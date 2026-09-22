@@ -25,5 +25,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
 
+# `answered!`, which the tests ask a provider's future once with.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
+
 [lints]
 workspace = true

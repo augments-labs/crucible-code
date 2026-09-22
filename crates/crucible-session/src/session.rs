@@ -29,6 +29,7 @@ use crucible_core::{
     ContextPatch, ContextSnapshot, JournalStore, Message, RecordedToolOutput, RunItem, SessionId,
     SessionOwner, SessionStore, ToolResult, Transcript, Workspace,
 };
+use crucible_runtime::BoxFuture;
 
 mod beside;
 mod claim;
@@ -914,36 +915,52 @@ impl SessionStore for Session {
         SessionOwner::of_bytes(self.path.parent()?.as_os_str().as_encoded_bytes())
     }
 
-    fn append_message(&self, message: &Message) {
-        self.append(message);
+    fn append_message<'a>(&'a self, message: &'a Message) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.append(message) })
     }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
         self.context_snapshot()
     }
 
-    fn contextual(&self, patch: &ContextPatch) -> Result<(), ContextError> {
-        self.contextual(patch)
+    fn contextual<'a>(
+        &'a self,
+        patch: &'a ContextPatch,
+    ) -> BoxFuture<'a, Result<(), ContextError>> {
+        Box::pin(async move { self.contextual(patch) })
     }
 
-    fn compacted(&self, replaced: usize, recap: &str) {
-        self.compacted(replaced, recap);
+    fn compacted<'a>(&'a self, replaced: usize, recap: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.compacted(replaced, recap) })
     }
 
-    fn display_compacted(&self, compacted: crucible_core::Compacted, pruned: bool) {
-        self.display_compacted(compacted, pruned);
+    fn display_compacted(
+        &self,
+        compacted: crucible_core::Compacted,
+        pruned: bool,
+    ) -> BoxFuture<'_, ()> {
+        Box::pin(async move { self.display_compacted(compacted, pruned) })
     }
 
-    fn pruned(&self, freed: usize, results: &[crucible_core::ToolId]) {
-        self.pruned(freed, results);
+    fn pruned<'a>(
+        &'a self,
+        freed: usize,
+        results: &'a [crucible_core::ToolId],
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.pruned(freed, results) })
     }
 
-    fn restricted(&self, freed: usize, results: &[crucible_core::ToolId], notice: &str) {
-        self.restricted(freed, results, notice);
+    fn restricted<'a>(
+        &'a self,
+        freed: usize,
+        results: &'a [crucible_core::ToolId],
+        notice: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.restricted(freed, results, notice) })
     }
 
-    fn measured(&self, calibration: &Calibration) {
-        self.measured(calibration);
+    fn measured<'a>(&'a self, calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.measured(calibration) })
     }
 
     fn calibrated(&self) -> Option<Calibration> {

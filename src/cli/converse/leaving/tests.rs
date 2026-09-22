@@ -12,6 +12,7 @@ use crucible_core::{
     SessionOwner, SessionStore, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult,
     Unwatched, Verdict,
 };
+use crucible_runtime::BoxFuture;
 use crucible_sandbox_local::LocalSandbox;
 use sha2::{Digest, Sha256};
 
@@ -65,7 +66,8 @@ fn running_with(
 
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched)
             .with_invocation(InvocationId::new());
-        let output = tool.run(approved, &context).expect("the command started");
+        let output =
+            crucible_runtime::answered!(tool.run(approved, &context)).expect("the command started");
         assert!(
             !output.is_failed(),
             "a command this test needs running was refused: {}",
@@ -85,8 +87,7 @@ fn running_with(
         let receipt = JOURNAL
             .put_call_result(pending.key(), &result)
             .expect("the test journal stores the result");
-        pending
-            .accept(receipt)
+        crucible_runtime::answered!(pending.accept(receipt))
             .expect("the detached command accepts its receipt");
     }
 
@@ -161,25 +162,45 @@ impl SessionStore for Journal {
         None
     }
 
-    fn append_message(&self, _message: &Message) {}
+    fn append_message<'a>(&'a self, _message: &'a Message) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
         None
     }
 
-    fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
-        Ok(())
+    fn contextual<'a>(
+        &'a self,
+        _patch: &'a ContextPatch,
+    ) -> BoxFuture<'a, Result<(), ContextError>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    fn compacted(&self, _replaced: usize, _recap: &str) {}
+    fn compacted<'a>(&'a self, _replaced: usize, _recap: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 
-    fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+    fn pruned<'a>(&'a self, _freed: usize, _results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+    fn restricted<'a>(
+        &'a self,
+        _freed: usize,
+        _results: &'a [ToolId],
+        _notice: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn measured(&self, _calibration: &Calibration) {}
+    fn measured<'a>(&'a self, _calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
     fn calibrated(&self) -> Option<Calibration> {
         None

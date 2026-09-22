@@ -425,6 +425,10 @@ crucible-core.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
 crucible-runner.workspace = true
+# The bridges the command line crosses into an asynchronous contract by while
+# it is synchronous: the `/sandbox` panel asking the local backend, and the
+# probes timing a tool the way a turn runs one.
+crucible-runtime.workspace = true
 # The main binary exposes the explicit Windows administrator setup and removal
 # commands from the same audited crate that owns the native broker. Running the
 # already-selected Crucible image directly avoids elevating a mutable sibling
@@ -465,6 +469,9 @@ thiserror.workspace = true
 crucible-extension.workspace = true
 crucible-mcp.workspace = true
 crucible-session = { workspace = true, features = ["proof"] }
+# The macro a test answers a fake service's future with, for the tests that
+# drive one by hand.
+crucible-runtime = { workspace = true, features = ["proof"] }
 insta.workspace = true
 
 # The Linux benchmark probes run the shipped binary behind a controlling pseudo

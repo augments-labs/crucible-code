@@ -105,7 +105,7 @@ pub enum Performed {
         /// What was asked for.
         enabled: bool,
         /// Why nothing changed, where nothing did.
-        unchanged: Option<String>,
+        unchanged: Option<crate::sandbox::Unchanged>,
     },
     /// `/theme`: written down for the next run, or why not.
     Theme(Result<(), RememberError>),

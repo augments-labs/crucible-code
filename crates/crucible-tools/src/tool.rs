@@ -7,12 +7,19 @@
 //! that owns them parses them. That keeps this crate free of every tool's
 //! argument shape, and it means an argument is validated exactly once, by the
 //! code that knows what it means.
+//!
+//! Running a call waits on the world, so [`Tool::run`] hands back a
+//! [`BoxFuture`] that borrows the call's context for as long as it runs and no
+//! longer. Accepting a background result hands back a future too, because it
+//! waits on its durable record, but one that owns the acceptance and borrows
+//! nothing. Validating, classifying and summarizing a call describe it, and
+//! stay synchronous.
 
 use std::fmt;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{SandboxAudit, SandboxAuditError, SandboxAuditRecord, SandboxError};
 use crucible_storage::{
     CallResultKey, CallResultReceipt, CallResultStoreError, IdempotencyKey, InvocationId,
@@ -45,14 +52,23 @@ pub enum ToolError {
         problem: Box<str>,
     },
 
-    /// The operating system refused.
+    /// The operating system refused, or a step that would have had to wait was
+    /// dropped before it answered.
+    ///
+    /// A dropped step leaves whatever it began unconfirmed. The
+    /// [`Unready`](crucible_runtime::Unready) it was refused with is in
+    /// `source`, as the error an [`std::io::Error`] holds, perhaps beneath
+    /// another error: `get_ref` on that `io::Error` finds it, and its `source`
+    /// does not. A refusal met while restarting a hosted server after a failed
+    /// call is the exception: it is named only in `problem`.
     #[error("{tool}: {problem}")]
     Io {
         /// Which tool was running.
         tool: Box<str>,
         /// What failed, without the underlying path if it is sensitive.
         problem: Box<str>,
-        /// What the operating system reported.
+        /// What the operating system reported, or the refusal of a step that
+        /// would have had to wait.
         source: std::io::Error,
     },
 
@@ -352,13 +368,30 @@ impl Watch for Unwatched {
 /// A background executor registers this only after an application registry owns
 /// its cleanup scope. The runner calls it after output hooks and both encoded
 /// output bounds have selected the exact result written to durable storage.
+///
+/// Dropping one that was never accepted, or dropping the future
+/// [`accept`](Self::accept) returned before it answered, hands its scope back
+/// to the registry that owns the scope's cleanup, which stops it or keeps it
+/// until it can: nothing is left running that nobody owns. The runner relies
+/// on this wherever it does not accept one: when the call ends without a
+/// result it stores (it failed, was cancelled, timed out, was refused by a
+/// hook, or panicked), when storing the result failed or the turn's output
+/// limit replaced it, and when accepting would have had to wait.
 pub trait CallResultAcceptance: Send {
     /// Binds the durable result receipt into the executor's lifecycle record.
     ///
     /// # Errors
     ///
-    /// The executor could not durably close its acceptance transition.
-    fn accept(self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError>;
+    /// The executor could not durably close its acceptance transition. A step
+    /// of closing it that would have had to wait and was dropped is such a
+    /// failure too, reported as [`SandboxError::Lifecycle`] holding the
+    /// refusal, and whether the transition closed is then not known.
+    fn accept<'a>(
+        self: Box<Self>,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'a, Result<(), SandboxError>>
+    where
+        Self: 'a;
 }
 
 /// One source-qualified result waiting for runner-owned finalization.
@@ -378,8 +411,13 @@ impl PendingCallResult {
     ///
     /// # Errors
     ///
-    /// The executor could not durably close its acceptance transition.
-    pub fn accept(self, receipt: CallResultReceipt) -> Result<(), SandboxError> {
+    /// The executor could not durably close its acceptance transition, a step
+    /// that would have had to wait and was dropped among the reasons, as
+    /// [`CallResultAcceptance::accept`] says.
+    pub fn accept(
+        self,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'static, Result<(), SandboxError>> {
         self.acceptance.accept(receipt)
     }
 }
@@ -398,6 +436,43 @@ impl fmt::Debug for PendingCallResult {
 /// Narrow by design: a tool can identify its run and call, observe its own
 /// child cancellation/deadline, and stream output under that call. It cannot
 /// emit arbitrary events, mint approval, steer the agent, or reach a session.
+///
+/// A call's run borrows its context, so the work it started cannot outlive
+/// the context it was lent — the error code is what this fails with today and
+/// not a gate, since `compile_fail` accepts any compile error:
+///
+/// ```compile_fail,E0597
+/// use crucible_runtime::Cancel;
+/// use crucible_tools::{Approved, Tool, ToolContext, Unwatched};
+/// use crucible_types::{Ancestry, ToolId};
+///
+/// fn kept(tool: &dyn Tool, approved: Approved, ancestry: Ancestry, call: ToolId) {
+///     let parent = Cancel::new();
+///     let running = {
+///         let context = ToolContext::new(ancestry, call, &parent, None, &Unwatched);
+///         tool.run(approved, &context)
+///     };
+///     drop(running);
+/// }
+/// ```
+///
+/// Its twin differs only in the context being made where the future is
+/// kept, so that it lives as long, and compiles:
+///
+/// ```
+/// use crucible_runtime::Cancel;
+/// use crucible_tools::{Approved, Tool, ToolContext, Unwatched};
+/// use crucible_types::{Ancestry, ToolId};
+///
+/// fn kept(tool: &dyn Tool, approved: Approved, ancestry: Ancestry, call: ToolId) {
+///     let parent = Cancel::new();
+///     let context = ToolContext::new(ancestry, call, &parent, None, &Unwatched);
+///     let running = {
+///         tool.run(approved, &context)
+///     };
+///     drop(running);
+/// }
+/// ```
 pub struct ToolContext<'a> {
     ancestry: Ancestry,
     call: ToolId,
@@ -959,12 +1034,19 @@ pub trait Tool: Send + Sync {
     /// sink this executor may use. Most tools report nothing while running;
     /// commands are the reason the sink is present.
     ///
+    /// The future borrows `context` for as long as it runs and no longer, which
+    /// [`ToolContext`] shows cannot be got around.
+    ///
     /// # Errors
     ///
     /// [`ToolError`] when the call could not be carried out at all. A result
     /// the model should see, including a failure, comes back as a failed
     /// [`ToolOutput`].
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError>;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>>;
 }
 
 impl fmt::Debug for dyn Tool {
@@ -1056,9 +1138,15 @@ mod tests {
     struct Accepted(Arc<Mutex<Option<CallResultReceipt>>>);
 
     impl CallResultAcceptance for Accepted {
-        fn accept(self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError> {
+        fn accept<'a>(
+            self: Box<Self>,
+            receipt: CallResultReceipt,
+        ) -> BoxFuture<'a, Result<(), SandboxError>>
+        where
+            Self: 'a,
+        {
             *self.0.lock().unwrap() = Some(receipt);
-            Ok(())
+            Box::pin(std::future::ready(Ok(())))
         }
     }
 
@@ -1105,7 +1193,7 @@ mod tests {
 
         let pending = context.take_call_result().unwrap().expect("pending result");
         let receipt = CallResultReceipt::from_digest([0x5a; 32]);
-        pending.accept(receipt).unwrap();
+        crucible_runtime::answered!(pending.accept(receipt)).unwrap();
 
         assert_eq!(*accepted.lock().unwrap(), Some(receipt));
         assert!(context.take_call_result().unwrap().is_none());

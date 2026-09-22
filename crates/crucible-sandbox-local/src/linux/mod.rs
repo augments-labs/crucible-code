@@ -28,6 +28,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use crucible_runtime::{BoxFuture, Bridge};
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
@@ -155,227 +156,234 @@ impl SandboxSession for LinuxSession {
         &self.inspection
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        if self.materialized {
-            return Ok(());
-        }
-        self.materialization = match materialize::commit(&self.request) {
-            Ok(materialization) => materialization,
-            Err(problem) => {
-                self.request.audit().record(
-                    self.request.id(),
-                    SandboxFactKind::Failed {
-                        phase: SandboxFailurePhase::Materialize,
-                        kind: problem.failure_kind(),
-                    },
-                )?;
-                return Err(problem);
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move {
+            if self.materialized {
+                return Ok(());
             }
-        };
-        self.materialized = true;
-        self.request.audit().record(
-            self.request.id(),
-            SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
-        )?;
-        Ok(())
+            self.materialization = match materialize::commit(&self.request) {
+                Ok(materialization) => materialization,
+                Err(problem) => {
+                    self.request.audit().record(
+                        self.request.id(),
+                        SandboxFactKind::Failed {
+                            phase: SandboxFailurePhase::Materialize,
+                            kind: problem.failure_kind(),
+                        },
+                    )?;
+                    return Err(problem);
+                }
+            };
+            self.materialized = true;
+            self.request.audit().record(
+                self.request.id(),
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
+            )?;
+            Ok(())
+        })
     }
 
-    fn stage(
+    fn stage<'a>(
         mut self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        if !self.materialized {
-            self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Start,
-                    kind: SandboxFailureKind::Materialization,
-                },
-            )?;
-            return Err(SandboxError::Materialization {
-                problem: "session was not materialized before start".into(),
-                source: None,
-            });
-        }
-        for stage in [
-            SandboxCommandStage::Requested,
-            SandboxCommandStage::Effective,
-        ] {
-            let decision = self.request.policy().commands().evaluate(&command, stage);
-            self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Guardrail { stage, decision },
-            )?;
-            if decision != SandboxGuardrailDecision::Allowed {
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if !self.materialized {
                 self.request.audit().record(
                     self.request.id(),
                     SandboxFactKind::Failed {
                         phase: SandboxFailurePhase::Start,
-                        kind: SandboxFailureKind::Guardrail,
+                        kind: SandboxFailureKind::Materialization,
                     },
                 )?;
-                return Err(SandboxError::Guardrail);
+                return Err(SandboxError::Materialization {
+                    problem: "session was not materialized before start".into(),
+                    source: None,
+                });
             }
-        }
-        let projection = match projection::Projection::prepare(
-            &self.request,
-            &self.view,
-            self.materialization.as_ref(),
-        ) {
-            Ok(projection) => projection,
-            Err(problem) => {
-                self.record_start_failure(&problem)?;
-                return Err(problem);
-            }
-        };
-        let network_socket = projection.network_socket();
-        // From this point one owner covers every resource acquired before
-        // spawn. Its cleanup proves network and materialization first, then
-        // resolves the projection and admission. No early return can silently
-        // drop evidence or infer Complete from only the session's fields.
-        let mut launch = LinuxLaunch {
-            process: None,
-            projection: Some(projection),
-            network: None,
-            materialization: self.materialization.take(),
-            reservation: self.reservation.take(),
-            status_channel: None,
-            inspection: self.inspection.clone(),
-            audit: self.request.audit().clone(),
-            sandbox: self.request.id(),
-            invocation: self.request.invocation_mode(),
-            call_result_key: self.request.call_result_key(),
-            owner_transferred: false,
-            released: false,
-            #[cfg(test)]
-            serial: self.serial.take(),
-        };
-        self.transferred = true;
-        launch.network = match self.request.policy().network() {
-            crucible_sandbox::SandboxNetworkPolicy::Domains(policy) => {
-                match super::network::Mediator::unix(
-                    &network_socket,
-                    policy.clone(),
+            for stage in [
+                SandboxCommandStage::Requested,
+                SandboxCommandStage::Effective,
+            ] {
+                let decision = self.request.policy().commands().evaluate(&command, stage);
+                self.request.audit().record(
                     self.request.id(),
-                    self.request.policy().limits().command_time,
-                ) {
-                    Ok(mediator) => Some(mediator),
-                    Err(source) => {
-                        let problem = SandboxError::Spawn(source);
-                        launch.startup_failed(&problem);
-                        return Err(problem);
-                    }
+                    SandboxFactKind::Guardrail { stage, decision },
+                )?;
+                if decision != SandboxGuardrailDecision::Allowed {
+                    self.request.audit().record(
+                        self.request.id(),
+                        SandboxFactKind::Failed {
+                            phase: SandboxFailurePhase::Start,
+                            kind: SandboxFailureKind::Guardrail,
+                        },
+                    )?;
+                    return Err(SandboxError::Guardrail);
                 }
             }
-            crucible_sandbox::SandboxNetworkPolicy::Closed => None,
-        };
-        let proxy_socket = launch
-            .network
-            .as_ref()
-            .map(|_| {
-                network::SocketMount::open(
-                    &network_socket,
-                    std::path::Path::new(network::PROXY_PATH),
-                )
-            })
-            .transpose();
-        let proxy_socket = match proxy_socket {
-            Ok(socket) => socket,
-            Err(problem) => {
-                launch.startup_failed(&problem);
-                return Err(problem);
-            }
-        };
-        let status_channel = match broker::StatusChannel::pair() {
-            Ok(channel) => channel,
-            Err(source) => {
-                let problem = SandboxError::Spawn(source);
-                launch.startup_failed(&problem);
-                return Err(problem);
-            }
-        };
-        let status_descriptor = match status_channel.descriptor() {
-            Ok(descriptor) => descriptor,
-            Err(source) => {
-                let problem = SandboxError::Spawn(source);
-                launch.startup_failed(&problem);
-                return Err(problem);
-            }
-        };
-        let canceller = match status_channel.canceller() {
-            Ok(canceller) => canceller,
-            Err(source) => {
-                let problem = SandboxError::Spawn(source);
-                launch.startup_failed(&problem);
-                return Err(problem);
-            }
-        };
-        launch.status_channel = Some(status_channel);
-        let process = match command::build(command::Plan {
-            backend: &self.backend,
-            broker: &self.broker,
-            request: &self.request,
-            command: &command,
-            view: &self.view,
-            materialization: launch.materialization.as_ref(),
-            projection: launch.projection.as_ref(),
-            status_descriptor,
-            network: launch.network.as_ref(),
-            proxy_socket: proxy_socket.as_ref(),
-        }) {
-            Ok(process) => process,
-            Err(problem) => {
-                launch.startup_failed(&problem);
-                return Err(problem);
-            }
-        };
-        let Some(reservation) = launch.reservation.take() else {
-            let problem = SandboxError::Concurrency;
-            launch.startup_failed(&problem);
-            return Err(problem);
-        };
-        let (stage, materialization_sources) = launch
-            .materialization
-            .take()
-            .map(materialize::Materialization::split)
-            .map_or((None, Vec::new()), |(stage, sources)| {
-                (Some(stage), sources)
-            });
-        let spawned = super::process::spawn(
-            process,
-            super::process::SpawnPlan {
-                network: launch.network.take(),
+            let projection = match projection::Projection::prepare(
+                &self.request,
+                &self.view,
+                self.materialization.as_ref(),
+            ) {
+                Ok(projection) => projection,
+                Err(problem) => {
+                    self.record_start_failure(&problem)?;
+                    return Err(problem);
+                }
+            };
+            let network_socket = projection.network_socket();
+            // From this point one owner covers every resource acquired before
+            // spawn. Its cleanup proves network and materialization first, then
+            // resolves the projection and admission. No early return can silently
+            // drop evidence or infer Complete from only the session's fields.
+            let mut launch = LinuxLaunch {
+                process: None,
+                projection: Some(projection),
+                network: None,
+                materialization: self.materialization.take(),
+                reservation: self.reservation.take(),
+                status_channel: None,
                 inspection: self.inspection.clone(),
-                reservation,
-                stage,
-                limits: self.request.policy().limits(),
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
-                audit_started: false,
-                audit_cleanup: false,
                 invocation: self.request.invocation_mode(),
                 call_result_key: self.request.call_result_key(),
-                canceller: Some(canceller),
-                speech: command.speech(),
-                startup_input: None,
-            },
-        );
-        if let Some(status_channel) = launch.status_channel.as_mut() {
-            status_channel.close_writer();
-        }
-        drop(materialization_sources);
-        // Materialization and admission already belong to spawn's process
-        // owner; the launch now owns the distinct projection and journal.
-        // Session Drop must not infer Complete from its emptied fields.
-        self.transferred = true;
-        match spawned {
-            Ok(process) => launch.process = Some(process),
-            Err(problem) => {
+                owner_transferred: false,
+                released: false,
+                #[cfg(test)]
+                serial: self.serial.take(),
+            };
+            self.transferred = true;
+            launch.network = match self.request.policy().network() {
+                crucible_sandbox::SandboxNetworkPolicy::Domains(policy) => {
+                    match super::network::Mediator::unix(
+                        &network_socket,
+                        policy.clone(),
+                        self.request.id(),
+                        self.request.policy().limits().command_time,
+                    ) {
+                        Ok(mediator) => Some(mediator),
+                        Err(source) => {
+                            let problem = SandboxError::Spawn(source);
+                            launch.startup_failed(&problem);
+                            return Err(problem);
+                        }
+                    }
+                }
+                crucible_sandbox::SandboxNetworkPolicy::Closed => None,
+            };
+            let proxy_socket = launch
+                .network
+                .as_ref()
+                .map(|_| {
+                    network::SocketMount::open(
+                        &network_socket,
+                        std::path::Path::new(network::PROXY_PATH),
+                    )
+                })
+                .transpose();
+            let proxy_socket = match proxy_socket {
+                Ok(socket) => socket,
+                Err(problem) => {
+                    launch.startup_failed(&problem);
+                    return Err(problem);
+                }
+            };
+            let status_channel = match broker::StatusChannel::pair() {
+                Ok(channel) => channel,
+                Err(source) => {
+                    let problem = SandboxError::Spawn(source);
+                    launch.startup_failed(&problem);
+                    return Err(problem);
+                }
+            };
+            let status_descriptor = match status_channel.descriptor() {
+                Ok(descriptor) => descriptor,
+                Err(source) => {
+                    let problem = SandboxError::Spawn(source);
+                    launch.startup_failed(&problem);
+                    return Err(problem);
+                }
+            };
+            let canceller = match status_channel.canceller() {
+                Ok(canceller) => canceller,
+                Err(source) => {
+                    let problem = SandboxError::Spawn(source);
+                    launch.startup_failed(&problem);
+                    return Err(problem);
+                }
+            };
+            launch.status_channel = Some(status_channel);
+            let process = match command::build(command::Plan {
+                backend: &self.backend,
+                broker: &self.broker,
+                request: &self.request,
+                command: &command,
+                view: &self.view,
+                materialization: launch.materialization.as_ref(),
+                projection: launch.projection.as_ref(),
+                status_descriptor,
+                network: launch.network.as_ref(),
+                proxy_socket: proxy_socket.as_ref(),
+            }) {
+                Ok(process) => process,
+                Err(problem) => {
+                    launch.startup_failed(&problem);
+                    return Err(problem);
+                }
+            };
+            let Some(reservation) = launch.reservation.take() else {
+                let problem = SandboxError::Concurrency;
                 launch.startup_failed(&problem);
                 return Err(problem);
+            };
+            let (stage, materialization_sources) = launch
+                .materialization
+                .take()
+                .map(materialize::Materialization::split)
+                .map_or((None, Vec::new()), |(stage, sources)| {
+                    (Some(stage), sources)
+                });
+            let spawned = super::process::spawn(
+                process,
+                super::process::SpawnPlan {
+                    network: launch.network.take(),
+                    inspection: self.inspection.clone(),
+                    reservation,
+                    stage,
+                    limits: self.request.policy().limits(),
+                    audit: self.request.audit().clone(),
+                    sandbox: self.request.id(),
+                    audit_started: false,
+                    audit_cleanup: false,
+                    invocation: self.request.invocation_mode(),
+                    call_result_key: self.request.call_result_key(),
+                    canceller: Some(canceller),
+                    speech: command.speech(),
+                    startup_input: None,
+                },
+            );
+            if let Some(status_channel) = launch.status_channel.as_mut() {
+                status_channel.close_writer();
             }
-        }
-        Ok(Box::new(launch))
+            drop(materialization_sources);
+            // Materialization and admission already belong to spawn's process
+            // owner; the launch now owns the distinct projection and journal.
+            // Session Drop must not infer Complete from its emptied fields.
+            self.transferred = true;
+            match spawned {
+                Ok(process) => launch.process = Some(process),
+                Err(problem) => {
+                    launch.startup_failed(&problem);
+                    return Err(problem);
+                }
+            }
+            Ok(Box::new(launch) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -416,112 +424,119 @@ impl SandboxLaunch for LinuxLaunch {
         Ok(())
     }
 
-    fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        if self.process.is_none() {
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "sandbox process scope is unavailable before release",
-            )));
-        }
-        if self.status_channel.is_none() {
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "sandbox release channel is unavailable",
-            )));
-        }
-        let Some(mut process) = self.process.take() else {
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "sandbox process scope is unavailable before release",
-            )));
-        };
-        if let Some(projection) = self.projection.as_mut()
-            && let Err(source) = projection.record(transaction::Record::ReleaseIntent)
-        {
-            self.refuse_and_cleanup(process.as_mut());
-            return Err(SandboxError::Lifecycle(source));
-        }
-        if let Err(source) = self.audit.record(
-            self.sandbox,
-            SandboxFactKind::Lifecycle(SandboxLifecycle::ReleaseIntent),
-        ) {
-            self.refuse_and_cleanup(process.as_mut());
-            return Err(SandboxError::Audit(source));
-        }
-        if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
-            self.refuse_and_cleanup(process.as_mut());
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "background sandbox has no application cleanup owner",
-            )));
-        }
-        if self.invocation != SandboxInvocationMode::Foreground
-            && let Some(projection) = self.projection.as_mut()
-            && let Err(source) = projection.record(transaction::Record::OwnerTransferred)
-        {
-            self.refuse_and_cleanup(process.as_mut());
-            return Err(SandboxError::Lifecycle(source));
-        }
-        let ready = self.status_channel.as_mut().map_or_else(
-            || Err(io::Error::other("sandbox release channel is unavailable")),
-            broker::StatusChannel::attest_ready,
-        );
-        if let Err(source) = ready {
-            self.refuse_and_cleanup(process.as_mut());
-            let said = drain_launcher_stderr(process.as_mut());
-            let problem = SandboxError::Lifecycle(explain_launch_failure(source, &said));
-            let _ = self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Start,
-                    kind: problem.failure_kind(),
-                },
-            );
-            return Err(problem);
-        }
-        if let Some(projection) = self.projection.as_mut()
-            && let Err(source) = projection.record(transaction::Record::GoSentOrAmbiguous)
-        {
-            self.refuse_and_cleanup(process.as_mut());
-            return Err(SandboxError::Lifecycle(source));
-        }
-        let released = self.status_channel.as_mut().map_or_else(
-            || Err(io::Error::other("sandbox release channel is unavailable")),
-            broker::StatusChannel::send_go,
-        );
-        if let Err(source) = released {
-            self.rollback_and_cleanup(process.as_mut());
-            return Err(SandboxError::Lifecycle(source));
-        }
-        for lifecycle in [
-            SandboxLifecycle::CommandReleased,
-            SandboxLifecycle::CommandStarted,
-        ] {
-            if let Err(source) = self
-                .audit
-                .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+    fn release<'a>(
+        mut self: Box<Self>,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if self.process.is_none() {
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "sandbox process scope is unavailable before release",
+                )));
+            }
+            if self.status_channel.is_none() {
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "sandbox release channel is unavailable",
+                )));
+            }
+            let Some(mut process) = self.process.take() else {
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "sandbox process scope is unavailable before release",
+                )));
+            };
+            if let Some(projection) = self.projection.as_mut()
+                && let Err(source) = projection.record(transaction::Record::ReleaseIntent)
             {
-                self.rollback_and_cleanup(process.as_mut());
+                self.refuse_and_cleanup(process.as_mut());
+                return Err(SandboxError::Lifecycle(source));
+            }
+            if let Err(source) = self.audit.record(
+                self.sandbox,
+                SandboxFactKind::Lifecycle(SandboxLifecycle::ReleaseIntent),
+            ) {
+                self.refuse_and_cleanup(process.as_mut());
                 return Err(SandboxError::Audit(source));
             }
-        }
-        let Some(status_channel) = self.status_channel.take() else {
-            self.rollback_and_cleanup(process.as_mut());
-            return Err(SandboxError::Lifecycle(io::Error::other(
-                "sandbox release channel is unavailable",
-            )));
-        };
-        self.released = true;
-        let wrapped = projection::wrap(
-            process,
-            projection::ProcessPlan {
-                projection: self.projection.take(),
-                status_channel,
-                audit: self.audit.clone(),
-                sandbox: self.sandbox,
-                invocation: self.invocation,
-                call_result_key: self.call_result_key,
-                #[cfg(test)]
-                serial: self.serial.take(),
-            },
-        );
-        wrapped.map_err(SandboxError::Lifecycle)
+            if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
+                self.refuse_and_cleanup(process.as_mut());
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "background sandbox has no application cleanup owner",
+                )));
+            }
+            if self.invocation != SandboxInvocationMode::Foreground
+                && let Some(projection) = self.projection.as_mut()
+                && let Err(source) = projection.record(transaction::Record::OwnerTransferred)
+            {
+                self.refuse_and_cleanup(process.as_mut());
+                return Err(SandboxError::Lifecycle(source));
+            }
+            let ready = self.status_channel.as_mut().map_or_else(
+                || Err(io::Error::other("sandbox release channel is unavailable")),
+                broker::StatusChannel::attest_ready,
+            );
+            if let Err(source) = ready {
+                self.refuse_and_cleanup(process.as_mut());
+                let said = drain_launcher_stderr(process.as_mut());
+                let problem = SandboxError::Lifecycle(explain_launch_failure(source, &said));
+                let _ = self.audit.record(
+                    self.sandbox,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Start,
+                        kind: problem.failure_kind(),
+                    },
+                );
+                return Err(problem);
+            }
+            if let Some(projection) = self.projection.as_mut()
+                && let Err(source) = projection.record(transaction::Record::GoSentOrAmbiguous)
+            {
+                self.refuse_and_cleanup(process.as_mut());
+                return Err(SandboxError::Lifecycle(source));
+            }
+            let released = self.status_channel.as_mut().map_or_else(
+                || Err(io::Error::other("sandbox release channel is unavailable")),
+                broker::StatusChannel::send_go,
+            );
+            if let Err(source) = released {
+                self.rollback_and_cleanup(process.as_mut());
+                return Err(SandboxError::Lifecycle(source));
+            }
+            for lifecycle in [
+                SandboxLifecycle::CommandReleased,
+                SandboxLifecycle::CommandStarted,
+            ] {
+                if let Err(source) = self
+                    .audit
+                    .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+                {
+                    self.rollback_and_cleanup(process.as_mut());
+                    return Err(SandboxError::Audit(source));
+                }
+            }
+            let Some(status_channel) = self.status_channel.take() else {
+                self.rollback_and_cleanup(process.as_mut());
+                return Err(SandboxError::Lifecycle(io::Error::other(
+                    "sandbox release channel is unavailable",
+                )));
+            };
+            self.released = true;
+            let wrapped = projection::wrap(
+                process,
+                projection::ProcessPlan {
+                    projection: self.projection.take(),
+                    status_channel,
+                    audit: self.audit.clone(),
+                    sandbox: self.sandbox,
+                    invocation: self.invocation,
+                    call_result_key: self.call_result_key,
+                    #[cfg(test)]
+                    serial: self.serial.take(),
+                },
+            );
+            wrapped.map_err(SandboxError::Lifecycle)
+        })
     }
 }
 
@@ -584,14 +599,16 @@ impl LinuxLaunch {
     }
 
     fn refuse_and_cleanup(&mut self, process: &mut dyn SandboxProcess) {
-        let _ = process.stop();
+        // Whether the scope was reaped is read from the inspection below, which
+        // a stop that failed or would have had to wait leaves short of complete.
+        let _ = Bridge::LocalBackend.cross(process.stop());
         let scope_reaped = process.inspection().cleanup() == SandboxCleanup::Complete;
         let _ = self.record_refusal(scope_reaped);
         self.finish_cleanup(scope_reaped);
     }
 
     fn rollback_and_cleanup(&mut self, process: &mut dyn SandboxProcess) {
-        let _ = process.stop();
+        let _ = Bridge::LocalBackend.cross(process.stop());
         let scope_reaped = process.inspection().cleanup() == SandboxCleanup::Complete;
         let rolled_back = self
             .projection

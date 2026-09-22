@@ -16,6 +16,7 @@ use crucible_core::{
     ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId, ToolOutcome, ToolOutput,
     ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot, ToolSourceReceipt, Watch, Wrote,
 };
+use crucible_runtime::Bridge;
 
 use crate::{Event, Reporter};
 mod audit;
@@ -175,6 +176,9 @@ impl Work<'_> {
                         went = Went::Refused(invocation.call.name.clone());
                     }
                     ToolOutcome::Cancelled => {
+                        went = Went::Stopped(StopReason::Cancelled);
+                    }
+                    ToolOutcome::Failed if invocation.stops => {
                         went = Went::Stopped(StopReason::Cancelled);
                     }
                     ToolOutcome::Succeeded
@@ -526,11 +530,15 @@ impl Work<'_> {
             if let Ok(receipt) = self.journal.put_call_result(pending.key(), &result) {
                 // The result is already durable and replayable. A failed
                 // executor acknowledgement quarantines/stops its owned scope,
-                // but cannot replace that sole accepted result.
-                let _ = pending.accept(receipt);
+                // but cannot replace that sole accepted result. One that would
+                // have had to wait is dropped by the crossing before it
+                // answered, which the acceptance contract says hands the scope
+                // back to the registry that owns its cleanup.
+                let _ = Bridge::TurnTools.cross(pending.accept(receipt));
             } else {
-                // Dropping the unaccepted executor half reclaims its
-                // application-owned process scope.
+                // Dropping the unaccepted executor half hands its
+                // application-owned process scope back to the registry that
+                // owns its cleanup, as the acceptance contract says it does.
                 drop(pending);
                 invocation.output = ToolOutput::failed(if RESULT_STORAGE_FAILED.len() <= room {
                     RESULT_STORAGE_FAILED
@@ -638,6 +646,12 @@ struct Invocation {
     retention: ToolOutputRetention,
     recovery: Option<InvocationRecord>,
     pending_result: Option<PendingCallResult>,
+    /// Whether the pass ends on a stop at this call although its outcome says
+    /// something else. Set only where a run that would have had to wait, met
+    /// while the turn was being stopped, is answered as the refusal it was;
+    /// where reporting the call's sandbox facts failed after the run, that
+    /// failure is the answer instead, and this stays false.
+    stops: bool,
 }
 
 impl Invocation {
@@ -656,6 +670,7 @@ impl Invocation {
             retention,
             recovery: None,
             pending_result: None,
+            stops: false,
         }
     }
 
@@ -755,11 +770,32 @@ fn execute(prepared: Prepared, host: ExecutionHost<'_>, audit: SandboxAudit) -> 
                 .recovering(record);
         }
     };
-    let ran = entry.tool().run(approved, &context);
+    let ran = Bridge::TurnTools.cross(entry.tool().run(approved, &context));
     if let Err(problem) = report_sandbox_facts(&context, host.events, host.journal) {
         return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
             .recovering(record);
     }
+
+    // The call's result reports the refusal, not the stop: the run began and
+    // was dropped before it answered, so "not run" would be false, and would
+    // leave what the run began unmentioned. Where a stop was asked for, the
+    // pass still ends on it, as it does for a call the stop cut short.
+    let ran = match ran {
+        Ok(ran) => ran,
+        Err(unready) => {
+            let problem = ToolError::Io {
+                tool: call.name.clone(),
+                problem: "its run would have had to wait, so the run was dropped before it \
+                          answered; whatever the run began is unconfirmed"
+                    .into(),
+                source: std::io::Error::other(unready),
+            };
+            let mut failed = Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                .recovering(record);
+            failed.stops = host.cancel.requested();
+            return failed;
+        }
+    };
 
     if host.cancel.requested() {
         return Invocation::new(

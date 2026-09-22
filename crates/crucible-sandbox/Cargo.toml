@@ -13,17 +13,24 @@ authors.workspace = true
 # this crate takes the two crates that own those values and nothing above them.
 # `crucible-storage` is here for one reason: a sandboxed call hands back the
 # same receipt an unsandboxed one does, and the trait says so in its signature.
+# `crucible-runtime` is here for the future a lifecycle step hands back, which is
+# the same type every other service contract hands back.
 #
 # `thiserror` writes `Display` and `source` for the refusal enums; `sha2`
 # digests a policy so two of them can be compared without either being shown;
 # `globset` compiles the command patterns a guardrail matches.
 [dependencies]
+crucible-runtime.workspace = true
 crucible-storage.workspace = true
 crucible-types.workspace = true
 crucible-workspace.workspace = true
 globset.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+
+# `answered!`, which drives a fake's future by hand in a test.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
 
 [lints]
 workspace = true

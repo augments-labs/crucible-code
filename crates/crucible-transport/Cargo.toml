@@ -11,7 +11,8 @@ authors.workspace = true
 
 [dependencies]
 # `Cancel`, which is how a read that is waiting on a quiet program is ended by
-# the near end rather than at the patience.
+# the near end rather than at the patience, and the bridge a stop crosses while
+# the transport is synchronous.
 crucible-runtime.workspace = true
 # The streams and the process handle this crate adapts: `SandboxOutput` and
 # `SandboxRead` on the way in, `SandboxProcess` for the stopping.

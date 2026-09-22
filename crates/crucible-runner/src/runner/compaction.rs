@@ -5,11 +5,20 @@
 //! word for word — enough for the model to know what it was doing, at a
 //! fraction of what it was carrying.
 //!
-//! **The turn does not end.** This runs inside the loop, between one request
-//! and the next, and the loop carries on afterwards against a transcript that
-//! now fits. A session that ended its turn to make room would answer the
-//! question the user is still waiting on with a stop. The one turn that does
-//! end here is one somebody stopped, and it ends saying so.
+//! **Making room does not end the turn.** This runs inside the loop, between
+//! one request and the next, and the loop carries on afterwards against a
+//! transcript that now fits. A session that ended its turn to make room would
+//! answer the question the user is still waiting on with a stop. A turn ends
+//! here only when somebody stopped it, when room could not be made, or when a
+//! session line of the compaction's own would have had to wait. Room is not
+//! made where the recap failed or came back incomplete, where a step of the
+//! recap request would have had to wait, or where two goes in a row freed
+//! nothing. A refused line leaves standing what was done before it, as
+//! [`Runner::compact`] says: any pruning, whichever line it was, and the
+//! replacement as well where the line reported what the recap freed; where
+//! the line recorded the recap, the replacement is not made. The turn ends on
+//! what it was: the stop, the failure, the incomplete recap, the refusal,
+//! named for the crossing it was met at, or a window left without room.
 //!
 //! **The log is the record.** Compaction rewrites what the model is sent; what
 //! happened is what the session log holds, and it keeps every message this
@@ -35,6 +44,7 @@ use crucible_core::{
     PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request,
     RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
 };
+use crucible_runtime::{Bridge, Unready};
 use crucible_types::{Compacted, Compacting, RECAP};
 
 use crate::context::RunContext;
@@ -112,9 +122,31 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the request for the recap failed. The transcript is
-    /// untouched in that case: it is replaced once the answer is whole, so a
-    /// failure part way through leaves the session exactly as it was.
+    /// [`TurnError`] where the request for the recap failed. Nothing is
+    /// replaced in that case: the transcript is replaced once the answer is
+    /// whole, so a failure part way through leaves it as pruning left it. A
+    /// line the session would not take between turns, still held, is reported
+    /// as [`TurnError::Unready`] before anything is recorded or sent.
+    ///
+    /// A step of the recap request that would have had to wait, whether a
+    /// prompt-cache step or opening or reading the stream, is
+    /// [`TurnError::Unready`] and replaces nothing either, even when the
+    /// compaction is being stopped: a refusal outranks a stop. What the
+    /// dropped step began is unconfirmed, and a changing cache step is
+    /// recorded as ambiguous, to be reconciled, as a cancelled one is.
+    /// Whichever step it was, the recap request is taken back out of the
+    /// transcript. A request refused while its stream was being opened may
+    /// have gone out all the same, so its prompt-cache attempt is held,
+    /// reported and logged as `Unknown`; one refused while its answer was read
+    /// keeps `Accepted`.
+    ///
+    /// A session write of this compaction's own that would have had to wait is
+    /// [`TurnError::Unready`] too. The line recording what pruning cleared, and
+    /// the line reporting what pruning alone freed, are refused after the
+    /// pruning, which stands; the line recording the recap after any pruning
+    /// and before the replacement, which is then not made; and the line
+    /// reporting what the recap freed after the replacement, which stands.
+    /// Whether the log kept a refused line is not known.
     pub fn compact(
         &mut self,
         why: Compacting,
@@ -125,6 +157,13 @@ impl Runner {
         // the recap boundary below is read off the run, and a run asking for
         // more than the session allows does not get it.
         let run = &run.held_to(self.policy);
+
+        // A line the session would not take between turns ends the compaction
+        // it was held for, as it ends a turn: before anything is recorded or
+        // sent.
+        if let Some(unready) = self.state.unwritten.take() {
+            return Err(unready.into());
+        }
 
         let events = run.reporting();
 
@@ -143,7 +182,7 @@ impl Runner {
         // themselves, and that is exactly where there is no older middle for a
         // recap to replace. Prune before giving up on finding one so those
         // results do not become untouchable merely because the turn is active.
-        let pruned = self.prune();
+        let pruned = self.prune()?;
 
         let replacing = if let Some(replacing) = replacing {
             replacing
@@ -157,7 +196,7 @@ impl Runner {
                     after,
                     kept: self.state.transcript.turns(),
                 };
-                self.store.display_compacted(compacted, pruned);
+                Bridge::TurnSession.cross(self.store.display_compacted(compacted, pruned))?;
                 events.post(crate::Event::Compacted { compacted });
                 events.post(crate::Event::Carried {
                     left: self.left_under(run.policy().compaction),
@@ -226,7 +265,7 @@ impl Runner {
         // Written to the log before the transcript is replaced, so a crash
         // between the two leaves a log that says what happened rather than one
         // that quietly lost the messages.
-        self.store.compacted(replacing, &standing_as);
+        Bridge::TurnSession.cross(self.store.compacted(replacing, &standing_as))?;
         self.store
             .append_run_item(&RunItem::Compaction(CompactionRecord::new(
                 run.ancestry(),
@@ -256,7 +295,7 @@ impl Runner {
             after: self.state.load.tokens(),
             kept,
         };
-        self.store.display_compacted(compacted, pruned);
+        Bridge::TurnSession.cross(self.store.display_compacted(compacted, pruned))?;
         events.post(crate::Event::Compacted { compacted });
         events.post(crate::Event::Carried {
             left: self.left_under(run.policy().compaction),
@@ -536,17 +575,7 @@ impl Runner {
         let planned = cache.planned();
         self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
         if let Some(resource) = prepared.resource.as_ref() {
-            self.report_prompt_cache(
-                run,
-                PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
-                    attempt: Some(cache.attempt),
-                    resource: resource.id().clone(),
-                    operation: resource.pending(),
-                    state: resource.state(),
-                    expires_at: resource.expires_at(),
-                    owner: resource.binding().owner(),
-                }),
-            );
+            self.report_recap_resource(run, cache.attempt, resource);
         }
         let mut encoding = self.provider.prompt_cache_encoding(&Request {
             prompt_cache: Some(&cache),
@@ -588,8 +617,10 @@ impl Runner {
             prompt_cache: Some(&cache),
             ..request
         };
-        let asked = self.provider.stream(request, cancel);
-        let disposition = super::request_disposition(&asked);
+        let crossed = Bridge::TurnProvider.cross(self.provider.stream(request, cancel));
+        // Recorded and reported before a refusal ends the compaction, as a
+        // turn's own request is.
+        let disposition = super::crossed_disposition(&crossed);
         if let Some(attempt) = self.state.prompt_cache_attempt.as_mut() {
             attempt.disposition = disposition;
         }
@@ -601,6 +632,9 @@ impl Runner {
                 disposition,
             }),
         );
+        let asked = crossed.inspect_err(|_| {
+            self.state.transcript.pop();
+        })?;
         let cache = super::CacheObservation {
             attempt: cache.attempt,
             reporting: cache.capabilities.usage(),
@@ -625,6 +659,12 @@ impl Runner {
         );
 
         self.state.transcript.pop();
+        // A refusal outranks a stop. A read that would have had to wait was
+        // dropped before it answered, so what it began is unconfirmed, and a
+        // stop asked for meanwhile must not report it as a clean one.
+        if matches!(said, Err(TurnError::Unready(_))) {
+            return said;
+        }
         // The final EOF read may have raised cancellation without producing a
         // delta. A complete recap is still provisional until that read ends;
         // it must not replace the original history after the user stopped it.
@@ -632,6 +672,31 @@ impl Runner {
             return Ok(Recap::Stopped);
         }
         said
+    }
+
+    /// Reports the prompt-cache resource a recap request was prepared against,
+    /// under that request's attempt, before the request is encoded. Where the
+    /// encoding fails, the request goes without the resource: under `Prefer`,
+    /// a fallback request that does not name it is encoded under the same
+    /// attempt, and where there is no fallback, or it cannot be encoded
+    /// either, nothing is sent.
+    fn report_recap_resource(
+        &self,
+        run: &RunContext<'_>,
+        attempt: crucible_core::ProviderAttemptId,
+        resource: &crucible_core::PromptCacheResourceRecord,
+    ) {
+        self.report_prompt_cache(
+            run,
+            PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
+                attempt: Some(attempt),
+                resource: resource.id().clone(),
+                operation: resource.pending(),
+                state: resource.state(),
+                expires_at: resource.expires_at(),
+                owner: resource.binding().owner(),
+            }),
+        );
     }
 
     /// Reads one standalone recap response while preserving attempt accounting.
@@ -657,7 +722,7 @@ impl Runner {
         let mut stopped = None;
         let before = *spent;
 
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = Bridge::TurnProvider.cross(stream.next())? {
             let delta = match delta {
                 Ok(delta) => delta,
                 Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
@@ -779,7 +844,15 @@ impl Runner {
     /// calls stay, the prose stays, and the placeholder keeps the shape of a
     /// result that answered — only the bulk is gone, and only from what the
     /// model is sent.
-    fn prune(&mut self) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// [`Unready`] where the session would not take the line. The transcript
+    /// and the load have moved by then. Whether the log kept the line is not
+    /// known, since the store says nothing of a write dropped before it
+    /// answered, so a resume may read the results back uncleared, as it would
+    /// after a crash between the two.
+    fn prune(&mut self) -> Result<bool, Unready> {
         // The newest output is protected: a result the model just read is not
         // one to pull out from under it. Counted in bytes, the figure the
         // results are actually measured in.
@@ -817,7 +890,7 @@ impl Runner {
         }
 
         if savings < MINIMUM {
-            return false;
+            return Ok(false);
         }
 
         // The transcript first, because the log line names what was cleared:
@@ -826,7 +899,7 @@ impl Runner {
         // holds. The line goes out once the transcript has moved, and replay
         // reads it to make the same move again.
         let freed = self.state.transcript.prune(&clearing);
-        self.store.pruned(freed, &clearing);
+        let written = Bridge::TurnSession.cross(self.store.pruned(freed, &clearing));
 
         // The load drops by what was freed: the transcript is smaller, and the
         // next request is the thing that is measured. Recounted rather than
@@ -840,7 +913,7 @@ impl Runner {
             self.agent.instructions(),
             &super::advertising(&self.agent, &self.state.tools),
         );
-        true
+        written.map(|()| true)
     }
 }
 

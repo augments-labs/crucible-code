@@ -11,6 +11,7 @@ use crucible_core::{
     ToolArgs, ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId, ToolProvenance,
     ToolResourceKey, ToolSourceKind, Verdict,
 };
+use crucible_runtime::BoxFuture;
 
 use crucible_types::{
     Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
@@ -40,25 +41,45 @@ macro_rules! journal_only {
                 None
             }
 
-            fn append_message(&self, _message: &Message) {}
+            fn append_message<'a>(&'a self, _message: &'a Message) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
             fn context_snapshot(&self) -> Option<ContextSnapshot> {
                 None
             }
 
-            fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
-                Ok(())
+            fn contextual<'a>(
+                &'a self,
+                _patch: &'a ContextPatch,
+            ) -> BoxFuture<'a, Result<(), ContextError>> {
+                Box::pin(async move { Ok(()) })
             }
 
-            fn compacted(&self, _replaced: usize, _recap: &str) {}
+            fn compacted<'a>(&'a self, _replaced: usize, _recap: &'a str) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
-            fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+            fn display_compacted(&self, _compacted: Compacted, _pruned: bool) -> BoxFuture<'_, ()> {
+                Box::pin(async {})
+            }
 
-            fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+            fn pruned<'a>(&'a self, _freed: usize, _results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
-            fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+            fn restricted<'a>(
+                &'a self,
+                _freed: usize,
+                _results: &'a [ToolId],
+                _notice: &'a str,
+            ) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
-            fn measured(&self, _calibration: &Calibration) {}
+            fn measured<'a>(&'a self, _calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
             fn calibrated(&self) -> Option<Calibration> {
                 None
@@ -200,10 +221,16 @@ impl Tool for PipelineTool {
         Summary::new("pipeline")
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        assert_eq!(approved.args().as_str(), "transformed");
-        marked(&self.trace, "execute");
-        Ok(ToolOutput::ok(self.answer.clone()))
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            assert_eq!(approved.args().as_str(), "transformed");
+            marked(&self.trace, "execute");
+            Ok(ToolOutput::ok(self.answer.clone()))
+        })
     }
 }
 
@@ -257,12 +284,17 @@ impl Drop for AcceptedResult {
 }
 
 impl CallResultAcceptance for AcceptedResult {
-    fn accept(
+    fn accept<'a>(
         self: Box<Self>,
         receipt: CallResultReceipt,
-    ) -> Result<(), crucible_core::SandboxError> {
-        *self.0.lock().unwrap() = Some(receipt);
-        Ok(())
+    ) -> BoxFuture<'a, Result<(), crucible_core::SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            *self.0.lock().unwrap() = Some(receipt);
+            Ok(())
+        })
     }
 }
 
@@ -283,15 +315,21 @@ impl Tool for DeferredResultTool {
         Summary::new("deferred result")
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        context
-            .defer_call_result(Box::new(AcceptedResult(Arc::clone(&self.0))))
-            .map_err(|problem| ToolError::Io {
-                tool: "deferred".into(),
-                problem: "could not defer the final result".into(),
-                source: std::io::Error::other(problem),
-            })?;
-        Ok(ToolOutput::ok("raw executor output"))
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            context
+                .defer_call_result(Box::new(AcceptedResult(Arc::clone(&self.0))))
+                .map_err(|problem| ToolError::Io {
+                    tool: "deferred".into(),
+                    problem: "could not defer the final result".into(),
+                    source: std::io::Error::other(problem),
+                })?;
+            Ok(ToolOutput::ok("raw executor output"))
+        })
     }
 }
 
@@ -617,12 +655,12 @@ impl Tool for KeyedEffect {
         Summary::new("keyed effect")
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::ok("one effect"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move { Ok(ToolOutput::ok("one effect")) })
     }
 }
 
@@ -759,12 +797,18 @@ impl Tool for TimesOut {
         Summary::new("timeout")
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        while !context.cancel().requested() {
-            thread::yield_now();
-        }
-        Err(ToolError::Cancelled("timeout".into()))
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            while !context.cancel().requested() {
+                thread::yield_now();
+            }
+            Err(ToolError::Cancelled("timeout".into()))
+        })
     }
 }
 
@@ -844,27 +888,33 @@ impl Tool for Scheduled {
         Summary::new(args.as_str())
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        assert!(
-            self.state.approvals.load(Ordering::SeqCst) >= self.approvals_before_effects,
-            "an effect began before its scheduler wave finished approval"
-        );
-        self.state.ran.fetch_add(1, Ordering::SeqCst);
-        let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
-        self.state.peak.fetch_max(active, Ordering::SeqCst);
-        if let Some(barrier) = &self.barrier {
-            barrier.wait();
-        }
-        if approved.args().as_str().contains("slow") {
-            thread::sleep(Duration::from_millis(20));
-        }
-        self.state
-            .completed
-            .lock()
-            .unwrap()
-            .push(approved.args().as_str().to_owned());
-        self.state.active.fetch_sub(1, Ordering::SeqCst);
-        Ok(ToolOutput::ok(approved.args().as_str()))
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            assert!(
+                self.state.approvals.load(Ordering::SeqCst) >= self.approvals_before_effects,
+                "an effect began before its scheduler wave finished approval"
+            );
+            self.state.ran.fetch_add(1, Ordering::SeqCst);
+            let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.state.peak.fetch_max(active, Ordering::SeqCst);
+            if let Some(barrier) = &self.barrier {
+                barrier.wait();
+            }
+            if approved.args().as_str().contains("slow") {
+                thread::sleep(Duration::from_millis(20));
+            }
+            self.state
+                .completed
+                .lock()
+                .unwrap()
+                .push(approved.args().as_str().to_owned());
+            self.state.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(ToolOutput::ok(approved.args().as_str()))
+        })
     }
 }
 

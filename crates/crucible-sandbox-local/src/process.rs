@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxAudit, SandboxCleanup, SandboxFactKind, SandboxInspection, SandboxInvocationMode,
     SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRead, SandboxResourceLimits,
@@ -809,68 +810,9 @@ impl LocalProcess {
         self.audit_state.cleanup = Some(cleanup);
         Ok(())
     }
-}
 
-struct StartupInput {
-    bytes: Option<Vec<u8>>,
-    speech: crucible_sandbox::SandboxSpeech,
-}
-
-impl SandboxProcess for LocalProcess {
-    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
-        self.stdin.take()
-    }
-
-    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.stdout.take()
-    }
-
-    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.stderr.take()
-    }
-
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(problem) = self.control.failure() {
-            return Err(problem);
-        }
-        if let Some(status) = self.status {
-            if !self.scope_stopped {
-                return Err(io::Error::other(
-                    "sandbox process scope cleanup is unconfirmed",
-                ));
-            }
-            self.audit_finished()?;
-            return Ok(Some(status));
-        }
-
-        let status = {
-            let _lifecycle = self.control.lifecycle()?;
-            let terminator = self
-                .terminator
-                .ok_or_else(|| io::Error::other("sandbox process initialization is incomplete"))?;
-            let status = self.scope.try_wait(&mut self.child, terminator)?;
-            if status.is_some() {
-                self.control.done.store(true, Ordering::Release);
-            }
-            status
-        };
-        if let Some(status) = status {
-            self.status = Some(status);
-            self.scope_stopped = true;
-            if let Some(supervisor) = &mut self.supervisor
-                && let Err(problem) = supervisor.finish()
-            {
-                self.control.record_failure(&problem);
-                return Err(problem);
-            }
-            self.audit_finished()?;
-        }
-        if let Some(problem) = self.control.failure() {
-            return Err(problem);
-        }
-        Ok(status)
-    }
-
+    /// What [`SandboxProcess::stop`] does, synchronously, so `Drop` and a
+    /// failed startup can stop the process without a future to drive.
     fn stop(&mut self) -> io::Result<()> {
         #[cfg(test)]
         let stop_scope = self.test_stop;
@@ -944,6 +886,104 @@ impl SandboxProcess for LocalProcess {
         result
     }
 
+    /// What [`SandboxProcess::begin_background_acceptance`] does, synchronously.
+    fn begin_background_acceptance(
+        &mut self,
+        key: CallResultKey,
+    ) -> Result<(), crucible_sandbox::SandboxError> {
+        if self.invocation == SandboxInvocationMode::Foreground
+            || self.call_result_key.is_none()
+            || self.call_result_key != Some(key)
+            || self.background_acceptance != BackgroundAcceptance::None
+        {
+            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result identity is invalid",
+            )));
+        }
+        self.background_acceptance = BackgroundAcceptance::Pending;
+        Ok(())
+    }
+
+    /// What [`SandboxProcess::complete_background_acceptance`] does,
+    /// synchronously.
+    fn complete_background_acceptance(
+        &mut self,
+        _receipt: CallResultReceipt,
+    ) -> Result<(), crucible_sandbox::SandboxError> {
+        if self.background_acceptance != BackgroundAcceptance::Pending {
+            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result intent is unavailable",
+            )));
+        }
+        self.background_acceptance = BackgroundAcceptance::Accepted;
+        Ok(())
+    }
+}
+
+struct StartupInput {
+    bytes: Option<Vec<u8>>,
+    speech: crucible_sandbox::SandboxSpeech,
+}
+
+impl SandboxProcess for LocalProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.stdin.take()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.stdout.take()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.stderr.take()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if let Some(problem) = self.control.failure() {
+            return Err(problem);
+        }
+        if let Some(status) = self.status {
+            if !self.scope_stopped {
+                return Err(io::Error::other(
+                    "sandbox process scope cleanup is unconfirmed",
+                ));
+            }
+            self.audit_finished()?;
+            return Ok(Some(status));
+        }
+
+        let status = {
+            let _lifecycle = self.control.lifecycle()?;
+            let terminator = self
+                .terminator
+                .ok_or_else(|| io::Error::other("sandbox process initialization is incomplete"))?;
+            let status = self.scope.try_wait(&mut self.child, terminator)?;
+            if status.is_some() {
+                self.control.done.store(true, Ordering::Release);
+            }
+            status
+        };
+        if let Some(status) = status {
+            self.status = Some(status);
+            self.scope_stopped = true;
+            if let Some(supervisor) = &mut self.supervisor
+                && let Err(problem) = supervisor.finish()
+            {
+                self.control.record_failure(&problem);
+                return Err(problem);
+            }
+            self.audit_finished()?;
+        }
+        if let Some(problem) = self.control.failure() {
+            return Err(problem);
+        }
+        Ok(status)
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move { self.stop() })
+    }
+
     fn inspection(&self) -> &SandboxInspection {
         &self.inspection
     }
@@ -963,31 +1003,15 @@ impl SandboxProcess for LocalProcess {
     fn begin_background_acceptance(
         &mut self,
         key: CallResultKey,
-    ) -> Result<(), crucible_sandbox::SandboxError> {
-        if self.invocation == SandboxInvocationMode::Foreground
-            || self.call_result_key.is_none()
-            || self.call_result_key != Some(key)
-            || self.background_acceptance != BackgroundAcceptance::None
-        {
-            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
-                "sandbox background result identity is invalid",
-            )));
-        }
-        self.background_acceptance = BackgroundAcceptance::Pending;
-        Ok(())
+    ) -> BoxFuture<'_, Result<(), crucible_sandbox::SandboxError>> {
+        Box::pin(async move { self.begin_background_acceptance(key) })
     }
 
     fn complete_background_acceptance(
         &mut self,
-        _receipt: CallResultReceipt,
-    ) -> Result<(), crucible_sandbox::SandboxError> {
-        if self.background_acceptance != BackgroundAcceptance::Pending {
-            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
-                "sandbox background result intent is unavailable",
-            )));
-        }
-        self.background_acceptance = BackgroundAcceptance::Accepted;
-        Ok(())
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'_, Result<(), crucible_sandbox::SandboxError>> {
+        Box::pin(async move { self.complete_background_acceptance(receipt) })
     }
 }
 
@@ -1200,7 +1224,7 @@ mod tests {
                 "process output was not safely masked"
             );
         }
-        process.stop().unwrap();
+        crucible_runtime::answered!(process.stop()).unwrap();
     }
 
     #[test]
@@ -1223,7 +1247,7 @@ mod tests {
             std::net::TcpStream::connect(address).is_ok(),
             "live command lost its network owner"
         );
-        process.stop().unwrap();
+        crucible_runtime::answered!(process.stop()).unwrap();
         // Another test may be between fork and exec with a transient copy of
         // the CLOEXEC listener. Require closure within a fixed bound rather
         // than confusing that short window with a retained network owner.
@@ -1267,7 +1291,7 @@ mod tests {
             "a command built Closed must not hand back a writer"
         );
 
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// A peer is spoken to, and what it says back proves the bytes arrived
@@ -1288,7 +1312,7 @@ mod tests {
         let said = drained(&mut process).expect("what the peer said back");
         assert_eq!(said.trim_end(), "heard a kettle");
 
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// A trusted launcher prefix is written before the caller receives the
@@ -1313,7 +1337,7 @@ mod tests {
 
         let said = drained(&mut process).expect("what the peer received");
         assert_eq!(said.trim_end(), "trusted launch frame|caller input");
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// A one-shot command gets the trusted prefix and then end-of-file. Keeping
@@ -1334,7 +1358,7 @@ mod tests {
 
         let said = drained(&mut process).expect("what the step received");
         assert_eq!(said.trim_end(), "trusted launch frame|eof");
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// Standard input is handed over once. A second holder would be two writers
@@ -1352,7 +1376,7 @@ mod tests {
         assert!(second.is_none(), "the second take hands back nothing");
 
         drop(first);
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// Reads stdout until the far end closes it.

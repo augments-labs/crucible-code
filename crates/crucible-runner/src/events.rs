@@ -61,6 +61,38 @@ pub enum TurnError {
         cleanup: ToolsetError,
     },
 
+    /// Something ended the turn, a failed toolset lifecycle among the
+    /// possibilities, and disposing of the toolset after it would have had to
+    /// wait, so that step was dropped before it answered: whether the toolset
+    /// was disposed of is unconfirmed.
+    #[error("{primary}; then disposing of the toolset: {cleanup}")]
+    ToolsetCleanupUnready {
+        /// The failure that ended the work.
+        primary: Box<TurnError>,
+        /// The cleanup the bridge refused rather than waited on, which must
+        /// not be lost either.
+        cleanup: crucible_runtime::Unready,
+    },
+
+    /// A turn ended on `primary`, and a session write of what it had reached
+    /// would have had to wait, so that write was dropped before it answered:
+    /// whether the log holds it is unconfirmed.
+    ///
+    /// For a request that failed, the write is its answer as far as it got, or
+    /// the reading of the window that follows that answer. For a pass that
+    /// ended on a refused call or on the output boundary, it is the results of
+    /// the calls the pass settled, or the line recording that a result this
+    /// run's vendor may not be sent was cleared. Carried beside what ended the
+    /// turn rather than in its place, so a reader is told both.
+    #[error("{primary}; then a session write of what the turn had reached: {record}")]
+    RecordUnready {
+        /// What ended the turn: a request that failed or would have had to
+        /// wait, a call the reader refused, or the output boundary.
+        primary: Box<TurnError>,
+        /// The session write the bridge refused rather than waited on.
+        record: crucible_runtime::Unready,
+    },
+
     /// Work failed and its bounded sandbox audit could not be delivered either.
     #[error("{primary}; sandbox audit also failed: {audit}")]
     SandboxAudit {
@@ -101,6 +133,23 @@ pub enum TurnError {
         /// The most tool-output text one turn retains.
         maximum: usize,
     },
+
+    /// A step the loop took, a step a compaction between turns took, or a
+    /// session write held from between turns, would have had to wait.
+    ///
+    /// The loop reaches the provider, the tools, the prompt cache and the
+    /// session through a bridge that asks once, because the loop itself is not
+    /// asynchronous yet, and a compaction between turns reaches the provider,
+    /// the prompt cache and the session the same way. This is one of them
+    /// refusing rather than blocking, naming which it was. Picking a session
+    /// up and changing vendor write to the session between turns and hand
+    /// their caller nothing, so a write of theirs refused that way is held for
+    /// the turn or compaction that follows to report, before it records or
+    /// sends anything. The step was dropped unanswered, so its effect is
+    /// unconfirmed rather than undone: a refused session write may or may not
+    /// be in the log.
+    #[error(transparent)]
+    Unready(#[from] crucible_runtime::Unready),
 }
 
 /// Where a worker reports what happened.

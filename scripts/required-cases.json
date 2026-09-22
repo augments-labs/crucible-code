@@ -353,7 +353,7 @@
       },
       "case": "simultaneous_preparations_cannot_oversubscribe_the_requested_ceiling",
       "source": "crates/crucible-sandbox-local/tests/sandbox_admission.rs",
-      "body_sha256": "3d1a24febf534ae7bc60ac4ab9d0d6b37139ca1ed4b8ddce2d920a9757f4952c",
+      "body_sha256": "0abb29a233b3156606a1bf7aa4c491c46f7518259f960820eca1371f1c790f10",
       "platforms": [
         "linux",
         "macos",
@@ -389,7 +389,7 @@
       },
       "case": "runner::tests::lifecycle::repeated_disposal_reuses_the_first_cleanup_outcome_without_repeating_effects",
       "source": "crates/crucible-runner/src/runner/tests/lifecycle.rs",
-      "body_sha256": "400ba8bca6e8c78453d80dc82395dbe2a2714b34c5f6af21d1b2d2de15345b43",
+      "body_sha256": "bb9f2962eece73dbbc8c2b5f82327c8cf9b8ef1472ce1c2bff6f46752f00c660",
       "platforms": [
         "linux",
         "macos",
@@ -550,7 +550,7 @@
       },
       "case": "read::tests::a_link_retargeted_after_the_verdict_leads_outside_and_is_refused",
       "source": "crates/crucible-builtins/src/read.rs",
-      "body_sha256": "d4fc8b5c4fc5cba62dc8a4a15f0009f08f59e786c95f4c21b88d6a528e3d1695",
+      "body_sha256": "f3ab41cc32f69d85481d15ba64ff101022ad6f74b86ac99ad1742f2b31525490",
       "platforms": [
         "linux",
         "macos",
@@ -584,7 +584,7 @@
       },
       "case": "linux::guardrail_tests::a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead",
       "source": "crates/crucible-sandbox-local/src/linux/guardrail_tests.rs",
-      "body_sha256": "2a2b170ace7ada880e7e034090cde2eae0eeed30506c3758021e74f26b6c09c7",
+      "body_sha256": "2310fc10fbd72ffbf8830710e8cd40b54d2c890c73387235d44cb1c368664230",
       "platforms": [
         "linux"
       ]

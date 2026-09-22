@@ -894,7 +894,7 @@ fn wired(
     let transcript = spoken();
     let tools = offered();
 
-    let _ = provider.stream(
+    let _ = crucible_runtime::answered!(provider.stream(
         Request {
             purpose,
             model,
@@ -907,7 +907,7 @@ fn wired(
             prompt_cache: None,
         },
         &Cancel::new(),
-    );
+    ));
 
     let posted = recorder.posted();
     assert!(
@@ -1075,7 +1075,7 @@ fn caching(
             prompt_cache: Some(&cache),
         };
         let encoded = provider.prompt_cache_encoding(&request);
-        let _ = provider.stream(request, &Cancel::new());
+        let _ = crucible_runtime::answered!(provider.stream(request, &Cancel::new()));
 
         let posted = recorder.posted();
         assert!(

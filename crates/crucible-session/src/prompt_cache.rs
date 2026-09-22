@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crucible_runtime::BoxFuture;
 use crucible_storage::PromptCacheResourceStore;
 use crucible_types::{
     MAX_PROMPT_CACHE_RESOURCES, PromptCacheFingerprint, PromptCacheIsolation,
@@ -115,49 +116,65 @@ impl FilePromptCacheResourceStore {
 }
 
 impl PromptCacheResourceStore for FilePromptCacheResourceStore {
-    fn matching(
-        &mut self,
-        binding: &PromptCacheResourceBinding,
-    ) -> Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        let records = self.read()?;
-        Ok(records
-            .into_iter()
-            .rev()
-            .find(|record| record.binding() == binding))
-    }
-
-    fn put(&mut self, record: &PromptCacheResourceRecord) -> Result<(), PromptCacheResourceError> {
-        self.with_lock(|store| {
-            let mut records = store.read()?;
-            match records.iter().position(|found| found.id() == record.id()) {
-                Some(index) => {
-                    let slot = records
-                        .get_mut(index)
-                        .ok_or(PromptCacheResourceError::InvalidMetadata)?;
-                    *slot = record.clone();
-                }
-                None if records.len() < MAX_PROMPT_CACHE_RESOURCES => records.push(record.clone()),
-                None => return Err(PromptCacheResourceError::StoreFull),
-            }
-            store.replace(&records)
+    fn matching<'a>(
+        &'a mut self,
+        binding: &'a PromptCacheResourceBinding,
+    ) -> BoxFuture<'a, Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError>> {
+        Box::pin(async move {
+            let records = self.read()?;
+            Ok(records
+                .into_iter()
+                .rev()
+                .find(|record| record.binding() == binding))
         })
     }
 
-    fn remove(&mut self, id: &PromptCacheResourceId) -> Result<(), PromptCacheResourceError> {
-        self.with_lock(|store| {
-            let mut records = store.read()?;
-            records.retain(|record| record.id() != id);
-            store.replace(&records)
+    fn put<'a>(
+        &'a mut self,
+        record: &'a PromptCacheResourceRecord,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+        Box::pin(async move {
+            self.with_lock(|store| {
+                let mut records = store.read()?;
+                match records.iter().position(|found| found.id() == record.id()) {
+                    Some(index) => {
+                        let slot = records
+                            .get_mut(index)
+                            .ok_or(PromptCacheResourceError::InvalidMetadata)?;
+                        *slot = record.clone();
+                    }
+                    None if records.len() < MAX_PROMPT_CACHE_RESOURCES => {
+                        records.push(record.clone());
+                    }
+                    None => return Err(PromptCacheResourceError::StoreFull),
+                }
+                store.replace(&records)
+            })
+        })
+    }
+
+    fn remove<'a>(
+        &'a mut self,
+        id: &'a PromptCacheResourceId,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+        Box::pin(async move {
+            self.with_lock(|store| {
+                let mut records = store.read()?;
+                records.retain(|record| record.id() != id);
+                store.replace(&records)
+            })
         })
     }
 
     fn inspect(
         &mut self,
         maximum: usize,
-    ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        let mut records = self.read()?;
-        records.truncate(maximum.min(MAX_PROMPT_CACHE_RESOURCES));
-        Ok(records)
+    ) -> BoxFuture<'_, Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>> {
+        Box::pin(async move {
+            let mut records = self.read()?;
+            records.truncate(maximum.min(MAX_PROMPT_CACHE_RESOURCES));
+            Ok(records)
+        })
     }
 }
 
@@ -477,8 +494,8 @@ mod tests {
         assert!(!directory.exists());
 
         let record = record();
-        store.put(&record).unwrap();
-        let read = store.inspect(10).unwrap();
+        crucible_runtime::answered!(store.put(&record)).unwrap();
+        let read = crucible_runtime::answered!(store.inspect(10)).unwrap();
 
         let Some(read) = read.first() else {
             panic!("written metadata record must round-trip");
@@ -518,12 +535,14 @@ mod tests {
             300,
             130,
         );
-        first_process.put(&older).unwrap();
-        first_process.put(&newer).unwrap();
+        crucible_runtime::answered!(first_process.put(&older)).unwrap();
+        crucible_runtime::answered!(first_process.put(&newer)).unwrap();
         drop(first_process);
 
         let mut restarted = FilePromptCacheResourceStore::in_home(&sample.home());
-        let selected = restarted.matching(older.binding()).unwrap().unwrap();
+        let selected = crucible_runtime::answered!(restarted.matching(older.binding()))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(selected.id(), newer.id());
         assert_eq!(selected.state(), PromptCacheResourceState::Ready);
@@ -533,7 +552,7 @@ mod tests {
     fn the_metadata_shape_has_no_place_for_prompt_credentials_or_provider_responses() {
         let sample = Sample::new("prompt-cache-private-shape");
         let mut store = FilePromptCacheResourceStore::in_home(&sample.home());
-        store.put(&record()).unwrap();
+        crucible_runtime::answered!(store.put(&record())).unwrap();
 
         let text = fs::read_to_string(sample.home().join("prompt-cache").join("resources-v1.json"))
             .unwrap();

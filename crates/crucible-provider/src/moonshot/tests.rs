@@ -64,7 +64,7 @@ fn a_key_reaches_whichever_of_the_two_addresses_it_belongs_to() {
         let address = endpoint.as_str().to_owned();
         let (moonshot, replay) = provider(endpoint, ANSWER, 200);
 
-        moonshot.stream(asking("hello"), &Cancel::new()).unwrap();
+        crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap();
 
         assert_eq!(replay.sent().url, address);
     }
@@ -78,7 +78,7 @@ fn a_request_says_what_is_calling_and_asks_for_a_stream() {
     // that misreports itself is in violation of them.
     let (moonshot, replay) = provider(Moonshot::CODING, ANSWER, 200);
 
-    moonshot.stream(asking("hello"), &Cancel::new()).unwrap();
+    crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap();
 
     let sent = replay.sent();
     assert_eq!(header(&sent, "user-agent"), AGENT);
@@ -94,7 +94,7 @@ fn a_request_says_what_is_calling_and_asks_for_a_stream() {
 fn a_request_is_authorised_by_the_credential_it_was_given() {
     let (moonshot, replay) = provider(Moonshot::CODING, ANSWER, 200);
 
-    moonshot.stream(asking("hello"), &Cancel::new()).unwrap();
+    crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap();
 
     assert_eq!(
         header(&replay.sent(), "authorization"),
@@ -116,7 +116,8 @@ fn a_provider_does_not_show_its_credential_in_its_debug() {
 fn an_accepted_request_is_handed_back_as_the_answer_it_returned() {
     let (moonshot, _) = provider(Moonshot::CODING, ANSWER, 200);
 
-    let mut stream = moonshot.stream(asking("hello"), &Cancel::new()).unwrap();
+    let mut stream =
+        crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap();
 
     assert_eq!(
         deltas(stream.as_mut()),
@@ -135,9 +136,8 @@ fn a_refusal_carries_the_status_and_the_sentence_that_explains_it() {
         r#"{"error":{"type":"invalid_authentication_error","message":"Invalid Authentication"}}"#;
     let (moonshot, _) = provider(Moonshot::PLATFORM, said, 401);
 
-    let problem = moonshot
-        .stream(asking("hello"), &Cancel::new())
-        .unwrap_err();
+    let problem =
+        crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap_err();
 
     assert_eq!(
         problem.to_string(),
@@ -152,9 +152,8 @@ fn a_refusal_cannot_repeat_raw_or_bearer_credentials() {
     );
     let (moonshot, _) = provider(Moonshot::PLATFORM, &said, 401);
 
-    let problem = moonshot
-        .stream(asking("hello"), &Cancel::new())
-        .unwrap_err();
+    let problem =
+        crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap_err();
     let displayed = problem.to_string();
     let debugged = format!("{problem:?}");
 
@@ -170,8 +169,11 @@ fn a_stream_error_cannot_repeat_raw_or_bearer_credentials() {
     );
     let (moonshot, _) = provider(Moonshot::PLATFORM, &body, 200);
 
-    let mut stream = moonshot.stream(asking("hello"), &Cancel::new()).unwrap();
-    let problem = stream.next().unwrap().unwrap_err();
+    let mut stream =
+        crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap();
+    let problem = crucible_runtime::answered!(stream.next())
+        .unwrap()
+        .unwrap_err();
     let displayed = problem.to_string();
     let debugged = format!("{problem:?}");
 
@@ -186,7 +188,8 @@ fn a_cancelled_turn_is_never_sent() {
     let cancel = Cancel::new();
     cancel.request();
 
-    let problem = moonshot.stream(asking("hello"), &cancel).unwrap_err();
+    let problem =
+        crucible_runtime::answered!(moonshot.stream(asking("hello"), &cancel)).unwrap_err();
 
     assert!(matches!(problem, ProviderError::Cancelled(_)));
     assert!(

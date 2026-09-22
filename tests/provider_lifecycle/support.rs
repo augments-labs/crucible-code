@@ -18,6 +18,7 @@ use crucible_core::{
 use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_runner::{EventEnvelope, Post, TurnError};
+use crucible_runtime::BoxFuture;
 use crucible_session::Session;
 use serde_json::{Value, json};
 
@@ -161,18 +162,25 @@ impl Tool for Count {
     fn summary(&self, args: &ToolArgs) -> Summary {
         Summary::new(args.as_str())
     }
-    fn run(&self, approved: Approved, _: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let parsed: Value = serde_json::from_str(approved.args().as_str()).expect("valid fixture");
-        let step = parsed
-            .get("step")
-            .expect("valid fixture")
-            .as_str()
-            .expect("valid fixture");
-        self.0.lock().expect("valid fixture").push(step.into());
-        Ok(ToolOutput::ok(format!(
-            "fixture-result-{step}{}",
-            "x".repeat(self.1)
-        )))
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let parsed: Value =
+                serde_json::from_str(approved.args().as_str()).expect("valid fixture");
+            let step = parsed
+                .get("step")
+                .expect("valid fixture")
+                .as_str()
+                .expect("valid fixture");
+            self.0.lock().expect("valid fixture").push(step.into());
+            Ok(ToolOutput::ok(format!(
+                "fixture-result-{step}{}",
+                "x".repeat(self.1)
+            )))
+        })
     }
 }
 

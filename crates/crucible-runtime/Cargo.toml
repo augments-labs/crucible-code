@@ -30,5 +30,15 @@ tokio = { workspace = true, features = ["rt", "time"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 
+# A test drives a fake service by hand: it asks the future once, as a bridge
+# does, and fails where the fake would have waited, since a fake that waits is a
+# test that measures its own scheduling. `answered!` is that driver, and it
+# exists only when this feature is on. Nothing in the workspace turns it on as a
+# dependency; only `[dev-dependencies]` do, which cargo does not resolve for a
+# release build. It is not in the shipped binary and it is not API anyone can
+# rely on.
+[features]
+proof = []
+
 [lints]
 workspace = true

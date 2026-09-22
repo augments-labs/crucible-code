@@ -23,20 +23,26 @@ impl Tool for Audited {
         Summary::new("audited")
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let sandbox = SandboxId::new();
-        context
-            .sandbox_audit()
-            .record(
-                sandbox,
-                SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
-            )
-            .unwrap();
-        context
-            .sandbox_audit()
-            .record(sandbox, SandboxFactKind::Cleanup(SandboxCleanup::Complete))
-            .unwrap();
-        Ok(ToolOutput::ok("done"))
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let sandbox = SandboxId::new();
+            context
+                .sandbox_audit()
+                .record(
+                    sandbox,
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
+                )
+                .unwrap();
+            context
+                .sandbox_audit()
+                .record(sandbox, SandboxFactKind::Cleanup(SandboxCleanup::Complete))
+                .unwrap();
+            Ok(ToolOutput::ok("done"))
+        })
     }
 }
 
@@ -117,15 +123,21 @@ impl Tool for PanickingAudited {
         Summary::new("panicking audited tool")
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        context
-            .sandbox_audit()
-            .record(
-                SandboxId::new(),
-                SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
-            )
-            .unwrap();
-        panic!("fixture panic after a sandbox lifecycle transition")
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            context
+                .sandbox_audit()
+                .record(
+                    SandboxId::new(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
+                )
+                .unwrap();
+            panic!("fixture panic after a sandbox lifecycle transition")
+        })
     }
 }
 
@@ -222,28 +234,34 @@ impl Tool for DetachedAudited {
         Summary::new("detached audited tool")
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let sandbox = SandboxId::new();
-        let audit = context.sandbox_audit();
-        audit
-            .record(
-                sandbox,
-                SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
-            )
-            .unwrap();
-        let release = Arc::clone(&self.release);
-        let done = self.done.clone();
-        thread::spawn(move || {
-            release.wait();
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let sandbox = SandboxId::new();
+            let audit = context.sandbox_audit();
             audit
                 .record(
                     sandbox,
-                    SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
                 )
                 .unwrap();
-            done.send(()).unwrap();
-        });
-        Ok(ToolOutput::ok("detached"))
+            let release = Arc::clone(&self.release);
+            let done = self.done.clone();
+            thread::spawn(move || {
+                release.wait();
+                audit
+                    .record(
+                        sandbox,
+                        SandboxFactKind::Lifecycle(SandboxLifecycle::CommandFinished),
+                    )
+                    .unwrap();
+                done.send(()).unwrap();
+            });
+            Ok(ToolOutput::ok("detached"))
+        })
     }
 }
 

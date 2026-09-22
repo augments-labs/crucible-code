@@ -19,7 +19,7 @@ use std::io;
 use std::str;
 use std::sync::{LazyLock, Mutex};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{
     Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolContext, ToolEffect,
     ToolError, ToolOutput,
@@ -732,50 +732,56 @@ impl Tool for Grep {
         Some(Looking::Pattern)
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = crate::args::Args::parse(NAME, approved.args())?;
-        let pattern = args.text(PATTERN)?;
-        let limit = args.count(LIMIT, MATCHES)?.min(CEILING);
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = crate::args::Args::parse(NAME, approved.args())?;
+            let pattern = args.text(PATTERN)?;
+            let limit = args.count(LIMIT, MATCHES)?.min(CEILING);
 
-        let matcher = RegexMatcherBuilder::new()
-            .case_insensitive(args.flag(IGNORE_CASE, false)?)
-            .fixed_strings(args.flag(FIXED, false)?)
-            .build(pattern);
-        let Ok(matcher) = matcher else {
-            return Ok(ToolOutput::failed(format!(
-                "{pattern} is not a valid regular expression"
-            )));
-        };
+            let matcher = RegexMatcherBuilder::new()
+                .case_insensitive(args.flag(IGNORE_CASE, false)?)
+                .fixed_strings(args.flag(FIXED, false)?)
+                .build(pattern);
+            let Ok(matcher) = matcher else {
+                return Ok(ToolOutput::failed(format!(
+                    "{pattern} is not a valid regular expression"
+                )));
+            };
 
-        let requested = args.optional_text(PATH)?.unwrap_or(".");
-        // A directory outside the workspace is walked only on the say-so the
-        // `Approved` in hand carries.
-        let from = match crate::target::opened(&self.workspace, &approved, requested) {
-            Ok(path) => path,
-            Err(problem) => return Ok(ToolOutput::failed(problem)),
-        };
+            let requested = args.optional_text(PATH)?.unwrap_or(".");
+            // A directory outside the workspace is walked only on the say-so the
+            // `Approved` in hand carries.
+            let from = match crate::target::opened(&self.workspace, &approved, requested) {
+                Ok(path) => path,
+                Err(problem) => return Ok(ToolOutput::failed(problem)),
+            };
 
-        let Ok(only) = self.only(args.optional_text(GLOB)?) else {
-            return Ok(ToolOutput::failed(format!(
-                "{} is not a valid glob",
-                args.optional_text(GLOB)?.unwrap_or_default()
-            )));
-        };
+            let Ok(only) = self.only(args.optional_text(GLOB)?) else {
+                return Ok(ToolOutput::failed(format!(
+                    "{} is not a valid glob",
+                    args.optional_text(GLOB)?.unwrap_or_default()
+                )));
+            };
 
-        let mode = match args.choice(MODE, CONTENT, &[CONTENT, FILES])? {
-            FILES => Mode::Files,
-            _ => Mode::Content,
-        };
+            let mode = match args.choice(MODE, CONTENT, &[CONTENT, FILES])? {
+                FILES => Mode::Files,
+                _ => Mode::Content,
+            };
 
-        let query = Query {
-            matcher,
-            only,
-            mode,
-            context: args.whole(CONTEXT, 0)?.min(REACH),
-            limit,
-        };
-        let found = self.hunt(&from, query, &approved, context.cancel());
-        Ok(report(&found, pattern, (mode, limit)))
+            let query = Query {
+                matcher,
+                only,
+                mode,
+                context: args.whole(CONTEXT, 0)?.min(REACH),
+                limit,
+            };
+            let found = self.hunt(&from, query, &approved, context.cancel());
+            Ok(report(&found, pattern, (mode, limit)))
+        })
     }
 }
 

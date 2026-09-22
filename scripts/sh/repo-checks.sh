@@ -573,6 +573,16 @@ fi
 # has one owner below it -- `types`, for the identity a session is resumed by --
 # and two crates above it: `app`, which carries a request out, and the command
 # line, which is one front end. The check after the list holds both ends.
+#
+# `runtime` is named by each crate whose contract hands back its future, each
+# that implements one, and each that crosses into one through a bridge while its
+# own callers are synchronous; the bridges are listed where they are defined.
+# `extension`'s shipped source names it for none of these, only for `Unready`,
+# so that a stop the transport dropped rather than wait on is told apart from
+# one that failed; its tests also name `BoxFuture`, because a stand-in process
+# implements `SandboxProcess`.
+# `storage` hands back the same type spelled out, because it names no workspace
+# crate but `types`, and so it names no runtime.
 allowed='code app
 code attachments
 code auth
@@ -585,6 +595,7 @@ code mcp
 code privacy
 code provider
 code runner
+code runtime
 code session
 code builtins
 code sandbox-broker
@@ -642,6 +653,7 @@ models credentials
 models runtime
 models types
 extension registry
+extension runtime
 extension sandbox
 extension transport
 extension types
@@ -660,15 +672,19 @@ runner attachments
 runner context
 runner core
 runner models
+runner runtime
 runner types
 session core
 session privacy
+session runtime
 session storage
 session types
+sandbox runtime
 sandbox storage
 sandbox types
 sandbox workspace
 sandbox-local privacy
+sandbox-local runtime
 sandbox-local sandbox
 sandbox-local sandbox-broker
 sandbox-local storage
@@ -755,6 +771,47 @@ case $? in
         failed=1
         ;;
 esac
+
+section "bridge ledger"
+# `Bridge` is the ledger of every synchronous caller that crosses into an
+# asynchronous contract, and each entry says what bounds it, which crate owns
+# it and what retires it. The code is held to it as it is written. Outside the
+# ledger's package, a bridge is named only in the crate that owns it. Every
+# bridge is named in its owner's shipped source, judged by path under `src/`,
+# inline test modules included; in the ledger's own package no bridge's path
+# counts, so a bridge that package owns always fails here. No shipped source
+# but the ledger builds the waker or the context of a hand poll in a spelling
+# the check knows, which is one way a crossing nobody wrote down can look:
+# `Context` reached through an alias, a context an enclosing `poll` hands in,
+# and a library call that polls or waits for its caller, such as tokio's
+# `block_on`, build nothing it can see. None of the spellings the check knows
+# hides a bridge from the search for its path: an alias of the enum by `use` or
+# `type`, or a glob or braced import of its variants, and `Bridge as` is
+# refused wherever it is written, a qualified trait path included. `Self::`
+# inside an impl for `Bridge`, `<Bridge>::Name`, and a `Bridge` handed across
+# crates as a value, are seen by none of these. Two more are refused, likewise
+# only as they are written: a crossing whose own argument spells a borrow of a
+# future, beginning with `&mut`, `Pin::new(&mut` or `Box::pin(&mut`, or ending
+# with an `.as_mut()` after an argument that holds no `;`, `{` or `}`, not even
+# in a literal, and parentheses at most two deep; and a bridge taken off a
+# refusal and crossed again, where `.bridge()` comes directly before `.cross`.
+# `Pin::as_mut(&mut …)`, a path-qualified `std::pin::Pin::new(…)`, a crossing
+# written as a path call, `Bridge::cross(Bridge::Name, &mut …)`, and either one
+# bound to a name first pass, and a literal holding an unpaired parenthesis can
+# make the borrow check report a crossing that lends nothing or miss one that
+# lends. Only whole `//` comment lines are left out: a trailing or block
+# comment and a literal are read as code, so a spelling refused here is
+# reported there too, and a bridge's path written there in its owner's shipped
+# source counts as a crossing. Any answer but 0 fails, because 2 is a ledger
+# the check could not read and 1 is also what a crashed reader exits with.
+if ! python3 scripts/python/bridge-ledger.py --self-test; then
+    printf '    FAIL the bridge-ledger check failed its self-test\n'
+    failed=1
+fi
+if ! python3 scripts/python/bridge-ledger.py crates/crucible-runtime/src/bridge.rs "${manifests[@]}"; then
+    printf '    FAIL the bridge ledger and the code that crosses it disagree\n'
+    failed=1
+fi
 
 section "shipping source boundary"
 # The crate graph above is about packages, and the root package is three things
@@ -908,14 +965,18 @@ fi
 # whole, so a new import is a decision taken here. `generate-models` imports
 # `crucible_core` alone; `crucible_types` is in the text of the table it writes,
 # which is compiled where the table is kept and not where it is generated.
+# `bench-grep` and `bench-tools` name `crucible_runtime` for the bridge a tool's
+# run is timed through the way a turn runs one, so what they time includes it.
 probes='src/bin/bench-grep.rs crucible_builtins
 src/bin/bench-grep.rs crucible_core
+src/bin/bench-grep.rs crucible_runtime
 src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-tools.rs crucible_builtins
 src/bin/bench-tools.rs crucible_core
+src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
 src/bin/generate-models.rs crucible_core
 src/bin/generate-models.rs crucible_types'

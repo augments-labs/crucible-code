@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxRequest,
     SandboxResourceLimits, SandboxService, SandboxSession,
@@ -33,7 +33,7 @@ fn compatible(sample: &Sample) -> Bash {
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
     let tool = compatible(sample);
-    tool.run(allowed(&tool, args), &crate::sample::context())
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
@@ -42,7 +42,7 @@ fn ran(sample: &Sample, args: &str) -> ToolOutput {
 
 fn finalized(tool: &Bash, args: &str) -> Result<ToolOutput, ToolError> {
     let context = crate::sample::context();
-    let output = tool.run(allowed(tool, args), &context)?;
+    let output = crucible_runtime::answered!(tool.run(allowed(tool, args), &context))?;
     crate::sample::finalize_call_result(&context, &output);
     Ok(output)
 }
@@ -54,15 +54,22 @@ struct RecordingSandbox {
 }
 
 impl SandboxService for RecordingSandbox {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
         self.inner.probe()
     }
 
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        if let Ok(mut limits) = self.limits.lock() {
-            limits.push(request.policy().limits());
-        }
-        self.inner.prepare(request)
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            if let Ok(mut limits) = self.limits.lock() {
+                limits.push(request.policy().limits());
+            }
+            self.inner.prepare(request).await
+        })
     }
 }
 
@@ -95,9 +102,10 @@ fn what_a_command_prints_is_handed_over_while_it_is_still_running() {
     let watched = Watched::default();
 
     let args = r#"{"command":"printf 'Compiling one\nCompiling two\n'; sleep 1"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::watching(&watched))
-        .expect("the command ran");
+    let output = crucible_runtime::answered!(
+        tool.run(allowed(&tool, args), &crate::sample::watching(&watched))
+    )
+    .expect("the command ran");
 
     assert_eq!(
         watched.said(),
@@ -182,9 +190,9 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
-    let output = tool
-        .run(allowed(&tool, &args), &crate::sample::context())
-        .expect("a probed backend ran the command");
+    let output =
+        crucible_runtime::answered!(tool.run(allowed(&tool, &args), &crate::sample::context()))
+            .expect("a probed backend ran the command");
 
     assert!(output.is_failed(), "{}", output.text());
     assert!(
@@ -355,12 +363,11 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
 
     let started = Instant::now();
     let tool = compatible(&sample);
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"command":"sleep 30"}"#),
-            &crate::sample::cancelled_by(&cancel),
-        )
-        .expect_err("the turn was stopped");
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"command":"sleep 30"}"#),
+        &crate::sample::cancelled_by(&cancel),
+    ))
+    .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(
@@ -376,12 +383,11 @@ fn a_turn_already_stopped_never_starts_the_command() {
     cancel.request();
 
     let tool = compatible(&sample);
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
-            &crate::sample::cancelled_by(&cancel),
-        )
-        .expect_err("the turn was stopped");
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
+        &crate::sample::cancelled_by(&cancel),
+    ))
+    .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(!sample.root().join("should-not-exist").exists());
@@ -416,12 +422,11 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
         local(),
         empty_element_first,
     ));
-    let output = tool
-        .run(
-            allowed(&tool, r#"{"command":"echo hello"}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command ran");
+    let output = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"command":"echo hello"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("the command ran");
 
     assert_eq!(output.text(), "hello");
 }
@@ -591,9 +596,9 @@ fn the_variables_the_tool_was_given_reach_the_command() {
 
     let tool = compatible(&sample).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
     let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
-        .expect("the command ran");
+    let output =
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
+            .expect("the command ran");
 
     assert_eq!(output.text(), "cat");
 }
@@ -625,9 +630,9 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
 
     let tool = compatible(&sample).exporting([("HOME", "/nowhere-in-particular")]);
     let args = r#"{"command":"echo $HOME"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
-        .expect("the command ran");
+    let output =
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
+            .expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
 }
@@ -664,9 +669,9 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
 
     let tool = compatibility(Bash::inheriting(sample.workspace(), local(), crucibles_own));
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
-        .expect("the command ran");
+    let output =
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
+            .expect("the command ran");
 
     assert!(output.text().starts_with("[]"), "{}", output.text());
     assert!(!output.text().contains("s3cr3t"), "{}", output.text());
@@ -1161,18 +1166,25 @@ fn configured_command_ceilings_survive_foreground_and_background_requests() {
 fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceilings() {
     struct Capture(std::sync::Mutex<Vec<crucible_sandbox::SandboxPolicy>>);
     impl SandboxService for Capture {
-        fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-            Err(SandboxError::BackendUnavailable {
-                reason: "recording fixture".into(),
+        fn probe(
+            &self,
+        ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>>
+        {
+            Box::pin(async move {
+                Err(SandboxError::BackendUnavailable {
+                    reason: "recording fixture".into(),
+                })
             })
         }
         fn prepare(
             &self,
             request: SandboxRequest,
-        ) -> Result<Box<dyn SandboxSession>, SandboxError> {
-            self.0.lock().unwrap().push(request.policy().clone());
-            Err(SandboxError::BackendUnavailable {
-                reason: "stopped at preparation".into(),
+        ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(request.policy().clone());
+                Err(SandboxError::BackendUnavailable {
+                    reason: "stopped at preparation".into(),
+                })
             })
         }
     }
@@ -1187,10 +1199,10 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
     for choice in [false, true, false] {
         control.set_enabled(choice).unwrap();
         assert!(
-            tool.run(
+            crucible_runtime::answered!(tool.run(
                 allowed(&tool, r#"{"command":"echo fixture"}"#),
                 &crate::sample::context()
-            )
+            ))
             .is_err()
         );
     }
@@ -1237,12 +1249,11 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
         .under_policy(template.with_enabled(false))
         .following_enablement(control);
     assert!(
-        invalid
-            .run(
-                allowed(&invalid, r#"{"command":"echo fixture"}"#),
-                &crate::sample::context()
-            )
-            .is_err()
+        crucible_runtime::answered!(invalid.run(
+            allowed(&invalid, r#"{"command":"echo fixture"}"#),
+            &crate::sample::context()
+        ))
+        .is_err()
     );
     assert_eq!(
         capture.0.lock().unwrap().len(),

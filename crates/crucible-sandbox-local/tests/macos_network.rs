@@ -77,11 +77,10 @@ impl Fixture {
             policy,
             SandboxManifest::empty(),
         );
-        let mut session = LocalSandbox::new()
-            .prepare(request)
+        let mut session = crucible_runtime::answered!(LocalSandbox::new().prepare(request))
             .expect("enforcing network preparation");
-        session.materialize().expect("materialization");
-        session.start(command).expect("network command")
+        crucible_runtime::answered!(session.materialize()).expect("materialization");
+        crucible_runtime::answered!(session.start(command)).expect("network command")
     }
 }
 
@@ -146,7 +145,7 @@ fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Ve
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    process.stop().expect("complete cleanup");
+    crucible_runtime::answered!(process.stop()).expect("complete cleanup");
     (status.expect("status"), output, errors)
 }
 

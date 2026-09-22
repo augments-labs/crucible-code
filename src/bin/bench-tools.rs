@@ -20,6 +20,7 @@ use crucible_core::{
     Ancestry, Ask, Cancel, Mode, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs,
     ToolCall, ToolContext, ToolError, ToolId, ToolOutput, Unwatched, Verdict, Workspace,
 };
+use crucible_runtime::{Bridge, Unready};
 use crucible_sandbox_local::LocalSandbox;
 
 /// Median invocations retained for each operation.
@@ -35,6 +36,8 @@ enum ProbeError {
     Workspace(#[from] crucible_core::PathError),
     #[error("bench-tools: {0}")]
     Tool(#[from] ToolError),
+    #[error("bench-tools: {0}")]
+    Unready(#[from] Unready),
     #[error("bench-tools: permission did not approve {0}")]
     Permission(Box<str>),
     #[error("bench-tools: {0} reported failure: {1}")]
@@ -101,7 +104,7 @@ fn invoke(
     let context = ToolContext::new(Ancestry::new(), call.id, &cancel, None, &Unwatched);
 
     let started = Instant::now();
-    let output = tool.run(approved, &context)?;
+    let output = Bridge::Probes.cross(tool.run(approved, &context))??;
     let elapsed = started.elapsed();
     if output.is_failed() {
         return Err(ProbeError::Failed(name, output.into_text()));

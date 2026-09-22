@@ -20,7 +20,7 @@ use crucible_client_api::{
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Runner, Tools};
-use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
 use crucible_tools::{
     Approved, DescribeTool, Permission, Rules, Sensitivity, Summary, Target, Tool, ToolContext,
@@ -62,13 +62,15 @@ impl Tool for Counting {
         Summary::new(args.as_str())
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        self.0.fetch_add(1, Ordering::Relaxed);
-        Ok(ToolOutput::ok("done"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Ok(ToolOutput::ok("done"))
+        })
     }
 }
 

@@ -33,6 +33,7 @@ use crucible_core::{
     RuleError, Rules, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId,
     Unwatched, Verdict, Workspace,
 };
+use crucible_runtime::{Bridge, Unready};
 
 /// How far over `rg` the tool may be.
 const LIMIT: f64 = 1.25;
@@ -260,7 +261,8 @@ fn ours(corpus: &Corpus, workload: Workload, ruled: bool) -> Result<Duration, Pr
     );
 
     let started = Instant::now();
-    let output = grep.run(approved(&grep, args, &mut engine)?, &context)?;
+    let output =
+        Bridge::Probes.cross(grep.run(approved(&grep, args, &mut engine)?, &context))??;
     let took = started.elapsed();
 
     let expected = match workload.expected {
@@ -444,6 +446,9 @@ enum Problem {
 
     #[error("the search failed: {0}")]
     Search(#[from] crucible_core::ToolError),
+
+    #[error("the search could not be timed: {0}")]
+    Unready(#[from] Unready),
 }
 
 // A `main` that returns `Err` prints the `Debug` form, and the derived one

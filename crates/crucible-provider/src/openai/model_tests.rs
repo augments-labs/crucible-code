@@ -152,7 +152,7 @@ fn astra_uses_current_cache_options_and_preserves_every_effort_and_route_output_
                 provider.prompt_cache_encoding(&request),
                 PromptCacheEncoding::AutomaticHintEncoded
             );
-            provider.stream(request, &Cancel::new()).unwrap();
+            crucible_runtime::answered!(provider.stream(request, &Cancel::new())).unwrap();
             let sent = replay.sent();
             assert_eq!(sent.url, endpoint.as_str());
             let body: Value = serde_json::from_str(&sent.body).unwrap();
@@ -194,9 +194,10 @@ fn astra_unreported_cache_writes_are_unknown_not_assumed_free() {
         "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-test\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":100,\"input_tokens_details\":{\"cached_tokens\":20},\"output_tokens\":0,\"total_tokens\":100}}}\n\n",
     );
     let (provider, _) = provider(VENDOR, response);
-    let mut stream = provider.stream(request(), &Cancel::new()).unwrap();
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(), &Cancel::new())).unwrap();
     let mut usage = None;
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         if let Delta::Usage(report) = delta.unwrap() {
             usage = Some(report);
         }

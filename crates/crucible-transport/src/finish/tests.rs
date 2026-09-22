@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use crucible_runtime::{BoxFuture, Bridge, Unready};
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
@@ -36,6 +37,8 @@ struct Ending {
     stops: AtomicUsize,
     /// Stopping it does not confirm that its scope ended.
     unstoppable: AtomicBool,
+    /// Stopping it never answers, so a caller that cannot wait drops the stop.
+    waits: AtomicBool,
 }
 
 struct Process {
@@ -69,12 +72,19 @@ impl SandboxProcess for Process {
         self.ending.ended.load(Ordering::Relaxed) || self.ending.exited.load(Ordering::Relaxed)
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.ending.stops.fetch_add(1, Ordering::Relaxed);
-        if self.ending.unstoppable.load(Ordering::Relaxed) {
-            return Err(io::Error::other("scope termination could not be confirmed"));
-        }
-        Ok(())
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.ending.stops.fetch_add(1, Ordering::Relaxed);
+            if self.ending.waits.load(Ordering::Relaxed) {
+                std::future::pending::<()>().await;
+            }
+            if self.ending.unstoppable.load(Ordering::Relaxed) {
+                // Words that say what went wrong and not that the end is
+                // unconfirmed, as a backend's failure need not say it.
+                return Err(io::Error::other("the scope could not be reaped"));
+            }
+            Ok(())
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -97,6 +107,27 @@ fn exited() -> ExitStatus {
     use std::os::windows::process::ExitStatusExt as _;
 
     ExitStatus::from_raw(0)
+}
+
+/// The refusal somewhere beneath `error`, however it was carried.
+///
+/// An [`io::Error`] hides the error it holds from `source`, so the walk looks
+/// inside one before stepping past it.
+fn refusal(error: &(dyn std::error::Error + 'static)) -> Option<Unready> {
+    let mut next = Some(error);
+    while let Some(link) = next {
+        if let Some(unready) = link.downcast_ref::<Unready>() {
+            return Some(*unready);
+        }
+        next = match link
+            .downcast_ref::<io::Error>()
+            .and_then(io::Error::get_ref)
+        {
+            Some(inner) => Some(inner as &(dyn std::error::Error + 'static)),
+            None => link.source(),
+        };
+    }
+    None
 }
 
 fn process(ending: &Arc<Ending>) -> Process {
@@ -231,13 +262,69 @@ fn a_stop_that_fails_after_the_ceiling_says_both_things() {
     let (told, hears) = std::sync::mpsc::channel();
     let waiting = thread::spawn(move || {
         let finish = Finish::after(&mut process, Duration::ZERO);
-        told.send(format!("{finish:?}")).expect("the test hears it");
+        told.send(finish).expect("the test hears it");
     });
 
     let finish = hears.recv_timeout(Duration::from_secs(20));
 
     let finish = finish.expect("the wait for a publication that never ends has a ceiling");
     waiting.join().expect("the waiting thread");
-    assert!(finish.starts_with("Unreaped"), "{finish}");
-    assert!(finish.contains("publication"), "{finish}");
+    match finish {
+        // The message, not the error's `Debug`, which names a field for the
+        // publication whatever the message says.
+        Finish::Unreaped(problem) => {
+            assert!(problem.to_string().contains("publication"), "{problem}");
+            // A failed stop's words do not say that its end is unconfirmed, so
+            // the message says it, once.
+            assert_eq!(
+                problem.to_string(),
+                "its publication did not finish in time, and stopping it could not be \
+                 confirmed: the scope could not be reaped"
+            );
+        }
+        other => panic!("a stop that failed after the ceiling was reported as {other:?}"),
+    }
+}
+
+#[test]
+fn a_stop_that_would_have_had_to_wait_after_the_ceiling_keeps_both_facts_and_the_refusal() {
+    // The stop is dropped rather than waited on, so its end is not known; and a
+    // caller deciding what to do about that has to be able to tell a refused
+    // stop from a failed one, under the words that still say both facts.
+    let ending = Arc::new(Ending {
+        ended: AtomicBool::new(true),
+        waits: AtomicBool::new(true),
+        ..Ending::default()
+    });
+    let mut process = process(&ending);
+    let (told, hears) = std::sync::mpsc::channel();
+    let waiting = thread::spawn(move || {
+        let finish = Finish::after(&mut process, Duration::ZERO);
+        told.send(finish).expect("the test hears it");
+    });
+
+    let finish = hears.recv_timeout(Duration::from_secs(20));
+
+    let finish = finish.expect("the wait for a publication that never ends has a ceiling");
+    waiting.join().expect("the waiting thread");
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+    match finish {
+        Finish::Unreaped(problem) => {
+            assert_eq!(
+                refusal(&problem).map(|unready| unready.bridge()),
+                Some(Bridge::TransportProcess),
+                "the refusal is carried as itself, not as its words: {problem:?}"
+            );
+            assert!(problem.to_string().contains("publication"), "{problem}");
+            // The refusal's words already say that the stop's end is
+            // unconfirmed, and the message does not say it a second time.
+            assert_eq!(
+                problem.to_string(),
+                "its publication did not finish in time, and stopping a hosted program \
+                 would have had to wait, and the caller cannot; the waiting step was \
+                 dropped before it answered, so whatever that step began is unconfirmed"
+            );
+        }
+        other => panic!("a stop nobody confirmed was reported as {other:?}"),
+    }
 }

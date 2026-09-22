@@ -39,7 +39,7 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
     digest.update(result.output.text().as_bytes());
     digest.update([u8::from(result.output.is_failed())]);
     let receipt = CallResultReceipt::from_digest(digest.finalize().into());
-    pending.accept(receipt).expect("test result acceptance");
+    crucible_runtime::answered!(pending.accept(receipt)).expect("test result acceptance");
 }
 
 /// The variable a continuous-integration job sets so that a test needing the
@@ -75,7 +75,7 @@ pub(crate) fn enforcing(
     let guard = ENFORCING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match crucible_sandbox::SandboxService::probe(service) {
+    match crucible_runtime::answered!(crucible_sandbox::SandboxService::probe(service)) {
         Ok(_) => Some(guard),
         Err(problem) => {
             assert!(

@@ -28,6 +28,10 @@
 //! bounded wait and not an indefinite one, and a wait that expired ends
 //! nothing: the response is still open, and only the user or the socket closes
 //! it.
+//!
+//! That wait happens on whichever thread polls the stream: the future
+//! [`DeltaStream::next`] hands back does the whole read the first time it is
+//! asked.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -35,7 +39,7 @@ use std::io::{BufReader, Read};
 
 use crucible_credentials::Redactions;
 use crucible_models::{Delta, DeltaStream, ProviderError};
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::StopReason;
 
 use crate::sse::{Events, Framed, SseEvent};
@@ -137,23 +141,12 @@ impl<W: Wire> Response<W> {
         self.pending.clear();
         Err(problem.redacted(&self.redactions))
     }
-}
 
-impl<W: Wire> fmt::Debug for Response<W> {
-    /// By hand: a socket part-way through a response cannot be shown without
-    /// consuming it, and what is queued is response content.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Response")
-            .field("provider", &W::PROVIDER)
-            .field("pending", &self.pending.len())
-            .field("stopped", &self.stopped)
-            .field("finished", &self.finished)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<W: Wire> DeltaStream for Response<W> {
-    fn next(&mut self) -> Option<Result<Delta, ProviderError>> {
+    /// The next delta, read on the caller's own thread.
+    ///
+    /// What [`DeltaStream::next`] answers with, and what a caller in this
+    /// crate that reads a whole response for itself asks directly.
+    pub(crate) fn next_delta(&mut self) -> Option<Result<Delta, ProviderError>> {
         loop {
             if let Some(delta) = self.pending.pop_front() {
                 return Some(Ok(delta));
@@ -194,5 +187,24 @@ impl<W: Wire> DeltaStream for Response<W> {
                 }
             }
         }
+    }
+}
+
+impl<W: Wire> fmt::Debug for Response<W> {
+    /// By hand: a socket part-way through a response cannot be shown without
+    /// consuming it, and what is queued is response content.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Response")
+            .field("provider", &W::PROVIDER)
+            .field("pending", &self.pending.len())
+            .field("stopped", &self.stopped)
+            .field("finished", &self.finished)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<W: Wire> DeltaStream for Response<W> {
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
+        Box::pin(async move { self.next_delta() })
     }
 }

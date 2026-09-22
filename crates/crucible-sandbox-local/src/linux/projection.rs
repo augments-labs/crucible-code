@@ -14,6 +14,7 @@ use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 
+use crucible_runtime::{BoxFuture, Bridge};
 use crucible_sandbox::{
     SandboxAudit, SandboxError, SandboxFactKind, SandboxFilesystemAccess, SandboxInspection,
     SandboxInvocationMode, SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRequest,
@@ -892,7 +893,9 @@ fn cleanup_failed_wrap(
     audit: &SandboxAudit,
     sandbox: SandboxId,
 ) {
-    let _ = process.stop();
+    // Whether the scope was reaped is read from the inspection below, which a
+    // stop that failed or would have had to wait leaves short of complete.
+    let _ = Bridge::LocalBackend.cross(process.stop());
     let scope_reaped = process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete;
     let rolled_back = projection
         .as_deref_mut()
@@ -1103,51 +1106,9 @@ impl ProjectedProcess {
         self.status = Some(status);
         Ok(Some(status))
     }
-}
 
-impl SandboxProcess for ProjectedProcess {
-    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
-        self.process.take_stdin()
-    }
-
-    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.process.take_stdout()
-    }
-
-    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.process.take_stderr()
-    }
-
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(status) = self.status {
-            return Ok(Some(status));
-        }
-        if let Some((kind, problem)) = &self.failure {
-            return Err(io::Error::new(*kind, problem.to_string()));
-        }
-        if self.terminal {
-            // Stopped before its report was read, so how the leader ended is how
-            // the command ended. A zero here says the leader exited, not that
-            // what the command wrote was published: stopping discards whatever
-            // had not been published yet.
-            return self.process.try_wait();
-        }
-        if self.reported.is_none() {
-            if self.process.try_wait()?.is_none() {
-                return Ok(None);
-            }
-            self.report()?;
-        }
-        self.conclude()
-    }
-
-    fn ended(&mut self) -> bool {
-        self.status.is_some()
-            || self.terminal
-            || self.reported.is_some()
-            || matches!(self.process.try_wait(), Ok(Some(_)))
-    }
-
+    /// What [`SandboxProcess::stop`] does, synchronously, so `Drop` can stop
+    /// the process without a future to drive.
     fn stop(&mut self) -> io::Result<()> {
         if self.cleanup != crucible_sandbox::SandboxCleanup::Pending {
             return if self.cleanup == crucible_sandbox::SandboxCleanup::Complete {
@@ -1170,7 +1131,9 @@ impl SandboxProcess for ProjectedProcess {
             }
         });
         self.reported = None;
-        let process_cleanup = self.process.stop();
+        let process_cleanup = Bridge::LocalBackend
+            .cross(self.process.stop())
+            .unwrap_or_else(|unready| Err(io::Error::other(unready)));
         let scope_reaped =
             self.process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete;
         if let Some(receiver) = &mut self.receiver {
@@ -1217,18 +1180,7 @@ impl SandboxProcess for ProjectedProcess {
         result
     }
 
-    fn inspection(&self) -> &SandboxInspection {
-        &self.inspection
-    }
-
-    fn usage(&self) -> SandboxUsage {
-        self.process.usage()
-    }
-
-    fn violation(&self) -> Option<SandboxViolation> {
-        self.process.violation()
-    }
-
+    /// What [`SandboxProcess::begin_background_acceptance`] does, synchronously.
     fn begin_background_acceptance(&mut self, key: CallResultKey) -> Result<(), SandboxError> {
         if self.invocation == SandboxInvocationMode::Foreground
             || self.call_result_key.is_none()
@@ -1251,6 +1203,8 @@ impl SandboxProcess for ProjectedProcess {
         Ok(())
     }
 
+    /// What [`SandboxProcess::complete_background_acceptance`] does,
+    /// synchronously.
     fn complete_background_acceptance(
         &mut self,
         receipt: CallResultReceipt,
@@ -1266,7 +1220,7 @@ impl SandboxProcess for ProjectedProcess {
             ))
         })?;
         if let Err(source) = projection.record(transaction::Record::CallAccepted(receipt.bytes())) {
-            let _ = self.process.stop();
+            let _ = Bridge::LocalBackend.cross(self.process.stop());
             projection.retain_evidence();
             let _ = self.lifecycle(SandboxLifecycle::Quarantined);
             self.terminal = true;
@@ -1274,6 +1228,80 @@ impl SandboxProcess for ProjectedProcess {
         }
         self.acceptance_pending = false;
         Ok(())
+    }
+}
+
+impl SandboxProcess for ProjectedProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.process.take_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.process.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.process.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if let Some(status) = self.status {
+            return Ok(Some(status));
+        }
+        if let Some((kind, problem)) = &self.failure {
+            return Err(io::Error::new(*kind, problem.to_string()));
+        }
+        if self.terminal {
+            // Stopped before its report was read, so how the leader ended is how
+            // the command ended. A zero here says the leader exited, not that
+            // what the command wrote was published: stopping discards whatever
+            // had not been published yet.
+            return self.process.try_wait();
+        }
+        if self.reported.is_none() {
+            if self.process.try_wait()?.is_none() {
+                return Ok(None);
+            }
+            self.report()?;
+        }
+        self.conclude()
+    }
+
+    fn ended(&mut self) -> bool {
+        self.status.is_some()
+            || self.terminal
+            || self.reported.is_some()
+            || matches!(self.process.try_wait(), Ok(Some(_)))
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move { self.stop() })
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        &self.inspection
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.process.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.process.violation()
+    }
+
+    fn begin_background_acceptance(
+        &mut self,
+        key: CallResultKey,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.begin_background_acceptance(key) })
+    }
+
+    fn complete_background_acceptance(
+        &mut self,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.complete_background_acceptance(receipt) })
     }
 }
 

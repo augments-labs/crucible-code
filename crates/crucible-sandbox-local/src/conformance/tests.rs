@@ -2,12 +2,13 @@
 
 use std::time::Duration;
 
+use crucible_runtime::{BoxFuture, Bridge, Unready};
 use crucible_sandbox::{
-    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxDomainPattern,
-    SandboxDomainPolicy, SandboxError, SandboxFeature, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest, SandboxManifestEntry,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxRequest,
-    SandboxResourceLimits, SandboxService,
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCapability, SandboxDomainPattern, SandboxDomainPolicy, SandboxError, SandboxFeature,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest,
+    SandboxManifestEntry, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+    SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
@@ -203,7 +204,7 @@ fn compatibility_refuses_every_explicit_unsupported_policy_before_a_session_exis
             policy,
             manifest,
         );
-        let Err(problem) = service.prepare(request) else {
+        let Err(problem) = crucible_runtime::answered!(service.prepare(request)) else {
             panic!("compatibility accepted unsupported {}", feature.as_str());
         };
         assert!(
@@ -463,6 +464,67 @@ fn the_local_backend_contradicts_no_claim_it_states() {
     // suite that quietly skipped rows would say a backend conforms on the
     // strength of the questions it happened to ask.
     assert_eq!(audited.findings().len(), SandboxFeature::COUNT);
+}
+
+/// A backend that states a table and never answers an offer.
+///
+/// The table is built from constants and handed back at once, so nothing here
+/// depends on what this host can enforce: the only step left unanswered is a
+/// preparation, and every offer is one.
+struct Unanswering;
+
+impl SandboxService for Unanswering {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        let identity = SandboxBackendIdentity::new(
+            SandboxBackendId::new("unanswering").expect("a backend name"),
+            "1",
+            SandboxBackendProvenance::System,
+            None,
+        )
+        .expect("a backend version");
+        let capabilities = SandboxCapabilities::none()
+            .with(SandboxFeature::Filesystem, SandboxCapability::Enforced)
+            .with(
+                SandboxFeature::CommandTimeLimit,
+                SandboxCapability::Enforced,
+            );
+        Box::pin(std::future::ready(Ok((identity, capabilities))))
+    }
+
+    fn prepare(
+        &self,
+        _request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[test]
+fn an_offer_the_backend_never_answers_fails_the_audit_rather_than_going_unreached() {
+    // The audit cannot wait, so an offer that would have had to is dropped
+    // unanswered. Read as the backend's answer it went unreached, which is no
+    // fault, and a backend that answered nothing would hold every family.
+    let sample = Sample::new("sandbox-conformance-unanswered");
+
+    let audited = Conformance::audit(&Unanswering, sample.root());
+
+    let refused = match &audited {
+        Err(SandboxError::Lifecycle(error)) => error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<Unready>())
+            .map(Unready::bridge),
+        _ => None,
+    };
+    assert_eq!(
+        refused,
+        Some(Bridge::LocalBackend),
+        "{}",
+        audited
+            .as_ref()
+            .map_or_else(|error| format!("{error:?}"), Conformance::report)
+    );
 }
 
 #[test]

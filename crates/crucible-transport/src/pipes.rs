@@ -19,6 +19,7 @@
 use std::io;
 use std::time::Duration;
 
+use crucible_runtime::Bridge;
 use crucible_sandbox::{SandboxOutput, SandboxProcess};
 
 use crate::{Heard, Muttered, Said};
@@ -45,8 +46,9 @@ impl Pipes {
     /// # Errors
     ///
     /// [`Unspoken`] where the process has no pipe to speak over or none to
-    /// listen to. The process is stopped before either is returned, and an
-    /// unconfirmed stop comes back with it.
+    /// listen to. The process is stopped before either is returned, and a stop
+    /// that could not be confirmed comes back with it, whether it failed or
+    /// would have had to wait and was dropped.
     pub fn taken(process: &mut dyn SandboxProcess, patience: Duration) -> Result<Self, Unspoken> {
         let Some(input) = process.take_stdin() else {
             return Err(Unspoken::after(process, Absent::Input));
@@ -83,7 +85,10 @@ pub struct Unspoken {
     /// Why the backend could not confirm the stop, where it could not.
     ///
     /// A caller that reports only the missing pipe would retire a process scope
-    /// nothing has confirmed the end of.
+    /// nothing has confirmed the end of. A stop that would have had to wait was
+    /// dropped, and is as unconfirmed: the error then holds the
+    /// [`Unready`](crucible_runtime::Unready) it was refused with, which
+    /// `get_ref` finds.
     pub cleanup: Option<io::Error>,
 }
 
@@ -92,7 +97,12 @@ impl Unspoken {
     fn after(process: &mut dyn SandboxProcess, absent: Absent) -> Self {
         Self {
             absent,
-            cleanup: process.stop().err(),
+            // A stop that would have had to wait is as unconfirmed as one that
+            // failed.
+            cleanup: Bridge::TransportProcess
+                .cross(process.stop())
+                .unwrap_or_else(|unready| Err(io::Error::other(unready)))
+                .err(),
         }
     }
 }

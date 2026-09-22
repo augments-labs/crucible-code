@@ -16,6 +16,21 @@ change in any release with no deprecation period.
   names are compared as kept. A refusal and an undecided check reach a client
   marked truncated where they were cut; no shipped agent declares a guardrail,
   so only a build that adds one sees any of it.
+- **The provider, tool, sandbox and storage contracts hand back futures.** A
+  provider's stream and its prompt-cache resource lifecycle, a tool's run, a
+  toolset's lifecycle, a sandbox backend's probe and each sandbox lifecycle
+  step, and the session and prompt-cache store operations now return a boxed
+  `Send` future that borrows no more than the call was given, while names and
+  classifications stay synchronous, so an adapter built against these crates
+  adopts the new signatures. Their callers are still synchronous and ask each
+  future once through a named crossing, which reports one that would have had
+  to wait as an error instead of blocking; nothing a user runs behaves
+  differently. Any `CallResultAcceptance` dropped unaccepted, or whose
+  `accept` future is dropped before it answers, must hand its scope back to
+  the registry that owns the scope's cleanup; and while a run prepares its
+  tools, a sandbox step that brings a hosted MCP server up (prepare,
+  materialize or start) and would have had to wait is reported as the new
+  `ToolsetError::Unready`, with its cleanup unconfirmed.
 
 ### Fixed
 

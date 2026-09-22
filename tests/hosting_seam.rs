@@ -33,6 +33,7 @@ use crucible_core::{
 };
 use crucible_mcp::{Chosen, Hosting};
 use crucible_runner::Tools;
+use crucible_runtime::BoxFuture;
 use serde_json::{Value, json};
 
 /// How long a test lets one silence run before it gives up on a server.
@@ -225,9 +226,11 @@ impl SandboxProcess for Fake {
         self.watched.closed.load(Ordering::Relaxed)
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.watched.closed.store(true, Ordering::Relaxed);
-        Ok(())
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.watched.closed.store(true, Ordering::Relaxed);
+            Ok(())
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -255,12 +258,17 @@ impl SandboxLaunch for Held {
         &self.inspection
     }
 
-    fn release(self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        Ok(Box::new(Fake {
-            stdout: Some(Says(self.frames.into_iter().collect())),
-            watched: self.watched,
-            inspection: self.inspection,
-        }))
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Fake {
+                stdout: Some(Says(self.frames.into_iter().collect())),
+                watched: self.watched,
+                inspection: self.inspection,
+            }) as Box<dyn SandboxProcess>)
+        })
     }
 }
 
@@ -276,19 +284,24 @@ impl SandboxSession for Prepared {
         &self.inspection
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        Ok(())
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    fn stage(
+    fn stage<'a>(
         self: Box<Self>,
         _command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        Ok(Box::new(Held {
-            frames: self.frames,
-            watched: self.watched,
-            inspection: self.inspection,
-        }))
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Held {
+                frames: self.frames,
+                watched: self.watched,
+                inspection: self.inspection,
+            }) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -309,33 +322,42 @@ impl Pretend {
 }
 
 impl SandboxService for Pretend {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-        Ok((
-            SandboxBackendIdentity::new(
-                SandboxBackendId::new("test").expect("a backend name"),
-                "1",
-                SandboxBackendProvenance::Compatibility,
-                None,
-            )
-            .expect("a backend identity"),
-            SandboxCapabilities::none(),
-        ))
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(async move {
+            Ok((
+                SandboxBackendIdentity::new(
+                    SandboxBackendId::new("test").expect("a backend name"),
+                    "1",
+                    SandboxBackendProvenance::Compatibility,
+                    None,
+                )
+                .expect("a backend identity"),
+                SandboxCapabilities::none(),
+            ))
+        })
     }
 
-    fn prepare(&self, _request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        let said = self
-            .says
-            .lock()
-            .expect("the script this test wrote")
-            .take()
-            .ok_or_else(|| {
-                SandboxError::Lifecycle(io::Error::other("only one server was scripted"))
-            })?;
-        Ok(Box::new(Prepared {
-            frames: said.iter().map(ToString::to_string).collect(),
-            watched: Arc::clone(&self.watched),
-            inspection: inspection(),
-        }))
+    fn prepare(
+        &self,
+        _request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let said = self
+                .says
+                .lock()
+                .expect("the script this test wrote")
+                .take()
+                .ok_or_else(|| {
+                    SandboxError::Lifecycle(io::Error::other("only one server was scripted"))
+                })?;
+            Ok(Box::new(Prepared {
+                frames: said.iter().map(ToString::to_string).collect(),
+                watched: Arc::clone(&self.watched),
+                inspection: inspection(),
+            }) as Box<dyn SandboxSession>)
+        })
     }
 }
 
@@ -357,12 +379,12 @@ impl Tool for Quiet {
         Summary::new(self.0)
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::ok("nothing"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move { Ok(ToolOutput::ok("nothing")) })
     }
 }
 
@@ -419,9 +441,9 @@ fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
         vec![chosen("docs")],
     );
     let context = lifecycle();
-    hosting.prepare(&context).expect("the server started");
+    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
 
-    let first = hosting.snapshot(&context).expect("one generation");
+    let first = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
     let before = first.find("mcp:docs/search").expect("the server's tool");
     let source = before.descriptor().provenance().id().to_owned();
     let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
@@ -430,7 +452,8 @@ fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
     // What `tool_search` does mid-turn: the built-in roster grows, so the
     // merged generation has to be rebuilt around it.
     revealed.reveal("grep");
-    let second = hosting.refresh(&context).expect("the generation after");
+    let second =
+        crucible_runtime::answered!(hosting.refresh(&context)).expect("the generation after");
 
     assert_ne!(
         first.generation().context_id(),
@@ -452,5 +475,5 @@ fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
         read,
         "and must not go back to the server for a catalogue it already read"
     );
-    hosting.dispose(&context).expect("the server stopped");
+    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
 }

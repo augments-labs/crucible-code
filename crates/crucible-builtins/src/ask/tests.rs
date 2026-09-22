@@ -51,7 +51,7 @@ const ONE: &str = r#"{"questions":[{"heading":"Language","question":"Which langu
 /// Runs a call through a tool that answers with `put`.
 fn ran(put: Arc<dyn Put>, args: &str) -> Result<ToolOutput, ToolError> {
     let tool = AskUser::new(put);
-    tool.run(allowed(&tool, args), &crate::sample::context())
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
 }
 
 /// The refusal a call earns, or a panic naming what it produced instead.

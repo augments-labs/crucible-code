@@ -48,14 +48,13 @@ fn nothing_the_command_can_see_would_honour_a_setuid_bit() {
         return;
     }
     let sample = Sample::new("sandbox-mount-authority");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (status, output, errors) = finish(
-        session
-            .start(command("cat /proc/self/mountinfo"))
+        crucible_runtime::answered!(session.start(command("cat /proc/self/mountinfo")))
             .expect("started command"),
     );
 
@@ -95,10 +94,10 @@ fn a_setuid_bit_a_confined_command_sets_itself_grants_it_nothing() {
         return;
     }
     let sample = Sample::new("sandbox-setuid");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     // A shell it owns, marked setuid, run: the identity on the other side is
     // the identity it started with. The mode is set before the identities are
@@ -107,13 +106,12 @@ fn a_setuid_bit_a_confined_command_sets_itself_grants_it_nothing() {
     // left in a writable root is metadata this sandbox refuses to publish —
     // which is a different rule, proved next door, and not the one under test.
     let (status, output, errors) = finish(
-        session
-            .start(command(
-                "cp /bin/sh ./climb && chmod 4755 ./climb && \
+        crucible_runtime::answered!(session.start(command(
+            "cp /bin/sh ./climb && chmod 4755 ./climb && \
                  ./climb -c 'awk \"/^Uid:/ { print \\$2, \\$3, \\$4 }\" /proc/self/status'; \
                  outcome=$?; chmod 0755 ./climb; exit \"$outcome\"",
-            ))
-            .expect("started command"),
+        )))
+        .expect("started command"),
     );
 
     assert!(
@@ -141,17 +139,16 @@ fn a_writable_root_does_not_let_a_confined_command_make_a_device() {
         return;
     }
     let sample = Sample::new("sandbox-mknod");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     // The disc the host boots from, asked for by number. Making the node is
     // what the kernel refuses; nothing here has to know whether reading it
     // would have worked.
     let (status, _, errors) = finish(
-        session
-            .start(command("mknod ./disc b 259 0"))
+        crucible_runtime::answered!(session.start(command("mknod ./disc b 259 0")))
             .expect("started command"),
     );
 
@@ -166,10 +163,10 @@ fn a_confined_command_can_neither_see_nor_signal_a_host_process() {
         return;
     }
     let sample = Sample::new("sandbox-host-processes");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("prepared sandbox");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let host = std::process::id();
 
     // Signalling is the half a missing `/proc` entry does not prove: a process
@@ -179,7 +176,9 @@ fn a_confined_command_can_neither_see_nor_signal_a_host_process() {
         "test ! -e /proc/{host} && ! kill -0 {host} 2>/dev/null && \
          test \"$(awk '/^TracerPid:/ {{ print $2 }}' /proc/self/status)\" = 0"
     );
-    let (status, _, errors) = finish(session.start(command(&script)).expect("started command"));
+    let (status, _, errors) = finish(
+        crucible_runtime::answered!(session.start(command(&script))).expect("started command"),
+    );
 
     assert!(
         status.success(),

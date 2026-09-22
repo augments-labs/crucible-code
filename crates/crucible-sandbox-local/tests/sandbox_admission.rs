@@ -64,7 +64,7 @@ impl Drop for Owned {
 /// The CI contract requires actual backend preparations, never silent skips.
 #[allow(clippy::panic)] // An unexpected probe error is a test failure.
 fn choices(service: &LocalSandbox) -> Vec<bool> {
-    match service.probe() {
+    match crucible_runtime::answered!(service.probe()) {
         Ok(_) => vec![false, true],
         Err(SandboxError::BackendUnavailable { reason }) => {
             assert!(
@@ -83,18 +83,16 @@ fn cloned_services_share_a_ceiling_before_materialization_and_release_it_on_drop
     let at = Owned::new();
     let service = LocalSandbox::new();
     for enabled in choices(&service) {
-        let first = service
-            .prepare(at.request(enabled, Some(2)))
+        let first = crucible_runtime::answered!(service.prepare(at.request(enabled, Some(2))))
             .expect("first slot");
-        let second = service
-            .clone()
-            .prepare(at.request(enabled, Some(2)))
-            .expect("second slot");
+        let second =
+            crucible_runtime::answered!(service.clone().prepare(at.request(enabled, Some(2))))
+                .expect("second slot");
         let request = at.request(enabled, Some(2));
         let audit = SandboxAudit::new(request.ancestry(), request.call().clone());
         let request = request.with_audit(audit.clone()).expect("attribution");
         assert!(matches!(
-            service.clone().prepare(request),
+            crucible_runtime::answered!(service.clone().prepare(request)),
             Err(SandboxError::Concurrency)
         ));
         let records = audit.records().expect("audit");
@@ -111,16 +109,16 @@ fn cloned_services_share_a_ceiling_before_materialization_and_release_it_on_drop
             SandboxFactKind::Cleanup(SandboxCleanup::Complete)
         )));
         drop(first);
-        let replacement = service
-            .prepare(at.request(enabled, Some(2)))
-            .expect("released slot");
+        let replacement =
+            crucible_runtime::answered!(service.prepare(at.request(enabled, Some(2))))
+                .expect("released slot");
         assert!(matches!(
-            service.prepare(at.request(enabled, Some(2))),
+            crucible_runtime::answered!(service.prepare(at.request(enabled, Some(2)))),
             Err(SandboxError::Concurrency)
         ));
         drop(second);
         drop(replacement);
-        assert!(service.prepare(at.request(enabled, Some(1))).is_ok());
+        assert!(crucible_runtime::answered!(service.prepare(at.request(enabled, Some(1)))).is_ok());
     }
 }
 
@@ -139,7 +137,7 @@ fn simultaneous_preparations_cannot_oversubscribe_the_requested_ceiling() {
                     let request = at.request(enabled, Some(2));
                     scope.spawn(move || {
                         barrier.wait();
-                        service.prepare(request)
+                        crucible_runtime::answered!(service.prepare(request))
                     })
                 })
                 .collect();
@@ -157,7 +155,7 @@ fn simultaneous_preparations_cannot_oversubscribe_the_requested_ceiling() {
             6
         );
         drop(results);
-        assert!(service.prepare(at.request(enabled, Some(1))).is_ok());
+        assert!(crucible_runtime::answered!(service.prepare(at.request(enabled, Some(1)))).is_ok());
     }
 }
 
@@ -169,14 +167,19 @@ fn omitted_or_larger_policy_limits_cannot_bypass_the_absolute_service_ceiling() 
     for enabled in choices(&service) {
         for maximum in [None, Some(100)] {
             let held: Vec<_> = (0..16)
-                .map(|_| service.prepare(at.request(enabled, maximum)).expect("slot"))
+                .map(|_| {
+                    crucible_runtime::answered!(service.prepare(at.request(enabled, maximum)))
+                        .expect("slot")
+                })
                 .collect();
             assert!(matches!(
-                service.prepare(at.request(enabled, maximum)),
+                crucible_runtime::answered!(service.prepare(at.request(enabled, maximum))),
                 Err(SandboxError::Concurrency)
             ));
             drop(held);
-            assert!(service.prepare(at.request(enabled, Some(1))).is_ok());
+            assert!(
+                crucible_runtime::answered!(service.prepare(at.request(enabled, Some(1)))).is_ok()
+            );
         }
     }
 }

@@ -153,7 +153,9 @@ fn a_session_from_before_typed_context_is_of_unknown_vintage_again_when_it_is_pi
     // then describe changes against a baseline that never existed instead of
     // superseding what it cannot see.
     let store = Recording::pre_context(OWNER);
-    store.append_message(&Message::said("recorded before typed context"));
+    crucible_runtime::answered!(
+        store.append_message(&Message::said("recorded before typed context"))
+    );
 
     let (picked, replayed) = store.reopened();
 

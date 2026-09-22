@@ -3,11 +3,13 @@
 //! Ask the model, run what it asked for, tell it what happened, ask again —
 //! until it yields, the user stops it, or something goes wrong.
 //!
-//! A response that failed before it said a word is asked for once more rather
-//! than counted as the thing that went wrong. The socket a provider closed
-//! while the tools ran is the usual reason, and it is safe to ask again for
-//! exactly the reason it is worth doing: nothing arrived, so nothing has been
-//! drawn that a second answer could contradict.
+//! A response that failed for a moment, before it said a word, is asked for
+//! again, up to the policy's attempts, rather than counted as the thing that
+//! went wrong. The socket a provider closed while the tools ran is the usual
+//! reason, and it is safe to ask again for exactly the reason it is worth
+//! doing: nothing arrived, so nothing has been drawn that a second answer
+//! could contradict. One that would have had to wait is not asked again: it
+//! may have gone out.
 //!
 //! Progress leaves through events, because the thread that draws is not this
 //! one. The outcome leaves through the return value, because the caller is
@@ -28,20 +30,22 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_core::{
-    Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
-    DeltaStream, Effort, JournalStore, Looking, Message, Modalities, Mode, Permission,
-    PermissionsSection, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheResourceError, PromptCacheResourceRecord,
-    PromptCacheRetentionClass, PromptCacheUsageFact, PromptCacheUsageReporting, Provider,
-    ProviderError, ProviderUsage, Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer,
-    StopReason, Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot,
-    Toolset, ToolsetContext, Transcript, TurnId, UsageCost,
+    Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta, DeltaStream,
+    Effort, JournalStore, Looking, Message, Modalities, Mode, Permission, PermissionsSection,
+    PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
+    PromptCachePreparationError, PromptCacheRequestDisposition, PromptCacheRequestFact,
+    PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
+    PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
+    Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer, StopReason, Summary, ToolCall,
+    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
+    Transcript, TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
 
 use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model};
+
+use crucible_runtime::{Bridge, Unready};
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -54,9 +58,11 @@ mod answer;
 mod assembly;
 pub mod attachments;
 mod cleanup;
+mod clearing;
 mod compaction;
 mod load;
 mod passes;
+mod record;
 mod state;
 mod work;
 
@@ -337,13 +343,20 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// [`PromptCacheResourceError`] when the private store cannot be read.
+    /// [`PromptCacheResourceError`] when the private store cannot be read,
+    /// [`PromptCacheResourceError::Local`] carrying the refusal among them
+    /// where reading it would have had to wait and was dropped.
     pub fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
         self.prompt_cache_store.as_deref_mut().map_or_else(
             || Ok(Vec::new()),
-            |store| store.inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES),
+            |store| {
+                crate::prompt_cache::local(
+                    "list",
+                    store.inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES),
+                )
+            },
         )
     }
 
@@ -361,37 +374,6 @@ impl Runner {
         let reading = self.admit_restricted();
         self.recount(reading);
         self
-    }
-
-    /// Takes out of a transcript just read back what this run's vendor may not
-    /// be sent, and hands back the reading the log kept where it still covers
-    /// what is left.
-    ///
-    /// Nobody is being left: the run may have started on another vendor than the
-    /// one the results came from, and no switch is ever observed to say so. What
-    /// the results record about who answered them is the whole of the decision.
-    /// The reading is `None` once anything was taken out: it measured a request
-    /// that carried it, and replaying the clearing's line drops it for the same
-    /// reason.
-    fn admit_restricted(&mut self) -> Option<crucible_types::Calibration> {
-        let clearing = self.untransferable(0, self.provider.as_ref(), None);
-        // As though a report had measured every message: the recount each
-        // caller runs next rebuilds the load from the transcript either way.
-        self.clear_untransferable(&clearing, self.state.transcript.messages().len());
-        if clearing.is_empty() {
-            self.store.calibrated()
-        } else {
-            None
-        }
-    }
-
-    /// Takes out of the message just recorded what this run's vendor may not be
-    /// sent.
-    fn admit_recorded(&mut self) {
-        let recorded = self.state.transcript.messages().len().saturating_sub(1);
-        let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
-        // No report has measured the message just recorded, which is the last.
-        self.clear_untransferable(&clearing, recorded);
     }
 
     /// Measures a transcript this runner did not build a message at a time.
@@ -433,7 +415,10 @@ impl Runner {
     /// What `/resume` runs. The store handed in is the one the caller opened
     /// and still holds: nothing is handed back, because closing the store this
     /// runner was writing to was never this crate's to do, and the caller that
-    /// opened it is the one that reports what its last write came to.
+    /// opened it is the one that reports what its last write came to. That
+    /// report cannot see a line the session left behind would not take between
+    /// turns: such a line stays held, and the next turn or compaction reports
+    /// it on the session picked up.
     ///
     /// Everything about the session that was answered is answered again. The
     /// transcript, the store and the turn count come from the session picked
@@ -785,88 +770,12 @@ impl Runner {
         self.provider = provider;
         // As though a report had measured every message: the estimate is taken
         // again from the byte total below, and that total follows every message.
-        self.clear_untransferable(&clearing, self.state.transcript.messages().len());
+        let cleared = self.clear_untransferable(&clearing, self.state.transcript.messages().len());
+        self.hold(cleared);
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
         self.state.load.reestimated();
-    }
-
-    /// The results from message `from` on that the next request may not carry to
-    /// `recipient`, each with the sentence to leave in its place.
-    ///
-    /// What may go where is decided by the result's own provenance, through
-    /// `crucible_models::transfer`, never from a vendor's or a tool's name here.
-    fn untransferable(
-        &self,
-        from: usize,
-        recipient: &dyn Provider,
-        leaving: Option<&dyn Provider>,
-    ) -> Vec<(crucible_core::ToolId, Box<str>)> {
-        let mut clearing = Vec::new();
-        for message in self.state.transcript.messages().iter().skip(from) {
-            if let crucible_core::Message::ToolResults(results) = message {
-                for result in results {
-                    if let crucible_models::Transfer::Clear(notice) =
-                        crucible_models::transfer(result.output.provenance(), recipient, leaving)
-                    {
-                        clearing.push((result.id.clone(), notice.into()));
-                    }
-                }
-            }
-        }
-        clearing
-    }
-
-    /// Takes the results a vendor restricts out of what is sent from here on,
-    /// and records that it happened.
-    ///
-    /// The results stay in the log holding what they held — the log is the
-    /// record of the session, and a user reading their own history is not the
-    /// third party the term is about. What the line buys is the session coming
-    /// back the same way: without it the transcript loses them and the log does
-    /// not, so the next resume reads them back and sends them on.
-    ///
-    /// One line per sentence, since a line carries one. Clearing takes the
-    /// provenance with the content, so a result is never cleared twice.
-    ///
-    /// No report has measured any message from `unmeasured` on; what the
-    /// clearing then does to the load is [`load::Load::rewritten`]'s to say.
-    fn clear_untransferable(
-        &mut self,
-        clearing: &[(crucible_core::ToolId, Box<str>)],
-        unmeasured: usize,
-    ) {
-        if clearing.is_empty() {
-            return;
-        }
-        // Weighed a message at a time on both sides, because a clearing reaches
-        // every result with a named id wherever it stands; and only here, so a
-        // pass that clears nothing walks nothing.
-        let before = load::Load::weights(self.state.transcript.messages());
-        let mut notices: Vec<&str> = Vec::new();
-        for (_, notice) in clearing {
-            if !notices.contains(&&**notice) {
-                notices.push(notice);
-            }
-        }
-
-        for notice in notices {
-            let results: Vec<crucible_core::ToolId> = clearing
-                .iter()
-                .filter(|(_, left)| **left == *notice)
-                .map(|(id, _)| id.clone())
-                .collect();
-
-            // The transcript first and the line after it, the way a pruning is
-            // written and for the same reason: a crash between the two must not
-            // leave a log claiming a clearing that the transcript never made.
-            let freed = self.state.transcript.clear_tool_outputs(&results, notice);
-            self.store.restricted(freed, &results, notice);
-        }
-        self.state
-            .load
-            .rewritten(&before, self.state.transcript.messages(), unmeasured);
     }
 
     /// How hard this session is asking the model to think.
@@ -894,58 +803,6 @@ impl Runner {
             ..self.agent.model().clone()
         };
         self.agent = Arc::new(self.agent.aimed(harder));
-    }
-
-    /// Appends a message to the transcript.
-    ///
-    /// The only way either the transcript or the log is written. Two calls
-    /// that could be made separately would eventually be made separately, and
-    /// a log that is missing one message is a session that cannot be continued.
-    fn record(&mut self, ancestry: Ancestry, message: Message) -> Result<(), TurnError> {
-        self.state
-            .transcript
-            .check_continuation(&message)
-            .map_err(|_| ProviderError::Protocol {
-                provider: self.provider.name(),
-                problem: "invalid or oversized provider continuation".into(),
-            })?;
-        let settles_call_results = matches!(&message, Message::ToolResults(_));
-        match RunItem::message(ancestry, message.clone()) {
-            Ok(item) => {
-                self.store.append_message(&message);
-                self.store.append_run_item(&item);
-            }
-            // The provider and tool admission boundaries already enforce
-            // these bounds. Preserve the conversation if an internal caller
-            // ever violates that contract, while its missing companion record
-            // makes the defect visible instead of writing unsafe metadata.
-            Err(_) => self.store.append_message(&message),
-        }
-        self.state.load.recorded(&message);
-        self.state
-            .transcript
-            .push(message)
-            .map_err(|_| ProviderError::Protocol {
-                provider: self.provider.name(),
-                problem: "invalid or oversized provider continuation".into(),
-            })?;
-
-        // After the message and not beside it: what this says covers the
-        // transcript including what was just appended, and a reader that found
-        // it in the other order would have it covering one message less.
-        if let Some(calibration) = self.state.load.calibrated() {
-            self.store.measured(&calibration);
-        }
-        if settles_call_results {
-            self.store.settle_call_results();
-            // After the results line, so the log reads what was answered and
-            // then what was taken out of it. The search source was chosen when
-            // the run started, so a session that moved away from its vendor
-            // still searches through that vendor, and the next request of this
-            // turn is built from what was just recorded.
-            self.admit_recorded();
-        }
-        Ok(())
     }
 
     fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
@@ -1028,6 +885,64 @@ impl Runner {
     /// that list: a call that could not be run at all, and one that ran and
     /// did not like what it found, both go back to the model as results it can
     /// work around.
+    ///
+    /// [`TurnError::Unready`] where a step the turn took would have had to
+    /// wait and was dropped: a session write, a prompt-cache step, asking the
+    /// model, or preparing, listing, refreshing or disposing of the toolset.
+    /// What the dropped step began is unconfirmed rather than undone. A
+    /// message whose own line was refused may or may not be in the log, and is
+    /// left out of the transcript unless it holds the results of a pass's
+    /// calls, which stay with the calls they answer, still cleared of what
+    /// this run's vendor may not be sent. A changing cache step is recorded as
+    /// ambiguous, to be reconciled, and a request for the model's answer,
+    /// being prepared or made, has that answer recorded as far as it got, as a
+    /// failed one does. A request refused while it was being made may have
+    /// gone out all the same, so its prompt-cache attempt is held, reported
+    /// and logged as `Unknown`; one refused while its answer was read keeps
+    /// `Accepted`. A step of a compaction the turn made leaves what
+    /// [`Runner::compact`] says it does. A line the session would not take
+    /// between turns, still held, ends the turn the same way before anything
+    /// of it is recorded or sent.
+    ///
+    /// Every step the turn crosses to that would have had to wait ends the
+    /// turn on the refusal, even while the turn is being stopped, rather than
+    /// as a clean stop, with two exceptions. The turn's requests to the model,
+    /// its cache steps, its session lines and its toolset's steps all end it
+    /// so, and a compaction the turn makes ends on a refusal as
+    /// [`Runner::compact`] says, taking the turn with it. The exceptions are a
+    /// call's run and a background result's acceptance, which never end the
+    /// turn on a refusal. A run that would have had to wait goes back to the
+    /// model as a failed result that says what the run began is unconfirmed,
+    /// and where the turn is being stopped the pass then ends on the stop at
+    /// that call; but where reporting the call's sandbox facts fails after the
+    /// run, that failure is what the model is told, as it is after any run,
+    /// and the pass does not end on the stop at that call. An acceptance that
+    /// would have had to wait leaves the command to the registry that owns its
+    /// cleanup.
+    ///
+    /// A turn that had already failed, and whose line recording what it
+    /// reached was refused, ends on [`TurnError::RecordUnready`], carrying the
+    /// failure and the refusal together: a request that failed, or was itself
+    /// refused, with its answer as far as it got, and a pass that ended on a
+    /// refused call or on the output boundary, with its results. No automatic
+    /// compaction starts after a refused write. A provider that failed the
+    /// request because the window was exceeded is reported beside the refused
+    /// line, and one that stopped its answer there is reported as the refusal,
+    /// as any stop is.
+    ///
+    /// A tool source's own step that would have had to wait and was dropped is
+    /// the source's failure, which [`TurnError::Toolset`] or
+    /// [`TurnError::ToolsetCleanup`] carries: it may come back as
+    /// [`ToolsetError::Unready`], or in the source's own words as
+    /// [`ToolsetError::Source`], and either way what that step began is
+    /// unconfirmed rather than undone. A cleanup step of the source's that
+    /// would have had to wait after another failure is reported as that
+    /// failure, and named at most in its text. A disposal the turn itself
+    /// crossed to that would have had to wait after another failure is
+    /// [`TurnError::ToolsetCleanupUnready`].
+    ///
+    /// [`ToolsetError::Unready`]: crucible_core::ToolsetError::Unready
+    /// [`ToolsetError::Source`]: crucible_core::ToolsetError::Source
     pub fn turn(
         &mut self,
         prompt: &str,
@@ -1073,6 +988,12 @@ impl Runner {
         // ceiling belongs where a run is admitted, and the two admitting
         // entries are this and [`Runner::compact`].
         let run = &run.held_to(self.policy);
+
+        // A line the session would not take between turns ends the turn it was
+        // held for, before anything of this one is recorded or sent.
+        if let Some(unready) = self.state.unwritten.take() {
+            return Err(unready.into());
+        }
 
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
@@ -1301,7 +1222,10 @@ impl Runner {
 
         let toolsets = ToolsetContext::new(run.ancestry(), run.cancel().clone(), None)
             .with_sandbox_audits(self.sandbox_audits.clone());
-        let prepared = self.toolset.prepare(&toolsets).map_err(TurnError::from);
+        let prepared = Bridge::TurnTools
+            .cross(self.toolset.prepare(&toolsets))
+            .map_err(TurnError::from)
+            .and_then(|prepared| prepared.map_err(TurnError::from));
         let prepared = combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()));
         let ran = match prepared {
             Ok(()) => {
@@ -1329,11 +1253,19 @@ impl Runner {
             Err(problem) => Err(problem),
         };
 
-        let finished = match (ran, self.toolset.dispose(&toolsets)) {
-            (Ok(result), Ok(())) => Ok(result),
-            (Ok(_), Err(cleanup)) => Err(TurnError::Toolset(cleanup)),
-            (Err(primary), Ok(())) => Err(primary),
-            (Err(primary), Err(cleanup)) => Err(TurnError::ToolsetCleanup {
+        let finished = match (
+            ran,
+            Bridge::TurnTools.cross(self.toolset.dispose(&toolsets)),
+        ) {
+            (Ok(result), Ok(Ok(()))) => Ok(result),
+            (Ok(_), Ok(Err(cleanup))) => Err(TurnError::Toolset(cleanup)),
+            (Ok(_), Err(unready)) => Err(TurnError::Unready(unready)),
+            (Err(primary), Ok(Ok(()))) => Err(primary),
+            (Err(primary), Ok(Err(cleanup))) => Err(TurnError::ToolsetCleanup {
+                primary: Box::new(primary),
+                cleanup,
+            }),
+            (Err(primary), Err(cleanup)) => Err(TurnError::ToolsetCleanupUnready {
                 primary: Box::new(primary),
                 cleanup,
             }),
@@ -1351,7 +1283,8 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the request for the recap itself failed.
+    /// [`TurnError`] wherever [`Runner::compact`] fails, which says what each
+    /// failure leaves.
     fn made_room(
         &mut self,
         why: Compacting,
@@ -1405,7 +1338,11 @@ impl Runner {
     /// last one with nothing in between. Calls the model never finished asking
     /// for go no further, the same as when it stops early. What is recorded
     /// says the answer never reached an ending, which is what keeps the next
-    /// request and a later replay from reading it as one that did.
+    /// request and a later replay from reading it as one that did. Where the
+    /// session would not take that line, or the reading of the window after
+    /// it, the failure still leaves, with the refusal beside it:
+    /// [`TurnError::RecordUnready`] carries both. An answer whose own line was
+    /// refused is left out of the transcript, as [`Runner::turn`] says.
     ///
     /// A stream that ends without saying why is that same failure: the socket
     /// went quiet, and quiet is what a finished response and a truncated one
@@ -1458,7 +1395,7 @@ impl Runner {
 
             let stop = answer.stop();
             let (text, _) = answer.finish();
-            self.record(
+            let recorded = self.record(
                 listening.run.ancestry(),
                 Message::Agent {
                     continuation: None,
@@ -1466,9 +1403,20 @@ impl Runner {
                     calls: Vec::new(),
                     stop,
                 },
-            )?;
+            );
 
-            return Err(problem);
+            return Err(match recorded {
+                Err(TurnError::Unready(record)) => TurnError::RecordUnready {
+                    primary: Box::new(problem),
+                    record,
+                },
+                // The transcript refuses only a continuation, which this
+                // message does not carry, so a session write that would have
+                // had to wait is all recording it can meet. Anything else would
+                // still be about the record rather than the request, and must
+                // not stand in for the failure being recorded.
+                Ok(()) | Err(_) => problem,
+            });
         }
     }
 
@@ -1667,8 +1615,11 @@ impl Runner {
                 prompt_cache: Some(&cache),
                 ..request
             };
-            let streamed = self.provider.stream(request, listening.run.cancel());
-            let disposition = request_disposition(&streamed);
+            let crossed =
+                Bridge::TurnProvider.cross(self.provider.stream(request, listening.run.cancel()));
+            // Recorded and reported before a refusal ends the turn, since the
+            // request may have gone out all the same.
+            let disposition = crossed_disposition(&crossed);
             if let Some(attempt) = self
                 .state
                 .prompt_cache_attempt
@@ -1685,6 +1636,7 @@ impl Runner {
                     disposition,
                 }),
             );
+            let streamed = crossed?;
             (
                 streamed?,
                 CacheObservation {
@@ -1762,7 +1714,7 @@ impl Runner {
         // that counts up as it goes come out the same.
         let before = counting.spent;
 
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = Bridge::TurnProvider.cross(stream.next())? {
             match delta? {
                 Delta::Text(text) => {
                     let bytes = text.len();
@@ -1941,6 +1893,20 @@ fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheReque
             | ProviderError::Protocol { .. },
         ) => PromptCacheRequestDisposition::Unknown,
     }
+}
+
+/// What a send is recorded as, from how crossing to it went.
+///
+/// One that answered is what `request_disposition` makes of the answer. One
+/// dropped because it would have had to wait may have gone out all the same,
+/// and nothing a provider's stream promises says otherwise, so it is
+/// unconfirmed rather than unsent.
+fn crossed_disposition<T>(
+    crossed: &Result<Result<T, ProviderError>, Unready>,
+) -> PromptCacheRequestDisposition {
+    crossed
+        .as_ref()
+        .map_or(PromptCacheRequestDisposition::Unknown, request_disposition)
 }
 
 fn unix_now() -> u64 {

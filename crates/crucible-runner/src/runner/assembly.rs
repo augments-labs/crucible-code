@@ -8,6 +8,7 @@
 
 use crucible_context::{Live, assemble};
 use crucible_core::{Ancestry, Message};
+use crucible_runtime::Bridge;
 
 use super::Runner;
 
@@ -37,7 +38,7 @@ impl Runner {
             self.record(ancestry, Message::Context(fragment))?;
         }
         if let Some(patch) = assembled.patch {
-            self.store.contextual(&patch)?;
+            Bridge::TurnSession.cross(self.store.contextual(&patch))??;
         }
 
         Ok(())

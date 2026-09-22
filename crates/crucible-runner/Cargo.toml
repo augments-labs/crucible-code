@@ -30,6 +30,10 @@ crucible-core.workspace = true
 # vendor restricts what it produced; the runner applies that decision and never
 # makes it from a vendor's or a tool's name.
 crucible-models.workspace = true
+# The bridges the turn loop crosses into the provider, the tools, the cache and
+# the session with while it is synchronous, and the refusal one gives instead of
+# waiting.
+crucible-runtime.workspace = true
 # Who answered a recorded result, which is what the transfer decision reads.
 crucible-types.workspace = true
 # The prompt-cache scope is named by a domain-separated digest of what it
@@ -39,6 +43,10 @@ sha2.workspace = true
 # Writes the turn failure enum, which holds each collaborator's own typed error
 # with `#[from]` rather than erasing it into a sentence.
 thiserror.workspace = true
+
+# `answered!`, which the tests ask a fake's future once with.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
 
 [lints]
 workspace = true

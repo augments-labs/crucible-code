@@ -9,6 +9,7 @@ use crucible_core::{
 };
 use crucible_runner::EventEnvelope;
 use crucible_runner::{Agent, Model, Runner, Tools};
+use crucible_runtime::BoxFuture;
 use crucible_session::{Pruned, Session};
 
 use crucible_tui::{Glyphs, Recording, Renderer};
@@ -68,11 +69,11 @@ impl Provider for Spelling {
         PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         panic!("nothing here sends a request")
     }
 }

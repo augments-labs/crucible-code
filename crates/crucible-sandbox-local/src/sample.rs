@@ -30,7 +30,7 @@ pub(crate) const REQUIRE_ENFORCING_SANDBOX: &str = "CRUCIBLE_TEST_REQUIRE_ENFORC
 /// has declared that the backend must exist, an unavailable backend is a failure
 /// naming the reason, so a suite that measured nothing cannot report green.
 pub(crate) fn skipped_without_enforcement(service: &crate::LocalSandbox) -> bool {
-    match crucible_sandbox::SandboxService::probe(service) {
+    match crucible_runtime::answered!(crucible_sandbox::SandboxService::probe(service)) {
         Ok(_) => false,
         Err(problem) => {
             assert!(

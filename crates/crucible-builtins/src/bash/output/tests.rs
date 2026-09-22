@@ -211,11 +211,11 @@ fn admitted(
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = crucible_sandbox_local::LocalSandbox::new()
-        .prepare(request)
-        .expect("a prepared session");
-    session.materialize().expect("an empty manifest");
-    session.start(command).expect("the child started")
+    let mut session =
+        crucible_runtime::answered!(crucible_sandbox_local::LocalSandbox::new().prepare(request))
+            .expect("a prepared session");
+    crucible_runtime::answered!(session.materialize()).expect("an empty manifest");
+    crucible_runtime::answered!(session.start(command)).expect("the child started")
 }
 
 #[cfg(unix)]
@@ -229,7 +229,7 @@ fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
 
     assert!(status.is_none());
     assert!(started.elapsed() < std::time::Duration::from_millis(500));
-    process.stop().unwrap();
+    crucible_runtime::answered!(process.stop()).unwrap();
 }
 
 /// What a command leaves running does not outlive the command.

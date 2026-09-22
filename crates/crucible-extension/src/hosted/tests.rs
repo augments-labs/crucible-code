@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crucible_runtime::{BoxFuture, Unready};
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
@@ -155,6 +156,9 @@ enum Ending {
     Stubborn,
     /// It never exits, and cannot be reaped.
     Unreapable,
+    /// It never exits, and a stop never answers, so crucible drops the stop
+    /// rather than wait on it.
+    Unanswering,
 }
 
 /// A process the sandbox might have started, doing only what a test needs.
@@ -227,16 +231,19 @@ impl SandboxProcess for Fake {
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match self.ending {
             Ending::Exited => Ok(Some(exited())),
-            Ending::Stubborn | Ending::Unreapable => Ok(None),
+            Ending::Stubborn | Ending::Unreapable | Ending::Unanswering => Ok(None),
         }
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.watched.stopped.fetch_add(1, Ordering::Relaxed);
-        match self.ending {
-            Ending::Unreapable => Err(io::Error::other("the scope could not be reaped")),
-            Ending::Exited | Ending::Stubborn => Ok(()),
-        }
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.watched.stopped.fetch_add(1, Ordering::Relaxed);
+            match self.ending {
+                Ending::Unreapable => Err(io::Error::other("the scope could not be reaped")),
+                Ending::Unanswering => std::future::pending().await,
+                Ending::Exited | Ending::Stubborn => Ok(()),
+            }
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -516,12 +523,46 @@ fn missing_input_retains_failed_cleanup() {
         message.contains("the scope could not be reaped"),
         "{message}"
     );
+    // A failed stop's words do not say that cleanup is unconfirmed, so the
+    // message says it, once.
+    assert_eq!(
+        message,
+        "the extension was started without crucible keeping its input, so there is \
+         no way to answer it; process cleanup remains unconfirmed: the scope could \
+         not be reaped"
+    );
     assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
     let Unstarted::Unreaped { cause, cleanup } = refused else {
         panic!("cleanup uncertainty must be typed");
     };
     assert!(matches!(*cause, Unstarted::Unspeakable));
     assert_eq!(cleanup.kind(), io::ErrorKind::Other);
+}
+
+#[test]
+fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
+    // The stop is dropped rather than waited on, and the refusal it was dropped
+    // with already says that what it began is unconfirmed: the message does not
+    // say it a second time.
+    let (mut process, watched) = Fake::new([], Ending::Unanswering);
+    process.speaks = false;
+    let refused = Hosted::<()>::over(process, PATIENCE).unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "the extension was started without crucible keeping its input, so there is \
+         no way to answer it; process cleanup: stopping a hosted program would have \
+         had to wait, and the caller cannot; the waiting step was dropped before it \
+         answered, so whatever that step began is unconfirmed"
+    );
+    assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
+    let Unstarted::Unreaped { cause, cleanup } = refused else {
+        panic!("cleanup uncertainty must be typed");
+    };
+    assert!(matches!(*cause, Unstarted::Unspeakable));
+    assert!(
+        matches!(cleanup.get_ref(), Some(held) if held.is::<Unready>()),
+        "the refusal is carried as itself, not as its words: {cleanup:?}"
+    );
 }
 
 #[test]

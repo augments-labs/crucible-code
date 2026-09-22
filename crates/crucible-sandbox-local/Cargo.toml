@@ -10,7 +10,10 @@ repository.workspace = true
 authors.workspace = true
 
 # `crucible-sandbox` states what a backend must satisfy; everything here is one
-# machine's answer to it. The other three are what a launch is described in:
+# machine's answer to it, handed back in the future `crucible-runtime` names,
+# and crossed, where a synchronous caller here reaches one, through the bridge
+# that crate names for this one.
+# The other three are what a launch is described in:
 # the frame the broker binary is handed, the identities a call is attributed
 # by, and the receipt a background command's result is accepted against.
 #
@@ -20,6 +23,7 @@ authors.workspace = true
 # that header carries. `sha2` seals what a sandbox was admitted on, so a
 # resumed run can tell a frame apart from a frame edited under it.
 [dependencies]
+crucible-runtime.workspace = true
 crucible-sandbox.workspace = true
 crucible-sandbox-broker.workspace = true
 crucible-storage.workspace = true
@@ -51,8 +55,10 @@ crucible-privacy.workspace = true
 windows-sys.workspace = true
 
 # A backend confines paths it is handed and never resolves one itself, so the
-# workspace type is reached only by the fixtures that build a tree to confine.
+# workspace type is reached only by the fixtures that build a tree to confine,
+# and `answered!` only by the fixtures that drive a lifecycle step by hand.
 [dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
 crucible-workspace.workspace = true
 
 [lints]

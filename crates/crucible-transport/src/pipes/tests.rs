@@ -5,6 +5,7 @@ use std::process::ExitStatus;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
@@ -121,12 +122,14 @@ impl SandboxProcess for Process {
         Ok(None)
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.held.stops.fetch_add(1, Ordering::Relaxed);
-        if self.withheld.unstoppable {
-            return Err(io::Error::other("scope termination could not be confirmed"));
-        }
-        Ok(())
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.held.stops.fetch_add(1, Ordering::Relaxed);
+            if self.withheld.unstoppable {
+                return Err(io::Error::other("scope termination could not be confirmed"));
+            }
+            Ok(())
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {

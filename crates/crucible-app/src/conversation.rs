@@ -114,8 +114,23 @@ impl Conversation {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the request for the recap failed; the transcript is
-    /// then as it was.
+    /// [`TurnError`] where [`Runner::compact`] says, which also says what each
+    /// failure leaves. A failed request for the recap replaces nothing, so the
+    /// transcript is as it was but for any pruning before it.
+    ///
+    /// Three refusals come back as [`TurnError::Unready`], even when the
+    /// compaction is being stopped: a refusal outranks a stop. A line the
+    /// session would not take between turns, still held, is refused before
+    /// anything is recorded or sent, and the transcript is as it was. A step of
+    /// the recap request that would have had to wait replaces nothing, as a
+    /// failed request does; what the step began is unconfirmed, and its
+    /// prompt-cache attempt, or the cache step refused, is recorded as
+    /// [`Runner::compact`] says. A session write of the compaction's own that
+    /// would have had to wait leaves standing what came before it: a refused
+    /// line about the pruning leaves the pruning, a refused line recording the
+    /// recap leaves the pruning without the replacement, which comes after that
+    /// line, and a refused line reporting what the recap freed leaves both.
+    /// Whether the log kept a refused line is not known.
     pub fn compact(
         &mut self,
         why: Compacting,
@@ -130,7 +145,9 @@ impl Conversation {
     ///
     /// # Errors
     ///
-    /// [`PromptCacheResourceError`] where the private store could not be read.
+    /// [`PromptCacheResourceError`] where the private store could not be read,
+    /// [`PromptCacheResourceError::Local`] carrying the refusal among them
+    /// where reading it would have had to wait and was dropped.
     pub fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
@@ -143,7 +160,15 @@ impl Conversation {
     /// # Errors
     ///
     /// [`PromptCacheResourceError`] where the private store could not be read
-    /// or durably updated.
+    /// or durably updated, [`PromptCacheResourceError::Local`] carrying the
+    /// refusal among them where a step on it would have had to wait, which may
+    /// or may not have acted, [`PromptCacheResourceError::Unsupported`] when a
+    /// record is held with the provider being asked and the provider has no
+    /// lifecycle to delete one through, and
+    /// [`PromptCacheResourceError::Cancelled`] when the pass comes to such a
+    /// record and finds `cancel` requested, which leaves that record and those
+    /// after it as they were. A provider step that would have had to wait is
+    /// counted rather than returned, as [`Runner::clean_prompt_cache`] says.
     pub fn clean_prompt_cache(
         &mut self,
         cancel: &Cancel,
@@ -161,7 +186,13 @@ impl Conversation {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the turn could not be taken at all.
+    /// [`TurnError`] where the turn could not be taken at all, or was not
+    /// finished, as [`Runner::turn`] says, which also says what each failure
+    /// leaves. [`TurnError::Unready`] is a step that would have had to wait and
+    /// was dropped, leaving what it began unconfirmed rather than undone, or a
+    /// line the session would not take between turns, still held, which ends
+    /// the turn before anything of it is recorded or sent. A tool source's own
+    /// step that would have had to wait comes back as that source's failure.
     pub fn turn(
         &mut self,
         prompt: &str,

@@ -32,6 +32,7 @@
 use std::fmt;
 use std::sync::{Arc, LazyLock, Mutex};
 
+use crucible_runtime::BoxFuture;
 use crucible_tools::{
     Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolContext, ToolError, ToolOutput,
 };
@@ -321,17 +322,23 @@ impl Tool for TodoWrite {
         tally(args)
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
 
-        match sent(&args)? {
-            Sent::Refused(why) => Ok(ToolOutput::failed(why)),
-            Sent::Tasks(tasks) => {
-                let answer = report(&tasks);
-                self.plan.write(tasks);
-                Ok(ToolOutput::ok(answer))
+            match sent(&args)? {
+                Sent::Refused(why) => Ok(ToolOutput::failed(why)),
+                Sent::Tasks(tasks) => {
+                    let answer = report(&tasks);
+                    self.plan.write(tasks);
+                    Ok(ToolOutput::ok(answer))
+                }
             }
-        }
+        })
     }
 }
 
@@ -487,7 +494,7 @@ mod tests {
     /// Runs one call the only way a call can be run.
     fn write(plan: &Plan, args: &str) -> ToolOutput {
         let tool = TodoWrite::new(plan.clone());
-        tool.run(allowed(&tool, args), &crate::sample::context())
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
             .unwrap()
     }
 
@@ -684,15 +691,14 @@ mod tests {
         // cannot see.
         let tool = TodoWrite::new(Plan::new());
 
-        let problem = tool
-            .run(
-                allowed(
-                    &tool,
-                    r#"{"tasks":[{"task":"Build it","state":"blocked"}]}"#,
-                ),
-                &crate::sample::context(),
-            )
-            .unwrap_err();
+        let problem = crucible_runtime::answered!(tool.run(
+            allowed(
+                &tool,
+                r#"{"tasks":[{"task":"Build it","state":"blocked"}]}"#,
+            ),
+            &crate::sample::context(),
+        ))
+        .unwrap_err();
 
         assert_eq!(
             problem.to_string(),
@@ -704,9 +710,9 @@ mod tests {
     fn a_call_with_no_tasks_at_all_ends_the_turn() {
         let tool = TodoWrite::new(Plan::new());
 
-        let problem = tool
-            .run(allowed(&tool, "{}"), &crate::sample::context())
-            .unwrap_err();
+        let problem =
+            crucible_runtime::answered!(tool.run(allowed(&tool, "{}"), &crate::sample::context()))
+                .unwrap_err();
 
         assert_eq!(problem.to_string(), "todo_write: tasks is required");
     }

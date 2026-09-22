@@ -22,7 +22,7 @@ use std::fmt;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{Cancel, Unready};
 use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation};
 use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken};
 
@@ -55,9 +55,9 @@ impl Hosted {
     ///
     /// [`Unstarted`] where the process has no pipe to speak over or none to
     /// listen to. Stopping the process is attempted before either is returned, and
-    /// [`Unstarted::Unreaped`] preserves an unconfirmed stop: a peer
-    /// crucible cannot hold a conversation with is one it has no way to end
-    /// politely later.
+    /// [`Unstarted::Unreaped`] preserves an unconfirmed stop, whether it failed
+    /// or would have had to wait and was dropped: a peer crucible cannot hold a
+    /// conversation with is one it has no way to end politely later.
     pub fn over(
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
@@ -258,16 +258,22 @@ pub enum Unstarted {
     )]
     Unheard,
 
-    /// Hosting failed, and the backend could not confirm process-scope cleanup.
+    /// Hosting failed, and cleanup of the process scope is unconfirmed: the
+    /// stop failed, or would have had to wait and was dropped.
     ///
-    /// Construction retains the original missing-pipe cause and the stop error;
-    /// it emits one wrapper, never a chain of cleanup attempts.
-    #[error("{cause}; process cleanup remains unconfirmed: {cleanup}")]
+    /// Construction retains the missing-pipe cause and the stop's error or its
+    /// refusal; it emits one wrapper, never a chain of cleanup attempts. A
+    /// refusal already says that what the stop began is unconfirmed, so the
+    /// message gives it as it stands; a failed stop's words need not say it, so
+    /// the message says it before them.
+    #[error("{cause}; {}: {cleanup}", process_cleanup(.cleanup))]
     Unreaped {
         /// Why the process could not be hosted.
         #[source]
         cause: Box<Self>,
-        /// Why the backend could not confirm cleanup.
+        /// Why the backend could not confirm cleanup. A stop that would have had
+        /// to wait was dropped, and is as unconfirmed: this then holds the
+        /// refusal, which `get_ref` finds.
         cleanup: io::Error,
     },
 }
@@ -307,6 +313,33 @@ impl From<Unspoken> for Unstarted {
             },
         }
     }
+}
+
+/// What leads in a stop's error in [`Unstarted::Unreaped`]'s message.
+fn process_cleanup(cleanup: &io::Error) -> &'static str {
+    if refused_stop(cleanup) {
+        "process cleanup"
+    } else {
+        "process cleanup remains unconfirmed"
+    }
+}
+
+/// Whether `stop` is a stop dropped because it would have had to wait, rather
+/// than one that failed.
+///
+/// The refusal is the error `stop` holds; or, for a process stopped at its
+/// publication ceiling, the error held by the stop's own error, which the one
+/// saying what the ceiling cost keeps as its source. Either way its words
+/// already say that what the stop began is unconfirmed.
+pub(crate) fn refused_stop(stop: &io::Error) -> bool {
+    let Some(held) = stop.get_ref() else {
+        return false;
+    };
+    let beneath = held
+        .source()
+        .and_then(|source| source.downcast_ref::<io::Error>())
+        .and_then(io::Error::get_ref);
+    held.is::<Unready>() || matches!(beneath, Some(inner) if inner.is::<Unready>())
 }
 
 #[cfg(test)]

@@ -24,12 +24,16 @@
 //! that have to pass it are not all in this repository. A container, a remote
 //! executor or another operating system's adapter can depend on this crate,
 //! run [`Conformance::audit`] over a directory it owns, and get the same
-//! verdicts against the same table.
+//! verdicts against the same table, provided each probe and preparation
+//! answers the first time it is asked: [the audit](Conformance::audit) does
+//! not wait, and one that would have had to fails it.
 
 use std::fmt::Write as _;
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+use crucible_runtime::Bridge;
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxDomainPattern,
     SandboxDomainPolicy, SandboxError, SandboxFeature, SandboxFilesystemAccess,
@@ -239,8 +243,16 @@ impl Conformance {
     ///
     /// The probe's own failure is returned as it stands. There is no backend to
     /// report on, and an empty matrix would read as one that holds nothing.
+    ///
+    /// The audit asks each step once and does not wait: a probe or a
+    /// preparation that would have had to is a [`SandboxError::Lifecycle`]
+    /// carrying the [`Unready`](crucible_runtime::Unready) it was refused
+    /// with. The audit ends there, and no verdict is recorded for an offer
+    /// that was never answered.
     pub fn audit(service: &dyn SandboxService, at: &Path) -> Result<Self, SandboxError> {
-        let (backend, capabilities) = service.probe()?;
+        let (backend, capabilities) = Bridge::LocalBackend
+            .cross(service.probe())
+            .unwrap_or_else(|unready| Err(SandboxError::Lifecycle(io::Error::other(unready))))?;
         // Each offer selects the backend that was just probed. An enabled
         // offer reaches the enforcing backend; a disabled offer reaches
         // compatibility. Mixing them would test another backend's claims.
@@ -248,7 +260,7 @@ impl Conformance {
         // One offer covers the whole isolation family, because no policy field
         // names a PID namespace on its own; requiring confinement is the only
         // way to ask for any of them, and it asks for all of them at once.
-        let confinement = offered(service, at, SandboxFeature::Filesystem, enabled);
+        let confinement = offered(service, at, SandboxFeature::Filesystem, enabled)?;
 
         let mut findings = Vec::with_capacity(SandboxFeature::COUNT);
         for feature in SandboxFeature::ALL {
@@ -258,7 +270,7 @@ impl Conformance {
             let answered = if claim == SandboxClaim::Isolation {
                 confinement.as_ref()
             } else {
-                alone = offered(service, at, feature, enabled);
+                alone = offered(service, at, feature, enabled)?;
                 alone.as_ref()
             };
             // A confining offer carries the whole isolation family whatever
@@ -426,13 +438,24 @@ fn judge(
 /// rather than a policy requires, and — because every fixture here is built
 /// from constants — a bug in this module, which surfaces as an untested claim
 /// rather than as a verdict nothing earned.
+///
+/// # Errors
+///
+/// A preparation that would have had to wait, as a
+/// [`SandboxError::Lifecycle`] carrying the
+/// [`Unready`](crucible_runtime::Unready) it was refused with. It is kept
+/// apart from the backend's answer because it is not one: judged as an answer
+/// it would read as unreached, and a backend that answered nothing would hold
+/// every family.
 fn offered(
     service: &dyn SandboxService,
     at: &Path,
     feature: SandboxFeature,
     enabled: bool,
-) -> Option<Result<(), SandboxError>> {
-    let (policy, manifest) = asking(at, feature, enabled)?;
+) -> Result<Option<Result<(), SandboxError>>, SandboxError> {
+    let Some((policy, manifest)) = asking(at, feature, enabled) else {
+        return Ok(None);
+    };
     let request = SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -440,7 +463,10 @@ fn offered(
         policy,
         manifest,
     );
-    Some(service.prepare(request).map(drop))
+    let prepared = Bridge::LocalBackend
+        .cross(service.prepare(request))
+        .map_err(|unready| SandboxError::Lifecycle(io::Error::other(unready)))?;
+    Ok(Some(prepared.map(drop)))
 }
 
 /// The smallest policy and manifest that require `feature` of a backend.
