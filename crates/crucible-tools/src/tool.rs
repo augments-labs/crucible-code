@@ -224,8 +224,10 @@ impl fmt::Debug for Remembered {
 /// The panel a call waits behind is drawn by a thread with no provider behind
 /// it: it sends the question and blocks on the answer, so it cannot go back and
 /// ask what the command was for. What the model says about a call therefore
-/// arrives *with* the call, as an argument the schema invites and the tool
-/// itself never reads.
+/// arrives *with* the call, as an argument the schema invites: it does not
+/// steer what the tool does with the call, though a tool may read it back as
+/// it runs and keep it for what it reports once the operation that call
+/// started is over.
 ///
 /// Empty is the ordinary case and not a failure. A tool whose schema invites no
 /// account, and a call that declined to give one, both come through here, and
@@ -234,7 +236,8 @@ impl fmt::Debug for Remembered {
 /// A [`Summary`] is the neighbouring type and answers a different question:
 /// that one is *what* the call is, taken out of the arguments the tool acts on,
 /// and it goes in the transcript. This is what the model says *about* the call,
-/// in its own words, and it is shown only while somebody is deciding.
+/// in its own words, written for the panel — where the `explanation` is shown
+/// and nowhere else.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Account {
     description: Box<str>,
