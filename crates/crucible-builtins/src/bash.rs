@@ -148,13 +148,17 @@ static PACED: LazyLock<String> = LazyLock::new(|| {
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
-/// Two of those arguments are not for this tool. The account fields declared
-/// last are never read here — they are drawn on the panel where somebody
-/// decides whether this call may run, and the reason they arrive with the call
-/// rather than being asked for when the panel opens is that the thread holding
-/// the terminal has no provider to ask. So they are declared here, at the one
+/// Two of those arguments are not for deciding what this tool does. The
+/// account fields declared last are drawn on the panel where somebody decides
+/// whether this call may run, and the reason they arrive with the call rather
+/// than being asked for when the panel opens is that the thread holding the
+/// terminal has no provider to ask. So they are declared here, at the one
 /// place a model is told what it may send, and read a layer up by
-/// [`fn@crate::account`].
+/// [`fn@crate::account`] for that panel. This tool reads the description back
+/// out of them too: once a command is left running, it is kept beside the
+/// command because the row reporting that command's end is drawn long after
+/// the starting turn has scrolled away, and a reader who allowed it is owed
+/// that description back rather than just the command it ran.
 ///
 /// Neither is required, and that is the whole of what keeps them optional in
 /// practice too: a call that says nothing about itself gets the panel it would
