@@ -381,12 +381,6 @@ impl Runner {
         self.state.load.bytes_to_tokens(bytes)
     }
 
-    /// Asks the model to write down what is worth keeping.
-    ///
-    /// The instruction is pushed onto the transcript and taken off again rather
-    /// than copied alongside it, because a copy of the transcript is the one
-    /// allocation this crate may not make.
-    ///
     /// The files to carry into the recap, read and modified apart.
     ///
     /// Two sources, in the order they happened: the lists every previous recap
@@ -448,6 +442,10 @@ impl Runner {
         Ok(RECAP_REQUEST.len() as u64)
     }
 
+    /// Asks the model to write down what is worth keeping.
+    ///
+    /// The instruction is never copied alongside the transcript, because a
+    /// copy of the transcript is the one allocation this crate may not make.
     fn recap(
         &mut self,
         why: Compacting,
