@@ -1270,7 +1270,7 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
     },
     Field {
         name: "env",
-        about: "Environment variables for the commands crucible runs. A file under the working directory may set only crucible's own CRUCIBLE_CODE_ names",
+        about: "Environment variables for the commands crucible runs, and crucible's own settings under CRUCIBLE_CODE_ names. A file under the working directory may set only those",
         shape: Shape::Named {
             declared: ENV,
             others: &VALUE,

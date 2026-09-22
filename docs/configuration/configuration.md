@@ -581,9 +581,12 @@ anything about releases.
 
 ### `env`
 
-Environment variables for the commands crucible runs — the bash tool's children,
-and nothing else. crucible does not put a variable in its own environment,
-because writing to it is `unsafe` in a process with threads.
+Environment variables for the commands crucible runs — the bash tool's children
+— and the place crucible's own settings are written, under names that begin
+with `CRUCIBLE_CODE_`. crucible does not put a variable in its own environment,
+because writing to it is `unsafe` in a process with threads. It reads its own
+names from the block as settings, and one set in the shell you start crucible in
+still wins.
 
 ```json
 { "env": { "RUST_LOG": "warn", "PAGER": "cat" } }
