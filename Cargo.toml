@@ -326,9 +326,9 @@ windows-sys = { version = "=0.61.2", features = [
 # `forbid` cannot be opted out of anywhere, so it would have moved that code
 # into a third-party crate rather than removed it, which is the same unsafe with
 # less review. `deny` keeps every file in this tree an error by default and
-# makes the one exception appear in the diff, spelled out, where it can be
-# argued with. Only the privacy, workspace-validation, atomic-file and Windows
-# process-boundary modules opt in.
+# makes each exception appear in the diff that introduces it, spelled out,
+# where it can be argued with. Each is written where it applies, with its
+# own stated `reason`.
 unsafe_code = "deny"
 missing_docs = "warn"
 missing_debug_implementations = "warn"
