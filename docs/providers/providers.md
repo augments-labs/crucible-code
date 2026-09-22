@@ -454,8 +454,8 @@ Two consequences you can see:
 A connection can close between the request and the first word of the answer. The
 usual reason is time: a turn that runs tools holds its connection open while they
 work, and a socket the provider closed in the meantime returns nothing at all. A
-service saying it is busy reads the same way from here — HTTP 429, or a 5xx from
-the service or from a gateway in front of it.
+failure about the moment rather than the request reads the same way from here —
+HTTP 429 or 408, or a 5xx from the service or from a gateway in front of it.
 
 crucible asks again, twice at most, pausing a quarter of a second before the
 first and half a second before the second. The row above the box says `retrying`
