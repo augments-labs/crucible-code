@@ -27,7 +27,7 @@ use crate::platform::{Output as PlatformOutput, ReadState, Scope, Terminator};
 /// Absolute ceiling even where a policy omits a smaller one.
 pub(super) const MAX_LOCAL_COMMANDS: usize = 16;
 
-/// Bounded reap interval used by destructors.
+/// Bounded reap interval inside synchronous `stop`. Not only Drop reaches it.
 const REAP: Duration = Duration::from_millis(250);
 
 /// Supervisor polling interval. It bounds deadline overshoot without spinning.
