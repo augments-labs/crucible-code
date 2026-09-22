@@ -44,6 +44,8 @@
 /// binary uses the same boundary before handing a document back here to splice.
 pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 
+#[cfg(test)]
+mod compiled;
 mod document;
 mod env;
 mod error;
