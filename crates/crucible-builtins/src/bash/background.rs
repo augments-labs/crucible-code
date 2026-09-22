@@ -287,9 +287,16 @@ impl Background {
 
     /// Takes a running command, answering with the number it is now known by.
     ///
-    /// `None` where the cap is already met, and then the caller still owns the
-    /// child — which it ends, because a command nobody can see or stop is the one
-    /// outcome this module exists to prevent.
+    /// `None` where the lease given for it belongs to another registry or has
+    /// already been spent, where the cap is already met, or where registry
+    /// ownership is unavailable. `taking` came in by value, so the caller
+    /// has already let go of the child in every one of those, and `keep` is
+    /// the last code that could act on it. On the lease and cap branches it
+    /// ends the child itself before answering, because a command nobody can
+    /// see or stop is the one outcome this module exists to prevent. On the
+    /// lock-failure branch nothing calls `end`; the child ends only because
+    /// dropping `taking` does, true of every sandbox this ships, though the
+    /// contract behind it promises no such thing.
     pub(super) fn keep(&self, mut taking: Taking, plan: Keep<'_>) -> Option<Kept> {
         let Keep {
             called,
