@@ -299,11 +299,23 @@ never follow redirects; the provider receives the 3xx refusal instead.
 
 A refused response body is read for at most ten seconds and 8 KiB. That deadline
 is elapsed time for the whole body, including bytes a slow peer continues to
-trickle between waits.
+trickle between waits, and it is per attempt: a status crucible retries can cost
+it more than once in a turn, and Esc ends the wait wherever it has got to. Where
+a refusal reaches you in the service's own words, a reply crucible read past the
+bound, and finished reading in time, ends in
+` [cut: the reply was longer than crucible reads]`. One whose reading ran out of
+time or broke off after the bound had filled ends in
+` [cut: crucible stopped reading here]`, because whether that one had more to
+come usually cannot be told. Either way the end of what was kept is dropped
+wherever that end begins a key, since a cut can land in the middle of one.
+Google, Fable 5.1 and Astra answer every refusal with a sentence of crucible's
+own instead.
 
-A key never appears in a log line, an error message, a session file, or
-anything crucible prints. If you see one, that is a bug worth
-[reporting privately](../../SECURITY.md).
+The exact key crucible sent is removed from a log line, an error message, a
+session file and anything crucible prints. That is the value crucible knows it
+sent, so a service that echoes a key back changed, or leaves part of one
+somewhere other than the end of a cut reply, is not something this can match. If
+you see a key, that is a bug worth [reporting privately](../../SECURITY.md).
 
 ### A key written down instead of exported
 

@@ -270,7 +270,129 @@ impl Redactions {
     /// Replaces every protected value while leaving other text intact.
     #[must_use]
     pub fn redact(&self, text: &str) -> String {
-        let marker = if self
+        // Text with whole values swapped for an ASCII marker is still text, so
+        // the conversion back stands nothing in for anything here.
+        String::from_utf8_lossy(&self.without(text.as_bytes())).into_owned()
+    }
+
+    /// The same, for the bytes of a response whose end was cut off.
+    ///
+    /// **For cut text only.** A bound that keeps the beginning of a response
+    /// lands wherever the bytes ran out, and that can be the middle of a value
+    /// a gateway echoed. [`redact`] matches whole values, so it cannot see
+    /// half of one, and half a credential at the end of the text is half a
+    /// credential the reader keeps. Everything `redact` replaces is replaced
+    /// here, and so is the longest part of the end of the text that begins a
+    /// protected value.
+    ///
+    /// Which is why the end has to be a cut: the last bytes of an ordinary
+    /// sentence that happen to begin a value are replaced too, and a sentence
+    /// ends where its writer meant it to. Where the end is an arbitrary
+    /// boundary, losing a byte or two of it costs nothing anybody can read.
+    ///
+    /// **Hand over the bytes as they arrived, never text made from them.** A
+    /// caller that converts first hands over an end its sender composed: how
+    /// many stand-in characters a lossy conversion leaves there is decided by
+    /// the bytes the sender chose to put at the end, and a search for a value's
+    /// beginning that has to reach behind them is a search the sender can
+    /// blind. The search here ends at the last whole character the bytes spell,
+    /// since anything after that begins no value, and the conversion happens
+    /// afterwards over what survives.
+    ///
+    /// **The answer is about the text as it is handed back.** A caller that
+    /// afterwards parses it, unescapes it or lifts a part of it out is showing
+    /// something this never decided about: a body that was whole JSON up to
+    /// the cut has its own last bytes protected, and the sentence inside it —
+    /// which is what such a caller extracts — has whatever the cut left there.
+    /// Redact again over anything taken out, and rely on this for none of it.
+    ///
+    /// What is decided about is the text as given, once the whole values have
+    /// gone: a value ending exactly at the cut is replaced by `redact`, and
+    /// what is left behind then begins nothing, so it stays one marker rather
+    /// than becoming two.
+    ///
+    /// The work this adds over `redact` is bounded by the protected values
+    /// rather than by the text — only an end shorter than a value can begin
+    /// one — so a long body costs no more here than a short one.
+    ///
+    /// [`redact`]: Self::redact
+    #[must_use]
+    pub fn redact_cut(&self, said: &[u8]) -> String {
+        let mut kept = self.without(said);
+        if let Some(from) = self.begun(spelled(&kept)) {
+            // A protected value is text, so its first byte opens a character
+            // and never continues one: a tail that begins a value begins where
+            // a character does, and cutting the bytes there splits none.
+            kept.truncate(from);
+            kept.extend_from_slice(self.marker().as_bytes());
+        }
+        String::from_utf8_lossy(&kept).into_owned()
+    }
+
+    /// Every protected value replaced, in bytes rather than in text.
+    ///
+    /// One pass for both callers: a filter that saw whole values differently
+    /// from the one the cut guard runs would be a second answer to the same
+    /// question. Bytes because [`redact_cut`] must not convert first, and a
+    /// value is text whose bytes appear in text only where the text spells it,
+    /// so nothing here decides differently for a caller that had text.
+    ///
+    /// [`redact_cut`]: Self::redact_cut
+    fn without(&self, text: &[u8]) -> Vec<u8> {
+        let marker = self.marker().as_bytes();
+        let mut remaining = text;
+        let mut redacted = Vec::with_capacity(text.len());
+
+        while let Some((at, value)) = self
+            .values
+            .iter()
+            .filter_map(|value| {
+                let value = value.as_bytes();
+                found(remaining, value).map(|at| (at, value))
+            })
+            .min_by(|(left_at, left), (right_at, right)| {
+                left_at
+                    .cmp(right_at)
+                    .then_with(|| right.len().cmp(&left.len()))
+            })
+        {
+            redacted.extend_from_slice(remaining.get(..at).unwrap_or_default());
+            redacted.extend_from_slice(marker);
+            remaining = remaining
+                .get(at.saturating_add(value.len())..)
+                .unwrap_or_default();
+        }
+        redacted.extend_from_slice(remaining);
+        redacted
+    }
+
+    /// Where the longest part of the end of `text` that begins a value starts.
+    ///
+    /// `None` where the end of the text begins none of them. The earliest such
+    /// start is the longest such end, and a tail is looked for only from the
+    /// point where one could still be shorter than the value it begins, which
+    /// leaves a whole value to [`redact`].
+    ///
+    /// [`redact`]: Self::redact
+    fn begun(&self, text: &[u8]) -> Option<usize> {
+        self.values
+            .iter()
+            .filter_map(|value| {
+                let value = value.as_bytes();
+                let earliest = text.len().saturating_sub(value.len().saturating_sub(1));
+                (earliest..text.len())
+                    .find(|&at| text.get(at..).is_some_and(|tail| value.starts_with(tail)))
+            })
+            .min()
+    }
+
+    /// What a removed value is replaced with.
+    ///
+    /// Nothing at all where a protected value is part of the marker itself,
+    /// since writing the marker would then be writing the value back into the
+    /// text it was taken out of.
+    fn marker(&self) -> &'static str {
+        if self
             .values
             .iter()
             .all(|value| !"<redacted>".contains(&**value))
@@ -278,29 +400,53 @@ impl Redactions {
             "<redacted>"
         } else {
             ""
-        };
-        let mut remaining = text;
-        let mut redacted = String::with_capacity(text.len());
-
-        while let Some((at, value)) = self
-            .values
-            .iter()
-            .filter_map(|value| remaining.find(&**value).map(|at| (at, value.as_ref())))
-            .min_by(|(left_at, left), (right_at, right)| {
-                left_at
-                    .cmp(right_at)
-                    .then_with(|| right.len().cmp(&left.len()))
-            })
-        {
-            redacted.push_str(remaining.get(..at).unwrap_or_default());
-            redacted.push_str(marker);
-            remaining = remaining
-                .get(at.saturating_add(value.len())..)
-                .unwrap_or_default();
         }
-        redacted.push_str(remaining);
-        redacted
     }
+}
+
+/// Where `needle` first appears in `haystack`.
+///
+/// What [`str::find`] answers, for bytes that need not be text. A protected
+/// value is never empty — [`Outgoing::protect`] drops an empty one — and the
+/// guard says so anyway rather than leaving a window of zero to panic on.
+fn found(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|at| at == needle)
+}
+
+/// The bytes up to the end of the last whole character they spell.
+///
+/// A cut lands on a byte rather than on a character, so what sits at the end
+/// can be half of one, or bytes that spell no character at all. Neither begins
+/// a protected value, and either left in place hides a value's beginning in
+/// front of it from the search that looks for one.
+///
+/// Dropping them moves where that search looks: what they could hide is the
+/// start of a credential, and what a search would find in them instead is
+/// bytes no reader can make a character of.
+///
+/// It can also cost a truncation the search would otherwise have made: where
+/// the character the cut split is a value's own first one, the bytes that
+/// began that value are the dropped ones, so nothing is found and nothing is
+/// taken off the end. No byte of the value is shown for it. Those bytes are
+/// past the last whole character, which is where the conversion stands a
+/// replacement character in — a single one, a split character being one
+/// incomplete sequence — so what reaches the reader is that stand-in, and
+/// neither a byte of the value nor a count of the ones it stands for.
+fn spelled(said: &[u8]) -> &[u8] {
+    let mut at = 0_usize;
+    let mut end = 0_usize;
+
+    for chunk in said.utf8_chunks() {
+        at = at.saturating_add(chunk.valid().len());
+        if !chunk.valid().is_empty() {
+            end = at;
+        }
+        at = at.saturating_add(chunk.invalid().len());
+    }
+    said.get(..end).unwrap_or_default()
 }
 
 impl fmt::Debug for Redactions {
@@ -436,6 +582,94 @@ mod tests {
             .redact(&format!("before\0{SECRET}\0after"));
 
         assert_eq!(shown, "before\0<redacted>\0after");
+    }
+
+    #[test]
+    fn a_value_the_text_was_cut_in_the_middle_of_goes_with_the_whole_ones() {
+        // The end of cut text is wherever the bytes ran out, which can be the
+        // middle of a value a gateway echoed. Whole-value redaction cannot see
+        // half of one, so half of one is what the reader would keep.
+        let mut request = Outgoing::new();
+        request.protect(SECRET);
+        let redactions = request.redactions();
+
+        for taken in 1..SECRET.len() {
+            let half = SECRET.get(..taken).unwrap_or_default();
+
+            assert_eq!(
+                redactions.redact_cut(format!("before {half}").as_bytes()),
+                "before <redacted>",
+                "{taken} bytes of it stayed"
+            );
+        }
+
+        // A value that ends exactly at the cut is one value, not a whole one
+        // followed by the start of another: what is decided about is the text
+        // as given, after the whole ones have gone.
+        assert_eq!(
+            redactions.redact_cut(format!("before {SECRET}").as_bytes()),
+            "before <redacted>"
+        );
+
+        // Nothing at the end begins a value, so nothing goes beyond what
+        // whole-value redaction already takes.
+        let ordinary = format!("gateway repeated {SECRET} and then gave up");
+        assert_eq!(
+            redactions.redact_cut(ordinary.as_bytes()),
+            redactions.redact(&ordinary)
+        );
+    }
+
+    #[test]
+    fn a_value_the_cut_left_in_front_of_bytes_that_spell_nothing_goes_too() {
+        // How many stand-in characters a conversion leaves at the end is the
+        // sender's to arrange: one byte that spells no character is one of
+        // them, and two are two. Deciding anything about the end of the text
+        // from what the conversion left is deciding it from what was sent, so
+        // the decision is made on the bytes and the conversion comes after.
+        let mut request = Outgoing::new();
+        request.protect(SECRET);
+        let redactions = request.redactions();
+
+        let half = SECRET.get(..SECRET.len().saturating_sub(1)).unwrap_or("");
+        let mut cut = format!("before {half}").into_bytes();
+        cut.extend_from_slice(&[0xFF, 0xFF]);
+
+        let shown = redactions.redact_cut(&cut);
+
+        assert!(
+            !shown.contains(half),
+            "the value in front of the stray bytes stayed: {shown}"
+        );
+    }
+
+    #[test]
+    fn a_cut_inside_the_first_character_of_a_value_shows_no_byte_of_it() {
+        // The bytes past the last whole character are dropped before the end
+        // is searched, and where the split character is the value's own first
+        // one those bytes are the only ones that began it: the search finds
+        // nothing, and the end is not truncated. What the value's first bytes
+        // become is the stand-in the conversion puts there for them — one of
+        // them, however many bytes the cut left — so the reader is shown
+        // neither a byte of the value nor how many of them there were.
+        for wide in ['é', '€', '𝄞'] {
+            let value = format!("{wide}{SECRET}");
+            let mut request = Outgoing::new();
+            request.protect(value.as_str());
+            let redactions = request.redactions();
+
+            for taken in 1..wide.len_utf8() {
+                let mut cut = b"before ".to_vec();
+                cut.extend_from_slice(value.as_bytes().get(..taken).unwrap_or_default());
+
+                let shown = redactions.redact_cut(&cut);
+
+                assert_eq!(
+                    shown, "before \u{FFFD}",
+                    "{taken} of the bytes {wide:?} is spelled with reached the answer"
+                );
+            }
+        }
     }
 
     #[test]
