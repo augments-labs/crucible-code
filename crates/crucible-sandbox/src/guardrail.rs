@@ -439,8 +439,10 @@ pub enum SandboxGuardrailError {
     TooManyRules,
 }
 
-// The fixtures are POSIX absolute paths, which no Windows path type accepts;
-// Windows has no confinement backend to give them a native shape.
+// The fixtures this module hands to `SandboxCommand::new` are POSIX absolute
+// paths; Windows does not accept them as absolute, so that constructor rejects
+// them on Windows before any backend is called. The gate is the module's, so
+// tests that need no such rejection ride it too.
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
