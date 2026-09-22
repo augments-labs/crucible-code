@@ -411,8 +411,7 @@ impl Tool for WebFetch {
             } else {
                 said.push_str(&kept);
                 if left > 0 {
-                    use std::fmt::Write as _;
-                    let _ = write!(said, "\n[{left} more lines not shown.]");
+                    said.push_str(&left_out(left));
                 }
             }
 
@@ -434,24 +433,84 @@ fn failed(
     match problem {
         crucible_tools::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool.into())),
 
-        // Bounded like any other answer. A refusal carries the service's own
-        // reply, which is somebody else's bytes and can be a whole error page —
-        // and what a tool returns goes into the next request whole, so an
-        // unbounded failure grows the transcript that rule 6 budgets.
+        // Bounded like any other answer, and said to have been. A refusal
+        // carries the service's own reply, which is somebody else's bytes and
+        // can be a whole error page — and what a tool returns goes into the
+        // next request whole, so an unbounded failure grows the transcript that
+        // rule 6 budgets.
         problem => {
             // The concrete service is useful diagnostic context, but it is not
             // the provider or model answering the conversation. Say which role
             // the name has before saying the name, so `moonshot` here cannot
             // read as a silent model switch.
-            let explained = format!("web source error: {problem}");
-            let (said, _) = bound::within(explained.lines().map(|line| format!("{line}\n")));
-            Ok(ToolOutput::failed(if said.is_empty() {
-                format!("{tool} could not answer.")
-            } else {
-                said
-            }))
+            Ok(ToolOutput::failed(as_much_as_fits(&format!(
+                "web source error: {problem}"
+            ))))
         }
     }
+}
+
+/// The ending of an answer whose whole lines kept nothing, which cannot count
+/// what it left.
+const CUT: &str = "\n[The rest of this reply was cut: it is longer than one tool call may return.]";
+
+/// As much of an explanation as fits, saying when it left something out.
+///
+/// Whole lines, the way every other bounded answer here is cut. One whose
+/// lines all fit comes back whole; one that does not is cut to whole lines,
+/// with room kept for an ending saying how many it left — a cut result reads
+/// to the model as a complete one, and a refusal it thinks it has all of is a
+/// refusal it works around on half of what the service said.
+///
+/// A first line that will not fit in what that room leaves, with the newline
+/// whole lines add, is the case whole lines cannot serve: a minified error
+/// body would keep none of itself and come back naming neither the vendor nor
+/// the status. So that answer keeps characters while they fit instead, which
+/// keeps the head the vendor and the status are in, and cuts inside the line,
+/// at a character boundary, only a line longer than what the room leaves.
+fn as_much_as_fits(explained: &str) -> String {
+    if let (whole, 0) = bound::within(explained.lines().map(|line| format!("{line}\n"))) {
+        return whole;
+    }
+
+    // Counted before the cut answer keeps anything, so it and the sentence
+    // under it are inside `OUTPUT` together. Whichever ending this takes, no
+    // count of lines left out is wider than the count of lines it was drawn
+    // from.
+    let room = CUT.len().max(left_out(explained.lines().count()).len());
+    let budget = OUTPUT.saturating_sub(room);
+
+    let mut kept = String::new();
+    let mut left = 0;
+
+    for line in explained.lines() {
+        if left > 0 || kept.len() + line.len() + 1 > budget {
+            left += 1;
+        } else {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+
+    if kept.is_empty() {
+        let mut head = String::new();
+        for letter in explained.chars() {
+            if head.len() + letter.len_utf8() > budget {
+                break;
+            }
+            head.push(letter);
+        }
+        head.push_str(CUT);
+        return head;
+    }
+
+    kept.push_str(&left_out(left));
+    kept
+}
+
+/// The line under a cut answer saying how many whole lines it left out.
+fn left_out(lines: usize) -> String {
+    format!("\n[{lines} more lines not shown.]")
 }
 
 /// The line under a list saying what it did not include.

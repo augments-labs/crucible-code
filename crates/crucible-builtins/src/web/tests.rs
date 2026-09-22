@@ -144,6 +144,30 @@ impl Search for Breaks {
     }
 }
 
+/// A source that refuses with a reply of the test's own making.
+struct Refuses(String);
+
+impl Search for Refuses {
+    fn name(&self) -> &'static str {
+        "fake"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Named {
+            sent: "https://search.example/".into(),
+            host: "search.example".into(),
+        }
+    }
+
+    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        Err(SourceError::Refused {
+            named: "fake",
+            status: 400,
+            message: self.0.as_str().into(),
+        })
+    }
+}
+
 /// A fetch that hands back one page, from wherever it says it ended up.
 struct Pages(Page);
 
@@ -182,6 +206,12 @@ fn result(title: &str, url: &str, extract: &str) -> SearchResult {
 
 fn searching(results: Vec<SearchResult>) -> WebSearch {
     WebSearch::new(Arc::new(Answers(results)))
+}
+
+/// The head of an answer, for a failure message that must not print a reply
+/// the size of the bound.
+fn head(said: &str) -> String {
+    said.chars().take(80).collect()
 }
 
 fn fetching(url: &str, title: Option<&str>, text: &str) -> WebFetch {
@@ -371,6 +401,224 @@ fn a_source_that_could_not_answer_is_a_failed_result_and_not_a_broken_tool() {
 
     assert!(output.is_failed());
     assert_eq!(output.text(), "web source error: fake: HTTP 503: busy\n");
+}
+
+#[test]
+fn a_refusal_longer_than_the_bound_says_what_it_left_out() {
+    // A refusal carries the service's whole reply, which can be a whole error
+    // page. Cut with nothing saying so, it reads to the model as everything the
+    // service said — so the model works around a problem it was told half of.
+    let line = "the service explained itself at length\n";
+    let lines = 2_000;
+    let tool = WebSearch::new(Arc::new(Refuses(line.repeat(lines))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        said.starts_with(&format!("web source error: fake: HTTP 400: {line}")),
+        "the refusal lost the source, the status and the head of the reply: {:?}",
+        head(said),
+    );
+    // `CUT` is the widest ending this answer can earn, so everything in front
+    // of it is room the head had, and a head that took it stops one line short.
+    assert!(
+        said.len() > bound::OUTPUT - super::CUT.len() - line.len(),
+        "the answer stopped a whole line short of the room it had: {} bytes",
+        said.len(),
+    );
+    // Every line of the answer but its ending came from the reply, so the count
+    // the ending owes is the reply's lines less the ones that survived.
+    let shown = said.matches(line.trim_end()).count();
+    let ending = format!("[{} more lines not shown.]", lines - shown);
+    assert_eq!(
+        said.lines().next_back(),
+        Some(ending.as_str()),
+        "the ending does not name the lines the answer left out",
+    );
+    assert!(
+        said.len() <= bound::OUTPUT,
+        "the bound did not hold: {}",
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_of_one_line_over_the_bound_still_names_the_source_and_the_status() {
+    // A minified error body is one line, and a bound that keeps whole lines
+    // kept none of it: what came back was that the tool could not answer, with
+    // neither the vendor nor the status the service refused with in it.
+    let tool = WebSearch::new(Arc::new(Refuses("x".repeat(bound::OUTPUT * 2))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    let kept = said
+        .strip_suffix(super::CUT)
+        .expect("a reply twice the bound to end by saying it was cut");
+    assert!(
+        kept.starts_with("web source error: fake: HTTP 400: x"),
+        "the refusal lost the source and the status: {:?}",
+        head(said),
+    );
+    // One line earns the widest ending this answer has, and the head is
+    // entitled to everything in front of it.
+    assert_eq!(
+        kept.len(),
+        bound::OUTPUT - super::CUT.len(),
+        "the head did not fill the room its ending left it",
+    );
+    assert!(
+        said.len() <= bound::OUTPUT,
+        "the bound did not hold: {}",
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_cut_inside_a_line_is_cut_between_characters() {
+    // The bound is a count of bytes and a reply is somebody else's text, so
+    // the byte the cut lands on is not a character boundary: behind this
+    // thirty-four byte prefix, three-byte characters put a continuation byte
+    // there. Cut on the byte and the answer is a panic, or nothing at all.
+    let letter = "€";
+    let body = letter.repeat(bound::OUTPUT);
+    let tool = WebSearch::new(Arc::new(Refuses(body.clone())));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    let reply = format!("web source error: fake: HTTP 400: {body}");
+    let kept = said
+        .strip_suffix(super::CUT)
+        .expect("a reply three times the bound to end by saying it was cut");
+    assert!(
+        reply.starts_with(kept),
+        "the answer is not the head of the reply: {:?}",
+        head(said),
+    );
+    assert!(
+        kept.len() + letter.len() > bound::OUTPUT - super::CUT.len(),
+        "the head stopped {} bytes short of the room its ending left it",
+        bound::OUTPUT - super::CUT.len() - kept.len(),
+    );
+    assert!(
+        said.len() <= bound::OUTPUT,
+        "the bound did not hold: {}",
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_that_fills_the_room_exactly_does_not_claim_a_cut() {
+    // A reply of one line filling the room an ending leaves to the byte fits
+    // the bound whole, newline and all. A sentence saying the rest was cut is
+    // then about nothing, and the model is told it is missing what it is
+    // holding.
+    let prefix = "web source error: fake: HTTP 400: ";
+    let body = "x".repeat(bound::OUTPUT - super::CUT.len() - prefix.len());
+    let tool = WebSearch::new(Arc::new(Refuses(body.clone())));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        !said.ends_with(super::CUT),
+        "the answer claimed a cut it did not make: {} bytes",
+        said.len(),
+    );
+    assert!(
+        said == format!("{prefix}{body}\n"),
+        "a reply that fits whole did not come back whole: {:?}, {} bytes",
+        head(said),
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_whose_whole_lines_fit_the_bound_comes_back_whole() {
+    // Room for an ending is owed only to an answer that leaves something out.
+    // Kept back from one that fits, it cuts a reply the bound would have
+    // carried and then tells the model the reply was too long.
+    let prefix = "web source error: fake: HTTP 400: ";
+    let first = "A".repeat(bound::OUTPUT - super::CUT.len() - prefix.len());
+    let tool = WebSearch::new(Arc::new(Refuses(format!("{first}\nB"))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        !said.ends_with(super::CUT) && !said.ends_with("more lines not shown.]"),
+        "a reply inside the bound was said to have been cut: {} bytes",
+        said.len(),
+    );
+    assert!(
+        said == format!("{prefix}{first}\nB\n"),
+        "a reply inside the bound did not come back whole: {:?}, {} bytes",
+        head(said),
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_of_lines_inside_the_bound_is_not_cut_for_an_ending_it_does_not_need() {
+    // Two lines taking, newlines included, the bound less half the widest
+    // ending: past what is left once an ending's room is kept, inside the
+    // bound itself.
+    let each = (bound::OUTPUT - super::CUT.len() / 2) / 2;
+    assert!(
+        2 * each > bound::OUTPUT - super::CUT.len() && 2 * each <= bound::OUTPUT,
+        "the reply no longer lands between the ending's room and the bound",
+    );
+    let prefix = "web source error: fake: HTTP 400: ";
+    let first = "A".repeat(each - 1 - prefix.len());
+    let second = "B".repeat(each - 1);
+    let tool = WebSearch::new(Arc::new(Refuses(format!("{first}\n{second}"))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        !said.ends_with(super::CUT) && !said.ends_with("more lines not shown.]"),
+        "a reply inside the bound was said to have been cut: {} bytes",
+        said.len(),
+    );
+    assert!(
+        said == format!("{prefix}{first}\n{second}\n"),
+        "a reply inside the bound did not come back whole: {:?}, {} bytes",
+        head(said),
+        said.len(),
+    );
 }
 
 #[test]

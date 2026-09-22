@@ -40,6 +40,13 @@ change in any release with no deprecation period.
   another's, and both were compared as text with every invalid byte replaced,
   so two such directories could share a scope. They are now compared byte for
   byte; a directory whose name is text is unaffected.
+- **A web source's refusal says when its reply was cut.** `web_search` and
+  `web_fetch` hold what a refusing service replied to the 30 000 bytes a tool
+  may answer with, and a longer reply was cut with nothing saying so — or, where
+  it was one long line, replaced altogether by `web_search could not answer.`,
+  losing the vendor and the HTTP status with it. A cut refusal now keeps the
+  head of the reply, where the source and the status are, and ends with
+  `[N more lines not shown.]` or a line saying the rest of it was cut.
 
 ## [0.42.0] - 2026-09-20
 
