@@ -34,7 +34,7 @@ pub enum EndpointError {
     /// Neither `https` nor a loopback `http`.
     #[error(
         "{0} is not an address crucible will send a key to: it must be https, \
-         or http on localhost"
+         or http on localhost, 127.0.0.1 or [::1]"
     )]
     Insecure(Box<str>),
 

@@ -93,10 +93,11 @@ all. Choosing an arbitrary inherited secret is authority, so `apiKeyEnv` is
 read only from the configuration file in your home directory.
 
 `baseUrl` is for a gateway or a proxy speaking the same protocol. It must be
-`https`, or `http` on `localhost` — the key travels in a header on every
-request, so the address decides who receives it, and plain `http` to anywhere
-else is that key on somebody's network in the clear. For the same reason it is
-one of the keys [workspace files](#the-workspace-files) may not set.
+`https`, or `http` on `localhost`, `127.0.0.1` or `[::1]` — the key travels in a
+header on every request, so the address decides who receives it, and plain
+`http` to anywhere else is that key on somebody's network in the clear. For the
+same reason it is one of the keys [workspace files](#the-workspace-files) may
+not set.
 
 ```json
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
@@ -566,13 +567,14 @@ this one.
 { "updates": { "check": "never" } }
 ```
 
-`auto` is the default and is the only thing crucible reaches the network for
-besides a turn. At most once a day, on a thread of its own, it asks GitHub which
-release is newest and writes the answer to `~/.crucible/release`; nothing waits
-for it, so the answer is drawn under the welcome the *next* time you start. No
-part of your session, your directory or your configuration is sent — the request
-is a plain GET for the repository's latest release, carrying a user agent that
-names crucible and its version.
+`auto` is the default. A turn, `/login` and `/compact` all reach the network
+because you asked; this is the only time crucible decides to on its own. At most
+once a day, on a thread of its own, it asks GitHub which release is newest and
+writes the answer to `~/.crucible/release`; nothing waits for it, so the answer
+is drawn under the welcome the *next* time you start. No part of your session,
+your directory or your configuration is sent — the request is a plain GET for
+the repository's latest release, carrying a user agent that names crucible and
+its version.
 
 `never` stops the asking. crucible then never contacts GitHub, and never says
 anything about releases.
