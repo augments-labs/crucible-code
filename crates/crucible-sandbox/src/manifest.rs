@@ -473,8 +473,8 @@ mod tests {
         assert!(SandboxManifest::new([directory, child]).is_ok());
     }
 
-    // The mount fixtures are POSIX absolute paths, which no Windows path type
-    // accepts.
+    // The mount source is a POSIX absolute path; Windows does not accept it as
+    // absolute, so `validate_source` rejects it on Windows.
     #[cfg(unix)]
     #[test]
     fn manifest_debug_never_contains_inline_bytes_or_mount_sources() {
