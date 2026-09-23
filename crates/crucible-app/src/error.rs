@@ -141,4 +141,9 @@ pub enum AppError {
         /// The provider that could not be authenticated.
         provider: Box<str>,
     },
+
+    /// The run is over, and some of the threads the application ran its work
+    /// on had not stopped within their bound: a cleanup that failed.
+    #[error(transparent)]
+    Unstopped(#[from] crate::runtime::Unstopped),
 }
