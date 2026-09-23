@@ -179,8 +179,11 @@ ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 hyper = { version = "=1.11.1", default-features = false, features = ["client", "http1"] }
 # The pooled client over `hyper`, and the connector that takes a custom
 # resolver: the seam where `crucible-http` applies a lookup's deadline and
-# bound. `client-legacy` is that client and connector; the proxy features are
-# not compiled. `tokio` joins them to tokio's sockets.
+# bound. `client-legacy` is that client and connector, and the `CONNECT`
+# tunnel a proxy is reached through; the environment proxy matcher
+# (`client-proxy`) and the platform proxy discovery are not compiled, because
+# neither chooses a proxy the way the client before this one did. `tokio`
+# joins them to tokio's sockets.
 hyper-util = { version = "=0.1.20", default-features = false, features = ["client-legacy", "http1", "tokio"] }
 # The trait a connector is written against, which the client above names in
 # its bounds. Already in its graph; named here so a connector can implement it.
@@ -203,7 +206,8 @@ webpki-roots = "=1.0.9"
 # the credential boundary. The three wire protocols need the same codec the
 # other way, because every one of them carries an attached file as base64 text,
 # and this encoder appends into the body being built rather than returning a
-# second copy of a request's worth of bytes.
+# second copy of a request's worth of bytes. A forward proxy's user information
+# is encoded with it too, and sent to the proxy as a `Basic` credential.
 base64 = "=0.23.1"
 
 # OAuth PKCE and stable installation identifiers need bytes from the operating

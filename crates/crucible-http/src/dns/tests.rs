@@ -9,7 +9,7 @@ use hyper_util::client::legacy::connect::dns::Name;
 use tokio::time::advance;
 use tower_service::Service;
 
-use super::{Lookup, LookupError, Lookups, Poison};
+use super::{Lookup, LookupError, Lookups, PlainLookups, Poison};
 
 /// A platform lookup that does not return until the test lets it, counting
 /// how many are inside it at once.
@@ -36,7 +36,8 @@ impl Lookup for Stall {
 }
 
 impl Stall {
-    fn counts(&self) -> (usize, usize, usize) {
+    /// How many are inside, the most ever inside, and how many were made.
+    pub(crate) fn counts(&self) -> (usize, usize, usize) {
         let state = self.state.lock().unwrap();
         (state.1, state.2, state.3)
     }
@@ -68,6 +69,21 @@ pub(crate) fn stalled(count: usize, poison: Option<&Poison>) -> (Lookups, Arc<St
     let count = NonZeroUsize::new(count).unwrap();
     let lookups = Lookups::with(count, poison.cloned(), stall.clone());
     (lookups, Arc::clone(&stall), Release(stall))
+}
+
+/// A plain owner of `count` lookups that stall until the test lets them go.
+pub(crate) fn stalled_plain(count: usize) -> (PlainLookups, Arc<Stall>, Release) {
+    let stall = Arc::new(Stall::default());
+    let count = NonZeroUsize::new(count).unwrap();
+    let lookups = PlainLookups::with(count, stall.clone());
+    (lookups, Arc::clone(&stall), Release(stall))
+}
+
+/// A poison that is already raised.
+pub(crate) fn raised() -> Poison {
+    let poison = Poison::default();
+    poison.raise();
+    poison
 }
 
 fn name() -> Name {

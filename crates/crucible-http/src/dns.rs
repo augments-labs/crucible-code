@@ -15,7 +15,9 @@
 //! One that outlives that raises the poison, and every lookup under the same
 //! poison afterwards fails at once rather than queue behind it. A plain
 //! owner has neither: it is bounded by the deadline of the request around
-//! it, and its stalls never raise the poison.
+//! it, and its stalls never raise the poison. It is a type of its own,
+//! [`PlainLookups`], so that the lookup of a proxy's host, which must be
+//! plain, cannot be handed a poisoned owner.
 
 use std::fmt;
 use std::io;
@@ -59,6 +61,33 @@ pub struct Lookups {
     poison: Option<Poison>,
 }
 
+/// An owner of plain lookups: no deadline or poison of its own, and no way
+/// to be given either. A proxy's host is looked up only with one of these,
+/// so a proxied request can neither obey nor raise a poison.
+///
+/// It can look targets up too, converted into the [`Lookups`] a client takes
+/// for them; the permits stay shared.
+///
+/// ```compile_fail,E0308
+/// # use std::num::NonZeroUsize;
+/// # use crucible_http::{Http, Lookups, Poison, ProxyEnv, Tls};
+/// fn build(tls: &Tls, poison: &Poison) -> Http {
+///     let target = Lookups::poisoned(NonZeroUsize::MIN, poison);
+///     Http::new(tls, target.clone(), target, ProxyEnv::capture())
+/// }
+/// ```
+///
+/// ```
+/// # use std::num::NonZeroUsize;
+/// # use crucible_http::{Http, Lookups, Poison, ProxyEnv, Tls};
+/// fn build(tls: &Tls, poison: &Poison) -> Http {
+///     let target = Lookups::poisoned(NonZeroUsize::MIN, poison);
+///     Http::new(tls, target.clone(), Lookups::plain(NonZeroUsize::MIN), ProxyEnv::capture())
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub struct PlainLookups(Lookups);
+
 /// Raised once a poisoned lookup outlives its deadline, and never lowered.
 ///
 /// An owned value rather than a process-wide flag: whoever builds the
@@ -94,10 +123,11 @@ impl Lookups {
     }
 
     /// An owner of `count` lookups at once with no deadline or poison of
-    /// their own, for requests that are bounded by a deadline of their own.
+    /// their own, for requests that are bounded by a deadline of their own
+    /// and for proxy hosts.
     #[must_use]
-    pub fn plain(count: NonZeroUsize) -> Self {
-        Self::with(count, None, Arc::new(System))
+    pub fn plain(count: NonZeroUsize) -> PlainLookups {
+        PlainLookups::with(count, Arc::new(System))
     }
 
     pub(crate) fn with(
@@ -123,6 +153,18 @@ impl Lookups {
             lookup.lookup(&host)
         });
         Ok(found.await??.into_iter())
+    }
+}
+
+impl PlainLookups {
+    pub(crate) fn with(count: NonZeroUsize, lookup: Arc<dyn Lookup>) -> Self {
+        Self(Lookups::with(count, None, lookup))
+    }
+}
+
+impl From<PlainLookups> for Lookups {
+    fn from(plain: PlainLookups) -> Self {
+        plain.0
     }
 }
 
@@ -165,6 +207,20 @@ impl Service<Name> for Lookups {
 
     fn call(&mut self, name: Name) -> Self::Future {
         Box::pin(self.clone().resolve(name.as_str().to_owned()))
+    }
+}
+
+impl Service<Name> for PlainLookups {
+    type Response = vec::IntoIter<SocketAddr>;
+    type Error = LookupError;
+    type Future = BoxFuture<'static, Result<Self::Response, LookupError>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), LookupError>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, name: Name) -> Self::Future {
+        self.0.call(name)
     }
 }
 
