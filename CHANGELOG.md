@@ -40,6 +40,13 @@ change in any release with no deprecation period.
   were all of it. What that command printed now ends, in the note, with
   `[output is incomplete: reading it failed before the end]`; a command whose
   output was read without a failure is reported as before.
+- **A background command's output no longer reads as complete when crucible
+  stopped reading it before the end.** A command that ended while nobody
+  waited, one of whose pipes had not reached its end, was reported with what
+  had arrived as though it were the whole. What that command printed now ends,
+  in that case, with `[output is incomplete: it had not been read to the end
+  when the command was reported]`; a command whose readers reached the end is
+  reported as before.
 - **A background command's output now says how many of its bytes were
   omitted.** When a command's output passed what crucible keeps, the model was
   told of a cut that counted a read's own ceiling or the encoded result, not

@@ -518,6 +518,45 @@ fn a_kept_command_that_cannot_publish_is_reported_once_its_patience_has_passed()
 }
 
 #[test]
+fn a_publication_that_never_finishes_keeps_its_reason_after_end_stops_it() {
+    // The fake's own `stop`, like the real backend's, resolves the process as
+    // exited on success. What reap decided on the beat that called `end` —
+    // that nothing it wrote was published — must still be what is reported,
+    // not a status a later beat reads back off the very leader `end` itself
+    // just resolved.
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    let mut printing = process(&observed);
+    printing.stdout = Some(Box::new(Printing {
+        said: None,
+        then: || Ok(SandboxRead::Pending),
+        told: None,
+    }));
+    drop(keeping(&left, printing, false));
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let one = loop {
+        if let Some(one) = left.reap().into_iter().next() {
+            break one;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a publication that never finished, held for its reader, was never reported"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    assert_eq!(one.code, None, "{one:?}");
+    assert_eq!(
+        one.unpublished.as_deref(),
+        Some("its publication did not finish in time"),
+        "{one:?}"
+    );
+}
+
+#[test]
 fn a_cancel_waits_less_for_a_publication_than_a_deadline_does() {
     // A deadline's patience is a machine's; a cancel's is a person's, who is
     // waiting for the turn to end.
@@ -736,10 +775,189 @@ fn a_background_command_whose_output_read_failed_says_it_is_incomplete() {
     );
 }
 
+/// Whether the command running as `number` has had both its readers reach the
+/// end of their pipes. Holds the registry lock only for the lookup, and reads
+/// `false` for a number with no entry — so a test can wait on the fact itself
+/// instead of racing the beat that would otherwise report it.
+fn drained(left: &Background, number: usize) -> bool {
+    left.standing.lock().is_ok_and(|standing| {
+        standing
+            .left
+            .iter()
+            .find(|entry| entry.number == number)
+            .is_some_and(Left::drained)
+    })
+}
+
 #[test]
 fn a_background_command_whose_output_was_read_to_the_end_says_only_what_it_printed() {
-    let one = ended_after_printing(b"compiled 7 of 7 crates\n", || Ok(SandboxRead::End));
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    let (told, heard) = std::sync::mpsc::channel();
+    let mut printing = process(&observed);
+    printing.stdout = Some(Box::new(Printing {
+        said: Some(b"compiled 7 of 7 crates\n"),
+        then: || Ok(SandboxRead::End),
+        told: Some(told),
+    }));
+    let kept = keeping(&left, printing, false);
+    let number = kept.number();
+    drop(kept);
+    heard
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the reader met the ending under test");
+
+    // `told` fires as the reader decides to end, a moment before its thread
+    // has actually finished. Waited out here, rather than left to the grace
+    // `reap` gives a reader that has not: that grace is what the other two
+    // tests below mean to exercise, and this one would otherwise pass or fail
+    // on how much of it a loaded runner left to close that moment's gap.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !drained(&left, number) {
+        assert!(
+            Instant::now() < deadline,
+            "the reader never reached the end"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    observed.exited.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let one = loop {
+        if let Some(one) = left.reap().into_iter().next() {
+            break one;
+        }
+        assert!(Instant::now() < deadline, "the command was never reported");
+        thread::sleep(Duration::from_millis(10));
+    };
 
     assert_eq!(&*one.printed, "compiled 7 of 7 crates");
     assert_eq!(one.lines, 1);
+}
+
+#[test]
+fn a_background_command_whose_reader_never_reached_the_end_says_it_is_incomplete() {
+    // Something the command started keeps its pipe from ever showing an end,
+    // the way a held-open grandchild's would. Every hold on reporting its
+    // ending runs out rather than waiting forever, and what it kept must not
+    // then read as the whole.
+    let one = ended_after_printing(b"still building", || Ok(SandboxRead::Pending));
+
+    assert_eq!(
+        &*one.printed,
+        format!("still building{BEFORE_NOTE}{UNDRAINED}")
+    );
+}
+
+/// A standard output that hands over `said`, then parks on [`SandboxRead::Pending`]
+/// — signalling once, on `parked`, the first time it does — until both
+/// `observed` shows `end` has stopped this command and the test has set
+/// `let_go`, and only then hands over `rest` before ending: the shape of a pipe
+/// a descendant kept open past the shell's own exit, which `end` is what makes
+/// let go. The second gate lets the test decide when that release is noticed,
+/// so no beat it asserts on races the reader.
+struct Releasing {
+    said: Option<&'static [u8]>,
+    observed: Arc<Observed>,
+    let_go: Arc<AtomicBool>,
+    rest: Option<&'static [u8]>,
+    parked: Option<std::sync::mpsc::Sender<()>>,
+}
+
+impl SandboxOutput for Releasing {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if let Some(said) = self.said.take() {
+            let read = said.len().min(buffer.len());
+            buffer
+                .get_mut(..read)
+                .expect("room for what it says")
+                .copy_from_slice(said.get(..read).expect("what it says"));
+            return Ok(SandboxRead::Bytes(read));
+        }
+        if self.observed.stops.load(Ordering::Relaxed) == 0 || !self.let_go.load(Ordering::Relaxed)
+        {
+            if let Some(parked) = self.parked.take() {
+                let _ = parked.send(());
+            }
+            return Ok(SandboxRead::Pending);
+        }
+        let Some(rest) = self.rest.take() else {
+            return Ok(SandboxRead::End);
+        };
+        let read = rest.len().min(buffer.len());
+        buffer
+            .get_mut(..read)
+            .expect("room for what it says")
+            .copy_from_slice(rest.get(..read).expect("what it says"));
+        Ok(SandboxRead::Bytes(read))
+    }
+}
+
+#[test]
+fn a_background_command_whose_reader_catches_up_once_stopped_says_the_whole() {
+    // A grandchild can keep a pipe open past the shell's own exit; `end` is
+    // what is expected to make it let go. The bytes that then arrive are
+    // still worth keeping, not losing to a check made before the reader had
+    // caught up with them.
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    let let_go = Arc::new(AtomicBool::new(false));
+    let (parked, settled) = std::sync::mpsc::channel();
+    let mut printing = process(&observed);
+    printing.stdout = Some(Box::new(Releasing {
+        said: Some(b"still building"),
+        observed: Arc::clone(&observed),
+        let_go: Arc::clone(&let_go),
+        rest: Some(b": done"),
+        parked: Some(parked),
+    }));
+    let kept = keeping(&left, printing, false);
+    let number = kept.number();
+    drop(kept);
+    settled
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the reader parked waiting for the release");
+    observed.exited.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    // This beat only starts the grace its own exit gets; nothing has asked
+    // `end` yet, so it must hold rather than report.
+    assert!(
+        left.reap().is_empty(),
+        "reported before its own exit was even held"
+    );
+    // A sleep only ever overshoots, so surpassing that grace this way holds
+    // by construction: the next beat is the one that ends it, not one still
+    // held by the first wait.
+    thread::sleep(output::DRAIN + Duration::from_millis(50));
+
+    // This beat ends the command, and must hold rather than report the marker
+    // at once: the reader cannot catch up with that release until the test
+    // lets it go below, so the hold is what this beat has to show.
+    assert!(
+        left.reap().is_empty(),
+        "reported before the reader that end() itself released had a chance to catch up"
+    );
+
+    // The reader is let go only now, after the beat that held it; the test
+    // then waits on the fact itself, however long the host takes.
+    let_go.store(true, Ordering::Relaxed);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !drained(&left, number) {
+        assert!(
+            Instant::now() < deadline,
+            "the reader never caught up with what end() released"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let one = left
+        .reap()
+        .into_iter()
+        .next()
+        .expect("the command was reported once its reader had caught up");
+
+    assert_eq!(&*one.printed, "still building: done");
 }
