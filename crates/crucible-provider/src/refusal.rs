@@ -367,6 +367,13 @@ enum ReadError {
 }
 
 /// Reads until the body ends, its bytes run out, or `wait` does.
+///
+/// The wait is checked once per pass, before a read is attempted, never
+/// after one returns: what a read has already handed over is kept, and a
+/// clean end it reports is honoured, whatever the clock reads by then. The
+/// wait's own job is only to stop a *further* attempt — a stall or a
+/// trickle that has yet to say anything more — from holding the turn; it
+/// has nothing to take back from an attempt that already answered.
 fn fill(
     body: &mut dyn Read,
     said: &mut Vec<u8>,
@@ -385,11 +392,14 @@ fn fill(
         }
 
         let read = body.read(&mut into);
+        // The cancel is looked at again here, and it still wins: an Esc that
+        // lands the instant this read returns drops whatever it just handed
+        // over. That costs nothing, because a cancelled turn is reported as
+        // `ProviderError::Cancelled` and never shows a byte of this body —
+        // the bytes below are worth keeping only where the wait, not a
+        // cancel, is what ends the reading.
         if cancel.requested() {
             return Err(ReadError::Cancelled);
-        }
-        if since.elapsed() >= wait {
-            return Err(timed_out().into());
         }
 
         match read {
@@ -552,6 +562,116 @@ mod tests {
         ]);
 
         let problem = plain_said(502, Box::new(body), MAX_WAIT);
+
+        assert_eq!(problem.to_string(), "test: HTTP 502: upstream is unwell");
+    }
+
+    /// A body whose one read sleeps past `wait` and then answers with `then`.
+    ///
+    /// Drives the timing deterministically: the sleep is what spends the
+    /// wait, not a hope that a fast test outraces a real deadline, so it is
+    /// the read's own answer — not a check that ran ahead of it — that
+    /// decides what `fill` does with it.
+    struct Late {
+        wait: Duration,
+        then: Vec<u8>,
+    }
+
+    impl Read for Late {
+        fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+            std::thread::sleep(self.wait.saturating_add(Duration::from_millis(20)));
+            let took = self.then.len().min(into.len());
+            into.get_mut(..took)
+                .unwrap_or_default()
+                .copy_from_slice(self.then.get(..took).unwrap_or_default());
+            self.then.drain(..took);
+            Ok(took)
+        }
+    }
+
+    #[test]
+    fn a_clean_end_a_read_hands_over_after_the_wait_runs_out_is_not_a_stall() {
+        // The bug this proves against checked the wait right after this
+        // read, before looking at what it returned, so a body that closed
+        // cleanly exactly there was reported as a stall instead.
+        let wait = Duration::from_millis(5);
+        let mut reading = Late {
+            wait,
+            then: Vec::new(),
+        };
+        let mut said = Vec::new();
+
+        let read = fill(&mut reading, &mut said, wait, &Cancel::new());
+
+        assert!(
+            read.is_ok(),
+            "a late clean end was reported as a stall: {read:?}"
+        );
+        assert!(said.is_empty());
+    }
+
+    #[test]
+    fn a_chunk_a_read_hands_over_as_the_wait_runs_out_is_kept() {
+        // The other half: a read that cannot be shown to have ended, or to
+        // be the whole reply, still handed bytes over before the wait ran
+        // out finding that out, and those bytes must survive it.
+        let wait = Duration::from_millis(5);
+        let mut reading = Late {
+            wait,
+            then: b"partial".to_vec(),
+        };
+        let mut said = Vec::new();
+
+        let read = fill(&mut reading, &mut said, wait, &Cancel::new());
+
+        assert!(
+            matches!(read, Err(ReadError::Body(_))),
+            "expected the spent wait to end this read: {read:?}"
+        );
+        assert_eq!(said, b"partial");
+    }
+
+    /// A body that hands `first` over at once, then sleeps past `wait`
+    /// before answering that nothing more is coming.
+    ///
+    /// Two pieces because the read this proves is the one that discovers the
+    /// clean end: the reply already sat whole in `fill`'s buffer, and the
+    /// read confirming that arrives only once the wait has already run out.
+    struct WholeThenLateEnd {
+        first: Option<Vec<u8>>,
+        wait: Duration,
+    }
+
+    impl Read for WholeThenLateEnd {
+        fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+            let Some(body) = self.first.take() else {
+                std::thread::sleep(self.wait.saturating_add(Duration::from_millis(20)));
+                return Ok(0);
+            };
+
+            let took = body.len().min(into.len());
+            into.get_mut(..took)
+                .unwrap_or_default()
+                .copy_from_slice(body.get(..took).unwrap_or_default());
+            Ok(took)
+        }
+    }
+
+    #[test]
+    fn a_reply_read_whole_is_shown_when_the_close_confirming_it_arrives_late() {
+        // The same bug as the two above, seen through the whole pipeline:
+        // the reply was already complete in hand, and only the read saying
+        // so arrived once the wait had run out. Losing it turned a reply
+        // into "the response could not be read", and keeping it says
+        // `End::Whole` — no cut clause, because none of it was lost.
+        let wait = Duration::from_millis(5);
+        let body = r#"{"error":{"message":"upstream is unwell"}}"#;
+        let reading = WholeThenLateEnd {
+            first: Some(body.as_bytes().to_vec()),
+            wait,
+        };
+
+        let problem = plain_said(502, Box::new(reading), wait);
 
         assert_eq!(problem.to_string(), "test: HTTP 502: upstream is unwell");
     }

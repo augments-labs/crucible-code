@@ -52,6 +52,13 @@ change in any release with no deprecation period.
   "[1 more lines not shown.]" for one line left out; both now say "result"
   and "line" for a count of one, matching how every other count in crucible
   is said.
+- **A refusal whose last bytes arrived as the ten-second read wait ran out is
+  no longer thrown away.** The wait was checked right after a read returned,
+  before looking at what it had handed over, so a reply that finished exactly
+  then came back as "the response could not be read" instead of the reply
+  itself, or shorter than what was actually read. What a read hands over is
+  now kept, and a clean end it reports is honoured, whatever the wait says by
+  then.
 
 ### Security
 
