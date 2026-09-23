@@ -20,11 +20,21 @@ crucible-sandbox.workspace = true
 # Every fallible function here answers with a module-owned enum, and the derive
 # writes the `Display` and `source` impls rather than shipping a runtime.
 thiserror.workspace = true
+# The asynchronous half of the framing and the finish: `io-util` is the buffered
+# reading and the whole-buffer writing a frame is read and sent with over any
+# asynchronous stream, and `time` is the clock a finish waits on and bounds its
+# stop by. Nothing here builds or chooses a runtime; both run on the caller's.
+tokio = { workspace = true, features = ["io-util", "time"] }
 
 # The identities a sandbox request is made under, which only the tests that
 # build one need: nothing on this crate's surface names them.
 [dev-dependencies]
 crucible-types.workspace = true
+# `macros` and `rt` are the `#[tokio::test]` a test runs its streams on, and
+# `test-util` is the paused clock a finish's grace and bounds are asserted
+# against without spending the wall time they name. None of it reaches the
+# library.
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [lints]
 workspace = true
