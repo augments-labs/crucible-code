@@ -152,9 +152,9 @@ pub struct Startup<'a> {
     /// A redirected run has nobody, and a tool that can only ever answer "there
     /// is no one here" is a schema spent saying so.
     pub terminal: bool,
-    /// Reads the environment. A parameter because the real one cannot be
-    /// written from a test: writing to it is `unsafe` in edition 2024, which
-    /// this workspace forbids.
+    /// Reads the environment. A parameter so a test need not write the real one:
+    /// writing to it is `unsafe` in edition 2024, and this workspace denies
+    /// `unsafe` code.
     pub from: &'a dyn Fn(&str) -> Option<String>,
     /// What `/login` wrote down. Read once by the caller, because the same
     /// answer is what decided which provider this run is for.
@@ -488,8 +488,8 @@ pub type Reach = fn(Wiring<'_>, &str) -> Reaching;
 /// sentence, resolved by the caller from the same credential set.
 ///
 /// `from` reads the environment. It is a parameter because the pairing below is
-/// worth a test and the real environment cannot be set from one: writing to it
-/// is `unsafe` in edition 2024, which this workspace forbids.
+/// worth a test. Setting the real environment from one is `unsafe` in edition
+/// 2024, and this workspace denies `unsafe` code.
 ///
 /// Which variable holds the key is configuration, so a file may name a
 /// different one — somebody with a work key and a personal key has two

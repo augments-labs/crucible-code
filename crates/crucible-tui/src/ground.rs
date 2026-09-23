@@ -47,7 +47,7 @@ const MIDPOINT: f64 = 0.1842;
 /// Free, and synchronous: it is a variable, so the first frame can be drawn on
 /// this without waiting for anything. `from` reads the environment as a
 /// parameter because writing to the real one is `unsafe` in edition 2024 and
-/// this workspace forbids it.
+/// this workspace denies it.
 #[must_use]
 pub fn seeded(from: &dyn Fn(&str) -> Option<String>) -> Option<Ground> {
     // `fg;bg`, and the `fg;other;bg` some terminals write instead. The

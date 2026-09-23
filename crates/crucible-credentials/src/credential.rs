@@ -77,7 +77,7 @@ impl ApiKey {
     ///
     /// The lookup is a parameter so the "unset" and "blank" rules can be tested
     /// without mutating the process environment — which in edition 2024 is
-    /// `unsafe`, and this crate forbids that outright. Configuration stores the
+    /// `unsafe`, and this workspace denies that. Configuration stores the
     /// variable *name*, never the value, so this is how a key enters the
     /// process.
     ///

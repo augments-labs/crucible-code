@@ -194,13 +194,13 @@ impl Settings {
 
     /// The variables the commands crucible runs are started with.
     ///
-    /// Crucible's own environment is not touched and cannot be: writing to it
-    /// is `unsafe` in edition 2024 and this workspace forbids that. So this
-    /// block says what `cargo test` or `git` sees, and crucible reads its own
-    /// `CRUCIBLE_CODE_` settings out of it as settings, below the environment
-    /// it was started in, as [`Self::scroll_speed`] does. The one variable it
-    /// reads before opening a file is refused here outright rather than left to
-    /// look applied.
+    /// Crucible's own environment is not touched: writing to it is `unsafe` in
+    /// edition 2024 and this workspace denies that. So this block says what
+    /// `cargo test` or `git` sees, and crucible reads its own `CRUCIBLE_CODE_`
+    /// settings out of it as settings, below the environment it was started
+    /// in, as [`Self::scroll_speed`] does. The one variable it reads before
+    /// opening a file is refused here outright rather than left to look
+    /// applied.
     pub fn env(&self) -> impl Iterator<Item = (&str, &str)> {
         self.value
             .get("env")

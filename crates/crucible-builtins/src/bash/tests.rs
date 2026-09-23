@@ -588,8 +588,8 @@ fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
 
 #[test]
 fn the_variables_the_tool_was_given_reach_the_command() {
-    // crucible cannot put these in its own environment — writing to it is
-    // `unsafe` in edition 2024 and this workspace forbids that — so they are
+    // crucible does not put these in its own environment — writing to it is
+    // `unsafe` in edition 2024 and this workspace denies that — so they are
     // handed to each child directly. Which is the better answer anyway: the
     // model's commands get them and nothing else on the machine does.
     let sample = Sample::new("bash-env");
