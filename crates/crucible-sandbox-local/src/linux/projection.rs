@@ -1254,6 +1254,10 @@ impl SandboxProcess for ProjectedProcess {
         self.process.take_stdin()
     }
 
+    fn take_async_stdin(&mut self) -> Option<Box<dyn crucible_sandbox::SandboxInput>> {
+        self.process.take_async_stdin()
+    }
+
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
         self.process.take_stdout()
     }
@@ -1439,6 +1443,53 @@ mod tests {
 
         let masked = [b"id=".as_slice(), &[b'*'; 20]].concat();
         assert_eq!(printed.recv().unwrap(), masked);
+    }
+
+    /// A projected command's input is the process's own asynchronous input,
+    /// not the default adapter over its synchronous one, which would write on
+    /// the thread polling it: a write to a command that never reads leaves
+    /// the runtime free.
+    #[test]
+    fn a_projected_command_forwards_its_asynchronous_input() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "exec sleep 3"]);
+        let plan =
+            crate::process::testing_plan(crucible_sandbox::SandboxSpeech::Held, None).unwrap();
+        let audit = plan.audit.clone();
+        let sandbox = plan.sandbox;
+        let (process, stop_mark) = crate::process::spawn_marked(command, plan).unwrap();
+        let (control, _broker) = std::os::unix::net::UnixStream::pair().unwrap();
+        let inspection = process.inspection().clone();
+        let mut projected = ProjectedProcess {
+            process,
+            projection: None,
+            receiver: None,
+            status: None,
+            terminal: false,
+            reported: None,
+            failure: None,
+            unrecorded: None,
+            audit,
+            sandbox,
+            control: Some(control),
+            invocation: SandboxInvocationMode::Foreground,
+            call_result_key: None,
+            acceptance_pending: false,
+            inspection,
+            cleanup: crucible_sandbox::SandboxCleanup::Pending,
+            stop_mark: Some(stop_mark),
+            on_cancel: None,
+            _serial: None,
+        };
+        let input = crucible_sandbox::SandboxProcess::take_async_stdin(&mut projected)
+            .expect("a command built Held hands back an input");
+
+        let (gave_up, ticks) = crate::process::tests::pipes::writing_to_a_deaf_command(input)
+            .expect("the write held the runtime's only thread");
+
+        assert!(gave_up, "a write to a command that never reads answered");
+        assert_eq!(ticks, Some(10), "other work stopped while the write waited");
+        projected.stop().unwrap();
     }
 
     #[test]
