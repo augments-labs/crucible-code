@@ -44,6 +44,11 @@
 //!
 //! A start is released there only when a process killed this way wrote the
 //! credential across more than one write.
+//!
+//! A waiting read masks exactly as a read without waiting does, reading the
+//! source through the source's own waiting read. Output held back as a
+//! possible start is not an answer there: the read goes on reading the source
+//! until something can be released or the stream ends.
 
 use std::collections::VecDeque;
 use std::io;
@@ -231,21 +236,22 @@ impl ProtectedOutput {
             SandboxRead::Pending
         }
     }
-}
 
-impl SandboxOutput for ProtectedOutput {
-    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
-        if buffer.is_empty() {
-            return Ok(SandboxRead::Pending);
-        }
-        if !self.ready.is_empty() || self.ended || self.discarded > 0 {
-            return Ok(self.drain(buffer));
-        }
-        // At most one bounded source read per call. A nonblocking Pending
-        // retains only a possible secret prefix; ordinary output never waits
-        // for a fixed lookahead window or changes its byte encoding/length.
-        let mut incoming = [0; 4096];
-        let count = match self.inner.read_ready(&mut incoming)? {
+    /// An answer from what is already on this side of the source, where there
+    /// is one to give without reading it.
+    fn answered(&mut self, buffer: &mut [u8]) -> Option<SandboxRead> {
+        (!self.ready.is_empty() || self.ended || self.discarded > 0).then(|| self.drain(buffer))
+    }
+
+    /// Takes in one read of the source, `read` of `incoming`, and answers from
+    /// what that leaves.
+    fn took(
+        &mut self,
+        read: SandboxRead,
+        incoming: &[u8],
+        buffer: &mut [u8],
+    ) -> io::Result<SandboxRead> {
+        let count = match read {
             SandboxRead::Bytes(count) => count,
             SandboxRead::Limited {
                 retained,
@@ -274,6 +280,49 @@ impl SandboxOutput for ProtectedOutput {
             self.mask_held();
         }
         Ok(self.drain(buffer))
+    }
+}
+
+impl SandboxOutput for ProtectedOutput {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if buffer.is_empty() {
+            return Ok(SandboxRead::Pending);
+        }
+        if let Some(answer) = self.answered(buffer) {
+            return Ok(answer);
+        }
+        // At most one bounded source read per call. A nonblocking Pending
+        // retains only a possible secret prefix; ordinary output never waits
+        // for a fixed lookahead window or changes its byte encoding/length.
+        let mut incoming = [0; 4096];
+        let read = self.inner.read_ready(&mut incoming)?;
+        self.took(read, &incoming, buffer)
+    }
+
+    /// Reads the source the same way through its own waiting read, so a
+    /// source the runtime waits on is waited on here too. Where everything a
+    /// read took is held back as a possible start, this reads the source again
+    /// rather than answer `Pending`.
+    fn read<'a>(
+        &'a mut self,
+        buffer: &'a mut [u8],
+    ) -> crucible_runtime::BoxFuture<'a, io::Result<SandboxRead>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(SandboxRead::Bytes(0));
+            }
+            loop {
+                if let Some(answer) = self.answered(buffer) {
+                    return Ok(answer);
+                }
+                let mut incoming = [0; 4096];
+                let read = self.inner.read(&mut incoming).await?;
+                match self.took(read, &incoming, buffer)? {
+                    SandboxRead::Pending => {}
+                    answer => return Ok(answer),
+                }
+            }
+        })
     }
 }
 
@@ -623,6 +672,161 @@ mod tests {
                         "an occurrence of {patterns:?} in {:?} was masked differently",
                         String::from_utf8_lossy(&input)
                     );
+                }
+            }
+        }
+    }
+
+    /// A source whose bytes arrive only to a waiting read, as a pipe the
+    /// runtime waits on does: asked without waiting, it is never ready.
+    struct Waited(VecDeque<Step>);
+
+    impl SandboxOutput for Waited {
+        fn read_ready(&mut self, _: &mut [u8]) -> io::Result<SandboxRead> {
+            Ok(SandboxRead::Pending)
+        }
+
+        fn read<'a>(
+            &'a mut self,
+            bytes: &'a mut [u8],
+        ) -> crucible_runtime::BoxFuture<'a, io::Result<SandboxRead>> {
+            Box::pin(async move {
+                loop {
+                    return Ok(match self.0.pop_front() {
+                        None => SandboxRead::End,
+                        Some(Step::Bytes(chunk)) if chunk.is_empty() => continue,
+                        Some(Step::Bytes(chunk)) => {
+                            let count = bytes.len().min(chunk.len());
+                            bytes
+                                .get_mut(..count)
+                                .expect("fixture buffer")
+                                .copy_from_slice(chunk.get(..count).expect("fixture count"));
+                            if count < chunk.len() {
+                                self.0.push_front(Step::Bytes(
+                                    chunk.get(count..).expect("remainder").to_vec(),
+                                ));
+                            }
+                            SandboxRead::Bytes(count)
+                        }
+                        Some(Step::Discard(discarded)) => SandboxRead::Limited {
+                            retained: 0,
+                            discarded,
+                        },
+                    });
+                }
+            })
+        }
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("a test runtime")
+    }
+
+    /// Reads `output` to its end through waiting reads `width` bytes wide.
+    fn waited_all(output: &mut ProtectedOutput, width: usize) -> (Vec<u8>, usize) {
+        runtime().block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let mut retained = Vec::new();
+                let mut lost = 0;
+                let mut bytes = vec![0; width];
+                loop {
+                    let count = match output.read(&mut bytes).await.expect("read") {
+                        SandboxRead::Bytes(count) => count,
+                        SandboxRead::Limited {
+                            retained,
+                            discarded,
+                        } => {
+                            lost += discarded;
+                            retained
+                        }
+                        SandboxRead::Pending => panic!("a waiting read answered pending"),
+                        SandboxRead::End => return (retained, lost),
+                    };
+                    retained.extend_from_slice(bytes.get(..count).expect("bounded"));
+                }
+            })
+            .await
+            .expect("the masked stream never asked its source to wait")
+        })
+    }
+
+    /// What a waiting read of `steps` leaves, masked against `patterns`.
+    fn waited_through(
+        patterns: Vec<Vec<u8>>,
+        steps: impl IntoIterator<Item = Step>,
+        width: usize,
+    ) -> (Vec<u8>, usize) {
+        let mut output =
+            ProtectedOutput::new(Box::new(Waited(steps.into_iter().collect())), patterns);
+        waited_all(&mut output, width)
+    }
+
+    #[test]
+    fn a_waiting_read_masks_what_the_source_gives_only_to_a_waiting_read() {
+        let password = USERINFO.split_once(':').expect("fixture").1;
+        let mut input = b"id=".to_vec();
+        input.extend_from_slice(password.as_bytes());
+        input.extend_from_slice(b"\n");
+
+        let masked = waited_through(proxy(), [Step::Bytes(input)], 64);
+
+        let mut expected = b"id=".to_vec();
+        expected.extend(std::iter::repeat_n(b'*', password.len()));
+        expected.extend_from_slice(b"\n");
+        assert_eq!(masked, (expected, 0));
+    }
+
+    /// Every split of every fixture the reads without waiting are held to,
+    /// read waiting instead: the masking, the byte counts and the discard
+    /// accounting are the same.
+    #[test]
+    fn a_waiting_read_masks_every_split_exactly_as_a_read_without_waiting() {
+        let password = USERINFO.split_once(':').expect("fixture").1;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(USERINFO);
+        for value in [password.as_bytes(), encoded.as_bytes()] {
+            let mut input = b"\xffprefix=".to_vec();
+            input.extend_from_slice(value);
+            input.extend_from_slice(b"\x00end");
+            for split in 0..=input.len() {
+                let left = input.get(..split).expect("left").to_vec();
+                let right = input.get(split..).expect("right").to_vec();
+                for width in [1, 7, 4096] {
+                    let synchronous =
+                        collect([left.clone(), Vec::new(), right.clone()].into(), width, 0);
+                    let waited = waited_through(
+                        proxy(),
+                        [Step::Bytes(left.clone()), Step::Bytes(right.clone())],
+                        width,
+                    );
+                    assert_eq!(waited, synchronous, "split at {split}, width {width}");
+                }
+            }
+        }
+        for value in [password, encoded.as_str()] {
+            let mut input = b"id=".to_vec();
+            input.extend_from_slice(value.as_bytes().get(..20).expect("fixture length"));
+            let synchronous = collect([input.clone()].into(), 1, 7);
+            let waited = waited_through(proxy(), [Step::Bytes(input), Step::Discard(7)], 1);
+            assert_eq!(waited, synchronous);
+        }
+    }
+
+    #[test]
+    fn a_waiting_read_masks_exactly_what_comparing_at_every_position_finds() {
+        let sets: [&[&str]; 4] = [&["aab", "aba"], &["abab"], &["aa", "ab"], &["abaab", "b"]];
+        for patterns in sets {
+            let bytes: Vec<Vec<u8>> = patterns.iter().map(|p| p.as_bytes().to_vec()).collect();
+            for length in 0..=7u32 {
+                for bits in 0..(1u32 << length) {
+                    let input: Vec<u8> = (0..length)
+                        .map(|at| if bits >> at & 1 == 1 { b'b' } else { b'a' })
+                        .collect();
+                    let synchronous = masked_by(patterns, [input.clone()].into());
+                    let (waited, lost) = waited_through(bytes.clone(), [Step::Bytes(input)], 1);
+                    assert_eq!((waited, lost), (synchronous, 0));
                 }
             }
         }
