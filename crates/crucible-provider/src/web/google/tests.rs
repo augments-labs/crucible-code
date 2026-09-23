@@ -5,7 +5,9 @@ use crate::{Google, transport::Replay};
 use crucible_credentials::{ApiKey, Header, HeaderKey};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
+use std::io::{self, Read};
 use std::sync::Arc;
+use std::time::Duration;
 
 fn answer(steps: &[Value]) -> String {
     let mut body = String::new();
@@ -141,6 +143,81 @@ fn google_fetch_bounds_the_whole_stream_even_after_a_complete_answer() {
         "gemini-3.8-flash",
     );
     assert!(source.fetch(url, &Cancel::new()).is_err());
+}
+
+/// A body that hands its whole content over in one read, then sleeps past
+/// `wait` before confirming the clean end that closed it.
+///
+/// Modeled on `web/tests.rs`'s `WholeThenLateEnd` (the #695 sibling this fix
+/// follows) and `refusal.rs`'s fixture of the same name: the answer already
+/// sits whole in the parser's buffer, complete with the event that says the
+/// model is done, and only the read confirming there is nothing further
+/// arrives once the wait has already run out. A read that hands over more
+/// content instead would need a further attempt to confirm the stream's
+/// end, and that attempt is rightly bound by the same wait — it is the
+/// clean end itself, not a content chunk, that this proves is kept.
+struct WholeThenLateEnd {
+    body: Option<Vec<u8>>,
+    wait: Duration,
+}
+
+impl Read for WholeThenLateEnd {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        let Some(body) = self.body.take() else {
+            std::thread::sleep(self.wait.saturating_add(Duration::from_millis(20)));
+            return Ok(0);
+        };
+        let took = body.len().min(into.len());
+        into.get_mut(..took)
+            .unwrap_or_default()
+            .copy_from_slice(body.get(..took).unwrap_or_default());
+        Ok(took)
+    }
+}
+
+#[test]
+fn a_fetched_page_read_whole_is_delivered_when_its_close_arrives_late() {
+    // Proves the fix through the same pipeline `GoogleWeb::ask` builds —
+    // `Limited` wrapped by the Interactions SSE wire that parses its
+    // events — rather than against `Limited` alone: the bug replaced a page
+    // whose close confirmed right as the wait ran out with "Google web
+    // response exceeded its deadline" instead of the retrieved text, even
+    // though the whole answer, including the event saying the model was
+    // done, had already arrived.
+    let url = "https://example.com/page";
+    let body = answer(&fetched(url)).into_bytes();
+    let wait = Duration::from_millis(5);
+
+    let reading = WholeThenLateEnd {
+        body: Some(body),
+        wait,
+    };
+    let limited =
+        super::read::Limited::new(Box::new(reading), Cancel::new(), super::super::MOST, wait);
+    let wire = crate::google::wire::Interactions::new(
+        "gemini-3.8-flash",
+        crucible_types::ContinuationScope::from_digest([7; 32]),
+    )
+    .unwrap();
+    let mut stream = crate::stream::Response::with_wire(
+        Box::new(limited),
+        Cancel::new(),
+        crucible_credentials::Redactions::default(),
+        wire,
+    );
+
+    let mut text = String::new();
+    let mut stop = None;
+    while let Some(delta) = stream.next_delta() {
+        match delta.expect("a page read whole must not fail when its close arrives late") {
+            Delta::Text(part) => text.push_str(&part),
+            Delta::Stopped(reason) => stop = Some(reason),
+            _ => {}
+        }
+    }
+
+    assert_eq!(text, "é page");
+    assert_eq!(stop, Some(StopReason::Yielded));
 }
 
 #[test]
