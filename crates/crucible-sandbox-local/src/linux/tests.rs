@@ -1792,24 +1792,71 @@ fn a_launch_that_dies_before_ready_is_explained_by_the_launcher_stderr() {
         )
     };
 
-    let explained = super::explain_launch_failure(eof(), b"bwrap: Unknown option --overlay-src\n");
-    assert_eq!(explained.kind(), std::io::ErrorKind::UnexpectedEof);
+    let said = |problem: &crucible_sandbox::SandboxError| match problem {
+        crucible_sandbox::SandboxError::LaunchRefused { said, .. } => Some(said.to_string()),
+        _ => None,
+    };
+    let channel = |problem: &crucible_sandbox::SandboxError| {
+        std::error::Error::source(problem)
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .map(|source| (source.kind(), source.to_string()))
+    };
+
+    let explained = super::refused_launch(eof(), b"bwrap: Unknown option --overlay-src\n");
     assert_eq!(
-        explained.to_string(),
-        "failed to fill whole buffer; the sandbox launcher said: bwrap: Unknown option --overlay-src"
+        channel(&explained),
+        Some((
+            std::io::ErrorKind::UnexpectedEof,
+            "failed to fill whole buffer".to_owned()
+        ))
+    );
+    assert_eq!(
+        said(&explained).as_deref(),
+        Some("bwrap: Unknown option --overlay-src")
     );
 
-    let silent = super::explain_launch_failure(eof(), b" \n");
-    assert_eq!(silent.to_string(), "failed to fill whole buffer");
+    let silent = super::refused_launch(eof(), b" \n");
+    assert_eq!(said(&silent), None);
+    assert_eq!(
+        channel(&silent),
+        Some((
+            std::io::ErrorKind::UnexpectedEof,
+            "failed to fill whole buffer".to_owned()
+        ))
+    );
 
     let noisy = "x".repeat(super::MAX_LAUNCHER_DIAGNOSTIC_BYTES + 100);
-    let bounded = super::explain_launch_failure(eof(), noisy.as_bytes()).to_string();
+    let bounded = said(&super::refused_launch(eof(), noisy.as_bytes())).unwrap_or_default();
     assert!(bounded.ends_with(" (truncated)"), "{bounded}");
     assert!(bounded.len() < noisy.len(), "{}", bounded.len());
 
-    let multiline = super::explain_launch_failure(eof(), b"first\nsecond line\n\n").to_string();
-    assert!(
-        multiline.ends_with("said: first second line"),
-        "{multiline}"
+    let multiline = super::refused_launch(eof(), b"first\nsecond line\n\n");
+    assert_eq!(said(&multiline).as_deref(), Some("first second line"));
+}
+
+#[test]
+fn a_refused_launch_shows_what_the_launcher_said() {
+    let eof = || {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "failed to fill whole buffer",
+        )
+    };
+
+    let refused = super::refused_launch(eof(), b"bwrap: Unknown option --overlay-src\n");
+    assert_eq!(
+        refused.to_string(),
+        "sandbox launch refused: bwrap: Unknown option --overlay-src"
     );
+    assert_eq!(
+        refused.failure_kind(),
+        crucible_sandbox::SandboxFailureKind::Lifecycle
+    );
+
+    let silent = super::refused_launch(eof(), b" \n");
+    assert!(
+        matches!(silent, crucible_sandbox::SandboxError::Lifecycle(_)),
+        "{silent:?}"
+    );
+    assert_eq!(silent.to_string(), "sandbox lifecycle failed");
 }

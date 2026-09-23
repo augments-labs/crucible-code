@@ -81,6 +81,12 @@ change in any release with no deprecation period.
   end-of-stream read landed exactly as the wait expired, came back as "Google
   web response exceeded its deadline" instead of the answer. That confirming
   read's clean end is now honoured, not replaced by the deadline error.
+- **A launch the system Bubblewrap refuses says what Bubblewrap said.** Since
+  0.35.0 such an error was meant to quote Bubblewrap's message, but a `bash`
+  command or a hosted MCP server on Linux reported only `sandbox lifecycle
+  failed`. It now reports `sandbox launch refused:` followed by Bubblewrap's
+  own words, on one line and cut at 512 bytes, so an option it does not know
+  is named.
 
 ### Security
 
