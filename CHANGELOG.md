@@ -48,6 +48,22 @@ change in any release with no deprecation period.
   head of the reply, where the source and the status are, and ends with
   `[N more lines not shown.]` or a line saying the rest of it was cut.
 
+### Security
+
+- **A refusal cut at its byte bound no longer ends in the start of a
+  credential, and says it was cut.** Only whole values were redacted, so a
+  gateway that echoed an API key or an access token across the 8 KiB boundary
+  crucible reads left the part in front of it at the end of the message — on
+  the terminal, in a redirected standard output and in every client. What is
+  kept of a cut reply now loses its end wherever that end begins a protected
+  value, and where crucible shows what a service said — everywhere but Google,
+  Fable 5.1 and Astra, which answer with a sentence of crucible's own — the
+  message says so instead of stopping mid-word: ` [cut: the reply was longer
+  than crucible reads]` where more of it arrived and the reading then ended,
+  and ` [cut: crucible stopped reading here]` where the bound filled and the
+  reading then failed, which names no length because crucible usually cannot
+  know one.
+
 ## [0.42.0] - 2026-09-20
 
 ### Changed
