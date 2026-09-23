@@ -36,7 +36,8 @@ use hyper_util::client::legacy::connect::{Connect, capture_connection};
 use tokio::time::{Instant, sleep_until};
 
 use crate::connect::{ConnectError, Connector, Tls};
-use crate::dns::Lookups;
+use crate::dns::{Lookups, PlainLookups};
+use crate::proxy::{ProxyEnv, Route, select};
 use crate::tasks::Tasks;
 
 /// The `user-agent` a request is sent with when it names none: what the
@@ -78,6 +79,9 @@ pub struct Http {
     client: Client<Connector, Body>,
     /// Held, never read: dropping the last one aborts every task in it.
     _tasks: Arc<Tasks>,
+    /// The proxy settings its connector routes by, to find the credential a
+    /// request will travel with.
+    env: Arc<ProxyEnv>,
 }
 
 /// The part of a request whose minute ran out.
@@ -99,7 +103,9 @@ pub enum HttpError {
     #[error("request URL or header was invalid")]
     Invalid(#[from] hyper::http::Error),
     /// The URL names neither `http` nor `https`, so it would have been sent
-    /// without the scheme that says whether to verify its recipient.
+    /// without the scheme that says whether to verify its recipient; or it
+    /// names no host, so there is no recipient to verify, look up or ask a
+    /// proxy for.
     #[error("request URL was invalid")]
     Unverifiable,
     /// One part of the request outlived its minute.
@@ -124,16 +130,21 @@ impl HttpError {
 }
 
 impl Http {
-    /// A client that connects directly and looks targets up with `target`.
+    /// A client that routes each request as `env` says, looks a target it
+    /// connects to directly up with `target`, and a proxy's host with
+    /// `proxy_host`.
     ///
     /// Each client has its own pool: a client is what requests that may
     /// share connections share.
     #[must_use]
-    pub fn new(tls: &Tls, target: Lookups) -> Self {
+    pub fn new(tls: &Tls, target: Lookups, proxy_host: PlainLookups, env: ProxyEnv) -> Self {
+        let env = Arc::new(env);
         let tasks = Tasks::new();
+        let connector = Connector::new(tls, target, proxy_host, Arc::clone(&env));
         Self {
-            client: client(Connector::new(tls, target), &tasks),
+            client: client(connector, &tasks),
             _tasks: tasks,
+            env,
         }
     }
 
@@ -141,7 +152,9 @@ impl Http {
     /// status.
     ///
     /// `headers` go out as given, with [`DEFAULT_USER_AGENT`] added when they
-    /// name no `user-agent`.
+    /// name no `user-agent`. When the request is to go through a proxy that
+    /// is sent a credential, that credential is registered on `headers` for
+    /// redaction ([`Outgoing::protect`]).
     ///
     /// # Errors
     ///
@@ -150,7 +163,7 @@ impl Http {
         &self,
         method: Method,
         url: &str,
-        headers: &Outgoing,
+        headers: &mut Outgoing,
         body: String,
     ) -> Result<Response<Incoming>, HttpError> {
         let mut request = Request::builder().method(method).uri(url);
@@ -158,8 +171,14 @@ impl Http {
             request = request.header(&**name, &**value);
         }
         let mut request = request.body(body)?;
-        if !matches!(request.uri().scheme_str(), Some("http" | "https")) {
+        let uri = request.uri();
+        if !matches!(uri.scheme_str(), Some("http" | "https"))
+            || uri.host().is_none_or(str::is_empty)
+        {
             return Err(HttpError::Unverifiable);
+        }
+        if let Route::Tunnel(proxy) = select(&self.env, request.uri()) {
+            proxy.protect(headers);
         }
         if !request.headers().contains_key(USER_AGENT) {
             let agent = HeaderValue::from_static(DEFAULT_USER_AGENT);

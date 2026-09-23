@@ -1,8 +1,13 @@
-//! Making a connection: lookup, TCP and TLS, within 15 s.
+//! Making a connection: lookup, TCP, a proxy's tunnel and TLS, within 15 s.
 //!
-//! The target is looked up with the client's own [`Lookups`]. The one
-//! deadline covers every step, because what it promises is that a connection
-//! is up within 15 s.
+//! A target reached directly is looked up with the client's own [`Lookups`].
+//! Through a proxy, only the proxy's host is looked up, and only with a
+//! [`PlainLookups`], so a proxied request neither obeys nor raises a poison;
+//! the proxy resolves the target. An `https://` proxy is itself spoken to
+//! over TLS, and an `https` target's own TLS runs inside the tunnel, so the
+//! proxy carries bytes it cannot read. The one deadline covers every step,
+//! the proxy's lookup included, because what it promises is that a
+//! connection is up within 15 s.
 //!
 //! A failure says which step it was ([`ConnectError`]), with the error that
 //! step gave. Its message names no address; the `Debug` of a TCP failure
@@ -12,12 +17,13 @@ use std::error::Error;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use crucible_runtime::BoxFuture;
 use hyper::Uri;
 use hyper::http::uri::Scheme;
+use hyper_util::client::legacy::connect::proxy::Tunnel;
 use hyper_util::client::legacy::connect::{Connected, Connection, HttpConnector};
 use hyper_util::rt::TokioIo;
 use rustls::ClientConfig;
@@ -26,7 +32,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
-use crate::dns::{LookupError, Lookups};
+use crate::dns::{LookupError, Lookups, PlainLookups};
+use crate::proxy::{ConnectProxy, Leg, ProxyEnv, Route, select};
 
 /// How long a connection may take, from its lookup to its last handshake.
 const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
@@ -86,9 +93,18 @@ pub enum ConnectError {
     /// The hostname lookup failed; the source says how.
     #[error("hostname lookup failed")]
     Lookup(#[source] BoxError),
-    /// No TCP connection could be made.
+    /// No TCP connection could be made, to the target or to its proxy. For a
+    /// SOCKS proxy that was to resolve the target, or a proxy address that
+    /// cannot be rebuilt without its user information, none is tried: the
+    /// previous client made no connection either.
     #[error("connection failed")]
     Tcp(#[source] BoxError),
+    /// TLS with an `https://` proxy failed.
+    #[error("TLS setup with the proxy failed")]
+    ProxyTls(#[source] io::Error),
+    /// No tunnel through the proxy was opened; the source says why.
+    #[error("the proxy did not open a tunnel")]
+    Tunnel(#[source] BoxError),
     /// TLS with the target failed.
     #[error("TLS setup failed")]
     Tls(#[source] io::Error),
@@ -122,7 +138,8 @@ pub(crate) trait Io: AsyncRead + AsyncWrite + Send + Unpin {}
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Io for T {}
 
-/// One connection, whatever it was built from: TCP, or TLS over it.
+/// One connection, whatever it was built from: TCP, TLS over it, or either
+/// inside a tunnel.
 pub(crate) struct Conn(Box<dyn Io>);
 
 impl Conn {
@@ -131,25 +148,42 @@ impl Conn {
     }
 }
 
-/// Connects to a target directly.
+/// Connects to a target the way the environment's proxy settings say.
 #[derive(Clone)]
 pub(crate) struct Connector {
     tls: Tls,
     target: HttpConnector<Lookups>,
+    /// Reaches a proxy itself, looking its host up with plain lookups alone.
+    proxy: HttpConnector<PlainLookups>,
+    env: Arc<ProxyEnv>,
+}
+
+/// A TCP connector over `lookups` that dials whatever scheme it is handed:
+/// the connector above it has already decided the scheme.
+fn tcp<R>(lookups: R) -> HttpConnector<R> {
+    let mut tcp = HttpConnector::new_with_resolver(lookups);
+    tcp.enforce_http(false);
+    tcp
 }
 
 impl Connector {
-    pub(crate) fn new(tls: &Tls, target: Lookups) -> Self {
-        let mut tcp = HttpConnector::new_with_resolver(target);
-        tcp.enforce_http(false);
+    pub(crate) fn new(
+        tls: &Tls,
+        target: Lookups,
+        proxy_host: PlainLookups,
+        env: Arc<ProxyEnv>,
+    ) -> Self {
         Self {
             tls: tls.clone(),
-            target: tcp,
+            target: tcp(target),
+            proxy: tcp(proxy_host),
+            env,
         }
     }
 
     /// Connects, and speaks TLS to an `https` target. Plaintext is for an
-    /// `http` target alone: anything else is refused before it is dialled.
+    /// `http` target or an `http://` proxy alone: any other target is refused
+    /// before it is dialled.
     async fn connect(mut self, target: Uri) -> Result<Conn, ConnectError> {
         let verified = match (target.scheme(), target.host()) {
             (Some(scheme), _) if *scheme == Scheme::HTTP => None,
@@ -158,8 +192,21 @@ impl Connector {
             }
             _ => return Err(ConnectError::Unverifiable),
         };
-        let tcp = self.target.call(target).await;
-        let stream = Conn::new(tcp.map_err(ConnectError::reaching)?.into_inner());
+        let env = Arc::clone(&self.env);
+        let stream = match select(&env, &target) {
+            Route::Direct => {
+                let tcp = self.target.call(target).await;
+                Conn::new(tcp.map_err(ConnectError::reaching)?.into_inner())
+            }
+            Route::Tunnel(proxy) => self.tunnel(proxy, &target).await?,
+            Route::Refused => {
+                let refused = io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    "the proxy the environment names cannot be used",
+                );
+                return Err(ConnectError::Tcp(Box::new(refused)));
+            }
+        };
         match verified {
             Some(host) => self
                 .tls
@@ -168,6 +215,181 @@ impl Connector {
                 .map_err(ConnectError::Tls),
             None => Ok(stream),
         }
+    }
+
+    /// Opens a tunnel to `target` through `proxy`: TCP to the proxy, TLS to
+    /// it when it is `https://`, then `CONNECT`.
+    async fn tunnel(&mut self, proxy: &ConnectProxy, target: &Uri) -> Result<Conn, ConnectError> {
+        let tcp = self.proxy.call(proxy.uri().clone()).await;
+        let tcp = Conn::new(tcp.map_err(ConnectError::reaching)?.into_inner());
+        let leg = match proxy.leg() {
+            Leg::Tls(host) => self
+                .tls
+                .wrap(tcp, host)
+                .await
+                .map_err(ConnectError::ProxyTls)?,
+            Leg::Plain => tcp,
+        };
+        let leg = Conn::new(HeadFirst::new(leg));
+        let destination = with_port(target).map_err(|error| ConnectError::Tunnel(error.into()))?;
+        let mut tunnel =
+            Tunnel::new(proxy.uri().clone(), Opened(Some(leg))).with_headers(proxy.headers());
+        let opened = tunnel.call(destination).await;
+        Ok(opened
+            .map_err(|error| ConnectError::Tunnel(error.into()))?
+            .into_inner())
+    }
+}
+
+/// `target`'s host with its port written out, since a tunnel otherwise
+/// assumes 443 whatever the scheme.
+fn with_port(target: &Uri) -> Result<Uri, hyper::http::Error> {
+    let secure = target.scheme() == Some(&Scheme::HTTPS);
+    let port = target.port_u16().unwrap_or(if secure { 443 } else { 80 });
+    let host = target.host().unwrap_or_default();
+    Uri::builder().authority(format!("{host}:{port}")).build()
+}
+
+/// The most of a proxy's answer to `CONNECT` read ahead: the size of the
+/// buffer hyper-util's tunnel reads that answer into, and so the longest head
+/// it accepts.
+const MAX_ANSWER: usize = 8 * 1024;
+
+/// A connection to a proxy that hands the proxy's answer to `CONNECT` on in
+/// one piece ending with its head, the way hyper-util's tunnel expects it.
+///
+/// The tunnel judges the bytes it has after each read: a first read shorter
+/// than `HTTP/1.1 200` is taken for a refusal, and a 200 whose head does not
+/// end the read is waited on until the connect deadline. The previous client
+/// read on until the head was whole. So here the answer is read until
+/// `\r\n\r\n` ends its head, [`MAX_ANSWER`] bytes or the end of the
+/// stream, whichever comes first, and only then handed on; bytes read after
+/// the head are held and handed on untouched by the reads that follow, and
+/// every later read goes straight to the proxy. Nothing of the answer is
+/// looked at but where its head ends. A head must end in CRLF CRLF: one that
+/// ends in bare LF, which the previous client accepted, is never found to
+/// end. The connection then fails at the connect deadline while the proxy
+/// keeps it open, and at once when the proxy closes it or when 8 KiB arrive
+/// with no CRLF CRLF, since what was read is then handed to the tunnel,
+/// which refuses it.
+struct HeadFirst {
+    io: Conn,
+    /// Whether the answer is still being read ahead.
+    gathering: bool,
+    /// Bytes read from the proxy and not yet handed on.
+    held: Vec<u8>,
+    /// How many of `held` are the answer's head, to be handed on in reads of
+    /// their own before anything after it.
+    head: usize,
+}
+
+impl HeadFirst {
+    fn new(io: Conn) -> Self {
+        Self {
+            io,
+            gathering: true,
+            held: Vec::new(),
+            head: 0,
+        }
+    }
+
+    /// Reads ahead until the answer's head has ended, or can grow no more.
+    fn gather(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        while self.gathering {
+            if let Some(end) = self.held.windows(4).position(|four| four == b"\r\n\r\n") {
+                self.head = end + 4;
+                self.gathering = false;
+            } else if self.held.len() >= MAX_ANSWER {
+                self.head = self.held.len();
+                self.gathering = false;
+            } else {
+                let mut chunk = [0; 1024];
+                let room = MAX_ANSWER.saturating_sub(self.held.len()).min(chunk.len());
+                let mut read = ReadBuf::new(chunk.get_mut(..room).unwrap_or_default());
+                ready!(Pin::new(&mut *self.io.0).poll_read(cx, &mut read))?;
+                if read.filled().is_empty() {
+                    // The proxy closed: hand on what it said.
+                    self.head = self.held.len();
+                    self.gathering = false;
+                }
+                self.held.extend_from_slice(read.filled());
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncRead for HeadFirst {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = &mut *self;
+        ready!(this.gather(cx))?;
+        if this.held.is_empty() {
+            return Pin::new(&mut *this.io.0).poll_read(cx, buf);
+        }
+        let part = if this.head > 0 {
+            this.head
+        } else {
+            this.held.len()
+        };
+        let taken = part.min(buf.remaining());
+        buf.put_slice(this.held.get(..taken).unwrap_or_default());
+        this.held.drain(..taken);
+        this.head = this.head.saturating_sub(taken);
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for HeadFirst {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.io).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.io).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.io.is_write_vectored()
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.io).poll_shutdown(cx)
+    }
+}
+
+/// The connection to a proxy, already made, handed to the tunnel as the one
+/// connection it asks for, so that a failure to reach the proxy is reported
+/// as the step that failed rather than as the tunnel's.
+struct Opened(Option<Conn>);
+
+impl Service<Uri> for Opened {
+    type Response = TokioIo<Conn>;
+    type Error = io::Error;
+    type Future = std::future::Ready<io::Result<TokioIo<Conn>>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _: Uri) -> Self::Future {
+        let leg = self.0.take().map(TokioIo::new);
+        std::future::ready(leg.ok_or_else(|| io::Error::other("the proxy connection was taken")))
     }
 }
 

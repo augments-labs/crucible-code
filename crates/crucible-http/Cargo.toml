@@ -1,6 +1,6 @@
 [package]
 name = "crucible-http"
-description = "An HTTP client for outgoing requests to share, and the TLS, redirect, lookup and head policy it sends under."
+description = "An HTTP client for outgoing requests to share, and the TLS, proxy, redirect, lookup and head policy it sends under."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -15,6 +15,8 @@ authors.workspace = true
 crucible-credentials.workspace = true
 # `BoxFuture`, the shape the connector and the resolver hand their work back in.
 crucible-runtime.workspace = true
+# The `Basic` credential a proxy's user information is sent as.
+base64.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 rustls.workspace = true

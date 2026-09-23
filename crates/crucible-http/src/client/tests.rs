@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
@@ -16,16 +17,19 @@ use hyper::{Method, Request, Response, StatusCode, Uri};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, duplex};
-use tokio::net::TcpListener;
+use tokio::io::{
+    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, copy_bidirectional, duplex,
+};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::Instant;
 use tokio_rustls::TlsAcceptor;
 use tower_service::Service;
 
 use super::{Body, Http, HttpError, Phase, client, exchange};
-use crate::connect::{Conn, ConnectError, Tls};
-use crate::dns::tests::{Answer, settle, stalled, until_inside};
-use crate::dns::{Lookup, Lookups};
+use crate::connect::{Conn, ConnectError, Connector, Tls};
+use crate::dns::tests::{Answer, Stall, raised, settle, stalled, stalled_plain, until_inside};
+use crate::dns::{Lookup, Lookups, PlainLookups, Poison};
+use crate::proxy::ProxyEnv;
 use crate::tasks::Tasks;
 
 /// A self-signed certificate for 127.0.0.1, and its key. It protects nothing:
@@ -34,7 +38,7 @@ const CERT: &[u8] = include_bytes!("../../fixtures/server.cert.der");
 const KEY: &[u8] = include_bytes!("../../fixtures/server.key.der");
 
 /// A platform lookup these tests must never reach: every target here is an IP
-/// address.
+/// address, a name only a proxy resolves, or one refused before any lookup.
 struct Never;
 
 impl Lookup for Never {
@@ -44,11 +48,23 @@ impl Lookup for Never {
 }
 
 fn http(tls: &Tls) -> Http {
-    Http::new(tls, Lookups::with(NonZeroUsize::MIN, None, Arc::new(Never)))
+    proxied(tls, ProxyEnv::read(|_| None))
+}
+
+/// A client routed as `env` says, that looks no name up itself.
+fn proxied(tls: &Tls, env: ProxyEnv) -> Http {
+    let target = Lookups::with(NonZeroUsize::MIN, None, Arc::new(Never));
+    let proxy_host = PlainLookups::with(NonZeroUsize::MIN, Arc::new(Never));
+    Http::new(tls, target, proxy_host, env)
+}
+
+/// An environment whose only proxy variable is `name`, set to `value`.
+fn proxy_env(name: &'static str, value: String) -> ProxyEnv {
+    ProxyEnv::read(move |asked| (asked == name).then(|| value.clone()))
 }
 
 async fn get(http: &Http, url: &str) -> Result<Response<Incoming>, HttpError> {
-    http.send(Method::GET, url, &Outgoing::new(), String::new())
+    http.send(Method::GET, url, &mut Outgoing::new(), String::new())
         .await
 }
 
@@ -176,7 +192,7 @@ async fn a_redirect_is_handed_back_and_never_followed() {
     let mut headers = Outgoing::new();
     headers.set_header("User-Agent", "crucible/1");
     let response = http(&Tls::new().unwrap())
-        .send(Method::POST, &url, &headers, "{}".to_owned())
+        .send(Method::POST, &url, &mut headers, "{}".to_owned())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FOUND);
@@ -257,7 +273,12 @@ async fn dropping_the_client_ends_the_connections_it_spawned() {
 #[tokio::test(start_paused = true)]
 async fn a_connection_not_made_in_fifteen_seconds_is_given_up() {
     let (lookups, stall, _release) = stalled(1, None);
-    let http = Http::new(&Tls::new().unwrap(), lookups);
+    let http = Http::new(
+        &Tls::new().unwrap(),
+        lookups,
+        PlainLookups::with(NonZeroUsize::MIN, Arc::new(Never)),
+        ProxyEnv::read(|_| None),
+    );
     let sending = tokio::spawn(async move { get(&http, "http://api.test/").await.err() });
     until_inside(&stall, 1).await;
     tokio::time::advance(Duration::from_millis(14_999)).await;
@@ -283,8 +304,8 @@ async fn a_request_that_names_no_scheme_is_never_dialled() {
         .to_owned();
     let http = http(&Tls::new().unwrap());
     let sending = tokio::spawn(async move {
-        let headers = Outgoing::new();
-        let sent = http.send(Method::CONNECT, &target, &headers, String::new());
+        let mut headers = Outgoing::new();
+        let sent = http.send(Method::CONNECT, &target, &mut headers, String::new());
         sent.await.err()
     });
     let reached = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
@@ -293,24 +314,327 @@ async fn a_request_that_names_no_scheme_is_never_dialled() {
     assert!(matches!(error, HttpError::Unverifiable), "{error:?}");
 }
 
-/// A target is spoken to in plaintext only when its scheme is `http`: any other
-/// scheme, or `https` with no host to verify, is refused before it is dialled.
-/// Every name resolves to the listener, so a dial would be seen there first.
-/// `send` refuses the other scheme; the connector refuses `https` with no host.
+/// A target is spoken to in plaintext only when its scheme is `http` and it
+/// names a host: any other scheme, or no host, is refused by `send` before it
+/// is dialled. Every name resolves to the listener, so a dial would be seen
+/// there first.
 #[tokio::test]
 async fn a_target_that_cannot_be_verified_is_never_spoken_to_in_plaintext() {
-    for (scheme, host) in [("ftp", "127.0.0.1"), ("https", "")] {
+    for (scheme, host) in [("ftp", "127.0.0.1"), ("https", ""), ("http", "")] {
         let (listener, url) = listen(scheme).await;
         let url = url.replace("127.0.0.1", host);
         let lookups = Lookups::with(NonZeroUsize::MIN, None, Arc::new(Answer));
-        let http = Http::new(&Tls::new().unwrap(), lookups);
+        let proxy_host = PlainLookups::with(NonZeroUsize::MIN, Arc::new(Never));
+        let http = Http::new(
+            &Tls::new().unwrap(),
+            lookups,
+            proxy_host,
+            ProxyEnv::read(|_| None),
+        );
         let sending = tokio::spawn(async move { get(&http, &url).await.err() });
         let reached = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
         assert!(reached.is_err(), "{scheme} with host {host:?} was dialled");
         let error = sending.await.unwrap().unwrap();
-        let refused = matches!(error, HttpError::Unverifiable)
-            || matches!(error.connect(), Some(ConnectError::Unverifiable));
-        assert!(refused, "{scheme}: {error:?}");
+        let refused = matches!(error, HttpError::Unverifiable);
+        assert!(refused, "{scheme} with host {host:?}: {error:?}");
+    }
+}
+
+/// A `CONNECT` proxy for one connection: reads the `CONNECT` head, noting it
+/// in `heard`, answers with `reply`, and after a 200 carries bytes both ways
+/// between the client and the address the `CONNECT` named.
+async fn tunnel<S>(mut client: S, reply: &'static str, heard: Heard)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let (connect, _) = head(&mut client).await;
+    heard.lock().unwrap().push(connect.clone());
+    client.write_all(reply.as_bytes()).await.unwrap();
+    if reply.starts_with("HTTP/1.1 200") {
+        let target = connect.split(' ').nth(1).unwrap();
+        let mut target = TcpStream::connect(target).await.unwrap();
+        let _ = copy_bidirectional(&mut client, &mut target).await;
+    }
+}
+
+const OPENED: &str = "HTTP/1.1 200 Connection established\r\n\r\n";
+
+/// Through a proxy, the target is named in the `CONNECT` and never looked up
+/// here, the proxy is sent the previous client's fields and the credential,
+/// and the credential is registered for redaction on the request's headers.
+#[tokio::test]
+async fn a_proxied_request_goes_through_connect_and_the_proxy_resolves_its_target() {
+    let (listener, proxy) = listen("http").await;
+    let tunnelled = tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let connect = head(&mut tcp).await.0;
+        tcp.write_all(OPENED.as_bytes()).await.unwrap();
+        let request = head(&mut tcp).await.0;
+        tcp.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+            .await
+            .unwrap();
+        (connect, request)
+    });
+    let proxy = proxy.replace("http://", "http://user:pass@");
+    let mut headers = Outgoing::new();
+    let response = proxied(&Tls::new().unwrap(), proxy_env("HTTPS_PROXY", proxy))
+        .send(
+            Method::GET,
+            "http://vendor.test/v1",
+            &mut headers,
+            String::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let (connect, request) = tunnelled.await.unwrap();
+    assert_eq!(
+        connect,
+        "CONNECT vendor.test:80 HTTP/1.1\r\nHost: vendor.test:80\r\nuser-agent: ureq/3.4.2\r\n\
+         proxy-connection: Keep-Alive\r\nproxy-authorization: Basic dXNlcjpwYXNz\r\n\r\n"
+    );
+    assert!(request.starts_with("GET /v1 HTTP/1.1\r\n"), "{request}");
+    let shown = headers.redactions().redact("proxy said dXNlcjpwYXNz");
+    assert!(!shown.contains("dXNlcjpwYXNz"), "{shown}");
+}
+
+/// An `https` target is reached through an `http://` proxy and through an
+/// `https://` one, which is itself spoken to over TLS; either way the
+/// target's own TLS runs inside the tunnel, so the proxy carries only bytes
+/// it cannot read.
+#[tokio::test]
+async fn a_request_reaches_its_target_through_an_http_or_https_proxy_with_the_targets_tls_inside() {
+    for scheme in ["http", "https"] {
+        let (target, url) = listen("https").await;
+        let said = Heard::default();
+        let heard = Arc::clone(&said);
+        tokio::spawn(async move {
+            let (tcp, _) = target.accept().await.unwrap();
+            let tls = acceptor(&[]).accept(tcp).await.unwrap();
+            answer(tls, move |request| {
+                let line = format!("{} {}", request.method(), request.uri());
+                heard.lock().unwrap().push(line);
+                Response::new(String::new())
+            })
+            .await;
+        });
+        let (listener, proxy) = listen(scheme).await;
+        let connects = Heard::default();
+        let noted = Arc::clone(&connects);
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            if scheme == "https" {
+                let tls = acceptor(&[]).accept(tcp).await.unwrap();
+                tunnel(tls, OPENED, noted).await;
+            } else {
+                tunnel(tcp, OPENED, noted).await;
+            }
+        });
+        let tls = Tls::trusting(CertificateDer::from(CERT.to_vec()));
+        let http = proxied(&tls, proxy_env("ALL_PROXY", proxy));
+        let response = get(&http, &format!("{url}v1")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{scheme}");
+        let authority = url.trim_start_matches("https://").trim_end_matches('/');
+        let connects = connects.lock().unwrap().clone();
+        let expected = format!("CONNECT {authority} HTTP/1.1\r\n");
+        assert!(
+            matches!(connects.as_slice(), [only] if only.starts_with(&expected)),
+            "{scheme} proxy saw {connects:?}"
+        );
+        assert_eq!(*said.lock().unwrap(), ["GET /v1"], "{scheme}");
+    }
+}
+
+/// A proxy's answer is taken whole however it is split into writes: a 200
+/// whose first piece is shorter than its status line still opens the tunnel.
+#[tokio::test]
+async fn a_proxys_answer_split_before_its_status_still_opens_the_tunnel() {
+    let (listener, proxy) = listen("http").await;
+    tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let _ = head(&mut tcp).await;
+        tcp.write_all(b"HTTP/1.1 ").await.unwrap();
+        tcp.flush().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        tcp.write_all(b"200 Connection established\r\n\r\n")
+            .await
+            .unwrap();
+        let _ = head(&mut tcp).await;
+        tcp.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+            .await
+            .unwrap();
+        let _ = tcp.read(&mut [0; 1]).await;
+    });
+    let http = proxied(&Tls::new().unwrap(), proxy_env("ALL_PROXY", proxy));
+    let response = get(&http, "http://vendor.test/").await;
+    let status = response.as_ref().map(Response::status);
+    assert_eq!(status.ok(), Some(StatusCode::NO_CONTENT), "{response:?}");
+}
+
+/// Bytes a proxy writes behind its 200 head, in the same write, are the
+/// tunnel's first bytes: the tunnel opens at once and hands them on as they
+/// came, where waiting for the head to end the read would wait out the
+/// connect deadline.
+#[tokio::test]
+async fn bytes_behind_a_proxys_answer_are_handed_on_through_the_tunnel() {
+    let (listener, proxy) = listen("http").await;
+    tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let _ = head(&mut tcp).await;
+        tcp.write_all(b"HTTP/1.1 200 Connection established\r\n\r\nearly")
+            .await
+            .unwrap();
+        let _ = tcp.read(&mut [0; 1]).await;
+    });
+    let lookups = Lookups::with(NonZeroUsize::MIN, None, Arc::new(Never));
+    let proxy_host = PlainLookups::with(NonZeroUsize::MIN, Arc::new(Never));
+    let env = Arc::new(proxy_env("ALL_PROXY", proxy));
+    let mut connector = Connector::new(&Tls::new().unwrap(), lookups, proxy_host, env);
+    let connecting = connector.call(Uri::from_static("http://vendor.test/"));
+    let opened = tokio::time::timeout(Duration::from_secs(5), connecting).await;
+    let mut tunnel = opened
+        .expect("the tunnel was still opening after 5 s")
+        .unwrap()
+        .into_inner();
+    let mut early = [0; 5];
+    tunnel.read_exact(&mut early).await.unwrap();
+    assert_eq!(&early, b"early");
+}
+
+/// Every source and message of `error`, and its `Debug`.
+fn everything_said(error: &HttpError) -> String {
+    let mut said = format!("{error:?}");
+    let mut cause: Option<&dyn Error> = Some(error);
+    while let Some(step) = cause {
+        said.push('\n');
+        said.push_str(&step.to_string());
+        cause = step.source();
+    }
+    said
+}
+
+/// A proxy that answers a `CONNECT` with anything but a 200 has refused the
+/// connection, and the request fails as a connection that was not made. What
+/// the failure says holds neither the credential nor its encoding, and the
+/// encoding is registered for redaction all the same.
+#[tokio::test]
+async fn a_refused_connect_is_a_connect_failure_that_shows_no_credential() {
+    for reply in [
+        "HTTP/1.1 407 Proxy Authentication Required\r\n\r\n",
+        "HTTP/1.1 403 Forbidden\r\n\r\n",
+    ] {
+        let (listener, proxy) = listen("http").await;
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            tunnel(tcp, reply, Heard::default()).await;
+        });
+        let proxy = proxy.replace("http://", "http://user:secret@");
+        let mut headers = Outgoing::new();
+        let error = proxied(&Tls::new().unwrap(), proxy_env("ALL_PROXY", proxy))
+            .send(
+                Method::GET,
+                "https://vendor.test/",
+                &mut headers,
+                String::new(),
+            )
+            .await
+            .unwrap_err();
+        let refused = matches!(error.connect(), Some(ConnectError::Tunnel(_)));
+        assert!(refused, "{reply:?}: {error:?}");
+        let said = everything_said(&error);
+        for secret in ["secret", "dXNlcjpzZWNyZXQ="] {
+            assert!(!said.contains(secret), "{said}");
+        }
+        let shown = headers.redactions().redact("dXNlcjpzZWNyZXQ=");
+        assert!(!shown.contains("dXNlcjpzZWNyZXQ="), "{shown}");
+    }
+}
+
+/// A SOCKS proxy that would have resolved the target is one the previous
+/// client, built without SOCKS, had no address for: the connection is
+/// refused, and neither the proxy nor the target is dialled.
+#[tokio::test]
+async fn a_socks_proxy_that_resolves_the_target_is_refused_without_a_dial() {
+    let (proxy, proxy_url) = listen("http").await;
+    let (target, url) = listen("http").await;
+    let socks = proxy_url.replace("http://", "socks5h://");
+    let http = proxied(&Tls::new().unwrap(), proxy_env("ALL_PROXY", socks));
+    let sending = tokio::spawn(async move { get(&http, &url).await.err() });
+    for (listener, what) in [(proxy, "proxy"), (target, "target")] {
+        let dialled = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+        assert!(dialled.is_err(), "the {what} was dialled");
+    }
+    let error = sending.await.unwrap().unwrap();
+    let Some(ConnectError::Tcp(refused)) = error.connect() else {
+        panic!("not refused: {error:?}");
+    };
+    let refused = refused.downcast_ref::<io::Error>().map(io::Error::kind);
+    assert_eq!(refused, Some(io::ErrorKind::ConnectionRefused));
+}
+
+/// A request that cannot be verified is refused before a route is chosen, so
+/// the proxy the environment names is never dialled for it either.
+#[tokio::test]
+async fn a_target_that_cannot_be_verified_is_refused_before_a_proxy_is_dialled() {
+    for url in ["ftp://vendor.test/", "https://:443/", "http://:80/"] {
+        let (listener, proxy) = listen("http").await;
+        let http = proxied(&Tls::new().unwrap(), proxy_env("ALL_PROXY", proxy));
+        let sending = tokio::spawn(async move { get(&http, url).await.err() });
+        let dialled = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+        assert!(dialled.is_err(), "the proxy was dialled for {url}");
+        let error = sending.await.unwrap().unwrap();
+        let refused = matches!(error, HttpError::Unverifiable);
+        assert!(refused, "{url}: {error:?}");
+    }
+}
+
+/// Waits, on the wall clock, for the first of: a lookup inside `proxy_host`,
+/// one inside `target`, or `sending` ending; and says which it was.
+async fn first_lookup<T>(
+    proxy_host: &Stall,
+    target: &Stall,
+    sending: &tokio::task::JoinHandle<T>,
+) -> &'static str {
+    loop {
+        if proxy_host.counts().0 > 0 {
+            return "the proxy host";
+        }
+        if target.counts().0 > 0 {
+            return "the target";
+        }
+        if sending.is_finished() {
+            return "none, the request ended";
+        }
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// A proxy's host is looked up with a plain owner, under the connect deadline
+/// alone: a raised poison does not stop it, a stall in it raises none, and
+/// the connection is given up at 15 s like any other.
+#[tokio::test(start_paused = true)]
+async fn a_proxy_host_is_looked_up_under_the_connect_deadline_and_never_the_poison() {
+    for poison in [raised(), Poison::default()] {
+        let (target, target_stall, _released) = stalled(1, Some(&poison));
+        let (proxy_host, stall, _release) = stalled_plain(1);
+        let env = proxy_env("HTTPS_PROXY", "http://proxy.test:3128".to_owned());
+        let http = Http::new(&Tls::new().unwrap(), target, proxy_host, env);
+        let sending = tokio::spawn(async move { get(&http, "https://api.test/").await.err() });
+        let was_raised = poison.is_raised();
+        let first = first_lookup(&stall, &target_stall, &sending).await;
+        assert_eq!(first, "the proxy host", "poison raised: {was_raised}");
+        tokio::time::advance(Duration::from_millis(14_999)).await;
+        settle().await;
+        assert!(!sending.is_finished(), "gave up before the deadline");
+        assert_eq!(poison.is_raised(), was_raised, "the poison changed");
+        tokio::time::advance(Duration::from_millis(1)).await;
+        settle().await;
+        assert!(sending.is_finished(), "still connecting at the deadline");
+        let error = sending.await.unwrap().unwrap();
+        let deadline = matches!(error.connect(), Some(ConnectError::Deadline));
+        assert!(deadline, "{error:?}");
+        assert_eq!(poison.is_raised(), was_raised, "the poison changed");
     }
 }
 
