@@ -510,14 +510,16 @@ fn as_much_as_fits(explained: &str) -> String {
 
 /// The line under a cut answer saying how many whole lines it left out.
 fn left_out(lines: usize) -> String {
-    format!("\n[{lines} more lines not shown.]")
+    let noun = if lines == 1 { "line" } else { "lines" };
+    format!("\n[{lines} more {noun} not shown.]")
 }
 
 /// The line under a list saying what it did not include.
 fn said_of(found: usize, left: usize) -> String {
+    let noun = if found == 1 { "result" } else { "results" };
     if left == 0 {
-        format!("{found} results.")
+        format!("{found} {noun}.")
     } else {
-        format!("{found} results, {left} not shown.")
+        format!("{found} {noun}, {left} not shown.")
     }
 }

@@ -47,6 +47,11 @@ change in any release with no deprecation period.
   losing the vendor and the HTTP status with it. A cut refusal now keeps the
   head of the reply, where the source and the status are, and ends with
   `[N more lines not shown.]` or a line saying the rest of it was cut.
+- **A count of one no longer reads as plural.** `web_search` said "1
+  results." for a single result, and a cut `web_fetch` page or refusal said
+  "[1 more lines not shown.]" for one line left out; both now say "result"
+  and "line" for a count of one, matching how every other count in crucible
+  is said.
 
 ### Security
 

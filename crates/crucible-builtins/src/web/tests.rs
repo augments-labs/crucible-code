@@ -272,6 +272,36 @@ fn a_limit_keeps_that_many_and_counts_what_it_left() {
 }
 
 #[test]
+fn a_search_that_found_one_result_says_result_not_results() {
+    let tool = searching(vec![result("Serde", "https://serde.rs", "A framework.")]);
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(said.ends_with("1 result."), "{said}");
+    assert!(!said.contains("1 results"), "{said}");
+}
+
+#[test]
+fn a_search_that_found_two_results_still_says_results() {
+    let tool = searching(vec![
+        result("Serde", "https://serde.rs", "A framework."),
+        result("Tokio", "https://tokio.rs", "An async runtime."),
+    ]);
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"async rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(said.ends_with("2 results."), "{said}");
+}
+
+#[test]
 fn a_search_question_shows_the_query_and_the_host_it_goes_to() {
     // Both facts. The host was settled when the user chose a provider and is
     // the same whatever is asked; the query is the thing that actually leaves
@@ -659,6 +689,63 @@ fn a_page_over_the_bound_comes_back_cut_rather_than_empty() {
         said.len() < 40_000,
         "the bound did not hold: {}",
         said.len()
+    );
+}
+
+#[test]
+fn a_page_leaving_exactly_one_line_out_says_line_not_lines() {
+    // 301 lines of 100 bytes each (the trailing newline `within` adds back
+    // included): the first 300 fill `bound::OUTPUT` exactly, so the 301st is
+    // the one line left out.
+    let long = "x".repeat(99) + "\n";
+    let tool = fetching(
+        "https://example.com/one-over",
+        Some("One over"),
+        &long.repeat(301),
+    );
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/one-over"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(
+        !output.is_failed(),
+        "a source that answers to have not failed"
+    );
+    assert!(
+        said.ends_with("[1 more line not shown.]"),
+        "{:?}",
+        &said[said.len().saturating_sub(60)..],
+    );
+}
+
+#[test]
+fn a_page_leaving_two_lines_out_still_says_lines() {
+    let long = "x".repeat(99) + "\n";
+    let tool = fetching(
+        "https://example.com/two-over",
+        Some("Two over"),
+        &long.repeat(302),
+    );
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/two-over"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(
+        !output.is_failed(),
+        "a source that answers to have not failed"
+    );
+    assert!(
+        said.ends_with("[2 more lines not shown.]"),
+        "{:?}",
+        &said[said.len().saturating_sub(60)..],
     );
 }
 
