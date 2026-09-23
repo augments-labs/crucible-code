@@ -97,6 +97,7 @@ mod tests {
         let marker =
             std::env::temp_dir().join(format!("crucible-binding-child-{}", std::process::id()));
         let _ = std::fs::remove_file(&marker);
+        let _turn = crate::broker::child_turn::take();
         let status = Command::new(std::env::current_exe().expect("test executable"))
             .args([
                 "--exact",
