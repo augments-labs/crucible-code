@@ -778,6 +778,87 @@ case $? in
         ;;
 esac
 
+section "a test build's sandbox state stays out of a release"
+# `per-checkout-state` names the Linux sandbox's state directory after the
+# checkout a test build was compiled from, so that two checkouts testing at once
+# keep apart. What ships uses the directory the security documentation names,
+# and a build that turned the feature on would move every user's state. This
+# holds the manifests to that: no table Cargo resolves for a build that ships
+# may turn the feature on. A release command that asks for it itself, with
+# `--features`, flags or configuration, is not something a manifest says, and
+# is not read here.
+#
+# Resolver 2 and later resolve dev-dependencies only for tests, benches and
+# examples; resolver 1 folds their features into every build. So the root
+# manifest must name its resolver, and name 2 or later. The feature may then be
+# turned on by a dev-dependency and nothing else: not by a normal or build
+# dependency, under any target, not by the workspace table a member inherits
+# from, and not by a feature of any package, the crate's own `default` included.
+# Cargo is asked for the manifests as it reads them, with every inherited line
+# folded in; the resolver, which it does not describe, is read from the root
+# manifest it names. Every package that takes the crate turns the feature on
+# for its own tests, because a narrow `cargo test -p` of it builds no other
+# package's dev-dependencies. A narrow run of the crate's own integration tests
+# cannot, since a crate that took itself would be an edge, and passes
+# `--features per-checkout-state` instead.
+sandbox_state=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, os, sys, tomllib
+
+OWNER, FEATURE = "crucible-sandbox-local", "per-checkout-state"
+described = json.load(sys.stdin)
+packages = described["packages"]
+with open(os.path.join(described["workspace_root"], "Cargo.toml"), "rb") as source:
+    root = tomllib.load(source)
+resolvers = [table["resolver"] for table in (root.get("workspace", {}), root.get("package", {})) if "resolver" in table]
+if not resolvers:
+    print(f"the root Cargo.toml names no resolver, so nothing says a release build leaves out {FEATURE}")
+for resolver in resolvers:
+    if not (isinstance(resolver, str) and resolver.isdigit() and int(resolver) >= 2):
+        print(f"the workspace resolver is {resolver!r}; before 2, a release build takes the {FEATURE} a dev-dependency turns on")
+owner = [package for package in packages if package["name"] == OWNER]
+if len(owner) != 1 or FEATURE not in owner[0]["features"]:
+    sys.exit(0)
+tested = 0
+for package in packages:
+    name = package["name"]
+    keys, testing = set(), False
+    for dependency in package["dependencies"]:
+        if dependency["name"] != OWNER:
+            continue
+        keys.add(dependency.get("rename") or dependency["name"])
+        if FEATURE not in dependency["features"]:
+            continue
+        kind = dependency["kind"] or "normal"
+        if kind == "dev":
+            testing = True
+        else:
+            print(f"{name} turns on {FEATURE} in a {kind} dependency, which a release build resolves")
+    for feature, enables in package["features"].items():
+        if name == OWNER:
+            named = feature != FEATURE and FEATURE in enables
+        else:
+            named = any(f"{key}{joint}{FEATURE}" in enables for key in keys for joint in ("/", "?/"))
+        if named:
+            print(f"{name} turns on {FEATURE} through its feature {feature}, which a release build can ask for")
+    if keys and name != OWNER:
+        if testing:
+            tested += 1
+        else:
+            print(f"{name} takes {OWNER} and its tests do not turn on {FEATURE}; they would share the state of every checkout")
+if tested:
+    print("measured")
+')
+if ! grep -Fxq measured <<<"$sandbox_state"; then
+    printf '    FAIL crucible-sandbox-local was not found declaring per-checkout-state and a package turning it on for its tests; this check measured nothing\n'
+    failed=1
+fi
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == measured ]] && continue
+    printf '    FAIL %s\n' "$line"
+    failed=1
+done <<<"$sandbox_state"
+
 section "bridge ledger"
 # `Bridge` is the ledger of every synchronous caller that crosses into an
 # asynchronous contract, and each entry says what bounds it, which crate owns

@@ -28,8 +28,9 @@ serde_json.workspace = true
 [dev-dependencies]
 # The confinement a command is actually run under. Tools name the service
 # contract and never a machine, so the tests take one machine's answer to it
-# to have anything to run a command through.
-crucible-sandbox-local.workspace = true
+# to have anything to run a command through, in the sandbox state directory of
+# this checkout rather than the one every checkout of this user would share.
+crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 
 # SHA-256 of a finished test result, so its receipt is identified by what it
 # contains rather than by when it was put there.

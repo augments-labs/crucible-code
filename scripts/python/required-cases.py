@@ -32,7 +32,8 @@ Platform-specific cases are pending on the platforms that cannot run them, not
 skipped: each supported platform's own run enforces its own rows.
 
     scripts/python/required-cases.py <artifacts> <doc-list> <doc-ignored-list>
-    scripts/python/required-cases.py --self-test  prove the source reader reads
+    scripts/python/required-cases.py --self-test  prove the source reader reads,
+                                                  and what a rerun asks cargo for
 """
 
 import hashlib
@@ -43,6 +44,15 @@ import subprocess
 import sys
 
 MANIFEST = "scripts/required-cases.json"
+
+# What a rerun of one package adds so that it builds as the shared selection
+# did. The Linux sandbox keeps a test build's state in a directory of its own
+# checkout only with `per-checkout-state` on. The selection turns it on through
+# other packages' dev-dependencies, which a rerun of one package does not build,
+# and the crate cannot take itself as one. Without it, a rerun of the crate's
+# integration tests would lock and recover in the directory every crucible that
+# is not a test build uses, and so in every other checkout's rerun too.
+RERUN_FEATURES = {"crucible-sandbox-local": ["--features", "per-checkout-state"]}
 
 PLATFORM = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
     sys.platform, sys.platform
@@ -182,6 +192,27 @@ def self_test():
     if reported(printed, "src/lib.rs", "Trouble::one", 40):
         print("    FAIL the required-case reader let a neighbour's example answer for it")
         return 1
+
+    sandboxed = invocation("crucible-sandbox-local", ["--test", "linux_network"], ["--exact", "one"])
+    if sandboxed != [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "crucible-sandbox-local",
+        "--features",
+        "per-checkout-state",
+        "--test",
+        "linux_network",
+        "--",
+        "--exact",
+        "one",
+    ]:
+        print("    FAIL a rerun of crucible-sandbox-local would keep its sandbox state where every checkout does")
+        return 1
+    if "--features" in invocation("crucible-builtins", ["--lib"], ["--exact", "one"]):
+        print("    FAIL a rerun asks for a feature its package's selection did not need")
+        return 1
     return 0
 
 
@@ -250,10 +281,25 @@ def selector(target):
     }[target["kind"]]
 
 
+def invocation(package, arguments, filters):
+    """The command that asks cargo for exactly these cases of one package."""
+    return [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        package,
+        *RERUN_FEATURES.get(package, []),
+        *arguments,
+        "--",
+        *filters,
+    ]
+
+
 def attempted(package, arguments, filters):
     """What cargo said when asked for exactly these."""
     result = subprocess.run(
-        ["cargo", "test", "--locked", "-p", package, *arguments, "--", *filters],
+        invocation(package, arguments, filters),
         capture_output=True,
         text=True,
         check=False,
