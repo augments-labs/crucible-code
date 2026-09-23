@@ -98,7 +98,7 @@ mod tests {
             std::env::temp_dir().join(format!("crucible-binding-child-{}", std::process::id()));
         let _ = std::fs::remove_file(&marker);
         let _turn = crate::broker::child_turn::take();
-        let status = Command::new(std::env::current_exe().expect("test executable"))
+        let mut child = Command::new(std::env::current_exe().expect("test executable"))
             .args([
                 "--exact",
                 "broker::binding::tests::child_filter_denies_tcp_and_unix_bind",
@@ -106,8 +106,9 @@ mod tests {
             ])
             .env(CHILD, "1")
             .env(CHILD_MARKER, &marker)
-            .status()
+            .spawn()
             .expect("spawn child");
+        let status = child.wait().expect("wait for child");
         assert!(status.success(), "child status: {status}");
         assert_eq!(std::fs::read(&marker).expect("child marker"), b"executed");
         let _ = std::fs::remove_file(marker);
