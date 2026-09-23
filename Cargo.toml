@@ -502,6 +502,12 @@ crucible-session = { workspace = true, features = ["proof"] }
 # The macro a test answers a fake service's future with, for the tests that
 # drive one by hand.
 crucible-runtime = { workspace = true, features = ["proof"] }
+# The confinement the command line runs commands under, keeping its sandbox
+# state in a directory of this checkout's while the integration tests run it, so
+# another checkout's tests never lock, recover or change it. Named here as well
+# as through the application, because a narrow `cargo test -p crucible-code`
+# builds no other package's dev-dependencies.
+crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 insta.workspace = true
 
 # The Linux benchmark probes run the shipped binary behind a controlling pseudo

@@ -72,6 +72,12 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 [dev-dependencies]
 # The guardrail a headless turn is refused by.
 crucible-agents.workspace = true
+# The same confinement the application composes, keeping its sandbox state in a
+# directory of this checkout's while it is tested, so another checkout's tests
+# never lock, recover or change it. Cargo does not resolve dev-dependencies for
+# a build, so this turns the feature on for `cargo test` and for nothing that
+# ships.
+crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 
 [lints]
 workspace = true

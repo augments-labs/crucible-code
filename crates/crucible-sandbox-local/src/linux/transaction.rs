@@ -1445,8 +1445,8 @@ fn validate_lock(state_path: &Path, name: &str, lock: &File) -> io::Result<()> {
     Ok(())
 }
 
-/// Reconciles every stale stage of this user, which all live in the private
-/// state directory the registry lease has already validated.
+/// Reconciles every stale stage in this build's state directory, the private
+/// one the registry lease has already validated.
 pub(super) fn reconcile_host_transactions() -> io::Result<()> {
     let Ok(state) = state_base() else {
         return Ok(());
@@ -1816,17 +1816,60 @@ fn discard_recovered_staging(candidate: &Path, recovered: &mut Recovered) -> io:
 
 /// This user's private transaction state directory, which also holds every
 /// writable projection stage.
+///
+/// The user id in its name is read at run time; the rest is fixed when this
+/// crate is compiled. A build that ships uses
+/// `/var/tmp/crucible-code-sandbox-{uid}-v1`. A test build — this crate's own
+/// unit tests, or any build with the `per-checkout-state` feature, which only
+/// dev-dependency lines turn on — adds a token of the directory this crate was
+/// compiled from, a path the compiler writes in. Two checkouts testing at once
+/// then each lock, recover and change a directory of their own: a test that
+/// leaves its directory in a mode no command accepts, or a recovery that
+/// removes the stages it finds, reaches no other checkout's.
+///
+/// Only test builds are kept apart this way. A build without the feature, such
+/// as a narrow run of this crate's integration tests that did not ask for it,
+/// uses the shipped directory, and shares it with whichever crucible this user
+/// is running. A `crucible` binary that `cargo test` left in a checkout's
+/// `target`, until a plain `cargo build` replaces it, is a test build as well:
+/// it uses that checkout's directory, so it does not share a publication lock
+/// with a crucible that is not a test build working on the same roots.
 fn state_base() -> Result<PathBuf, SandboxError> {
+    let name = format!(
+        "crucible-code-sandbox-{}-v1",
+        rustix::process::getuid().as_raw()
+    );
+    #[cfg(any(test, feature = "per-checkout-state"))]
+    let name = checkout_state_name(&name, env!("CARGO_MANIFEST_DIR"));
+    state_base_named(&name)
+}
+
+/// `shipped` followed by a fixed-width token of `checkout`: the first eight
+/// bytes of its SHA-256, in hexadecimal, so a path of any length or spelling
+/// makes a name of one length and one alphabet.
+#[cfg(any(test, feature = "per-checkout-state"))]
+fn checkout_state_name(shipped: &str, checkout: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut name = format!("{shipped}-");
+    for byte in Sha256::digest(checkout.as_bytes()).iter().take(8) {
+        // Writing to a string cannot fail, and a name that lost a byte would
+        // be another checkout's.
+        let _ = write!(name, "{byte:02x}");
+    }
+    name
+}
+
+/// The directory `name` under `/var/tmp`, refused unless `/var/tmp` resolves to
+/// itself.
+fn state_base_named(name: &str) -> Result<PathBuf, SandboxError> {
     let base = Path::new("/var/tmp");
     if base.canonicalize().ok().as_deref() != Some(base) {
         return Err(SandboxError::BackendUnavailable {
             reason: "canonical host transaction state base is unavailable".into(),
         });
     }
-    Ok(base.join(format!(
-        "crucible-code-sandbox-{}-v1",
-        rustix::process::getuid().as_raw()
-    )))
+    Ok(base.join(name))
 }
 
 /// The state directory for `request`, refused when it overlaps the requested
