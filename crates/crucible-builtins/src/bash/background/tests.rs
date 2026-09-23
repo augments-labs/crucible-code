@@ -10,7 +10,7 @@ use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
     SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
-    SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
 use crucible_tools::Unwatched;
 
@@ -38,6 +38,8 @@ struct Observed {
 struct Process {
     observed: Arc<Observed>,
     inspection: SandboxInspection,
+    /// What its standard output reads as, where a test gives it one.
+    stdout: Option<Box<dyn SandboxOutput>>,
 }
 
 impl SandboxProcess for Process {
@@ -46,7 +48,7 @@ impl SandboxProcess for Process {
     }
 
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        None
+        self.stdout.take()
     }
 
     fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
@@ -149,11 +151,15 @@ fn process(observed: &Arc<Observed>) -> Process {
     Process {
         observed: Arc::clone(observed),
         inspection,
+        stdout: None,
     }
 }
 
 fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
-    let process = process(observed);
+    keeping(left, process(observed), accepting)
+}
+
+fn keeping(left: &Background, process: Process, accepting: bool) -> Kept {
     let taken = output::collect(
         Box::new(process),
         &output::Waiting {
@@ -642,4 +648,98 @@ fn letting_the_registry_go_ends_a_command_whose_ending_went_wrong() {
         looks <= 5,
         "the registry kept asking a command that had answered: {looks}"
     );
+}
+
+/// A standard output that hands over `said` and then ends the way `then` says,
+/// telling `told` once it has.
+struct Printing {
+    said: Option<&'static [u8]>,
+    then: fn() -> io::Result<SandboxRead>,
+    told: Option<std::sync::mpsc::Sender<()>>,
+}
+
+impl SandboxOutput for Printing {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        let Some(said) = self.said.take() else {
+            let ending = (self.then)();
+            if let Some(told) = self.told.take() {
+                let _ = told.send(());
+            }
+            return ending;
+        };
+        let read = said.len().min(buffer.len());
+        buffer
+            .get_mut(..read)
+            .expect("room for what it says")
+            .copy_from_slice(said.get(..read).expect("what it says"));
+        Ok(SandboxRead::Bytes(read))
+    }
+}
+
+/// What reaping reports of a background command that printed `said` on its
+/// standard output, whose reading then ended the way `then` says, and which then
+/// exited.
+///
+/// The command exits only once its reader has met that ending. Reaping reports
+/// an ending whose readers are still going once a short grace has passed, and a
+/// reader starved past it would be stopped before it met the ending under test.
+fn ended_after_printing(said: &'static [u8], then: fn() -> io::Result<SandboxRead>) -> Ended {
+    let left = Background::new();
+    let observed = Arc::new(Observed::default());
+    let (told, heard) = std::sync::mpsc::channel();
+    let mut printing = process(&observed);
+    printing.stdout = Some(Box::new(Printing {
+        said: Some(said),
+        then,
+        told: Some(told),
+    }));
+    drop(keeping(&left, printing, false));
+    heard
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the reader met the ending under test");
+    observed.exited.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(one) = left.reap().into_iter().next() {
+            return one;
+        }
+        assert!(Instant::now() < deadline, "the command was never reported");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_background_command_whose_output_read_failed_says_it_is_incomplete() {
+    // A reader that failed part-way stops the way one that reached the end
+    // does. Reported as it stood, the model reads the part as the whole.
+    let one = ended_after_printing(b"compiled 3 of 7 crates", || {
+        Err(io::Error::other("synthetic read failure canary 5f3a"))
+    });
+
+    assert!(
+        one.printed.starts_with("compiled 3 of 7 crates"),
+        "{:?}",
+        one.printed
+    );
+    assert!(
+        one.printed
+            .contains("[output is incomplete: reading it failed before the end]"),
+        "a reader that failed left output that looks complete: {:?}",
+        one.printed
+    );
+    assert!(
+        !one.printed.contains("canary"),
+        "the read failure's own words reached the note: {:?}",
+        one.printed
+    );
+}
+
+#[test]
+fn a_background_command_whose_output_was_read_to_the_end_says_only_what_it_printed() {
+    let one = ended_after_printing(b"compiled 7 of 7 crates\n", || Ok(SandboxRead::End));
+
+    assert_eq!(&*one.printed, "compiled 7 of 7 crates");
+    assert_eq!(one.lines, 1);
 }

@@ -34,6 +34,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **What a command left running printed no longer reads as complete when
+  reading it failed.** When a read of its output failed part-way, the note
+  telling the model the command had ended carried what had arrived as though it
+  were all of it. What that command printed now ends, in the note, with
+  `[output is incomplete: reading it failed before the end]`; a command whose
+  output was read without a failure is reported as before.
 - **Two session directories, or two workspaces, whose names are not valid
   UTF-8 are no longer one prompt cache scope.** The directory a session is kept
   in and the workspace each separate one reader's prompt cache resources from
