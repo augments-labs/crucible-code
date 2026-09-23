@@ -135,7 +135,8 @@ pub struct Ended {
     pub code: Option<i32>,
     /// How many lines it printed in total.
     pub lines: usize,
-    /// What it printed, bounded and cut the way an answer is.
+    /// What it printed, bounded and cut the way an answer is, and ending in a
+    /// note that it is incomplete where a read of it failed before the end.
     ///
     /// The whole reason the model is told any of this. A note that a command
     /// ended and never what it said leaves the question the command was
@@ -518,7 +519,7 @@ impl Background {
                 continue;
             }
             let (lines, _) = left.counted();
-            let printed = super::output::excerpt(&left.text(), SHARE);
+            let printed = left.printed();
 
             ended.push(Ended {
                 tool: super::NAME,
@@ -735,7 +736,49 @@ impl Left {
         said.push_str(&self.err.text());
         said
     }
+
+    /// What it printed, for the note about its ending: bounded and cut the way
+    /// an answer is, and saying so where a reader failed before the end.
+    ///
+    /// A reader that failed part-way stops the way one that reached the end
+    /// does, so what it kept is a prefix that looks whole. Joining the readers
+    /// is what tells the two apart. Dropping this entry would join them anyway,
+    /// a moment later on the same thread, and throw away what the join said;
+    /// here it is read. The failure's own words are not carried — only that
+    /// there was one, in a fixed phrase — as a foreground command's error names
+    /// what could not be done and not what the operating system said.
+    fn printed(&mut self) -> String {
+        let said = self.text();
+        // Both, whatever the first says: each join is also the reader's end.
+        let out = self.out.close().is_err();
+        let err = self.err.close().is_err();
+        if !(out || err) {
+            return super::output::excerpt(&said, SHARE);
+        }
+
+        let kept = super::output::excerpt(&said, SHARE - UNREAD.len() - BEFORE_UNREAD.len());
+        if kept.is_empty() {
+            UNREAD.to_owned()
+        } else {
+            format!("{kept}{BEFORE_UNREAD}{UNREAD}")
+        }
+    }
 }
+
+/// What the note says of a command whose output a read failed on before the
+/// end.
+///
+/// Its room, and the blank line before it, come out of the share rather than
+/// being added to it, so a failed read makes the note no longer than
+/// `excerpt(.., SHARE)` could already have made it.
+const UNREAD: &str = "[output is incomplete: reading it failed before the end]";
+
+/// What parts [`UNREAD`] from what was printed.
+const BEFORE_UNREAD: &str = "\n\n";
+
+// The subtraction above relies on it, and a share too small to leave any
+// output beside the note would be a note about nothing.
+const _: () = assert!(UNREAD.len() + BEFORE_UNREAD.len() < SHARE);
 
 #[cfg(test)]
 mod tests;

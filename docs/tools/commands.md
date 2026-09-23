@@ -209,6 +209,9 @@ answering still open, and the only move left is to run something else that asks
 it again — which is the polling the note exists to make unnecessary. Each ending
 carries a quarter of a result's ceiling, so four commands ending into one note
 cost what one result does, and output cut to fit says so where it was cut.
+Output whose reading failed part-way ends with
+`[output is incomplete: reading it failed before the end]`, so the part that
+was read never passes for the whole.
 
 The model is told the moment there is somewhere to put it. A turn that is
 running takes the ending between one step and the next, so a plan built around a

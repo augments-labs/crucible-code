@@ -802,9 +802,11 @@ impl Pipe {
     /// Whether the reader has reached the end of the pipe.
     ///
     /// Answered by the thread having stopped. An I/O failure can also stop the
-    /// thread, but [`Self::close`] joins it and reports that failure before a
-    /// `ToolOutput` can be returned; `ended` only bounds how long collection
-    /// waits before that definitive result.
+    /// thread, but [`Self::close`] joins it and reports that failure. For a
+    /// command somebody waits on, that is a tool error returned before any
+    /// `ToolOutput` can be; for one that ended in the background, the registry
+    /// reads it and says the output is incomplete. `ended` only bounds how long
+    /// either waits before that definitive result.
     pub(super) fn ended(&self) -> bool {
         self.reader
             .as_ref()
@@ -854,8 +856,9 @@ impl Pipe {
             .unwrap_or_default()
     }
 
-    /// Stops and joins the reader, reporting spawn-side failures as tool errors.
-    fn close(&mut self) -> Result<(), ToolError> {
+    /// Stops and joins the reader, reporting one that failed or panicked as a
+    /// tool error.
+    pub(super) fn close(&mut self) -> Result<(), ToolError> {
         self.stop.store(true, Ordering::Relaxed);
         let Some(reader) = self.reader.take() else {
             return Ok(());
