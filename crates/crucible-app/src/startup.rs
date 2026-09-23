@@ -38,6 +38,7 @@ use crucible_workspace::Workspace;
 
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
+use crate::services::Services;
 use crate::subscription::Subscriptions;
 use crate::{AppError, Conversation};
 
@@ -92,6 +93,11 @@ pub enum Resuming {
 /// let a startup be pointed somewhere disposable and failed either way it can
 /// fail, and eight of those in a row is a call nobody can read.
 pub struct Startup<'a> {
+    /// What the application owns for the length of the run, the runtime among
+    /// it. The one way a factory here reaches something owned once per run:
+    /// what such a thing needs is a field of this, never a parameter of its
+    /// own beside it.
+    pub services: &'a Services,
     /// The generation of the provider registry every name here was read
     /// against, and the one a model's limits are read out of. Taken by the
     /// caller rather than here, so the provider that was resolved and the

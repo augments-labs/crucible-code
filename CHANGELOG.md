@@ -20,6 +20,14 @@ change in any release with no deprecation period.
   A proxy's credential is registered for redaction on the headers a request is
   sent with, so `Http::send` takes them mutably. Nothing uses it yet, so
   nothing a user runs behaves differently.
+- **A crossing that waits, and one runtime the application owns.**
+  `Bridge::wait` polls a future on the caller's thread against a runtime
+  handle until it answers or the turn's `Cancel` is raised, noticed within
+  20 ms, and refuses with `Unwaited` on a runtime thread or with no handle.
+  `crucible-app` lends a multi-thread runtime of 4 workers and at most 8
+  blocking threads, with a timer and no I/O driver, through
+  `services::Services`, built only when first asked for and shut down within
+  2 s once a run ends; nothing asks for it yet.
 
 ### Changed
 
