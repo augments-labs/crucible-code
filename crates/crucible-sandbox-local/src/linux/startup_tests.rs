@@ -66,6 +66,7 @@ fn startup_unconfirmed_cleanup_retains_linux_projection_and_audits_failed() -> i
     let audit = request.audit().clone();
     let mut launch = LinuxLaunch {
         process: None,
+        stop_mark: None,
         projection: Some(projection),
         network: None,
         materialization: None,
@@ -169,6 +170,7 @@ fn pretransfer_network_cleanup_failure_is_quarantined_and_never_complete() -> io
     let audit = request.audit().clone();
     let mut launch = LinuxLaunch {
         process: None,
+        stop_mark: None,
         projection: Some(projection),
         network: Some(mediator),
         materialization: None,
@@ -276,6 +278,7 @@ fn pretransfer_materialization_cleanup_failure_retains_projection_evidence() -> 
     let audit = request.audit().clone();
     let mut launch = LinuxLaunch {
         process: None,
+        stop_mark: None,
         projection: Some(projection),
         network: None,
         materialization: Some(materialization),

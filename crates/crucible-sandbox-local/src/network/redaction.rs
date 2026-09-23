@@ -1,10 +1,41 @@
 //! Bounded byte-preserving masking of echoed per-command proxy credentials.
+//!
+//! Output that could still grow into the password or its base64 form is held
+//! back: masked one `*` per byte if it completes one, released as it is once
+//! it cannot. When the command ends its own output, what is still held back is
+//! released as it is. When crucible cut the output instead, by discarding past
+//! the output limit or by stopping the command, the rest can never arrive, so
+//! what is held back is masked. It could be the start of the credential or
+//! only look like it: the base64 form always begins `Y3J1Y2libGU6`, so a final
+//! `Y` of cut output shows as `*`.
+//!
+//! Some ends crucible imposes are not marked, and each reads as the command's
+//! own:
+//!
+//! - Its clean-up of what the command left running: the kill of the
+//!   command's group once it exits, or on Linux the broker's sweep of the
+//!   namespace once the workload exits. Both run after every exit, whether or
+//!   not anything is left, and neither says whether it killed anything, so
+//!   marking them would mask output that ended on its own.
+//! - A CPU limit, when one is set: the kernel kills the command, and nothing
+//!   records that as a limit it broke.
+//! - A Linux broker that fails after the command started and exits: the
+//!   kernel kills what is left of the command with it, and the readers see
+//!   only the end.
+//!
+//! A start is released there only when a process killed this way wrote the
+//! credential across more than one write.
 
 use std::collections::VecDeque;
 use std::io;
 
 use base64::Engine as _;
 use crucible_sandbox::{SandboxOutput, SandboxRead};
+
+/// Whether crucible cut short the command whose output this is, by its output
+/// or command-time limit or by stopping it, rather than the command ending on
+/// its own.
+pub(super) type Interrupted = Box<dyn Fn() -> bool + Send>;
 
 pub(super) struct ProtectedOutput {
     inner: Box<dyn SandboxOutput>,
@@ -13,6 +44,8 @@ pub(super) struct ProtectedOutput {
     ready: VecDeque<u8>,
     discarded: usize,
     ended: bool,
+    /// Asked when the stream ends. Without it, every end is the command's own.
+    interrupted: Option<Interrupted>,
 }
 
 impl ProtectedOutput {
@@ -23,6 +56,7 @@ impl ProtectedOutput {
             ready: VecDeque::with_capacity(4096 + 100),
             discarded: 0,
             ended: false,
+            interrupted: None,
             patterns: [
                 userinfo
                     .split_once(':')
@@ -34,6 +68,11 @@ impl ProtectedOutput {
                     .into_bytes(),
             ],
         }
+    }
+
+    pub(super) fn interrupted_by(mut self, interrupted: Interrupted) -> Self {
+        self.interrupted = Some(interrupted);
+        self
     }
 }
 
@@ -56,6 +95,13 @@ impl ProtectedOutput {
                 }
             }
         }
+    }
+
+    /// Masks what is held back, which can no longer complete.
+    fn mask_held(&mut self) {
+        self.ready
+            .extend(std::iter::repeat_n(b'*', self.prefix.len()));
+        self.prefix.clear();
     }
 
     fn drain(&mut self, bytes: &mut [u8]) -> SandboxRead {
@@ -106,7 +152,12 @@ impl SandboxOutput for ProtectedOutput {
             SandboxRead::Pending => return Ok(SandboxRead::Pending),
             SandboxRead::End => {
                 self.ended = true;
-                self.ready.extend(self.prefix.drain(..));
+                let cut = self.interrupted.as_ref().is_some_and(|cut| cut());
+                if cut {
+                    self.mask_held();
+                } else {
+                    self.ready.extend(self.prefix.drain(..));
+                }
                 return Ok(self.drain(buffer));
             }
         };
@@ -114,6 +165,9 @@ impl SandboxOutput for ProtectedOutput {
             .get(..count)
             .ok_or_else(|| io::Error::other("sandbox output exceeded its buffer"))?;
         self.accept(bytes);
+        if self.discarded > 0 {
+            self.mask_held();
+        }
         Ok(self.drain(buffer))
     }
 }
@@ -164,6 +218,11 @@ mod tests {
             output.read_ready(&mut []).expect("empty"),
             SandboxRead::Pending
         );
+        read_all(&mut output, width)
+    }
+
+    /// Reads `output` to its end through a buffer `width` bytes wide.
+    fn read_all(output: &mut ProtectedOutput, width: usize) -> (Vec<u8>, usize) {
         let mut retained = Vec::new();
         let mut lost = 0;
         let mut bytes = vec![0; width];
@@ -240,6 +299,75 @@ mod tests {
         assert_eq!(
             collect([b"01234".to_vec()].into(), 2, 0),
             (b"01234".to_vec(), 0)
+        );
+    }
+
+    /// "id=" and the first 20 bytes of `value`, with the output limit
+    /// discarding the 7 bytes that followed them.
+    fn cut_short(value: &str) -> (Vec<u8>, usize) {
+        let mut input = b"id=".to_vec();
+        input.extend_from_slice(value.as_bytes().get(..20).expect("fixture length"));
+        collect([input].into(), 1, 7)
+    }
+
+    #[test]
+    fn a_password_the_output_limit_cut_short_is_masked() {
+        let password = USERINFO.split_once(':').expect("fixture").1;
+        assert_eq!(
+            cut_short(password),
+            ([b"id=".as_slice(), &[b'*'; 20]].concat(), 7)
+        );
+    }
+
+    #[test]
+    fn an_encoded_credential_the_output_limit_cut_short_is_masked() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(USERINFO);
+        assert_eq!(
+            cut_short(&encoded),
+            ([b"id=".as_slice(), &[b'*'; 20]].concat(), 7)
+        );
+    }
+
+    /// What a source reads next: bytes it keeps, or a discard on a read of its
+    /// own, as when the budget ran out at a read boundary or on the other stream.
+    enum Step {
+        Bytes(Vec<u8>),
+        Discard(usize),
+    }
+
+    struct Steps(VecDeque<Step>);
+
+    impl SandboxOutput for Steps {
+        fn read_ready(&mut self, bytes: &mut [u8]) -> io::Result<SandboxRead> {
+            Ok(match self.0.pop_front() {
+                None => SandboxRead::End,
+                Some(Step::Bytes(chunk)) => {
+                    bytes
+                        .get_mut(..chunk.len())
+                        .expect("fixture buffer")
+                        .copy_from_slice(&chunk);
+                    SandboxRead::Bytes(chunk.len())
+                }
+                Some(Step::Discard(discarded)) => SandboxRead::Limited {
+                    retained: 0,
+                    discarded,
+                },
+            })
+        }
+    }
+
+    #[test]
+    fn a_discard_on_a_read_of_its_own_masks_what_an_earlier_read_held_back() {
+        let password = USERINFO.split_once(':').expect("fixture").1;
+        let mut input = b"id=".to_vec();
+        input.extend_from_slice(password.as_bytes().get(..20).expect("fixture length"));
+        let mut output = ProtectedOutput::new(
+            Box::new(Steps([Step::Bytes(input), Step::Discard(7)].into())),
+            USERINFO,
+        );
+        assert_eq!(
+            read_all(&mut output, 1),
+            ([b"id=".as_slice(), &[b'*'; 20]].concat(), 7)
         );
     }
 }

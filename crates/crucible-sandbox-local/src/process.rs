@@ -250,6 +250,33 @@ pub(super) fn spawn(
     spawn_local(command, plan).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
 }
 
+/// [`spawn`], with the mark a stop made from outside the process sets on it.
+#[cfg(target_os = "linux")]
+pub(super) fn spawn_marked(
+    command: Command,
+    plan: SpawnPlan,
+) -> Result<(Box<dyn SandboxProcess>, StopMark), crucible_sandbox::SandboxError> {
+    spawn_local(command, plan).map(|process| {
+        let mark = StopMark(Arc::clone(&process.control));
+        (Box::new(process) as Box<dyn SandboxProcess>, mark)
+    })
+}
+
+/// Tells a command's output streams that crucible is stopping it, for an
+/// owner that can end the command's output before [`SandboxProcess::stop`]
+/// reaches the process: the Linux projection cancels through its broker.
+#[cfg(target_os = "linux")]
+pub(super) struct StopMark(Arc<Control>);
+
+#[cfg(target_os = "linux")]
+impl StopMark {
+    /// Marks the command cut, unless it has already been seen to exit. Called
+    /// before anything that can end its output.
+    pub(super) fn stopping(&self) {
+        self.0.stopping();
+    }
+}
+
 fn spawn_local(
     command: Command,
     plan: SpawnPlan,
@@ -442,6 +469,8 @@ struct Control {
     lifecycle: Mutex<()>,
     done: AtomicBool,
     violation: AtomicU8,
+    /// Set when crucible stops a command it has not seen exit.
+    stopped_running: AtomicBool,
     output_remaining: Option<AtomicU64>,
     output_bytes: AtomicU64,
     failure: Mutex<Option<Failure>>,
@@ -461,6 +490,7 @@ impl Control {
             lifecycle: Mutex::new(()),
             done: AtomicBool::new(false),
             violation: AtomicU8::new(NO_VIOLATION),
+            stopped_running: AtomicBool::new(false),
             output_remaining: output_limit.map(AtomicU64::new),
             output_bytes: AtomicU64::new(0),
             failure: Mutex::new(None),
@@ -509,6 +539,26 @@ impl Control {
         {
             self.record_failure(&io::Error::other(problem));
         }
+    }
+
+    /// Marks a stop of a command not yet seen to exit, which is what ends it.
+    /// `done` is set once an exit is seen, or once a stop has begun, and that
+    /// stop has already made this decision. A stop that lands after the
+    /// command exited, but before crucible saw it, masks what was held back,
+    /// and the stop is then what crucible reports; on Linux that window opens
+    /// at the workload's exit and lasts until the broker has cleaned up and
+    /// exited.
+    fn stopping(&self) {
+        if !self.done.load(Ordering::Acquire) {
+            self.stopped_running.store(true, Ordering::Release);
+        }
+    }
+
+    /// Whether crucible cut the command short: by its output or command-time
+    /// limit, or by a stop while it was still running. Either way, its output
+    /// ended early.
+    fn interrupted(&self) -> bool {
+        self.violation().is_some() || self.stopped_running.load(Ordering::Acquire)
     }
 
     fn violation(&self) -> Option<SandboxViolation> {
@@ -658,6 +708,17 @@ impl SandboxOutput for PreparedOutput {
     }
 }
 
+/// Masks the proxy credential in one output stream of the command `control`
+/// governs.
+fn protect_output(
+    network: &super::network::Mediator,
+    output: Box<dyn SandboxOutput>,
+    control: &Arc<Control>,
+) -> Box<dyn SandboxOutput> {
+    let control = Arc::clone(control);
+    network.protect_output(output, Box::new(move || control.interrupted()))
+}
+
 /// The process, its process-tree scope, streams, stage, and reservation.
 struct LocalProcess {
     child: Child,
@@ -755,11 +816,11 @@ impl LocalProcess {
             self.stdout = self
                 .stdout
                 .take()
-                .map(|output| network.protect_output(output));
+                .map(|output| protect_output(network, output, &self.control));
             self.stderr = self
                 .stderr
                 .take()
-                .map(|output| network.protect_output(output));
+                .map(|output| protect_output(network, output, &self.control));
         }
         if limits.command_time.is_some() || limits.output_bytes.is_some() {
             self.supervisor = Some(
@@ -822,6 +883,8 @@ impl LocalProcess {
             return self.control.failure().map_or(Ok(()), Err);
         }
 
+        // Before the kill: a command not yet seen to exit is being cut short.
+        self.control.stopping();
         self.control.done.store(true, Ordering::Release);
         let cleanup = match self.control.lifecycle() {
             Ok(_lifecycle) => {
@@ -1163,6 +1226,7 @@ pub(super) fn testing_plan(
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     mod cleanup;
+    mod credential;
     mod startup;
 
     use super::Stage;

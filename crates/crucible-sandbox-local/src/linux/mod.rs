@@ -242,6 +242,7 @@ impl SandboxSession for LinuxSession {
             // drop evidence or infer Complete from only the session's fields.
             let mut launch = LinuxLaunch {
                 process: None,
+                stop_mark: None,
                 projection: Some(projection),
                 network: None,
                 materialization: self.materialization.take(),
@@ -348,7 +349,7 @@ impl SandboxSession for LinuxSession {
                 .map_or((None, Vec::new()), |(stage, sources)| {
                     (Some(stage), sources)
                 });
-            let spawned = super::process::spawn(
+            let spawned = super::process::spawn_marked(
                 process,
                 super::process::SpawnPlan {
                     network: launch.network.take(),
@@ -376,7 +377,10 @@ impl SandboxSession for LinuxSession {
             // Session Drop must not infer Complete from its emptied fields.
             self.transferred = true;
             match spawned {
-                Ok(process) => launch.process = Some(process),
+                Ok((process, stop_mark)) => {
+                    launch.process = Some(process);
+                    launch.stop_mark = Some(stop_mark);
+                }
                 Err(problem) => {
                     launch.startup_failed(&problem);
                     return Err(problem);
@@ -389,6 +393,7 @@ impl SandboxSession for LinuxSession {
 
 struct LinuxLaunch {
     process: Option<Box<dyn SandboxProcess>>,
+    stop_mark: Option<super::process::StopMark>,
     projection: Option<projection::Projection>,
     network: Option<super::network::Mediator>,
     materialization: Option<materialize::Materialization>,
@@ -527,6 +532,7 @@ impl SandboxLaunch for LinuxLaunch {
                 projection::ProcessPlan {
                     projection: self.projection.take(),
                     status_channel,
+                    stop_mark: self.stop_mark.take(),
                     audit: self.audit.clone(),
                     sandbox: self.sandbox,
                     invocation: self.invocation,
