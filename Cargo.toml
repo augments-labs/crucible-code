@@ -171,6 +171,32 @@ http = "=1.5.0"
 # the `flate2` it costs.
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 
+# HTTP, asynchronously: a client whose request waits on the runtime rather than
+# on a thread of its own. `hyper` is the
+# HTTP/1.1 framing, the response head's size limits and the close of a
+# connection whose request was dropped; `http1` alone, so no HTTP/2 is compiled.
+# `std` has sockets and no HTTP.
+hyper = { version = "=1.11.1", default-features = false, features = ["client", "http1"] }
+# The pooled client over `hyper`, and the connector that takes a custom
+# resolver: the seam where `crucible-http` applies a lookup's deadline and
+# bound. `client-legacy` is that client and connector; the proxy features are
+# not compiled. `tokio` joins them to tokio's sockets.
+hyper-util = { version = "=0.1.20", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+# The trait a connector is written against, which the client above names in
+# its bounds. Already in its graph; named here so a connector can implement it.
+tower-service = "=0.3.3"
+# TLS. One stack, in Rust, over `ring` rather than the default `aws-lc-rs`, a C
+# library this tree does not build; TLS 1.2 is kept beside 1.3 as it was before.
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
+# The same TLS over an asynchronous socket: the reads, writes, wakeups and
+# close-notify a handshake and its records need, which `rustls` leaves to its
+# caller. Default features off for the same reason as above.
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
+# The Mozilla root set a server's certificate is checked against, compiled in:
+# no system store, bundle or platform verifier is read, so a certificate is
+# trusted the same way on every machine. Already in the tree under `ureq`.
+webpki-roots = "=1.0.9"
+
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; this decoder is
 # already present through rustls and avoids growing a second, partial codec at

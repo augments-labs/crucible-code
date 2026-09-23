@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **An HTTP client for outgoing requests to share, as its own crate.**
+  `crucible-http` is an asynchronous HTTP/1.1 client with rustls over the
+  compiled-in roots, redirects handed back rather than followed, bounded
+  hostname lookups with an optional 5 s deadline, a minute each for sending a
+  request's body and awaiting the response head, and a bounded response head. Nothing uses it yet, so nothing a user
+  runs behaves differently.
+
 ### Changed
 
 - **A guardrail's name and reason are kept to a ceiling.** A refusal, a check

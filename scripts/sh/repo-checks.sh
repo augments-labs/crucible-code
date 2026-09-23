@@ -583,6 +583,10 @@ fi
 # implements `SandboxProcess`.
 # `storage` hands back the same type spelled out, because it names no workspace
 # crate but `types`, and so it names no runtime.
+#
+# `http` is an HTTP client built for outgoing requests to share. It sends the
+# headers a credential was applied to and hands its connector's work back as a
+# runtime future, and it names nothing else in the workspace.
 allowed='code app
 code attachments
 code auth
@@ -657,6 +661,8 @@ extension runtime
 extension sandbox
 extension transport
 extension types
+http credentials
+http runtime
 mcp runtime
 mcp sandbox
 mcp tools
