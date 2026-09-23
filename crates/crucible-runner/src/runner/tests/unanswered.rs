@@ -1,9 +1,13 @@
 //! A turn over a service that never answers one step.
 //!
-//! A turn cannot wait, so a step that would have waited is dropped before it
+//! A turn awaits the provider, a call that runs alone and the toolset's
+//! preparation and disposal, and crosses to the rest through a bridge that
+//! asks once. A step crossed to that would have waited is dropped before it
 //! answers, and whatever it began is unconfirmed. The stand-ins here each
-//! leave exactly one step unanswered, so a refusal can only have come from
-//! that step. The recap a compaction asks for is a request like any other.
+//! leave exactly one such step unanswered, so a refusal can only have come
+//! from that step. A provider that has not answered is awaited instead, and
+//! what ends the turn then is what the provider answers once the turn is
+//! stopped. The recap a compaction asks for is a request like any other.
 //!
 //! Three things decide what the refusal is reported as. A refusal that ends
 //! the turn or a compaction is reported as the refusal, named for the crossing
@@ -20,12 +24,13 @@
 use crucible_core::{
     Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Compacted, ContextError,
     ContextPatch, ContextSnapshot, PromptCacheCapabilities, PromptCacheRoute, SessionId,
-    SessionOwner, ToolOutcome,
+    SessionOwner, ToolDescriptor, ToolExecutionMode, ToolOutcome, ToolProvenance, ToolSourceKind,
 };
 use crucible_runtime::{BoxFuture, Bridge};
 
 use super::aiming::left_behind;
 use super::pick_up::restrictions;
+use super::waiting::UntilStopped;
 use super::*;
 
 /// The one kind of line a [`Withholding`] store never answers the write of.
@@ -143,7 +148,7 @@ impl JournalStore for Withholding {
     }
 }
 
-/// The part of a request a [`Stalling`] provider never answers.
+/// The part of a request a [`Stalling`] provider answers only once stopped.
 #[derive(Debug, Clone, Copy)]
 enum Stalls {
     /// Sending the request.
@@ -152,10 +157,12 @@ enum Stalls {
     Response,
 }
 
-/// A provider that is sent a request and never answers one part of it.
+/// A provider that is sent a request and answers one part of it only once
+/// the turn has been stopped, as a real one answers a stop.
 ///
-/// Everything a request is built from is its script's, and so is the record of
-/// what it was sent.
+/// It stops the turn itself the first time it has nothing to say, as a
+/// reader pressing the key while it waited would. Everything a request is
+/// built from is its script's, and so is the record of what it was sent.
 struct Stalling {
     script: Script,
     at: Stalls,
@@ -191,19 +198,38 @@ impl Provider for Stalling {
             // Kept in the script's record, so a test can count what went out.
             drop(self.script.stream(request, cancel).await);
             match self.at {
-                Stalls::Request => std::future::pending().await,
-                Stalls::Response => Ok(Box::new(Silent) as Box<dyn DeltaStream>),
+                Stalls::Request => {
+                    UntilStopped {
+                        cancel: cancel.clone(),
+                        answer: Some(Err(ProviderError::Cancelled(self.script.name()))),
+                    }
+                    .await
+                }
+                Stalls::Response => Ok(Box::new(Silent {
+                    cancel: cancel.clone(),
+                    said: false,
+                }) as Box<dyn DeltaStream>),
             }
         })
     }
 }
 
-/// A response that never says anything.
-struct Silent;
+/// A response that says nothing until the turn is stopped, then says once
+/// that it was, and ends.
+struct Silent {
+    cancel: Cancel,
+    said: bool,
+}
 
 impl DeltaStream for Silent {
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
-        Box::pin(std::future::pending())
+        if std::mem::replace(&mut self.said, true) {
+            return Box::pin(async { None });
+        }
+        Box::pin(UntilStopped {
+            cancel: self.cancel.clone(),
+            answer: Some(Some(Ok(Delta::Stopped(StopReason::Cancelled)))),
+        })
     }
 }
 
@@ -257,14 +283,18 @@ fn dispositions(
     (held, posted, kept)
 }
 
-/// Runs a turn whose provider never answers `at`.
+/// Runs a turn whose provider answers `at` only once the turn is stopped.
 ///
-/// The refusal is named for the provider, and it is not a failure the provider
-/// reported: nothing about it says the request was refused or went away, so it
-/// is not a reason to send the request again either. The attempt is held and
-/// reported as `disposition`: a send dropped before it answered may have gone
-/// out all the same, and a request whose response was opened was accepted.
-fn stalled(at: Stalls, disposition: PromptCacheRequestDisposition) {
+/// The provider's step is awaited across the stop, not dropped, so what ends
+/// the turn is what the provider answered: a request it had not sent is its
+/// own cancellation, and a response it had opened ends stopped. It is not a
+/// reason to send the request again either. The attempt is held and
+/// reported as `disposition`: a send the provider says it cancelled was not
+/// sent, and a request whose response was opened was accepted.
+fn stalled(
+    at: Stalls,
+    disposition: PromptCacheRequestDisposition,
+) -> Result<StopReason, TurnError> {
     let script = Script::new(vec![saying("never read")]);
     let sent = script.sent();
     let store = Recording::nowhere();
@@ -276,15 +306,8 @@ fn stalled(at: Stalls, disposition: PromptCacheRequestDisposition) {
     );
     scripted.runner.provider = Box::new(Stalling { script, at });
 
-    let problem = scripted.turn("go").unwrap_err();
+    let turned = scripted.turn("go");
 
-    assert!(
-        matches!(
-            &problem,
-            TurnError::Unready(unready) if unready.bridge() == Bridge::TurnProvider
-        ),
-        "{at:?}: {problem:?}"
-    );
     assert_eq!(
         sent.lock().unwrap().len(),
         1,
@@ -295,23 +318,34 @@ fn stalled(at: Stalls, disposition: PromptCacheRequestDisposition) {
         (Some(disposition), vec![disposition], vec![disposition]),
         "{at:?}: the attempt as held, as posted and as kept"
     );
+    turned
 }
 
 #[test]
-fn a_request_the_provider_never_answers_ends_the_turn_refused() {
-    stalled(Stalls::Request, PromptCacheRequestDisposition::Unknown);
+fn a_request_stopped_while_the_provider_had_not_answered_ends_as_the_provider_says() {
+    let turned = stalled(Stalls::Request, PromptCacheRequestDisposition::NotSent);
+
+    assert!(
+        matches!(
+            &turned,
+            Err(TurnError::Provider(ProviderError::Cancelled(_)))
+        ),
+        "{turned:?}"
+    );
 }
 
 #[test]
-fn a_response_that_never_says_anything_ends_the_turn_refused() {
-    stalled(Stalls::Response, PromptCacheRequestDisposition::Accepted);
+fn a_response_stopped_before_it_said_anything_ends_the_turn_stopped() {
+    let turned = stalled(Stalls::Response, PromptCacheRequestDisposition::Accepted);
+
+    assert_eq!(turned.unwrap(), StopReason::Cancelled);
 }
 
 /// Asks for a recap, after two turns answered in full, from a provider that
-/// never answers `at`.
+/// answers `at` only once the compaction is stopped.
 ///
-/// The compaction ends on the refusal and replaces nothing, and the request for
-/// the recap is not left in the transcript. The recap's attempt is held and
+/// The compaction ends stopped and replaces nothing, and the request for the
+/// recap is not left in the transcript. The recap's attempt is held and
 /// reported as `disposition`, for the reason [`stalled`] gives.
 fn stalled_recap(at: Stalls, disposition: PromptCacheRequestDisposition) {
     let store = Recording::nowhere();
@@ -332,14 +366,11 @@ fn stalled_recap(at: Stalls, disposition: PromptCacheRequestDisposition) {
     scripted.runner.provider = Box::new(Stalling { script, at });
     let before = scripted.runner.state.transcript().messages().to_vec();
 
-    let problem = scripted.compacting().unwrap_err();
+    let compacted = scripted.compacting();
 
     assert!(
-        matches!(
-            &problem,
-            TurnError::Unready(unready) if unready.bridge() == Bridge::TurnProvider
-        ),
-        "{at:?}: {problem:?}"
+        matches!(compacted, Ok(Room::Stopped)),
+        "{at:?}: {compacted:?}"
     );
     assert_eq!(
         scripted.runner.state.transcript().messages(),
@@ -354,12 +385,12 @@ fn stalled_recap(at: Stalls, disposition: PromptCacheRequestDisposition) {
 }
 
 #[test]
-fn a_recap_request_the_provider_never_answers_ends_the_compaction_refused() {
-    stalled_recap(Stalls::Request, PromptCacheRequestDisposition::Unknown);
+fn a_recap_request_stopped_while_the_provider_had_not_answered_ends_the_compaction_stopped() {
+    stalled_recap(Stalls::Request, PromptCacheRequestDisposition::NotSent);
 }
 
 #[test]
-fn a_recap_that_never_says_anything_ends_the_compaction_refused() {
+fn a_recap_stopped_before_it_said_anything_ends_the_compaction_stopped() {
     stalled_recap(Stalls::Response, PromptCacheRequestDisposition::Accepted);
 }
 
@@ -492,14 +523,26 @@ fn results_past_the_boundary_whose_line_is_never_written_end_on_both() {
     );
 }
 
-/// A tool that raises the turn's stop as it runs, then answers or never does.
+/// A tool that raises the turn's stop as it runs, then answers, never does,
+/// or answers only once it sees the stop it raised.
 ///
 /// It raises the run's own stop rather than the one its context hands it: a
 /// tool's run is handed a child of the run's, and a child's stop does not
 /// reach the run it came from.
 struct Stopping {
     stop: Cancel,
-    answers: bool,
+    answers: Answers,
+}
+
+/// When a [`Stopping`] tool answers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Answers {
+    /// At once.
+    AtOnce,
+    /// Never.
+    Never,
+    /// Once it has waited and seen the stop.
+    OnceStopped,
 }
 
 impl DescribeTool for Stopping {
@@ -533,18 +576,29 @@ impl Tool for Stopping {
         _context: &'a ToolContext<'_>,
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-            self.stop.request();
-            if self.answers {
-                Ok(ToolOutput::ok("stopped"))
-            } else {
-                std::future::pending().await
+            match self.answers {
+                Answers::AtOnce => {
+                    self.stop.request();
+                    Ok(ToolOutput::ok("stopped"))
+                }
+                Answers::Never => {
+                    self.stop.request();
+                    std::future::pending().await
+                }
+                Answers::OnceStopped => {
+                    UntilStopped {
+                        cancel: self.stop.clone(),
+                        answer: Some(Ok(ToolOutput::ok("stopped"))),
+                    }
+                    .await
+                }
             }
         })
     }
 }
 
 /// A turn whose one tool raises its stop while it runs, recorded to `store`.
-fn stopped_by(answers: bool, rounds: Vec<Vec<Delta>>, store: Arc<Recording>) -> Scripted {
+fn stopped_by(answers: Answers, rounds: Vec<Vec<Delta>>, store: Arc<Recording>) -> Scripted {
     let stop = Cancel::new();
     let mut offered = Tools::new();
     offered
@@ -563,7 +617,11 @@ fn a_results_line_refused_while_stopping_ends_the_turn_refused() {
     // The stop is not a clean one while the record of what the pass answered
     // is in doubt: the refusal is what the turn ends on.
     let store = Recording::nowhere();
-    let mut scripted = stopped_by(true, vec![calling("a", "stop", "{}")], Arc::clone(&store));
+    let mut scripted = stopped_by(
+        Answers::AtOnce,
+        vec![calling("a", "stop", "{}")],
+        Arc::clone(&store),
+    );
     scripted.runner.store = Arc::new(Withholding {
         recording: store,
         withheld: Withheld::Results,
@@ -581,7 +639,7 @@ fn a_results_line_refused_while_stopping_ends_the_turn_refused() {
 }
 
 /// What each message is, in order, by the calls and results it pairs.
-fn shape(messages: &[Message]) -> Vec<String> {
+pub(super) fn shape(messages: &[Message]) -> Vec<String> {
     messages
         .iter()
         .map(|message| match message {
@@ -765,53 +823,53 @@ fn a_restricted_result_in_an_unwritten_results_line_is_still_cleared() {
 }
 
 #[test]
-fn a_recap_read_refused_while_stopping_ends_the_compaction_refused() {
-    // Whether the recap had begun to arrive is unconfirmed, which a clean stop
-    // would not say.
-    let mut scripted = Scripted::new(
-        Script::new(vec![saying("first"), saying("second")]),
-        Tools::new(),
+fn a_run_in_a_parallel_wave_refused_while_stopping_is_answered_as_unconfirmed() {
+    // The calls of a parallel wave each ask their run once on a thread of
+    // their own. A run there began and was dropped before it answered. "Not
+    // run" would be false, and whatever the run began would go unmentioned.
+    // The stop still ends the turn after that pass: the model is not asked
+    // again.
+    let stop = Cancel::new();
+    let provenance = ToolProvenance::new(
+        ToolSourceKind::User,
+        "test:stop",
+        "a tool that stops the turn",
+    )
+    .unwrap();
+    let descriptor =
+        ToolDescriptor::new("stop", r#"{"type":"object","properties":{}}"#, provenance)
+            .unwrap()
+            .executing(ToolExecutionMode::Parallel);
+    let mut offered = Tools::new();
+    offered
+        .add(
+            descriptor,
+            Arc::new(Stopping {
+                stop: stop.clone(),
+                answers: Answers::Never,
+            }),
+        )
+        .unwrap();
+    let mut scripted = Scripted::recording(
+        Script::new(vec![vec![
+            Delta::ToolStarted {
+                id: ToolId::new("a"),
+                name: "stop".into(),
+            },
+            Delta::ToolArgs("{}".into()),
+            Delta::ToolStarted {
+                id: ToolId::new("b"),
+                name: "stop".into(),
+            },
+            Delta::ToolArgs("{}".into()),
+            Delta::Stopped(StopReason::WantsTools),
+        ]]),
+        offered,
         Verdict::Allow,
-    );
-    scripted.runner.policy.compaction = Compaction {
-        keep_tokens: 1,
-        ..Compaction::default()
-    };
-    scripted.turn("first").expect("a turn to compact from");
-    scripted.turn("second").expect("a middle to replace");
-    scripted.runner.provider = Box::new(Stalling {
-        script: Script::new(vec![saying("never read")]),
-        at: Stalls::Response,
-    });
-    let before = scripted.runner.state.transcript().messages().to_vec();
-    scripted.cancel.request();
-
-    let compacted = scripted.compacting();
-
-    assert!(
-        matches!(
-            &compacted,
-            Err(TurnError::Unready(unready)) if unready.bridge() == Bridge::TurnProvider
-        ),
-        "{compacted:?}"
-    );
-    assert_eq!(
-        scripted.runner.state.transcript().messages(),
-        before.as_slice(),
-        "the transcript moved"
-    );
-}
-
-#[test]
-fn a_run_refused_while_stopping_is_answered_as_unconfirmed() {
-    // The run began and was dropped before it answered. "Not run" would be
-    // false, and whatever the run began would go unmentioned. The stop still
-    // ends the turn after that pass: the model is not asked again.
-    let mut scripted = stopped_by(
-        false,
-        vec![calling("a", "stop", "{}")],
         Recording::nowhere(),
     );
+    scripted.cancel = stop;
+    scripted.runner.policy.tools = crate::ToolScheduling::bounded(2).unwrap();
 
     let turned = scripted.turn("go");
 
@@ -837,5 +895,29 @@ fn a_run_refused_while_stopping_is_answered_as_unconfirmed() {
             _ => None,
         })
         .collect();
-    assert_eq!(outcomes, [ToolOutcome::Failed]);
+    assert_eq!(outcomes, [ToolOutcome::Failed, ToolOutcome::Failed]);
+}
+
+#[test]
+fn a_run_that_waits_across_the_stop_ends_the_pass_stopped() {
+    // A call that runs alone is awaited: its run waits, sees the stop, and
+    // answers, and the call is answered as the stop cut it short.
+    let mut scripted = stopped_by(
+        Answers::OnceStopped,
+        vec![calling("a", "stop", "{}")],
+        Recording::nowhere(),
+    );
+
+    let turned = scripted.turn("go");
+
+    assert_eq!(turned.unwrap(), StopReason::Cancelled);
+    assert_eq!(
+        scripted.sent.lock().unwrap().len(),
+        1,
+        "the model was asked again after the stop"
+    );
+    assert_eq!(
+        only_result(&scripted).output.text(),
+        "not run: the turn ended first"
+    );
 }

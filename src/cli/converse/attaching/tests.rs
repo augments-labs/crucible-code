@@ -15,7 +15,7 @@ use crucible_session::{Pruned, Session};
 use crucible_tui::{Glyphs, Recording, Renderer};
 
 use crate::cli::draw;
-use crate::cli::fake::Script;
+use crate::cli::fake::{Awaited, Script};
 use crate::cli::kept::Kept;
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
@@ -662,6 +662,7 @@ fn what_the_prompt_attached_reaches_the_transcript() {
     let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
         .turn(prompt, attachments, &mut Nobody, &run)
+        .awaited()
         .expect("the turn to finish");
 
     let Some(Message::User { text, attachments }) = runner.transcript().messages().first() else {
@@ -701,6 +702,7 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
     let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
         .turn(prompt, attachments, &mut Nobody, &run)
+        .awaited()
         .expect("the turn to finish");
 
     assert_eq!(

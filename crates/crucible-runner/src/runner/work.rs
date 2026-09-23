@@ -5,8 +5,18 @@
 //! with no answer, so a turn that stops half way through a pass — because the
 //! user cancelled, or said no — still writes a result for each remaining call
 //! saying why there is nothing in it.
+//!
+//! A call that runs alone — every call, unless a run asked for a wider
+//! scheduler ceiling — has its run awaited, so a tool that has to wait for its
+//! answer is waited for. The calls of a parallel wave run on scoped threads of
+//! their own, one each, and each of those asks its call's run once through a
+//! bridge: a run there that would have had to wait is answered as unconfirmed,
+//! as every run was before the turn could await one.
 
+use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::Instant;
 
@@ -16,7 +26,7 @@ use crucible_core::{
     ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId, ToolOutcome, ToolOutput,
     ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot, ToolSourceReceipt, Watch, Wrote,
 };
-use crucible_runtime::Bridge;
+use crucible_runtime::{Bridge, Unready};
 
 use crate::{Event, Reporter};
 mod audit;
@@ -78,7 +88,7 @@ pub(crate) struct Work<'a> {
 
 impl Work<'_> {
     /// Runs `calls`, and answers every one of them in provider order.
-    pub(crate) fn pass(
+    pub(crate) async fn pass(
         &mut self,
         calls: &[ToolCall],
         held: usize,
@@ -167,7 +177,7 @@ impl Work<'_> {
                     })
                     .collect()
             } else {
-                self.execute_wave(decisions)
+                self.execute_wave(decisions).await
             };
 
             for (offset, invocation) in invocations.into_iter().enumerate() {
@@ -354,7 +364,10 @@ impl Work<'_> {
     }
 
     /// Executes every approved call in one conflict-free scheduler wave.
-    fn execute_wave(&self, decisions: Vec<Decision>) -> Vec<Invocation> {
+    ///
+    /// A wave with one approved call awaits its run. A wave of several runs
+    /// each on a scoped thread of its own, which asks the run once.
+    async fn execute_wave(&self, decisions: Vec<Decision>) -> Vec<Invocation> {
         let host = ExecutionHost {
             ancestry: self.ancestry,
             cancel: self.cancel,
@@ -367,16 +380,17 @@ impl Work<'_> {
             .filter(|decision| matches!(decision, Decision::Ready(_)))
             .count();
         if ready <= 1 {
-            return decisions
-                .into_iter()
-                .map(|decision| match decision {
-                    Decision::Ready(prepared) => execute_contained(prepared, host),
+            let mut invocations = Vec::with_capacity(decisions.len());
+            for decision in decisions {
+                invocations.push(match decision {
+                    Decision::Ready(prepared) => execute_alone(prepared, host).await,
                     Decision::Done(invocation)
                     | Decision::Refused(invocation)
                     | Decision::Stopped(invocation)
                     | Decision::NotRun(invocation) => invocation,
-                })
-                .collect();
+                });
+            }
+            return invocations;
         }
 
         let mut completed = Vec::with_capacity(decisions.len());
@@ -703,6 +717,8 @@ struct ExecutionHost<'a> {
     audits: &'a SandboxAuditRegistry,
 }
 
+/// Runs one call of a parallel wave on the scoped thread it was given, asking
+/// its run once, and contains a panic.
 fn execute_contained(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation {
     let fallback = PanicFallback::from(&prepared);
     let audit = match host
@@ -712,122 +728,190 @@ fn execute_contained(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation 
         Ok(audit) => audit,
         Err(problem) => return fallback.audit_failed(problem),
     };
-    if let Ok(invocation) =
-        catch_unwind(AssertUnwindSafe(|| execute(prepared, host, audit.clone())))
-    {
+    if let Ok(invocation) = catch_unwind(AssertUnwindSafe(|| {
+        let (started, approved) = Started::from(prepared, host);
+        let watching = started.watching(host);
+        let context = match started.context(host, &watching, audit.clone()) {
+            Ok(context) => context,
+            Err(problem) => return started.unattributed(&problem),
+        };
+        let ran = Bridge::TurnTools.cross(started.entry.tool().run(approved, &context));
+        started.settled(ran, &context, host)
+    })) {
         invocation
     } else {
-        let _ = report_sandbox_audit(
-            &audit,
-            host.ancestry,
-            &fallback.call.id,
-            host.events,
-            host.journal,
-        );
-        fallback.panicked()
+        fallback.contained(&audit, host)
     }
 }
 
-fn execute(prepared: Prepared, host: ExecutionHost<'_>, audit: SandboxAudit) -> Invocation {
-    let Prepared {
-        call,
-        entry,
-        approved,
-        evidence,
-        mut record,
-    } = prepared;
-    let _ = record.start();
-    host.journal.append_run_item(&RunItem::Invocation {
-        record: record.clone(),
-        preview: None,
-    });
-    let deadline = entry
-        .descriptor()
-        .timeout()
-        .and_then(|timeout| Instant::now().checked_add(timeout));
-    let watching = Watching {
-        call: call.id.clone(),
-        events: host.events,
-    };
-    let context = match ToolContext::new(
-        host.ancestry,
-        call.id.clone(),
-        host.cancel,
-        deadline,
-        &watching,
-    )
-    .with_invocation(record.id())
-    .with_sandbox_audit(audit)
+/// Runs a call that runs alone, awaiting its run, and contains a panic in any
+/// poll of it.
+async fn execute_alone(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation {
+    let fallback = PanicFallback::from(&prepared);
+    let audit = match host
+        .audits
+        .collector(host.ancestry, fallback.call.id.clone())
     {
-        Ok(context) => context,
-        Err(problem) => {
-            let problem = ToolError::Io {
-                tool: "sandbox audit".into(),
-                problem: "could not attach fixed lifecycle attribution".into(),
-                source: std::io::Error::other(problem),
-            };
+        Ok(audit) => audit,
+        Err(problem) => return fallback.audit_failed(problem),
+    };
+    let executing = Contained(Box::pin(async {
+        let (started, approved) = Started::from(prepared, host);
+        let watching = started.watching(host);
+        let context = match started.context(host, &watching, audit.clone()) {
+            Ok(context) => context,
+            Err(problem) => return started.unattributed(&problem),
+        };
+        let ran = started.entry.tool().run(approved, &context).await;
+        started.settled(Ok(ran), &context, host)
+    }));
+    match executing.await {
+        Some(invocation) => invocation,
+        None => fallback.contained(&audit, host),
+    }
+}
+
+/// A future whose panic, in whichever poll it comes, is caught and answered
+/// as `None` rather than unwinding into the turn.
+///
+/// Polled with the waker of whoever polls it. It is awaited once, so nothing
+/// asks it again once it has answered or come apart.
+struct Contained<'a, T>(Pin<Box<dyn Future<Output = T> + 'a>>);
+
+impl<T> Future for Contained<'_, T> {
+    type Output = Option<T>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+        match catch_unwind(AssertUnwindSafe(|| self.0.as_mut().poll(cx))) {
+            Ok(Poll::Ready(answer)) => Poll::Ready(Some(answer)),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(_) => Poll::Ready(None),
+        }
+    }
+}
+
+/// A call whose run has been recorded as started, and what finishing it
+/// needs.
+struct Started {
+    call: ToolCall,
+    entry: ToolEntry,
+    evidence: InvocationEvidence,
+    record: InvocationRecord,
+    deadline: Option<Instant>,
+}
+
+impl Started {
+    /// Records the call as started, and hands back the approval to run it
+    /// under.
+    fn from(prepared: Prepared, host: ExecutionHost<'_>) -> (Self, Approved) {
+        let Prepared {
+            call,
+            entry,
+            approved,
+            evidence,
+            mut record,
+        } = prepared;
+        let _ = record.start();
+        host.journal.append_run_item(&RunItem::Invocation {
+            record: record.clone(),
+            preview: None,
+        });
+        let deadline = entry
+            .descriptor()
+            .timeout()
+            .and_then(|timeout| Instant::now().checked_add(timeout));
+        (
+            Self {
+                call,
+                entry,
+                evidence,
+                record,
+                deadline,
+            },
+            approved,
+        )
+    }
+
+    /// Where this call's output goes while it runs.
+    fn watching<'a>(&self, host: ExecutionHost<'a>) -> Watching<'a> {
+        Watching {
+            call: self.call.id.clone(),
+            events: host.events,
+        }
+    }
+
+    /// The context this call's run is handed.
+    fn context<'a>(
+        &self,
+        host: ExecutionHost<'a>,
+        watching: &'a Watching<'a>,
+        audit: SandboxAudit,
+    ) -> Result<ToolContext<'a>, ToolError> {
+        ToolContext::new(
+            host.ancestry,
+            self.call.id.clone(),
+            host.cancel,
+            self.deadline,
+            watching,
+        )
+        .with_invocation(self.record.id())
+        .with_sandbox_audit(audit)
+        .map_err(|problem| ToolError::Io {
+            tool: "sandbox audit".into(),
+            problem: "could not attach fixed lifecycle attribution".into(),
+            source: std::io::Error::other(problem),
+        })
+    }
+
+    /// The call, failed on `problem` before it ran.
+    fn unattributed(self, problem: &ToolError) -> Invocation {
+        Invocation::failed(self.call, problem, ToolOutcome::Failed, self.evidence)
+            .recovering(self.record)
+    }
+
+    /// The call, answered with what its run came to: `ran` is the run's
+    /// answer, or the refusal of a run that would have had to wait.
+    fn settled(
+        self,
+        ran: Result<Result<ToolOutput, ToolError>, Unready>,
+        context: &ToolContext<'_>,
+        host: ExecutionHost<'_>,
+    ) -> Invocation {
+        let Self {
+            call,
+            entry,
+            evidence,
+            record,
+            ..
+        } = self;
+        if let Err(problem) = report_sandbox_facts(context, host.events, host.journal) {
             return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
                 .recovering(record);
         }
-    };
-    let ran = Bridge::TurnTools.cross(entry.tool().run(approved, &context));
-    if let Err(problem) = report_sandbox_facts(&context, host.events, host.journal) {
-        return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
-            .recovering(record);
-    }
 
-    // The call's result reports the refusal, not the stop: the run began and
-    // was dropped before it answered, so "not run" would be false, and would
-    // leave what the run began unmentioned. Where a stop was asked for, the
-    // pass still ends on it, as it does for a call the stop cut short.
-    let ran = match ran {
-        Ok(ran) => ran,
-        Err(unready) => {
-            let problem = ToolError::Io {
-                tool: call.name.clone(),
-                problem: "its run would have had to wait, so the run was dropped before it \
-                          answered; whatever the run began is unconfirmed"
-                    .into(),
-                source: std::io::Error::other(unready),
-            };
-            let mut failed = Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
-                .recovering(record);
-            failed.stops = host.cancel.requested();
-            return failed;
-        }
-    };
+        // The call's result reports the refusal, not the stop: the run began
+        // and was dropped before it answered, so "not run" would be false, and
+        // would leave what the run began unmentioned. Where a stop was asked
+        // for, the pass still ends on it, as it does for a call the stop cut
+        // short.
+        let ran = match ran {
+            Ok(ran) => ran,
+            Err(unready) => {
+                let problem = ToolError::Io {
+                    tool: call.name.clone(),
+                    problem: "its run would have had to wait, so the run was dropped before it \
+                              answered; whatever the run began is unconfirmed"
+                        .into(),
+                    source: std::io::Error::other(unready),
+                };
+                let mut failed = Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                    .recovering(record);
+                failed.stops = host.cancel.requested();
+                return failed;
+            }
+        };
 
-    if host.cancel.requested() {
-        return Invocation::new(
-            call,
-            ToolOutput::failed(NOT_RUN),
-            ToolOutcome::Cancelled,
-            evidence,
-        )
-        .recovering(record);
-    }
-    if context.timed_out() {
-        return Invocation::new(
-            call,
-            ToolOutput::failed("tool timed out"),
-            ToolOutcome::TimedOut,
-            evidence,
-        )
-        .recovering(record);
-    }
-
-    let output = match ran {
-        Ok(output) => match entry.hooks().output() {
-            Some(guard) => match guard.guard(&call, output) {
-                Ok(output) => output,
-                Err(problem) => {
-                    return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
-                        .recovering(record);
-                }
-            },
-            None => output,
-        },
-        Err(ToolError::Cancelled(_)) => {
+        if host.cancel.requested() {
             return Invocation::new(
                 call,
                 ToolOutput::failed(NOT_RUN),
@@ -836,31 +920,62 @@ fn execute(prepared: Prepared, host: ExecutionHost<'_>, audit: SandboxAudit) -> 
             )
             .recovering(record);
         }
-        Err(problem) => {
-            return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
-                .recovering(record);
+        if context.timed_out() {
+            return Invocation::new(
+                call,
+                ToolOutput::failed("tool timed out"),
+                ToolOutcome::TimedOut,
+                evidence,
+            )
+            .recovering(record);
         }
-    };
-    let pending = match context.take_call_result() {
-        Ok(pending) => pending,
-        Err(problem) => {
-            let problem = ToolError::Io {
-                tool: call.name.clone(),
-                problem: "could not transfer deferred result ownership".into(),
-                source: std::io::Error::other(problem),
-            };
-            return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+
+        let output = match ran {
+            Ok(output) => match entry.hooks().output() {
+                Some(guard) => match guard.guard(&call, output) {
+                    Ok(output) => output,
+                    Err(problem) => {
+                        return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                            .recovering(record);
+                    }
+                },
+                None => output,
+            },
+            Err(ToolError::Cancelled(_)) => {
+                return Invocation::new(
+                    call,
+                    ToolOutput::failed(NOT_RUN),
+                    ToolOutcome::Cancelled,
+                    evidence,
+                )
                 .recovering(record);
-        }
-    };
-    let outcome = if output.is_failed() {
-        ToolOutcome::Failed
-    } else {
-        ToolOutcome::Succeeded
-    };
-    Invocation::new(call, output, outcome, evidence)
-        .recovering(record)
-        .accepting(pending)
+            }
+            Err(problem) => {
+                return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                    .recovering(record);
+            }
+        };
+        let pending = match context.take_call_result() {
+            Ok(pending) => pending,
+            Err(problem) => {
+                let problem = ToolError::Io {
+                    tool: call.name.clone(),
+                    problem: "could not transfer deferred result ownership".into(),
+                    source: std::io::Error::other(problem),
+                };
+                return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                    .recovering(record);
+            }
+        };
+        let outcome = if output.is_failed() {
+            ToolOutcome::Failed
+        } else {
+            ToolOutcome::Succeeded
+        };
+        Invocation::new(call, output, outcome, evidence)
+            .recovering(record)
+            .accepting(pending)
+    }
 }
 
 struct PanicFallback {
@@ -880,6 +995,19 @@ impl From<&Prepared> for PanicFallback {
 }
 
 impl PanicFallback {
+    /// The call, answered as a contained panic once whatever its sandbox
+    /// audit collected has been reported.
+    fn contained(self, audit: &SandboxAudit, host: ExecutionHost<'_>) -> Invocation {
+        let _ = report_sandbox_audit(
+            audit,
+            host.ancestry,
+            &self.call.id,
+            host.events,
+            host.journal,
+        );
+        self.panicked()
+    }
+
     fn panicked(self) -> Invocation {
         Invocation::new(
             self.call,

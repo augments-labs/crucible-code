@@ -45,9 +45,28 @@ use crucible_workspace::Workspace;
 
 #[path = "headless/client.rs"]
 mod client;
+#[path = "headless/crossing.rs"]
+mod crossing;
 
 /// Whatever stopped a test before its assertion.
 type Failed = Box<dyn std::error::Error>;
+
+/// The runtime these conversations wait for their turns on, standing where
+/// the application's own would: built once for the whole test binary, with
+/// its workers driving whatever a turn waits on.
+fn runtime() -> Result<tokio::runtime::Handle, Failed> {
+    static RUNTIME: std::sync::OnceLock<std::io::Result<tokio::runtime::Runtime>> =
+        std::sync::OnceLock::new();
+    match RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+    }) {
+        Ok(runtime) => Ok(runtime.handle().clone()),
+        Err(problem) => Err(format!("no runtime to take a turn on: {problem}").into()),
+    }
+}
 
 /// A workspace, a sessions directory and a home, removed when this is dropped.
 struct Tree(PathBuf);
@@ -289,7 +308,8 @@ fn conversing(
             crucible_context::ContextInputs::new(work),
             session,
         )
-    }))
+    })
+    .on(runtime()?))
 }
 
 /// Everything a switch is decided from, all of it under one tree: the

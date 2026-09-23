@@ -27,7 +27,7 @@ change in any release with no deprecation period.
   `crucible-app` lends a multi-thread runtime of 4 workers and at most 8
   blocking threads, with a timer and no I/O driver, through
   `services::Services`, built only when first asked for and shut down within
-  2 s once a run ends; nothing asks for it yet.
+  2 s once a run ends.
 
 ### Changed
 
@@ -52,6 +52,15 @@ change in any release with no deprecation period.
   tools, a sandbox step that brings a hosted MCP server up (prepare,
   materialize or start) and would have had to wait is reported as the new
   `ToolsetError::Unready`, with its cleanup unconfirmed.
+- **A turn waits for the model, a lone tool call and its toolset.**
+  `Runner::turn` and `Runner::compact` are now `async`, so a provider stream,
+  the run of a call that runs alone, or a toolset's preparation or disposal
+  that has to wait is waited for rather than refused, and the runner spawns
+  nothing. `Conversation::turn` and `Conversation::compact` stay synchronous,
+  waiting on the calling thread through the runtime handed over with
+  `Conversation::on`, which `startup::assemble` now starts, and refusing with
+  the new `TurnError::Unwaited` without one;
+  `TurnError::ToolsetCleanupUnready` is gone.
 
 ### Fixed
 

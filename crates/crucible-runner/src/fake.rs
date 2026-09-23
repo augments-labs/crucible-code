@@ -24,6 +24,24 @@ use crucible_runtime::BoxFuture;
 /// The name a scripted provider answers to.
 const SCRIPT: &str = "script";
 
+/// Drives a future to its answer, the way a test takes a turn.
+///
+/// A turn is asynchronous and a test is not, so a test awaits one on a
+/// current-thread runtime of its own, made for the one future and gone with
+/// it: whatever the turn awaits is polled on the test's own thread, as it is
+/// on the thread the application takes a turn on.
+pub(crate) trait Awaited: std::future::Future + Sized {
+    /// The future's answer, once it has one.
+    fn awaited(self) -> Self::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a test runtime")
+            .block_on(self)
+    }
+}
+
+impl<F: std::future::Future> Awaited for F {}
+
 /// Every request a provider was given, shared with the test that made it.
 pub(crate) type Sent = Arc<Mutex<Vec<SentRequest>>>;
 

@@ -11,10 +11,10 @@
 //! answer the question the user is still waiting on with a stop. A turn ends
 //! here only when somebody stopped it, when room could not be made, or when a
 //! session line of the compaction's own would have had to wait. Room is not
-//! made where the recap failed or came back incomplete, where a step of the
-//! recap request would have had to wait, or where two goes in a row freed
-//! nothing. A refused line leaves standing what was done before it, as
-//! [`Runner::compact`] says: any pruning, whichever line it was, and the
+//! made where the recap failed or came back incomplete, where a prompt-cache
+//! step of the recap request would have had to wait, or where two goes in a
+//! row freed nothing. A refused line leaves standing what was done before it,
+//! as [`Runner::compact`] says: any pruning, whichever line it was, and the
 //! replacement as well where the line reported what the recap freed; where
 //! the line recorded the recap, the replacement is not made. The turn ends on
 //! what it was: the stop, the failure, the incomplete recap, the refusal,
@@ -128,17 +128,13 @@ impl Runner {
     /// line the session would not take between turns, still held, is reported
     /// as [`TurnError::Unready`] before anything is recorded or sent.
     ///
-    /// A step of the recap request that would have had to wait, whether a
-    /// prompt-cache step or opening or reading the stream, is
+    /// Opening the recap's stream and reading it are awaited. A prompt-cache
+    /// step of the recap request that would have had to wait is
     /// [`TurnError::Unready`] and replaces nothing either, even when the
     /// compaction is being stopped: a refusal outranks a stop. What the
     /// dropped step began is unconfirmed, and a changing cache step is
-    /// recorded as ambiguous, to be reconciled, as a cancelled one is.
-    /// Whichever step it was, the recap request is taken back out of the
-    /// transcript. A request refused while its stream was being opened may
-    /// have gone out all the same, so its prompt-cache attempt is held,
-    /// reported and logged as `Unknown`; one refused while its answer was read
-    /// keeps `Accepted`.
+    /// recorded as ambiguous, to be reconciled, as a cancelled one is. The
+    /// recap request is taken back out of the transcript.
     ///
     /// A session write of this compaction's own that would have had to wait is
     /// [`TurnError::Unready`] too. The line recording what pruning cleared, and
@@ -147,7 +143,7 @@ impl Runner {
     /// and before the replacement, which is then not made; and the line
     /// reporting what the recap freed after the replacement, which stands.
     /// Whether the log kept a refused line is not known.
-    pub fn compact(
+    pub async fn compact(
         &mut self,
         why: Compacting,
         run: &RunContext<'_>,
@@ -234,7 +230,7 @@ impl Runner {
         let touched = self.tracked(replacing);
         events.post(crate::Event::Compacting { why, part: 0 });
 
-        let recap = match self.recap(why, &touched, run, spent)? {
+        let recap = match self.recap(why, &touched, run, spent).await? {
             Recap::Complete(recap) => recap,
             Recap::Incomplete => return Err(TurnError::RecapIncomplete),
             Recap::Stopped => return Ok(Room::Stopped),
@@ -446,7 +442,7 @@ impl Runner {
     ///
     /// The instruction is never copied alongside the transcript, because a
     /// copy of the transcript is the one allocation this crate may not make.
-    fn recap(
+    async fn recap(
         &mut self,
         why: Compacting,
         touched: &TrackedFiles,
@@ -615,10 +611,10 @@ impl Runner {
             prompt_cache: Some(&cache),
             ..request
         };
-        let crossed = Bridge::TurnProvider.cross(self.provider.stream(request, cancel));
-        // Recorded and reported before a refusal ends the compaction, as a
+        let asked = self.provider.stream(request, cancel).await;
+        // Recorded and reported before a failure ends the compaction, as a
         // turn's own request is.
-        let disposition = super::crossed_disposition(&crossed);
+        let disposition = super::request_disposition(&asked);
         if let Some(attempt) = self.state.prompt_cache_attempt.as_mut() {
             attempt.disposition = disposition;
         }
@@ -630,9 +626,6 @@ impl Runner {
                 disposition,
             }),
         );
-        let asked = crossed.inspect_err(|_| {
-            self.state.transcript.pop();
-        })?;
         let cache = super::CacheObservation {
             attempt: cache.attempt,
             reporting: cache.capabilities.usage(),
@@ -645,24 +638,20 @@ impl Runner {
                 }),
             pricing_date,
         };
-        let said = self.read_recap(
-            asked,
-            RecapReading {
-                events,
-                touched,
-                spent,
-                cache,
-                why,
-            },
-        );
+        let said = self
+            .read_recap(
+                asked,
+                RecapReading {
+                    events,
+                    touched,
+                    spent,
+                    cache,
+                    why,
+                },
+            )
+            .await;
 
         self.state.transcript.pop();
-        // A refusal outranks a stop. A read that would have had to wait was
-        // dropped before it answered, so what it began is unconfirmed, and a
-        // stop asked for meanwhile must not report it as a clean one.
-        if matches!(said, Err(TurnError::Unready(_))) {
-            return said;
-        }
         // The final EOF read may have raised cancellation without producing a
         // delta. A complete recap is still provisional until that read ends;
         // it must not replace the original history after the user stopped it.
@@ -698,7 +687,7 @@ impl Runner {
     }
 
     /// Reads one standalone recap response while preserving attempt accounting.
-    fn read_recap(
+    async fn read_recap(
         &mut self,
         asked: Result<Box<dyn crucible_core::DeltaStream>, ProviderError>,
         reading: RecapReading<'_>,
@@ -720,7 +709,7 @@ impl Runner {
         let mut stopped = None;
         let before = *spent;
 
-        while let Some(delta) = Bridge::TurnProvider.cross(stream.next())? {
+        while let Some(delta) = stream.next().await {
             let delta = match delta {
                 Ok(delta) => delta,
                 Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),

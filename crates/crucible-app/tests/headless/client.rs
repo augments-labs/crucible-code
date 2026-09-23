@@ -113,7 +113,8 @@ fn asking(tree: &Tree, script: Script) -> Result<(Conversation, Arc<AtomicUsize>
             session,
         )
         .permitting(Permission::with(crucible_tools::Mode::Ask, Rules::new()))
-    });
+    })
+    .on(super::runtime()?);
 
     Ok((conversation, ran))
 }

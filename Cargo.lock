@@ -462,6 +462,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -613,6 +614,7 @@ dependencies = [
  "crucible-types",
  "sha2",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

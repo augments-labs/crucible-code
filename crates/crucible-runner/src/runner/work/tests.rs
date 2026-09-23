@@ -19,7 +19,7 @@ use crucible_types::{
 
 use super::*;
 use crate::Tools;
-use crate::fake::{Fixed, Says, changing};
+use crate::fake::{Awaited, Fixed, Says, changing};
 use crate::recording::Recording;
 
 use crate::{EventEnvelope, Post};
@@ -403,7 +403,8 @@ fn deferred_results_commit_the_exact_guarded_runner_output() {
         audits: &SandboxAuditRegistry::new(),
         concurrency: 1,
     }
-    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX);
+    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX)
+    .awaited();
 
     assert!(matches!(went, Went::On));
     let result = results.first().expect("one result");
@@ -441,7 +442,8 @@ fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
         audits: &SandboxAuditRegistry::new(),
         concurrency: 1,
     }
-    .pass(&[call("deferred-call", "deferred")], 0, 40);
+    .pass(&[call("deferred-call", "deferred")], 0, 40)
+    .awaited();
 
     assert!(matches!(went, Went::OutputLimit));
     assert!(results.first().expect("one result").output.is_failed());
@@ -476,7 +478,8 @@ fn a_failed_durable_result_write_reclaims_the_background_scope() {
         audits: &SandboxAuditRegistry::new(),
         concurrency: 1,
     }
-    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX);
+    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX)
+    .awaited();
 
     assert!(matches!(went, Went::On));
     let result = results.first().expect("one result");
@@ -563,7 +566,8 @@ fn invoke_many(
         audits: &SandboxAuditRegistry::new(),
         concurrency,
     }
-    .pass(calls, 0, maximum);
+    .pass(calls, 0, maximum)
+    .awaited();
     drop(keeping);
     (results, went, seen.try_iter().collect())
 }
@@ -695,7 +699,8 @@ fn an_approved_effect_journals_one_stable_prepared_started_and_finished_invocati
         audits: &SandboxAuditRegistry::new(),
         concurrency: 1,
     }
-    .pass(&[call("keyed-call", "keyed")], 0, usize::MAX);
+    .pass(&[call("keyed-call", "keyed")], 0, usize::MAX)
+    .awaited();
 
     assert!(matches!(went, Went::On));
     assert_eq!(results.len(), 1);
@@ -1202,6 +1207,7 @@ impl Proof {
             concurrency: 1,
         }
         .pass(calls, held, maximum)
+        .awaited()
     }
 }
 

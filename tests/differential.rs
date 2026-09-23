@@ -38,6 +38,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_builtins::{
     AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
@@ -1349,4 +1350,473 @@ fn a_session_writes_down_the_same_record_of_the_same_turn() {
     let written = kept.0.lock().expect("a lock").clone();
     let written = String::from_utf8(written).expect("a log of text");
     same("session-record", &written);
+}
+
+// ---------------------------------------------------------------------- turn
+
+/// Whether every step of the probed turn answers when first asked, as every
+/// service here did while a turn could not wait, or waits once first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pace {
+    AtOnce,
+    Waiting,
+}
+
+/// How many times each kind of step of the probed turn said it was not ready.
+#[derive(Debug, Default)]
+struct Waited {
+    provider: AtomicUsize,
+    tool: AtomicUsize,
+    toolset: AtomicUsize,
+}
+
+/// `future`, saying once that it is not ready first where the pace is
+/// `Waiting`, and counting it on `waited`.
+struct Paced<'a, F> {
+    waits: bool,
+    waited: &'a AtomicUsize,
+    future: std::pin::Pin<Box<F>>,
+}
+
+impl<'a, F> Paced<'a, F> {
+    fn new(pace: Pace, waited: &'a AtomicUsize, future: F) -> Self {
+        Self {
+            waits: pace == Pace::Waiting,
+            waited,
+            future: Box::pin(future),
+        }
+    }
+}
+
+impl<F: std::future::Future> std::future::Future for Paced<'_, F> {
+    type Output = F::Output;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<F::Output> {
+        if std::mem::replace(&mut self.waits, false) {
+            self.waited.fetch_add(1, Ordering::Relaxed);
+            cx.waker().wake_by_ref();
+            return std::task::Poll::Pending;
+        }
+        self.future.as_mut().poll(cx)
+    }
+}
+
+/// A model that asks for the probe tool once and then answers, at `pace`.
+struct Probed {
+    pace: Pace,
+    waited: Arc<Waited>,
+    rounds: std::sync::Mutex<std::collections::VecDeque<Vec<crucible_core::Delta>>>,
+    scope: CredentialScopeId,
+}
+
+impl Provider for Probed {
+    fn name(&self) -> &'static str {
+        "probed"
+    }
+
+    fn spells(&self) -> crucible_core::Modalities {
+        crucible_core::Modalities::empty().insert(crucible_core::Modality::Text)
+    }
+
+    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_core::PromptCacheCapabilities {
+        crucible_core::PromptCacheCapabilities::unknown("differential-turn-probe-v1")
+    }
+
+    fn prompt_cache_route(&self) -> crucible_core::PromptCacheRoute<'_> {
+        crucible_core::PromptCacheRoute {
+            protocol: "probed",
+            endpoint: "probed",
+            custom_endpoint: true,
+            credential_scope: self.scope,
+            account: None,
+            project: None,
+            request_shape_version: "differential-turn-probe-v1",
+        }
+    }
+
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
+        crucible_core::PromptCacheEncoding::NoControlIntended
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<Box<dyn crucible_core::DeltaStream>, crucible_core::ProviderError>,
+    > {
+        let round = self
+            .rounds
+            .lock()
+            .expect("a script")
+            .pop_front()
+            .unwrap_or_default();
+        let stream = Recited {
+            pace: self.pace,
+            waited: Arc::clone(&self.waited),
+            deltas: round.into(),
+        };
+        Box::pin(Paced::new(self.pace, &self.waited.provider, async move {
+            Ok(Box::new(stream) as Box<dyn crucible_core::DeltaStream>)
+        }))
+    }
+}
+
+/// One round of deltas, each read at the probe's pace.
+struct Recited {
+    pace: Pace,
+    waited: Arc<Waited>,
+    deltas: std::collections::VecDeque<crucible_core::Delta>,
+}
+
+impl crucible_core::DeltaStream for Recited {
+    fn next(
+        &mut self,
+    ) -> crucible_runtime::BoxFuture<
+        '_,
+        Option<Result<crucible_core::Delta, crucible_core::ProviderError>>,
+    > {
+        let next = self.deltas.pop_front().map(Ok);
+        Box::pin(Paced::new(
+            self.pace,
+            &self.waited.provider,
+            async move { next },
+        ))
+    }
+}
+
+/// The one tool the probed turn calls, running at the probe's pace.
+struct Probe {
+    pace: Pace,
+    waited: Arc<Waited>,
+}
+
+impl DescribeTool for Probe {
+    fn name(&self) -> &'static str {
+        "probe"
+    }
+
+    fn schema(&self) -> &'static str {
+        r#"{"type":"object","properties":{}}"#
+    }
+}
+
+impl crucible_core::Tool for Probe {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), crucible_core::ToolError> {
+        Ok(())
+    }
+
+    fn sensitivity(&self, _args: &ToolArgs) -> crucible_core::Sensitivity {
+        crucible_core::Sensitivity::ReadOnly {
+            target: crucible_core::Target::unresolved(),
+        }
+    }
+
+    fn summary(&self, args: &ToolArgs) -> crucible_core::Summary {
+        crucible_core::Summary::new(args.as_str())
+    }
+
+    fn run<'a>(
+        &'a self,
+        _approved: crucible_core::Approved,
+        _context: &'a crucible_core::ToolContext<'_>,
+    ) -> crucible_runtime::BoxFuture<'a, Result<crucible_core::ToolOutput, crucible_core::ToolError>>
+    {
+        Box::pin(Paced::new(self.pace, &self.waited.tool, async {
+            Ok(crucible_core::ToolOutput::ok("the probe found one reader"))
+        }))
+    }
+}
+
+/// A live toolset offering the probe, preparing and disposing of itself at
+/// the probe's pace.
+struct Offering {
+    pace: Pace,
+    waited: Arc<Waited>,
+    snapshot: crucible_core::ToolSnapshot,
+}
+
+impl crucible_core::Toolset for Offering {
+    fn prepare<'a>(
+        &'a self,
+        _context: &'a crucible_core::ToolsetContext,
+    ) -> crucible_runtime::BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+        Box::pin(Paced::new(self.pace, &self.waited.toolset, async {
+            Ok(())
+        }))
+    }
+
+    fn snapshot<'a>(
+        &'a self,
+        _context: &'a crucible_core::ToolsetContext,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<crucible_core::ToolSnapshot, crucible_core::ToolsetError>,
+    > {
+        Box::pin(async { Ok(self.snapshot.clone()) })
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        _context: &'a crucible_core::ToolsetContext,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<crucible_core::ToolSnapshot, crucible_core::ToolsetError>,
+    > {
+        Box::pin(async { Ok(self.snapshot.clone()) })
+    }
+
+    fn dispose<'a>(
+        &'a self,
+        _context: &'a crucible_core::ToolsetContext,
+    ) -> crucible_runtime::BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+        Box::pin(Paced::new(self.pace, &self.waited.toolset, async {
+            Ok(())
+        }))
+    }
+}
+
+/// Allows every call it is asked about, once.
+struct Allowing;
+
+impl crucible_core::Ask for Allowing {
+    fn ask(
+        &mut self,
+        _call: &ToolCall,
+        _sensitivity: &crucible_core::Sensitivity,
+    ) -> (crucible_core::Verdict, crucible_core::Remember) {
+        (
+            crucible_core::Verdict::Allow,
+            crucible_core::Remember::Never,
+        )
+    }
+}
+
+/// `text` with what is minted afresh on each run renumbered: each UUID in its
+/// hyphenated spelling becomes `<id-N>`, and each 64-digit hexadecimal digest
+/// — a prompt-cache fingerprint, which binds the run's own identity — becomes
+/// `<digest-N>`, numbered in the order each first appears, so the same value
+/// reads the same wherever it recurs and two runs compare on everything else.
+fn renumbered(text: &str) -> String {
+    const UUID: [usize; 5] = [8, 4, 4, 4, 12];
+    const DIGEST: usize = 64;
+    let bytes = text.as_bytes();
+    let uuid_length: usize = UUID.iter().sum::<usize>() + UUID.len() - 1;
+    let hex = |at: usize, width: usize| {
+        bytes
+            .get(at..at + width)
+            .is_some_and(|run| run.iter().all(u8::is_ascii_hexdigit))
+    };
+    let bounded = |at: usize, width: usize| {
+        !bytes.get(at + width).is_some_and(u8::is_ascii_hexdigit)
+            && (at == 0 || !bytes.get(at - 1).is_some_and(u8::is_ascii_hexdigit))
+    };
+    let is_uuid = |at: usize| {
+        let mut offset = at;
+        UUID.iter().enumerate().all(|(group, &width)| {
+            let digits = hex(offset, width);
+            offset += width;
+            let joined = group + 1 == UUID.len() || bytes.get(offset) == Some(&b'-');
+            offset += 1;
+            digits && joined
+        }) && bounded(at, uuid_length)
+    };
+    let is_digest = |at: usize| hex(at, DIGEST) && bounded(at, DIGEST);
+    let mut ids: Vec<&str> = Vec::new();
+    let mut digests: Vec<&str> = Vec::new();
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while at < text.len() {
+        let (kind, width, seen) = if is_uuid(at) {
+            ("id", uuid_length, &mut ids)
+        } else if is_digest(at) {
+            ("digest", DIGEST, &mut digests)
+        } else {
+            let next = text[at..].chars().next().expect("a character");
+            out.push(next);
+            at += next.len_utf8();
+            continue;
+        };
+        let value = &text[at..at + width];
+        let number = seen
+            .iter()
+            .position(|one| *one == value)
+            .unwrap_or_else(|| {
+                seen.push(value);
+                seen.len() - 1
+            });
+        let _ = write!(out, "<{kind}-{number}>");
+        at += width;
+    }
+    out
+}
+
+/// Takes one turn through the application's own crossing, on the
+/// application's own runtime, over a model, a tool and a toolset that answer
+/// at `pace`, and renders what came of it: how the turn ended, every event it
+/// posted in order, and every line the session wrote in order, the framework
+/// journal's invocation records among them.
+fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
+    let waited = Arc::new(Waited::default());
+    let provenance = ToolProvenance::new(
+        crucible_core::ToolSourceKind::Other,
+        "differential:probe",
+        "the differential turn's tool",
+    )
+    .expect("a provenance");
+    let probe = Probe {
+        pace,
+        waited: Arc::clone(&waited),
+    };
+    let descriptor = crucible_core::ToolDescriptor::new("probe", probe.schema(), provenance)
+        .expect("a descriptor");
+    let snapshot = crucible_core::ToolSnapshot::new([crucible_core::ToolEntry::new(
+        descriptor,
+        Arc::new(probe),
+    )])
+    .expect("a snapshot");
+    let offering = Offering {
+        pace,
+        waited: Arc::clone(&waited),
+        snapshot,
+    };
+    let provider = Probed {
+        pace,
+        waited: Arc::clone(&waited),
+        rounds: std::sync::Mutex::new(
+            [
+                vec![
+                    crucible_core::Delta::Text("Looking for its readers.".into()),
+                    crucible_core::Delta::ToolStarted {
+                        id: ToolId::new("probe-call-1"),
+                        name: "probe".into(),
+                    },
+                    crucible_core::Delta::ToolArgs("{}".into()),
+                    crucible_core::Delta::Stopped(StopReason::WantsTools),
+                ],
+                vec![
+                    crucible_core::Delta::Text("One reader, in the runner.".into()),
+                    crucible_core::Delta::Stopped(StopReason::Yielded),
+                ],
+            ]
+            .into(),
+        ),
+        scope: CredentialScopeId::new(),
+    };
+
+    let kept = Kept::default();
+    let session = Arc::new(Session::onto(
+        PathBuf::from("/nowhere/01900000-0000-7000-8000-0000000000cc.jsonl"),
+        kept.clone(),
+    ));
+    let (rendered, stopped) = crucible_app::services::serving(|services| {
+        let runtime = services
+            .runtime()
+            .handle()
+            .expect("the application's runtime");
+        let agent = crucible_runner::Agent::new(
+            crucible_core::AgentId::new("probe"),
+            crucible_runner::Model {
+                name: "probed".into(),
+                max_tokens: 64,
+                window: None,
+                accepts: None,
+                effort: None,
+            },
+        );
+        let mut conversation =
+            crucible_app::Conversation::recording(session, Some("probed"), |session| {
+                crucible_runner::Runner::with_toolset(
+                    Box::new(provider),
+                    offering,
+                    agent,
+                    crucible_context::ContextInputs::new(PathBuf::from("/nowhere/work"))
+                        .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
+                    session,
+                )
+            })
+            .on(runtime);
+        let (events, seen) = std::sync::mpsc::channel::<crucible_runner::EventEnvelope>();
+        let (cancel, steer, aside) = (
+            Cancel::new(),
+            crucible_core::Steer::new(),
+            crucible_core::Aside::new(),
+        );
+        let turned = {
+            let run = conversation
+                .runner()
+                .starting(&events, &cancel, &steer, &aside);
+            conversation.turn("probe the tree", Box::default(), &mut Allowing, &run)
+        };
+        drop(events);
+        let trouble = conversation.session().finish();
+        assert!(trouble.is_none(), "the probe's own log failed: {trouble:?}");
+
+        let mut rendered = String::new();
+        let _ = writeln!(rendered, "=== turn ===\n{turned:?}\n=== events ===");
+        for envelope in seen.try_iter() {
+            let _ = writeln!(rendered, "{:?}", envelope.into_event());
+        }
+        let _ = writeln!(rendered, "=== session ===");
+        rendered.push_str(
+            &String::from_utf8(kept.0.lock().expect("a lock").clone()).expect("a log of text"),
+        );
+        rendered
+    });
+    assert!(stopped.is_ok(), "the runtime did not stop: {stopped:?}");
+    (renumbered(&rendered), waited)
+}
+
+#[test]
+fn a_turn_whose_steps_wait_records_what_one_answered_at_once_records() {
+    // What changed is that a turn can wait for its model, a call that runs
+    // alone and its toolset's preparation and disposal. The same turn, with
+    // every one of those waiting once, has to come out exactly as it did when
+    // nothing could: the same ending, the same events in the same order, and
+    // the same session lines, each admitted call's invocation records once
+    // each and in order among them.
+    let (at_once, idle) = turn_record(Pace::AtOnce);
+    let (waiting, waited) = turn_record(Pace::Waiting);
+
+    assert_eq!(
+        (
+            idle.provider.load(Ordering::Relaxed),
+            idle.tool.load(Ordering::Relaxed),
+            idle.toolset.load(Ordering::Relaxed),
+        ),
+        (0, 0, 0),
+        "a step of the at-once turn waited"
+    );
+    assert!(
+        waited.provider.load(Ordering::Relaxed) > 0
+            && waited.tool.load(Ordering::Relaxed) == 1
+            && waited.toolset.load(Ordering::Relaxed) == 2,
+        "the waiting turn's model, tool run, preparation and disposal did not each wait: {waited:?}"
+    );
+    assert!(
+        at_once.contains("Ran(") && at_once.contains("the probe found one reader"),
+        "the probed turn did not run its call:\n{at_once}"
+    );
+    let invocations: Vec<&str> = at_once
+        .lines()
+        .filter(|line| line.contains("\"invocation\"") && line.contains("probe-call-1"))
+        .collect();
+    assert_eq!(
+        invocations.len(),
+        3,
+        "the admitted call was not recorded prepared, started and finished once each:\n{at_once}"
+    );
+    if waiting != at_once {
+        let spilled = Path::new(env!("CARGO_TARGET_TMPDIR")).join("turn-record.txt");
+        fs::write(&spilled, &waiting).expect("the waiting record to be written");
+        panic!(
+            "a turn whose steps waited recorded something else\n{}\n  waiting: {}",
+            parted(&at_once, &waiting),
+            spilled.display()
+        );
+    }
 }

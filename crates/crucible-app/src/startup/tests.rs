@@ -14,6 +14,19 @@ use super::*;
 use crate::providers::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
 use crate::sample::{Sample, WRITTEN};
 
+/// Drives a future to its answer on a current-thread runtime of its own, the
+/// way a test takes a turn on a runner it holds.
+trait Awaited: std::future::Future + Sized {
+    fn awaited(self) -> Self::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a test runtime")
+            .block_on(self)
+    }
+}
+
+impl<F: std::future::Future> Awaited for F {}
+
 struct Nobody;
 
 impl Ask for Nobody {
@@ -1018,7 +1031,9 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
     let (events, _seen) = std::sync::mpsc::channel();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let run = runner.starting(&events, &cancel, &steer, &aside);
-    let _ = runner.turn("probe", Box::new([]), &mut Nobody, &run);
+    let _ = runner
+        .turn("probe", Box::new([]), &mut Nobody, &run)
+        .awaited();
     let workspace_fact = runner
         .transcript()
         .messages()

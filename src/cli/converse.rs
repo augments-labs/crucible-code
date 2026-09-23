@@ -1397,7 +1397,8 @@ fn take<T: Terminal>(
 /// The runner goes with it and comes back beside what it found to do, which is
 /// what makes the transcript and the permission memory survive a turn without
 /// being shared between threads. Nothing on this side waits on the provider,
-/// which is what keeps the box under the turn live while it runs.
+/// which is what keeps the box under the turn live while it runs. The turn is
+/// waited for on that thread, and nothing of it is spawned.
 // Every one of these has to cross the thread boundary as a value the worker
 // owns or clones; the run that bundles four of them borrows, so it can only be
 // made on the far side. The lint counts to five; what has to travel is seven.

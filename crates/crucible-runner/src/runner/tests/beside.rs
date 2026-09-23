@@ -100,7 +100,9 @@ fn two_runs_at_once_spend_against_their_own_ceilings_and_file_under_their_own_ru
             let run = one
                 .runner
                 .starting(filing, &one.cancel, &one.steer, &one.aside);
-            one.runner.turn("go", Box::new([]), &mut one.says, &run)
+            one.runner
+                .turn("go", Box::new([]), &mut one.says, &run)
+                .awaited()
         });
 
         mid_turn
@@ -112,6 +114,7 @@ fn two_runs_at_once_spend_against_their_own_ceilings_and_file_under_their_own_ru
         let finished = two
             .runner
             .turn("go", Box::new([]), &mut two.says, &run)
+            .awaited()
             .map(ran);
 
         release.send(()).expect("the first run to still be waiting");
@@ -194,6 +197,7 @@ fn a_question_one_run_is_waiting_on_is_neither_put_to_nor_settled_for_the_other(
                 .starting(&one.events, &one.cancel, &one.steer, &one.aside);
             one.runner
                 .turn("go", Box::new([]), reader, &run)
+                .awaited()
                 .map(ran)
                 .expect("the first run to finish once it is answered")
         });

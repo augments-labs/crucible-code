@@ -118,7 +118,9 @@ fn audit_exit(fails: Option<&'static str>) {
     let mut asks = Says::new(Verdict::Allow);
     let context = runner.starting(&events, &cancel, &steer, &aside);
     let ancestry = context.ancestry();
-    let result = runner.turn("go", Box::new([]), &mut asks, &context);
+    let result = runner
+        .turn("go", Box::new([]), &mut asks, &context)
+        .awaited();
     assert_eq!(result.is_err(), fails.is_some(), "{fails:?}: {result:?}");
     drop(runner);
     let expected = match fails {

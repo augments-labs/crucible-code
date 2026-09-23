@@ -143,15 +143,28 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// nothing in the crossing does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bridge {
-    /// The turn loop asking the model, and a compaction asking it, inside a
-    /// turn or between turns: opening a provider's stream and reading each of
-    /// its deltas.
+    /// The application waiting, on the thread that takes it, for a turn or
+    /// a compaction it was asked for: the whole of the runner's asynchronous
+    /// turn or compaction, polled on that thread and never spawned.
     ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll to open a stream, and one poll for each delta read.
-    /// - Owner: `crucible-runner`
-    /// - Retired: when the turn loop and a compaction are asynchronous.
-    TurnProvider,
+    /// - Crossing: waits.
+    /// - Bound: one wait for each turn and each compaction.
+    /// - Wait bounded by: the turn's own cancel, as far as the steps the turn
+    ///   awaits heed it. The turn looks at that cancel between steps and hands
+    ///   it to every step it awaits — the provider's stream and each read of
+    ///   it, the run of a call that runs alone, the toolset's preparation and
+    ///   disposal — and how soon a step still waiting heeds it is that step's
+    ///   own contract: nothing here enforces a deadline on a waiting step, and
+    ///   a tool's deadline is read only once its run has answered. What the
+    ///   run keeps bounds how much the turn does rather than how long a step
+    ///   waits: its retry attempts, whose pauses heed the cancel, and its
+    ///   response, tool-output and spend ceilings. The crossing itself waits
+    ///   under a cancel nothing raises, so a stop ends the turn through its
+    ///   own ending rather than by dropping it at a step, which could leave a
+    ///   recorded call without its result.
+    /// - Owner: `crucible-app`
+    /// - Retired: when the application awaits a turn directly.
+    AppTurn,
     /// The runner's prompt-cache resources: a provider's lifecycle calls and
     /// the store their records are kept in. They are reached by a turn
     /// preparing its request, and by a compaction preparing its recap request
@@ -167,14 +180,18 @@ pub enum Bridge {
     /// - Retired: when the turn loop, a compaction, the runner's cache
     ///   inspection and its cleanup pass are asynchronous.
     TurnCache,
-    /// The turn's tools: running an admitted call, accepting a background
-    /// result, and preparing, listing, refreshing and disposing of toolsets.
+    /// The turn's tools where the turn does not await them yet: running a
+    /// call in a parallel wave, on the wave's own thread for it; accepting a
+    /// background result; and listing and refreshing the toolset at the top
+    /// of each pass. A call that runs alone, and preparing and disposing of
+    /// the toolset, are awaited.
     ///
     /// - Crossing: polls once.
-    /// - Bound: one poll for each call run, result accepted and toolset
-    ///   operation.
+    /// - Bound: one poll for each call run in a parallel wave, each result
+    ///   accepted, and each listing or refreshing of the toolset.
     /// - Owner: `crucible-runner`
-    /// - Retired: when the turn loop is asynchronous.
+    /// - Retired: when the turn awaits a parallel wave's runs, a background
+    ///   result's acceptance and the toolset's listing and refreshing.
     TurnTools,
     /// The runner's writes to its session: the turn's, and the ones a
     /// compaction, picking a session up or changing vendor makes between turns.
@@ -334,7 +351,7 @@ impl Bridge {
     /// What is crossed, in words a reader of an error can follow.
     const fn crossing(self) -> &'static str {
         match self {
-            Self::TurnProvider => "asking the model",
+            Self::AppTurn => "a turn or a compaction",
             Self::TurnCache => "a prompt-cache step",
             Self::TurnTools => "the turn's tools",
             Self::TurnSession => "writing to the session",
@@ -525,19 +542,20 @@ mod tests {
 
     #[test]
     fn a_future_that_would_wait_is_refused_naming_the_bridge() {
-        let refused = Bridge::TurnProvider.cross(std::future::pending::<()>());
+        let refused = Bridge::TurnSession.cross(std::future::pending::<()>());
 
         assert_eq!(
             refused,
             Err(Unready {
-                bridge: Bridge::TurnProvider
+                bridge: Bridge::TurnSession
             })
         );
         assert_eq!(
             refused.map_err(|unready| unready.to_string()),
             Err(
-                "asking the model would have had to wait, and the caller cannot; the waiting step \
-                 was dropped before it answered, so whatever that step began is unconfirmed"
+                "writing to the session would have had to wait, and the caller cannot; the \
+                 waiting step was dropped before it answered, so whatever that step began is \
+                 unconfirmed"
                     .to_owned()
             )
         );
@@ -624,11 +642,11 @@ mod tests {
     fn a_waiting_crossing_is_handed_back_what_a_future_that_had_to_wait_answered() {
         let runtime = runtime();
 
-        let slept = Bridge::TurnProvider.wait(Some(runtime.handle()), &Cancel::new(), async {
+        let slept = Bridge::AppTurn.wait(Some(runtime.handle()), &Cancel::new(), async {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             7
         });
-        let woken = Bridge::TurnProvider.wait(
+        let woken = Bridge::AppTurn.wait(
             Some(runtime.handle()),
             &Cancel::new(),
             WakesItself { asked: false },
@@ -806,28 +824,28 @@ mod tests {
     fn a_waiting_crossing_says_why_it_handed_nothing_back() {
         assert_eq!(
             [
-                Unwaited::Cancelled(Bridge::TurnProvider),
-                Unwaited::InsideRuntime(Bridge::TurnProvider),
-                Unwaited::NoRuntime(Bridge::TurnProvider),
+                Unwaited::Cancelled(Bridge::AppTurn),
+                Unwaited::InsideRuntime(Bridge::AppTurn),
+                Unwaited::NoRuntime(Bridge::AppTurn),
             ]
             .map(|unwaited| (unwaited.bridge(), unwaited.to_string())),
             [
                 (
-                    Bridge::TurnProvider,
-                    "asking the model was stopped before it answered; the waiting step was \
+                    Bridge::AppTurn,
+                    "a turn or a compaction was stopped before it answered; the waiting step was \
                      dropped, so whatever that step began is unconfirmed"
                         .to_owned()
                 ),
                 (
-                    Bridge::TurnProvider,
-                    "asking the model would have had to wait on a thread the runtime runs, \
+                    Bridge::AppTurn,
+                    "a turn or a compaction would have had to wait on a thread the runtime runs, \
                      where waiting holds a thread the wait may need; the step was dropped \
                      before it was asked anything"
                         .to_owned()
                 ),
                 (
-                    Bridge::TurnProvider,
-                    "asking the model would have had to wait, and there is no runtime to \
+                    Bridge::AppTurn,
+                    "a turn or a compaction would have had to wait, and there is no runtime to \
                      wait on; the step was dropped before it was asked anything"
                         .to_owned()
                 ),
