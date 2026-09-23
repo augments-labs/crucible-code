@@ -487,10 +487,6 @@ sha2.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
-# The same session crate the runner re-exports, with the seam that lets a test
-# hand it a log which fails on every write. Cargo does not resolve
-# dev-dependencies for a build, so this turns the feature on for `cargo test`
-# and for nothing that ships.
 [dev-dependencies]
 # Named by the integration tests alone, which drive the seams these two own from
 # outside: what an extension sweep finds, and what hosting a server comes to.
@@ -498,6 +494,10 @@ thiserror.workspace = true
 # neither, which the repository gate holds it to.
 crucible-extension.workspace = true
 crucible-mcp.workspace = true
+# The same session crate the runner re-exports, with the seam that lets a test
+# hand it a log which fails on every write. Cargo does not resolve
+# dev-dependencies for a build, so this turns the feature on for `cargo test`
+# and for nothing that ships.
 crucible-session = { workspace = true, features = ["proof"] }
 # The macro a test answers a fake service's future with, for the tests that
 # drive one by hand.
