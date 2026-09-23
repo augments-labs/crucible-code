@@ -1,0 +1,39 @@
+[package]
+name = "crucible-http"
+description = "An HTTP client for outgoing requests to share, and the TLS, redirect, lookup and head policy it sends under."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `Outgoing`: the headers a credential was applied to, which a request is sent
+# with.
+crucible-credentials.workspace = true
+# `BoxFuture`, the shape the connector and the resolver hand their work back in.
+crucible-runtime.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rustls.workspace = true
+thiserror.workspace = true
+# `net` for the sockets, `rt` for the blocking worker a hostname lookup runs
+# on, `sync` for the permits that bound those workers, `time` for deadlines.
+# Nothing here builds a runtime: the client runs on its caller's.
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+tokio-rustls.workspace = true
+tower-service.workspace = true
+webpki-roots.workspace = true
+
+# `server` is the other end of the loopback exchanges the tests hold, so the
+# peer speaks the same HTTP/1.1 the client does. `macros` writes the test
+# attribute, `test-util` is the paused clock a deadline is asserted against
+# without spending it, and `io-util` is the in-memory pipe a stalled peer is.
+[dev-dependencies]
+hyper = { workspace = true, features = ["server"] }
+tokio = { workspace = true, features = ["io-util", "macros", "test-util"] }
+
+[lints]
+workspace = true

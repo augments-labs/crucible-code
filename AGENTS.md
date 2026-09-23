@@ -19,6 +19,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-sandbox/` | What a confined process may observe or change |
 | `crates/crucible-sandbox-local/` | The confinement this machine can enforce, and the processes it runs |
 | `crates/crucible-transport/` | Bounded frames, the streams a hosted program is spoken to over, and its restart budget |
+| `crates/crucible-http/` | An HTTP client for outgoing requests to share, and the TLS, redirect, lookup and head policy it sends under |
 | `crates/crucible-tools/` | What a tool is, what may run one, and the proof that it may |
 | `crates/crucible-models/` | What a model is asked and answers with, and what a cache attempt may do |
 | `crates/crucible-context/` | The words a request is built from, and what a compaction asks for |
