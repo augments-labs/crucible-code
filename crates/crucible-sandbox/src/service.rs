@@ -1674,14 +1674,45 @@ pub enum SandboxError {
     /// The enforcing command could not start.
     #[error("sandbox launch failed")]
     Spawn(#[source] io::Error),
-    /// A running process could not be controlled or reaped, or a step that
-    /// would have had to wait was dropped before it answered.
+    /// A step in a sandbox's life did not complete, as
+    /// [`SandboxFailureKind::Lifecycle`](super::audit::SandboxFailureKind::Lifecycle)
+    /// describes. A launch that ended before readiness, where the backend can
+    /// quote what its launcher wrote meanwhile, is
+    /// [`LaunchRefused`](Self::LaunchRefused) instead.
     ///
     /// A dropped step leaves whatever it began unconfirmed, and its error holds
     /// the [`Unready`](crucible_runtime::Unready) it was refused with, which
     /// `get_ref` finds.
     #[error("sandbox lifecycle failed")]
     Lifecycle(#[source] io::Error),
+    /// The backend's launch ended before the command was released, and words
+    /// could be read from its launcher's standard error.
+    ///
+    /// Those words are usually why, but not always: they are whatever reached
+    /// that stream before readiness, some of which is written for other
+    /// reasons.
+    /// Audited as [`SandboxFailureKind::Lifecycle`](super::audit::SandboxFailureKind::Lifecycle),
+    /// as a launch that ended with nothing to quote is; the words stay out of
+    /// the audit.
+    #[error("sandbox launch refused: {said}")]
+    LaunchRefused {
+        /// What reached the launcher's standard error before the launch was
+        /// ready, quoted as it was: on Linux, what Bubblewrap wrote, what the
+        /// dynamic loader wrote, or the broker's runtime reporting a panic or
+        /// an abort. The loader can also write when a program starts, for
+        /// example under an environment entry setting `LD_DEBUG` or naming an
+        /// `LD_PRELOAD` object that does not exist, and a broker that refuses
+        /// does so through `source`, so these words may sit beside the reason
+        /// rather than be it. The backend cuts them to a bound, ending them
+        /// ` (truncated)` where there was more, folds them onto one line, and
+        /// masks them as [`SandboxProcess::take_stderr`] masks what a command
+        /// writes there.
+        said: Box<str>,
+        /// How the refusal was noticed: the error the launcher's status
+        /// channel gave instead of readiness.
+        #[source]
+        source: io::Error,
+    },
 }
 
 impl SandboxError {
@@ -1700,7 +1731,7 @@ impl SandboxError {
             Self::Concurrency => SandboxFailureKind::Concurrency,
             Self::Materialization { .. } => SandboxFailureKind::Materialization,
             Self::Spawn(_) => SandboxFailureKind::Spawn,
-            Self::Lifecycle(_) => SandboxFailureKind::Lifecycle,
+            Self::Lifecycle(_) | Self::LaunchRefused { .. } => SandboxFailureKind::Lifecycle,
             Self::Audit(_) => SandboxFailureKind::Audit,
         }
     }

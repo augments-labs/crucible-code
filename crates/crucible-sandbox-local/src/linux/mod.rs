@@ -485,7 +485,7 @@ impl SandboxLaunch for LinuxLaunch {
             if let Err(source) = ready {
                 self.refuse_and_cleanup(process.as_mut());
                 let said = drain_launcher_stderr(process.as_mut());
-                let problem = SandboxError::Lifecycle(explain_launch_failure(source, &said));
+                let problem = refused_launch(source, &said);
                 let _ = self.audit.record(
                     self.sandbox,
                     SandboxFactKind::Failed {
@@ -752,11 +752,24 @@ impl std::fmt::Debug for LinuxSession {
 /// How much of the launcher's stderr a refused launch may quote.
 const MAX_LAUNCHER_DIAGNOSTIC_BYTES: usize = 512;
 
-/// Bubblewrap and the broker explain a refused launch only on stderr, which
-/// would otherwise die unread with the process. A status channel that closes
-/// before READY is reported with that explanation, bounded and on one line, so
-/// a system Bubblewrap that rejects an option names the option.
-fn explain_launch_failure(source: io::Error, launcher_said: &[u8]) -> io::Error {
+/// The error a launch whose status channel closed before READY is refused
+/// with, given what the launcher left on stderr.
+///
+/// Before READY that stream holds what Bubblewrap wrote, what the dynamic
+/// loader wrote while starting Bubblewrap or the broker, and what the broker's
+/// runtime wrote reporting a panic or an abort. The broker prints nothing else
+/// there: it refuses through the status channel, which `attest_ready` turns
+/// into the channel error itself. The loader writes when a start fails, and
+/// can also write when one succeeds, for example under an environment entry
+/// setting `LD_DEBUG` or naming an `LD_PRELOAD` object that does not exist,
+/// so the words are usually why the launch ended but not always. The command
+/// has not run, because it starts only after GO. Unread, that stream dies
+/// with the process, so what it holds is quoted as it was, bounded and on one
+/// line, and a system Bubblewrap that rejects an option names the option.
+/// Where the part of it that could be read and quoted is only whitespace, the
+/// channel error stays the lifecycle failure it was; otherwise that error, a
+/// broker's refusal among them, is the source beneath the words.
+fn refused_launch(source: io::Error, launcher_said: &[u8]) -> SandboxError {
     let truncated = launcher_said.len() > MAX_LAUNCHER_DIAGNOSTIC_BYTES;
     let quoted = launcher_said
         .get(..MAX_LAUNCHER_DIAGNOSTIC_BYTES)
@@ -766,13 +779,13 @@ fn explain_launch_failure(source: io::Error, launcher_said: &[u8]) -> io::Error 
         .collect::<Vec<_>>()
         .join(" ");
     if one_line.is_empty() {
-        return source;
+        return SandboxError::Lifecycle(source);
     }
     let suffix = if truncated { " (truncated)" } else { "" };
-    io::Error::new(
-        source.kind(),
-        format!("{source}; the sandbox launcher said: {one_line}{suffix}"),
-    )
+    SandboxError::LaunchRefused {
+        said: format!("{one_line}{suffix}").into(),
+        source,
+    }
 }
 
 /// What a stopped launcher left on stderr, up to the quotable bound.

@@ -73,6 +73,90 @@ impl SandboxService for RecordingSandbox {
     }
 }
 
+/// This machine's confinement, except that its launcher refuses every command
+/// released through it the way a system Bubblewrap refuses an option it does
+/// not know.
+#[derive(Default)]
+struct RefusingSandbox(crucible_sandbox_local::LocalSandbox);
+
+impl SandboxService for RefusingSandbox {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.0.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session = self.0.prepare(request).await?;
+            Ok(Box::new(RefusingSession(session)) as Box<dyn SandboxSession>)
+        })
+    }
+}
+
+/// A session of [`RefusingSandbox`], staging as this machine's does.
+struct RefusingSession(Box<dyn SandboxSession>);
+
+impl SandboxSession for RefusingSession {
+    fn inspection(&self) -> &crucible_sandbox::SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: crucible_sandbox::SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn crucible_sandbox::SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        let Self(session) = *self;
+        Box::pin(async move {
+            let launch = session.stage(command).await?;
+            Ok(Box::new(RefusedLaunch(launch)) as Box<dyn crucible_sandbox::SandboxLaunch>)
+        })
+    }
+}
+
+/// A command staged by [`RefusingSession`], whose release the launcher refuses
+/// before the command runs.
+struct RefusedLaunch(Box<dyn crucible_sandbox::SandboxLaunch>);
+
+impl crucible_sandbox::SandboxLaunch for RefusedLaunch {
+    fn inspection(&self) -> &crucible_sandbox::SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn transfer_owner(&mut self) -> Result<(), SandboxError> {
+        self.0.transfer_owner()
+    }
+
+    fn release<'a>(
+        self: Box<Self>,
+    ) -> BoxFuture<'a, Result<Box<dyn crucible_sandbox::SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        // The staged command is dropped unreleased, which cleans it up.
+        drop(self);
+        Box::pin(async move {
+            Err(SandboxError::LaunchRefused {
+                said: "bwrap: Unknown option --overlay-src".into(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ),
+            })
+        })
+    }
+}
+
 /// A watcher that keeps what it was told, in the order it was told.
 #[derive(Default)]
 struct Watched(std::sync::Mutex<String>);
@@ -438,6 +522,27 @@ fn a_call_with_no_command_says_what_is_missing() {
     let problem = bash(&sample, "{}").expect_err("nothing to run");
 
     assert_eq!(problem.to_string(), "bash: command is required");
+}
+
+#[test]
+fn a_launch_the_launcher_refused_tells_the_model_what_it_said() {
+    let sample = Sample::new("bash-launch-refused");
+    let tool = compatibility(Bash::new(
+        sample.workspace(),
+        std::sync::Arc::new(RefusingSandbox::default()),
+    ));
+
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"command":"true"}"#),
+        &crate::sample::context()
+    ))
+    .expect_err("the launcher refused the command");
+
+    assert_eq!(
+        problem.to_string(),
+        "bash: could not start the confined shell: \
+         sandbox launch refused: bwrap: Unknown option --overlay-src"
+    );
 }
 
 #[test]

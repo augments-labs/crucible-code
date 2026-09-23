@@ -62,7 +62,9 @@ pub enum SandboxFailureKind {
     Materialization,
     /// Process creation failed.
     Spawn,
-    /// A running process could not be controlled or reaped.
+    /// A step in a sandbox's life, from probing a backend to accepting a
+    /// command's result, did not complete, including one dropped unanswered
+    /// because it would have had to wait.
     Lifecycle,
     /// The bounded audit collector itself could not retain the fact.
     Audit,
