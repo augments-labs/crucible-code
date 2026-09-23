@@ -22,6 +22,7 @@
 //!
 //! [`authorize`]: crucible_credentials::Credential::authorize
 
+use std::borrow::Cow;
 use std::io::{self, Read};
 use std::time::{Duration, Instant};
 
@@ -46,7 +47,56 @@ pub(crate) const SILENT: &str = "gave up on the response and named no reason; ch
 ///
 /// A refusal is a sentence. Anything larger is a proxy's error page, and
 /// reading all of it to print a paragraph of HTML helps nobody.
+///
+/// One byte past it is read and never kept, the way the web sources read the
+/// bodies they bound: a body that ends here and one that was cut here are
+/// otherwise the same bytes. Telling them apart is what lets the message say
+/// it is only the beginning of the reply, and what says the last bytes kept
+/// may be the beginning of a credential rather than the end of a sentence.
+///
+/// That byte settles it where the reading then ends, and so does a body that
+/// ends before it. Where the reading fails once the bound is full, the reply
+/// is reported as cut without a length, whether or not that byte had arrived
+/// — see [`STOPPED`].
 const MAX_REFUSAL: u64 = 8 * 1024;
+
+/// What a reply ends with when the byte past [`MAX_REFUSAL`] arrived and the
+/// reading then ended.
+///
+/// A user diagnoses a stopped turn from this sentence, and one that stops
+/// mid-word reads as the whole of what the service said. Saying the rest was
+/// never read costs a clause and is the difference between an answer that is
+/// puzzling and one that is bounded.
+///
+/// It names a length because a length was measured: the byte past the bound
+/// arrived, so there is more of this reply than is shown. Where the bound
+/// filled and the reading then failed instead of ending, the message ends in
+/// [`STOPPED`], whether or not that byte came.
+///
+/// It goes after the sentence rather than in front of it, because what the
+/// service said is what the reader came for.
+///
+/// Only a caller that passes the service's own words on shows this or the
+/// other. Google answers every refusal with a sentence of its own instead, and
+/// Anthropic and OpenAI do the same for the one model each whose replies are
+/// private, so for those a clause is appended to a message that is then
+/// replaced. The half of this that protects a credential is unaffected either
+/// way: those three show no part of a body at all.
+const LONGER: &str = " [cut: the reply was longer than crucible reads]";
+
+/// What a reply that filled the bound and then did not end ends with.
+///
+/// Usually the byte past the bound never came, and then a reply that stopped
+/// exactly there and one the bound cut are the same bytes from here. This
+/// says what is true whether or not that byte came — crucible read no
+/// further — where [`LONGER`] would most often name a length nobody
+/// measured, about a reply that may have been whole.
+///
+/// It is still a cut, which is the harmless way to be wrong where the reply
+/// was whole: a reader looks for a rest that is not there, instead of reading
+/// a fragment as the whole. The end it marks is crucible's own either way, so
+/// what the guard in [`kept`] protects across a cut it protects across this.
+const STOPPED: &str = " [cut: crucible stopped reading here]";
 
 /// The longest reading one may take altogether.
 ///
@@ -66,6 +116,16 @@ const MAX_REFUSAL: u64 = 8 * 1024;
 /// Ten seconds because what this competes with is the user learning nothing. A
 /// refusal is a sentence, and one that has not finished arriving in that long is
 /// not going to.
+///
+/// Ten seconds per attempt rather than per turn, and a peer can make a user meet
+/// it more than once. A refusal whose status says the service is busy or was
+/// itself kept waiting is transient, so the runner sends the request again — the
+/// shipped policy allows two further attempts — and a turn makes a request of
+/// its own for every tool pass. A gateway that answers 429, hands over the whole
+/// bound and then holds the connection open costs this wait on each of them, on
+/// the thread the turn is running on. The cancel is looked at before and after
+/// every read, so Esc ends all of it at once; what a turn may spend altogether
+/// is bounded at the turn, and is not this constant's to shorten.
 ///
 /// [`read_to_end`]: Read::read_to_end
 const MAX_WAIT: Duration = Duration::from_secs(10);
@@ -106,32 +166,43 @@ struct Refusal<'a> {
 /// hanging is a poor place to put a new way to fail.
 fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> ProviderError {
     let mut said = Vec::new();
-    let read = fill(&mut body.take(MAX_REFUSAL), &mut said, wait, refusal.cancel);
+    let read = fill(
+        &mut body.take(MAX_REFUSAL.saturating_add(1)),
+        &mut said,
+        wait,
+        refusal.cancel,
+    );
+    let most = usize::try_from(MAX_REFUSAL).unwrap_or(usize::MAX);
+    let longer = said.len() > most;
+
+    // The byte past the bound is one a peer that has sent its whole reply and
+    // not yet said so never hands over, and waiting for it is the deadline
+    // above. Once the bound is full that byte is one this function would
+    // discard anyway, so a read that fails after it is still answered from:
+    // what is in hand is already everything that would have been kept, and
+    // giving it up would cost a user the reply for the want of a byte nobody
+    // wanted.
+    //
+    // What such a read usually cannot say is whether there was more. The
+    // bound filled and the reading did not end cleanly — a stall that reached
+    // the deadline, a connection that broke, a body that ended without saying
+    // so — and where the byte past the bound never came, a reply that stopped
+    // at the bound looks the same from here as one the bound cut. Every such
+    // read is reported as cut, because a reader told something may be missing
+    // when nothing is loses less than one told nothing is missing when
+    // something is — but as `End::Stopped`, whether or not that byte came,
+    // which says where crucible stopped rather than claiming a length only
+    // the arm above is sure of. The cost is that the guard below then runs
+    // over text that may be whole: a complete reply whose last characters
+    // happen to begin a protected value loses them.
+    let filled = said.len() >= most;
+    said.truncate(most);
 
     let problem = match read {
-        // Lossy on purpose: this is already the failure path, and a message
-        // that is not quite text is still better than no message.
-        Ok(()) => {
-            let body = String::from_utf8_lossy(&said);
-
-            // A request that did not fit is a refusal with a remedy no other
-            // refusal has, so it is told apart before the rest are given their
-            // sentence. Decided from the vendor's own code rather than from the
-            // prose beside it: a code is a value the vendor enumerates, and the
-            // prose is a sentence they rewrite whenever they like.
-            if outgrew(&body) {
-                ProviderError::WindowExceeded {
-                    provider: refusal.provider,
-                }
-            } else {
-                ProviderError::Refused {
-                    provider: refusal.provider,
-                    status: refusal.status,
-                    message: explain(&body).into(),
-                }
-            }
-        }
+        Ok(()) if longer => kept(refusal, &said, End::Longer),
+        Ok(()) => kept(refusal, &said, End::Whole),
         Err(ReadError::Cancelled) => ProviderError::Cancelled(refusal.provider),
+        Err(ReadError::Body(_)) if filled => kept(refusal, &said, End::Stopped),
         Err(ReadError::Body(problem)) => ProviderError::Refused {
             provider: refusal.provider,
             status: refusal.status,
@@ -140,6 +211,113 @@ fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> Pro
     };
 
     problem.redacted(refusal.redactions)
+}
+
+/// How the bytes in hand ended, which is what the message may say about them.
+///
+/// Three states rather than one flag, because the two that end in a clause are
+/// known differently and the sentence a user reads is the difference. One was
+/// measured: the byte past the bound arrived and the reading ended. The other
+/// need not have been: the bound filled and the reading then failed, whether
+/// or not that byte came, and where it never came the reply may have been
+/// whole. A flag made the second borrow the first's sentence, so a connection
+/// reset after eight kibibytes told a user the reply was longer than crucible
+/// reads when nobody had counted.
+#[derive(Clone, Copy)]
+enum End {
+    /// The body ended inside the bound: what was kept is all of it.
+    Whole,
+
+    /// More of the reply arrived than the bound keeps, and the reading ended.
+    Longer,
+
+    /// The bound filled and the reading did not end.
+    Stopped,
+}
+
+impl End {
+    /// What the message ends with, and nothing where the reply was whole.
+    ///
+    /// A clause is also what says the end of the body is crucible's boundary,
+    /// whether or not it is the service's too, which is what [`kept`] guards
+    /// and tidies that end for.
+    const fn clause(self) -> Option<&'static str> {
+        match self {
+            Self::Whole => None,
+            Self::Longer => Some(LONGER),
+            Self::Stopped => Some(STOPPED),
+        }
+    }
+}
+
+/// The refusal that what was read makes, whether it is the whole reply or the
+/// beginning of one.
+fn kept(refusal: Refusal<'_>, said: &[u8], end: End) -> ProviderError {
+    let clause = end.clause();
+
+    // A cut ends the body wherever the bytes ran out, which can be the middle
+    // of a credential the gateway echoed back. The filter at the end of `said`
+    // matches whole values and would leave the first half of that one on the
+    // screen, so what was kept is filtered here instead, while it is still
+    // known that its end may be a cut rather than the end of a sentence.
+    //
+    // The bytes rather than text made from them, because the peer picks what
+    // the end of a lossy conversion looks like: bytes that spell no character
+    // become stand-in ones, as many as the peer sends, and a search for a
+    // credential's beginning that has to reach behind them is a search the
+    // peer can blind. `redact_cut` converts what it keeps.
+    //
+    // Lossy either way, on purpose: this is already the failure path, and a
+    // message that is not quite text is still better than no message.
+    let body = if clause.is_some() {
+        let mut text = refusal.redactions.redact_cut(said);
+
+        // A cut lands on a byte and a character can be several, so the last
+        // one kept can be half of one, and what the conversion leaves for it
+        // says only where crucible stopped reading. The clause below says that
+        // in words, so every stand-in at that end goes — afterwards, never
+        // instead: the guard has answered by now, and a peer can no longer
+        // move the end it searches by choosing the bytes there.
+        //
+        // Every one rather than the one the cut split, because how many the
+        // cut leaves is the peer's to choose: two bytes that spell nothing
+        // leave two, and removing a fixed count would leave a stray on the
+        // line. One the service itself sent goes with them — the conversion
+        // spells both the same character — and that costs a reader nothing:
+        // a stand-in spells no word, whoever sent it.
+        text.truncate(text.trim_end_matches(char::REPLACEMENT_CHARACTER).len());
+        Cow::Owned(text)
+    } else {
+        // Where the body ended, the end is the service's own, and its last
+        // character stays whatever the service made it.
+        String::from_utf8_lossy(said)
+    };
+
+    // A request that did not fit is a refusal with a remedy no other refusal
+    // has, so it is told apart before the rest are given their sentence.
+    // Decided from the vendor's own code rather than from the prose beside it:
+    // a code is a value the vendor enumerates, and the prose is a sentence they
+    // rewrite whenever they like.
+    if outgrew(&body) {
+        return ProviderError::WindowExceeded {
+            provider: refusal.provider,
+        };
+    }
+
+    // What the guard above protected is the end of the body, and this lifts a
+    // sentence out of the middle of it. A body that was whole JSON up to the
+    // cut has its closing bytes protected and its sentence untouched, so the
+    // beginning of a credential the cut left anywhere but at the very end
+    // still reaches the message. Whole values are gone from either.
+    let mut message = explain(&body);
+    if let Some(clause) = clause {
+        message.push_str(clause);
+    }
+    ProviderError::Refused {
+        provider: refusal.provider,
+        status: refusal.status,
+        message: message.into(),
+    }
 }
 
 /// Every code a vendor uses to say the request did not fit its model's window.
@@ -257,6 +435,12 @@ mod tests {
 
     fn reading(body: &str) -> Box<dyn Read + Send> {
         Box::new(std::io::Cursor::new(body.to_owned().into_bytes()))
+    }
+
+    /// The same, for a body that is not text. A peer picks the bytes it sends,
+    /// and some of the ones it can pick are no character at all.
+    fn reading_raw(body: Vec<u8>) -> Box<dyn Read + Send> {
+        Box::new(std::io::Cursor::new(body))
     }
 
     fn plain_refused(status: u16, body: Box<dyn Read + Send>) -> ProviderError {
@@ -384,6 +568,248 @@ mod tests {
             shown.len() < 16 * 1024,
             "the whole page came back: {} bytes",
             shown.len()
+        );
+    }
+
+    /// A value a gateway could echo back, invented here and nowhere else.
+    const CANARY: &str = "canary-9f3c-cut-in-half-do-not-log";
+
+    /// The clause a reply ends with when more of it arrived than the bound
+    /// keeps and the reading ended, spelled out rather than read off the
+    /// constant these tests are about.
+    const SAYS_LONGER: &str = " [cut: the reply was longer than crucible reads]";
+
+    /// The other one, spelled out the same way: what a reply ends with where
+    /// the bound filled and the reading then failed rather than ended.
+    const SAYS_STOPPED: &str = " [cut: crucible stopped reading here]";
+
+    fn protecting(value: &str) -> Redactions {
+        let mut outgoing = crucible_credentials::Outgoing::new();
+        outgoing.protect(value);
+        outgoing.redactions()
+    }
+
+    #[test]
+    fn a_credential_the_bound_cut_in_half_does_not_reach_the_message() {
+        // The echo starts inside the bound and ends past it, so what is kept
+        // is the first part of the credential and no whole-value filter can
+        // see it. It is the last thing on the line a user is shown.
+        let body = format!("{}{CANARY}tail", "x".repeat(8 * 1024 - 10));
+
+        let shown = refused(
+            "test",
+            502,
+            reading(&body),
+            &protecting(CANARY),
+            &Cancel::new(),
+        )
+        .to_string();
+
+        let start = CANARY.get(..10).unwrap_or_default();
+        assert!(
+            !shown.contains(start),
+            "the first bytes of the credential survived the cut"
+        );
+        assert!(
+            shown.ends_with(SAYS_LONGER),
+            "nothing said the reply was cut"
+        );
+    }
+
+    #[test]
+    fn a_reply_longer_than_the_bound_says_so_and_one_that_exactly_fills_it_does_not() {
+        // One byte decides it here, which is why the read goes one byte past
+        // the bound: a body stopped at the bound and one cut by it are
+        // otherwise the same bytes.
+        let exact = "x".repeat(8 * 1024);
+        let over = format!("{exact}x");
+
+        let fits = plain_refused(500, reading(&exact)).to_string();
+        let cut = plain_refused(500, reading(&over)).to_string();
+
+        assert_eq!(fits, format!("test: HTTP 500: {exact}"));
+        assert_eq!(
+            cut.len(),
+            fits.len().saturating_add(SAYS_LONGER.len()),
+            "the clause is the whole difference one byte makes"
+        );
+        assert_eq!(cut.strip_suffix(SAYS_LONGER), Some(fits.as_str()));
+    }
+
+    /// A peer that hands over as many bytes as it was made with and then
+    /// breaks rather than ending. Made with the bound, the byte that would
+    /// tell a reply stopping there from one cut there never arrives and the
+    /// reading fails instead; made with one more, that byte has arrived and
+    /// the break is behind the bound the body is read through.
+    ///
+    /// It fails outright rather than stalling until the deadline, so what this
+    /// asserts is about the message and not about how fast the machine running
+    /// it hands over eight kibibytes. Both reach the same arm: a stall that
+    /// runs out the wait is a failed read too, spelled `TimedOut`.
+    struct Filled(usize);
+
+    impl Read for Filled {
+        fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+            let giving = self.0.min(into.len());
+            if giving == 0 {
+                return Err(io::ErrorKind::ConnectionReset.into());
+            }
+            if let Some(slot) = into.get_mut(..giving) {
+                slot.fill(b'x');
+            }
+            self.0 = self.0.saturating_sub(giving);
+            Ok(giving)
+        }
+    }
+
+    #[test]
+    fn a_reply_that_fills_the_bound_and_then_does_not_end_is_still_shown() {
+        // The read that tells a reply ending at the bound from one cut by it
+        // is a read a peer that has sent everything and not closed will never
+        // answer. Asking for it must not cost the reply already in hand, which
+        // is everything that would have been kept either way.
+        let problem = plain_said(500, Box::new(Filled(8 * 1024)), MAX_WAIT);
+
+        let shown = problem.to_string();
+
+        assert!(
+            shown.contains(&"x".repeat(8 * 1024)),
+            "the reply was thrown away for the want of a byte: {shown}"
+        );
+        assert!(
+            shown.ends_with(SAYS_STOPPED),
+            "nothing said crucible read no further"
+        );
+        assert!(
+            !shown.contains(SAYS_LONGER),
+            "the message named a length nobody measured"
+        );
+    }
+
+    #[test]
+    fn a_length_the_bound_measured_survives_a_peer_that_breaks_after_it() {
+        // What keeps a peer's break from reaching the clause once the byte
+        // past the bound has arrived is the bound the body is read through.
+        // That byte is the last one that can reach `said`, and once it has,
+        // the peer is never read from again: the reset it answers with here
+        // is never seen, the reading ends cleanly, and the arm that names a
+        // length is the one that fires.
+        //
+        // So nothing the peer does after the byte that measured a length can
+        // have it reported as a reply nobody measured. Pinned because the two
+        // sides of that live apart — the bound is applied where the body is
+        // taken, and read off where the message is chosen.
+        let problem = plain_said(500, Box::new(Filled(8 * 1024 + 1)), MAX_WAIT);
+
+        let shown = problem.to_string();
+
+        assert!(
+            shown.ends_with(SAYS_LONGER),
+            "the measured length went unnamed: {}",
+            shown
+                .get(shown.len().saturating_sub(64)..)
+                .unwrap_or(&shown)
+        );
+        assert!(
+            !shown.contains(SAYS_STOPPED),
+            "a reply measured as longer was reported as merely stopped"
+        );
+    }
+
+    /// The same canary, with a character too wide for one byte, so a cut can
+    /// land inside one rather than between two.
+    const WIDE_CANARY: &str = "canary-6b21-coupé-en-deux-do-not-log";
+
+    #[test]
+    fn a_credential_the_bound_cut_inside_a_character_does_not_reach_the_message() {
+        // The bound counts bytes and a character can be several, so the last
+        // thing kept can be half of one. Half a character is no character, so
+        // turning the body into text first would stand a replacement one in
+        // for it and the filter would be asked about a tail the conversion
+        // invented rather than about the bytes that arrived.
+        let wide = WIDE_CANARY.find('é').unwrap_or_default();
+        let filler = (8 * 1024_usize).saturating_sub(wide).saturating_sub(1);
+        let body = format!("{}{WIDE_CANARY}tail", "x".repeat(filler));
+
+        let shown = refused(
+            "test",
+            502,
+            reading(&body),
+            &protecting(WIDE_CANARY),
+            &Cancel::new(),
+        )
+        .to_string();
+
+        let start = WIDE_CANARY.get(..wide).unwrap_or_default();
+        assert!(
+            !shown.contains(start),
+            "the credential before the split character survived the cut"
+        );
+        assert!(
+            shown.ends_with(SAYS_LONGER),
+            "nothing said the reply was cut"
+        );
+    }
+
+    #[test]
+    fn a_cut_inside_the_last_character_leaves_no_stand_in_in_the_message() {
+        // Nothing protected anywhere in this: what the bound split is an
+        // ordinary word. Half a character is no character, so the conversion
+        // stands a replacement one in for it, and that stand-in marks where
+        // crucible stopped reading rather than anything the service said. The
+        // clause after it already says that, in words.
+        let filler = (8 * 1024_usize)
+            .saturating_sub("caf".len())
+            .saturating_sub(1);
+        let mut body = "x".repeat(filler).into_bytes();
+        body.extend_from_slice("café".as_bytes());
+
+        let shown = plain_refused(502, reading_raw(body)).to_string();
+
+        assert!(
+            shown.ends_with(&format!("caf{SAYS_LONGER}")),
+            "the half character the cut left is on the line: {}",
+            shown
+                .get(shown.len().saturating_sub(64)..)
+                .unwrap_or(&shown)
+        );
+    }
+
+    #[test]
+    fn a_credential_the_bound_cut_in_front_of_stray_bytes_does_not_reach_the_message() {
+        // How many characters the conversion invents at the end is the peer's
+        // to choose: two bytes that are no character at all are two of them,
+        // and a filter that answers about what the conversion left answers
+        // about a tail the peer arranged. All but the last character of the
+        // credential is kept, and the stray bytes sit behind it.
+        let head = CANARY.get(..CANARY.len().saturating_sub(1)).unwrap_or("");
+        let stray = [0xFF_u8, 0xFF];
+        let filler = (8 * 1024_usize)
+            .saturating_sub(head.len())
+            .saturating_sub(stray.len());
+
+        let mut body = "x".repeat(filler).into_bytes();
+        body.extend_from_slice(head.as_bytes());
+        body.extend_from_slice(&stray);
+        // The byte that makes it a cut, and the only one never kept.
+        body.push(b'!');
+
+        let shown = refused(
+            "test",
+            502,
+            reading_raw(body),
+            &protecting(CANARY),
+            &Cancel::new(),
+        )
+        .to_string();
+
+        assert!(
+            !shown.contains(head),
+            "the credential in front of the stray bytes survived the cut"
+        );
+        assert!(
+            shown.ends_with(SAYS_LONGER),
+            "nothing said the reply was cut"
         );
     }
 
