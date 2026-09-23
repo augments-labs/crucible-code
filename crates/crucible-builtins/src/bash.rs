@@ -392,7 +392,7 @@ impl Bash {
     ///
     /// Handed to each child rather than set in this process, which is not a
     /// workaround: writing to the environment is `unsafe` in edition 2024 and
-    /// this workspace forbids it, and the narrower thing is the right thing
+    /// this workspace denies it, and the narrower thing is the right thing
     /// anyway. The model's commands get these; nothing else does, and a thread
     /// reading the environment while another one writes it cannot happen.
     ///
