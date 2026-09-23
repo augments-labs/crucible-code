@@ -990,3 +990,103 @@ fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
     holder.join().expect("the holding thread");
     contender.join().expect("the contending thread");
 }
+
+/// Another checkout's state directory, removed however a test ends — unless it
+/// is this build's own, which every other test of the process shares.
+struct AnotherCheckout(PathBuf);
+
+impl Drop for AnotherCheckout {
+    fn drop(&mut self) {
+        if state_base().ok().as_deref() != Some(self.0.as_path()) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+/// A state directory's mode, put back however a test ends.
+struct ModeRestored(PathBuf, fs::Permissions);
+
+impl Drop for ModeRestored {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.0, self.1.clone());
+    }
+}
+
+#[test]
+fn a_checkout_neither_refuses_nor_recovers_another_checkouts_sandbox_state() {
+    // Two checkouts testing at once: this build, and one compiled from another
+    // directory. The other is named under this checkout, so the same test
+    // running from a third checkout names a directory of its own.
+    let own = state_base().expect("this build's state directory");
+    let other = AnotherCheckout(
+        state_base_named(&checkout_state_name(
+            &format!(
+                "crucible-code-sandbox-{}-v1",
+                rustix::process::getuid().as_raw()
+            ),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/another-checkout"),
+        ))
+        .expect("another checkout's state directory"),
+    );
+    create_state_directory(&own).expect("this build's state directory");
+    create_state_directory(&other.0).expect("another checkout's state directory");
+
+    // What a publication test does to watch a refusal: this build's directory
+    // is left in a mode no command accepts.
+    let changing = TestStateChange::change();
+    let restore = ModeRestored(
+        own.clone(),
+        fs::metadata(&own)
+            .expect("this build's state directory")
+            .permissions(),
+    );
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o750))
+        .expect("a state directory that is not private");
+    let refused = Lease::try_acquire_in(&own);
+    let granted = Lease::try_acquire_in(&other.0);
+    drop(restore);
+    drop(changing);
+    assert!(refused.is_err(), "the changed mode refused nothing");
+    assert!(
+        matches!(granted, Ok(Some(_))),
+        "another checkout's state was refused for a mode this one's was left in: {granted:?}"
+    );
+    drop(granted);
+
+    // What every preparation does first: recover the stale stages it finds,
+    // under the registry lease it holds while it makes a stage of its own, so
+    // no stage another test of this process is still making is taken for one.
+    let stage = other.0.join(stage_name(SandboxId::new()));
+    create_private_test_directory(&stage);
+    let registry = RegistryLease::acquire_at(&own).expect("this build's registry lease");
+    RegistryLease::reconcile(&registry).expect("this build's recovery");
+    drop(registry);
+    assert!(
+        stage.exists(),
+        "this build's recovery removed a stage of another checkout's"
+    );
+
+    // Both sit under the same `/var/tmp` the shipped path does, and each is the
+    // shipped name with a fixed-width token of its checkout.
+    let shipped = format!(
+        "crucible-code-sandbox-{}-v1-",
+        rustix::process::getuid().as_raw()
+    );
+    for state in [&own, &other.0] {
+        assert_eq!(state.parent(), Some(Path::new("/var/tmp")));
+        let token = state
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix(&shipped))
+            .unwrap_or_default();
+        assert!(
+            token.len() == 16
+                && token
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+            "{} is not the shipped name with a checkout's token",
+            state.display()
+        );
+    }
+    assert_ne!(own, other.0);
+}

@@ -61,5 +61,17 @@ windows-sys.workspace = true
 crucible-runtime = { workspace = true, features = ["proof"] }
 crucible-workspace.workspace = true
 
+# A Linux test build keeps its sandbox state in a directory named for the
+# checkout it was compiled from, so two checkouts testing at once never lock,
+# recover or change each other's; this crate's own unit tests do so without it.
+# Nothing in the workspace turns it on as a dependency; only
+# `[dev-dependencies]` do, which cargo does not resolve for a release build, and
+# the repository gate holds that. This crate does not take itself as a
+# dev-dependency, which the crate graph would count as an edge, so a narrow
+# `cargo test -p crucible-sandbox-local` asks for it with
+# `--features per-checkout-state`.
+[features]
+per-checkout-state = []
+
 [lints]
 workspace = true

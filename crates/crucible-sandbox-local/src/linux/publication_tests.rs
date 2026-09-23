@@ -708,7 +708,8 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
     assert!(!sample.root().join("mine.txt").exists());
 }
 
-/// A file in this user's shared state directory, removed however a test ends.
+/// A file in the state directory this checkout's test builds share, removed
+/// however a test ends.
 struct TakenAway(std::path::PathBuf);
 
 impl Drop for TakenAway {
@@ -717,10 +718,11 @@ impl Drop for TakenAway {
     }
 }
 
-/// A mode in this user's shared state directory, put back however a test ends.
+/// A mode in the state directory this checkout's test builds share, put back
+/// however a test ends.
 ///
-/// Every command of this user reads that directory; one left as a test made it
-/// would refuse them all.
+/// Every sandboxed command a test build of this checkout runs reads that
+/// directory; one left as a test made it would refuse them all.
 struct ModeRestored(std::path::PathBuf, std::fs::Permissions);
 
 impl Drop for ModeRestored {

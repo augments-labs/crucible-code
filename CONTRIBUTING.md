@@ -91,6 +91,32 @@ group member could rewrite, and it walks the whole path to it, so a tree
 created under `umask 002` fails the sandbox tests for its mode rather than for
 anything in the change under test. The error names the directory.
 
+On Linux, a test build keeps the sandbox's state in a directory of its own
+checkout, `/var/tmp/crucible-code-sandbox-{uid}-v1-{token}`, where the token is
+taken from the checkout's path when the build is compiled. Two checkouts, such
+as two worktrees, can then run their tests at once without locking, recovering
+or changing each other's state. `cargo test --workspace` and a narrow
+`cargo test -p` of a package that uses the sandbox turn this on for you, and
+so does `scripts/sh/rust-checks.sh` when it reruns a required case on its own.
+A narrow run of the sandbox crate itself has to ask for it:
+
+```bash
+cargo test -p crucible-sandbox-local --features per-checkout-state
+```
+
+Without it, that run's integration tests use
+`/var/tmp/crucible-code-sandbox-{uid}-v1`, the directory every crucible that is
+not a test build uses, so they share it with any crucible you have running.
+`scripts/sh/repo-checks.sh` fails if a manifest would turn the feature on for a
+build that ships, or if the workspace resolver would carry it there from a
+dev-dependency; a release command that asks for the feature itself is not
+something it reads. A `crucible` binary that `cargo test` left in the
+checkout's `target/` is a test build too, until a plain `cargo build` replaces
+it: it keeps its state in that checkout's directory, so it does not share the
+publication lock with an installed crucible working on the same repository. The
+per-checkout directory stays behind when you remove a worktree; delete it by
+hand if you want it gone.
+
 `scripts/required-cases.json` names the obligations that must keep running
 whatever the tests are called: `scripts/sh/rust-checks.sh` checks that each one
 is still discovered by the same selection the suite runs under, is not ignored,
