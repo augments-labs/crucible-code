@@ -25,7 +25,7 @@ use crucible_storage::{CallResultKey, CallResultReceipt};
 use crucible_types::SandboxId;
 use sha2::{Digest as _, Sha256};
 
-use super::super::process::Stage;
+use super::super::process::{Stage, StopMark};
 use super::broker::StatusChannel;
 use super::command::View;
 use super::materialize::Materialization;
@@ -821,6 +821,7 @@ fn refused(problem: &'static str) -> SandboxError {
 pub(super) struct ProcessPlan {
     pub(super) projection: Option<Projection>,
     pub(super) status_channel: StatusChannel,
+    pub(super) stop_mark: Option<StopMark>,
     pub(super) audit: SandboxAudit,
     pub(super) sandbox: SandboxId,
     pub(super) invocation: SandboxInvocationMode,
@@ -837,6 +838,7 @@ pub(super) fn wrap(
     let ProcessPlan {
         mut projection,
         status_channel,
+        stop_mark,
         audit,
         sandbox,
         invocation,
@@ -882,6 +884,9 @@ pub(super) fn wrap(
         acceptance_pending: false,
         inspection,
         cleanup: crucible_sandbox::SandboxCleanup::Pending,
+        stop_mark,
+        #[cfg(test)]
+        on_cancel: None,
         #[cfg(test)]
         _serial: serial,
     }))
@@ -946,6 +951,12 @@ struct ProjectedProcess {
     acceptance_pending: bool,
     inspection: SandboxInspection,
     cleanup: crucible_sandbox::SandboxCleanup,
+    /// Set before the cancel, which lets the broker end the command's output.
+    stop_mark: Option<StopMark>,
+    /// Runs just before the cancel's first byte is written, standing in for a
+    /// broker that ends the output as soon as it reads it.
+    #[cfg(test)]
+    on_cancel: Option<Box<dyn FnOnce() + Send>>,
     #[cfg(test)]
     _serial: Option<transaction::TestSerialLease>,
 }
@@ -1118,7 +1129,14 @@ impl ProjectedProcess {
             };
         }
         let needs_terminal = self.status.is_none() && !self.terminal;
+        // The broker kills the workload on reading the cancel, which can end
+        // its output before the stop below is reached, so mark the cut first.
+        if let Some(mark) = &self.stop_mark {
+            mark.stopping();
+        }
         let cancellation = self.control.as_mut().map_or(Ok(()), |control| {
+            #[cfg(test)]
+            let control = &mut tests::BeforeFirstByte::new(control, self.on_cancel.take());
             match control
                 .write_all(&CANCEL_FRAME)
                 .and_then(|()| control.flush())
@@ -1314,6 +1332,114 @@ impl Drop for ProjectedProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs a hook before the first byte reaches the writer it wraps: what the
+    /// hook sees is what a peer that acts on the first byte it reads would see.
+    pub(super) struct BeforeFirstByte<'a, W> {
+        inner: &'a mut W,
+        hook: Option<Box<dyn FnOnce() + Send>>,
+    }
+
+    impl<'a, W> BeforeFirstByte<'a, W> {
+        pub(super) fn new(inner: &'a mut W, hook: Option<Box<dyn FnOnce() + Send>>) -> Self {
+            Self { inner, hook }
+        }
+    }
+
+    impl<W: Write> Write for BeforeFirstByte<'_, W> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if let Some(hook) = self.hook.take() {
+                hook();
+            }
+            self.inner.write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    /// A projected stop sends the broker a cancel, and the broker kills the
+    /// workload, ending its output, before the stop reaches the process
+    /// itself. Here the command is ended, and its output read to the end as a
+    /// reader thread may, before the cancel's first byte is written: the start
+    /// of a credential it printed must already read as cut.
+    #[test]
+    fn a_credential_start_is_masked_when_the_broker_ends_the_output_on_cancel() {
+        use crucible_sandbox::{SandboxDomainPolicy, SandboxNetworkProvenance, SandboxRead};
+
+        let policy =
+            SandboxDomainPolicy::new([], [], false, [], SandboxNetworkProvenance::User).unwrap();
+        let proxy = crate::network::Mediator::tcp(
+            policy,
+            SandboxId::new(),
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .unwrap();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "printf 'id=%.20s' \"${HTTP_PROXY#http://crucible:}\"; read -r _",
+        ]);
+        command.envs(proxy.environment(proxy.address()));
+        let mut plan =
+            crate::process::testing_plan(crucible_sandbox::SandboxSpeech::Held, None).unwrap();
+        plan.network = Some(proxy);
+        let audit = plan.audit.clone();
+        let sandbox = plan.sandbox;
+        let (mut process, stop_mark) = crate::process::spawn_marked(command, plan).unwrap();
+        let stdin = process.take_stdin().unwrap();
+        let mut stdout = process.take_stdout().unwrap();
+
+        let (read, printed) = std::sync::mpsc::channel();
+        let broker_kills_the_workload = move || {
+            drop(stdin);
+            let mut kept = Vec::new();
+            let mut buffer = [0; 256];
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while std::time::Instant::now() < deadline {
+                match stdout.read_ready(&mut buffer) {
+                    Ok(SandboxRead::Bytes(count)) => {
+                        kept.extend_from_slice(buffer.get(..count).unwrap_or_default());
+                    }
+                    Ok(SandboxRead::Pending) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Ok(SandboxRead::End) => break,
+                    Ok(SandboxRead::Limited { .. }) | Err(_) => return,
+                }
+            }
+            let _ = read.send(kept);
+        };
+        let (control, _broker) = std::os::unix::net::UnixStream::pair().unwrap();
+        let inspection = process.inspection().clone();
+        let mut projected = ProjectedProcess {
+            process,
+            projection: None,
+            receiver: None,
+            status: None,
+            terminal: false,
+            reported: None,
+            failure: None,
+            unrecorded: None,
+            audit,
+            sandbox,
+            control: Some(control),
+            invocation: SandboxInvocationMode::Foreground,
+            call_result_key: None,
+            acceptance_pending: false,
+            inspection,
+            cleanup: crucible_sandbox::SandboxCleanup::Pending,
+            stop_mark: Some(stop_mark),
+            on_cancel: Some(Box::new(broker_kills_the_workload)),
+            _serial: None,
+        };
+
+        projected.stop().unwrap();
+
+        let masked = [b"id=".as_slice(), &[b'*'; 20]].concat();
+        assert_eq!(printed.recv().unwrap(), masked);
+    }
 
     #[test]
     fn protected_names_are_never_publication_entries() {

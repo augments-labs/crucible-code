@@ -75,6 +75,11 @@ change in any release with no deprecation period.
   and ` [cut: crucible stopped reading here]` where the bound filled and the
   reading then failed, which names no length because crucible usually cannot
   know one.
+- **A proxy credential crucible cut short is masked.** Crucible masks a
+  command's exact proxy password and its base64 userinfo in captured stdout and
+  stderr. Output cut by the output limit, or output of a command crucible
+  stopped, now shows as `*` any last few bytes that could begin the credential,
+  such as a final `Y`. Output that ended on its own is unchanged.
 
 ## [0.42.0] - 2026-09-20
 

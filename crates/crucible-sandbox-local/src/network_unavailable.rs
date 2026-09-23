@@ -16,7 +16,11 @@ impl Mediator {
         match *self {}
     }
 
-    pub(super) fn protect_output(&self, _output: Box<dyn SandboxOutput>) -> Box<dyn SandboxOutput> {
+    pub(super) fn protect_output(
+        &self,
+        _output: Box<dyn SandboxOutput>,
+        _interrupted: Box<dyn Fn() -> bool + Send>,
+    ) -> Box<dyn SandboxOutput> {
         match *self {}
     }
 }

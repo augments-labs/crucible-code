@@ -141,11 +141,17 @@ impl Mediator {
         Ok(mediator)
     }
 
+    /// Masks this command's credential in one of its output streams.
+    /// `interrupted` says whether crucible cut the command short, by its output
+    /// or command-time limit or by stopping it.
     pub(super) fn protect_output(
         &self,
         output: Box<dyn crucible_sandbox::SandboxOutput>,
+        interrupted: redaction::Interrupted,
     ) -> Box<dyn crucible_sandbox::SandboxOutput> {
-        Box::new(redaction::ProtectedOutput::new(output, &self.userinfo))
+        Box::new(
+            redaction::ProtectedOutput::new(output, &self.userinfo).interrupted_by(interrupted),
+        )
     }
 
     pub(super) fn stop(&mut self) -> io::Result<()> {
