@@ -66,6 +66,15 @@ change in any release with no deprecation period.
   part-way through. What that read reports — a clean end or its own failure
   — is now used as it stands, so a real read error landing there is shown as
   itself instead of the generic timeout that used to replace it.
+- **A Google web search or fetch answer that had already arrived whole is no
+  longer thrown away because its closing read came in as the wait ran out.**
+  Google reads its answers through a reader of its own, separate from the
+  shared one other web sources use, and it checked the wait right after a
+  read returned, before looking at what the read had handed back, so a page
+  or search result whose content was complete, but whose confirming
+  end-of-stream read landed exactly as the wait expired, came back as "Google
+  web response exceeded its deadline" instead of the answer. That confirming
+  read's clean end is now honoured, not replaced by the deadline error.
 
 ### Security
 
