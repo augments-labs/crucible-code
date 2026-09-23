@@ -904,6 +904,299 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
 }
 
 #[test]
+fn a_command_the_developer_let_go_of_still_reports_small_output_whole() {
+    // The fix must add no needless cut: output well under a stream's own
+    // ceiling comes back exactly as printed, byte for byte, same as today.
+    //
+    // The press is delayed rather than made before the command starts, as the
+    // test above does: that test never reads what was printed, only whether
+    // the markers arrived, and a press read on the very first pass can land
+    // before `printf` has run at all.
+    let sample = Sample::new("bash-pressed-small");
+    let left = Background::new();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let output = thread::scope(|scope| {
+        let running =
+            scope.spawn(|| finalized(&tool, r#"{"command":"printf 'small\n'; sleep 30"}"#));
+        thread::sleep(Duration::from_millis(300));
+        left.ask();
+        running.join().expect("the wait thread")
+    })
+    .expect("the command started");
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(
+        output.text().starts_with("small\n\n[left running as #1"),
+        "small output was not reported whole: {}",
+        output.text()
+    );
+    assert!(
+        !output.text().contains("omitted from the middle"),
+        "small output should never be cut: {}",
+        output.text()
+    );
+
+    left.stop(1).expect("background cleanup");
+}
+
+#[test]
+fn the_panel_behind_ctrl_b_shows_kept_bytes_whole_and_untrimmed() {
+    // `wrote` used to share `gathered`'s own cut, which trims trailing
+    // whitespace even where nothing was dropped — a cut the panel never asked
+    // for, since it promises the whole of what is kept rather than an answer
+    // cut to its own ceiling. This pins that promise against a command that
+    // printed a trailing blank line, byte for byte against what base printed
+    // before either cut existed.
+    //
+    // The press is asked for before the command starts, so the first pass of
+    // the wait takes it, and the panel is then polled rather than read once:
+    // the command goes on running after the press, and what it printed lands
+    // in the readers whenever the shell gets to it, not by a fixed moment.
+    let sample = Sample::new("bash-pressed-panel-whole");
+    let left = Background::new();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    left.ask();
+    finalized(&tool, r#"{"command":"printf 'kept\n\n'; sleep 30"}"#).expect("the command started");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let shown = loop {
+        let shown = left.wrote(1);
+        if shown.as_deref() == Some("kept\n\n") || Instant::now() >= deadline {
+            break shown;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert_eq!(
+        shown.as_deref(),
+        Some("kept\n\n"),
+        "the panel cut or trimmed output that never needed either"
+    );
+
+    left.stop(1).expect("background cleanup");
+}
+
+#[test]
+fn the_panel_behind_ctrl_b_marks_where_each_stream_lost_bytes() {
+    // The panel stands both streams, and each reader's hole is its own: at
+    // the end of that stream's fixed head, before its rolling tail. One marker
+    // at the midpoint of the two streams glued together would sit on the
+    // stdout/stderr boundary, where nothing was dropped, and leave both real
+    // splices silent. This pins the panel byte for byte: each stream's head,
+    // a marker at its hole with that stream's own counts, then its tail — and
+    // nothing trimmed, since the panel promises the whole of what is kept.
+    //
+    // The head and tail budgets are restated from `OUTPUT` because the
+    // reader's own are private to `output`; if they change, this fails rather
+    // than passing silently.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    // Each pattern ends in a newline and divides the flood, so each stream's
+    // kept tail ends in whitespace and a trim would be seen.
+    const PATTERN: &str = "0123456789abcde\n";
+    const REVERSED: &str = "edcba9876543210\n";
+    const _: () = assert!(FLOOD.is_multiple_of(PATTERN.len()));
+    const _: () = assert!(FLOOD.is_multiple_of(REVERSED.len()));
+    let head = crate::bound::OUTPUT / 2;
+    let tail = crate::bound::OUTPUT - head;
+    let sample = Sample::new("bash-panel-both-flooded");
+    let left = Background::new();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let stream = |pattern: &str| -> String {
+        let printed = pattern.repeat(FLOOD / pattern.len() + 1);
+        let printed = printed.get(..FLOOD).unwrap_or_default();
+        format!(
+            "{}\n\n[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]\n\n{}",
+            printed.get(..head).unwrap_or_default(),
+            FLOOD - crate::bound::OUTPUT,
+            printed.get(FLOOD - tail..).unwrap_or_default(),
+        )
+    };
+    let expected = format!("{}{}", stream(PATTERN), stream(REVERSED));
+
+    let output = finalized(
+        &tool,
+        &format!(
+            r#"{{"command":"yes {} | head -c {FLOOD}; yes {} | head -c {FLOOD} >&2; sleep 30","background":true}}"#,
+            PATTERN.trim_end(),
+            REVERSED.trim_end(),
+        ),
+    )
+    .expect("the command started");
+    assert!(!output.is_failed(), "{}", output.text());
+
+    // Polled for the exact text: an early read catches a flood part-way
+    // through, with a smaller, still-correct count for what has arrived.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let shown = loop {
+        let shown = left.wrote(1).unwrap_or_default();
+        if shown == expected || Instant::now() >= deadline {
+            break shown;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    // Said in terms a reader can check rather than as two 180 KB strings.
+    let differs = shown
+        .bytes()
+        .zip(expected.bytes())
+        .position(|(got, want)| got != want)
+        .unwrap_or(shown.len().min(expected.len()));
+    let around = |text: &str| -> String {
+        let from = differs.saturating_sub(40);
+        let to = differs.saturating_add(120).min(text.len());
+        text.get(from..to).unwrap_or_default().to_owned()
+    };
+    assert!(
+        shown == expected,
+        "the panel's markers do not sit at each stream's own hole with its own counts: the \
+         {} bytes shown first differ from the {} expected at byte {differs}:\n--- shown ---\n{}\n\
+         --- expected ---\n{}",
+        shown.len(),
+        expected.len(),
+        around(&shown),
+        around(&expected),
+    );
+
+    left.stop(1).expect("background cleanup");
+}
+
+#[test]
+fn a_command_the_developer_let_go_of_says_where_bytes_were_omitted() {
+    // `Taking::printed` is handed straight to the model by `keep_running`,
+    // with no cut after it: its own doc claims it is "bounded and cut the
+    // same way an answer is", and this pins that claim against a command that
+    // printed more than a stream's head and tail before it was let go of.
+    //
+    // The press has to land after this reader has actually taken the whole
+    // flood, and nothing public says so before the command comes out of the
+    // wait — there is no `Taking` to ask until the press itself produces one.
+    // So this waits on the one thing that is public: the answer the press
+    // comes back with. A wait too short lands on a command that has not yet
+    // taken every byte the pipeline sent, and is retried with a longer one
+    // rather than asserted on, bounded by an overall deadline a healthy
+    // reader clears on its first attempt.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let expected = format!(
+        "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+        FLOOD - super::output::CAPTURE_TEXT
+    );
+    let sample = Sample::new("bash-pressed-flood");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut wait = Duration::from_millis(50);
+    let (output, left) = loop {
+        let left = Background::new();
+        let tool = compatible(&sample).leaving(left.clone());
+
+        // The pipeline floods the stream almost at once and the trailing
+        // sleep keeps the command running, so the press lands on a command
+        // that has not exited rather than racing its own end.
+        let output = thread::scope(|scope| {
+            let running = scope.spawn(|| {
+                finalized(
+                    &tool,
+                    &format!(
+                        r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}; sleep 30","timeout":60}}"#
+                    ),
+                )
+            });
+            thread::sleep(wait);
+            left.ask();
+            running.join().expect("the wait thread")
+        });
+
+        let landed = output
+            .as_ref()
+            .is_ok_and(|output| output.text().contains(&expected));
+        if landed || Instant::now() >= deadline {
+            break (output, left);
+        }
+        let _ = left.stop(1);
+        wait = (wait * 2).min(Duration::from_secs(2));
+    };
+    let output = output.expect("the command started");
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("ctrl+b"), "{}", output.text());
+    assert!(
+        output.text().contains(&expected),
+        "the model was told less than what the reader actually dropped, or nothing at all: {}",
+        output.text()
+    );
+
+    left.stop(1).expect("background cleanup");
+}
+
+#[test]
+fn a_command_the_developer_let_go_of_survives_the_runners_own_result_ceiling() {
+    // `keep_running`'s answer already carries a marker once the reader's own
+    // cut applies; the runner then applies its own encoded-size ceiling,
+    // `limit_encoded`, to every result before it reaches the model — and a
+    // flood this dense with newlines (`yes` ends every line it prints) encodes
+    // past that ceiling on top of the reader's own cut. Without
+    // `with_capture_elision` carrying the process counts along, that second
+    // cut has no process byte count of its own: it removes the reader's
+    // exact marker and names only encoded result bytes in its place.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let expected = format!(
+        "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+        FLOOD - super::output::CAPTURE_TEXT
+    );
+    let process_counts = format!(
+        "process output was {FLOOD} bytes; {} bytes omitted during capture",
+        FLOOD - super::output::CAPTURE_TEXT
+    );
+    let sample = Sample::new("bash-pressed-flood-ceiling");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut wait = Duration::from_millis(50);
+    let (output, left) = loop {
+        let left = Background::new();
+        let tool = compatible(&sample).leaving(left.clone());
+
+        let output = thread::scope(|scope| {
+            let running = scope.spawn(|| {
+                finalized(
+                    &tool,
+                    &format!(
+                        r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}; sleep 30","timeout":60}}"#
+                    ),
+                )
+            });
+            thread::sleep(wait);
+            left.ask();
+            running.join().expect("the wait thread")
+        });
+
+        let landed = output
+            .as_ref()
+            .is_ok_and(|output| output.text().contains(&expected));
+        if landed || Instant::now() >= deadline {
+            break (output, left);
+        }
+        let _ = left.stop(1);
+        wait = (wait * 2).min(Duration::from_secs(2));
+    };
+    let mut output = output.expect("the command started");
+
+    // The runner's own ceiling applies to every result on the way to the
+    // model; nothing here should need it to fit already.
+    let _ = output.limit_encoded(crucible_types::TOOL_RESULT_BYTES);
+
+    assert!(
+        output.text().contains(&process_counts),
+        "the runner's own result ceiling cut through the reader's marker with no process byte \
+         count of its own: {}",
+        output.text()
+    );
+
+    left.stop(1).expect("background cleanup");
+}
+
+#[test]
 fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() {
     // Nothing this crate can import owns the string: the workflows that set it
     // are not Rust, and the backend crate that spells it for its own tests
@@ -1091,6 +1384,47 @@ fn a_command_that_ended_hands_over_what_it_printed() {
     assert!(
         one.printed.contains("the-answer-is-42"),
         "the model was told the command ended and not what it said: {:?}",
+        one.printed
+    );
+}
+
+#[test]
+fn a_command_that_ended_says_where_bytes_were_omitted() {
+    // `Left::printed` used to cut with a method that took no dropped-byte
+    // count of its own, so a cut counted only what this reader's own cut let
+    // go rather than what the command actually printed. This pins the whole
+    // gap against a command that printed more than a stream's head and tail
+    // before it ended.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let share = crate::bound::OUTPUT / MOST;
+    let sample = Sample::new("bash-background-flood");
+    let left = Background::new();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let output = finalized(
+        &tool,
+        &format!(r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}","background":true}}"#),
+    )
+    .expect("the command started");
+    assert!(!output.is_failed(), "{}", output.text());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let ended = loop {
+        let ended = left.reap();
+        if !ended.is_empty() || Instant::now() >= deadline {
+            break ended;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    let one = ended.first().expect("the command ended");
+    assert_eq!(one.code, Some(0));
+    assert!(
+        one.printed.contains(&format!(
+            "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+            FLOOD - share
+        )),
+        "the note counted only what this reader kept, not what the command printed: {:?}",
         one.printed
     );
 }

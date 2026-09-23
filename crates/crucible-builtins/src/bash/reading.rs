@@ -1,10 +1,11 @@
 //! Asking a command that is still running what it has printed so far.
 //!
-//! The registry has held this answer since it was built — it is what the panel
-//! behind <kbd>Ctrl</kbd>+<kbd>O</kbd> stands whole. The reader could reach it
-//! and the model could not, and the gap between those two is where a model
-//! goes looking for another way: running a second command to ask the question
-//! the first one is already answering.
+//! The registry has held what a command has printed since it was built — the
+//! same pipes the panel behind <kbd>Ctrl</kbd>+<kbd>B</kbd>, then
+//! <kbd>Enter</kbd>, stands whole, cut here to an answer's own ceiling
+//! instead. The reader could reach them and the model could not, and the gap
+//! between those two is where a model goes looking for another way: running a
+//! second command to ask the question the first one is already answering.
 //!
 //! So this is the affordance behind the sentence a backgrounded command comes
 //! back with. That sentence asks the model not to poll, and the ending it
@@ -117,21 +118,24 @@ impl Tool for BashOutput {
             let args = Args::parse(NAME, approved.args())?;
             let number = asked(&args)?;
 
-            let Some(printed) = self.left.wrote(number) else {
+            let Some(printed) = self.left.printed(number) else {
                 return Ok(ToolOutput::failed(missing(number, &self.left)));
             };
 
-            // Both of a command's streams are kept to the retained ceiling apiece,
-            // so what the registry hands over can be twice what one answer may
-            // carry. Cut here, where it becomes an answer.
-            let printed = super::output::excerpt(&printed, super::output::CAPTURE_TEXT);
-            if printed.trim().is_empty() {
+            // `printed` already cuts this to an answer's own ceiling and
+            // carries the counts a marker inside it names; passing them on
+            // with `with_capture_elision` keeps them true even where the
+            // runner's own result ceiling must cut through that marker.
+            if printed.text.trim().is_empty() {
                 return Ok(ToolOutput::ok(format!(
                     "[#{number} is running and has printed nothing yet]"
                 )));
             }
 
-            Ok(ToolOutput::ok(printed))
+            Ok(
+                ToolOutput::ok(printed.text)
+                    .with_capture_elision(printed.original, printed.omitted),
+            )
         })
     }
 }

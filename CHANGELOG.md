@@ -40,6 +40,15 @@ change in any release with no deprecation period.
   were all of it. What that command printed now ends, in the note, with
   `[output is incomplete: reading it failed before the end]`; a command whose
   output was read without a failure is reported as before.
+- **A background command's output now says how many of its bytes were
+  omitted.** When a command's output passed what crucible keeps, the model was
+  told of a cut that counted a read's own ceiling or the encoded result, not
+  what the process printed, and the background panel joined the kept head and
+  tail with no mark. What the model reads of a command left running, one that
+  ended while nobody waited and `bash_output` now names how many bytes the
+  process printed and how many were omitted, even where the 30,000-byte result
+  limit cuts it again, and the panel marks where each stream lost bytes.
+  Output small enough to keep whole is unaffected.
 - **Two session directories, or two workspaces, whose names are not valid
   UTF-8 are no longer one prompt cache scope.** The directory a session is kept
   in and the workspace each separate one reader's prompt cache resources from

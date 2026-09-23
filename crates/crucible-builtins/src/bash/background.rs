@@ -382,7 +382,16 @@ impl Background {
             .collect()
     }
 
-    /// The end of what a command printed, for the view that stands one whole.
+    /// The whole of what a command has printed, for the panel that stands one
+    /// running: every kept byte, uncut and untrimmed, stream by stream; where
+    /// a stream dropped bytes past its own ceiling, the same marker an answer
+    /// would carry, at that stream's own hole, naming what it printed and
+    /// every byte its reader let go of.
+    ///
+    /// Built through `output::stood` rather than `output::gathered`,
+    /// whose cut is an answer's own ceiling and not this panel's: what is kept
+    /// is bounded per stream already, so the panel adds its markers to that
+    /// rather than cutting what an answer would have to.
     #[must_use]
     pub fn wrote(&self, number: usize) -> Option<String> {
         let standing = self.standing.lock().ok()?;
@@ -391,7 +400,25 @@ impl Background {
             .left
             .iter()
             .find(|left| left.number == number)
-            .map(Left::text)
+            .map(|left| super::output::stood(&left.out, &left.err))
+    }
+
+    /// What a command running as `number` has printed, as `bash_output`'s own
+    /// answer: cut to an answer's own ceiling rather than the panel's wider
+    /// one, and carrying the counts [`super::output::gathered`] built so the
+    /// caller can pass them on to
+    /// [`crucible_tools::ToolOutput::with_capture_elision`] — the same way a
+    /// finished command's own answer does, so a later limiter pass that must
+    /// cut through this call's own marker still has the true count to repeat.
+    #[must_use]
+    pub(super) fn printed(&self, number: usize) -> Option<super::output::Captured> {
+        let standing = self.standing.lock().ok()?;
+
+        standing
+            .left
+            .iter()
+            .find(|left| left.number == number)
+            .map(|left| super::output::gathered(&left.out, &left.err, super::output::CAPTURE_TEXT))
     }
 
     /// Ends the command running as `number`.
@@ -698,18 +725,27 @@ pub(super) struct Taking {
 impl Taking {
     /// What the command printed before it was let go of.
     ///
-    /// Bounded and cut the same way an answer is, because that is what it is: the
-    /// only part of this command's output the model will be handed unless it asks
-    /// for more.
-    pub(super) fn printed(&self) -> String {
-        let mut said = self.out.text();
-        said.push_str(&self.err.text());
+    /// Bounded and cut the same way an answer is, because that is what it is:
+    /// the only part of this command's output the model will be handed unless
+    /// it asks for more. Built the way `output::joined` builds an
+    /// answer's own text — bytes and dropped count together — so a command
+    /// that printed more than a stream's head and tail before it was let go of
+    /// says where the rest went instead of splicing over it in silence, and so
+    /// the caller can carry that count on to
+    /// [`crucible_tools::ToolOutput::with_capture_elision`] the same way a
+    /// finished command's own answer does.
+    pub(super) fn printed(&self) -> super::output::Captured {
+        let said = super::output::gathered(&self.out, &self.err, super::output::CAPTURE_TEXT);
 
-        if said.trim().is_empty() {
-            return String::from("(no output yet)");
+        if said.text.trim().is_empty() {
+            return super::output::Captured {
+                text: String::from("(no output yet)"),
+                original: said.original,
+                omitted: said.omitted,
+            };
         }
 
-        said.trim_end().to_owned()
+        said
     }
 }
 
@@ -730,13 +766,6 @@ impl Left {
         self.out.ended() && self.err.ended()
     }
 
-    /// The end of what it has printed, both streams joined.
-    fn text(&self) -> String {
-        let mut said = self.out.text();
-        said.push_str(&self.err.text());
-        said
-    }
-
     /// What it printed, for the note about its ending: bounded and cut the way
     /// an answer is, and saying so where a reader failed before the end.
     ///
@@ -747,16 +776,25 @@ impl Left {
     /// here it is read. The failure's own words are not carried — only that
     /// there was one, in a fixed phrase — as a foreground command's error names
     /// what could not be done and not what the operating system said.
+    ///
+    /// Built through [`super::output::gathered`] rather than
+    /// [`super::output::excerpt`], so what is cut here counts every byte a
+    /// reader ever let go — not only the slice this cut removed on top of that
+    /// — the same gap `joined` reports for a command somebody waited for.
     fn printed(&mut self) -> String {
-        let said = self.text();
         // Both, whatever the first says: each join is also the reader's end.
         let out = self.out.close().is_err();
         let err = self.err.close().is_err();
         if !(out || err) {
-            return super::output::excerpt(&said, SHARE);
+            return super::output::gathered(&self.out, &self.err, SHARE).text;
         }
 
-        let kept = super::output::excerpt(&said, SHARE - UNREAD.len() - BEFORE_UNREAD.len());
+        let kept = super::output::gathered(
+            &self.out,
+            &self.err,
+            SHARE - UNREAD.len() - BEFORE_UNREAD.len(),
+        )
+        .text;
         if kept.is_empty() {
             UNREAD.to_owned()
         } else {
@@ -770,7 +808,7 @@ impl Left {
 ///
 /// Its room, and the blank line before it, come out of the share rather than
 /// being added to it, so a failed read makes the note no longer than
-/// `excerpt(.., SHARE)` could already have made it.
+/// `gathered(.., SHARE)` could already have made it.
 const UNREAD: &str = "[output is incomplete: reading it failed before the end]";
 
 /// What parts [`UNREAD`] from what was printed.
