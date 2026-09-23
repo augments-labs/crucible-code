@@ -370,10 +370,12 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
 
 #[test]
 fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
-    // Catching the signal a resize sends needs `unsafe`, which this
-    // workspace forbids, so a prompt is the only moment the loop can notice
-    // one. Unnoticed, the width read at startup is the width every turn is
-    // wrapped to for the rest of the session.
+    // In raw mode a resize is reported among the keys, and whatever is reading
+    // them — the box, a picker — acts on it then. A session reading whole
+    // lines, as this one does, is told of none; what notices it is the re-read
+    // of the window's size the loop makes before every prompt. Unnoticed, the
+    // width read at startup is the width every turn is wrapped to for the rest
+    // of the session.
     let conversation = paired(Arc::new(Session::nowhere()), |session| {
         scripted(
             Script::new(vec![saying("abcdefghijkl")]),

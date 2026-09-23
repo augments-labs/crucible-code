@@ -1022,7 +1022,7 @@ impl Palette {
     /// environment and `is_terminal` have already agreed on between them —
     /// this decides only how much. `from` reads the environment as a parameter
     /// because writing to the real one is `unsafe` in edition 2024 and this
-    /// workspace forbids it.
+    /// workspace denies it.
     /// `theme` is which table of hues to spend, already resolved — `auto` is a
     /// question about the terminal and is answered before this is reached.
     /// `ground` is what the terminal said its background is, and `None` is a

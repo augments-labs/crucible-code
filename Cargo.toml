@@ -144,7 +144,7 @@ two-face = { version = "=0.5.2", default-features = false, features = [
 insta = "=1.48.0"
 
 # The terminal itself. One thing genuinely needs it: the ioctl that reports the
-# window size, which is an `unsafe` libc call this workspace forbids writing by
+# window size, which is an `unsafe` libc call this workspace denies writing by
 # hand. The escape sequences the renderer emits are plain ANSI, so `crossterm`
 # stays confined to one file behind the `Terminal` trait and swapping it out is
 # a day, not a rewrite. A full-screen renderer would also want its raw mode,
