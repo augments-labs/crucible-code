@@ -769,15 +769,8 @@ impl Pipe {
                             thread::sleep(TICK);
                             continue;
                         }
-                        // What `read` documents as non-fatal and asks callers to
-                        // retry. Producing one takes a signal handler that returns,
-                        // and this process installs none — catching a signal needs
-                        // `unsafe`, which the workspace denies — so it cannot
-                        // happen today. It is retried rather than reasoned about
-                        // because the fact protecting it lives in another crate:
-                        // the day anything here catches a resize, dropping this
-                        // would end a reader mid-command and send the cut output
-                        // back looking complete.
+                        // An interrupted read, which `std::io::Read` documents as
+                        // non-fatal and to be retried.
                         Err(problem) if problem.kind() == io::ErrorKind::Interrupted => continue,
                         Err(problem) => return Err(problem),
                     };
