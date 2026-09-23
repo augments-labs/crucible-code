@@ -957,10 +957,11 @@ fn tools(
     tools.add_builtin(Edit::new(workspace.clone()))?;
     tools.add_builtin(Write::new(workspace.clone(), seen.clone()))?;
 
-    // The `env` block goes to the commands crucible runs and nowhere else.
-    // crucible cannot put a variable in its own environment — writing to one is
-    // `unsafe` in edition 2024 — and would not want to: what the block is for
-    // is what `cargo test` sees, not what this process sees.
+    // The whole `env` block goes to the commands crucible runs. crucible does
+    // not put a variable in its own environment, because writing to one is
+    // `unsafe` in a process with threads. It reads the `CRUCIBLE_CODE_`
+    // settings the block also holds as settings, and a variable of the same
+    // name in the environment crucible was started in wins over the block.
     // And the other end of the row under the box. The clone shares one registry
     // rather than copying it, which is what lets the caller show what is running
     // and stop one — and what makes the caller's copy the thing that ends them all.

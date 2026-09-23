@@ -196,8 +196,9 @@ impl Settings {
     ///
     /// Crucible's own environment is not touched and cannot be: writing to it
     /// is `unsafe` in edition 2024 and this workspace forbids that. So this
-    /// block says what `cargo test` or `git` sees, not what crucible sees —
-    /// crucible's own settings have keys of their own, and the one variable it
+    /// block says what `cargo test` or `git` sees, and crucible reads its own
+    /// `CRUCIBLE_CODE_` settings out of it as settings, below the environment
+    /// it was started in, as [`Self::scroll_speed`] does. The one variable it
     /// reads before opening a file is refused here outright rather than left to
     /// look applied.
     pub fn env(&self) -> impl Iterator<Item = (&str, &str)> {
