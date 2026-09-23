@@ -913,14 +913,16 @@ impl Drop for Pipe {
 }
 
 /// How long a command that has exited is held back for, waiting for its readers
-/// to reach the end of its pipes.
+/// to reach the end of its pipes: once before what it left running is ended,
+/// and once more after, because ending it can be what lets a pipe reach its
+/// end.
 ///
 /// The same moment [`settle`] gives a command somebody is waiting on, spent the
 /// other way round: the registry cannot block the thread that draws, so instead
 /// of waiting inside one call it declines to report the ending and is asked
 /// again on the next beat. A grandchild still holding a pipe open is what the
-/// deadline is for — the ending is reported with whatever arrived, rather than
-/// never.
+/// deadline is for — the ending is reported with whatever arrived, marked
+/// incomplete, rather than never.
 pub(super) const DRAIN: Duration = SETTLE;
 
 /// Gives the readers a moment to reach the end once the command is over, and

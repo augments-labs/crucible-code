@@ -82,6 +82,19 @@ struct Left {
     /// When the process was first seen to have gone, for the grace its readers
     /// get to reach the end of its pipes. `None` until it has.
     exited: Option<Instant>,
+    /// When `end` stopped this command's descendants. `None` until it has;
+    /// reap does not ask again once it is `Some`. Read against
+    /// [`super::output::DRAIN`] again from here, so a pipe `end` itself lets
+    /// go of is given the same grace to show its end that the first wait
+    /// gave it.
+    stopped: Option<Instant>,
+    /// The `(code, unpublished)` reap had determined on the beat that made
+    /// `stopped` `Some`, kept rather than asked of `try_wait` again: stopping
+    /// a command's descendants can itself resolve a status that `try_wait`
+    /// had not yet reported, and a beat that asked again after the stop could
+    /// read that new status in place of the one reap already decided to
+    /// report. `None` until `stopped` is.
+    settled: Option<(Option<i32>, Option<String>)>,
     /// When it was first seen to have ended with its publication unfinished.
     /// `None` until it has, and the ceiling its wait gets is counted from it.
     publishing: Option<Instant>,
@@ -136,7 +149,8 @@ pub struct Ended {
     /// How many lines it printed in total.
     pub lines: usize,
     /// What it printed, bounded and cut the way an answer is, and ending in a
-    /// note that it is incomplete where a read of it failed before the end.
+    /// note that it is incomplete where a read of it failed before the end, or
+    /// where the ending was reported before every reader had reached the end.
     ///
     /// The whole reason the model is told any of this. A note that a command
     /// ended and never what it said leaves the question the command was
@@ -333,6 +347,8 @@ impl Background {
             err: taking.err,
             since: taking.since,
             exited: None,
+            stopped: None,
+            settled: None,
             publishing: None,
             accepting,
         });
@@ -492,39 +508,49 @@ impl Background {
                 still.push(left);
                 continue;
             }
-            let (code, unpublished) = match left.process.try_wait() {
-                Ok(Some(status)) => (status.code(), None),
-                // From a command that has ended, an error is how its ending went
-                // wrong: what it wrote was refused, most often. It is reported like
-                // any other ending, with why, rather than kept as though it still
-                // ran.
-                Err(problem) if left.process.ended() => (
-                    None,
-                    Some(super::output::excerpt(&problem.to_string(), SHARE)),
-                ),
-                // It has ended, and its writes are waiting their turn to
-                // publish. Kept rather than stopped, because stopping it
-                // discards them — but not for the whole run: what it waits for
-                // can be held by another crucible of this user, and a command
-                // nothing ever reports holds one of the few slots there are.
-                Ok(None) if left.process.ended() => {
-                    let since = *left.publishing.get_or_insert_with(Instant::now);
-                    if since.elapsed() < PUBLICATION {
+            // Asked of `try_wait` fresh on every beat until `stopped` is
+            // `Some`; from there the pair is read back rather than asked
+            // again, because ending a command's descendants can itself
+            // resolve a status `try_wait` had not yet reported, and asking
+            // again after that would report that new status instead of the
+            // one already decided.
+            let (code, unpublished) = if let Some(settled) = left.settled.clone() {
+                settled
+            } else {
+                match left.process.try_wait() {
+                    Ok(Some(status)) => (status.code(), None),
+                    // From a command that has ended, an error is how its ending went
+                    // wrong: what it wrote was refused, most often. It is reported like
+                    // any other ending, with why, rather than kept as though it still
+                    // ran.
+                    Err(problem) if left.process.ended() => (
+                        None,
+                        Some(super::output::excerpt(&problem.to_string(), SHARE)),
+                    ),
+                    // It has ended, and its writes are waiting their turn to
+                    // publish. Kept rather than stopped, because stopping it
+                    // discards them — but not for the whole run: what it waits for
+                    // can be held by another crucible of this user, and a command
+                    // nothing ever reports holds one of the few slots there are.
+                    Ok(None) if left.process.ended() => {
+                        let since = *left.publishing.get_or_insert_with(Instant::now);
+                        if since.elapsed() < PUBLICATION {
+                            still.push(left);
+                            continue;
+                        }
+                        (
+                            None,
+                            Some("its publication did not finish in time".to_owned()),
+                        )
+                    }
+                    // Still running, or a wait that could not be made. A command whose
+                    // status cannot be read is kept rather than reported: it is still
+                    // holding resources, and `stop` and this module's drop are both
+                    // still able to end it.
+                    Ok(None) | Err(_) => {
                         still.push(left);
                         continue;
                     }
-                    (
-                        None,
-                        Some("its publication did not finish in time".to_owned()),
-                    )
-                }
-                // Still running, or a wait that could not be made. A command whose
-                // status cannot be read is kept rather than reported: it is still
-                // holding resources, and `stop` and this module's drop are both
-                // still able to end it.
-                Ok(None) | Err(_) => {
-                    still.push(left);
-                    continue;
                 }
             };
 
@@ -540,13 +566,39 @@ impl Background {
             }
 
             // The shell has gone; its descendants have not necessarily, and this
-            // is the one path where nothing else will end them.
-            if super::output::end(left.process.as_mut()).is_err() {
+            // is the one path where nothing else will end them. Asked on every
+            // beat until it succeeds, and not again by reap after that: once it
+            // has, nothing is left running for a second ask to stop.
+            let stopped = if let Some(when) = left.stopped {
+                when
+            } else {
+                if super::output::end(left.process.as_mut()).is_err() {
+                    still.push(left);
+                    continue;
+                }
+                let now = Instant::now();
+                left.stopped = Some(now);
+                left.settled = Some((code, unpublished.clone()));
+                now
+            };
+
+            // Ending descendants above can itself be what lets a held-open pipe
+            // reach its end, and its reader still needs a moment to notice and
+            // post it. The same grace the first wait gave is given again from
+            // here, so that moment is actually given rather than judged by a
+            // check made before the reader had it.
+            if !left.drained() && stopped.elapsed() < super::output::DRAIN {
                 still.push(left);
                 continue;
             }
+
+            // Read now, because it is the last moment the answer can still be
+            // true: `Left::printed` below closes both readers next, and closing
+            // one forces it to stop whether it ever reached the end or not —
+            // asking after that would find every reader "ended" regardless.
+            let complete = left.drained();
             let (lines, _) = left.counted();
-            let printed = left.printed();
+            let printed = left.printed(complete);
 
             ended.push(Ended {
                 tool: super::NAME,
@@ -767,39 +819,75 @@ impl Left {
     }
 
     /// What it printed, for the note about its ending: bounded and cut the way
-    /// an answer is, and saying so where a reader failed before the end.
+    /// an answer is, and saying so where a reader failed before the end, or
+    /// where `complete` says a reader had still not reached it.
     ///
-    /// A reader that failed part-way stops the way one that reached the end
-    /// does, so what it kept is a prefix that looks whole. Joining the readers
-    /// is what tells the two apart. Dropping this entry would join them anyway,
-    /// a moment later on the same thread, and throw away what the join said;
-    /// here it is read. The failure's own words are not carried — only that
-    /// there was one, in a fixed phrase — as a foreground command's error names
-    /// what could not be done and not what the operating system said.
+    /// A reader that failed stops the way one that reached the end does, so
+    /// what it kept is a prefix that looks whole; joining it is what tells the
+    /// two apart. A reader still short of the end when reap stopped waiting is
+    /// told apart only by `complete`: closing a reader stops it, after which
+    /// it reads as ended like any other, so `complete` is read before this is
+    /// called; see [`Background::reap`]. Dropping this entry would join the
+    /// readers anyway, a moment later on the same thread, and throw away what
+    /// the join said; here it is read. The read failure's own words are not
+    /// carried — only that there was one, in a fixed phrase — as a foreground
+    /// command's error names what could not be done and not what the
+    /// operating system said.
     ///
     /// Built through [`super::output::gathered`] rather than
     /// [`super::output::excerpt`], so what is cut here counts every byte a
     /// reader ever let go — not only the slice this cut removed on top of that
     /// — the same gap `joined` reports for a command somebody waited for.
-    fn printed(&mut self) -> String {
+    fn printed(&mut self, complete: bool) -> String {
         // Both, whatever the first says: each join is also the reader's end.
         let out = self.out.close().is_err();
         let err = self.err.close().is_err();
-        if !(out || err) {
-            return super::output::gathered(&self.out, &self.err, SHARE).text;
+        if out || err {
+            return noted(&self.out, &self.err, Note::Unread);
         }
+        if !complete {
+            return noted(&self.out, &self.err, Note::Undrained);
+        }
+        super::output::gathered(&self.out, &self.err, SHARE).text
+    }
+}
 
-        let kept = super::output::gathered(
-            &self.out,
-            &self.err,
-            SHARE - UNREAD.len() - BEFORE_UNREAD.len(),
-        )
-        .text;
-        if kept.is_empty() {
-            UNREAD.to_owned()
-        } else {
-            format!("{kept}{BEFORE_UNREAD}{UNREAD}")
+/// Why a command's kept output stops short of the whole, for [`noted`].
+///
+/// An enum rather than the marker's own text, so a marker `noted` is asked to
+/// append is always one the const assertions below have measured against
+/// [`SHARE`]: passing a string neither covers is a case the type cannot
+/// express, not a bound this subtraction could still get wrong.
+#[derive(Clone, Copy)]
+enum Note {
+    /// A reader failed before reaching the end.
+    Unread,
+    /// A reader had still not reached the end once every hold on reporting
+    /// this ending had run out.
+    Undrained,
+}
+
+impl Note {
+    const fn marker(self) -> &'static str {
+        match self {
+            Self::Unread => UNREAD,
+            Self::Undrained => UNDRAINED,
         }
+    }
+}
+
+/// What was kept, with the marker `note` names appended: how a reader's
+/// failure, or reap no longer waiting for a reader, is said.
+///
+/// Shared by both notes so the one gap between "what was printed" and "why it
+/// stops short" is measured once, whichever note it is.
+fn noted(out: &Pipe, err: &Pipe, note: Note) -> String {
+    let marker = note.marker();
+    let kept = super::output::gathered(out, err, SHARE - marker.len() - BEFORE_NOTE.len()).text;
+    if kept.is_empty() {
+        marker.to_owned()
+    } else {
+        format!("{kept}{BEFORE_NOTE}{marker}")
     }
 }
 
@@ -811,12 +899,24 @@ impl Left {
 /// `gathered(.., SHARE)` could already have made it.
 const UNREAD: &str = "[output is incomplete: reading it failed before the end]";
 
-/// What parts [`UNREAD`] from what was printed.
-const BEFORE_UNREAD: &str = "\n\n";
+/// What the note says of a command whose readers had still not reached the
+/// end of its pipes once every hold on reporting its ending had run out.
+///
+/// Nothing failed here: either something that outlived the stop still holds a
+/// pipe open, or the reader had not caught up by the time the second hold
+/// [`Background::reap`] gives it also ran out. Either way what was kept is a
+/// prefix, not the whole.
+const UNDRAINED: &str =
+    "[output is incomplete: it had not been read to the end when the command was reported]";
 
-// The subtraction above relies on it, and a share too small to leave any
-// output beside the note would be a note about nothing.
-const _: () = assert!(UNREAD.len() + BEFORE_UNREAD.len() < SHARE);
+/// What parts a note from what was printed.
+const BEFORE_NOTE: &str = "\n\n";
+
+// `noted` relies on both to leave a share it can still subtract from without
+// underflowing, and a share too small to leave any output beside a note would
+// be a note about nothing.
+const _: () = assert!(UNREAD.len() + BEFORE_NOTE.len() < SHARE);
+const _: () = assert!(UNDRAINED.len() + BEFORE_NOTE.len() < SHARE);
 
 #[cfg(test)]
 mod tests;
