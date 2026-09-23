@@ -240,6 +240,75 @@ fn resume_and_continue_cannot_be_asked_for_together() {
     assert!(said.contains("cannot be used with"), "{said}");
 }
 
+/// The application's runtime is made only by [`run`], through
+/// `crucible_app::services::serving`, and only when something there asks for
+/// it. `--help` and `--version` are answered by the parser itself, before
+/// [`start`] reaches its dispatch, so neither can come near it.
+#[test]
+fn help_and_version_are_answered_while_the_arguments_are_parsed() {
+    for (flag, kind) in [
+        ("--help", clap::error::ErrorKind::DisplayHelp),
+        ("--version", clap::error::ErrorKind::DisplayVersion),
+    ] {
+        let answered = Cli::try_parse_from(["crucible", flag]).expect_err("an answer, not a run");
+
+        assert_eq!(answered.kind(), kind, "{flag} was parsed into a run");
+    }
+}
+
+/// Stands for the registry of commands left running, once ending a command is
+/// work the runtime owns: dropped, it hands its stop to the runtime and says
+/// whether the stop ran. The real registry's drop cannot be watched from here,
+/// so this is what [`leaving_first`] is handed in its place.
+struct Registry {
+    stop: std::sync::OnceLock<Box<dyn Fn() -> bool + Send + Sync>>,
+    landed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Registry {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.get() {
+            self.landed
+                .store(stop(), std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+#[test]
+fn the_registry_of_commands_left_running_ends_before_the_runtime_is_shut_down() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock, mpsc};
+    use std::time::Duration;
+
+    let landed = Arc::new(AtomicBool::new(false));
+    let made = Arc::clone(&landed);
+
+    let (armed, stopped) = leaving_first(
+        move || Registry {
+            stop: OnceLock::new(),
+            landed: made,
+        },
+        |services, leaving| {
+            let runtime = services.runtime().handle()?;
+            let _ = leaving.stop.set(Box::new(move || {
+                let (ran, heard) = mpsc::channel();
+                let _stop = runtime.spawn(async move {
+                    let _ = ran.send(());
+                });
+                heard.recv_timeout(Duration::from_secs(2)).is_ok()
+            }));
+            Ok::<_, crucible_app::runtime::Unstarted>(())
+        },
+    );
+
+    assert!(armed.is_ok(), "the runtime could not be started: {armed:?}");
+    assert_eq!(stopped, Ok(()));
+    assert!(
+        landed.load(Ordering::Acquire),
+        "the registry of commands left running handed its stop to a runtime already shut down"
+    );
+}
+
 #[test]
 fn windows_sandbox_maintenance_is_an_exclusive_early_action() {
     let setup = Cli::try_parse_from(["crucible", "sandbox", "setup", "--owner", r"MACHINE\person"])

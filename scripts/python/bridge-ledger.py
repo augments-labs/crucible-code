@@ -13,9 +13,15 @@ a ledger and the packages holding it, so that a ledger nobody could parse never
 passes as one nothing disagrees with. `--self-test` exits 0 when every case
 gives the answer written beside it, and 1 otherwise.
 
-They agree when every variant's documentation says what bounds it, names as its
-owner one package of the workspace and says in words what retires it; when a
-variant is named, outside the package that declares it, only in its owner;
+They agree when every variant's documentation says whether it polls once or
+waits, in a `- Crossing:` item reading `polls once` or `waits`, says what bounds
+it, and, where it waits, says what bounds its wait in a `- Wait bounded by:`
+item, names as its owner one package of the workspace and says in words what
+retires it; when no source outside the ledger's package crosses a variant by
+the other kind than the one its entry says, which is seen only where the
+variant's path is followed, blanks and line breaks aside, by `.wait` or by
+`.cross`; when a variant is named, outside the package that declares it, only
+in its owner;
 when every variant is named in its owner's shipped source, because a bridge
 nothing crosses is deleted rather than kept; when no shipped source but the
 ledger builds, in a spelling this check knows, the waker or the context that a
@@ -53,13 +59,15 @@ written as a method call, `.cross(`, whose argument begins with `&mut`,
 `Pin::new(&mut …)` or `Box::pin(&mut …)`, or ends with an `.as_mut()` after an
 argument that holds no `;`, `{` or `}` and parentheses at most two deep.
 `Pin::as_mut(&mut …)`, a path-qualified `std::pin::Pin::new(…)` and a crossing
-written as a path call, `Bridge::cross(Bridge::Name, &mut …)`, pass. What comes
+written as a path call, `Bridge::cross(Bridge::Name, &mut …)`, pass, and so does
+any borrow handed to a wait, `.wait(`. What comes
 before that `.as_mut()` is read as written, string and character literals
 included: a `;`, `{` or `}` anywhere in it ends the match, so a lend whose
 argument holds a format string such as `format!("{name}")`, or a struct
 literal, is missed; and a literal holding an unpaired parenthesis can make the
 check report a crossing that lends nothing, or miss one that lends. A bridge
-crossed again is seen only where `.bridge()` comes directly before `.cross`.
+crossed again is seen only where `.bridge()` comes directly before `.cross` or
+`.wait`.
 Either one bound to a name first is outside what the check can see, and so is
 a `Bridge` passed across crates as a value, as a parameter or a field.
 
@@ -137,9 +145,18 @@ LENT = re.compile(
 )
 # A bridge taken off a refusal and crossed again: the crossing no longer spells
 # which variant it is, so neither who owns it nor that it retries can be seen.
-# Seen only where `.bridge()` comes directly before `.cross`; a bridge bound to
-# a name first and crossed by it is not.
-RECROSSED = re.compile(r"\.bridge\(\)\s*\.cross\b")
+# Seen only where `.bridge()` comes directly before `.cross` or `.wait`; a
+# bridge bound to a name first and crossed by it is not.
+RECROSSED = re.compile(r"\.bridge\(\)\s*\.(?:cross|wait)\b")
+# How an entry says it crosses: once, by one poll, or by waiting. Read from its
+# `- Crossing:` item, a full stop after it allowed.
+ONCE, WAITS = "polls once", "waits"
+# A variant crossed by the method that says how, with only blanks, line breaks
+# included, between the path and the method. A variant bound to a name first,
+# or reached through a crossing written as a path call, `Bridge::wait(…)`, is
+# not seen by either.
+CROSSED_ONCE = re.compile(r"\bBridge::([A-Z][A-Za-z0-9]*)\s*\.cross\b")
+WAITED = re.compile(r"\bBridge::([A-Z][A-Za-z0-9]*)\s*\.wait\b")
 # Roughly what a plan's identifier looks like: one to three capitals, perhaps a
 # hyphen, then digits, as a whole word. What retires a bridge is said in words
 # a reader of the code can check, never by a name only a plan resolves. This is
@@ -228,9 +245,16 @@ def disagreements(ledger_path, ledger, packages, sources):
     `packages` maps each package's name to its directory and `sources` each
     Rust file's path to its text, all relative to the same root.
     """
-    wrong, owners = [], {}
+    wrong, owners, kinds = [], {}, {}
     declared = entries(ledger)
     for name, docs in declared:
+        kind = item(docs, "Crossing").removesuffix(".")
+        if kind not in (ONCE, WAITS):
+            wrong.append(f"`Bridge::{name}` does not say whether it polls once or waits")
+        else:
+            kinds[name] = kind
+        if kind == WAITS and not item(docs, "Wait bounded by"):
+            wrong.append(f"`Bridge::{name}` waits and does not say what bounds its wait")
         if not item(docs, "Bound"):
             wrong.append(f"`Bridge::{name}` does not say what bounds it")
         retired = item(docs, "Retired")
@@ -264,6 +288,12 @@ def disagreements(ledger_path, ledger, packages, sources):
             wrong.append(f"{path} polls a future by hand; a synchronous caller crosses through a `Bridge` instead")
         if package == home:
             continue
+        for found in WAITED.finditer(code):
+            if kinds.get(found.group(1)) == ONCE:
+                wrong.append(f"{path} waits on `Bridge::{found.group(1)}`, which the ledger says polls once")
+        for found in CROSSED_ONCE.finditer(code):
+            if kinds.get(found.group(1)) == WAITS:
+                wrong.append(f"{path} polls `Bridge::{found.group(1)}` once, which the ledger says waits")
         for found in NAMED.finditer(code):
             name = found.group(1)
             if name not in dict(declared):
@@ -317,6 +347,7 @@ LEDGER = """\
 pub enum Bridge {
     /// Asking the model.
     ///
+    /// - Crossing: polls once.
     /// - Bound: one poll for each delta
     ///   read.
     /// - Owner: `runner`
@@ -324,12 +355,28 @@ pub enum Bridge {
     Turn,
     /// Starting a server.
     ///
+    /// - Crossing: polls once.
     /// - Bound: one poll for each start.
     /// - Owner: `code`
     /// - Retired: when the application runs on one runtime.
     Hosting,
 }
 """
+
+# A ledger that also holds an entry that waits, and what bounds its wait.
+WAITING_ENTRY = """\
+    /// Taking a login step.
+    ///
+    /// - Crossing: waits.
+    /// - Bound: one wait for each step.
+    /// - Wait bounded by: the turn's cancel, and the step's own
+    ///   deadline.
+    /// - Owner: `code`
+    /// - Retired: when a login is asynchronous.
+    Login,
+"""
+WAITING = LEDGER.removesuffix("}\n") + WAITING_ENTRY + "}\n"
+UNBOUNDED = WAITING.replace("    /// - Wait bounded by: the turn's cancel, and the step's own\n    ///   deadline.\n", "")
 
 PACKAGES = {"code": ".", "runner": os.path.join("crates", "runner"), "runtime": os.path.join("crates", "runtime")}
 AT = os.path.join("crates", "runtime", "src", "bridge.rs")
@@ -339,6 +386,8 @@ RUNNER = os.path.join("crates", "runner", "src", "turn.rs")
 RUNNER_MODULE_TEST = os.path.join("crates", "runner", "src", "turn", "tests.rs")
 RUNNER_TEST = os.path.join("crates", "runner", "tests", "turn.rs")
 CODE = os.path.join("src", "serve.rs")
+LOGIN = os.path.join("src", "login.rs")
+LOGGING_IN = "fn login() { Bridge::Login.wait(Some(&handle), &cancel, step()); }\n"
 AGREEING = {
     AT: LEDGER + CROSSING,
     RUNNER: "fn turn() { Bridge::Turn.cross(ask()); }\n",
@@ -383,6 +432,54 @@ CASES = [
         without("    /// - Retired: when the application runs on one runtime.\n"),
         changed(without("    /// - Retired: when the application runs on one runtime.\n")),
         ["`Bridge::Hosting` does not say what retires it"],
+    ),
+    (
+        "a variant that does not say how it crosses",
+        LEDGER.replace("    /// - Crossing: polls once.\n", "", 1),
+        changed(LEDGER.replace("    /// - Crossing: polls once.\n", "", 1)),
+        ["`Bridge::Turn` does not say whether it polls once or waits"],
+    ),
+    (
+        "a variant that crosses some third way",
+        LEDGER.replace("polls once.", "streams.", 1),
+        changed(LEDGER.replace("polls once.", "streams.", 1)),
+        ["`Bridge::Turn` does not say whether it polls once or waits"],
+    ),
+    (
+        "a waiting variant that says what bounds its wait, waited on by its owner",
+        WAITING,
+        changed(WAITING, {LOGIN: LOGGING_IN}),
+        [],
+    ),
+    (
+        "a waiting variant that does not say what bounds its wait",
+        UNBOUNDED,
+        changed(UNBOUNDED, {LOGIN: LOGGING_IN}),
+        ["`Bridge::Login` waits and does not say what bounds its wait"],
+    ),
+    (
+        "a variant that polls once, waited on",
+        LEDGER,
+        changed(files={RUNNER: "fn turn() {\n    Bridge::Turn\n        .wait(None, &cancel, ask());\n}\n"}),
+        [f"{RUNNER} waits on `Bridge::Turn`, which the ledger says polls once"],
+    ),
+    (
+        "a waiting variant, polled once",
+        WAITING,
+        changed(WAITING, {LOGIN: "fn login() { Bridge::Login.cross(step()); }\n"}),
+        [f"{LOGIN} polls `Bridge::Login` once, which the ledger says waits"],
+    ),
+    (
+        "a bridge taken off a refusal and waited on again",
+        WAITING,
+        changed(
+            WAITING,
+            {
+                LOGIN: "fn login() { if let Err(no) = Bridge::Login.wait(None, &cancel, step()) "
+                "{ no.bridge().wait(None, &cancel, step()); } }\n"
+            },
+        ),
+        [f"{LOGIN} crosses a bridge taken off a refusal"],
     ),
     (
         "a variant retired by an identifier",

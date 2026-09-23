@@ -62,6 +62,12 @@ crucible-workspace.workspace = true
 serde_json.workspace = true
 # `AppError`, which the command line turns into the sentence a user reads.
 thiserror.workspace = true
+# The one runtime the application owns and lends a handle to. `rt-multi-thread`
+# because a synchronous caller waiting on a future does not drive a runtime's
+# drivers, so the runtime has to have workers of its own that do; `time` for
+# the timer, the one driver it has. No I/O feature: nothing puts a socket on it
+# yet.
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 
 [dev-dependencies]
 # The guardrail a headless turn is refused by.
