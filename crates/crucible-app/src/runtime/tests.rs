@@ -1,0 +1,63 @@
+//! How the runtime is shut down, and what it says when that runs out of time.
+
+use std::sync::mpsc;
+use std::time::Duration;
+
+use super::{RuntimeOwner, Unstopped};
+
+#[test]
+fn a_runtime_nothing_asked_for_shuts_down_at_once() {
+    let owner = RuntimeOwner::new();
+
+    assert!(
+        !owner.is_built(),
+        "an owner built a runtime nobody asked for"
+    );
+    assert_eq!(owner.shutdown(), Ok(()));
+}
+
+#[test]
+fn a_runtime_whose_threads_stop_in_time_shuts_down_cleanly() {
+    let owner = RuntimeOwner::new();
+    let runtime = owner.handle().unwrap();
+    let answered = runtime.block_on(runtime.spawn(async { 5 }));
+
+    assert_eq!(answered.map_err(|failed| failed.to_string()), Ok(5));
+    assert_eq!(owner.shutdown(), Ok(()));
+}
+
+/// A blocking thread that will not return until the test lets it is the one
+/// thing no shutdown can stop, so the bound runs out with it still running,
+/// and the shutdown says so. It is let go afterwards, so it outlives the test
+/// by no more than the time it takes to see its channel close.
+#[test]
+fn a_shutdown_that_runs_out_of_time_is_reported_as_failed_cleanup() {
+    let owner = RuntimeOwner::new();
+    let runtime = owner.handle().unwrap();
+    let (release, held) = mpsc::channel::<()>();
+    let (started, began) = mpsc::channel();
+    let _stuck = runtime.spawn_blocking(move || {
+        let _ = started.send(());
+        let _ = held.recv();
+    });
+    began.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    let stopped = owner.shutdown_within(Duration::from_millis(50));
+    drop(release);
+
+    assert_eq!(
+        stopped,
+        Err(Unstopped {
+            running: 1,
+            waited: Duration::from_millis(50),
+        })
+    );
+    assert_eq!(
+        stopped.map_err(|unstopped| unstopped.to_string()),
+        Err(
+            "1 of the threads crucible runs its work on had not stopped 50 ms after they were \
+             asked to, and were left running; what they were doing is unconfirmed"
+                .to_owned()
+        )
+    );
+}

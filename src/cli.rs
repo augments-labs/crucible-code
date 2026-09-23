@@ -40,6 +40,8 @@ use crucible_app::AppError;
 use crucible_app::providers::{
     Providers, Served, available, chosen, opening_unasked, providers, re_serving,
 };
+use crucible_app::runtime::Unstopped;
+use crucible_app::services::Services;
 use crucible_app::startup::{self, Startup, assemble, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
@@ -440,8 +442,50 @@ fn sends(settings: &crucible_config::Settings) -> crucible_tui::Sending {
     }
 }
 
-/// Builds everything, then hands over to the loop.
+/// Runs a session on the application's services, then shuts them down.
+///
+/// The session is [`running`], handed the registry of commands left running
+/// by [`leaving_first`], which is what orders that registry's end before the
+/// services'. A shutdown that ran out of time is a failed cleanup, said
+/// whether or not the session failed first; where it did, the session's
+/// failure is still the one the run ends with.
 fn run(cli: &Cli) -> Result<(), Fatal> {
+    let (ran, stopped) = leaving_first(Background::new, |services, leaving| {
+        running(cli, services, leaving)
+    });
+    match (ran, stopped) {
+        (ran, Ok(())) => ran,
+        (Ok(()), Err(unstopped)) => Err(AppError::from(unstopped).into()),
+        (Err(first), Err(unstopped)) => {
+            let _ = fail(&AppError::from(unstopped).into());
+            Err(first)
+        }
+    }
+}
+
+/// Runs `session` on the application's services with the registry of commands
+/// left running that `registry` makes, then shuts the services down.
+///
+/// The registry is what ends every command left running, and it ends them by
+/// being dropped. It is made here, inside the services' lifetime, and lent
+/// rather than given, so this function holds it until the session has returned
+/// and drops it before the services are shut down: a command it ends by
+/// handing work to the runtime finds the runtime still running. What this
+/// orders is the registry's own end. A clone the session kept past its return,
+/// on a thread it left running, would outlive the shutdown, and this cannot
+/// see one.
+fn leaving_first<L, T>(
+    registry: impl FnOnce() -> L,
+    session: impl FnOnce(&Services, &L) -> T,
+) -> (T, Result<(), Unstopped>) {
+    crucible_app::services::serving(|services| {
+        let leaving = registry();
+        session(services, &leaving)
+    })
+}
+
+/// Builds everything, then hands over to the loop.
+fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
@@ -456,12 +500,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // one holder, the panel above the box is a second, and `/clear` is the
     // third.
     let plan = Plan::new();
-
-    // Made here for a fourth reason on top of theirs: this is what ends every
-    // command left running, and it ends them by being dropped. Held by the
-    // outermost scope there is, so the last thing that happens in this process is
-    // the processes it started going with it.
-    let leaving = Background::new();
 
     // The other end of the panel a model's questions stand in. One value shared
     // rather than copied, so a question put on the worker thread is one the
@@ -671,7 +709,8 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
     let conversation = assemble(&Startup {
-        leaving: &leaving,
+        services,
+        leaving,
         providers: &catalogue,
         provider: launch.serving,
         unasked: launch.unasked,

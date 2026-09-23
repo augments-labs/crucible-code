@@ -26,13 +26,16 @@
 //!
 //! Where the service contracts hand back a future and the caller is still
 //! synchronous, [`Bridge`] is how it crosses: once, without waiting, and with
-//! [`Unready`] where the future would have had to wait. Its variants are the
-//! ledger of every such caller, and [`BoxFuture`] is the one shape every
-//! contract hands back.
+//! [`Unready`] where the future would have had to wait; or, for the entries
+//! that say they wait, by waiting on a runtime handed to it until the future
+//! answers or the turn is cancelled, and with [`Unwaited`] where it cannot. Its
+//! variants are the ledger of every such caller, and [`BoxFuture`] is the one
+//! shape every contract hands back.
 //!
 //! Nothing here starts a runtime. A library that built its own would decide
 //! for the application how many threads it gets; [`Group`] runs on the runtime
-//! of whoever called it, and a crossing enters none.
+//! of whoever called it, a crossing that polls once enters none, and one that
+//! waits enters only the runtime its caller hands it.
 
 mod aside;
 mod bridge;
@@ -45,7 +48,7 @@ pub use aside::Aside;
 #[cfg(feature = "proof")]
 #[doc(hidden)]
 pub use bridge::__answered;
-pub use bridge::{BoxFuture, Bridge, Unready};
+pub use bridge::{BoxFuture, Bridge, NOTICED, Unready, Unwaited};
 pub use cancel::Cancel;
 pub use group::{Ended, Full, Group};
 pub use progress::{Progress, Told};

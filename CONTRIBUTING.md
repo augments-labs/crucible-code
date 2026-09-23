@@ -98,9 +98,15 @@ as two worktrees, can then run their tests at once without locking, recovering
 or changing each other's state. `cargo test --workspace` and a narrow
 `cargo test -p` of a package that uses the sandbox turn this on for you, and
 so does `scripts/sh/rust-checks.sh` when it reruns a required case on its own.
-A narrow run of the sandbox crate itself has to ask for it:
+A narrow run of the sandbox crate itself has to ask for it, and needs the
+broker built first: its enforcing tests look for `crucible-sandbox-broker`
+in the test binary's directory and the one above it (`target/debug/`), and a
+narrow `cargo test -p` builds no other package's binaries, so in a fresh
+checkout they fail with "no trusted crucible-sandbox-broker executable was
+found":
 
 ```bash
+cargo build -p crucible-sandbox-broker
 cargo test -p crucible-sandbox-local --features per-checkout-state
 ```
 
