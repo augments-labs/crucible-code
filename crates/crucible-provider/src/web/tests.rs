@@ -1249,6 +1249,138 @@ fn a_body_that_keeps_producing_bytes_cannot_outlive_the_elapsed_deadline() {
     );
 }
 
+/// A body that hands its whole answer over in one read, then confirms the
+/// end only once `wait` has already run out.
+struct WholeThenLateEnd {
+    whole: Option<Vec<u8>>,
+    wait: std::time::Duration,
+}
+
+impl Read for WholeThenLateEnd {
+    fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
+        let Some(whole) = self.whole.take() else {
+            std::thread::sleep(
+                self.wait
+                    .saturating_add(std::time::Duration::from_millis(20)),
+            );
+            return Ok(0);
+        };
+        let took = whole.len().min(into.len());
+        into.get_mut(..took)
+            .unwrap_or_default()
+            .copy_from_slice(whole.get(..took).unwrap_or_default());
+        Ok(took)
+    }
+}
+
+#[test]
+fn an_answer_already_whole_is_kept_when_its_closing_read_arrives_late() {
+    // The bug this proves against checked the wait right after this closing
+    // read, before looking at what it returned, so an answer already
+    // complete in hand was reported as though it had stopped part-way
+    // through instead of being used.
+    let wait = std::time::Duration::from_millis(5);
+
+    let answered = filled(
+        "test",
+        Box::new(WholeThenLateEnd {
+            whole: Some(b"the whole answer".to_vec()),
+            wait,
+        }),
+        wait,
+        &Cancel::new(),
+    )
+    .expect("a whole answer confirmed late to be used");
+
+    assert_eq!(answered, "the whole answer");
+}
+
+/// A body whose one read sleeps past `wait` before handing back the bytes it
+/// holds, without the clean end that would say the answer is complete.
+struct SlowChunk {
+    wait: std::time::Duration,
+    then: Vec<u8>,
+}
+
+impl Read for SlowChunk {
+    fn read(&mut self, into: &mut [u8]) -> std::io::Result<usize> {
+        std::thread::sleep(
+            self.wait
+                .saturating_add(std::time::Duration::from_millis(20)),
+        );
+        let took = self.then.len().min(into.len());
+        into.get_mut(..took)
+            .unwrap_or_default()
+            .copy_from_slice(self.then.get(..took).unwrap_or_default());
+        self.then.drain(..took);
+        Ok(took)
+    }
+}
+
+#[test]
+fn a_chunk_that_arrives_as_the_wait_runs_out_is_not_read_past() {
+    // The other half of the same fix: a read that comes back after the wait
+    // without reporting a clean end still ends the call, because the wait
+    // then blocks any further read — even one that would have ended
+    // cleanly, as this mock's next one would (its `then` is fully drained
+    // by the one read exercised here).
+    let wait = std::time::Duration::from_millis(5);
+
+    let problem = filled(
+        "test",
+        Box::new(SlowChunk {
+            wait,
+            then: b"partial".to_vec(),
+        }),
+        wait,
+        &Cancel::new(),
+    )
+    .expect_err("an answer not confirmed complete to still time out");
+
+    assert!(
+        problem.to_string().contains("it stopped part-way through"),
+        "{problem}"
+    );
+}
+
+/// A body whose one read sleeps past `wait` before failing with a real I/O
+/// error — not [`io::ErrorKind::Interrupted`], which is retried instead.
+struct SlowFailure {
+    wait: std::time::Duration,
+}
+
+impl Read for SlowFailure {
+    fn read(&mut self, _into: &mut [u8]) -> std::io::Result<usize> {
+        std::thread::sleep(
+            self.wait
+                .saturating_add(std::time::Duration::from_millis(20)),
+        );
+        Err(std::io::Error::other("upstream reset the connection"))
+    }
+}
+
+#[test]
+fn a_real_read_failure_landing_as_the_wait_runs_out_keeps_its_own_message() {
+    // Before the fix, the removed check fired on this same failure before it
+    // was looked at, so a genuine error landing here was replaced with the
+    // generic "it stopped part-way through" instead of being shown.
+    let wait = std::time::Duration::from_millis(5);
+
+    let problem = filled("test", Box::new(SlowFailure { wait }), wait, &Cancel::new())
+        .expect_err("a real read failure to still be reported");
+
+    assert!(
+        problem
+            .to_string()
+            .contains("upstream reset the connection"),
+        "{problem}"
+    );
+    assert!(
+        !problem.to_string().contains("it stopped part-way through"),
+        "{problem}"
+    );
+}
+
 /// A transport that never reaches the service because the user left the turn
 /// while the request was still being set up — resolving, connecting, waiting
 /// for headers. It is the one failure the transport spells as a cancel rather

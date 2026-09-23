@@ -90,7 +90,10 @@ fn read(
 ///
 /// The wait rather than the deadline it makes, so nothing here adds to an
 /// `Instant` — that addition panics where it overflows, and a bound against
-/// hanging is a poor place to put a new way to fail.
+/// hanging is a poor place to put a new way to fail. It is charged only
+/// against attempting another read, never against one already under way, so
+/// what that read reports — a clean end or a failure — is used as it stands
+/// whatever the clock reads by then.
 fn filled(
     named: &'static str,
     body: Box<dyn Read + Send>,
@@ -120,9 +123,6 @@ fn filled(
         let read = body.read(&mut into);
         if cancel.requested() {
             return Err(SourceError::Cancelled(named));
-        }
-        if since.elapsed() >= wait {
-            return Err(transport(&timed_out()));
         }
 
         match read {

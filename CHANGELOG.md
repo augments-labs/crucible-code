@@ -59,6 +59,13 @@ change in any release with no deprecation period.
   itself, or shorter than what was actually read. What a read hands over is
   now kept, and a clean end it reports is honoured, whatever the wait says by
   then.
+- **A `web_search` or `web_fetch` answer that finished as the two-minute wait
+  ran out failed instead of being used.** The reader checked that wait right
+  after its closing read, before looking at what the read returned, so an
+  answer already complete in hand was reported as though it had stopped
+  part-way through. What that read reports — a clean end or its own failure
+  — is now used as it stands, so a real read error landing there is shown as
+  itself instead of the generic timeout that used to replace it.
 
 ### Security
 
