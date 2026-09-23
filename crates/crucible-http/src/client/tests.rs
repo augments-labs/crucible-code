@@ -26,7 +26,8 @@ use tokio_rustls::TlsAcceptor;
 use tower_service::Service;
 
 use super::{Body, Http, HttpError, Phase, client, exchange};
-use crate::connect::{Conn, ConnectError, Connector, Tls};
+use crate::body::{BodyError, Chunk, Chunks};
+use crate::connect::{Conn, ConnectError, Connector, MAX_SETUPS, Setups, Tls};
 use crate::dns::tests::{Answer, Stall, raised, settle, stalled, stalled_plain, until_inside};
 use crate::dns::{Lookup, Lookups, PlainLookups, Poison};
 use crate::proxy::ProxyEnv;
@@ -662,7 +663,7 @@ impl Service<Uri> for Pipe {
 }
 
 /// A client over one pipe, its peer's end, and the owner of its tasks.
-fn piped(capacity: usize) -> (Client<Pipe, Body>, DuplexStream, Arc<Tasks>) {
+fn piped(capacity: usize) -> (Client<Setups<Pipe>, Body>, DuplexStream, Arc<Tasks>) {
     let (near, far) = duplex(capacity);
     let tasks = Tasks::new();
     let client = client(Pipe(Arc::new(Mutex::new(Some(near)))), &tasks);
@@ -671,7 +672,7 @@ fn piped(capacity: usize) -> (Client<Pipe, Body>, DuplexStream, Arc<Tasks>) {
 
 /// Sends a POST of `size` bytes over `client`, from its own task.
 fn post(
-    client: Client<Pipe, Body>,
+    client: Client<Setups<Pipe>, Body>,
     size: usize,
 ) -> tokio::task::JoinHandle<Result<StatusCode, HttpError>> {
     let request = Request::post("http://peer.test/").body("x".repeat(size));
@@ -746,6 +747,237 @@ async fn each_part_of_a_request_has_a_minute_of_its_own() {
     );
 }
 
+/// A `CONNECT` proxy's end of each connection made to it, with the head of
+/// the `CONNECT` that opened it, handed over as each arrives.
+fn proxy_accepting(listener: TcpListener) -> tokio::sync::mpsc::Receiver<(String, TcpStream)> {
+    let (made, accepted) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        loop {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let made = made.clone();
+            tokio::spawn(async move {
+                let (connect, _) = head(&mut tcp).await;
+                let _ = made.send((connect, tcp)).await;
+            });
+        }
+    });
+    accepted
+}
+
+/// The next connection made to the proxy, if one is made within `within`.
+async fn next_connect(
+    accepted: &mut tokio::sync::mpsc::Receiver<(String, TcpStream)>,
+    within: Duration,
+) -> Option<(String, TcpStream)> {
+    tokio::time::timeout(within, accepted.recv())
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Opens the tunnel on `tcp` and answers one request through it with a 204,
+/// once `go` says to.
+async fn answer_through(tcp: &mut TcpStream, go: tokio::sync::oneshot::Receiver<()>) {
+    tcp.write_all(OPENED.as_bytes()).await.unwrap();
+    let _ = head(tcp).await;
+    go.await.unwrap();
+    tcp.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+        .await
+        .unwrap();
+}
+
+/// A proxied GET of `url` from a task of its own, answering its status.
+fn proxied_get(http: &Http, url: String) -> tokio::task::JoinHandle<StatusCode> {
+    let http = http.clone();
+    tokio::spawn(async move { get(&http, &url).await.unwrap().status() })
+}
+
+const VENDOR: &str = "http://vendor.test/";
+
+/// A second request to the proxied host, raced: its connection is being
+/// made, with the `CONNECT` and its credential already at the proxy and no
+/// answer, when the first request's connection comes free, so it takes that
+/// one and sends its head there. Hands back the second request, the proxy's
+/// socket for the connection it had started, and the pooled one.
+async fn lost_a_race(
+    http: &Http,
+    accepted: &mut tokio::sync::mpsc::Receiver<(String, TcpStream)>,
+) -> (tokio::task::JoinHandle<StatusCode>, TcpStream, TcpStream) {
+    let first = proxied_get(http, VENDOR.to_owned());
+    let (_, mut pooled) = next_connect(accepted, Duration::from_secs(5))
+        .await
+        .unwrap();
+    let (answer_first, first_answered) = tokio::sync::oneshot::channel();
+    let serving = tokio::spawn(async move {
+        answer_through(&mut pooled, first_answered).await;
+        pooled
+    });
+    let second = proxied_get(http, VENDOR.to_owned());
+    let (connect, raced) = next_connect(accepted, Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert!(connect.contains("proxy-authorization: Basic"), "{connect}");
+    answer_first.send(()).unwrap();
+    assert_eq!(first.await.unwrap(), StatusCode::NO_CONTENT);
+    let mut pooled = serving.await.unwrap();
+    let _ = head(&mut pooled).await;
+    (second, raced, pooled)
+}
+
+/// Whether `MAX_SETUPS` more connections can be started at once.
+async fn every_slot_is_free(
+    http: &Http,
+    accepted: &mut tokio::sync::mpsc::Receiver<(String, TcpStream)>,
+) {
+    let more: Vec<_> = (0..MAX_SETUPS)
+        .map(|at| proxied_get(http, format!("http://more{at}.test/")))
+        .collect();
+    for at in 0..MAX_SETUPS {
+        let made = next_connect(accepted, Duration::from_secs(5)).await;
+        assert!(made.is_some(), "only {at} setups could start");
+    }
+    for request in more {
+        request.abort();
+    }
+}
+
+fn credentialed_proxy(proxy: &str) -> Http {
+    let proxy = proxy.replace("http://", "http://user:secret@");
+    proxied(&Tls::new().unwrap(), proxy_env("ALL_PROXY", proxy))
+}
+
+/// A request whose connection is still being made when another request's
+/// connection to the same host comes free takes that one, and the connection
+/// it had started ends once the request has its answer: the proxy's socket
+/// for the `CONNECT` it sent with the credential ends, and its setup slot is
+/// free again for another four to be made at once.
+#[tokio::test]
+async fn a_connect_that_lost_the_race_to_a_pooled_connection_ends_with_its_answer() {
+    let (listener, proxy) = listen("http").await;
+    let mut accepted = proxy_accepting(listener);
+    let http = credentialed_proxy(&proxy);
+    let (second, mut raced, mut pooled) = lost_a_race(&http, &mut accepted).await;
+    pooled
+        .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+        .await
+        .unwrap();
+    assert_eq!(second.await.unwrap(), StatusCode::NO_CONTENT);
+    assert_eq!(until_closed(&mut raced).await, Seen::End);
+    every_slot_is_free(&http, &mut accepted).await;
+}
+
+/// The same race, cancelled while the answer is awaited on the pooled
+/// connection: both the pooled connection and the one the request had
+/// started end, and the slot is free again.
+#[tokio::test]
+async fn a_connect_that_lost_the_race_to_a_pooled_connection_ends_when_its_request_is_cancelled() {
+    let (listener, proxy) = listen("http").await;
+    let mut accepted = proxy_accepting(listener);
+    let http = credentialed_proxy(&proxy);
+    let (second, mut raced, mut pooled) = lost_a_race(&http, &mut accepted).await;
+    second.abort();
+    assert!(second.await.unwrap_err().is_cancelled());
+    assert_eq!(until_closed(&mut pooled).await, Seen::End);
+    assert_eq!(until_closed(&mut raced).await, Seen::End);
+    every_slot_is_free(&http, &mut accepted).await;
+}
+
+/// A request that takes a pooled connection while its own is still waiting
+/// for a setup slot never has that connection made: once the request has
+/// its answer, a slot coming free sends no `CONNECT` for it.
+#[tokio::test]
+async fn a_connect_waiting_for_a_slot_is_never_made_once_its_request_is_gone() {
+    let (listener, proxy) = listen("http").await;
+    let mut accepted = proxy_accepting(listener);
+    let http = proxied(&Tls::new().unwrap(), proxy_env("ALL_PROXY", proxy));
+    let first = proxied_get(&http, VENDOR.to_owned());
+    let (_, mut pooled) = next_connect(&mut accepted, Duration::from_secs(5))
+        .await
+        .unwrap();
+    let (answer_first, first_answered) = tokio::sync::oneshot::channel();
+    let serving = tokio::spawn(async move {
+        answer_through(&mut pooled, first_answered).await;
+        pooled
+    });
+    let holders: Vec<_> = (0..MAX_SETUPS)
+        .map(|at| proxied_get(&http, format!("http://holder{at}.test/")))
+        .collect();
+    let mut held = Vec::new();
+    for _ in 0..MAX_SETUPS {
+        held.push(
+            next_connect(&mut accepted, Duration::from_secs(5))
+                .await
+                .unwrap(),
+        );
+    }
+    let second = proxied_get(&http, VENDOR.to_owned());
+    let early = next_connect(&mut accepted, Duration::from_millis(200)).await;
+    assert!(early.is_none(), "a setup past the bound was made");
+    answer_first.send(()).unwrap();
+    assert_eq!(first.await.unwrap(), StatusCode::NO_CONTENT);
+    let mut pooled = serving.await.unwrap();
+    let _ = head(&mut pooled).await;
+    pooled
+        .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+        .await
+        .unwrap();
+    assert_eq!(second.await.unwrap(), StatusCode::NO_CONTENT);
+    let (freed, mut freed_tcp) = held.swap_remove(0);
+    let holder = freed.split(' ').nth(1).unwrap().trim_end_matches(":80");
+    let at = holders
+        .iter()
+        .enumerate()
+        .position(|(at, _)| holder == format!("holder{at}.test"))
+        .unwrap();
+    holders.get(at).unwrap().abort();
+    assert_eq!(until_closed(&mut freed_tcp).await, Seen::End);
+    let late = next_connect(&mut accepted, Duration::from_millis(500)).await;
+    assert!(
+        late.is_none(),
+        "a CONNECT was sent after its request was gone: {:?}",
+        late.map(|(connect, _)| connect)
+    );
+    for holder in holders {
+        holder.abort();
+    }
+}
+
+/// A request body goes out whole, framed by its length rather than in chunks,
+/// and no `accept-encoding` is asked for, so an answer comes back as it was
+/// sent.
+#[tokio::test]
+async fn a_request_body_goes_out_whole_with_its_length_and_asks_for_no_encoding() {
+    let size = 100_000;
+    let (listener, url) = listen("http").await;
+    let server = tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let (head, mut arrived) = head(&mut tcp).await;
+        while arrived < size {
+            let read = tcp.read(&mut vec![0; 64 * 1024]).await.unwrap();
+            assert!(read > 0, "the body ended after {arrived} bytes");
+            arrived += read;
+        }
+        tcp.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+            .await
+            .unwrap();
+        (head.to_ascii_lowercase(), arrived)
+    });
+    let response = http(&Tls::new().unwrap())
+        .send(Method::POST, &url, &mut Outgoing::new(), "x".repeat(size))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let (head, arrived) = server.await.unwrap();
+    assert!(
+        head.contains(&format!("\r\ncontent-length: {size}\r\n")),
+        "{head}"
+    );
+    for asked in ["transfer-encoding", "accept-encoding"] {
+        assert!(!head.contains(asked), "{head}");
+    }
+    assert_eq!(arrived, size);
+}
+
 /// This crate's own source installs no logger or subscriber and writes nothing
 /// to a terminal. What its dependencies emit is not covered here.
 #[test]
@@ -780,4 +1012,288 @@ fn nothing_here_logs_or_prints() {
         }
     }
     assert!(found.is_empty(), "{found:#?}");
+}
+
+/// What a server saw of a connection once the client let go of it.
+#[derive(Debug, PartialEq, Eq)]
+enum Seen {
+    /// The stream ended: the client closed its side.
+    End,
+    /// The client reset the connection.
+    Reset,
+    /// Nothing ended within five seconds.
+    StillOpen,
+}
+
+/// Reads whatever else the client sends until its side of `tcp` ends, and
+/// says how it ended.
+async fn until_closed(tcp: &mut TcpStream) -> Seen {
+    let mut rest = [0; 4096];
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), tcp.read(&mut rest)).await {
+            Ok(Ok(0)) => return Seen::End,
+            Ok(Ok(_)) => {}
+            Ok(Err(_)) => return Seen::Reset,
+            Err(_) => return Seen::StillOpen,
+        }
+    }
+}
+
+/// The headers of a request that carries a credential; the value is fake.
+fn credentialed() -> Outgoing {
+    let mut headers = Outgoing::new();
+    headers.set_header("authorization", "Bearer not-a-real-token");
+    headers
+}
+
+/// Sends a credentialed GET to `url` from a task of its own, as a consumer
+/// awaiting it would, so that cancelling is dropping that task's future.
+fn sending(
+    http: &Http,
+    url: String,
+) -> tokio::task::JoinHandle<Result<Response<Incoming>, HttpError>> {
+    let http = http.clone();
+    tokio::spawn(async move {
+        let mut headers = credentialed();
+        http.send(Method::GET, &url, &mut headers, String::new())
+            .await
+    })
+}
+
+/// How many of `tasks` are alive once they have had five seconds, on the
+/// wall clock, to end.
+async fn left_running(tasks: &Tasks) -> usize {
+    let started = std::time::Instant::now();
+    while tasks.live() > 0 && started.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tasks.live()
+}
+
+/// Cancelled during setup: the production connector has stalled in the TLS
+/// handshake, the server having taken the client's first flight and
+/// answered nothing. Dropping the request closes the connection being made.
+/// The request, credential and all, is still in the future that was
+/// dropped: nothing of the client's is spawned before it has a connection.
+#[tokio::test]
+async fn cancelling_while_a_connection_is_made_closes_it() {
+    let (listener, url) = listen("https").await;
+    let (hello, heard) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        let read = tcp.read(&mut [0; 4096]).await.unwrap();
+        hello.send(read).unwrap();
+        until_closed(&mut tcp).await
+    });
+    let http = http(&Tls::new().unwrap());
+    let request = sending(&http, url);
+    assert!(heard.await.unwrap() > 0, "no handshake began");
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert_eq!(server.await.unwrap(), Seen::End);
+}
+
+/// Cancelled while the response head is awaited: the server has the whole
+/// request, credential included, and has not answered. Dropping the request
+/// closes the connection, and no task of the client's is left holding what
+/// it sent.
+#[tokio::test]
+async fn cancelling_while_the_head_is_awaited_closes_the_connection() {
+    let (listener, url) = listen("http").await;
+    let (got, heard) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut tcp, _) = listener.accept().await.unwrap();
+        got.send(head(&mut tcp).await.0).unwrap();
+        until_closed(&mut tcp).await
+    });
+    let http = http(&Tls::new().unwrap());
+    let request = sending(&http, url);
+    let sent = heard.await.unwrap();
+    assert!(
+        sent.contains("authorization: Bearer not-a-real-token"),
+        "{sent}"
+    );
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert_eq!(server.await.unwrap(), Seen::End);
+    assert_eq!(left_running(http.tasks()).await, 0);
+}
+
+/// Answers the request on `listener` with a head promising 100 bytes and the
+/// first 10 of them, then says how the connection ended.
+async fn half_a_body(listener: TcpListener, sent: tokio::sync::oneshot::Sender<()>) -> Seen {
+    let (mut tcp, _) = listener.accept().await.unwrap();
+    let _ = head(&mut tcp).await;
+    tcp.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n0123456789")
+        .await
+        .unwrap();
+    sent.send(()).unwrap();
+    until_closed(&mut tcp).await
+}
+
+/// Cancelled mid-stream: the head and the first bytes of the body have been
+/// read, and the rest has not come. Dropping the reader closes the
+/// connection, and leaves no task of the client's.
+#[tokio::test]
+async fn cancelling_mid_stream_closes_the_connection() {
+    let (listener, url) = listen("http").await;
+    let (sent, written) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(half_a_body(listener, sent));
+    let http = http(&Tls::new().unwrap());
+    let (first, taken) = tokio::sync::oneshot::channel();
+    let reading = tokio::spawn({
+        let http = http.clone();
+        async move {
+            let mut chunks = Chunks::new(get(&http, &url).await.unwrap().into_body());
+            let mut first = Some(first);
+            while let Some(next) = chunks.next().await {
+                if let (Ok(Chunk::Data(data)), Some(first)) = (next, first.take()) {
+                    first.send(data).unwrap();
+                }
+            }
+        }
+    });
+    written.await.unwrap();
+    assert_eq!(&taken.await.unwrap()[..], b"0123456789");
+    reading.abort();
+    assert!(reading.await.unwrap_err().is_cancelled());
+    assert_eq!(server.await.unwrap(), Seen::End);
+    assert_eq!(left_running(http.tasks()).await, 0);
+}
+
+/// A body being read when its client is dropped stops as incomplete: the
+/// client's tasks, the connection among them, are aborted, and what hyper
+/// says then, that the message did not complete, is what the error holds.
+#[tokio::test]
+async fn a_body_whose_client_is_dropped_is_incomplete() {
+    let (listener, url) = listen("http").await;
+    let (sent, written) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(half_a_body(listener, sent));
+    let http = http(&Tls::new().unwrap());
+    let mut chunks = Chunks::new(get(&http, &url).await.unwrap().into_body());
+    written.await.unwrap();
+    let mut data = Vec::new();
+    let reading = tokio::time::timeout(Duration::from_secs(5), async {
+        while data.len() < 10 {
+            match chunks.next().await {
+                Some(Ok(Chunk::Data(more))) => data.extend_from_slice(&more),
+                Some(Ok(Chunk::Quiet)) => {}
+                other => panic!("the body stopped after {} bytes: {other:?}", data.len()),
+            }
+        }
+    });
+    reading.await.expect("ten bytes never came");
+    assert_eq!(data, b"0123456789");
+    drop(http);
+    let next = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match chunks.next().await {
+                Some(Ok(Chunk::Quiet)) => {}
+                next => break next,
+            }
+        }
+    });
+    let next = next.await.expect("the body neither failed nor ended");
+    let Some(Err(BodyError::Incomplete(error))) = next else {
+        panic!("not incomplete: {next:?}");
+    };
+    assert!(error.is_incomplete_message(), "{error:?}");
+    assert_eq!(server.await.unwrap(), Seen::End);
+}
+
+/// A connector that dials the test's server, tells it which host the request
+/// was for, and then holds that connection without ever handing it over:
+/// a setup that stalls until its request is dropped.
+#[derive(Clone)]
+struct Stalling(SocketAddr);
+
+impl Service<Uri> for Stalling {
+    type Response = TokioIo<Conn>;
+    type Error = io::Error;
+    type Future = BoxFuture<'static, io::Result<TokioIo<Conn>>>;
+
+    fn poll_ready(&mut self, _: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, target: Uri) -> Self::Future {
+        let server = self.0;
+        Box::pin(async move {
+            let mut tcp = TcpStream::connect(server).await?;
+            let host = target.host().unwrap_or_default();
+            tcp.write_all(format!("{host}\n").as_bytes()).await?;
+            std::future::pending::<()>().await;
+            Ok(TokioIo::new(Conn::new(tcp)))
+        })
+    }
+}
+
+/// Accepts each connection on `listener`, and hands it on with the host its
+/// setup named.
+fn accepting(listener: TcpListener) -> tokio::sync::mpsc::Receiver<(String, TcpStream)> {
+    let (made, accepted) = tokio::sync::mpsc::channel(16);
+    tokio::spawn(async move {
+        loop {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let mut host = Vec::new();
+            let mut byte = [0; 1];
+            while tcp.read_exact(&mut byte).await.is_ok() && byte != *b"\n" {
+                host.extend_from_slice(&byte);
+            }
+            if made
+                .send((String::from_utf8(host).unwrap(), tcp))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
+    accepted
+}
+
+/// A client makes at most `MAX_SETUPS` connections at once, whatever hosts
+/// they are for; a request past that waits for a slot rather than failing,
+/// and takes the one a cancelled setup gives up. The cancelled setup's
+/// connection ends as the server sees it.
+#[tokio::test]
+async fn setups_past_the_bound_wait_for_a_slot() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stalling = Stalling(listener.local_addr().unwrap());
+    let mut accepted = accepting(listener);
+    let tasks = Tasks::new();
+    let client = client(stalling, &tasks);
+    let hosts: Vec<String> = (0..=MAX_SETUPS)
+        .map(|at| format!("peer{at}.test"))
+        .collect();
+    let requests: Vec<_> = hosts
+        .iter()
+        .map(|host| {
+            let client = client.clone();
+            let request = Request::get(format!("http://{host}/")).body(String::new());
+            tokio::spawn(async move { exchange(&client, request.unwrap()).await.err() })
+        })
+        .collect();
+    let mut held = Vec::new();
+    for _ in 0..MAX_SETUPS {
+        held.push(accepted.recv().await.unwrap());
+    }
+    let past = tokio::time::timeout(Duration::from_millis(200), accepted.recv()).await;
+    assert!(past.is_err(), "a setup past the bound was made: {past:?}");
+    let (host, mut first) = held.swap_remove(0);
+    let at = hosts.iter().position(|each| *each == host).unwrap();
+    requests.get(at).unwrap().abort();
+    assert_eq!(until_closed(&mut first).await, Seen::End);
+    let waited = tokio::time::timeout(Duration::from_secs(5), accepted.recv()).await;
+    let (waited, _) = waited
+        .expect("the waiting setup never took the slot")
+        .unwrap();
+    let entered: Vec<&String> = held.iter().map(|(host, _)| host).collect();
+    assert!(
+        waited != host && !entered.contains(&&waited),
+        "{waited} again"
+    );
+    for request in requests {
+        request.abort();
+    }
 }
