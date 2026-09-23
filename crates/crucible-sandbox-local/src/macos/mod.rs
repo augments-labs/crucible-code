@@ -364,6 +364,7 @@ impl SandboxSession for MacSession {
                     canceller: None,
                     speech: command.speech(),
                     startup_input: None,
+                    credentials: super::process::credential_values(command.environment()),
                 }),
                 inspection: self.inspection.clone(),
                 audit: self.request.audit().clone(),

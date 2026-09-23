@@ -24,6 +24,7 @@ mod hosted;
 mod hosting;
 mod talking;
 mod wire;
+mod withheld;
 
 pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call};
 pub use catalogue::{
@@ -34,3 +35,4 @@ pub use hosted::{Ended, Hosted, Unstarted};
 pub use hosting::{Chosen, Hosting};
 pub use talking::{ASIDES, Talking, Trouble};
 pub use wire::{Call, Garbled, Heard, NO_SUCH_METHOD, RPC, Reply, SAID_BYTES, Sent};
+pub use withheld::{Indistinct, Withheld};

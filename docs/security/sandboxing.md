@@ -384,7 +384,20 @@ provenance alongside the host-resolved value. Handles and values are redacted
 from debugging, inspection, audit, JSONL and diagnostics. Credential variables
 share the ordinary environment count, name, uniqueness, NUL and aggregate-byte
 bounds; a credential cannot silently replace a literal variable with the same
-name.
+name. Every non-empty credential value is masked the way proxy credentials
+are, one `*` per byte wherever its exact bytes appear, without changing byte
+counts: in captured stdout and stderr of an ordinary command, and in stderr
+alone of a command crucible speaks a protocol to, such as an MCP server. On
+that command's stdout no credential value is masked, so no frame is rewritten
+by one; only crucible's own proxy credential is masked there, when the command
+has network domains. The MCP client hides each value in the words of every
+reply it keeps after decoding it, which also finds a value the reply escaped;
+a number it keeps, such as an error code, is shown as sent. A value the
+command re-encodes, splits or transforms before printing it is not matched. On
+Windows the output masker matches a value's bytes as crucible holds them, which
+are UTF-8 for any valid Unicode value, so a value printed in UTF-16 or an ANSI
+code page is not matched there; the decoded hiding in MCP replies applies on
+every platform.
 
 ## Lifecycle and inspection
 

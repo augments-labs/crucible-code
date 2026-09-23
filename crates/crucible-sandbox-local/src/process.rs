@@ -188,6 +188,21 @@ pub(super) struct SpawnPlan {
     /// can take the same pipe. Native brokers consume a bounded launch frame
     /// and leave any later command-protocol bytes for the workload.
     pub(super) startup_input: Option<Vec<u8>>,
+    /// The exact bytes of every credential value the command's environment
+    /// carries, from [`credential_values`], masked on standard error, and on
+    /// standard output unless the command is spoken to.
+    pub(super) credentials: Vec<Vec<u8>>,
+}
+
+/// What of `environment` is masked in the command's output: the encoded bytes
+/// of every credential value, each of which is non-empty.
+pub(super) fn credential_values(
+    environment: &crucible_sandbox::SandboxEnvironment,
+) -> Vec<Vec<u8>> {
+    environment
+        .credential_values()
+        .map(|value| value.as_encoded_bytes().to_vec())
+        .collect()
 }
 
 /// Cleans preparation owners that never reached a child process.
@@ -311,6 +326,7 @@ fn spawn_inner(
         canceller,
         speech,
         startup_input,
+        credentials,
     } = plan;
     command
         .stdin(match (speech, startup_input.is_some()) {
@@ -396,6 +412,7 @@ fn spawn_inner(
     ) {
         Ok(terminator) => {
             process.terminator = Some(terminator);
+            process.protect_outputs(credentials, speech);
             Ok(process)
         }
         Err(startup) => match process.stop() {
@@ -708,15 +725,18 @@ impl SandboxOutput for PreparedOutput {
     }
 }
 
-/// Masks the proxy credential in one output stream of the command `control`
-/// governs.
+/// Masks `patterns` in one output stream of the command `control` governs,
+/// which says whether crucible cut that command short.
 fn protect_output(
-    network: &super::network::Mediator,
     output: Box<dyn SandboxOutput>,
+    patterns: Vec<Vec<u8>>,
     control: &Arc<Control>,
 ) -> Box<dyn SandboxOutput> {
     let control = Arc::clone(control);
-    network.protect_output(output, Box::new(move || control.interrupted()))
+    Box::new(
+        super::redaction::ProtectedOutput::new(output, patterns)
+            .interrupted_by(Box::new(move || control.interrupted())),
+    )
 }
 
 /// The process, its process-tree scope, streams, stage, and reservation.
@@ -812,16 +832,6 @@ impl LocalProcess {
             .transpose()
             .map_err(crucible_sandbox::SandboxError::Spawn)?
             .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
-        if let Some(network) = &self.network {
-            self.stdout = self
-                .stdout
-                .take()
-                .map(|output| protect_output(network, output, &self.control));
-            self.stderr = self
-                .stderr
-                .take()
-                .map(|output| protect_output(network, output, &self.control));
-        }
         if limits.command_time.is_some() || limits.output_bytes.is_some() {
             self.supervisor = Some(
                 Supervisor::start(
@@ -841,6 +851,50 @@ impl LocalProcess {
                 .audit(SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted))?;
         }
         Ok(terminator)
+    }
+
+    /// Masks what the command could print that it was given as a secret: its
+    /// proxy's credential where it has one, on both output streams, and
+    /// `credentials`, every credential its environment carries, on standard
+    /// error and on standard output unless the command is spoken to.
+    ///
+    /// A spoken-to command's standard output is a protocol. There a value is
+    /// escaped as the protocol escapes it, so its own bytes need not appear,
+    /// and a short one masked in place would rewrite the frames around it; the
+    /// peer decodes each frame and masks what it keeps. A proxy credential is
+    /// crucible's own and long, and masked there as everywhere.
+    ///
+    /// Each stream is wrapped once, and not at all where there is nothing to
+    /// mask. Nothing reads either stream before the process is handed back,
+    /// so wrapping them once initialization has succeeded loses no byte.
+    fn protect_outputs(
+        &mut self,
+        credentials: Vec<Vec<u8>>,
+        speech: crucible_sandbox::SandboxSpeech,
+    ) {
+        let proxy = self
+            .network
+            .as_ref()
+            .map(super::network::Mediator::masked)
+            .unwrap_or_default();
+        let mut printed = proxy.clone();
+        if speech == crucible_sandbox::SandboxSpeech::Closed {
+            printed.extend(credentials.iter().cloned());
+        }
+        let mut muttered = proxy;
+        muttered.extend(credentials);
+        if !printed.is_empty() {
+            self.stdout = self
+                .stdout
+                .take()
+                .map(|output| protect_output(output, printed, &self.control));
+        }
+        if !muttered.is_empty() {
+            self.stderr = self
+                .stderr
+                .take()
+                .map(|output| protect_output(output, muttered, &self.control));
+        }
     }
 
     fn audit_finished(&mut self) -> io::Result<()> {
@@ -1220,6 +1274,7 @@ pub(super) fn testing_plan(
         canceller: None,
         speech,
         startup_input: None,
+        credentials: Vec::new(),
     })
 }
 

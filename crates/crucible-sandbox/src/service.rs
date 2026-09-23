@@ -117,6 +117,20 @@ impl std::fmt::Debug for SandboxCredentialHandle {
 }
 
 /// One host-resolved credential value projected under an environment name.
+///
+/// A backend that runs a command given one masks the exact bytes of every
+/// credential value wherever they appear on the command's standard error, and
+/// on its standard output unless the command was built
+/// [`SandboxSpeech::Held`], one `*` per byte, so no byte count changes. What
+/// reaches [`SandboxProcess::take_stdout`] and [`SandboxProcess::take_stderr`]
+/// is already masked. Only those exact bytes are matched: a value the command
+/// re-encodes, splits or otherwise transforms before printing it is not.
+///
+/// A held command's standard output is a protocol, where a value arrives
+/// escaped and masking bytes in place could rewrite a frame, so no credential
+/// value is masked there and the peer speaking to it hides the values in what
+/// it decodes. Only crucible's own proxy credential is masked on it, where the
+/// command has one.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxCredentialProjection {
     handle: SandboxCredentialHandle,
@@ -259,6 +273,18 @@ impl SandboxEnvironment {
         self.entries
             .iter()
             .filter_map(|entry| entry.credential.as_ref())
+    }
+
+    /// The non-empty values of the credentials present in this projection,
+    /// in name order: what a backend masks in the command's output.
+    ///
+    /// An empty value is left out, because it occurs everywhere and so can
+    /// only be matched by masking nothing or everything.
+    pub fn credential_values(&self) -> impl Iterator<Item = &OsStr> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.credential.is_some() && !entry.value.is_empty())
+            .map(|entry| entry.value.as_os_str())
     }
 
     /// Whether no variable is projected.
@@ -1381,9 +1407,19 @@ pub trait SandboxProcess: Send {
     fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>>;
 
     /// Takes stdout once.
+    ///
+    /// The exact bytes of every credential value the command's environment
+    /// carries read as one `*` per byte, byte counts unchanged; a value the
+    /// command re-encodes, splits or transforms is not matched. A command
+    /// built [`SandboxSpeech::Held`] is the exception: its standard output is
+    /// a protocol, where no credential value is masked and whoever speaks to
+    /// it hides those values in what it decodes; only crucible's own proxy
+    /// credential is masked there, where the command has one. See
+    /// [`SandboxCredentialProjection`].
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>>;
 
-    /// Takes stderr once.
+    /// Takes stderr once, masked as [`Self::take_stdout`] is for a command
+    /// that is not spoken to, whatever the command's speech.
     fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>>;
 
     /// Non-blocking process status.

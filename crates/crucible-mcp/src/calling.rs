@@ -12,6 +12,9 @@
 //! still the answer to the question that was asked, and [`Answered::omitted`]
 //! is how it says it is not all of it.
 //!
+//! What the server was given in confidence is hidden in the text before it is
+//! kept, as [`Withheld`](crate::Withheld) says.
+//!
 //! A server reporting that the tool itself failed is not an error of crucible's
 //! making. The model asked for something, the something did not work, and that
 //! is a result to react to rather than a conversation to end — so it arrives as
@@ -170,6 +173,11 @@ pub fn call<R: BufRead, W: Write>(
         said.push_str(&shown);
     }
 
+    // Hidden before the cut, so a value is found whole even where the cut
+    // would have landed inside it, and over the joined text, so one a server
+    // spread over two blocks it had split at a line is found too. Hiding
+    // keeps every length, so the count above still counts the server's bytes.
+    let said = talking.withheld().hide(&said).into_owned();
     let (text, cut) = cut(said);
     Ok(Answered {
         text,

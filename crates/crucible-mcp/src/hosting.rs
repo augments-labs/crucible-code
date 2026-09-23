@@ -80,7 +80,7 @@ use crucible_types::{Ancestry, SandboxId, ToolArgs, ToolId};
 use serde_json::Value;
 
 use crate::hosted::refused_stop;
-use crate::{Answered, Hosted, Offered, Unanswered, Unstarted};
+use crate::{Answered, Hosted, Offered, Unanswered, Unstarted, Withheld};
 
 #[cfg(test)]
 mod tests;
@@ -407,7 +407,8 @@ fn start(
         .map_err(waited)?
         .map_err(|e| refused(&e))?;
 
-    let mut hosted = Hosted::over(process, chosen.handshake).map_err(|error| {
+    let withheld = Withheld::given(&chosen.environment);
+    let mut hosted = Hosted::withholding(process, chosen.handshake, withheld).map_err(|error| {
         let problem = ToolsetError::Source {
             id: chosen.name.clone(),
             problem: error.to_string().into(),
@@ -564,7 +565,7 @@ impl Hosting {
         let mut entries = Vec::with_capacity(offered.len());
         for one in offered {
             let called: Box<str> =
-                format!("{NAMESPACE}{OF}{}{WITHIN}{}", chosen.name, one.name()).into();
+                format!("{NAMESPACE}{OF}{}{WITHIN}{}", chosen.name, one.shown()).into();
             let descriptor =
                 ToolDescriptor::new(called.clone(), one.schema().to_string(), provenance.clone())
                     .map_err(ToolsetError::from)?;
@@ -759,7 +760,7 @@ impl Server {
             return Err(format!(
                 "it came back without {}, or offering it under a different schema, so the \
                  tools this run published no longer describe it{}",
-                moved.name(),
+                moved.shown(),
                 cleanup
                     .err()
                     .map_or_else(String::new, |error| format!("; {error}"))

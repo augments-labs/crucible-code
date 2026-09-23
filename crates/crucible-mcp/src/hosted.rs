@@ -29,6 +29,7 @@ use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken}
 use crate::calling::{Answered, Unanswered};
 use crate::catalogue::{Greeting, Offered, Rebuffed};
 use crate::talking::Talking;
+use crate::withheld::Withheld;
 use serde_json::Value;
 
 /// An MCP server, hosted over a confined process.
@@ -58,14 +59,29 @@ impl Hosted {
     /// [`Unstarted::Unreaped`] preserves an unconfirmed stop, whether it failed
     /// or would have had to wait and was dropped: a peer crucible cannot hold a
     /// conversation with is one it has no way to end politely later.
-    pub fn over(
+    pub fn over(process: Box<dyn SandboxProcess>, patience: Duration) -> Result<Self, Unstarted> {
+        Self::withholding(process, patience, Withheld::nothing())
+    }
+
+    /// Speaks to `process` as [`Self::over`] does, hiding `withheld` in
+    /// everything the server says that crucible keeps.
+    ///
+    /// Its standard output is decoded before anything is hidden, which is the
+    /// only place a value it escaped can be found and the one place hiding
+    /// cannot rewrite a frame. Its standard error is the backend's to mask.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::over`].
+    pub fn withholding(
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
+        withheld: Withheld,
     ) -> Result<Self, Unstarted> {
         let pipes = Pipes::taken(process.as_mut(), patience)?;
         Ok(Self {
             process,
-            talking: Talking::new(pipes.heard, pipes.said),
+            talking: Talking::withholding(pipes.heard, pipes.said, withheld),
             muttered: pipes.muttered,
             patience,
         })

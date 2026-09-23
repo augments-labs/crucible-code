@@ -31,6 +31,7 @@ use super::{Chosen, Hosting};
 mod audit;
 mod cleanup;
 mod startup;
+mod withheld;
 
 /// How long a test lets one silence run before it gives up on a server.
 ///

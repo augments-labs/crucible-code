@@ -273,6 +273,7 @@ impl SandboxSession for CompatibilitySession {
                     canceller: None,
                     speech: command.speech(),
                     startup_input: None,
+                    credentials: super::process::credential_values(command.environment()),
                 }),
                 inspection: self.inspection.clone(),
                 audit: self.request.audit().clone(),
@@ -1020,6 +1021,191 @@ mod tests {
         assert_no_live_process(pid, deadline);
         crucible_runtime::answered!(process.stop()).expect("first cleanup");
         crucible_runtime::answered!(process.stop()).expect("idempotent cleanup");
+    }
+
+    /// A command started with a secret that prints it back — a failed login
+    /// that repeats its request, a debug dump — hands it to whatever reads its
+    /// output. Confinement off is where every command runs by default, so the
+    /// compatibility backend masks a credential the environment carries just
+    /// as an enforcing one does.
+    #[test]
+    fn a_credential_the_command_prints_is_masked_on_both_streams() {
+        use std::ffi::OsStr;
+
+        use crucible_sandbox::{
+            SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+            SandboxRead,
+        };
+
+        let sample = Sample::new("sandbox-compatibility-credential");
+        let policy = SandboxPolicy::standard(&sample.workspace())
+            .expect("policy")
+            .with_enabled(false);
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("credential-output"),
+            policy,
+            SandboxManifest::empty(),
+        );
+        // The script names the variable, never the value, so the only way the
+        // value can reach either stream is through the environment.
+        let canary = "credential-value-canary";
+        let credential = SandboxCredentialProjection::new(
+            SandboxCredentialHandle::new("env:0", SandboxCredentialProvenance::User)
+                .expect("credential handle"),
+            "SANDBOX_TOKEN",
+            canary,
+        )
+        .expect("credential projection");
+        let environment =
+            SandboxEnvironment::with_credentials([("LANG", OsStr::new("C"))], [credential])
+                .expect("environment");
+        let command = SandboxCommand::new(
+            "/bin/sh",
+            [
+                OsString::from("-c"),
+                OsString::from(
+                    "printf 'token=%s\\n' \"$SANDBOX_TOKEN\"; \
+                     printf 'token=%s\\n' \"$SANDBOX_TOKEN\" >&2",
+                ),
+            ],
+            environment,
+        )
+        .expect("command");
+        let service = LocalSandbox::new();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
+
+        let expected = format!("token={}\n", "*".repeat(canary.len()));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        for (stream, mut output) in [
+            ("stdout", process.take_stdout().expect("stdout")),
+            ("stderr", process.take_stderr().expect("stderr")),
+        ] {
+            let mut printed = Vec::new();
+            let mut buffer = [0_u8; 7];
+            loop {
+                assert!(Instant::now() < deadline, "output did not finish");
+                match output.read_ready(&mut buffer).expect("read") {
+                    SandboxRead::Bytes(read) => {
+                        printed.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+                    }
+                    SandboxRead::Pending => thread::sleep(Duration::from_millis(1)),
+                    SandboxRead::End => break,
+                    SandboxRead::Limited { .. } => panic!("no output limit was set"),
+                }
+            }
+            let shown = String::from_utf8_lossy(&printed);
+            assert_eq!(
+                printed.len(),
+                expected.len(),
+                "masking changed how many bytes the command printed on {stream}: {shown}"
+            );
+            assert!(
+                !shown.contains(canary),
+                "a credential value the command echoed on {stream} was not masked: {shown}"
+            );
+            assert_eq!(
+                shown, expected,
+                "what the command printed on {stream} was not kept around the masked value"
+            );
+        }
+        while process.try_wait().expect("wait").is_none() {
+            assert!(Instant::now() < deadline, "command did not finish");
+            thread::sleep(Duration::from_millis(5));
+        }
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
+    }
+
+    /// A command crucible speaks to — an MCP server — writes a protocol on its
+    /// stdout, and a credential value as short as `1` masked there would turn
+    /// `"id":1` into `"id":*`. So a credential is masked on its stderr only, and
+    /// what it says on stdout reaches the reader byte for byte: the one
+    /// speaking to it masks the value in what it decodes.
+    #[test]
+    fn a_credential_a_spoken_to_command_prints_is_masked_on_stderr_and_its_stdout_is_whole() {
+        use std::ffi::OsStr;
+
+        use crucible_sandbox::{
+            SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+            SandboxOutput, SandboxRead,
+        };
+
+        let sample = Sample::new("sandbox-compatibility-spoken-credential");
+        let policy = SandboxPolicy::standard(&sample.workspace())
+            .expect("policy")
+            .with_enabled(false);
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("credential-frames"),
+            policy,
+            SandboxManifest::empty(),
+        );
+        let credential = SandboxCredentialProjection::new(
+            SandboxCredentialHandle::new("env:0", SandboxCredentialProvenance::User)
+                .expect("credential handle"),
+            "SANDBOX_TOKEN",
+            "1",
+        )
+        .expect("credential projection");
+        let environment =
+            SandboxEnvironment::with_credentials([("LANG", OsStr::new("C"))], [credential])
+                .expect("environment");
+        let frame = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+        let command = SandboxCommand::new(
+            "/bin/sh",
+            [
+                OsString::from("-c"),
+                OsString::from(format!(
+                    "printf '%s\\n' '{frame}'; printf 'token=%s\\n' \"$SANDBOX_TOKEN\" >&2"
+                )),
+            ],
+            environment,
+        )
+        .expect("command")
+        .spoken_to();
+        let service = LocalSandbox::new();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
+        drop(process.take_stdin());
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let drained = |mut output: Box<dyn SandboxOutput>| {
+            let mut printed = Vec::new();
+            let mut buffer = [0_u8; 7];
+            loop {
+                assert!(Instant::now() < deadline, "output did not finish");
+                match output.read_ready(&mut buffer).expect("read") {
+                    SandboxRead::Bytes(read) => {
+                        printed.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+                    }
+                    SandboxRead::Pending => thread::sleep(Duration::from_millis(1)),
+                    SandboxRead::End => break,
+                    SandboxRead::Limited { .. } => panic!("no output limit was set"),
+                }
+            }
+            String::from_utf8_lossy(&printed).into_owned()
+        };
+        let stdout = drained(process.take_stdout().expect("stdout"));
+        let stderr = drained(process.take_stderr().expect("stderr"));
+        assert_eq!(
+            stdout,
+            format!("{frame}\n"),
+            "masking altered a frame a spoken-to command wrote on stdout"
+        );
+        assert_eq!(
+            stderr, "token=*\n",
+            "an envFrom value a spoken-to command echoed on stderr was not masked"
+        );
+        while process.try_wait().expect("wait").is_none() {
+            assert!(Instant::now() < deadline, "command did not finish");
+            thread::sleep(Duration::from_millis(5));
+        }
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     #[cfg(target_os = "linux")]

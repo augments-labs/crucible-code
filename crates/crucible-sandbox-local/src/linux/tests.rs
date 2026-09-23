@@ -1470,6 +1470,68 @@ fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
     );
 }
 
+/// What the confined command prints of a credential it was given reaches the
+/// host masked, one `*` per byte, on both streams.
+#[test]
+fn a_credential_the_confined_command_prints_is_masked_on_both_streams() {
+    let service = LocalSandbox::new();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-credential-output");
+    // The script names the variable, never the value, so the only way the
+    // value can reach either stream is through the environment.
+    let canary = "credential-value-canary";
+    let credential = SandboxCredentialProjection::new(
+        SandboxCredentialHandle::new("env:0", SandboxCredentialProvenance::User)
+            .expect("credential handle"),
+        "SANDBOX_TOKEN",
+        canary,
+    )
+    .expect("credential projection");
+    let environment =
+        SandboxEnvironment::with_credentials([("LANG", OsStr::new("C"))], [credential])
+            .expect("environment");
+    let command = SandboxCommand::new(
+        "/bin/sh",
+        [
+            OsString::from("-c"),
+            OsString::from(
+                "printf 'token=%s\\n' \"$SANDBOX_TOKEN\"; \
+                 printf 'token=%s\\n' \"$SANDBOX_TOKEN\" >&2",
+            ),
+        ],
+        environment,
+    )
+    .expect("command");
+
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let process = crucible_runtime::answered!(session.start(command)).expect("started command");
+    let (status, output, errors) = finish(process);
+
+    assert!(status.success(), "{status}");
+    let expected = format!("token={}\n", "*".repeat(canary.len()));
+    for (stream, printed) in [("stdout", output), ("stderr", errors)] {
+        let shown = String::from_utf8_lossy(&printed);
+        assert_eq!(
+            printed.len(),
+            expected.len(),
+            "masking changed how many bytes the command printed on {stream}: {shown}"
+        );
+        assert!(
+            !shown.contains(canary),
+            "a credential value the command echoed on {stream} was not masked: {shown}"
+        );
+        assert_eq!(
+            shown, expected,
+            "what the command printed on {stream} was not kept around the masked value"
+        );
+    }
+}
+
 #[test]
 fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
     let service = LocalSandbox::new();

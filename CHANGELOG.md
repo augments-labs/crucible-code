@@ -102,6 +102,15 @@ change in any release with no deprecation period.
   stderr. Output cut by the output limit, or output of a command crucible
   stopped, now shows as `*` any last few bytes that could begin the credential,
   such as a final `Y`. Output that ended on its own is unchanged.
+- **An MCP server that echoes its `envFrom` secret no longer hands it to the
+  model.** A server that repeated the token it was given, in a tool result or
+  an error, had it copied into the tool output, the session file and the next
+  provider request. Every occurrence of an `envFrom` value now shows as `*` in
+  the server's stderr and in the results, errors and tool catalogue crucible
+  keeps from its replies, JSON-escaped echoes included; an echo cut short or
+  transformed, a value repeated as a number such as an error code, and files
+  the server writes are not caught. Each `envFrom` entry now counts a 5–7 byte
+  handle toward the 128 KiB server environment limit.
 
 ## [0.42.0] - 2026-09-20
 

@@ -15,10 +15,20 @@
 //! names belong to whoever wrote the method, and crucible refusing a spelling
 //! out of a vocabulary it was never shown would be crucible deciding what a
 //! protocol it is a client of meant.
+//!
+//! What a frame says that crucible keeps as words — a failure's message, and
+//! the spelling of an identifier it could not have issued, digits included —
+//! has what the server was given in confidence hidden in it as it is read; see
+//! [`Withheld`]. Everything else is read as sent: the version member, every
+//! number crucible reads, a result, which is hidden by whoever reads it, a
+//! notification, which is dropped, and the name of a question, which only goes
+//! back to the server that asked it.
 
 use std::fmt;
 
 use serde_json::{Map, Value, json};
+
+use crate::withheld::{Indistinct, Withheld};
 
 /// The version of JSON-RPC every MCP frame states.
 pub const RPC: &str = "2.0";
@@ -133,7 +143,10 @@ pub enum Garbled {
 }
 
 /// What one frame from a server said.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Its `Debug` says what kind of frame it was and how much it carried, and
+/// never a word of what the server wrote there that crucible has not hidden.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Heard {
     /// An answer to a call crucible made.
     Answer {
@@ -164,7 +177,10 @@ pub enum Heard {
 }
 
 /// What an answer settled a call with.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Its `Debug` names a result's kind and never its contents, which are read
+/// and hidden by whoever asked.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Reply {
     /// It worked, and this is what came back, unread.
     Worked(Value),
@@ -178,6 +194,42 @@ pub enum Reply {
     },
 }
 
+impl fmt::Debug for Heard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Answer { call, reply } => f
+                .debug_struct("Answer")
+                .field("call", call)
+                .field("reply", reply)
+                .finish(),
+            Self::Asked { call, method } => f
+                .debug_struct("Asked")
+                .field("call", call)
+                .field("method_bytes", &method.len())
+                .finish(),
+            Self::Told { method, params } => f
+                .debug_struct("Told")
+                .field("method_bytes", &method.len())
+                .field("params", &kind(params))
+                .finish(),
+        }
+    }
+}
+
+impl fmt::Debug for Reply {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Worked(result) => f.debug_tuple("Worked").field(&kind(result)).finish(),
+            // Hidden as it was read, and the same words a failure shows.
+            Self::Failed { code, said } => f
+                .debug_struct("Failed")
+                .field("code", code)
+                .field("said", said)
+                .finish(),
+        }
+    }
+}
+
 impl Heard {
     /// Reads one frame.
     ///
@@ -187,6 +239,19 @@ impl Heard {
     /// on. Every one of them is about this frame alone: the framing is intact,
     /// so the next frame is still worth reading.
     pub fn read(frame: &str) -> Result<Self, Garbled> {
+        Self::read_withholding(frame, &Withheld::nothing())
+    }
+
+    /// Reads one frame from a server given `withheld`, hiding it in what the
+    /// frame says that crucible keeps as words: a failure's message, and the
+    /// spelling of an identifier crucible could not have issued. A method
+    /// name, a notification's parameters and a result are carried as sent,
+    /// for the reasons the module doc gives.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read`], with the same values hidden in what an error says.
+    pub fn read_withholding(frame: &str, withheld: &Withheld) -> Result<Self, Garbled> {
         let value: Value = serde_json::from_str(frame).map_err(|err| Garbled::Unparsed {
             said: err.to_string().into(),
         })?;
@@ -205,14 +270,14 @@ impl Heard {
             written.get("result"),
             written.get("error"),
         ) {
-            (Some(method), None, None) => asked(&written, method),
+            (Some(method), None, None) => asked(&written, method, withheld),
             (None, Some(result), None) => Ok(Self::Answer {
-                call: call(&written)?,
+                call: call(&written, withheld)?,
                 reply: Reply::Worked(result.clone()),
             }),
             (None, None, Some(trouble)) => Ok(Self::Answer {
-                call: call(&written)?,
-                reply: failed(trouble)?,
+                call: call(&written, withheld)?,
+                reply: failed(trouble, withheld)?,
             }),
             _ => Err(Garbled::Shapeless),
         }
@@ -220,31 +285,35 @@ impl Heard {
 }
 
 /// A request or a notification, told apart by whether it carries an identifier.
-fn asked(written: &Map<String, Value>, method: &Value) -> Result<Heard, Garbled> {
-    let method = text("method", method)?;
+fn asked(
+    written: &Map<String, Value>,
+    method: &Value,
+    withheld: &Withheld,
+) -> Result<Heard, Garbled> {
+    // Not hidden: a notification is dropped unread and a question's name only
+    // goes back to the server that asked it, so neither is ever shown.
+    let method: Box<str> = text("method", method)?.into();
     bounded("method", &method)?;
     let Some(id) = written.get("id") else {
-        return Ok(Heard::Told {
-            method,
-            params: written.get("params").cloned().unwrap_or(Value::Null),
-        });
+        let params = written.get("params").cloned().unwrap_or(Value::Null);
+        return Ok(Heard::Told { method, params });
     };
     Ok(Heard::Asked {
-        call: numbered(id)?,
+        call: numbered(id, withheld)?,
         method,
     })
 }
 
 /// The call an answer settles.
-fn call(written: &Map<String, Value>) -> Result<Call, Garbled> {
+fn call(written: &Map<String, Value>, withheld: &Withheld) -> Result<Call, Garbled> {
     let Some(id) = written.get("id") else {
         return Err(Garbled::Shapeless);
     };
-    numbered(id)
+    numbered(id, withheld)
 }
 
 /// An identifier, as the number crucible issues and nothing else.
-fn numbered(id: &Value) -> Result<Call, Garbled> {
+fn numbered(id: &Value, withheld: &Withheld) -> Result<Call, Garbled> {
     if let Some(call) = id.as_u64() {
         return Ok(Call::new(call));
     }
@@ -252,7 +321,19 @@ fn numbered(id: &Value) -> Result<Call, Garbled> {
     // Held to the same ceiling as everything else retained off a pipe. The
     // spelling is kept so the sentence can say what arrived instead, and a
     // frame is a megabyte: without this the sentence could be one.
-    let found = id.to_string();
+    //
+    // Hidden twice: in the strings the identifier holds, so an escaped value
+    // is found as the value it decodes to, and then in the spelling, since an
+    // identifier crucible could not have issued is kept as text, and a number
+    // spelled there is as much a server's words as a string. Where hiding
+    // would leave two of its member names the same, the identifier is named
+    // by its kind instead: quoting it would quote one member where the server
+    // wrote two.
+    let mut written = id.clone();
+    let found = match withheld.hide_in(&mut written) {
+        Ok(()) => withheld.hide(&written.to_string()).into_owned(),
+        Err(Indistinct) => kind(id).to_owned(),
+    };
     bounded("id", &found)?;
     Err(Garbled::NotACall {
         found: found.into(),
@@ -261,7 +342,7 @@ fn numbered(id: &Value) -> Result<Call, Garbled> {
 
 /// The `error` member, which the standard says is an object with a code and a
 /// message.
-fn failed(trouble: &Value) -> Result<Reply, Garbled> {
+fn failed(trouble: &Value, withheld: &Withheld) -> Result<Reply, Garbled> {
     let Some(written) = trouble.as_object() else {
         return Err(Garbled::WrongKind {
             field: "error",
@@ -276,24 +357,23 @@ fn failed(trouble: &Value) -> Result<Reply, Garbled> {
             wanted: "an integer",
         });
     };
-    let said = text(
-        "error.message",
-        written.get("message").unwrap_or(&Value::Null),
-    )?;
+    let said: Box<str> = withheld
+        .hide(text(
+            "error.message",
+            written.get("message").unwrap_or(&Value::Null),
+        )?)
+        .into();
     bounded("error.message", &said)?;
     Ok(Reply::Failed { code, said })
 }
 
 /// A member that has to be a string.
-fn text(field: &'static str, value: &Value) -> Result<Box<str>, Garbled> {
-    value
-        .as_str()
-        .map(Into::into)
-        .ok_or_else(|| Garbled::WrongKind {
-            field,
-            found: kind(value),
-            wanted: "a string",
-        })
+fn text<'a>(field: &'static str, value: &'a Value) -> Result<&'a str, Garbled> {
+    value.as_str().ok_or_else(|| Garbled::WrongKind {
+        field,
+        found: kind(value),
+        wanted: "a string",
+    })
 }
 
 /// A retained spelling, held to its ceiling.
@@ -324,8 +404,20 @@ fn kind(value: &Value) -> &'static str {
 ///
 /// Built here rather than by whoever is speaking, so every outgoing frame
 /// carries the version member and nothing composes a message by hand.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// It carries what a server said as sent — the name of a tool being called,
+/// a page cursor, the name of a question being refused — so its `Debug` says
+/// how long the frame is and never a word of it.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Sent(Value);
+
+impl fmt::Debug for Sent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Sent")
+            .field("frame_bytes", &self.frame().len())
+            .finish()
+    }
+}
 
 impl Sent {
     /// A call crucible wants an answer to.

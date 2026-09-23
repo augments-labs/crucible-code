@@ -8,7 +8,6 @@
 //! listeners and relay workers; the process-wide OS resolver is never joined.
 
 mod body;
-mod redaction;
 mod request;
 mod resolver;
 mod socket;
@@ -40,6 +39,22 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const FAIL_RELAY_SPAWN: u8 = 1;
 #[cfg(test)]
 const PANIC_RESPONSE: u8 = 2;
+
+/// The forms of a proxy's `userinfo` a command could print: the password, as
+/// its proxy URL carries it, and the whole userinfo in base64, as its
+/// authorization header does.
+pub(super) fn credential_forms(userinfo: &str) -> Vec<Vec<u8>> {
+    vec![
+        userinfo
+            .split_once(':')
+            .map_or("", |(_, password)| password)
+            .as_bytes()
+            .to_vec(),
+        base64::engine::general_purpose::STANDARD
+            .encode(userinfo)
+            .into_bytes(),
+    ]
+}
 
 pub(super) struct Mediator {
     #[cfg(any(test, not(target_os = "linux")))]
@@ -141,17 +156,9 @@ impl Mediator {
         Ok(mediator)
     }
 
-    /// Masks this command's credential in one of its output streams.
-    /// `interrupted` says whether crucible cut the command short, by its output
-    /// or command-time limit or by stopping it.
-    pub(super) fn protect_output(
-        &self,
-        output: Box<dyn crucible_sandbox::SandboxOutput>,
-        interrupted: redaction::Interrupted,
-    ) -> Box<dyn crucible_sandbox::SandboxOutput> {
-        Box::new(
-            redaction::ProtectedOutput::new(output, &self.userinfo).interrupted_by(interrupted),
-        )
+    /// What of this command's credential is masked in its output streams.
+    pub(super) fn masked(&self) -> Vec<Vec<u8>> {
+        credential_forms(&self.userinfo)
     }
 
     pub(super) fn stop(&mut self) -> io::Result<()> {

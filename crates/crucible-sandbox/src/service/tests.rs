@@ -231,6 +231,33 @@ fn credential_projections_are_typed_bounded_and_fully_redacted() {
 }
 
 #[test]
+fn credential_values_are_the_non_empty_credentials_and_no_literal() {
+    let credential = |identity: &str, name: &str, value: &str| {
+        SandboxCredentialProjection::new(
+            SandboxCredentialHandle::new(identity, SandboxCredentialProvenance::User)
+                .expect("credential handle"),
+            name,
+            OsStr::new(value),
+        )
+        .expect("credential projection")
+    };
+    let environment = SandboxEnvironment::with_credentials(
+        [("LANG", OsStr::new("C"))],
+        [
+            credential("env:0", "EMPTY_TOKEN", ""),
+            credential("env:1", "DOCS_TOKEN", "docs-value"),
+        ],
+    )
+    .expect("projected environment");
+
+    assert_eq!(
+        environment.credential_values().collect::<Vec<_>>(),
+        [OsStr::new("docs-value")],
+        "an empty credential value, which no backend can mask, was offered as one to mask"
+    );
+}
+
+#[test]
 fn credential_names_cannot_collide_with_literal_environment_entries() {
     let handle = SandboxCredentialHandle::new(
         "provider/openai/default",

@@ -15,12 +15,24 @@
 //! what the model calls and a schema goes into what the provider is shown, so
 //! both are bounded on arrival, and a catalogue that runs past a bound is
 //! refused whole rather than truncated into a shorter list that looks complete.
+//!
+//! What the server was given in confidence is hidden in what is kept of it, as
+//! [`Withheld`] says: a tool's description, its schema, the name it gave
+//! itself and a version crucible refused. A tool's name is kept twice, as the
+//! server spelled it, which is only ever sent back to the server, and hidden,
+//! which is the one anything else is shown. A version crucible accepted is one
+//! of its own constants and is kept as it is. A schema in which hiding would
+//! make two member names of one object the same is refused with the rest of
+//! the catalogue, as two tools under one name are, rather than shown with a
+//! property gone.
 
+use std::fmt;
 use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
 
 use crate::talking::{Talking, Trouble};
+use crate::withheld::Withheld;
 
 /// The versions of MCP crucible speaks, newest first.
 ///
@@ -132,6 +144,21 @@ pub enum Rebuffed {
         /// The name they share.
         name: Box<str>,
     },
+
+    /// A tool's schema holds two member names that read the same once what
+    /// the server was given in confidence is hidden in them.
+    ///
+    /// Refused, because an object holds one member per name: keeping either
+    /// would show the model a schema with a property silently gone, and which
+    /// one would be an accident of order.
+    #[error(
+        "the server offers {name} with a schema whose member names crucible cannot tell apart \
+         once what the server was given in confidence is hidden"
+    )]
+    Indistinct {
+        /// The tool's name, as it is shown.
+        name: Box<str>,
+    },
 }
 
 /// What the handshake settled.
@@ -144,7 +171,8 @@ pub enum Rebuffed {
 pub struct Greeting {
     /// The version both ends are speaking.
     version: Box<str>,
-    /// What the server calls itself, where it said.
+    /// What the server calls itself, where it said, with what it was given in
+    /// confidence hidden.
     named: Option<Box<str>>,
     /// Whether it said it has tools at all.
     offers: bool,
@@ -174,21 +202,33 @@ impl Greeting {
 ///
 /// Inert. Holding one grants nothing and calls nothing; what turns it into
 /// something the model can see is above this crate.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Offered {
     /// What the server calls it.
     name: Box<str>,
-    /// What it says the tool is for, where it said.
+    /// The same, with what the server was given in confidence hidden.
+    shown: Box<str>,
+    /// What it says the tool is for, where it said, hidden the same way.
     about: Option<Box<str>>,
-    /// The schema for its arguments, carried and never read.
+    /// The schema for its arguments, carried and never read, hidden the same
+    /// way.
     schema: Value,
 }
 
 impl Offered {
-    /// What the server calls it.
+    /// What the server calls it, which is what a call to it has to say.
+    ///
+    /// Only ever sent back to the server that said it; anything shown to
+    /// anyone else is [`Self::shown`].
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// What the server calls it, with what it was given in confidence hidden.
+    #[must_use]
+    pub fn shown(&self) -> &str {
+        &self.shown
     }
 
     /// What it says the tool is for.
@@ -201,6 +241,17 @@ impl Offered {
     #[must_use]
     pub const fn schema(&self) -> &Value {
         &self.schema
+    }
+}
+
+impl fmt::Debug for Offered {
+    /// What is kept hidden, and never the name as the server wrote it.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Offered")
+            .field("shown", &self.shown)
+            .field("about", &self.about)
+            .field("schema", &self.schema)
+            .finish_non_exhaustive()
     }
 }
 
@@ -231,7 +282,7 @@ pub fn hello<R: BufRead, W: Write>(talking: &mut Talking<R, W>) -> Result<Greeti
     };
     if !VERSIONS.contains(&version) {
         return Err(Rebuffed::Version {
-            found: version.into(),
+            found: talking.withheld().hide(version).into(),
             spoken: VERSIONS.join(", ").into(),
         });
     }
@@ -241,7 +292,7 @@ pub fn hello<R: BufRead, W: Write>(talking: &mut Talking<R, W>) -> Result<Greeti
         named: answer
             .pointer("/serverInfo/name")
             .and_then(Value::as_str)
-            .map(Into::into),
+            .map(|named| talking.withheld().hide(named).into()),
         offers: answer.pointer("/capabilities/tools").is_some(),
     };
 
@@ -261,8 +312,9 @@ pub fn hello<R: BufRead, W: Write>(talking: &mut Talking<R, W>) -> Result<Greeti
 ///
 /// [`Rebuffed`] where the conversation fails, a page is not the shape the
 /// protocol gives, a retained spelling runs past its ceiling, the catalogue is
-/// longer than [`TOOLS`], it takes more than [`PAGES`] pages, or two tools
-/// arrive under one name.
+/// longer than [`TOOLS`], it takes more than [`PAGES`] pages, two tools
+/// arrive under one name, or a schema's member names cannot be told apart once
+/// hidden.
 pub fn tools<R: BufRead, W: Write>(
     talking: &mut Talking<R, W>,
     greeting: &Greeting,
@@ -286,13 +338,15 @@ pub fn tools<R: BufRead, W: Write>(
             });
         };
         for held in listed {
-            let offered = one(held)?;
-            if read
-                .iter()
-                .any(|kept| kept.name().eq_ignore_ascii_case(offered.name()))
-            {
+            let offered = one(held, talking.withheld())?;
+            // Shown names too: two names that differ only where something was
+            // hidden are one name to everything that reads them.
+            if read.iter().any(|kept| {
+                kept.name().eq_ignore_ascii_case(offered.name())
+                    || kept.shown().eq_ignore_ascii_case(offered.shown())
+            }) {
                 return Err(Rebuffed::Twice {
-                    name: offered.name.clone(),
+                    name: offered.shown.clone(),
                 });
             }
             if read.len() >= TOOLS {
@@ -313,7 +367,7 @@ pub fn tools<R: BufRead, W: Write>(
 }
 
 /// One entry of a page.
-fn one(held: &Value) -> Result<Offered, Rebuffed> {
+fn one(held: &Value, withheld: &Withheld) -> Result<Offered, Rebuffed> {
     let Some(name) = held.get("name").and_then(Value::as_str) else {
         return Err(Rebuffed::Missing {
             field: "name",
@@ -336,15 +390,22 @@ fn one(held: &Value) -> Result<Offered, Rebuffed> {
     // Absent is an empty schema rather than a refusal: a tool that takes no
     // arguments is an ordinary tool, and the protocol lets a server leave the
     // member off to say so.
-    let schema = held
+    let mut schema = held
         .get("inputSchema")
         .cloned()
         .unwrap_or_else(|| json!({}));
     bounded("inputSchema", schema.to_string().len(), SCHEMA_BYTES)?;
+    // After the bound, which is on what the server sent; hiding keeps every
+    // string's length, so it cannot take a schema past it.
+    let shown: Box<str> = withheld.hide(name).into();
+    if withheld.hide_in(&mut schema).is_err() {
+        return Err(Rebuffed::Indistinct { name: shown });
+    }
 
     Ok(Offered {
         name: name.into(),
-        about: about.map(Into::into),
+        shown,
+        about: about.map(|about| withheld.hide(about).into()),
         schema,
     })
 }
