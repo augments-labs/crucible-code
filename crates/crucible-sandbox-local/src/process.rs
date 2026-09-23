@@ -6,8 +6,8 @@
 //! the service restarts. This bounds new admissions without claiming that an
 //! unconfirmed workload died or retaining an unbounded cleanup thread.
 
-use std::io;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::io::{self, Write as _};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -22,7 +22,7 @@ use crucible_sandbox::{
 use crucible_storage::{CallResultKey, CallResultReceipt};
 use crucible_types::SandboxId;
 
-use crate::platform::{Output as PlatformOutput, ReadState, Scope, Terminator};
+use crate::platform::{self, ReadState, Scope, Stream, Terminator};
 
 /// Absolute ceiling even where a policy omits a smaller one.
 pub(super) const MAX_LOCAL_COMMANDS: usize = 16;
@@ -366,10 +366,7 @@ fn spawn_inner(
         }
     };
     let started = Instant::now();
-    let stdin = child
-        .stdin
-        .take()
-        .map(|input| Box::new(input) as Box<dyn std::io::Write + Send>);
+    let stdin = child.stdin.take();
     let control = Arc::new(Control::new(limits.output_bytes, audit, sandbox));
     // Own every resource before the first fallible initialization operation.
     // No caller can observe this private, unfinished process. Stop and Drop
@@ -378,6 +375,7 @@ fn spawn_inner(
         child,
         scope,
         stdin,
+        input_thread: platform::InputThread::default(),
         terminator: None,
         stdout: None,
         stderr: None,
@@ -479,6 +477,43 @@ fn startup_cleanup_failed(
         cleanup.kind(),
         StartupCleanupFailure { startup, cleanup },
     ))
+}
+
+/// A stop's scope cleanup and its input thread's end, as one answer: the
+/// scope's failure where it failed, carrying the thread's beside it where both
+/// did, so neither is lost to a caller deciding whether to retry.
+fn stopped_with_input(scope: io::Result<()>, input: io::Result<()>) -> io::Result<()> {
+    match (scope, input) {
+        (Err(scope), Err(input)) => Err(io::Error::new(
+            scope.kind(),
+            InputAlsoFailed { scope, input },
+        )),
+        (scope, input) => scope.and(input),
+    }
+}
+
+/// A stop whose scope cleanup failed, and whose input thread's end failed too.
+#[derive(Debug)]
+struct InputAlsoFailed {
+    scope: io::Error,
+    input: io::Error,
+}
+
+impl std::fmt::Display for InputAlsoFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "sandbox process scope cleanup failed ({:?}); the thread writing its input did not end either ({:?})",
+            self.scope.kind(),
+            self.input.kind(),
+        )
+    }
+}
+
+impl std::error::Error for InputAlsoFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.scope)
+    }
 }
 
 /// Shared hard-limit state used by both output streams and the supervisor.
@@ -686,28 +721,21 @@ impl Supervisor {
     }
 }
 
-/// A pipe put into non-blocking mode before the process handle escapes.
+/// A pipe put into non-blocking mode before the process handle escapes, and
+/// counted against the command's output budget as it is read.
 struct PreparedOutput {
-    inner: Box<dyn PlatformOutput>,
+    inner: Box<dyn Stream>,
     control: Arc<Control>,
 }
 
 impl PreparedOutput {
-    fn new(output: impl PlatformOutput, control: Arc<Control>) -> io::Result<Self> {
-        output.prepare()?;
-        Ok(Self {
-            inner: Box::new(output),
-            control,
-        })
+    const fn new(inner: Box<dyn Stream>, control: Arc<Control>) -> Self {
+        Self { inner, control }
     }
-}
 
-impl SandboxOutput for PreparedOutput {
-    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
-        if buffer.is_empty() {
-            return Ok(SandboxRead::Pending);
-        }
-        self.inner.read_ready(buffer).map(|read| match read {
+    /// What a read of the pipe found, counted against the output budget.
+    fn counted(&self, read: ReadState) -> SandboxRead {
+        match read {
             ReadState::Bytes(bytes) => {
                 let (retained, discarded) = self.control.record_output(bytes);
                 if discarded == 0 {
@@ -721,6 +749,29 @@ impl SandboxOutput for PreparedOutput {
             }
             ReadState::Pending => SandboxRead::Pending,
             ReadState::End => SandboxRead::End,
+        }
+    }
+}
+
+impl SandboxOutput for PreparedOutput {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if buffer.is_empty() {
+            return Ok(SandboxRead::Pending);
+        }
+        let read = self.inner.read_ready(buffer)?;
+        Ok(self.counted(read))
+    }
+
+    /// Waits on the pipe as the platform waits on one (see
+    /// [`crate::platform`]), and counts what it read as a read without waiting
+    /// is counted.
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<SandboxRead>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(SandboxRead::Bytes(0));
+            }
+            let read = self.inner.read(buffer).await?;
+            Ok(self.counted(read))
         })
     }
 }
@@ -747,7 +798,10 @@ struct LocalProcess {
     terminator: Option<Terminator>,
     /// The writing end of a peer's input, until somebody takes it. Dropping it
     /// unread is what closes the far end's stdin.
-    stdin: Option<Box<dyn std::io::Write + Send>>,
+    stdin: Option<ChildStdin>,
+    /// The thread, where the platform starts one, that the input taken
+    /// asynchronously is written on; `stop` ends and joins it.
+    input_thread: platform::InputThread,
     stdout: Option<Box<dyn SandboxOutput>>,
     stderr: Option<Box<dyn SandboxOutput>>,
     inspection: SandboxInspection,
@@ -820,18 +874,24 @@ impl LocalProcess {
             .child
             .stdout
             .take()
-            .map(|pipe| PreparedOutput::new(pipe, Arc::clone(&self.control)))
+            .map(platform::stream)
             .transpose()
             .map_err(crucible_sandbox::SandboxError::Spawn)?
-            .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
+            .map(|pipe| {
+                Box::new(PreparedOutput::new(pipe, Arc::clone(&self.control)))
+                    as Box<dyn SandboxOutput>
+            });
         self.stderr = self
             .child
             .stderr
             .take()
-            .map(|pipe| PreparedOutput::new(pipe, Arc::clone(&self.control)))
+            .map(platform::stream)
             .transpose()
             .map_err(crucible_sandbox::SandboxError::Spawn)?
-            .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
+            .map(|pipe| {
+                Box::new(PreparedOutput::new(pipe, Arc::clone(&self.control)))
+                    as Box<dyn SandboxOutput>
+            });
         if limits.command_time.is_some() || limits.output_bytes.is_some() {
             self.supervisor = Some(
                 Supervisor::start(
@@ -970,7 +1030,13 @@ impl LocalProcess {
             .network
             .as_mut()
             .map_or(Ok(()), super::network::Mediator::stop);
-        let scope_confirmed = cleanup.is_ok() && joined.is_ok() && network.is_ok();
+        // After the scope's stop, which closed the pipe's other end where it
+        // succeeded, so a write the thread was parked in has failed or is
+        // abandoned here. Ended whether or not it did: a thread left unjoined
+        // for a stop to retry is one more thing the retry has to find.
+        let input = self.input_thread.end();
+        let scope_confirmed = cleanup.is_ok() && joined.is_ok() && network.is_ok() && input.is_ok();
+        let cleanup = stopped_with_input(cleanup, input);
         let staged = if scope_confirmed {
             let staged = self.stage.as_mut().map_or(Ok(()), Stage::cleanup);
             if staged.is_ok() {
@@ -1044,7 +1110,18 @@ struct StartupInput {
 
 impl SandboxProcess for LocalProcess {
     fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
-        self.stdin.take()
+        self.stdin
+            .take()
+            .map(|input| Box::new(input) as Box<dyn std::io::Write + Send>)
+    }
+
+    /// The pipe written as the platform writes one asynchronously (see
+    /// [`crate::platform`]). A thread the platform starts for it belongs to
+    /// this process, and `stop` ends and joins it.
+    fn take_async_stdin(&mut self) -> Option<Box<dyn crucible_sandbox::SandboxInput>> {
+        self.stdin
+            .take()
+            .map(|pipe| platform::input(pipe, &self.input_thread))
     }
 
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
@@ -1148,8 +1225,12 @@ impl Drop for LocalProcess {
     fn drop(&mut self) {
         let _ = self.stop();
         // Ordinary field destruction must not clean an uncertain workload's
-        // files or advertise room for a replacement process. No thread or Arc
-        // is leaked: the service retains only its already-bounded counter slot.
+        // files or advertise room for a replacement process: the service
+        // retains only its already-bounded counter slot. Every thread this
+        // process started has been joined by a stop that succeeded; the one a
+        // stop could not end, an input thread whose write nothing reached in
+        // its bound, was reported by that stop as failed cleanup, and goes
+        // with this quarantined process unjoined until its pipe closes.
         if let Some(stage) = &mut self.stage {
             stage.retained = true;
         }
@@ -1199,7 +1280,7 @@ fn unconfined_child(
     testing_local(command, speech, None).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", windows)))]
 fn testing_local(
     command: Command,
     speech: crucible_sandbox::SandboxSpeech,
@@ -1208,7 +1289,7 @@ fn testing_local(
     spawn_local(command, testing_plan(speech, stage)?)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", windows)))]
 pub(super) fn testing_plan(
     speech: crucible_sandbox::SandboxSpeech,
     stage: Option<Stage>,
@@ -1278,10 +1359,17 @@ pub(super) fn testing_plan(
     })
 }
 
+// Windows gives each input written asynchronously a thread of its own, which
+// only there has something for the process to join.
+#[cfg(all(test, windows))]
+#[path = "process/tests/windows_input.rs"]
+mod windows_input;
+
 #[cfg(all(test, target_os = "linux"))]
-mod tests {
+pub(crate) mod tests {
     mod cleanup;
     mod credential;
+    pub(crate) mod pipes;
     mod startup;
 
     use super::Stage;

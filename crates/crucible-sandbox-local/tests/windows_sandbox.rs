@@ -46,26 +46,44 @@ const RESULT: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_RESULT";
 const SENTINEL: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_SENTINEL";
 const WHOAMI: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_WHOAMI";
 
-// Native launches may queue behind the broker's 30-second machine-wide setup
-// bound. Keep this outer deadline longer so a broker timeout is reported as
-// the result instead of being hidden by the integration harness.
+// The broker bounds only its wait for the machine-wide setup mutex, at 30
+// seconds. Keep each test's own deadline longer so a timed-out setup wait is
+// reported as the command's result instead of being hidden by this harness.
+// The broker does not bound the sandbox account's logon or its wait for the
+// process, so the first launch, which carries a one-off cost, gets
+// `FIRST_LAUNCH_WAIT` instead.
 const COMMAND_WAIT: Duration = Duration::from_secs(45);
+
+// This harness pays for the first native launch once per test binary. In every
+// passing sample it finished within 13.7 to 23.4 seconds of the binary
+// starting, against about 0.2 to 0.65 seconds for each launch after it, and it
+// once did not finish within `COMMAND_WAIT`. Nothing in the broker bounds it,
+// so this budget is its only limit: about five times the slowest passing
+// sample, while a launch that hangs still fails within two minutes.
+const FIRST_LAUNCH_WAIT: Duration = Duration::from_mins(2);
 
 // These independent checks share one machine-wide setup lock and account.
 // Queue fixtures here so concurrent logons cannot consume each other's bounded
 // maintenance waits on slower hosts; the child workload never takes this lock.
-static NATIVE_FIXTURE: Mutex<()> = Mutex::new(());
+// The flag records that the first native launch in this binary has been
+// attempted, so no test's own command pays for it.
+static NATIVE_FIXTURE: Mutex<bool> = Mutex::new(false);
 
 struct Fixture {
     parent: PathBuf,
     workspace: PathBuf,
     outside: PathBuf,
-    _serial: MutexGuard<'static, ()>,
+    serial: MutexGuard<'static, bool>,
 }
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        let serial = NATIVE_FIXTURE.lock().expect("native fixture lock");
+        // A test that panicked while holding the guard has already failed on
+        // its own, and its sandbox job was stopped when its process dropped,
+        // before the guard was released. The guarded flag holds no other state.
+        let serial = NATIVE_FIXTURE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_nanos());
@@ -78,12 +96,38 @@ impl Fixture {
         fs::create_dir_all(workspace.join(".git")).expect("workspace");
         fs::create_dir(&outside).expect("outside");
         crucible_privacy::directory(&outside).expect("protected outside directory");
-        Self {
+        let mut fixture = Self {
             parent: parent.canonicalize().expect("canonical fixture"),
             workspace: workspace.canonicalize().expect("canonical workspace"),
             outside: outside.canonicalize().expect("canonical outside"),
-            _serial: serial,
+            serial,
+        };
+        if !*fixture.serial {
+            // Set first, so a failed first launch is attempted once and not
+            // again by every test that follows it.
+            *fixture.serial = true;
+            fixture.first_launch();
         }
+        fixture
+    }
+
+    // Pays the one-off cost of the first native launch before any test's own
+    // command runs, so that cost is measured against its own budget.
+    fn first_launch(&self) {
+        let (status, _, errors) = finish(
+            start(
+                self.request("windows-first-launch"),
+                command("status", std::iter::empty::<(&'static str, OsString)>()),
+            ),
+            "first native sandbox launch in this test binary",
+            FIRST_LAUNCH_WAIT,
+        );
+        assert_eq!(
+            status.code(),
+            Some(4660),
+            "first native sandbox launch in this test binary failed: {}",
+            String::from_utf8_lossy(&errors)
+        );
     }
 
     fn request(&self, name: &str) -> SandboxRequest {
@@ -238,18 +282,25 @@ fn start(request: SandboxRequest, command: SandboxCommand) -> Box<dyn SandboxPro
     crucible_runtime::answered!(session.start(command)).expect("started command")
 }
 
-fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>) {
+fn finish(
+    mut process: Box<dyn SandboxProcess>,
+    launch: &str,
+    wait: Duration,
+) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>) {
     let mut stdout = process.take_stdout();
     let mut stderr = process.take_stderr();
     let mut output = Vec::new();
     let mut errors = Vec::new();
     let mut status = None;
-    let deadline = Instant::now() + COMMAND_WAIT;
+    let deadline = Instant::now() + wait;
     while stdout.is_some() || stderr.is_some() || status.is_none() {
         read(&mut stdout, &mut output);
         read(&mut stderr, &mut errors);
         status = status.or_else(|| process.try_wait().expect("wait"));
-        assert!(Instant::now() < deadline, "sandbox command timed out");
+        assert!(
+            Instant::now() < deadline,
+            "{launch} did not finish within {wait:?}"
+        );
         thread::sleep(Duration::from_millis(10));
     }
     crucible_runtime::answered!(process.stop()).expect("cleanup");
@@ -281,28 +332,32 @@ fn windows_writes_the_workspace_and_protects_private_and_repository_data() {
     let allowed = fixture.workspace.join("allowed.txt");
     let denied = fixture.outside.join("denied.txt");
     let identity = fixture.workspace.join("identity.txt");
-    let (status, _, errors) = finish(start(
-        fixture.request("windows-filesystem"),
-        command(
-            "filesystem",
-            [
-                (ALLOWED, allowed.clone().into_os_string()),
-                (DENIED, denied.clone().into_os_string()),
-                (PROTECTED, protected.clone().into_os_string()),
-                (
-                    PROTECTED_DIRECTORY,
-                    protected_directory.clone().into_os_string(),
-                ),
-                (
-                    RENAMED_DIRECTORY,
-                    renamed_directory.clone().into_os_string(),
-                ),
-                (LINKED, linked_file.clone().into_os_string()),
-                (IDENTITY, identity.clone().into_os_string()),
-                (WHOAMI, system_program("whoami.exe").into_os_string()),
-            ],
+    let (status, _, errors) = finish(
+        start(
+            fixture.request("windows-filesystem"),
+            command(
+                "filesystem",
+                [
+                    (ALLOWED, allowed.clone().into_os_string()),
+                    (DENIED, denied.clone().into_os_string()),
+                    (PROTECTED, protected.clone().into_os_string()),
+                    (
+                        PROTECTED_DIRECTORY,
+                        protected_directory.clone().into_os_string(),
+                    ),
+                    (
+                        RENAMED_DIRECTORY,
+                        renamed_directory.clone().into_os_string(),
+                    ),
+                    (LINKED, linked_file.clone().into_os_string()),
+                    (IDENTITY, identity.clone().into_os_string()),
+                    (WHOAMI, system_program("whoami.exe").into_os_string()),
+                ],
+            ),
         ),
-    ));
+        "sandbox command",
+        COMMAND_WAIT,
+    );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     assert_eq!(
@@ -371,16 +426,20 @@ fn windows_denies_loopback_network_connections() {
         .expect("nonblocking listener");
     let port = listener.local_addr().expect("listener address").port();
     let connected = fixture.workspace.join("connected.txt");
-    let (status, _, errors) = finish(start(
-        fixture.request("windows-network"),
-        command(
-            "network",
-            [
-                (PORT, OsString::from(port.to_string())),
-                (CONNECTED, connected.clone().into_os_string()),
-            ],
+    let (status, _, errors) = finish(
+        start(
+            fixture.request("windows-network"),
+            command(
+                "network",
+                [
+                    (PORT, OsString::from(port.to_string())),
+                    (CONNECTED, connected.clone().into_os_string()),
+                ],
+            ),
         ),
-    ));
+        "sandbox command",
+        COMMAND_WAIT,
+    );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     assert!(!connected.exists());
@@ -402,7 +461,7 @@ fn windows_forwards_input_after_its_private_launch_frame() {
     input.write_all(b"caller input").expect("write input");
     input.flush().expect("flush input");
     drop(input);
-    let (status, _, errors) = finish(process);
+    let (status, _, errors) = finish(process, "sandbox command", COMMAND_WAIT);
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     assert_eq!(fs::read(result).expect("input result"), b"caller input");
@@ -412,13 +471,17 @@ fn windows_forwards_input_after_its_private_launch_frame() {
 fn windows_supplies_and_removes_a_private_temporary_directory() {
     let fixture = Fixture::new("temporary-directory");
     let result = fixture.workspace.join("temporary-directory.txt");
-    let (status, _, errors) = finish(start(
-        fixture.request("windows-temporary-directory"),
-        command(
-            "temporary-directory",
-            [(RESULT, result.clone().into_os_string())],
+    let (status, _, errors) = finish(
+        start(
+            fixture.request("windows-temporary-directory"),
+            command(
+                "temporary-directory",
+                [(RESULT, result.clone().into_os_string())],
+            ),
         ),
-    ));
+        "sandbox command",
+        COMMAND_WAIT,
+    );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     let temporary = PathBuf::from(fs::read_to_string(result).expect("temporary path"));
@@ -432,10 +495,14 @@ fn windows_supplies_and_removes_a_private_temporary_directory() {
 #[test]
 fn windows_preserves_the_native_workload_exit_status() {
     let fixture = Fixture::new("exit-status");
-    let (status, _, errors) = finish(start(
-        fixture.request("windows-exit-status"),
-        command("status", std::iter::empty::<(&'static str, OsString)>()),
-    ));
+    let (status, _, errors) = finish(
+        start(
+            fixture.request("windows-exit-status"),
+            command("status", std::iter::empty::<(&'static str, OsString)>()),
+        ),
+        "sandbox command",
+        COMMAND_WAIT,
+    );
 
     assert_eq!(
         status.code(),
@@ -450,16 +517,20 @@ fn windows_job_cleanup_stops_a_background_descendant() {
     let fixture = Fixture::new("process-cleanup");
     let result = fixture.workspace.join("descendant-pid.txt");
     let sentinel = fixture.workspace.join("descendant-survived.txt");
-    let (status, _, errors) = finish(start(
-        fixture.request("windows-process-cleanup"),
-        command(
-            "spawn-descendant",
-            [
-                (RESULT, result.clone().into_os_string()),
-                (SENTINEL, sentinel.clone().into_os_string()),
-            ],
+    let (status, _, errors) = finish(
+        start(
+            fixture.request("windows-process-cleanup"),
+            command(
+                "spawn-descendant",
+                [
+                    (RESULT, result.clone().into_os_string()),
+                    (SENTINEL, sentinel.clone().into_os_string()),
+                ],
+            ),
         ),
-    ));
+        "sandbox command",
+        COMMAND_WAIT,
+    );
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
     let pid = fs::read_to_string(result)
         .expect("descendant pid")

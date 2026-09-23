@@ -1,11 +1,16 @@
-//! Unix process groups and non-blocking pipe reads.
+//! Unix process groups, non-blocking pipe reads, and pipes the runtime waits
+//! on.
 
-use std::io::{self, Read};
-use std::os::fd::AsFd;
-use std::process::{Child, Command, ExitStatus};
+use std::io::{self, Read, Write};
+use std::os::fd::{AsFd, AsRawFd};
+use std::process::{Child, ChildStdin, Command, ExitStatus};
 
+use crucible_runtime::BoxFuture;
+use crucible_sandbox::SandboxInput;
 use rustix::fs::OFlags;
 use rustix::io::Errno;
+use tokio::io::Interest;
+use tokio::io::unix::AsyncFd;
 
 use super::ReadState;
 
@@ -110,4 +115,145 @@ pub(super) fn read(pipe: &mut impl Read, buffer: &mut [u8]) -> io::Result<ReadSt
         Err(problem) if problem.kind() == io::ErrorKind::WouldBlock => Ok(ReadState::Pending),
         Err(problem) => Err(problem),
     }
+}
+
+/// An output pipe read without waiting until it is first waited on, when it
+/// moves into the reactor of the runtime polling that read, and stays there:
+/// a later waiting read is polled on that runtime, which needs its I/O driver
+/// (Tokio panics on one without it).
+pub(super) struct Waited<P: AsRawFd> {
+    plain: Option<P>,
+    registered: Option<AsyncFd<P>>,
+}
+
+impl<P: super::Pipe> Waited<P> {
+    pub(super) const fn new(pipe: P) -> Self {
+        Self {
+            plain: Some(pipe),
+            registered: None,
+        }
+    }
+}
+
+impl<P: super::Pipe> super::Stream for Waited<P> {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<ReadState> {
+        if let Some(pipe) = &mut self.registered {
+            return pipe.get_mut().read_ready(buffer);
+        }
+        self.plain.as_mut().ok_or_else(lost)?.read_ready(buffer)
+    }
+
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<ReadState>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(ReadState::Bytes(0));
+            }
+            let pipe = registered(&mut self.plain, &mut self.registered, Interest::READABLE)?;
+            loop {
+                let mut ready = pipe.readable_mut().await?;
+                // A read that would block clears the readiness the reactor
+                // reported, and the loop waits for the next.
+                if let Ok(read) = ready.try_io(|pipe| pipe.get_mut().read(buffer)) {
+                    return Ok(match read? {
+                        0 => ReadState::End,
+                        count => ReadState::Bytes(count),
+                    });
+                }
+            }
+        })
+    }
+}
+
+/// The writing end of a command's standard input, made non-blocking and
+/// moved into the reactor of the runtime polling its first write.
+struct Input {
+    plain: Option<ChildStdin>,
+    registered: Option<AsyncFd<ChildStdin>>,
+}
+
+/// What a command holds for its asynchronous input: nothing, because the
+/// reactor waits on the pipe and no thread is started for it. Its end is the
+/// same call a platform with such a thread makes.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InputThread {
+    _none: (),
+}
+
+impl InputThread {
+    /// Ends nothing: no thread writes a command's input here.
+    #[allow(
+        clippy::unnecessary_wraps,
+        clippy::unused_self,
+        reason = "the same call as the platform whose input is written on a thread"
+    )]
+    pub(crate) fn end(&self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Hands `pipe` back as something written asynchronously.
+///
+/// Nothing changes about the pipe until the first write, which is what finds
+/// the runtime that waits on it. No thread is started, so `_thread` is left
+/// as it is.
+pub(crate) fn input(pipe: ChildStdin, _thread: &InputThread) -> Box<dyn SandboxInput> {
+    Box::new(Input {
+        plain: Some(pipe),
+        registered: None,
+    })
+}
+
+/// A write takes what the pipe has room for when the reactor says it has
+/// some, so a write dropped before it answers has delivered nothing.
+impl SandboxInput for Input {
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+        Box::pin(async move {
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            if let Some(pipe) = &self.plain {
+                prepare(pipe)?;
+            }
+            let pipe = registered(&mut self.plain, &mut self.registered, Interest::WRITABLE)?;
+            loop {
+                let mut ready = pipe.writable_mut().await?;
+                if let Ok(written) = ready.try_io(|pipe| pipe.get_mut().write(bytes)) {
+                    return written;
+                }
+            }
+        })
+    }
+}
+
+/// The pipe in `registered`, moving it there from `plain` first if it has
+/// not been waited on before.
+///
+/// # Errors
+///
+/// No Tokio runtime is polling this, or the reactor refused the descriptor;
+/// the pipe then stays as it was. A runtime without its I/O driver enabled
+/// panics inside Tokio instead, which is why every caller documents needing
+/// one.
+fn registered<'a, P: AsRawFd>(
+    plain: &mut Option<P>,
+    registered: &'a mut Option<AsyncFd<P>>,
+    interest: Interest,
+) -> io::Result<&'a mut AsyncFd<P>> {
+    if registered.is_none() {
+        tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
+        let pipe = plain.take().ok_or_else(lost)?;
+        match AsyncFd::try_with_interest(pipe, interest) {
+            Ok(pipe) => *registered = Some(pipe),
+            Err(refused) => {
+                let (pipe, problem) = refused.into_parts();
+                *plain = Some(pipe);
+                return Err(problem);
+            }
+        }
+    }
+    registered.as_mut().ok_or_else(lost)
+}
+
+fn lost() -> io::Error {
+    io::Error::other("the command's pipe is no longer held here")
 }

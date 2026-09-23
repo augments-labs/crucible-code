@@ -1,21 +1,31 @@
-//! Windows race-free job containment and pollable anonymous pipes.
+//! Windows race-free job containment, pollable anonymous pipes, and the
+//! threads that wait on them.
 //!
 //! Completion requires a successful job-accounting query with zero active
 //! members after termination is requested. Windows can still be finalizing
 //! descendant process objects and pending I/O; the caller separately reaps the
 //! leader. This scope supplies process control for compatibility execution.
+//!
+//! A pipe read or written asynchronously is handed to a thread of its own
+//! (the `owned` module), because no runtime here is told when an anonymous pipe
+//! becomes ready. A write that thread is parked in is abandoned by cancelling
+//! the pipe's pending I/O, which is what dropping the writer asks for.
 #![allow(
     unsafe_code,
     reason = "Windows exposes job objects and anonymous-pipe polling only through its system API"
 )]
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::mem::size_of;
 use std::os::windows::io::AsRawHandle;
 use std::os::windows::process::CommandExt as _;
-use std::process::{Child, Command, ExitStatus};
-use std::thread;
+use std::process::{Child, ChildStdin, Command, ExitStatus};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+use crucible_runtime::BoxFuture;
+use crucible_sandbox::SandboxInput;
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_NO_DATA, HANDLE, INVALID_HANDLE_VALUE,
@@ -23,6 +33,7 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
+use windows_sys::Win32::System::IO::{CancelIoEx, CancelSynchronousIo};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_TIME,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
@@ -36,6 +47,7 @@ use windows_sys::Win32::System::Threading::{
 };
 
 use super::ReadState;
+use super::owned::{Reader, Writer, WriterOwner};
 
 /// Bounds job-state polling separately from the caller's leader reap.
 const STOP_WAIT: Duration = Duration::from_millis(250);
@@ -357,6 +369,136 @@ pub(super) fn read(
 
 fn raw(pipe: &impl AsRawHandle) -> HANDLE {
     pipe.as_raw_handle() as HANDLE
+}
+
+/// An output pipe read without waiting until it is first waited on, when it
+/// moves onto a thread of its own for as long as this lives.
+pub(super) struct Waited<P> {
+    plain: Option<P>,
+    owned: Option<Reader>,
+}
+
+impl<P: super::Pipe> Waited<P> {
+    pub(super) const fn new(pipe: P) -> Self {
+        Self {
+            plain: Some(pipe),
+            owned: None,
+        }
+    }
+}
+
+impl<P: super::Pipe> super::Stream for Waited<P> {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<ReadState> {
+        if let Some(reader) = &mut self.owned {
+            return reader.read_ready(buffer);
+        }
+        self.plain.as_mut().ok_or_else(lost)?.read_ready(buffer)
+    }
+
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<ReadState>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(ReadState::Bytes(0));
+            }
+            if self.owned.is_none() {
+                let pipe = self.plain.take().ok_or_else(lost)?;
+                self.owned = Some(Reader::start(pipe)?);
+            }
+            self.owned.as_mut().ok_or_else(lost)?.read(buffer).await
+        })
+    }
+}
+
+/// The writing end of a command's standard input, moved onto a thread of its
+/// own at the first write.
+struct Input {
+    plain: Option<ChildStdin>,
+    owned: Option<Writer>,
+    /// Where the thread's owner is left for the command to end.
+    thread: InputThread,
+}
+
+/// The thread a command's asynchronous input is written on, once its first
+/// write has started one, held by the command, whose stop ends and joins it.
+/// Once ended it starts no thread, so a write first made after the stop is
+/// refused rather than start a thread nothing would join.
+pub(crate) type InputThread = WriterOwner;
+
+/// Hands `pipe` back as something written asynchronously, leaving the thread
+/// its first write starts in `thread`.
+///
+/// Nothing changes about the pipe until that first write.
+pub(crate) fn input(pipe: ChildStdin, thread: &InputThread) -> Box<dyn SandboxInput> {
+    Box::new(Input {
+        plain: Some(pipe),
+        owned: None,
+        thread: thread.clone(),
+    })
+}
+
+impl SandboxInput for Input {
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+        Box::pin(async move {
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            if self.owned.is_none() {
+                let pipe = Arc::new(self.plain.take().ok_or_else(lost)?);
+                // Weak, so the pipe closes when the thread lets go of it,
+                // whatever still holds the interruption.
+                let held = Arc::downgrade(&pipe);
+                let writer = self.thread.start(
+                    Shared(pipe),
+                    Box::new(move |thread| {
+                        if let Some(pipe) = held.upgrade() {
+                            abandon(&pipe, thread);
+                        }
+                    }),
+                )?;
+                self.owned = Some(writer);
+            }
+            self.owned.as_mut().ok_or_else(lost)?.write(bytes).await
+        })
+    }
+}
+
+/// The pipe the writer's thread writes through, while the interruption holds
+/// the same pipe open so its handle stays the pipe's.
+struct Shared(Arc<ChildStdin>);
+
+impl Write for Shared {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        (&*self.0).write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        (&*self.0).flush()
+    }
+}
+
+/// Abandons whatever write `thread` is parked in on `pipe`.
+///
+/// The interruption calls this with the pipe held for the call, so the handle
+/// it names is open throughout.
+///
+/// The standard library writes a child's input through an overlapped handle,
+/// which `CancelIoEx` reaches from any thread; a synchronous write, which the
+/// handle could also be given, is reached by `CancelSynchronousIo` on the
+/// thread instead. Either answers failure when nothing is pending, which is
+/// the case the caller retries.
+fn abandon(pipe: &ChildStdin, thread: &JoinHandle<()>) {
+    // SAFETY: `pipe` is borrowed from an `Arc` the caller upgraded and holds
+    // for the call, so its handle is open throughout, and `thread` is borrowed
+    // from the join handle that owns the thread's handle. Neither call writes through a pointer, and a
+    // null `OVERLAPPED` asks for every pending request on the handle.
+    unsafe {
+        CancelIoEx(raw(pipe), std::ptr::null());
+        CancelSynchronousIo(thread.as_raw_handle() as HANDLE);
+    }
+}
+
+fn lost() -> io::Error {
+    io::Error::other("the command's pipe is no longer held here")
 }
 
 #[cfg(test)]
