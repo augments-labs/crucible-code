@@ -86,7 +86,51 @@ fn namespace_processes() -> io::Result<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::broker::child_turn;
+    use rustix::process::{WaitId, WaitIdOptions};
     use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+
+    /// How long the test below lets the reaping test run before it collects
+    /// its own child. With the turn in place the reaping test is held for all
+    /// of it, so every run takes this long and holds the turn meanwhile.
+    /// Without the turn the test fails only if the reaping test reaches its
+    /// first reap within it, which under extreme load it may not. A shorter
+    /// allowance can therefore only let unfixed code pass, never fail fixed
+    /// code, and a longer one only costs time.
+    const REAPING_TEST_ALLOWANCE: Duration = Duration::from_secs(1);
+
+    /// Stands where a test waiting for its own child by pid stands, at the
+    /// moment that child has exited and before the wait collects it, and runs
+    /// the reaping test there for `REAPING_TEST_ALLOWANCE`. Without the turn
+    /// the reap takes the status first and the wait fails with `ECHILD`, which
+    /// is how a whole test run failed.
+    #[test]
+    fn a_child_waited_for_by_pid_keeps_its_status_while_the_reaping_test_runs() {
+        let turn = child_turn::take();
+        let mut named = Command::new("true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("named child");
+        rustix::process::waitid(
+            WaitId::Pid(Pid::from_child(&named)),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
+        )
+        .expect("named child exits, left uncollected");
+
+        let (finished, reaping_finished) = mpsc::channel();
+        let reaping = thread::spawn(move || {
+            reaping_returns_the_workload_status_and_discards_other_zombies();
+            let _ = finished.send(());
+        });
+        let _ = reaping_finished.recv_timeout(REAPING_TEST_ALLOWANCE);
+
+        let status = named.wait().expect("the named child's own status");
+        assert!(status.success(), "named child status: {status}");
+        drop(turn);
+        reaping.join().expect("the reaping test after the turn");
+    }
 
     #[test]
     #[expect(
@@ -94,6 +138,7 @@ mod tests {
         reason = "both children are reaped through the function under test, not through `Child`"
     )]
     fn reaping_returns_the_workload_status_and_discards_other_zombies() {
+        let _turn = child_turn::take();
         let mut bystander = Command::new("true")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
