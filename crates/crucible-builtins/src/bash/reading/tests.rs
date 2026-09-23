@@ -57,6 +57,109 @@ fn a_command_still_running_says_what_it_has_printed() {
 }
 
 #[test]
+fn a_command_still_running_says_where_bytes_were_omitted() {
+    // `wrote` glued `Left::text` with no dropped-byte count, and this tool cut
+    // the glued string with `excerpt`, which passes `already = 0`. A running
+    // command that printed more than a stream's head and tail before it was
+    // read here therefore reached the model as a silent splice, or with a cut
+    // note counting only what this reader itself kept.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let sample = Sample::new("bash-output-flood");
+    let left = Background::new();
+    let _tool = started(
+        &sample,
+        &left,
+        &format!(r#""yes 0123456789abcdef | head -c {FLOOD}; sleep 30""#),
+    );
+
+    let marker = format!(
+        "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+        FLOOD - super::super::output::CAPTURE_TEXT
+    );
+
+    // Polled rather than read once: the pipeline still has to finish writing
+    // `FLOOD` bytes after `started` returns, so an early read can catch it
+    // part-way through and see a smaller, still-correct count for what has
+    // arrived so far. The wait is for the exact marker a finished flood
+    // produces, not merely for some cut having happened.
+    let tool = BashOutput::new(left.clone());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let text = loop {
+        let output = crucible_runtime::answered!(
+            tool.run(allowed(&tool, r#"{"number":1}"#), &crate::sample::context())
+        )
+        .expect("the registry answered");
+        assert!(!output.is_failed(), "{}", output.text());
+        let text = output.text().to_owned();
+        if text.contains(&marker) || Instant::now() >= deadline {
+            break text;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert!(
+        text.contains(&marker),
+        "the model was told less than what the reader actually dropped, or nothing at all: {text}"
+    );
+    let _ = left.stop(1);
+}
+
+#[test]
+fn a_command_still_running_survives_the_runners_own_result_ceiling() {
+    // `bash_output`'s answer already carries a marker once the reader's own
+    // cut applies; the runner then applies its own encoded-size ceiling,
+    // `limit_encoded`, to every result before it reaches the model — and a
+    // flood this dense with newlines (`yes` ends every line it prints) encodes
+    // past that ceiling on top of the reader's own cut. Without
+    // `with_capture_elision` carrying the process counts along, that second
+    // cut has no process byte count of its own: it removes the reader's
+    // exact marker and names only encoded result bytes in its place.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let sample = Sample::new("bash-output-flood-ceiling");
+    let left = Background::new();
+    let _tool = started(
+        &sample,
+        &left,
+        &format!(r#""yes 0123456789abcdef | head -c {FLOOD}; sleep 30""#),
+    );
+
+    let marker = format!(
+        "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+        FLOOD - super::super::output::CAPTURE_TEXT
+    );
+    let process_counts = format!(
+        "process output was {FLOOD} bytes; {} bytes omitted during capture",
+        FLOOD - super::super::output::CAPTURE_TEXT
+    );
+
+    let tool = BashOutput::new(left.clone());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut output = loop {
+        let output = crucible_runtime::answered!(
+            tool.run(allowed(&tool, r#"{"number":1}"#), &crate::sample::context())
+        )
+        .expect("the registry answered");
+        assert!(!output.is_failed(), "{}", output.text());
+        if output.text().contains(&marker) || Instant::now() >= deadline {
+            break output;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    // The runner's own ceiling applies to every result on the way to the
+    // model; nothing here should need it to fit already.
+    let _ = output.limit_encoded(crucible_types::TOOL_RESULT_BYTES);
+
+    assert!(
+        output.text().contains(&process_counts),
+        "the runner's own result ceiling cut through the reader's marker with no process byte \
+         count of its own: {}",
+        output.text()
+    );
+    let _ = left.stop(1);
+}
+
+#[test]
 fn a_number_nothing_answers_to_says_what_is_running() {
     // The ordinary way to be wrong here is to be one moment late: a command
     // that ended has left the registry, and its output is already on its way in

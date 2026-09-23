@@ -441,14 +441,16 @@ impl Bash {
                     std::io::Error::other("reserved background identity is unavailable"),
                 )
             })?;
+        let text = &printed.text;
         let accepted = ToolOutput::ok(match why {
             output::Why::Asked => {
-                format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")
+                format!("{text}\n\n[left running as #{number}; {LEFT_RUNNING}]")
             }
             output::Why::Pressed => {
-                format!("{printed}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]")
+                format!("{text}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]")
             }
-        });
+        })
+        .with_capture_elision(printed.original, printed.omitted);
         let key = context.call_result_key().ok_or_else(|| {
             io(
                 "cannot finalize a background command without durable result storage",

@@ -706,14 +706,40 @@ impl Kept {
     }
 
     /// The two ends, in order, with the gap between them unmarked — [`joined`]
-    /// is where it gets said, because that is where the two streams have been
-    /// put together and there is one gap to describe.
+    /// and [`gathered`] are where it gets said for an answer, because that is
+    /// where the two streams have been put together and there is one gap to
+    /// describe; [`Kept::shown`] says it for this one stream, for the panel.
     fn bytes(&self) -> Vec<u8> {
         // Bounded by `OUTPUT` however long the command ran, which is what this
         // type exists to guarantee.
         let mut all = self.head.clone();
         all.extend(&self.tail);
         all
+    }
+
+    /// The two ends with the gap said where it is, for the panel that stands
+    /// this stream whole: the head, then — only where bytes were dropped — the
+    /// marker an answer carries, at the hole and counting this stream's own
+    /// printed and dropped bytes, then the tail. Nothing is trimmed.
+    ///
+    /// Where nothing was dropped the two ends are one run of bytes and are
+    /// read as one. Where they are not, each is read on its own, so a
+    /// character cut at either edge of the hole reads as damaged there rather
+    /// than as one character spliced across bytes that were never adjacent.
+    fn shown(&self) -> String {
+        if self.dropped == 0 {
+            return String::from_utf8_lossy(&self.bytes()).into_owned();
+        }
+
+        // Bounded by `OUTPUT` and the marker: the two ends together never hold
+        // more than a stream's head and tail budgets.
+        let tail: Vec<u8> = self.tail.iter().copied().collect();
+        format!(
+            "{}\n\n{}\n\n{}",
+            String::from_utf8_lossy(&self.head),
+            marker(self.taken(), self.dropped),
+            String::from_utf8_lossy(&tail)
+        )
     }
 }
 
@@ -818,11 +844,23 @@ impl Pipe {
     ///
     /// This never joins the reader. It takes a bounded snapshot while the
     /// collection path remains responsible for stopping and joining the
-    /// pollable reader afterwards.
+    /// pollable reader afterwards. [`joined`] and [`gathered`] are what turn
+    /// this pair into the text a caller reports, because the count belongs
+    /// beside the bytes it was dropped from rather than travelling alone.
     fn take(&self) -> (Vec<u8>, usize) {
         self.kept
             .lock()
             .map(|kept| (kept.bytes(), kept.dropped))
+            .unwrap_or_default()
+    }
+
+    /// What has arrived so far, as the panel stands one stream: whole where
+    /// nothing was dropped, and with the marker at the hole where it was.
+    /// See [`Kept::shown`].
+    fn shown(&self) -> String {
+        self.kept
+            .lock()
+            .map(|kept| kept.shown())
             .unwrap_or_default()
     }
 
@@ -834,14 +872,6 @@ impl Pipe {
         self.kept
             .lock()
             .map(|kept| (kept.lines, kept.taken()))
-            .unwrap_or_default()
-    }
-
-    /// The end of what has arrived, for the view that stands one whole.
-    pub(super) fn text(&self) -> String {
-        self.kept
-            .lock()
-            .map(|kept| String::from_utf8_lossy(&kept.bytes()).into_owned())
             .unwrap_or_default()
     }
 
@@ -923,27 +953,73 @@ fn settle(out: &Pipe, err: &Pipe) -> bool {
 /// result is not the sequence a terminal would have shown — a progress line on
 /// `stderr` says nothing here about which `stdout` line it came between.
 fn joined(out: &Pipe, err: &Pipe) -> Captured {
+    let (both, dropped) = taken(out, err);
+    captured(&both, dropped, CAPTURE_TEXT)
+}
+
+/// Both pipes' bytes, concatenated, and how much of the two together their
+/// readers let go to stay bounded.
+///
+/// The one place [`joined`] and [`gathered`] share, so the two never drift
+/// into counting the gap two different ways.
+fn taken(out: &Pipe, err: &Pipe) -> (Vec<u8>, usize) {
     let (mut both, from_out) = out.take();
     let (rest, from_err) = err.take();
     both.extend(rest);
-
-    captured(&both, from_out.saturating_add(from_err), CAPTURE_TEXT)
+    (both, from_out.saturating_add(from_err))
 }
 
-/// As much of `text` as `budget` allows, cut and annotated the way an answer is.
+/// Both pipes, joined and cut to `budget` the way [`joined`] cuts them to the
+/// answer's own ceiling — bytes and the count a reader dropped, together, so
+/// the marker this writes names the whole gap rather than only the slice this
+/// call still had to cut.
 ///
-/// For text that is not itself a tool result and so never reaches the
-/// invocation pipeline's ceiling: the note about a command that ended while
-/// nobody waited carries what it printed, and carries it under a budget of its
-/// own because several commands can end into one note.
+/// For a command's own output read while it is still running or just after:
+/// the note on one that ended while nobody waited, and the two live reads
+/// that answer a call directly, [`Taking::printed`] and
+/// [`Background::printed`]. Callers that build an answer from what this
+/// returns carry `original` and `omitted` on to it with
+/// [`crucible_tools::ToolOutput::with_capture_elision`], so a later limiter
+/// pass that must cut through this call's own marker still has the true
+/// count to repeat.
+///
+/// [`Taking::printed`]: super::background::Taking::printed
+/// [`Background::printed`]: super::background::Background::printed
+pub(super) fn gathered(out: &Pipe, err: &Pipe, budget: usize) -> Captured {
+    let (both, dropped) = taken(out, err);
+    captured(&both, dropped, budget)
+}
+
+/// Both pipes, one after the other, each stood the way [`Kept::shown`] stands
+/// one stream: every kept byte, and where a stream's reader dropped bytes, the
+/// marker an answer carries at that stream's own hole, counting what that
+/// stream printed and dropped.
+///
+/// For the view a reader stands rather than an answer a call is cut to. Unlike
+/// [`gathered`], nothing here is cut to a budget or trimmed: what is kept is at
+/// most a stream's head and tail per pipe, and the marker is added to that
+/// rather than taken out of it. Per stream rather than over the two glued
+/// together, because each reader's hole is its own: one marker at the middle
+/// of the glue can sit where nothing was dropped, on the boundary between the
+/// streams when both flooded, and leave the real splices unmarked.
+pub(super) fn stood(out: &Pipe, err: &Pipe) -> String {
+    let mut both = out.shown();
+    both.push_str(&err.shown());
+    both
+}
+
+/// As much of `text` as `budget` allows, cut and annotated the way an answer
+/// is, for a piece of text with no dropped-byte count of its own: an error's
+/// own message. A reader whose own drops must be counted uses [`gathered`]
+/// instead, which is where that count is carried through.
 pub(super) fn excerpt(text: &str, budget: usize) -> String {
     captured(text.as_bytes(), 0, budget).text
 }
 
-struct Captured {
-    text: String,
-    original: usize,
-    omitted: usize,
+pub(super) struct Captured {
+    pub(super) text: String,
+    pub(super) original: usize,
+    pub(super) omitted: usize,
 }
 
 /// The head and the tail, when there is more than anything can use.
@@ -981,17 +1057,23 @@ fn captured(bytes: &[u8], already: usize, budget: usize) -> Captured {
     let tail = String::from_utf8_lossy(bytes.get(tail_start..).unwrap_or_default());
     let kept = head_end.saturating_add(bytes.len().saturating_sub(tail_start));
     let omitted = already.saturating_add(bytes.len().saturating_sub(kept));
-    let text = format!(
-        "{head}\n\n[process output was {original} bytes; {omitted} bytes omitted from the middle during capture]\n\n{tail}"
-    )
-    .trim_end()
-    .to_owned();
+    let text = format!("{head}\n\n{}\n\n{tail}", marker(original, omitted))
+        .trim_end()
+        .to_owned();
 
     Captured {
         text,
         original,
         omitted,
     }
+}
+
+/// What stands where a reader dropped bytes, in an answer's cut and in the
+/// panel alike, so both say it in one phrase.
+fn marker(original: usize, omitted: usize) -> String {
+    format!(
+        "[process output was {original} bytes; {omitted} bytes omitted from the middle during capture]"
+    )
 }
 
 /// The nearest character boundary at or after `at`, so a cut never lands
