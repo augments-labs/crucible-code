@@ -6,8 +6,6 @@
 
 use std::io;
 
-use crucible_sandbox::SandboxOutput;
-
 #[derive(Debug)]
 pub(super) enum Mediator {}
 
@@ -16,11 +14,7 @@ impl Mediator {
         match *self {}
     }
 
-    pub(super) fn protect_output(
-        &self,
-        _output: Box<dyn SandboxOutput>,
-        _interrupted: Box<dyn Fn() -> bool + Send>,
-    ) -> Box<dyn SandboxOutput> {
+    pub(super) fn masked(&self) -> Vec<Vec<u8>> {
         match *self {}
     }
 }

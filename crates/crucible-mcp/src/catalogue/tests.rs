@@ -443,3 +443,71 @@ fn a_cursor_past_its_ceiling_is_refused_rather_than_handed_back() {
     };
     assert_eq!(field, "nextCursor");
 }
+
+#[test]
+fn a_schema_whose_member_names_would_hide_alike_is_refused_rather_than_merged() {
+    // Hidden, `k_q7` and `k_z9` are both `k_**`, and an object holds one
+    // member per name: keeping either would show the model a schema with a
+    // property missing.
+    let frames = [
+        agreeable(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": { "tools": [{
+                "name": "search",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "k_q7": { "type": "string" }, "k_z9": { "type": "number" } },
+                },
+            }] },
+        }),
+    ];
+    let mut said = Vec::new();
+    let read = {
+        let mut talking = Talking::withholding(
+            Cursor::new(script(&frames)),
+            &mut said,
+            crate::Withheld::new(["q7", "z9"]),
+        );
+        let greeting = hello(&mut talking).expect("an agreeable greeting");
+        tools(&mut talking, &greeting)
+    };
+
+    let Err(refused) = read else {
+        panic!("a schema that lost a member to hiding was offered: {read:?}");
+    };
+    let told = refused.to_string();
+    assert!(
+        told.contains("search") && !told.contains("q7") && !told.contains("z9"),
+        "the refusal should name the tool and no value: {told}"
+    );
+}
+
+#[test]
+fn debug_of_an_offered_tool_shows_only_what_is_hidden() {
+    let frames = [
+        agreeable(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": { "tools": [{ "name": "search-sk-canary", "description": "sk-canary" }] },
+        }),
+    ];
+    let mut said = Vec::new();
+    let offered = {
+        let mut talking = Talking::withholding(
+            Cursor::new(script(&frames)),
+            &mut said,
+            crate::Withheld::new(["sk-canary"]),
+        );
+        let greeting = hello(&mut talking).expect("an agreeable greeting");
+        tools(&mut talking, &greeting).expect("one tool")
+    };
+
+    let shown = format!("{offered:?}");
+    assert!(
+        !shown.contains("sk-canary"),
+        "Debug of an offered tool printed the name the server wrote: {shown}"
+    );
+}

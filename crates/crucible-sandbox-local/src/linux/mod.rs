@@ -366,6 +366,7 @@ impl SandboxSession for LinuxSession {
                     canceller: Some(canceller),
                     speech: command.speech(),
                     startup_input: None,
+                    credentials: super::process::credential_values(command.environment()),
                 },
             );
             if let Some(status_channel) = launch.status_channel.as_mut() {

@@ -20,7 +20,10 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use crucible_config::{McpServer, SandboxSettings, Settings};
-use crucible_sandbox::{SandboxEnvironment, SandboxPolicy};
+use crucible_sandbox::{
+    SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+    SandboxEnvironment, SandboxPolicy,
+};
 use crucible_workspace::Workspace;
 
 use crate::AppError;
@@ -109,29 +112,40 @@ fn program(command: &str, lookup: &impl Fn(&str) -> Option<OsString>) -> Option<
 /// server inherits nothing it was not given a name for. `envFrom` is where a
 /// secret travels, and it travels as a value read here and never written
 /// anywhere — the document holds the name of a variable, which is not one.
+///
+/// Each `envFrom` value goes as a credential, so it is kept out of what the
+/// server says back: the backend that runs the server masks it on standard
+/// error, and the MCP client hides it in the words of every reply it decodes
+/// and keeps, where a tool result or an error that repeats the token would
+/// otherwise carry it to the model, the session file and the next request.
+/// Its handle is its position, which says nothing about the value. An `env`
+/// value is already on disk and goes as it stands.
 fn environment(
     record: &McpServer,
     lookup: &impl Fn(&str) -> Option<OsString>,
 ) -> Result<SandboxEnvironment, String> {
-    let mut entries: Vec<(Box<str>, OsString)> = record
-        .env()
-        .map(|(name, value)| (name.into(), OsString::from(value)))
-        .collect();
-
-    for (name, from) in record.env_from() {
+    let mut credentials = Vec::new();
+    for (position, (name, from)) in record.env_from().enumerate() {
         let held = lookup(from).ok_or_else(|| {
             // The name of the variable, never a value: this sentence reaches a
             // terminal, and a run that failed because a key was unset must not
             // be the thing that prints one that was.
             format!("envFrom names {from}, which is not set in crucible's own environment")
         })?;
-        entries.push((name.into(), held));
+        let handle = SandboxCredentialHandle::new(
+            format!("env:{position}"),
+            SandboxCredentialProvenance::User,
+        )
+        .map_err(|problem| problem.to_string())?;
+        credentials.push(
+            SandboxCredentialProjection::new(handle, name, held)
+                .map_err(|problem| problem.to_string())?,
+        );
     }
 
-    SandboxEnvironment::new(
-        entries
-            .iter()
-            .map(|(name, value)| (name.as_ref(), value.as_os_str() as &OsStr)),
+    SandboxEnvironment::with_credentials(
+        record.env().map(|(name, value)| (name, OsStr::new(value))),
+        credentials,
     )
     .map_err(|problem| problem.to_string())
 }

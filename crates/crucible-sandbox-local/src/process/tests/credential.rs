@@ -79,7 +79,7 @@ fn stream<const N: usize>(
     script: [Option<Vec<u8>>; N],
 ) -> io::Result<Box<dyn SandboxOutput>> {
     let prepared = PreparedOutput::new(Script(script.into()), Arc::clone(control))?;
-    Ok(protect_output(proxy, Box::new(prepared), control))
+    Ok(protect_output(Box::new(prepared), proxy.masked(), control))
 }
 
 /// "id=" and the first 20 bytes of the password: the start of a credential

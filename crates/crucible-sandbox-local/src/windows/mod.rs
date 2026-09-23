@@ -224,6 +224,7 @@ impl SandboxSession for WindowsSession {
                     canceller: None,
                     speech: command.speech(),
                     startup_input: Some(startup_input),
+                    credentials: super::process::credential_values(command.environment()),
                 }),
                 inspection: self.inspection.clone(),
                 audit: self.request.audit().clone(),

@@ -255,6 +255,38 @@ fn a_server_is_started_with_what_the_record_named_and_nothing_else() {
     );
 }
 
+/// A value read through `envFrom` is handed over marked as a credential, so the
+/// backend that runs the server masks it in what the server prints. A literal
+/// `env` value is not one: the document already holds it.
+#[test]
+fn an_envfrom_value_is_given_as_a_credential_and_an_env_value_is_not() {
+    let sample = Sample::new("selecting-credential");
+    let settings = sample.user(BARE);
+    let (_, lookup) = installed(&sample, "docs-mcp", &[(NAMED, HELD)]);
+
+    let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup)
+        .expect("a record this test wrote");
+    let [chosen] = found.as_slice() else {
+        panic!("one server was named");
+    };
+    assert_eq!(
+        chosen.environment().credentials().count(),
+        1,
+        "DOCS_TOKEN came through envFrom"
+    );
+
+    let settings = sample.user(
+        r#"{"mcp": {"servers": {"docs": {"command": "docs-mcp", "env": {"DOCS_LOCALE": "en"}}}}}"#,
+    );
+    let (_, lookup) = installed(&sample, "docs-mcp", &[]);
+    let found = selected(&["docs".to_owned()], &settings, &sample.workspace(), lookup)
+        .expect("a record this test wrote");
+    let [chosen] = found.as_slice() else {
+        panic!("one server was named");
+    };
+    assert_eq!(chosen.environment().credentials().count(), 0);
+}
+
 #[test]
 fn an_envfrom_naming_a_variable_that_is_not_set_refuses_without_printing_one_that_is() {
     let sample = Sample::new("selecting-unset");

@@ -935,6 +935,30 @@ was itself started with in `MY_DOCS_TOKEN`. The token never appears in a
 document, a session file or a log line, which is the same bargain `apiKeyEnv`
 makes for provider keys.
 
+What the server says back does not carry the value either. Crucible shows every
+occurrence of it, overlapping ones included, as `*`, one per byte, in what the
+server writes on standard error and in the words of every reply it decodes from
+standard output and keeps: tool results, error messages, and the names,
+descriptions and schemas of the tools it offers. A reply is decoded first, so
+an echo the server's JSON escaped is found too, and the protocol around the
+words is read as it was sent — no frame is rewritten, and every number crucible
+reads, such as a call's `id`, is read as sent whatever the value is. The one
+number kept as words, the spelling of an `id` crucible could not have issued,
+is hidden like the rest of the words it keeps. A number crucible keeps is shown
+as sent too — an error's code, a number in a tool's schema, the `id` of an
+answer to a call it was not waiting on — so a value a server repeats as a
+number reaches the model there, which is one more reason such a value belongs
+in `env`. A server whose tool schema would have two member names of one object
+alike once the value is hidden in them is refused, as a server offering two
+tools under one name is. Not caught: an echo cut short or split into pieces,
+except a value split across two blocks of one result where it has a line break;
+a value the server transforms before saying it; and anything it writes into a
+file under a writable root. A short or ordinary value still belongs in `env`,
+since an `envFrom` value of `1` shows every `1` in the server's own words as
+`*`. Each `envFrom` entry also counts its credential handle, 5 to 7 bytes,
+toward the 128 KiB limit on the server's environment, as every credential
+handed to a sandboxed command does.
+
 The rest of the record is the timing and failure behaviour, and every one of
 them has an answer already:
 

@@ -30,6 +30,7 @@ use crucible_transport::{FrameError, Frames, Said, Written};
 use serde_json::Value;
 
 use crate::wire::{Call, Garbled, Heard, Reply, Sent};
+use crate::withheld::Withheld;
 
 /// The most frames crucible will read past while waiting on one answer.
 ///
@@ -177,6 +178,8 @@ pub struct Talking<R, W> {
     said: Written<W>,
     /// The number the next call gets.
     next: u64,
+    /// What the server was given in confidence, hidden in what it says.
+    withheld: Withheld,
 }
 
 impl<O: crucible_sandbox::SandboxOutput> Talking<crucible_transport::Heard<O>, Said> {
@@ -191,14 +194,30 @@ impl<O: crucible_sandbox::SandboxOutput> Talking<crucible_transport::Heard<O>, S
 }
 
 impl<R: BufRead, W: Write> Talking<R, W> {
-    /// Speaks over `from` and `to`.
+    /// Speaks over `from` and `to`, to a server given nothing in confidence.
     #[must_use]
-    pub const fn new(from: R, to: W) -> Self {
+    pub fn new(from: R, to: W) -> Self {
+        Self::withholding(from, to, Withheld::nothing())
+    }
+
+    /// Speaks over `from` and `to`, to a server given `withheld`.
+    ///
+    /// What this keeps of a frame has them hidden, and whoever reads what an
+    /// answer carries hides them through [`Self::withheld`].
+    #[must_use]
+    pub fn withholding(from: R, to: W, withheld: Withheld) -> Self {
         Self {
             heard: Frames::new(from),
             said: Written::new(to),
             next: 1,
+            withheld,
         }
+    }
+
+    /// What the server was given in confidence, for whoever reads an answer.
+    #[must_use]
+    pub const fn withheld(&self) -> &Withheld {
+        &self.withheld
     }
 
     /// The stream the server is heard over, for what only it can be asked.
@@ -252,7 +271,7 @@ impl<R: BufRead, W: Write> Talking<R, W> {
             let Some(frame) = self.heard.next_frame() else {
                 return Err(Trouble::Stopped { call });
             };
-            match Heard::read(&frame?)? {
+            match Heard::read_withholding(&frame?, &self.withheld)? {
                 Heard::Answer { call: found, .. } if found != call => {
                     return Err(Trouble::Astray { call, found });
                 }
