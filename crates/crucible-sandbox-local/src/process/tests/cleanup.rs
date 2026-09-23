@@ -374,3 +374,25 @@ fn panicked_supervisor_wait_failure_survives_cached_status() -> io::Result<()> {
     assert_eq!(process.inspection().cleanup(), SandboxCleanup::Failed);
     Ok(())
 }
+
+/// A stop whose scope cleanup and input thread both failed reports both: the
+/// scope's failure as the error, and the thread's beside it, so a caller that
+/// retries the stop knows the thread was not joined either.
+#[test]
+fn a_stop_reports_a_failed_input_thread_beside_a_failed_scope() {
+    let scope = io::Error::new(io::ErrorKind::PermissionDenied, "scope");
+    let input = io::Error::new(io::ErrorKind::TimedOut, "input");
+
+    let both = stopped_with_input(Err(scope), Err(input)).expect_err("two failures");
+
+    assert_eq!(both.kind(), io::ErrorKind::PermissionDenied);
+    let said = both.to_string();
+    assert!(
+        said.contains("PermissionDenied") && said.contains("TimedOut"),
+        "{said}"
+    );
+    let input_only = stopped_with_input(Ok(()), Err(io::Error::from(io::ErrorKind::TimedOut)))
+        .expect_err("the input's failure");
+    assert_eq!(input_only.kind(), io::ErrorKind::TimedOut);
+    stopped_with_input(Ok(()), Ok(())).expect("nothing failed");
+}

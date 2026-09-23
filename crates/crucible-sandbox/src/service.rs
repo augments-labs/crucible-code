@@ -4,7 +4,9 @@
 //! materializing, staging, releasing, stopping, and beginning and completing a
 //! background result's acceptance — hands back a [`BoxFuture`]. One that
 //! consumes its session or launch owns it for as long as it runs, and one that
-//! borrows a process holds it until it answers. What reads a state the backend
+//! borrows a process holds it until it answers. A pipe read or written
+//! asynchronously ([`SandboxOutput::read`], [`SandboxInput`]) hands back one
+//! too, borrowing the pipe until it answers. What reads a state the backend
 //! already holds (an inspection, a usage snapshot) and what reads a pipe
 //! without waiting stay synchronous, and so do a status look and handing a
 //! launch to another owner. A status look never waits on the command or on
@@ -1380,6 +1382,69 @@ pub trait SandboxOutput: Send {
     ///
     /// The backend stream could not be read or inspected.
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead>;
+
+    /// Reads as [`Self::read_ready`] does, once there is something to answer.
+    ///
+    /// Never [`SandboxRead::Pending`]: the future waits instead, and an empty
+    /// `buffer` answers `Bytes(0)` at once, since nothing can be read into it.
+    /// Dropping the future before it answers takes nothing out of the stream,
+    /// so a caller can give up on a read and ask again.
+    ///
+    /// The default asks [`Self::read_ready`], and after each `Pending` waits a
+    /// few milliseconds on the clock of the runtime polling it before asking
+    /// again, because a stream that says only whether bytes are ready now has
+    /// no way to say when they arrive. A backend whose stream can report that
+    /// overrides this, and says what its override needs of the runtime polling
+    /// it: an I/O driver, or staying on the runtime it was first polled on.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_ready`], and, for the default, the future was polled
+    /// outside a Tokio runtime. The default also needs that runtime's clock:
+    /// on a runtime built without it, Tokio panics where the default pauses.
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<SandboxRead>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(SandboxRead::Bytes(0));
+            }
+            loop {
+                match self.read_ready(buffer)? {
+                    SandboxRead::Pending => pause().await?,
+                    read => return Ok(read),
+                }
+            }
+        })
+    }
+}
+
+/// How long the default waiting read leaves a stream before asking it again:
+/// the pause the synchronous readers of a stream already take.
+const PAUSE: Duration = Duration::from_millis(5);
+
+/// Waits [`PAUSE`] on the clock of the runtime polling this, or says there is
+/// no runtime rather than letting the timer panic.
+async fn pause() -> io::Result<()> {
+    tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
+    tokio::time::sleep(PAUSE).await;
+    Ok(())
+}
+
+/// What the default [`SandboxProcess::take_async_stdin`] hands back: the
+/// writer [`SandboxProcess::take_stdin`] hands over, written and flushed on
+/// the thread polling it.
+struct Written(Box<dyn io::Write + Send>);
+
+impl SandboxInput for Written {
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+        Box::pin(async move {
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            let written = io::Write::write(&mut self.0, bytes)?;
+            io::Write::flush(&mut self.0)?;
+            Ok(written)
+        })
+    }
 }
 
 /// A boxed output is an output.
@@ -1391,6 +1456,31 @@ impl<O: SandboxOutput + ?Sized> SandboxOutput for Box<O> {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
         (**self).read_ready(buffer)
     }
+
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<SandboxRead>> {
+        (**self).read(buffer)
+    }
+}
+
+/// The writing end of a command's standard input, written asynchronously.
+///
+/// What [`SandboxProcess::take_async_stdin`] hands back. A write waits while
+/// the pipe is full, which is what a peer that stopped reading looks like, and
+/// a caller that cannot afford to wait forever drops the write at a deadline of
+/// its own; nothing here can tell a stalled peer from a slow one.
+pub trait SandboxInput: Send {
+    /// Writes some of `bytes` once the pipe will take them, and says how many
+    /// it took: at least one, unless `bytes` is empty.
+    ///
+    /// Whether a write dropped before it answers has delivered anything
+    /// depends on the backend, which says so; a caller that drops one cannot
+    /// assume either way.
+    ///
+    /// # Errors
+    ///
+    /// The pipe could not be written, for example because the command closed
+    /// its end.
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>>;
 }
 
 /// A running sandbox command, including its complete cleanup scope.
@@ -1405,6 +1495,22 @@ pub trait SandboxProcess: Send {
     /// so a caller that cannot afford to wait forever needs a deadline of its
     /// own; there is no answer this layer could give it instead.
     fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>>;
+
+    /// Takes the writing end of standard input once, to be written
+    /// asynchronously.
+    ///
+    /// The same pipe [`Self::take_stdin`] hands over, so whichever is asked
+    /// first takes it and the other then hands back nothing.
+    ///
+    /// The default adapts [`Self::take_stdin`]: each write is made on the
+    /// thread polling it, and then flushed. That is right for a writer that
+    /// never waits, such as one in memory, and wrong for a pipe that can fill,
+    /// which would hold that thread; a backend whose writer can fill overrides
+    /// this, and says what its override needs of the runtime polling it.
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.take_stdin()
+            .map(|input| Box::new(Written(input)) as Box<dyn SandboxInput>)
+    }
 
     /// Takes stdout once.
     ///
