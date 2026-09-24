@@ -111,8 +111,8 @@ pub(super) fn collect(
     // therefore stops the process scope and performs only a bounded reap.
     let started = Instant::now();
     let mut running = Waited::new(process);
-    let mut out = Pipe::drain(running.taking()?.take_stdout(), "stdout")?;
-    let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr")?;
+    let mut out = Pipe::drain(running.taking()?.take_stdout(), "stdout", TICK)?;
+    let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr", TICK)?;
 
     let deadline = started + *allowed;
     let mut expiry = Expiry::No;
@@ -764,10 +764,12 @@ pub(super) struct Pipe {
 }
 
 impl Pipe {
-    /// Starts reading `pipe` on a thread.
+    /// Starts reading `pipe` on a thread, which waits `pause` between looks
+    /// at a pipe with nothing to read, unless it is woken sooner.
     fn drain(
         pipe: Option<Box<dyn SandboxOutput>>,
         stream: &'static str,
+        pause: Duration,
     ) -> Result<Self, ToolError> {
         let kept = Arc::new(Mutex::new(Kept::default()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -799,11 +801,11 @@ impl Pipe {
                             retained,
                             discarded,
                         }) => (retained, discarded),
-                        // Nothing yet. A tick is waited out, unless somebody
+                        // Nothing yet. The pause is waited out, unless somebody
                         // who knows there is something now wakes the reader;
                         // a wake with nothing behind it costs one more look.
                         Ok(SandboxRead::Pending) => {
-                            thread::park_timeout(TICK);
+                            thread::park_timeout(pause);
                             continue;
                         }
                         // An interrupted read, which `std::io::Read` documents as
