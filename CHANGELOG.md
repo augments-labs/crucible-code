@@ -151,6 +151,12 @@ change in any release with no deprecation period.
   `decide_admitted_guarded` are now `async` to match. An implementer of any
   of these traits adopts the new signatures; nothing a user runs behaves
   differently.
+- **On Linux, a sandboxed command's status no longer waits for what it wrote
+  to be reported back.** Once the command has exited, a status asked for while
+  the sandbox is still sending its scan of the writable roots answers `None`
+  at once, with `SandboxProcess::ended` answering `true`, and settles on a
+  later look; a stop takes no more of that scan than has already been sent,
+  rather than waiting for the rest.
 
 ### Fixed
 

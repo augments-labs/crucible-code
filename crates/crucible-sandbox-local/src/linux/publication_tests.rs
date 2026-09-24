@@ -91,6 +91,30 @@ fn ended_within(process: &mut dyn SandboxProcess, patience: Duration) -> ExitSta
     }
 }
 
+/// What `process` answers once it answers more than `None`, within `patience`.
+///
+/// A command that reads as ended may still be having its terminal scan read,
+/// which is answered `None` without waiting; this looks again until the answer
+/// is its ending, or how that went wrong.
+fn settled_within(
+    process: &mut dyn SandboxProcess,
+    patience: Duration,
+) -> std::io::Result<ExitStatus> {
+    let deadline = Instant::now() + patience;
+    loop {
+        match process.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(problem) => return Err(problem),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the command did not settle within {patience:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn a_writer_left_running_does_not_keep_another_from_writing() {
     let service = crate::sample::service();
@@ -1221,8 +1245,7 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o750))
         .expect("a state directory that is not this user's own");
 
-    let refused = process
-        .try_wait()
+    let refused = settled_within(process.as_mut(), Duration::from_secs(5))
         .expect_err("an admission nobody can ask for is an ending that went wrong");
 
     drop(restore);
@@ -1271,8 +1294,7 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
         .expect("an unopenable lock");
     fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
 
-    let first = process
-        .try_wait()
+    let first = settled_within(process.as_mut(), Duration::from_secs(5))
         .expect_err("an admission nobody can ask for is an ending that went wrong");
     let again = process.try_wait();
 
