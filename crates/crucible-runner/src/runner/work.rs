@@ -154,7 +154,7 @@ impl Work<'_> {
                     continue;
                 }
 
-                let decision = self.prepare(call);
+                let decision = self.prepare(call).await;
                 match &decision {
                     Decision::Refused(_) => {
                         ended = Some(WaveEnd::Refused);
@@ -219,7 +219,7 @@ impl Work<'_> {
 
     /// Captures, validates, transforms, revalidates, classifies, guards, and
     /// approves one call without causing its tool effect.
-    fn prepare(&mut self, call: &ToolCall) -> Decision {
+    async fn prepare(&mut self, call: &ToolCall) -> Decision {
         if self.cancel.requested() {
             return Decision::Stopped(self.stand_in(call, NOT_RUN, ToolOutcome::Cancelled));
         }
@@ -299,15 +299,18 @@ impl Work<'_> {
         }
 
         let sensitivity = entry.tool().sensitivity(&transformed.args);
-        let guarded = self.permission.decide_admitted_guarded(
-            &admission,
-            &sensitivity,
-            |final_call, final_sensitivity| match entry.hooks().input() {
-                Some(guard) => guard.guard(final_call, final_sensitivity),
-                None => Ok(()),
-            },
-            self.ask,
-        );
+        let guarded = self
+            .permission
+            .decide_admitted_guarded(
+                &admission,
+                &sensitivity,
+                |final_call, final_sensitivity| match entry.hooks().input() {
+                    Some(guard) => guard.guard(final_call, final_sensitivity),
+                    None => Ok(()),
+                },
+                self.ask,
+            )
+            .await;
         let settled = match guarded {
             Ok(settled) => settled,
             Err(problem) => {

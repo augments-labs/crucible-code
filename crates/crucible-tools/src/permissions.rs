@@ -179,13 +179,17 @@ impl Permission {
     }
 
     /// Decides one call, asking the user if that is what it comes to.
-    pub fn decide(
+    ///
+    /// Awaited end to end: a question put to the user is human-length, so the
+    /// wait is the future's own `Pending` rather than a block inside a ready
+    /// one, and the thread polling it is free for the whole of it.
+    pub async fn decide(
         &mut self,
         call: &ToolCall,
         sensitivity: &Sensitivity,
         ask: &mut dyn Ask,
     ) -> Settled {
-        self.decide_for(call, sensitivity, None, ask)
+        self.decide_for(call, sensitivity, None, ask).await
     }
 
     /// Decides a call admitted from one immutable tool generation.
@@ -193,7 +197,7 @@ impl Permission {
     /// The resulting [`Approved`] remains bound to that generation, so a
     /// refresh cannot redirect it to a different tool registered under the
     /// same provider-visible name.
-    pub fn decide_admitted(
+    pub async fn decide_admitted(
         &mut self,
         admission: &ToolAdmission,
         sensitivity: &Sensitivity,
@@ -205,6 +209,7 @@ impl Permission {
             Some(admission.generation()),
             ask,
         )
+        .await
     }
 
     /// Decides an admitted call with an input guard between standing policy
@@ -218,7 +223,7 @@ impl Permission {
     /// # Errors
     ///
     /// The error returned by `guard`; no [`Approved`] is minted in that case.
-    pub fn decide_admitted_guarded(
+    pub async fn decide_admitted_guarded(
         &mut self,
         admission: &ToolAdmission,
         sensitivity: &Sensitivity,
@@ -235,12 +240,12 @@ impl Permission {
             }
             Disposition::Ask => {
                 guard(call, sensitivity)?;
-                Ok(self.put(call, sensitivity, generation, ask))
+                Ok(self.put(call, sensitivity, generation, ask).await)
             }
         }
     }
 
-    fn decide_for(
+    async fn decide_for(
         &mut self,
         call: &ToolCall,
         sensitivity: &Sensitivity,
@@ -250,7 +255,7 @@ impl Permission {
         match self.disposition(call, sensitivity) {
             Disposition::Allow => self.approve(call, sensitivity, generation, Verdict::Allow),
             Disposition::Deny => Settled::Forbidden,
-            Disposition::Ask => self.put(call, sensitivity, generation, ask),
+            Disposition::Ask => self.put(call, sensitivity, generation, ask).await,
         }
     }
 
@@ -280,7 +285,7 @@ impl Permission {
     }
 
     /// Asks, unless this scope was already allowed for the session.
-    fn put(
+    async fn put(
         &mut self,
         call: &ToolCall,
         sensitivity: &Sensitivity,
@@ -292,7 +297,7 @@ impl Permission {
             return self.approve(call, sensitivity, generation, Verdict::Allow);
         }
 
-        let (verdict, remember) = ask.ask(call, sensitivity);
+        let (verdict, remember) = ask.ask(call, sensitivity).await;
 
         // Matched rather than compared, so a duration added later stops the
         // build here instead of being quietly read as "do not remember".

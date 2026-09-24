@@ -964,8 +964,12 @@ impl Says {
 }
 
 impl Ask for Says {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> BoxFuture<'a, (Verdict, Remember)> {
         self.asked += 1;
-        (self.verdict, self.remember)
+        Box::pin(async { (self.verdict, self.remember) })
     }
 }

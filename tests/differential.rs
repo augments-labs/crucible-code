@@ -301,8 +301,11 @@ fn the_argument_only_command_surface_answers_what_it_did() {
 /// A questioner that is never asked, so that the tool can be described.
 struct Silent;
 impl Put for Silent {
-    fn put(&self, _: &[Question]) -> Option<Vec<Answered>> {
-        None
+    fn put<'a>(
+        &'a self,
+        _: &'a [Question],
+    ) -> crucible_runtime::BoxFuture<'a, Option<Vec<Answered>>> {
+        Box::pin(async { None })
     }
 }
 
@@ -1589,15 +1592,17 @@ impl crucible_core::Toolset for Offering {
 struct Allowing;
 
 impl crucible_core::Ask for Allowing {
-    fn ask(
-        &mut self,
-        _call: &ToolCall,
-        _sensitivity: &crucible_core::Sensitivity,
-    ) -> (crucible_core::Verdict, crucible_core::Remember) {
-        (
-            crucible_core::Verdict::Allow,
-            crucible_core::Remember::Never,
-        )
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a crucible_core::Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (crucible_core::Verdict, crucible_core::Remember)> {
+        Box::pin(async {
+            (
+                crucible_core::Verdict::Allow,
+                crucible_core::Remember::Never,
+            )
+        })
     }
 }
 

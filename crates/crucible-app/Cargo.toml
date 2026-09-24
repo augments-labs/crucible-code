@@ -72,6 +72,10 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 [dev-dependencies]
 # The guardrail a headless turn is refused by.
 crucible-agents.workspace = true
+# `answered!`, which drives a fake `Ask`/`Front`'s future by hand in a test:
+# every fake here answers the moment it is asked, so a test fails at the line
+# that asked rather than hanging where one would have had to wait.
+crucible-runtime = { workspace = true, features = ["proof"] }
 # The same confinement the application composes, keeping its sandbox state in a
 # directory of this checkout's while it is tested, so another checkout's tests
 # never lock, recover or change it. Cargo does not resolve dev-dependencies for

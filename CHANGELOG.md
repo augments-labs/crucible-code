@@ -107,6 +107,16 @@ change in any release with no deprecation period.
   cancel 250 ms before reporting its cleanup as failed. `LocalSandbox` takes
   that runtime through `watching_on`, and one given none prepares but starts
   no command.
+- **A question, a permission ask and the panel front end hand back futures.**
+  `Put::put`, which a tool puts its questions to whoever is at the keyboard
+  through, the permission engine's `Ask::ask`, and `crucible_app::client`'s
+  `Front::put` (now `Front: Send`) return a boxed `Send` future rather than
+  blocking inside a ready one; `client::questions` is now `async`, awaiting
+  `Front::put` in turn, so a human-length wait for an answer never occupies
+  the thread polling it. `Permission::decide`, `decide_admitted` and
+  `decide_admitted_guarded` are now `async` to match. An implementer of any
+  of these traits adopts the new signatures; nothing a user runs behaves
+  differently.
 
 ### Fixed
 
