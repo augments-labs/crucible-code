@@ -214,6 +214,20 @@ change in any release with no deprecation period.
   cancelled rather than opening the file again as text. A file counts as seen
   only once the call that touched it has its answer, and no call is lent a
   worker yet, so nothing else a user runs behaves differently.
+- **The runner awaits every session write, and a session answers once its
+  writer has the line.** A turn's, a compaction's and a clearing's writes
+  through `SessionStore` are now awaited rather than asked once, so a store
+  whose writes wait is waited for instead of ending the turn, and
+  `TurnError::RecordUnready` is gone; `Session`'s writes answer once its writer
+  thread has handed the line to the operating system or kept why not as
+  `Session::trouble`. `Runner::pick_up`, `serve` and `resuming` owe the session
+  their clearing lines until the new `Runner::record_clearings`, or the next
+  turn or compaction, writes them, and `Conversation` awaits it after each; a
+  consumer whose conversation cannot make that wait, having no runtime or
+  asking from a runtime's thread, now finds it reported by the new
+  `Session::missed` on each session the lines are owed to, until a later wait,
+  turn or compaction of that conversation writes them, while the log goes on
+  recording. Nothing a user runs behaves differently.
 
 ### Fixed
 

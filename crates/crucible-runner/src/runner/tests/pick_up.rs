@@ -7,10 +7,9 @@
 //! runner's own fields, which is what keeps a swap that set every one of them
 //! correctly from passing while the record it left behind said something else.
 
-use crucible_runtime::Bridge;
 use crucible_types::ResultProvenance;
 
-use super::unanswered::{Withheld, Withholding};
+use super::waiting::{Slow, Waits};
 use super::*;
 
 /// Whose sessions these are. One reader throughout, since nothing here is
@@ -35,10 +34,13 @@ fn earlier() -> Arc<Recording> {
 ///
 /// The transcript comes back from the store's own replay rather than from
 /// anything the test held, which is the whole of what a pick-up depends on.
+/// What the pick-up owes the session is written next, as the application
+/// writes it.
 fn picking(scripted: &mut Scripted, store: &Recording) -> Arc<Recording> {
     let (picked, transcript) = store.reopened();
     let onto: Arc<dyn JournalStore> = picked.clone();
     scripted.runner.pick_up(onto, transcript);
+    scripted.runner.record_clearings().awaited();
     picked
 }
 
@@ -365,6 +367,7 @@ fn a_session_moved_twice_says_once_that_its_results_were_taken_away() {
     scripted
         .runner
         .serve(Box::new(Script::new(vec![]).with_name("openai")));
+    scripted.runner.record_clearings().awaited();
 
     scripted
         .runner
@@ -563,48 +566,55 @@ fn a_session_picked_up_where_nothing_is_set_up_keeps_what_its_vendor_answered() 
     );
 }
 
+/// Where in `store` the first clearing line and the first prompt `said`
+/// stand.
+fn cleared_before(store: &Recording, said: &str) -> (Option<usize>, Option<usize>) {
+    let kept = store.kept();
+    let cleared = kept
+        .iter()
+        .position(|one| matches!(one, Kept::Restricted { .. }));
+    let asked = kept
+        .iter()
+        .position(|one| matches!(one, Kept::Said(Message::User { text, .. }) if &**text == said));
+    (cleared, asked)
+}
+
 #[test]
-fn a_clearing_line_the_session_never_took_ends_the_next_turn_before_anything_is_sent() {
-    // Changing vendor happens between turns, where no caller waits on an
-    // error, so a clearing line the session would not take is held for the
-    // turn that follows. Whether it was kept is not known, and a session that
-    // cannot say what it recorded is not one to carry on writing to.
+fn a_clearing_line_the_session_waits_to_take_is_in_the_log_before_the_next_turn() {
+    // Changing vendor happens between turns and clears what the new vendor
+    // may not be sent; the session is still owed the line saying so, and the
+    // next turn writes it before anything of its own.
     let (mut scripted, store) = restricted_search();
-    scripted.runner.store = Arc::new(Withholding {
-        recording: store,
-        withheld: Withheld::Restricted,
+    scripted.runner.store = Arc::new(Slow {
+        recording: Arc::clone(&store),
+        waits: Waits::Restricted,
     });
     scripted.turn("search for rust").expect("a search turn");
-    let anthropic = Script::new(vec![saying("never asked")]).with_name("anthropic");
-    let sent = anthropic.sent();
+    let anthropic = Script::new(vec![saying("asked after the line")]).with_name("anthropic");
 
     scripted.runner.serve(Box::new(anthropic));
 
     assert_eq!(
         only_result(&scripted).output.text(),
         RESTRICTED,
-        "the clearing was not made because its line was not taken"
+        "the clearing was not made"
     );
-    let problem = scripted.turn("and now?").unwrap_err();
+    scripted
+        .turn("and now?")
+        .expect("the turn after the clearing");
+    let (cleared, asked) = cleared_before(&store, "and now?");
     assert!(
-        matches!(
-            &problem,
-            TurnError::Unready(unready) if unready.bridge() == Bridge::TurnSession
-        ),
-        "{problem:?}"
-    );
-    assert!(
-        sent.lock().unwrap().is_empty(),
-        "the turn asked the provider before reporting the line it held"
+        cleared.is_some() && cleared < asked,
+        "the clearing's line was not written before the next turn: {:?}",
+        store.kept()
     );
 }
 
 #[test]
-fn a_clearing_line_the_session_never_took_ends_the_next_compaction_before_anything_is_sent() {
-    // `/compact` is admitted between turns the way a turn is, and the line it
-    // would write past is as unknown to it. Two turns, so there is a middle to
-    // recap: a compaction that carried on would record and ask the provider on
-    // top of a record that cannot say what it holds.
+fn a_clearing_line_the_session_waits_to_take_is_in_the_log_before_the_next_compaction() {
+    // `/compact` is admitted between turns the way a turn is, and it writes
+    // what is owed first the same way. Two turns, so there is a middle to
+    // recap.
     let store = Recording::started(OWNER);
     let restricting = Script::new(vec![
         calling("call_search", "web_search", r#"{"query":"rust"}"#),
@@ -615,9 +625,9 @@ fn a_clearing_line_the_session_never_took_ends_the_next_compaction_before_anythi
     .restricting(RESTRICTED);
     let mut scripted =
         Scripted::recording(restricting, searching(), Verdict::Allow, Arc::clone(&store));
-    scripted.runner.store = Arc::new(Withholding {
+    scripted.runner.store = Arc::new(Slow {
         recording: Arc::clone(&store),
-        withheld: Withheld::Restricted,
+        waits: Waits::Restricted,
     });
     scripted.runner.policy.compaction = Compaction {
         keep_tokens: 1,
@@ -625,27 +635,50 @@ fn a_clearing_line_the_session_never_took_ends_the_next_compaction_before_anythi
     };
     scripted.turn("search for rust").expect("a search turn");
     scripted.turn("and then?").expect("a turn to keep");
-    let anthropic = Script::new(vec![recap("never asked")]).with_name("anthropic");
-    let sent = anthropic.sent();
+    let anthropic = Script::new(vec![recap("notes after the line")]).with_name("anthropic");
 
     scripted.runner.serve(Box::new(anthropic));
-    let recorded = store.kept().len();
     let compacted = scripted.compacting();
 
+    assert!(matches!(compacted, Ok(Room::Made(_))), "{compacted:?}");
+    let kept = store.kept();
+    let cleared = kept
+        .iter()
+        .position(|one| matches!(one, Kept::Restricted { .. }));
+    let recapped = kept
+        .iter()
+        .position(|one| matches!(one, Kept::Compacted { .. }));
     assert!(
-        matches!(
-            &compacted,
-            Err(TurnError::Unready(unready)) if unready.bridge() == Bridge::TurnSession
-        ),
-        "{compacted:?}"
+        cleared.is_some() && cleared < recapped,
+        "the clearing's line was not written before the compaction's: {kept:?}"
     );
-    assert_eq!(
-        store.kept().len(),
-        recorded,
-        "the compaction recorded past the line it held"
+}
+
+#[test]
+fn a_session_picked_up_over_a_store_that_waits_has_its_clearing_written_before_the_next_turn() {
+    let (mut scripted, store) = restricted_search();
+    scripted.turn("search for rust").expect("a search turn");
+    let (picked, transcript) = store.reopened();
+    let mut next = Scripted::recording(
+        Script::new(vec![saying("asked after the line")]).with_name("anthropic"),
+        searching(),
+        Verdict::Allow,
+        Recording::started(OWNER),
     );
+
+    next.runner.pick_up(
+        Arc::new(Slow {
+            recording: Arc::clone(&picked),
+            waits: Waits::Restricted,
+        }),
+        transcript,
+    );
+    next.turn("and now?").expect("the turn after the pick-up");
+
+    let (cleared, asked) = cleared_before(&picked, "and now?");
     assert!(
-        sent.lock().unwrap().is_empty(),
-        "the compaction asked the provider before reporting the line it held"
+        cleared.is_some() && cleared < asked,
+        "the clearing's line was not written before the next turn: {:?}",
+        picked.kept()
     );
 }

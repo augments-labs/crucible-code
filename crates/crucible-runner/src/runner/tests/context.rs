@@ -25,6 +25,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     scripted
         .runner
         .assemble_context(ancestry)
+        .awaited()
         .expect("the first context");
 
     let first = contexts(scripted.runner.state.transcript());
@@ -72,6 +73,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     scripted
         .runner
         .assemble_context(ancestry)
+        .awaited()
         .expect("unchanged context");
 
     assert_eq!(scripted.runner.state.transcript().len(), messages);

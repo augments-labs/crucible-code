@@ -239,6 +239,36 @@ fn durable_call_results_are_idempotent_and_content_bound() {
 }
 
 #[test]
+fn a_session_told_of_a_missing_line_still_accepts_a_background_result() {
+    // What is missing is lines somebody else never handed over, not a log
+    // that stopped working: the session goes on keeping what it is given.
+    let sample = Sample::new("missing-still-records");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    session.append(&calling("call-1", "bash", "{}"));
+    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new("call-1"));
+    let result = ToolResult {
+        id: ToolId::new("call-1"),
+        output: RecordedToolOutput::ok("background job #1 accepted"),
+    };
+
+    session.missing("lines owed to this log were not waited for");
+
+    assert!(
+        session.put_call_result(key, &result).is_ok(),
+        "a background result was refused because other lines were missing"
+    );
+    assert!(
+        session.display_history().is_ok(),
+        "the history could not be read because other lines were missing"
+    );
+    assert_eq!(session.trouble(), None, "the log was said to have failed");
+    assert!(
+        session.missed().is_some(),
+        "what is missing went unreported"
+    );
+}
+
+#[test]
 fn ordinary_tool_results_settle_accepted_sidecars_after_the_log_barrier() {
     let sample = Sample::new("settle-live-call-result");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
@@ -1416,6 +1446,9 @@ fn a_session_that_records_nothing_is_still_a_session() {
 /// What a name something else already holds costs. Its own file because no
 /// ordinary run reaches any of it, and what it guards is somebody else's log.
 mod colliding;
+
+/// What a write through the store contract waits for before it answers.
+mod acknowledged;
 
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {

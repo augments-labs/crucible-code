@@ -126,12 +126,14 @@ impl<'a> AgentLoop<'a> {
     /// goes with it — the reader did not type it, and an event saying they did
     /// would put a sentence in the panel that nobody wrote. The line above it
     /// is already on their screen.
-    fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
+    async fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
         let run = self.run;
         let events = run.reporting();
         for line in run.steer().take() {
             events.post(Event::Steered { line: line.clone() });
-            self.runner.record(run.ancestry(), Message::said(line))?;
+            self.runner
+                .record(run.ancestry(), Message::said(line))
+                .await?;
             events.post(Event::Carried {
                 left: self
                     .runner
@@ -141,7 +143,9 @@ impl<'a> AgentLoop<'a> {
             });
         }
         for note in run.aside().take() {
-            self.runner.record(run.ancestry(), Message::said(note))?;
+            self.runner
+                .record(run.ancestry(), Message::said(note))
+                .await?;
             events.post(Event::Carried {
                 left: self
                     .runner
@@ -166,7 +170,7 @@ impl<'a> AgentLoop<'a> {
     /// written down. A refused answer leaves no trace for the next request to
     /// carry: the deltas the reader watched arrive were provisional, and this
     /// is where that stops being true for everything else.
-    fn ending(
+    async fn ending(
         &mut self,
         text: Box<str>,
         continuation: Option<ProviderContinuation>,
@@ -179,15 +183,17 @@ impl<'a> AgentLoop<'a> {
             Err(problem) => return Ok(Ending::Undecided { problem, stop }),
         }
 
-        self.runner.record(
-            self.run.ancestry(),
-            Message::Agent {
-                continuation: if calls.is_empty() { continuation } else { None },
-                text,
-                calls: Vec::new(),
-                stop: Some(stop),
-            },
-        )?;
+        self.runner
+            .record(
+                self.run.ancestry(),
+                Message::Agent {
+                    continuation: if calls.is_empty() { continuation } else { None },
+                    text,
+                    calls: Vec::new(),
+                    stop: Some(stop),
+                },
+            )
+            .await?;
         Ok(Ending::Stopped(stop))
     }
 
@@ -221,22 +227,18 @@ impl<'a> AgentLoop<'a> {
     /// does, which is why they leave through here rather than through
     /// [`StopReason`]. A step that would have had to wait ends it wherever
     /// [`Runner::turn`] says one does, and leaves what that says: as
-    /// [`TurnError::Unready`], as [`TurnError::RecordUnready`] beside what
-    /// ended the turn where it was the write of what the turn had reached, or
-    /// as the source's failure where it was a tool source's own step.
+    /// [`TurnError::Unready`], or as the source's failure where it was a tool
+    /// source's own step.
     ///
     /// Every step the turn crosses to that would have had to wait ends it on
     /// the refusal, even where a stop was asked for, except a call's run in a
     /// parallel wave and a background result's acceptance, which never end it
     /// on a refusal: [`Runner::turn`] says what becomes of each. The turn's
-    /// cache steps, its session lines and its toolset's listing and
-    /// refreshing all end it so. The line recording the last answer, the part
-    /// of an answer a full window cut short, and the results of a pass are
-    /// each written before the ending they lead to is reached, so a refusal of
-    /// one is what the turn ends on. A compaction's steps end it as [`Runner::compact`]
-    /// says. A pass that ended on a refused call or on the output boundary,
-    /// and whose results line was refused, ends as
-    /// [`TurnError::RecordUnready`] with both.
+    /// cache steps and its toolset's listing and refreshing all end it so. A
+    /// compaction's steps end it as [`Runner::compact`] says. The line
+    /// recording the last answer, the part of an answer a full window cut
+    /// short, and the results of a pass are each awaited before the ending
+    /// they lead to is reached.
     pub(super) async fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
         let run = self.run;
         let events = run.reporting();
@@ -249,7 +251,7 @@ impl<'a> AgentLoop<'a> {
         loop {
             self.runner.flush_sandbox_audits(events)?;
 
-            self.interjected(counting)?;
+            self.interjected(counting).await?;
 
             // Read once per pass: `tool_search` can reveal a schema mid-turn.
             // The exact set measured here is handed to the request below, so an
@@ -284,7 +286,7 @@ impl<'a> AgentLoop<'a> {
             // compaction from the preceding loop iteration rewrote history.
             // Recording the fragments updates `runner.load` before it is read
             // below, so reserve and fullness see exactly what will be sent.
-            self.runner.assemble_context(run.ancestry())?;
+            self.runner.assemble_context(run.ancestry()).await?;
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
@@ -398,15 +400,17 @@ impl<'a> AgentLoop<'a> {
                 bounds.heard(&answer);
                 let (text, _calls) = answer.finish();
                 if !text.is_empty() {
-                    self.runner.record(
-                        run.ancestry(),
-                        Message::Agent {
-                            continuation: None,
-                            text,
-                            calls: Vec::new(),
-                            stop: Some(said),
-                        },
-                    )?;
+                    self.runner
+                        .record(
+                            run.ancestry(),
+                            Message::Agent {
+                                continuation: None,
+                                text,
+                                calls: Vec::new(),
+                                stop: Some(said),
+                            },
+                        )
+                        .await?;
                 }
                 if !run.policy().compaction.automatic {
                     return Ok(Ending::Stopped(said));
@@ -425,7 +429,7 @@ impl<'a> AgentLoop<'a> {
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Runner::over(said, &calls) {
-                return self.ending(text, continuation, &calls, stop);
+                return self.ending(text, continuation, &calls, stop).await;
             }
 
             for call in &calls {
@@ -453,15 +457,17 @@ impl<'a> AgentLoop<'a> {
             // drops on the way back in. The calls are cloned because the pass
             // needs them too — one pass's worth, which is what the turn holds
             // either way and does not grow with the transcript.
-            self.runner.record(
-                run.ancestry(),
-                Message::Agent {
-                    continuation,
-                    text,
-                    calls: calls.clone(),
-                    stop: Some(said),
-                },
-            )?;
+            self.runner
+                .record(
+                    run.ancestry(),
+                    Message::Agent {
+                        continuation,
+                        text,
+                        calls: calls.clone(),
+                        stop: Some(said),
+                    },
+                )
+                .await?;
 
             let (results, went, output_bytes) = Work {
                 tools: &tools,
@@ -479,12 +485,9 @@ impl<'a> AgentLoop<'a> {
 
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
-            if let Err(problem) = self
-                .runner
+            self.runner
                 .record(run.ancestry(), Message::ToolResults(results))
-            {
-                return Err(unrecorded(problem, went, tool_output_maximum));
-            }
+                .await?;
             events.post(Event::Carried {
                 left: self
                     .runner
@@ -504,31 +507,5 @@ impl<'a> AgentLoop<'a> {
                 }
             }
         }
-    }
-}
-
-/// How a pass ends when recording its results met `problem`, given how the
-/// pass went.
-///
-/// A refusal outranks a stop. The results line is written before the pass's
-/// ending is reached, and a write that would have had to wait was dropped
-/// before it answered, so a pass that a stop ended, or that would have gone
-/// on, ends as that refusal: a clean stop would say nothing of a line that
-/// may be missing from the log. A pass that ended on a call the reader
-/// refused, or on the output boundary, ends on that with the refusal beside
-/// it, since either alone would hide the other. Whatever else recording the
-/// results met is returned as it is.
-fn unrecorded(problem: TurnError, went: Went, maximum: usize) -> TurnError {
-    let TurnError::Unready(record) = problem else {
-        return problem;
-    };
-    let primary = match went {
-        Went::On | Went::Stopped(_) => return TurnError::Unready(record),
-        Went::Refused(name) => TurnError::Refused(name),
-        Went::OutputLimit => TurnError::ToolOutputBytes { maximum },
-    };
-    TurnError::RecordUnready {
-        primary: Box::new(primary),
-        record,
     }
 }
