@@ -76,7 +76,8 @@ fn sandbox_facts_are_evented_and_journaled_before_the_tool_finishes() {
         audits: &SandboxAuditRegistry::new(),
         concurrency: 1,
     }
-    .pass(&[call("audited-call", "audited")], 0, usize::MAX);
+    .pass(&[call("audited-call", "audited")], 0, usize::MAX)
+    .awaited();
 
     assert!(matches!(went, Went::On));
     assert_eq!(results.len(), 1);
@@ -180,7 +181,8 @@ fn a_panicking_tool_cannot_erase_its_sandbox_facts() {
         &[call("panicking-audited-call", "panicking-audited")],
         0,
         usize::MAX,
-    );
+    )
+    .awaited();
 
     assert!(matches!(went, Went::On));
     assert!(results.first().is_some_and(|result| {
@@ -210,6 +212,224 @@ fn a_panicking_tool_cannot_erase_its_sandbox_facts() {
             .filter(|item| matches!(item, RunItem::Sandbox { .. }))
             .count(),
         1,
+        "{held:#?}"
+    );
+}
+
+/// Records a sandbox fact, says once that it is not ready, and panics the
+/// next time it is asked: a run that comes apart on a poll after its first.
+struct PanickingLater;
+
+impl Tool for PanickingLater {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
+
+    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+        Sensitivity::ReadOnly {
+            target: Target::unresolved(),
+        }
+    }
+
+    fn summary(&self, _args: &ToolArgs) -> Summary {
+        Summary::new("a tool that panics on a later poll")
+    }
+
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            context
+                .sandbox_audit()
+                .record(
+                    SandboxId::new(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
+                )
+                .unwrap();
+            let mut asked = false;
+            std::future::poll_fn(|cx| {
+                if asked {
+                    std::task::Poll::Ready(())
+                } else {
+                    asked = true;
+                    cx.waker().wake_by_ref();
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+            panic!("fixture panic on the poll after the first")
+        })
+    }
+}
+
+#[test]
+fn a_run_that_panics_on_a_later_poll_is_contained_as_one_that_panics_at_once() {
+    // A call that runs alone is awaited across polls, so it can come apart on
+    // any of them. One that does after waiting is answered exactly as one
+    // that comes apart on its first poll is: contained, with the fact its
+    // sandbox recorded before it came apart reported once.
+    let descriptor = ToolDescriptor::new(
+        "panicking-later",
+        "{}",
+        ToolProvenance::new(
+            ToolSourceKind::User,
+            "test:panicking-later",
+            "later panic audit test",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut tools = Tools::new();
+    tools.add(descriptor, Arc::new(PanickingLater)).unwrap();
+    let snapshot = tools.snapshot().unwrap();
+    let journal = KeepingJournal::default();
+    let (events, seen) = channel();
+    let keeping = Keeping(events);
+    let ancestry = Ancestry::new();
+    let cancel = Cancel::new();
+    let mut permission = Permission::new();
+    let mut ask = Says::new(Verdict::Allow);
+
+    let (results, went, _) = Work {
+        tools: &snapshot,
+        permission: &mut permission,
+        ask: &mut ask,
+        events: Reporter::new(ancestry, &keeping),
+        cancel: &cancel,
+        ancestry,
+        journal: &journal,
+        audits: &SandboxAuditRegistry::new(),
+        concurrency: 1,
+    }
+    .pass(
+        &[call("panicking-later-call", "panicking-later")],
+        0,
+        usize::MAX,
+    )
+    .awaited();
+
+    assert!(matches!(went, Went::On));
+    assert!(results.first().is_some_and(|result| {
+        result.output.is_failed() && result.output.text().contains("failure was contained")
+    }));
+    let events = seen.try_iter().collect::<Vec<_>>();
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                Event::Sandbox { call: audited, .. },
+                Event::ToolFinished {
+                    call: finished,
+                    receipt: Some(receipt),
+                    ..
+                }
+            ] if audited == finished
+                && audited.as_str() == "panicking-later-call"
+                && receipt.outcome() == ToolOutcome::Panicked
+        ),
+        "{events:#?}"
+    );
+    let held = journal.0.lock().unwrap();
+    assert_eq!(
+        held.iter()
+            .filter(|item| matches!(item, RunItem::Sandbox { .. }))
+            .count(),
+        1,
+        "{held:#?}"
+    );
+}
+
+#[test]
+fn a_panicking_tool_in_a_parallel_wave_cannot_erase_its_sandbox_facts() {
+    // The calls of a parallel wave each run on a scoped thread of their own,
+    // where a panic is contained apart from the one a call running alone
+    // meets. Each call is still answered as contained, and each still has
+    // the fact its sandbox recorded before it came apart reported once.
+    let descriptor = ToolDescriptor::new(
+        "panicking-audited",
+        "{}",
+        ToolProvenance::new(
+            ToolSourceKind::User,
+            "test:panicking-audited",
+            "panic audit test",
+        )
+        .unwrap(),
+    )
+    .unwrap()
+    .executing(ToolExecutionMode::Parallel);
+    let mut tools = Tools::new();
+    tools.add(descriptor, Arc::new(PanickingAudited)).unwrap();
+    let snapshot = tools.snapshot().unwrap();
+    let journal = KeepingJournal::default();
+    let (events, seen) = channel();
+    let keeping = Keeping(events);
+    let ancestry = Ancestry::new();
+    let cancel = Cancel::new();
+    let mut permission = Permission::new();
+    let mut ask = Says::new(Verdict::Allow);
+
+    let (results, went, _) = Work {
+        tools: &snapshot,
+        permission: &mut permission,
+        ask: &mut ask,
+        events: Reporter::new(ancestry, &keeping),
+        cancel: &cancel,
+        ancestry,
+        journal: &journal,
+        audits: &SandboxAuditRegistry::new(),
+        concurrency: 2,
+    }
+    .pass(
+        &[
+            call("panicking-a", "panicking-audited"),
+            call("panicking-b", "panicking-audited"),
+        ],
+        0,
+        usize::MAX,
+    )
+    .awaited();
+
+    assert!(matches!(went, Went::On));
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|result| {
+        result.output.is_failed() && result.output.text().contains("failure was contained")
+    }));
+    let events = seen.try_iter().collect::<Vec<_>>();
+    let mut audited: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Sandbox { call, .. } => Some(call.as_str()),
+            _ => None,
+        })
+        .collect();
+    audited.sort_unstable();
+    assert_eq!(audited, ["panicking-a", "panicking-b"], "{events:#?}");
+    let finished: Vec<(&str, Option<ToolOutcome>)> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::ToolFinished { call, receipt, .. } => Some((
+                call.as_str(),
+                receipt.as_ref().map(crucible_core::ToolReceipt::outcome),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        finished,
+        [
+            ("panicking-a", Some(ToolOutcome::Panicked)),
+            ("panicking-b", Some(ToolOutcome::Panicked)),
+        ]
+    );
+
+    let held = journal.0.lock().unwrap();
+    assert_eq!(
+        held.iter()
+            .filter(|item| matches!(item, RunItem::Sandbox { .. }))
+            .count(),
+        2,
         "{held:#?}"
     );
 }
@@ -315,7 +535,8 @@ fn detached_sandbox_facts_keep_the_original_call_until_the_next_runner_boundary(
         &[call("detached-audited-call", "detached-audited")],
         0,
         usize::MAX,
-    );
+    )
+    .awaited();
     assert!(matches!(went, Went::On));
     assert_eq!(results.len(), 1);
 

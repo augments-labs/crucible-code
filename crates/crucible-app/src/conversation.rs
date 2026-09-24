@@ -14,13 +14,28 @@
 //! show. The runner itself is handed out to be read and never to be changed,
 //! so the session it records into and the provider it is said to be asking
 //! cannot be moved from outside without the other half moving with them.
+//!
+//! **A turn is waited for on the thread that asks for it.** The runner's turn
+//! and compaction are asynchronous, and the front ends that ask for them are
+//! not yet: [`Conversation::turn`] and [`Conversation::compact`] each cross
+//! into the runner through [`Bridge::AppTurn`], which polls the whole turn on
+//! the calling thread, entered into the application's runtime, and never
+//! spawns it. Whatever the turn awaits therefore runs where it ran when the
+//! turn was synchronous, on the thread the front end took the turn on. The
+//! crossing waits under a cancel nothing raises: a stop is the turn's own to
+//! answer, through the cancel on its run, so it ends the way a stopped turn
+//! ends rather than as a future dropped at a step, which could leave a call
+//! recorded with no result. The runtime is the one the application owns,
+//! handed over by [`Conversation::on`]; a conversation never handed one
+//! refuses every turn and compaction with [`TurnError::Unwaited`].
 
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 
 use crucible_context::Room;
 use crucible_runner::{PromptCacheCleanup, RunContext, Runner, TurnError, Turned};
-use crucible_runtime::Cancel;
+use crucible_runtime::{Bridge, Cancel};
 use crucible_session::{FilePromptCacheResourceStore, Session, SessionError};
 use crucible_tools::{Ask, Mode};
 use crucible_types::{
@@ -28,6 +43,7 @@ use crucible_types::{
     Transcript,
 };
 use crucible_workspace::Workspace;
+use tokio::runtime::Handle;
 
 /// A runner, the session it records into, and the provider it is asking.
 #[derive(Debug)]
@@ -39,6 +55,9 @@ pub struct Conversation {
     /// session log, and the registry names it for `/model`, the settings file
     /// and the credential store, which is the name every switch is decided by.
     pub(crate) serving: Option<&'static str>,
+    /// The runtime a turn and a compaction are waited for on, or `None`
+    /// where none was handed over, which refuses them.
+    runtime: Option<Handle>,
 }
 
 impl Conversation {
@@ -61,6 +80,17 @@ impl Conversation {
             runner: build(Arc::clone(&session)),
             session,
             serving,
+            runtime: None,
+        }
+    }
+
+    /// The same conversation, waiting for its turns and compactions on
+    /// `runtime`, the application's own.
+    #[must_use]
+    pub fn on(self, runtime: Handle) -> Self {
+        Self {
+            runtime: Some(runtime),
+            ..self
         }
     }
 
@@ -75,8 +105,7 @@ impl Conversation {
             runner: self
                 .runner
                 .with_prompt_cache_store(FilePromptCacheResourceStore::in_home(home)),
-            session: self.session,
-            serving: self.serving,
+            ..self
         }
     }
 
@@ -112,6 +141,8 @@ impl Conversation {
 
     /// Makes room in the transcript by asking for a recap of it.
     ///
+    /// Waited for on the calling thread, as the module says.
+    ///
     /// # Errors
     ///
     /// [`TurnError`] where [`Runner::compact`] says, which also says what each
@@ -131,13 +162,17 @@ impl Conversation {
     /// recap leaves the pruning without the replacement, which comes after that
     /// line, and a refused line reporting what the recap freed leaves both.
     /// Whether the log kept a refused line is not known.
+    ///
+    /// [`TurnError::Unwaited`] where the compaction could not be waited for at
+    /// all: this conversation was handed no runtime, or the caller is on a
+    /// thread a runtime runs. Nothing was asked or recorded.
     pub fn compact(
         &mut self,
         why: Compacting,
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        self.runner.compact(why, run, spent)
+        waited(self.runtime.as_ref(), self.runner.compact(why, run, spent))
     }
 
     /// The persistent prompt-cache resources this conversation remembers
@@ -180,7 +215,8 @@ impl Conversation {
     /// model or refused before it is asked.
     ///
     /// Everything the turn reported on the way is on `run`; what comes back is
-    /// how it ended. A refusal is an answer too — [`Turned::Rejected`] and
+    /// how it ended. Waited for on the calling thread, as the module says. A
+    /// refusal is an answer too — [`Turned::Rejected`] and
     /// [`Turned::Undecided`] name the guardrail and its reason so that whoever
     /// typed the prompt can be told why nothing was said.
     ///
@@ -193,6 +229,10 @@ impl Conversation {
     /// line the session would not take between turns, still held, which ends
     /// the turn before anything of it is recorded or sent. A tool source's own
     /// step that would have had to wait comes back as that source's failure.
+    ///
+    /// [`TurnError::Unwaited`] where the turn could not be waited for at all:
+    /// this conversation was handed no runtime, or the caller is on a thread a
+    /// runtime runs. Nothing of the turn was asked or recorded.
     pub fn turn(
         &mut self,
         prompt: &str,
@@ -200,7 +240,10 @@ impl Conversation {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        self.runner.turn(prompt, attached, ask, run)
+        waited(
+            self.runtime.as_ref(),
+            self.runner.turn(prompt, attached, ask, run),
+        )
     }
 
     /// Starts a new session and records into it from here on, with nothing
@@ -250,4 +293,19 @@ impl Conversation {
         self.runner.pick_up(session, transcript);
         left
     }
+}
+
+/// Waits on the calling thread for `work`, a turn or a compaction, on
+/// `runtime`.
+///
+/// Under a cancel nothing raises, so the crossing never drops the work part
+/// way: a stop reaches the work through the cancel on its own run, and the
+/// work ends itself, as the module says.
+fn waited<T>(
+    runtime: Option<&Handle>,
+    work: impl Future<Output = Result<T, TurnError>>,
+) -> Result<T, TurnError> {
+    Bridge::AppTurn
+        .wait(runtime, &Cancel::new(), work)
+        .unwrap_or_else(|refused| Err(refused.into()))
 }

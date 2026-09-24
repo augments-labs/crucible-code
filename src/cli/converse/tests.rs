@@ -22,7 +22,7 @@ use std::sync::mpsc::channel;
 use crucible_tui::Key;
 
 use super::*;
-use crate::cli::fake::{Fixed, Script, Stalling, changing, running};
+use crate::cli::fake::{Fixed, Script, Stalling, changing, running, runtime};
 use crate::cli::sample::Sample;
 
 /// The opening a session starts with.
@@ -150,7 +150,7 @@ pub(crate) fn paired(
     session: Arc<Session>,
     build: impl FnOnce(Arc<Session>) -> Runner,
 ) -> Conversation {
-    Conversation::recording(session, Some("anthropic"), build)
+    Conversation::recording(session, Some("anthropic"), build).on(runtime())
 }
 
 /// A runner that answers from `script` and records into `session`.

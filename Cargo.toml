@@ -509,6 +509,10 @@ crucible-runtime = { workspace = true, features = ["proof"] }
 # builds no other package's dev-dependencies.
 crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 insta.workspace = true
+# The runtimes a test waits for a turn on now that a turn is asynchronous: a
+# current-thread one to drive a runner a test holds, and a multi-thread one
+# standing where the application's own runtime stands for a conversation.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 # The Linux benchmark probes run the shipped binary behind a controlling pseudo
 # terminal and render into a bounded kernel pipe, and the one test that runs

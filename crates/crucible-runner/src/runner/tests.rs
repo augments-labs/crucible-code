@@ -23,7 +23,7 @@ use crucible_runtime::BoxFuture;
 use sha2::{Digest as _, Sha256};
 
 use super::*;
-use crate::fake::{Fixed, Says, Script, Sent, Typing, changing};
+use crate::fake::{Awaited, Fixed, Says, Script, Sent, Typing, changing};
 use crate::outcome::RunStatus;
 use crate::policy::{Bounds, Retry};
 use crate::recording::{Kept, Recording};
@@ -98,6 +98,7 @@ mod reporting;
 mod spending;
 mod storage;
 mod unanswered;
+mod waiting;
 
 /// A destination that keeps the event and lets the attribution go.
 ///
@@ -309,6 +310,7 @@ impl Scripted {
 
         self.runner
             .compact(Compacting::Asked, &run, &mut Spend::default())
+            .awaited()
     }
 
     /// The same, for a prompt that named files.
@@ -323,6 +325,7 @@ impl Scripted {
 
         self.runner
             .turn(prompt, attachments, &mut self.says, &run)
+            .awaited()
             .map(ran)
     }
 
@@ -338,6 +341,7 @@ impl Scripted {
 
         self.runner
             .turn(prompt, Box::new([]), &mut self.says, &run)
+            .awaited()
             .map(ran)
     }
 
@@ -352,7 +356,9 @@ impl Scripted {
             .runner
             .starting(&self.events, &self.cancel, &self.steer, &self.aside);
 
-        self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
+        self.runner
+            .turn(prompt, Box::new([]), &mut self.says, &run)
+            .awaited()
     }
 
     /// The files each request went out without, one entry per request that
@@ -700,6 +706,7 @@ impl Steering {
 
         self.runner
             .turn(prompt, Box::new([]), &mut self.says, &run)
+            .awaited()
             .map(ran)
     }
 
@@ -1508,6 +1515,7 @@ fn tool_results_past_the_retained_boundary_end_the_turn() {
     let problem = scripted
         .runner
         .exchange(&mut scripted.says, &run)
+        .awaited()
         .unwrap_err();
 
     assert!(matches!(problem, TurnError::ToolOutputBytes { maximum: 8 }));

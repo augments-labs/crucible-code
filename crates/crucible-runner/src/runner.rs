@@ -8,12 +8,23 @@
 //! went wrong. The socket a provider closed while the tools ran is the usual
 //! reason, and it is safe to ask again for exactly the reason it is worth
 //! doing: nothing arrived, so nothing has been drawn that a second answer
-//! could contradict. One that would have had to wait is not asked again: it
-//! may have gone out.
+//! could contradict.
 //!
 //! Progress leaves through events, because the thread that draws is not this
 //! one. The outcome leaves through the return value, because the caller is
 //! what decides whether the session continues.
+//!
+//! A turn is asynchronous. It awaits the provider's stream and each read of
+//! it, the run of a call that runs alone, and the toolset's preparation and
+//! disposal, so a step that has to wait for its answer is waited for rather
+//! than refused. It spawns nothing and starts no runtime: whoever awaits it
+//! polls it, on that caller's own thread. It hands its [`Cancel`] to every
+//! step it awaits and looks at it between them, so a stop ends it as it
+//! always has, and how soon an awaited step heeds that stop is the step's own
+//! contract. The steps still reached through a bridge that asks once — a
+//! session write, a prompt-cache step, the toolset's listing and refreshing,
+//! a background result's acceptance and a run in a parallel wave — are
+//! refused where they would have had to wait.
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,
@@ -44,8 +55,6 @@ use crucible_core::{
 use crucible_context::ContextInputs;
 
 use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model};
-
-use crucible_runtime::{Bridge, Unready};
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -886,39 +895,38 @@ impl Runner {
     /// did not like what it found, both go back to the model as results it can
     /// work around.
     ///
-    /// [`TurnError::Unready`] where a step the turn took would have had to
-    /// wait and was dropped: a session write, a prompt-cache step, asking the
-    /// model, or preparing, listing, refreshing or disposing of the toolset.
-    /// What the dropped step began is unconfirmed rather than undone. A
-    /// message whose own line was refused may or may not be in the log, and is
-    /// left out of the transcript unless it holds the results of a pass's
-    /// calls, which stay with the calls they answer, still cleared of what
-    /// this run's vendor may not be sent. A changing cache step is recorded as
-    /// ambiguous, to be reconciled, and a request for the model's answer,
-    /// being prepared or made, has that answer recorded as far as it got, as a
-    /// failed one does. A request refused while it was being made may have
-    /// gone out all the same, so its prompt-cache attempt is held, reported
-    /// and logged as `Unknown`; one refused while its answer was read keeps
-    /// `Accepted`. A step of a compaction the turn made leaves what
+    /// [`TurnError::Unready`] where a step the turn crossed to rather than
+    /// awaited would have had to wait and was dropped: a session write, a
+    /// prompt-cache step, or listing or refreshing the toolset. What the
+    /// dropped step began is unconfirmed rather than undone. A message whose
+    /// own line was refused may or may not be in the log, and is left out of
+    /// the transcript unless it holds the results of a pass's calls, which
+    /// stay with the calls they answer, still cleared of what this run's
+    /// vendor may not be sent. A changing cache step is recorded as
+    /// ambiguous, to be reconciled, and a request for the model's answer being
+    /// prepared has that answer recorded as far as it got, as a failed one
+    /// does. A step of a compaction the turn made leaves what
     /// [`Runner::compact`] says it does. A line the session would not take
     /// between turns, still held, ends the turn the same way before anything
     /// of it is recorded or sent.
     ///
     /// Every step the turn crosses to that would have had to wait ends the
     /// turn on the refusal, even while the turn is being stopped, rather than
-    /// as a clean stop, with two exceptions. The turn's requests to the model,
-    /// its cache steps, its session lines and its toolset's steps all end it
-    /// so, and a compaction the turn makes ends on a refusal as
+    /// as a clean stop, with two exceptions. The turn's cache steps, its
+    /// session lines and its toolset's listing and refreshing all end it so,
+    /// and a compaction the turn makes ends on a refusal as
     /// [`Runner::compact`] says, taking the turn with it. The exceptions are a
-    /// call's run and a background result's acceptance, which never end the
-    /// turn on a refusal. A run that would have had to wait goes back to the
-    /// model as a failed result that says what the run began is unconfirmed,
-    /// and where the turn is being stopped the pass then ends on the stop at
-    /// that call; but where reporting the call's sandbox facts fails after the
-    /// run, that failure is what the model is told, as it is after any run,
-    /// and the pass does not end on the stop at that call. An acceptance that
-    /// would have had to wait leaves the command to the registry that owns its
-    /// cleanup.
+    /// call's run in a parallel wave and a background result's acceptance,
+    /// which never end the turn on a refusal. A run that would have had to
+    /// wait goes back to the model as a failed result that says what the run
+    /// began is unconfirmed, and where the turn is being stopped the pass then
+    /// ends on the stop at that call; but where reporting the call's sandbox
+    /// facts fails after the run, that failure is what the model is told, as
+    /// it is after any run, and the pass does not end on the stop at that
+    /// call. An acceptance that would have had to wait leaves the command to
+    /// the registry that owns its cleanup. A run in a wave of one call, the
+    /// provider's stream and the toolset's preparation and disposal are
+    /// awaited, and are never refused this way.
     ///
     /// A turn that had already failed, and whose line recording what it
     /// reached was refused, ends on [`TurnError::RecordUnready`], carrying the
@@ -937,20 +945,18 @@ impl Runner {
     /// [`ToolsetError::Source`], and either way what that step began is
     /// unconfirmed rather than undone. A cleanup step of the source's that
     /// would have had to wait after another failure is reported as that
-    /// failure, and named at most in its text. A disposal the turn itself
-    /// crossed to that would have had to wait after another failure is
-    /// [`TurnError::ToolsetCleanupUnready`].
+    /// failure, and named at most in its text.
     ///
     /// [`ToolsetError::Unready`]: crucible_core::ToolsetError::Unready
     /// [`ToolsetError::Source`]: crucible_core::ToolsetError::Source
-    pub fn turn(
+    pub async fn turn(
         &mut self,
         prompt: &str,
         attachments: Box<[Attachment]>,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        let turned = self.invoking(prompt, attachments, ask, run);
+        let turned = self.invoking(prompt, attachments, ask, run).await;
 
         // The invocation ends where the caller gets an answer it can act on,
         // and what the input checks made of these words ends with it. A
@@ -968,7 +974,7 @@ impl Runner {
     /// # Errors
     ///
     /// [`TurnError`], exactly as [`Runner::turn`] describes.
-    fn invoking(
+    async fn invoking(
         &mut self,
         prompt: &str,
         attachments: Box<[Attachment]>,
@@ -1052,7 +1058,7 @@ impl Runner {
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let turned = self.exchange(ask, run)?;
+        let turned = self.exchange(ask, run).await?;
         if let Some(stop) = turned.stop() {
             events.post(Event::TurnFinished {
                 turn: self.state.turn,
@@ -1213,7 +1219,11 @@ impl Runner {
     /// policy rather than printing megabytes to get there.
     ///
     /// The permission prompt stays outside it, because asking is `&mut`.
-    fn exchange(&mut self, ask: &mut dyn Ask, run: &RunContext<'_>) -> Result<Turned, TurnError> {
+    async fn exchange(
+        &mut self,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
         // Not held to the session here. [`Runner::turn`] does it, and is the
         // only caller that ships; a test reaching this directly is asking for
         // the run exactly as it wrote it. A second entry that reaches a
@@ -1222,10 +1232,11 @@ impl Runner {
 
         let toolsets = ToolsetContext::new(run.ancestry(), run.cancel().clone(), None)
             .with_sandbox_audits(self.sandbox_audits.clone());
-        let prepared = Bridge::TurnTools
-            .cross(self.toolset.prepare(&toolsets))
-            .map_err(TurnError::from)
-            .and_then(|prepared| prepared.map_err(TurnError::from));
+        let prepared = self
+            .toolset
+            .prepare(&toolsets)
+            .await
+            .map_err(TurnError::from);
         let prepared = combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()));
         let ran = match prepared {
             Ok(()) => {
@@ -1248,24 +1259,17 @@ impl Runner {
 
                 AgentLoop::new(self, run, ask, &toolsets)
                     .drive(&mut counting)
+                    .await
                     .map(|ending| ending.turned(run.run(), counting.spent))
             }
             Err(problem) => Err(problem),
         };
 
-        let finished = match (
-            ran,
-            Bridge::TurnTools.cross(self.toolset.dispose(&toolsets)),
-        ) {
-            (Ok(result), Ok(Ok(()))) => Ok(result),
-            (Ok(_), Ok(Err(cleanup))) => Err(TurnError::Toolset(cleanup)),
-            (Ok(_), Err(unready)) => Err(TurnError::Unready(unready)),
-            (Err(primary), Ok(Ok(()))) => Err(primary),
-            (Err(primary), Ok(Err(cleanup))) => Err(TurnError::ToolsetCleanup {
-                primary: Box::new(primary),
-                cleanup,
-            }),
-            (Err(primary), Err(cleanup)) => Err(TurnError::ToolsetCleanupUnready {
+        let finished = match (ran, self.toolset.dispose(&toolsets).await) {
+            (Ok(result), Ok(())) => Ok(result),
+            (Ok(_), Err(cleanup)) => Err(TurnError::Toolset(cleanup)),
+            (Err(primary), Ok(())) => Err(primary),
+            (Err(primary), Err(cleanup)) => Err(TurnError::ToolsetCleanup {
                 primary: Box::new(primary),
                 cleanup,
             }),
@@ -1285,14 +1289,14 @@ impl Runner {
     ///
     /// [`TurnError`] wherever [`Runner::compact`] fails, which says what each
     /// failure leaves.
-    fn made_room(
+    async fn made_room(
         &mut self,
         why: Compacting,
         run: &RunContext<'_>,
         fruitless: &mut u8,
         spent: &mut Spend,
     ) -> Result<After, TurnError> {
-        match self.compact(why, run, spent)? {
+        match self.compact(why, run, spent).await? {
             // Not counted against the goes this loop is allowed, because it was
             // not a go: nothing was replaced and nobody is going to ask again.
             Room::Stopped => return Ok(After::Stopped),
@@ -1361,7 +1365,7 @@ impl Runner {
     /// and leave the transcript holding the half that was taken back.
     ///
     /// [`ProviderError::transient`]: crucible_core::ProviderError::transient
-    fn listen(
+    async fn listen(
         &mut self,
         bounds: &TurnBounds,
         mut listening: Listening<'_>,
@@ -1376,7 +1380,7 @@ impl Runner {
                 listening.run.policy().bounds.response_bytes,
             );
 
-            let problem = match self.hearing(&mut answer, &mut listening) {
+            let problem = match self.hearing(&mut answer, &mut listening).await {
                 Ok(said) => return Ok((answer, said)),
                 Err(problem) => problem,
             };
@@ -1440,7 +1444,7 @@ impl Runner {
     /// Separate from [`Self::listen`] because what a failed response leaves in
     /// the transcript depends on whether it is going to be asked again, and that
     /// question is asked once rather than at each place the reading can fail.
-    fn hearing(
+    async fn hearing(
         &mut self,
         answer: &mut Answer,
         listening: &mut Listening<'_>,
@@ -1615,11 +1619,9 @@ impl Runner {
                 prompt_cache: Some(&cache),
                 ..request
             };
-            let crossed =
-                Bridge::TurnProvider.cross(self.provider.stream(request, listening.run.cancel()));
-            // Recorded and reported before a refusal ends the turn, since the
-            // request may have gone out all the same.
-            let disposition = crossed_disposition(&crossed);
+            let streamed = self.provider.stream(request, listening.run.cancel()).await;
+            // Recorded and reported before a failure ends the turn.
+            let disposition = request_disposition(&streamed);
             if let Some(attempt) = self
                 .state
                 .prompt_cache_attempt
@@ -1636,7 +1638,6 @@ impl Runner {
                     disposition,
                 }),
             );
-            let streamed = crossed?;
             (
                 streamed?,
                 CacheObservation {
@@ -1654,7 +1655,8 @@ impl Runner {
             )
         };
 
-        self.hear(stream.as_mut(), answer, listening, cache_observation)?;
+        self.hear(stream.as_mut(), answer, listening, cache_observation)
+            .await?;
         // EOF is itself a read. Cancellation can arrive during that read even
         // when the stream returns no final delta, so check the run's authority
         // again before making any native state or tool call replayable.
@@ -1698,7 +1700,7 @@ impl Runner {
     }
 
     /// Reads deltas into `answer` until the stream ends.
-    fn hear(
+    async fn hear(
         &mut self,
         stream: &mut dyn DeltaStream,
         answer: &mut Answer,
@@ -1714,7 +1716,7 @@ impl Runner {
         // that counts up as it goes come out the same.
         let before = counting.spent;
 
-        while let Some(delta) = Bridge::TurnProvider.cross(stream.next())? {
+        while let Some(delta) = stream.next().await {
             match delta? {
                 Delta::Text(text) => {
                     let bytes = text.len();
@@ -1893,20 +1895,6 @@ fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheReque
             | ProviderError::Protocol { .. },
         ) => PromptCacheRequestDisposition::Unknown,
     }
-}
-
-/// What a send is recorded as, from how crossing to it went.
-///
-/// One that answered is what `request_disposition` makes of the answer. One
-/// dropped because it would have had to wait may have gone out all the same,
-/// and nothing a provider's stream promises says otherwise, so it is
-/// unconfirmed rather than unsent.
-fn crossed_disposition<T>(
-    crossed: &Result<Result<T, ProviderError>, Unready>,
-) -> PromptCacheRequestDisposition {
-    crossed
-        .as_ref()
-        .map_or(PromptCacheRequestDisposition::Unknown, request_disposition)
 }
 
 fn unix_now() -> u64 {

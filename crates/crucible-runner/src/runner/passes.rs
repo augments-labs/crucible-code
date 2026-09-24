@@ -191,6 +191,19 @@ impl<'a> AgentLoop<'a> {
         Ok(Ending::Stopped(stop))
     }
 
+    /// Makes room for `why` against this run's totals, and says what the
+    /// turn may do next, as [`Runner::made_room`] does.
+    async fn room(
+        &mut self,
+        why: Compacting,
+        fruitless: &mut u8,
+        counting: &mut Counting,
+    ) -> Result<After, TurnError> {
+        self.runner
+            .made_room(why, self.run, fruitless, &mut counting.spent)
+            .await
+    }
+
     /// Takes passes until the turn ends, and says how it ended.
     ///
     /// The totals are the caller's, not this loop's. Every way out of here is
@@ -213,18 +226,18 @@ impl<'a> AgentLoop<'a> {
     /// as the source's failure where it was a tool source's own step.
     ///
     /// Every step the turn crosses to that would have had to wait ends it on
-    /// the refusal, even where a stop was asked for, except a call's run and a
-    /// background result's acceptance, which never end it on a refusal:
-    /// [`Runner::turn`] says what becomes of each. The turn's requests to the
-    /// model, its cache steps, its session lines and its toolset's steps all
-    /// end it so. The line recording the last answer, the part of an answer a
-    /// full window cut short, and the results of a pass are each written
-    /// before the ending they lead to is reached, so a refusal of one is what
-    /// the turn ends on. A compaction's steps end it as [`Runner::compact`]
+    /// the refusal, even where a stop was asked for, except a call's run in a
+    /// parallel wave and a background result's acceptance, which never end it
+    /// on a refusal: [`Runner::turn`] says what becomes of each. The turn's
+    /// cache steps, its session lines and its toolset's listing and
+    /// refreshing all end it so. The line recording the last answer, the part
+    /// of an answer a full window cut short, and the results of a pass are
+    /// each written before the ending they lead to is reached, so a refusal of
+    /// one is what the turn ends on. A compaction's steps end it as [`Runner::compact`]
     /// says. A pass that ended on a refused call or on the output boundary,
     /// and whose results line was refused, ends as
     /// [`TurnError::RecordUnready`] with both.
-    pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
+    pub(super) async fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
         let run = self.run;
         let events = run.reporting();
         let cancel = run.cancel();
@@ -309,12 +322,10 @@ impl<'a> AgentLoop<'a> {
                 events.post(Event::Carried {
                     left: counting.left(),
                 });
-                match self.runner.made_room(
-                    Compacting::Full,
-                    run,
-                    &mut fruitless,
-                    &mut counting.spent,
-                )? {
+                match self
+                    .room(Compacting::Full, &mut fruitless, counting)
+                    .await?
+                {
                     // Re-enter the boundary check against the reduced load.
                     // A prune that helped but did not help enough may still need
                     // the complete-active-pass recap before any request is safe.
@@ -335,24 +346,26 @@ impl<'a> AgentLoop<'a> {
                 .load
                 .requesting(self.runner.agent.instructions(), &advertised);
 
-            let heard = match self.runner.listen(
-                &bounds,
-                Listening {
-                    run,
-                    advertised: &advertised,
-                    generation: tools.generation(),
-                    counting,
-                },
-            ) {
+            let heard = match self
+                .runner
+                .listen(
+                    &bounds,
+                    Listening {
+                        run,
+                        advertised: &advertised,
+                        generation: tools.generation(),
+                        counting,
+                    },
+                )
+                .await
+            {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
                     if run.policy().compaction.automatic =>
                 {
-                    match self.runner.made_room(
-                        Compacting::Refused,
-                        run,
-                        &mut fruitless,
-                        &mut counting.spent,
-                    )? {
+                    match self
+                        .room(Compacting::Refused, &mut fruitless, counting)
+                        .await?
+                    {
                         After::Carry => continue,
                         After::Stopped => return Ok(Ending::Stopped(StopReason::Cancelled)),
                         After::Stuck => {
@@ -398,12 +411,10 @@ impl<'a> AgentLoop<'a> {
                 if !run.policy().compaction.automatic {
                     return Ok(Ending::Stopped(said));
                 }
-                match self.runner.made_room(
-                    Compacting::Refused,
-                    run,
-                    &mut fruitless,
-                    &mut counting.spent,
-                )? {
+                match self
+                    .room(Compacting::Refused, &mut fruitless, counting)
+                    .await?
+                {
                     After::Carry => continue,
                     After::Stuck => return Err(TurnError::NoRoom),
                     After::Stopped => return Ok(Ending::Stopped(StopReason::Cancelled)),
@@ -463,7 +474,8 @@ impl<'a> AgentLoop<'a> {
                 audits: &self.runner.sandbox_audits,
                 concurrency: run.policy().tools.maximum_concurrency(),
             }
-            .pass(&calls, bounds.tool_output, tool_output_maximum);
+            .pass(&calls, bounds.tool_output, tool_output_maximum)
+            .await;
 
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 

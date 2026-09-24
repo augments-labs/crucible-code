@@ -195,7 +195,9 @@ impl fmt::Debug for Startup<'_> {
 /// # Errors
 ///
 /// [`AppError`] where no provider, server or session could be set up as
-/// asked; nothing is written to the disk for a startup that fails.
+/// asked, and [`AppError::Unstarted`] where the runtime the conversation's
+/// turns are waited for on would not start; nothing is written to the disk
+/// for a startup that fails.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let Startup {
         settings,
@@ -235,6 +237,11 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // answers the same credential — a second, simpler lookup here would have
     // billed a plan session's searches to whatever key the shell carried.
     let reaching = web(startup, settings);
+
+    // Before the session, for the reason the provider is: the runtime every
+    // turn is waited for on is started here, the first thing in a run that
+    // asks for it, and a run whose runtime would not start writes no session.
+    let runtime = startup.services.runtime().handle()?;
 
     let (session, earlier) = match &startup.resuming {
         Resuming::Newest => {
@@ -298,7 +305,8 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
             }
             None => runner,
         }
-    });
+    })
+    .on(runtime);
 
     Ok(conversation)
 }

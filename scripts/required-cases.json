@@ -317,7 +317,7 @@
       },
       "case": "runner::work::tests::an_approved_effect_journals_one_stable_prepared_started_and_finished_invocation",
       "source": "crates/crucible-runner/src/runner/work/tests.rs",
-      "body_sha256": "b893e14edf62c5b238ec3253787ad72e37c178ceb4286a1c9fed56f5687815e1",
+      "body_sha256": "97f51d663b73fd57507bcaf51d1fb6b496be2568726ce087c1039a466d517e14",
       "platforms": [
         "linux",
         "macos",

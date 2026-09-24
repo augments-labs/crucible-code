@@ -259,6 +259,7 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert!(matches!(
             run.compact(Compacting::Asked, &context, &mut Spend::default())
+                .awaited()
                 .expect("valid fixture"),
             Room::Made(_)
         ));

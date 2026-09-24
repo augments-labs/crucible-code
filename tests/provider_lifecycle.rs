@@ -82,6 +82,7 @@ fn every_new_model_replays_two_tool_passes_after_restart_and_compaction() {
         assert!(
             matches!(
                 run.compact(Compacting::Asked, &context, &mut Spend::default())
+                    .awaited()
                     .unwrap(),
                 Room::Made(_)
             ),
@@ -342,6 +343,7 @@ fn cancelling_a_recap_at_eof_preserves_the_original_durable_history() {
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert_eq!(
             run.compact(Compacting::Asked, &context, &mut Spend::default())
+                .awaited()
                 .unwrap(),
             Room::Stopped,
             "{model}: cancelled recap committed"
@@ -383,6 +385,7 @@ fn a_late_recap_failure_never_replaces_the_original_session() {
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert!(
             run.compact(Compacting::Asked, &context, &mut Spend::default())
+                .awaited()
                 .is_err()
         );
         assert_eq!(run.transcript().messages(), before.messages());
@@ -506,6 +509,7 @@ fn pruning_native_tool_results_survives_restart_without_reexecution() {
         assert!(
             matches!(
                 run.compact(Compacting::Asked, &context, &mut Spend::default())
+                    .awaited()
                     .unwrap(),
                 Room::Made(_)
             ),

@@ -146,4 +146,9 @@ pub enum AppError {
     /// on had not stopped within their bound: a cleanup that failed.
     #[error(transparent)]
     Unstopped(#[from] crate::runtime::Unstopped),
+
+    /// The runtime a conversation waits for its turns on could not be
+    /// started, so no conversation was assembled.
+    #[error(transparent)]
+    Unstarted(#[from] crate::runtime::Unstarted),
 }

@@ -16,6 +16,36 @@ use crucible_core::{
 };
 use crucible_runtime::BoxFuture;
 
+/// Drives a future to its answer on a current-thread runtime of its own, the
+/// way a test takes a turn on a runner it holds.
+pub(crate) trait Awaited: std::future::Future + Sized {
+    /// The future's answer, once it has one.
+    fn awaited(self) -> Self::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a test runtime")
+            .block_on(self)
+    }
+}
+
+impl<F: std::future::Future> Awaited for F {}
+
+/// The runtime a test's conversations wait for their turns on, standing where
+/// the application's own would: built once for the whole test binary, with
+/// its workers driving whatever a turn waits on.
+pub(crate) fn runtime() -> tokio::runtime::Handle {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .build()
+                .expect("a test runtime")
+        })
+        .handle()
+        .clone()
+}
+
 /// How many requests a script has been given, readable after it has moved into
 /// a runner.
 pub(crate) type Asked = Arc<AtomicUsize>;

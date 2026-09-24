@@ -69,6 +69,7 @@ fn the_tool_output_boundary_is_one_budget_for_the_whole_turn() {
     let problem = scripted
         .runner
         .exchange(&mut scripted.says, &run)
+        .awaited()
         .unwrap_err();
 
     assert!(

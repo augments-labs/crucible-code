@@ -22,6 +22,20 @@ use crucible_runtime::BoxFuture;
 use crucible_session::Session;
 use serde_json::{Value, json};
 
+/// Drives a future to its answer on a current-thread runtime of its own, the
+/// way a test takes a turn on a runner it holds.
+pub(crate) trait Awaited: std::future::Future + Sized {
+    /// The future's answer, once it has one.
+    fn awaited(self) -> Self::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a test runtime")
+            .block_on(self)
+    }
+}
+
+impl<F: std::future::Future> Awaited for F {}
+
 pub(crate) const MODELS: [&str; 6] = [
     "gemini-3.8-flash",
     "gemini-3.7-flash",
@@ -194,6 +208,7 @@ pub(crate) fn try_turn(
     let aside = Aside::new();
     let context = run.starting(sample, &cancel, &steer, &aside);
     run.turn(prompt, Box::new([]), &mut Permit(sample), &context)
+        .awaited()
         .map(|turned| {
             turned
                 .result()

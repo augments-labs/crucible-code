@@ -61,19 +61,6 @@ pub enum TurnError {
         cleanup: ToolsetError,
     },
 
-    /// Something ended the turn, a failed toolset lifecycle among the
-    /// possibilities, and disposing of the toolset after it would have had to
-    /// wait, so that step was dropped before it answered: whether the toolset
-    /// was disposed of is unconfirmed.
-    #[error("{primary}; then disposing of the toolset: {cleanup}")]
-    ToolsetCleanupUnready {
-        /// The failure that ended the work.
-        primary: Box<TurnError>,
-        /// The cleanup the bridge refused rather than waited on, which must
-        /// not be lost either.
-        cleanup: crucible_runtime::Unready,
-    },
-
     /// A turn ended on `primary`, and a session write of what it had reached
     /// would have had to wait, so that write was dropped before it answered:
     /// whether the log holds it is unconfirmed.
@@ -137,19 +124,34 @@ pub enum TurnError {
     /// A step the loop took, a step a compaction between turns took, or a
     /// session write held from between turns, would have had to wait.
     ///
-    /// The loop reaches the provider, the tools, the prompt cache and the
-    /// session through a bridge that asks once, because the loop itself is not
-    /// asynchronous yet, and a compaction between turns reaches the provider,
-    /// the prompt cache and the session the same way. This is one of them
-    /// refusing rather than blocking, naming which it was. Picking a session
-    /// up and changing vendor write to the session between turns and hand
-    /// their caller nothing, so a write of theirs refused that way is held for
-    /// the turn or compaction that follows to report, before it records or
-    /// sends anything. The step was dropped unanswered, so its effect is
-    /// unconfirmed rather than undone: a refused session write may or may not
-    /// be in the log.
+    /// The loop awaits the provider, a call that runs alone and the toolset's
+    /// preparation and disposal, and reaches the rest — the prompt cache, the
+    /// session, the toolset's listing and refreshing, a background result's
+    /// acceptance and a run in a parallel wave — through a bridge that asks
+    /// once, because those steps are not awaited yet; a compaction between
+    /// turns reaches the prompt cache and the session the same way. This is
+    /// one of them refusing rather than blocking, naming which it was.
+    /// Picking a session up and changing vendor write to the session between
+    /// turns and hand their caller nothing, so a write of theirs refused that
+    /// way is held for the turn or compaction that follows to report, before
+    /// it records or sends anything. The step was dropped unanswered, so its
+    /// effect is unconfirmed rather than undone: a refused session write may
+    /// or may not be in the log.
     #[error(transparent)]
     Unready(#[from] crucible_runtime::Unready),
+
+    /// A synchronous caller's crossing into a turn or a compaction handed back
+    /// no answer.
+    ///
+    /// The runner never returns this. It is how a caller that waits for a turn
+    /// from synchronous code — the application, around each turn and each
+    /// compaction it is asked for — reports its crossing refusing. Refused for
+    /// having no runtime to wait on, or for being on a thread a runtime runs,
+    /// the turn was never asked anything; cancelled, it was dropped at a step
+    /// that had not answered, which the application's own crossing never is,
+    /// since nothing raises the cancel it waits under.
+    #[error(transparent)]
+    Unwaited(#[from] crucible_runtime::Unwaited),
 }
 
 /// Where a worker reports what happened.

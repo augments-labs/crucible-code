@@ -119,6 +119,7 @@ fn a_run_asking_for_more_than_the_session_allows_is_still_held_to_it() {
     let problem = scripted
         .runner
         .turn("go", Box::new([]), &mut scripted.says, &asking)
+        .awaited()
         .expect_err("a turn over the session's ceiling");
 
     assert!(
