@@ -23,6 +23,8 @@ mod catalogue;
 mod hosted;
 mod hosting;
 mod talking;
+#[cfg(test)]
+mod testing;
 mod wire;
 mod withheld;
 

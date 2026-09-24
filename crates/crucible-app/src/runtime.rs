@@ -26,9 +26,12 @@
 //! future a caller waits on unwoken by the timer it waits for. The workers of
 //! a multi-thread runtime run those drivers themselves, whoever is waiting.
 //!
-//! **A timer and no I/O driver.** Nothing puts a socket on this runtime yet,
-//! so it is built with the timer alone. Its drivers are fixed when it is built,
-//! and a Tokio socket opened in work on it panics, saying I/O is disabled.
+//! **A timer and an I/O driver.** The timer is what every timed wait on this
+//! runtime is measured against. The I/O driver is what a hosted program's
+//! pipes are waited on through: the tasks that read and write them run here,
+//! and on Unix the local backend registers each pipe with the driver of the
+//! runtime polling it. Its drivers are fixed when it is built, and one built
+//! without I/O would fail the first of those tasks, saying I/O is disabled.
 //!
 //! **Bounded threads.** [`WORKERS`] threads poll the tasks spawned onto the
 //! runtime, and at most [`BLOCKING`] more run blocking work handed to it; both
@@ -190,7 +193,8 @@ impl Drop for RuntimeOwner {
     }
 }
 
-/// The runtime, with its thread counts, its timer and its threads counted.
+/// The runtime, with its thread counts, its timer, its I/O driver and its
+/// threads counted.
 fn build() -> Result<Built, Unstarted> {
     let running = Arc::new(AtomicUsize::new(0));
     let started = Arc::clone(&running);
@@ -205,6 +209,7 @@ fn build() -> Result<Built, Unstarted> {
         .on_thread_stop(move || {
             stopped.fetch_sub(1, Ordering::AcqRel);
         })
+        .enable_io()
         .enable_time()
         .build()
         .map_err(Unstarted)?;

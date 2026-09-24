@@ -277,7 +277,8 @@ fn a_process_crucible_cannot_answer_is_refused_and_stopped() {
     let (mut process, watched) = Fake::new([], Ending::Stubborn);
     process.speaks = false;
 
-    let refused = Hosted::<()>::over(process, PATIENCE).expect_err("no input, no conversation");
+    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime())
+        .expect_err("no input, no conversation");
 
     assert!(matches!(refused, Unstarted::Unspeakable));
     assert_eq!(
@@ -292,7 +293,8 @@ fn a_process_crucible_cannot_hear_is_refused_and_stopped() {
     let (mut process, watched) = Fake::new([], Ending::Stubborn);
     process.stdout = None;
 
-    let refused = Hosted::<()>::over(process, PATIENCE).expect_err("no output, nothing to host");
+    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime())
+        .expect_err("no output, nothing to host");
 
     assert!(matches!(refused, Unstarted::Unheard));
     assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
@@ -310,7 +312,8 @@ fn what_the_extension_says_arrives_as_a_turn() {
         )],
         Ending::Exited,
     );
-    let mut hosted = Hosted::<()>::over(process, PATIENCE).expect("hosted");
+    let mut hosted =
+        Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
 
     let turn = hosted.turn().expect("a turn");
 
@@ -326,7 +329,8 @@ fn what_the_extension_says_arrives_as_a_turn() {
 #[test]
 fn what_crucible_asks_reaches_the_process() {
     let (process, watched) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted = Hosted::<&str>::over(process, PATIENCE).expect("hosted");
+    let mut hosted =
+        Hosted::<&str>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
 
     hosted
         .ask("tools/list", json!({}), "why crucible asked")
@@ -343,7 +347,8 @@ fn what_crucible_asks_reaches_the_process() {
 #[test]
 fn stopping_closes_the_input_first_and_reports_a_quiet_ending() {
     let (process, watched) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted = Hosted::<&str>::over(process, PATIENCE).expect("hosted");
+    let mut hosted =
+        Hosted::<&str>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
     hosted
         .ask("tools/list", json!({}), "unanswered")
         .expect("asked");
@@ -380,7 +385,7 @@ fn stopping_closes_the_input_first_and_reports_a_quiet_ending() {
 #[test]
 fn a_process_that_will_not_finish_is_stopped() {
     let (process, watched) = Fake::new([Step::Waits], Ending::Stubborn);
-    let hosted = Hosted::<()>::over(process, PATIENCE).expect("hosted");
+    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
 
     let ended = hosted.stop(Duration::from_millis(20));
 
@@ -395,7 +400,7 @@ fn a_process_that_will_not_finish_is_stopped() {
 #[test]
 fn a_scope_that_cannot_be_reaped_says_so() {
     let (process, _) = Fake::new([Step::Waits], Ending::Unreapable);
-    let hosted = Hosted::<()>::over(process, PATIENCE).expect("hosted");
+    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
 
     let ended = hosted.stop(Duration::from_millis(20));
 
@@ -410,7 +415,12 @@ fn a_scope_that_cannot_be_reaped_says_so() {
 #[test]
 fn a_silent_extension_ends_the_conversation_rather_than_waiting_forever() {
     let (process, _) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted = Hosted::<()>::over(process, Duration::from_millis(20)).expect("hosted");
+    let mut hosted = Hosted::<()>::over(
+        process,
+        Duration::from_millis(20),
+        &crate::testing::runtime(),
+    )
+    .expect("hosted");
 
     let over = hosted.turn().expect_err("nothing is coming");
 
@@ -428,7 +438,7 @@ fn what_the_extension_complains_about_is_drained_and_kept() {
             .into_iter()
             .collect(),
     ));
-    let hosted = Hosted::<()>::over(process, PATIENCE).expect("hosted");
+    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
 
     assert!(
         until(|| hosted.muttered().text().contains("libfoo.so")),
@@ -445,7 +455,8 @@ fn a_call_the_extension_makes_is_answered_on_the_wire() {
         )],
         Ending::Exited,
     );
-    let mut hosted = Hosted::<()>::over(process, PATIENCE).expect("hosted");
+    let mut hosted =
+        Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
 
     let Turn::Asked { id, method, .. } = hosted.turn().expect("a turn") else {
         panic!("a request is something to answer");
@@ -468,7 +479,8 @@ fn a_call_the_extension_makes_is_answered_on_the_wire() {
 #[test]
 fn a_call_the_host_gave_up_on_is_not_owed_again_at_the_end() {
     let (process, _) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted = Hosted::<&str>::over(process, PATIENCE).expect("hosted");
+    let mut hosted =
+        Hosted::<&str>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
     let kept = hosted
         .ask("tools/list", json!({}), "still wanted")
         .expect("asked");
@@ -500,7 +512,7 @@ fn an_extension_the_sandbox_stopped_says_what_it_was_stopped_for() {
         Ending::Stubborn,
         SandboxViolation::CommandTime,
     );
-    let hosted = Hosted::<()>::over(process, PATIENCE).expect("hosted");
+    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
 
     let ended = hosted.stop(Duration::from_millis(20));
 
@@ -516,7 +528,7 @@ fn an_extension_the_sandbox_stopped_says_what_it_was_stopped_for() {
 fn missing_input_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.speaks = false;
-    let refused = Hosted::<()>::over(process, PATIENCE).unwrap_err();
+    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("input"), "{message}");
     assert!(
@@ -546,7 +558,7 @@ fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
     // say it a second time.
     let (mut process, watched) = Fake::new([], Ending::Unanswering);
     process.speaks = false;
-    let refused = Hosted::<()>::over(process, PATIENCE).unwrap_err();
+    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
     assert_eq!(
         refused.to_string(),
         "the extension was started without crucible keeping its input, so there is \
@@ -569,7 +581,7 @@ fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
 fn missing_output_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.stdout = None;
-    let refused = Hosted::<()>::over(process, PATIENCE).unwrap_err();
+    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("output"), "{message}");
     assert!(

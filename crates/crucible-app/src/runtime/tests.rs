@@ -1,5 +1,7 @@
 //! How the runtime is shut down, and what it says when that runs out of time.
 
+#[cfg(unix)]
+use std::io;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -60,4 +62,53 @@ fn a_shutdown_that_runs_out_of_time_is_reported_as_failed_cleanup() {
                 .to_owned()
         )
     );
+}
+
+/// A hosted program's pipes are read and written by tasks on this runtime, and
+/// on Unix a pipe is waited on through the runtime's I/O driver. A runtime
+/// built without one fails the first task that waits on a pipe, so the program
+/// on the other end would never be heard; this is that wait, made the way the
+/// local backend makes it, in work owned on the runtime.
+#[cfg(unix)]
+#[test]
+fn a_pipe_waited_on_in_owned_work_makes_progress() {
+    let owner = RuntimeOwner::new();
+    let runtime = owner.handle().unwrap();
+    let (answer, answered) = mpsc::channel();
+    let work = runtime.spawn(async move {
+        let _ = answer.send(through_a_pipe().await.map_err(|failed| failed.to_string()));
+    });
+
+    let heard = answered.recv_timeout(Duration::from_secs(5));
+
+    assert_eq!(
+        heard,
+        Ok(Ok(*b"x")),
+        "a byte written into a pipe by owned work on the runtime has to be read back out of it"
+    );
+    drop(work);
+    assert_eq!(owner.shutdown(), Ok(()));
+}
+
+/// Writes one byte into a pipe and reads it back, waiting on each end.
+#[cfg(unix)]
+async fn through_a_pipe() -> io::Result<[u8; 1]> {
+    let (sender, receiver) = tokio::net::unix::pipe::pipe()?;
+    loop {
+        sender.writable().await?;
+        match sender.try_write(b"x") {
+            Ok(_) => break,
+            Err(problem) if problem.kind() == io::ErrorKind::WouldBlock => {}
+            Err(problem) => return Err(problem),
+        }
+    }
+    let mut byte = [0_u8; 1];
+    loop {
+        receiver.readable().await?;
+        match receiver.try_read(&mut byte) {
+            Ok(_) => return Ok(byte),
+            Err(problem) if problem.kind() == io::ErrorKind::WouldBlock => {}
+            Err(problem) => return Err(problem),
+        }
+    }
 }

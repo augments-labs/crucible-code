@@ -7,20 +7,21 @@
 //! host that leaves standard error alone is a host that hangs on a program
 //! for being talkative.
 //!
-//! So it is drained, on a thread, and thrown away except for the beginning. The
-//! beginning rather than the end because the question this answers is why a
-//! program stopped, and the first thing that went wrong says that; what
-//! follows is usually the same thing again with the process falling over on top
-//! of it. How much was dropped is kept too, because a bound nobody is told
-//! about reads as a program that went quiet.
+//! So it is drained, by a task on the runtime the host hands over, and thrown
+//! away except for the beginning. The beginning rather than the end because
+//! the question this answers is why a program stopped, and the first thing
+//! that went wrong says that; what follows is usually the same thing again
+//! with the process falling over on top of it. How much was dropped is kept
+//! too, because a bound nobody is told about reads as a program that went
+//! quiet.
 
 use std::fmt::{self, Write as _};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
 use crucible_sandbox::{SandboxOutput, SandboxRead};
+use tokio::runtime::Handle;
+
+use crate::owned::{Owned, PAUSE};
 
 /// How much of one program's complaint is kept.
 ///
@@ -29,9 +30,6 @@ use crucible_sandbox::{SandboxOutput, SandboxRead};
 /// channel: a program with something to say to crucible has a protocol for
 /// saying it.
 const KEPT: usize = 8 * 1024;
-
-/// How long the drain sleeps between asking a quiet stream again.
-const PAUSE: Duration = Duration::from_millis(5);
 
 /// How much of one read is taken at a time.
 const CHUNK: usize = 4 * 1024;
@@ -49,18 +47,27 @@ struct Kept {
 pub struct Muttered {
     /// What has been kept so far.
     kept: Arc<Mutex<Kept>>,
-    /// Whether the drain should stop at its next look.
-    done: Arc<AtomicBool>,
+    /// The drain, which ends when this is dropped; none for a stream that was
+    /// never there.
+    _draining: Option<Owned>,
 }
 
 impl Muttered {
-    /// Starts draining `output` and keeps the beginning of what it says.
+    /// Starts draining `output` on `on`, and keeps the beginning of what it
+    /// says.
     ///
-    /// The thread lives until the stream ends, until it fails, or until this
-    /// value is dropped, whichever comes first.
+    /// The drain is a task that lives until the stream ends, until it fails,
+    /// or until this value is dropped, whichever comes first. A stream that
+    /// never pauses does not hold a worker for itself: the drain gives the
+    /// runtime its turn back as any task does once it has run for a while.
     #[must_use]
-    pub fn draining<O: SandboxOutput + 'static>(output: O) -> Self {
-        Self::with_pause(output, PAUSE)
+    pub fn draining<O: SandboxOutput + 'static>(output: O, on: &Handle) -> Self {
+        let kept = Arc::new(Mutex::new(Kept::default()));
+        let draining = Owned::spawn(on, drain(output, Arc::clone(&kept)));
+        Self {
+            kept,
+            _draining: Some(draining),
+        }
     }
 
     /// A standard error that will never say anything.
@@ -68,49 +75,14 @@ impl Muttered {
     /// For a process the sandbox gave no such stream. Nothing in this
     /// repository's own backends does that, and a host carrying an `Option`
     /// through every use of this would be spelling out that possibility
-    /// everywhere in exchange for nothing. No thread, because there is no
+    /// everywhere in exchange for nothing. No task, because there is no
     /// stream for one to read.
     #[must_use]
     pub fn silent() -> Self {
         Self {
             kept: Arc::new(Mutex::new(Kept::default())),
-            done: Arc::new(AtomicBool::new(true)),
+            _draining: None,
         }
-    }
-
-    /// The same, with the pause between polls chosen rather than inherited.
-    pub(crate) fn with_pause<O: SandboxOutput + 'static>(mut output: O, pause: Duration) -> Self {
-        let kept = Arc::new(Mutex::new(Kept::default()));
-        let done = Arc::new(AtomicBool::new(false));
-        let writing = Arc::clone(&kept);
-        let stopping = Arc::clone(&done);
-        thread::spawn(move || {
-            let mut buffer = [0_u8; CHUNK];
-            while !stopping.load(Ordering::Relaxed) {
-                match output.read_ready(&mut buffer) {
-                    // Nothing yet, and nothing to wait for on this stream in
-                    // particular: it is drained so that it cannot fill, not
-                    // because anybody is expecting a word on it.
-                    Ok(SandboxRead::Bytes(0) | SandboxRead::Pending) => thread::sleep(pause),
-                    Ok(SandboxRead::Bytes(count)) => keep(&writing, buffer.get(..count)),
-                    // Bytes the sandbox itself dropped are dropped bytes here
-                    // too, and the count is the whole of what they mean.
-                    Ok(SandboxRead::Limited {
-                        retained,
-                        discarded,
-                    }) => {
-                        keep(&writing, buffer.get(..retained));
-                        if let Ok(mut held) = writing.lock() {
-                            held.dropped = held.dropped.saturating_add(discarded);
-                        }
-                    }
-                    // An ending or a broken stream is the same instruction:
-                    // there is nothing further to read and nobody to tell.
-                    Ok(SandboxRead::End) | Err(_) => break,
-                }
-            }
-        });
-        Self { kept, done }
     }
 
     /// What the program said, as text, saying so where it was cut short.
@@ -154,14 +126,35 @@ impl fmt::Debug for Muttered {
     }
 }
 
-impl Drop for Muttered {
-    /// Tells the drain to stop, without waiting for it to notice.
-    ///
-    /// Joining would mean waiting out one pause on every program that ends,
-    /// and the thread holds nothing anybody else is about to want: the stream
-    /// closes when it lets go of it, which is the only thing left to happen.
-    fn drop(&mut self) {
-        self.done.store(true, Ordering::Relaxed);
+/// Reads `output` until it ends or fails, keeping what the bound allows.
+async fn drain<O: SandboxOutput>(mut output: O, kept: Arc<Mutex<Kept>>) {
+    let mut buffer = vec![0_u8; CHUNK];
+    loop {
+        match output.read(&mut buffer).await {
+            // Nothing yet, and nothing to wait for on this stream in
+            // particular: it is drained so that it cannot fill, not because
+            // anybody is expecting a word on it.
+            Ok(SandboxRead::Bytes(0) | SandboxRead::Pending) => tokio::time::sleep(PAUSE).await,
+            Ok(SandboxRead::Bytes(count)) => keep(&kept, buffer.get(..count)),
+            // Bytes the sandbox itself dropped are dropped bytes here too, and
+            // the count is the whole of what they mean.
+            Ok(SandboxRead::Limited {
+                retained,
+                discarded,
+            }) => {
+                keep(&kept, buffer.get(..retained));
+                if let Ok(mut held) = kept.lock() {
+                    held.dropped = held.dropped.saturating_add(discarded);
+                }
+            }
+            // An ending or a broken stream is the same instruction: there is
+            // nothing further to read and nobody to tell.
+            Ok(SandboxRead::End) | Err(_) => return,
+        }
+        // A stream that always has more would otherwise be read for as long
+        // as it kept talking without the task ever reaching a wait, and an
+        // abort only lands at one.
+        tokio::task::consume_budget().await;
     }
 }
 

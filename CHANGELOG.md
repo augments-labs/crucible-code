@@ -120,6 +120,16 @@ change in any release with no deprecation period.
   told to stop and its answer discarded. A lone tool call still waiting when
   its deadline passes is now answered as timed out there, rather than once
   its run returns.
+- **A hosted program's pipes are read and written by tasks the conversation
+  owns, and can be awaited.** `crucible-transport`'s `Pipes::taken`,
+  `Heard::new`, `Said::new` and `Muttered::draining`, and the MCP and extension
+  hosts built on them, take the Tokio runtime handle their reader, writer and
+  standard-error drain run on as tasks that end when the value holding them is
+  dropped, and `Heard` and `Said` are also `AsyncBufRead` and `AsyncWrite` over
+  those same tasks. The application's runtime gains an I/O driver, and the
+  default `SandboxProcess::take_async_stdin` now writes on the runtime's
+  blocking threads rather than the thread polling it; what a server is sent
+  and answers with is unchanged.
 
 ### Fixed
 
