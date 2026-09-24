@@ -4,20 +4,28 @@ use serde_json::{Value, json};
 
 use super::CROWDED;
 use super::{Broken, Conversation, Next};
+use crate::calls::{Call, Generation};
 use crate::{CallError, CallId, EXTENSION_CALLS, EXTENSION_SAID_BYTES, Outcome, Spoken};
 
-/// Fills the extension's side to the ceiling, and hands back the identifiers.
-fn crowded(talk: &mut Conversation<&'static str>) -> Vec<CallId> {
+/// Call `number` of generation 0, which every conversation here is unless it
+/// says otherwise.
+const fn first(number: u64) -> Call {
+    Call::new(Generation::numbered(0), CallId::new(number))
+}
+
+/// Fills the extension's side to the ceiling, and hands back the calls.
+fn crowded(talk: &mut Conversation<&'static str>) -> Vec<Call> {
     let ceiling = u64::try_from(EXTENSION_CALLS).expect("the ceiling fits");
     (0..ceiling)
-        .map(|number| {
-            let id = CallId::new(number);
-            match talk.heard(asks(id, "read")) {
-                Next::Asked { id: taken, .. } => assert_eq!(taken, id),
+        .map(
+            |number| match talk.heard(asks(CallId::new(number), "read")) {
+                Next::Asked { id: taken, .. } => {
+                    assert_eq!(taken, first(number));
+                    taken
+                }
                 other => panic!("a call below the ceiling was not taken on: {other:?}"),
-            }
-            id
-        })
+            },
+        )
         .collect()
 }
 
@@ -34,10 +42,11 @@ fn asks(id: CallId, method: &str) -> Spoken {
 /// it, so the host does not have to keep a second table of its own.
 #[test]
 fn an_answer_carries_back_what_was_waiting_on_it() {
-    let mut talk = Conversation::new();
-    let (id, sent) = talk
+    let mut talk = Conversation::new(Generation::numbered(0));
+    let (call, sent) = talk
         .ask("search", json!({ "for": "kettle" }), "the search")
         .expect("a call");
+    let id = call.id();
     let Spoken::Request { method, params, .. } = sent else {
         panic!("asking must produce a request");
     };
@@ -61,7 +70,7 @@ fn an_answer_carries_back_what_was_waiting_on_it() {
 /// meant.
 #[test]
 fn an_answer_to_a_call_crucible_never_made_ends_the_conversation() {
-    let mut talk: Conversation<&str> = Conversation::new();
+    let mut talk: Conversation<&str> = Conversation::new(Generation::numbered(0));
     let invented = CallId::new(9);
 
     assert_eq!(
@@ -77,10 +86,11 @@ fn an_answer_to_a_call_crucible_never_made_ends_the_conversation() {
 /// unplaceable one: the far end thinks a call is open that crucible has closed.
 #[test]
 fn answering_one_call_twice_ends_the_conversation() {
-    let mut talk = Conversation::new();
-    let (id, _) = talk
+    let mut talk = Conversation::new(Generation::numbered(0));
+    let (call, _) = talk
         .ask("search", Value::Null, "the search")
         .expect("a call");
+    let id = call.id();
     let answer = || Spoken::Answer {
         id,
         outcome: Outcome::Worked(Value::Null),
@@ -94,7 +104,7 @@ fn answering_one_call_twice_ends_the_conversation() {
 /// identifier it owes an answer under.
 #[test]
 fn a_request_from_the_extension_is_taken_on() {
-    let mut talk: Conversation<&str> = Conversation::new();
+    let mut talk: Conversation<&str> = Conversation::new(Generation::numbered(0));
     let id = CallId::new(4);
 
     assert_eq!(
@@ -104,7 +114,7 @@ fn a_request_from_the_extension_is_taken_on() {
             params: json!({ "path": "notes" }),
         }),
         Next::Asked {
-            id,
+            id: first(4),
             method: "read".into(),
             params: json!({ "path": "notes" }),
         }
@@ -116,7 +126,7 @@ fn a_request_from_the_extension_is_taken_on() {
 /// extension already has open under it.
 #[test]
 fn a_second_call_under_a_live_identifier_ends_the_conversation() {
-    let mut talk: Conversation<&str> = Conversation::new();
+    let mut talk: Conversation<&str> = Conversation::new(Generation::numbered(0));
     let id = CallId::new(4);
     assert!(matches!(talk.heard(asks(id, "read")), Next::Asked { .. }));
 
@@ -131,7 +141,7 @@ fn a_second_call_under_a_live_identifier_ends_the_conversation() {
 /// about what is in flight.
 #[test]
 fn asking_past_the_ceiling_is_refused_and_the_conversation_goes_on() {
-    let mut talk = Conversation::new();
+    let mut talk = Conversation::new(Generation::numbered(0));
     let open = crowded(&mut talk);
     let over = CallId::new(u64::try_from(EXTENSION_CALLS).expect("the ceiling fits"));
 
@@ -162,7 +172,7 @@ fn asking_past_the_ceiling_is_refused_and_the_conversation_goes_on() {
 /// again without the conversation treating it as a second live call.
 #[test]
 fn a_refused_call_leaves_its_identifier_free() {
-    let mut talk = Conversation::new();
+    let mut talk = Conversation::new(Generation::numbered(0));
     let open = crowded(&mut talk);
     let over = CallId::new(u64::try_from(EXTENSION_CALLS).expect("the ceiling fits"));
     assert!(matches!(talk.heard(asks(over, "read")), Next::Refuse(_)));
@@ -180,7 +190,7 @@ fn a_refused_call_leaves_its_identifier_free() {
 /// Something said that expects nothing back needs no table and gets no answer.
 #[test]
 fn what_expects_nothing_back_is_passed_straight_through() {
-    let mut talk: Conversation<&str> = Conversation::new();
+    let mut talk: Conversation<&str> = Conversation::new(Generation::numbered(0));
 
     assert_eq!(
         talk.heard(Spoken::Told {
@@ -198,19 +208,19 @@ fn what_expects_nothing_back_is_passed_straight_through() {
 /// the call, so answering it a second time is refused rather than sent twice.
 #[test]
 fn a_call_the_extension_made_can_only_be_answered_once() {
-    let mut talk: Conversation<&str> = Conversation::new();
+    let mut talk: Conversation<&str> = Conversation::new(Generation::numbered(0));
     let id = CallId::new(2);
     assert!(matches!(talk.heard(asks(id, "read")), Next::Asked { .. }));
 
     assert_eq!(
-        talk.answer(id, Outcome::Worked(json!("notes"))),
+        talk.answer(first(2), Outcome::Worked(json!("notes"))),
         Ok(Spoken::Answer {
             id,
             outcome: Outcome::Worked(json!("notes")),
         })
     );
     assert_eq!(
-        talk.answer(id, Outcome::Worked(json!("notes"))),
+        talk.answer(first(2), Outcome::Worked(json!("notes"))),
         Err(CallError::Unknown { id })
     );
 }
@@ -219,11 +229,11 @@ fn a_call_the_extension_made_can_only_be_answered_once() {
 /// cannot put a frame on the wire that settles nothing.
 #[test]
 fn answering_a_call_the_extension_never_made_is_refused() {
-    let mut talk: Conversation<&str> = Conversation::new();
+    let mut talk: Conversation<&str> = Conversation::new(Generation::numbered(0));
     let invented = CallId::new(5);
 
     assert_eq!(
-        talk.answer(invented, Outcome::Worked(Value::Null)),
+        talk.answer(first(5), Outcome::Worked(Value::Null)),
         Err(CallError::Unknown { id: invented })
     );
 }
@@ -232,12 +242,12 @@ fn answering_a_call_the_extension_never_made_is_refused() {
 /// the host can fail each one. Nothing else is ever going to answer them.
 #[test]
 fn ending_hands_back_everything_crucible_was_waiting_on() {
-    let mut talk = Conversation::new();
-    let (first, _) = talk.ask("one", Value::Null, "the first").expect("a call");
+    let mut talk = Conversation::new(Generation::numbered(0));
+    let (answered, _) = talk.ask("one", Value::Null, "the first").expect("a call");
     talk.ask("two", Value::Null, "the second").expect("a call");
     assert!(matches!(
         talk.heard(Spoken::Answer {
-            id: first,
+            id: answered.id(),
             outcome: Outcome::Worked(Value::Null),
         }),
         Next::Answer { .. }
@@ -287,7 +297,7 @@ fn crucibles_own_refusal_is_something_a_frame_can_carry() {
 /// host started.
 #[test]
 fn an_answer_to_a_call_crucible_gave_up_on_does_not_break_the_conversation() {
-    let mut talk = Conversation::new();
+    let mut talk = Conversation::new(Generation::numbered(0));
     let (id, _) = talk
         .ask("search", Value::Null, "the search")
         .expect("a call");
@@ -295,10 +305,10 @@ fn an_answer_to_a_call_crucible_gave_up_on_does_not_break_the_conversation() {
     assert_eq!(talk.give_up(id), Ok("the search"));
     assert_eq!(
         talk.heard(Spoken::Answer {
-            id,
+            id: id.id(),
             outcome: Outcome::Worked(json!({ "found": 3 })),
         }),
-        Next::Late { id }
+        Next::Late { id: id.id() }
     );
 }
 
@@ -306,7 +316,7 @@ fn an_answer_to_a_call_crucible_gave_up_on_does_not_break_the_conversation() {
 /// answer for. One call owes one final answer.
 #[test]
 fn a_call_crucible_gave_up_on_is_not_handed_back_again_at_the_end() {
-    let mut talk = Conversation::new();
+    let mut talk = Conversation::new(Generation::numbered(0));
     let (given_up, _) = talk.ask("search", Value::Null, "gone").expect("a call");
     let (waiting, _) = talk.ask("read", Value::Null, "kept").expect("another call");
     talk.give_up(given_up).expect("giving up on the first");
@@ -317,11 +327,69 @@ fn a_call_crucible_gave_up_on_is_not_handed_back_again_at_the_end() {
 /// Giving up twice would produce a second final answer for one call.
 #[test]
 fn a_call_can_only_be_given_up_on_once() {
-    let mut talk = Conversation::new();
+    let mut talk = Conversation::new(Generation::numbered(0));
     let (id, _) = talk
         .ask("search", Value::Null, "the search")
         .expect("a call");
     talk.give_up(id).expect("giving up on it");
 
-    assert_eq!(talk.give_up(id), Err(CallError::Unknown { id }));
+    assert_eq!(talk.give_up(id), Err(CallError::Unknown { id: id.id() }));
+}
+
+/// A call handed out by an earlier generation is refused by the one there now,
+/// even where the new one has a call open under the same number: the answer was
+/// composed for the process that asked, not for whichever took its place.
+#[test]
+fn a_call_of_another_generation_is_refused_rather_than_settled() {
+    let replaced = Generation::numbered(0);
+    let now = Generation::numbered(1);
+    let mut talk: Conversation<&str> = Conversation::new(now);
+    assert!(matches!(
+        talk.heard(asks(CallId::new(7), "read")),
+        Next::Asked { .. }
+    ));
+    let stale = Call::new(replaced, CallId::new(7));
+
+    assert_eq!(
+        talk.answer(stale, Outcome::Worked(json!("meant for the first"))),
+        Err(CallError::Elsewhere { call: stale })
+    );
+    assert_eq!(
+        talk.answer(Call::new(now, CallId::new(7)), Outcome::Worked(Value::Null)),
+        Ok(Spoken::Answer {
+            id: CallId::new(7),
+            outcome: Outcome::Worked(Value::Null),
+        }),
+        "the call this generation has open under that number is still its own"
+    );
+}
+
+/// Giving up on a call of an earlier generation would hand the host what a
+/// call of this one was waiting on.
+#[test]
+fn a_call_of_another_generation_cannot_be_given_up_on() {
+    let now = Generation::numbered(1);
+    let mut talk = Conversation::new(now);
+    let (mine, _) = talk
+        .ask("search", Value::Null, "this generation's")
+        .expect("a call");
+    let stale = Call::new(Generation::numbered(0), mine.id());
+
+    assert_eq!(
+        talk.give_up(stale),
+        Err(CallError::Elsewhere { call: stale })
+    );
+    assert_eq!(talk.ended(), vec![(mine, "this generation's")]);
+}
+
+/// The refusal says which call and which generation, because the reader is
+/// the host's author working out why an answer went nowhere.
+#[test]
+fn a_call_of_another_generation_says_so() {
+    let stale = Call::new(Generation::numbered(0), CallId::new(7));
+
+    assert_eq!(
+        CallError::Elsewhere { call: stale }.to_string(),
+        "call 7 belongs to extension generation 0, not the one being spoken to"
+    );
 }

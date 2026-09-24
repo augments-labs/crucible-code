@@ -11,8 +11,9 @@
 //! after. A path that never asks — `--help` and `--version`, which end while
 //! the arguments are parsed, and the listings that print and stop — starts no
 //! thread for it. Assembling a conversation asks, because its turns are
-//! waited for on it and every command its sandbox starts is watched there,
-//! including the kill of one that breaks its time or output limit.
+//! waited for on it, every command its sandbox starts is watched there,
+//! including the kill of one that breaks its time or output limit, and an
+//! account's tokens are renewed there.
 //!
 //! **Multi-thread, because a waiting caller does not drive the runtime.** A
 //! synchronous caller waits for a future by polling it on its own thread,
@@ -28,10 +29,13 @@
 //!
 //! **A timer and an I/O driver.** The timer is what every timed wait on this
 //! runtime is measured against. The I/O driver is what a hosted program's
-//! pipes are waited on through: the tasks that read and write them run here,
-//! and on Unix the local backend registers each pipe with the driver of the
-//! runtime polling it. Its drivers are fixed when it is built, and one built
-//! without I/O would fail the first of those tasks, saying I/O is disabled.
+//! pipes and an account request's sockets are waited on through: the tasks
+//! that read and write the pipes run here, and on Unix the local backend
+//! registers each pipe with the driver of the runtime polling it; account
+//! requests put their sockets here too — a renewal as a task of its own, a
+//! login's requests in the future its thread waits on. Its drivers are fixed
+//! when it is built, and one built without I/O would fail the first of those
+//! tasks, saying I/O is disabled.
 //!
 //! **Bounded threads.** [`WORKERS`] threads poll the tasks spawned onto the
 //! runtime, and at most [`BLOCKING`] more run blocking work handed to it; both
@@ -68,12 +72,17 @@ pub const WORKERS: usize = 4;
 
 /// The most threads the runtime starts for blocking work handed to it.
 ///
-/// Blocking work is disk and platform calls, and the web source's requests,
-/// that have no asynchronous form, each bounded by its owner; what every owner
-/// may hold at once is checked against this in [`crate::services`]. Eight is
-/// twice the workers: enough for every worker's task to be waiting on one with
-/// room left over.
-pub const BLOCKING: usize = 8;
+/// Blocking work is disk and platform calls, the web source's requests,
+/// account renewals' lock, file and lookup work, and the calls into a command
+/// left running, which have no asynchronous form, each bounded by its owner.
+/// What every owner may hold at once is checked against this in
+/// [`crate::services`]: the tool worker's four jobs, the web source's two
+/// requests and account work's two threads, each counting work it gave up on
+/// that is still running, and one step at a time for each of the four commands
+/// that may be left running, whose owner makes every call into its process
+/// here; and one thread to spare, so an owner at its most never makes
+/// another's job queue.
+pub const BLOCKING: usize = 13;
 
 /// How long the runtime's threads are given to stop once it is shut down.
 ///

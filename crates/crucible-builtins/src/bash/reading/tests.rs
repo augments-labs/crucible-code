@@ -28,7 +28,7 @@ fn a_command_still_running_says_what_it_has_printed() {
     // The reason a model runs a second command to find out how the first one
     // is going: until now this answer existed and only the reader could see it.
     let sample = Sample::new("bash-output-running");
-    let left = Background::new();
+    let left = crate::sample::background();
     let _tool = started(
         &sample,
         &left,
@@ -65,7 +65,7 @@ fn a_command_still_running_says_where_bytes_were_omitted() {
     // note counting only what this reader itself kept.
     const FLOOD: usize = crate::bound::OUTPUT * 3;
     let sample = Sample::new("bash-output-flood");
-    let left = Background::new();
+    let left = crate::sample::background();
     let _tool = started(
         &sample,
         &left,
@@ -116,7 +116,7 @@ fn a_command_still_running_survives_the_runners_own_result_ceiling() {
     // exact marker and names only encoded result bytes in its place.
     const FLOOD: usize = crate::bound::OUTPUT * 3;
     let sample = Sample::new("bash-output-flood-ceiling");
-    let left = Background::new();
+    let left = crate::sample::background();
     let _tool = started(
         &sample,
         &left,
@@ -166,7 +166,7 @@ fn a_number_nothing_answers_to_says_what_is_running() {
     // the note about the ending. A refusal that said only "no" would send the
     // model looking for another way to ask.
     let sample = Sample::new("bash-output-gone");
-    let left = Background::new();
+    let left = crate::sample::background();
     let _tool = started(&sample, &left, r#""sleep 30""#);
 
     let tool = BashOutput::new(left.clone());
@@ -194,7 +194,7 @@ fn a_command_that_has_printed_nothing_says_so_rather_than_nothing() {
     // An empty answer reads as a broken tool, and the next move after one is
     // to run something else. Saying it is running and silent is the answer.
     let sample = Sample::new("bash-output-silent");
-    let left = Background::new();
+    let left = crate::sample::background();
     let _tool = started(&sample, &left, r#""sleep 30""#);
 
     let tool = BashOutput::new(left.clone());

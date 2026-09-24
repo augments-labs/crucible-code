@@ -243,6 +243,10 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // on, is started here, the first thing in a run that asks for it, and a
     // run whose runtime would not start writes no session.
     let runtime = startup.services.runtime().handle()?;
+    // And the renewals every subscription login was built with run there too,
+    // from here on: a credential this run resolved renews on it, and a login
+    // `/login` starts sends its requests through it.
+    startup.services.renewals().runs_on(runtime.clone());
 
     let (session, earlier) = match &startup.resuming {
         Resuming::Newest => {
@@ -266,6 +270,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // generation is one of the typed facts the first pass assembles.
     let sandbox: Arc<dyn crucible_sandbox::SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
+    // And every command left running is owned on the same runtime, by a task
+    // of its own, so the thread that draws never asks a process anything.
+    startup.leaving.watching_on(runtime.clone());
     let offering = tools(startup, settings, reaching, Arc::clone(&sandbox))?;
 
     // Operator-authored instructions are the stable request prefix. Everything

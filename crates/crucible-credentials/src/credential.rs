@@ -18,9 +18,8 @@
 //! [`Credential::authorize`] hands back a future rather than an answer, because
 //! a renewal can have to reach a server before it knows whether the token it
 //! holds is still good. One holding only a key has nothing to wait for and
-//! answers the first time that future is polled; a caller that polls once and
-//! treats a future still pending as a failure loses nothing any credential
-//! shipped here or in `crucible-auth` ever needed to wait for.
+//! answers the first time that future is polled; one whose token is due waits
+//! for its renewal, which a caller that polls once refuses.
 
 use std::fmt;
 use std::future::Future;
@@ -63,23 +62,6 @@ pub enum CredentialError {
     /// this reaches a log line and the screen like every other error here.
     #[error("{0}")]
     NotRenewed(Box<str>),
-
-    /// This call was polled as a runtime worker task, where it must not wait
-    /// for a credential's renewal — whether that renewal is this call's own,
-    /// or another poll's already in progress.
-    ///
-    /// A renewal that is not yet owned work of its own does everything —
-    /// taking a cross-process lock, reaching the network — inside
-    /// [`Credential::authorize`]'s first poll, so a runtime worker task must
-    /// never block there. Nor may it wait for another poll to finish one: a
-    /// credential that serializes renewal through an in-process lock cannot
-    /// tell, from outside that lock, whether the poll holding it is
-    /// renewing or only applying a token already fresh, so a worker refuses
-    /// either way rather than risk the wait. Its caller decides what to do
-    /// about a worker. No runtime dependency is needed to say so: this
-    /// variant carries nothing but its own fixed sentence.
-    #[error("this credential's renewal cannot run or be waited for on a runtime worker task")]
-    RenewalOnWorker,
 }
 
 /// An API key.
@@ -529,22 +511,18 @@ pub trait Credential: Send + Sync + fmt::Debug {
     /// Called on every request, which is what makes this the place a token is
     /// renewed: a credential holding one is deciding here whether what it holds
     /// is still good, at the only moment that can be answered about. One
-    /// holding only a key has nothing to wait for and answers the first time
-    /// its future is polled; a caller that polls once and treats a future
-    /// still pending as a failure loses nothing any credential shipped here
-    /// needs to wait for.
+    /// holding only a key, or a token still good, has nothing to wait for and
+    /// answers the first time its future is polled. One whose token is due
+    /// waits for its renewal, without holding the thread that polls it; a
+    /// caller that polls once and treats a future still pending as a failure
+    /// refuses that request, and what dropping the future leaves behind is
+    /// the credential's to say.
     ///
     /// # Errors
     ///
     /// [`CredentialError::NotRenewed`] where the credential had to produce
     /// something before it could answer and could not. One holding a key has
     /// already applied it by this point and cannot fail.
-    ///
-    /// [`CredentialError::RenewalOnWorker`] where this future was polled as
-    /// a runtime worker task and either it would have to renew what the
-    /// credential holds, or another poll already renewing (or merely
-    /// applying an already-fresh token) holds the credential's own lock —
-    /// neither may run or be waited for there yet.
     fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a>;
 }
 

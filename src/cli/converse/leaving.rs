@@ -15,6 +15,12 @@
 //! question one layer further out. `x` ends it, with no confirmation: the command
 //! was started by a call somebody allowed, and stopping it is the reason this is
 //! reachable at all. `esc`, and the key that opened it, close it.
+//!
+//! `x` asks for the stop and does not wait for it: a stop takes as long as its
+//! backend does, and this is the thread that draws. The list is looked at again
+//! on a beat while it stands, so the stop's outcome arrives on a later frame —
+//! the row gone, the list with it where it was the last, or the row marked as
+//! refused where the stop failed.
 
 use crucible_builtins::{Background, Standing};
 use crucible_tui::{
@@ -49,9 +55,16 @@ pub(super) struct Leaving {
     from: usize,
     /// How far down it may be scrolled, which only the layout knows.
     end: usize,
-    /// The command whose last stop failed and still needs a cleanup owner.
-    failed: Option<usize>,
+    /// What the list stood as when it was last laid out: each command's
+    /// number and whether its last stop was refused. What the beat compares
+    /// the registry against.
+    drawn: Vec<(usize, bool)>,
 }
+
+/// How often the list is looked at again with no key pressed: often enough
+/// that a stop's outcome reads as the answer to the key, and the same beat the
+/// row under the box is kept on.
+const BEAT: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl Leaving {
     /// Stands the list, and answers with whether it ended by taking a row.
@@ -68,13 +81,35 @@ impl Leaving {
         // Taken once per frame rather than once per press: a command ending while
         // the list is open is a row that has to go, and the list is the one place
         // a reader is looking at it.
-        region::stand(
+        region::stand_watching(
             renderer,
             |_| style,
             self,
             |leaving, columns, rows| (leaving.rows(left, columns, rows, style.glyphs()), None),
             |arrived, leaving| leaving.against(arrived, left),
+            BEAT,
+            |leaving| leaving.watched(left),
         )
+    }
+
+    /// What the registry did to the list since it was last laid out, with no
+    /// key pressed: a stop's outcome, or a command that ended on its own.
+    ///
+    /// A list with nothing left in it goes, since there is nothing to stand. The
+    /// output of one command standing over the list is left as it is until a
+    /// key moves it.
+    fn watched(&mut self, left: &Background) -> Moved {
+        if self.shown.is_some() {
+            return Moved::Still;
+        }
+        let now = standing(&left.running());
+        if now.is_empty() {
+            Moved::Left
+        } else if now == self.drawn {
+            Moved::Still
+        } else {
+            Moved::Redraw
+        }
     }
 
     /// The rows for this frame, at this size.
@@ -84,20 +119,14 @@ impl Leaving {
         // A command that ended while this was open takes its row with it, and the
         // mark comes back inside the list rather than pointing past the end of it.
         self.at = self.at.min(running.len().saturating_sub(1));
-        if self
-            .failed
-            .is_some_and(|number| !running.iter().any(|one| one.number == number))
-        {
-            self.failed = None;
-        }
+        self.drawn = standing(&running);
 
         if self.shown.is_some() {
             return self.watching(left, columns, rows, glyphs);
         }
 
         let mut listed = listed(&running, self.at, columns, rows, glyphs);
-        if self.failed.is_some()
-            && running.get(self.at).map(|one| one.number) == self.failed
+        if running.get(self.at).is_some_and(|one| one.refused)
             && let Some(at) = listed.len().checked_sub(2)
             && let Some(notice) = listed.get_mut(at)
         {
@@ -250,22 +279,12 @@ impl Leaving {
 
             // Ends it. No confirmation: the command was started by a call
             // somebody allowed, and this is the only key that can end one.
+            // Asked for rather than waited on; what came of it is drawn on a
+            // later frame, and the last one going takes the list with it.
             Pressed::Key(Key::Char('x')) => match running.get(self.at) {
                 Some(standing) => {
-                    if left.stop(standing.number).is_err() {
-                        self.failed = Some(standing.number);
-                        return Moved::Redraw;
-                    }
-                    self.failed = None;
-
-                    // The last one going takes the list with it — there is nothing
-                    // left to stand, and a frame of empty chrome is worse than the
-                    // row under the box that opened this.
-                    if running.len() <= 1 {
-                        Moved::Left
-                    } else {
-                        Moved::Redraw
-                    }
+                    let _ = left.stop(standing.number);
+                    Moved::Redraw
                 }
                 None => Moved::Left,
             },
@@ -300,6 +319,15 @@ impl Leaving {
             | Pressed::Ignored => Moved::Still,
         }
     }
+}
+
+/// Each command's number, and whether its last stop was refused: as much of
+/// the list as a beat has to compare.
+fn standing(running: &[Standing]) -> Vec<(usize, bool)> {
+    running
+        .iter()
+        .map(|standing| (standing.number, standing.refused))
+        .collect()
 }
 
 /// The list itself, laid out for this frame.

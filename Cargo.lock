@@ -394,14 +394,16 @@ version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-core",
+ "crucible-http",
  "crucible-privacy",
  "crucible-runtime",
  "getrandom 0.4.3",
+ "hyper",
+ "rustls",
  "serde_json",
  "sha2",
  "thiserror",
  "tokio",
- "ureq",
 ]
 
 [[package]]

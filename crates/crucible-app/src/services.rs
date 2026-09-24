@@ -1,6 +1,7 @@
 //! What the application owns for the length of a run and lends to what it
-//! assembles: today the runtime and the worker tools hand their blocking work
-//! to, and whatever later needs to be owned once per run the same way.
+//! assembles: today the runtime, the worker tools hand their blocking work
+//! to and the owner of account renewals, and whatever later needs to be owned
+//! once per run the same way.
 //!
 //! One value, [`Services`], made once by [`serving`] and lent to everything the
 //! run builds. [`crate::startup::Startup`] carries it, so a factory reaches
@@ -19,30 +20,47 @@
 //! running and every command it still holds — has been dropped by then, so
 //! anything their drops hand to the runtime lands on a runtime that is still
 //! running rather than one that is draining. Only what the run returns
-//! outlives it. The runtime is the last thing shut down, because everything
-//! else here may have work on it.
+//! outlives it. A renewal still in flight is then given [`RENEWING`] to
+//! finish and be written down. The runtime is the last thing shut down,
+//! because everything else here may have work on it.
 
+use std::fmt;
 use std::sync::OnceLock;
+use std::time::Duration;
 
+use crucible_auth::{Renewals, Unjoined};
 use crucible_provider::WEB_IN_FLIGHT;
 use crucible_tools::ToolWorker;
 
 use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 
 // Every shipped owner of the runtime's blocking threads, each at its most, and
-// still at least one thread to spare: the tool worker's jobs, and the requests
-// of the one web source a run builds. An owner added to the blocking threads is added
-// here.
+// still at least one thread to spare: the tool worker's jobs, the requests of
+// the one web source a run builds, account renewals and login requests, each
+// counting work it gave up on that is still running, and one step at a time
+// for each command left running, whose owner asks its process everything
+// there. An owner added to the blocking threads is added here.
 const _: () = assert!(
-    ToolWorker::CAPACITY + WEB_IN_FLIGHT < BLOCKING,
-    "the tool worker and the web source together would take every blocking thread the runtime has"
+    ToolWorker::CAPACITY + WEB_IN_FLIGHT + Renewals::BLOCKING + crucible_builtins::MOST < BLOCKING,
+    "the tool worker, the web source, account requests and the commands left running together \
+     would take every blocking thread the runtime has"
 );
+
+/// How long a renewal still in flight when the run is over is given to
+/// finish and be written down.
+///
+/// A rotation the token service has answered has spent the old refresh token,
+/// so one abandoned there leaves a store whose token no longer renews. Five
+/// seconds covers a rotation whose answer is on its way and the write after
+/// it; one still unanswered by then is abandoned, and said to be.
+pub const RENEWING: Duration = Duration::from_secs(5);
 
 /// What the application owns for the length of a run.
 #[derive(Debug)]
 pub struct Services {
     runtime: RuntimeOwner,
     tool_worker: OnceLock<ToolWorker>,
+    renewals: Renewals,
 }
 
 impl Services {
@@ -51,6 +69,7 @@ impl Services {
         Self {
             runtime: RuntimeOwner::new(),
             tool_worker: OnceLock::new(),
+            renewals: Renewals::new(),
         }
     }
 
@@ -77,11 +96,52 @@ impl Services {
         Ok(self.tool_worker.get_or_init(|| ToolWorker::new(handle)))
     }
 
-    /// Shuts down everything here, the runtime last.
-    fn shutdown(self) -> Result<(), Unstopped> {
-        self.runtime.shutdown()
+    /// The one owner of account renewals for the run, which every
+    /// subscription login is built with.
+    ///
+    /// Cheap and inert until it is given the runtime, which
+    /// [`crate::startup::assemble`] does once it has built it: until then a
+    /// renewal is refused rather than run, and nothing is started for it.
+    #[must_use]
+    pub fn renewals(&self) -> &Renewals {
+        &self.renewals
+    }
+
+    /// Shuts down everything here: renewals still in flight are given
+    /// [`RENEWING`] to finish, and the runtime is shut down last.
+    fn shutdown(self) -> Result<(), Unfinished> {
+        let renewals = self.renewals.join_within(RENEWING).err();
+        let runtime = self.runtime.shutdown().err();
+        match (renewals, runtime) {
+            (None, None) => Ok(()),
+            (renewals, runtime) => Err(Unfinished { renewals, runtime }),
+        }
     }
 }
+
+/// What a run's services had not finished when their bounds ran out: a
+/// cleanup that failed, said whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unfinished {
+    /// Renewals still in flight when their bound ran out, which were
+    /// abandoned.
+    renewals: Option<Unjoined>,
+    /// Runtime threads still running when theirs did.
+    runtime: Option<Unstopped>,
+}
+
+impl fmt::Display for Unfinished {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (&self.renewals, &self.runtime) {
+            (Some(renewals), Some(runtime)) => write!(f, "{renewals}; {runtime}"),
+            (Some(renewals), None) => renewals.fmt(f),
+            (None, Some(runtime)) => runtime.fmt(f),
+            (None, None) => f.write_str("the run's services were not all shut down"),
+        }
+    }
+}
+
+impl std::error::Error for Unfinished {}
 
 /// Runs `run` with the application's services, then shuts them down.
 ///
@@ -91,11 +151,12 @@ impl Services {
 ///
 /// # Errors
 ///
-/// The second half of what comes back is [`Unstopped`] where the runtime's
-/// threads had not all stopped within their bound. It is reported whatever
-/// `run` answered, beside it, so a run that failed and then failed to clean up
+/// The second half of what comes back is [`Unfinished`] where renewals still
+/// in flight had not finished within [`RENEWING`], or the runtime's threads
+/// had not all stopped within their bound. It is reported whatever `run`
+/// answered, beside it, so a run that failed and then failed to clean up
 /// says both.
-pub fn serving<T>(run: impl FnOnce(&Services) -> T) -> (T, Result<(), Unstopped>) {
+pub fn serving<T>(run: impl FnOnce(&Services) -> T) -> (T, Result<(), Unfinished>) {
     let services = Services::new();
     let ran = run(&services);
     (ran, services.shutdown())

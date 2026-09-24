@@ -24,8 +24,8 @@ change in any release with no deprecation period.
   `Bridge::wait` polls a future on the caller's thread against a runtime
   handle until it answers or the turn's `Cancel` is raised, noticed within
   20 ms, and refuses with `Unwaited` on a runtime thread or with no handle.
-  `crucible-app` lends a multi-thread runtime of 4 workers and at most 8
-  blocking threads, with a timer and no I/O driver, through
+  `crucible-app` lends a multi-thread runtime of 4 workers and at most 13
+  blocking threads, with a timer and an I/O driver, through
   `services::Services`, built only when first asked for and shut down within
   2 s once a run ends.
 - **A sandboxed command's pipes can be read and written asynchronously.**
@@ -110,11 +110,11 @@ change in any release with no deprecation period.
 - **Applying a credential and running a web search or fetch now return a
   future.** `Credential::authorize`, `Search::search` and `Fetch::fetch`
   return a boxed `Send` future instead of an immediate result, so an adapter
-  built against these traits adopts the new signatures; a new
-  `CredentialError::RenewalOnWorker` names a renewal that cannot yet run where
-  it was polled. Every shipped credential still answers the first time
-  `authorize`'s future is polled; how a web search or fetch now waits is the
-  entry below.
+  built against these traits adopts the new signatures. A credential holding a
+  key or a token still good answers the first time its future is polled, one
+  whose token is due is renewed as the entry on account tokens below says, and
+  how a web search or fetch now waits is the entry on Esc and web searches
+  below.
 - **A sandboxed command's status no longer waits behind the cancel of a limit
   it broke, and stopping it is bounded.** Each command the local sandbox starts
   is watched by a task of its own on the runtime `startup::assemble` starts,
@@ -151,6 +151,34 @@ change in any release with no deprecation period.
   `decide_admitted_guarded` are now `async` to match. An implementer of any
   of these traits adopts the new signatures; nothing a user runs behaves
   differently.
+- **An account's tokens are renewed once, as work of their own, and Esc no
+  longer waits for one.** ChatGPT and Kimi logins and renewals now go through
+  crucible's shared HTTP client, each request within 30 s, and a cancelled
+  login stops waiting for its request in flight at once. A renewal runs as a
+  task every credential for the account waits on, so a turn or web call
+  cancelled while it runs returns at once, and the renewal still finishes and
+  is written down. The login implementations and `Subscriptions::production`
+  take the run's `Renewals`, and `services::serving` reports a renewal still
+  unfinished 5 s after the run.
+- **An extension host is awaited, and never settles a call another process
+  was asked.** `crucible-extension`'s `Hosted` is spoken to only by awaiting
+  it and gains `replace`; its calls are a `Call` carrying a generation no other
+  hosted process shares, in place of a bare `CallId`, and one from any other
+  process is refused with `CallError::Elsewhere` rather than answered by its
+  number. `Speaking` is no longer driven synchronously, `Speaking`'s and
+  `Conversation`'s constructors are crate-private, and `Conversation` no
+  longer implements `Default`; nothing in crucible hosts an extension yet.
+- **A command left running no longer holds up the screen.** Each one is owned
+  by a task of its own that asks its process everything on the application
+  runtime's blocking threads, which grow to 13 so these four still leave one
+  spare, so neither drawing nor a sandbox's limit kills wait on a process;
+  `Background` takes that runtime through `watching_on`, and one given none
+  ends a command rather than keeping it. Pressing <kbd>x</kbd> asks for the
+  stop and returns at once, the row going or `Stop failed; x retries`
+  appearing on a later frame, and the list of commands left running now
+  closes by itself once its last command has ended, however it ended; the end
+  of a run waits at most 7 s for its commands to be ended before ending what
+  their owners did not reach.
 - **On Linux, a sandboxed command's status no longer waits for what it wrote
   to be reported back.** Once the command has exited, a status asked for while
   the sandbox is still sending its scan of the writable roots answers `None`
@@ -229,6 +257,12 @@ change in any release with no deprecation period.
   failed`. It now reports `sandbox launch refused:` followed by Bubblewrap's
   own words, on one line and cut at 512 bytes, so an option it does not know
   is named.
+- **A busy account store is reported after five seconds on macOS too.** A
+  wait for another crucible's lock on the store — shared by logins, keys and
+  renewals — was documented and reported after five seconds, but macOS
+  stretched it to about twenty because the wait counted a fixed number of
+  pauses rather than the clock. It now ends after five seconds on every
+  platform.
 
 ### Security
 

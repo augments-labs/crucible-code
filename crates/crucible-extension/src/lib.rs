@@ -32,7 +32,7 @@ mod spoken;
 mod testing;
 mod trust;
 
-pub use calls::{Asked, CallError, EXTENSION_CALLS, Serving};
+pub use calls::{Asked, Call, CallError, EXTENSION_CALLS, Serving};
 pub use conversation::{Broken, Conversation, Next};
 pub use discovery::{Extensions, Installed, MAX_EXTENSIONS, Refusal};
 pub use hosted::{Ended, Hosted, Unstarted};

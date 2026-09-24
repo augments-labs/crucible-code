@@ -24,6 +24,11 @@ grep-regex.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
 serde_json.workspace = true
+# Each command left running is owned by a task on the application's runtime,
+# handed in: `rt` is the handle it is spawned onto and the join handle the
+# registry keeps, and `time` is the pause between the task's looks. Nothing here
+# builds a runtime.
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [dev-dependencies]
 # The confinement a command is actually run under. Tools name the service

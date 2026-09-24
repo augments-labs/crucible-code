@@ -190,7 +190,7 @@ fn a_remembered_provider_without_any_credential_does_not_stop_startup() {
             &settings,
             &|_| None,
             &sample.store().read(),
-            &Subscriptions::production(),
+            &Subscriptions::production(&crucible_auth::Renewals::new()),
         ),
     )
     .expect("an unavailable remembered provider is an interactive setup state");

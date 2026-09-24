@@ -3,7 +3,7 @@
 use std::io;
 use std::process::ExitStatus;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crucible_core::{
     CallResultKey, CallResultReceipt, SandboxBackendIdentity, SandboxCapabilities, SandboxCommand,
@@ -21,14 +21,53 @@ pub(super) fn sandbox() -> (Arc<dyn SandboxService>, Arc<AtomicBool>) {
         Arc::new(Fallible {
             inner: Box::new(super::local()),
             denied: Arc::clone(&denied),
+            on_runtime: Arc::default(),
+            stalled: Arc::default(),
         }),
         denied,
+    )
+}
+
+/// This machine's confinement, whose stops wait while the flag handed back
+/// is set: a backend that has stopped answering.
+pub(super) fn stalling() -> (Arc<dyn SandboxService>, Arc<AtomicBool>) {
+    let stalled = Arc::new(AtomicBool::new(false));
+    (
+        Arc::new(Fallible {
+            inner: Box::new(super::local()),
+            denied: Arc::new(AtomicBool::new(false)),
+            on_runtime: Arc::default(),
+            stalled: Arc::clone(&stalled),
+        }),
+        stalled,
+    )
+}
+
+/// This machine's confinement watching on `runtime`, whose stops never fail,
+/// and a count of the stops that ran on a thread of a runtime.
+pub(super) fn counting_on(
+    runtime: tokio::runtime::Handle,
+) -> (Arc<dyn SandboxService>, Arc<AtomicUsize>) {
+    let on_runtime = Arc::new(AtomicUsize::new(0));
+    (
+        Arc::new(Fallible {
+            inner: Box::new(LocalSandbox::new().watching_on(runtime)),
+            denied: Arc::new(AtomicBool::new(false)),
+            on_runtime: Arc::clone(&on_runtime),
+            stalled: Arc::default(),
+        }),
+        on_runtime,
     )
 }
 
 struct Fallible<T: ?Sized> {
     inner: Box<T>,
     denied: Arc<AtomicBool>,
+    /// How many stops ran on a thread of a runtime, rather than on the thread
+    /// of whoever asked outside one.
+    on_runtime: Arc<AtomicUsize>,
+    /// While set, a stop waits.
+    stalled: Arc<AtomicBool>,
 }
 
 impl SandboxService for Fallible<LocalSandbox> {
@@ -46,6 +85,8 @@ impl SandboxService for Fallible<LocalSandbox> {
             Ok(Box::new(Fallible {
                 inner: self.inner.prepare(request).await?,
                 denied: Arc::clone(&self.denied),
+                on_runtime: Arc::clone(&self.on_runtime),
+                stalled: Arc::clone(&self.stalled),
             }) as Box<dyn SandboxSession>)
         })
     }
@@ -71,6 +112,8 @@ impl SandboxSession for Fallible<dyn SandboxSession> {
             Ok(Box::new(Fallible {
                 inner: self.inner.stage(command).await?,
                 denied: self.denied,
+                on_runtime: self.on_runtime,
+                stalled: self.stalled,
             }) as Box<dyn SandboxLaunch>)
         })
     }
@@ -93,6 +136,8 @@ impl SandboxLaunch for Fallible<dyn SandboxLaunch> {
             Ok(Box::new(Fallible {
                 inner: self.inner.release().await?,
                 denied: self.denied,
+                on_runtime: self.on_runtime,
+                stalled: self.stalled,
             }) as Box<dyn SandboxProcess>)
         })
     }
@@ -121,6 +166,12 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
 
     fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
         Box::pin(async move {
+            while self.stalled.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            if tokio::runtime::Handle::try_current().is_ok() {
+                self.on_runtime.fetch_add(1, Ordering::AcqRel);
+            }
             if self.denied.swap(false, Ordering::Relaxed) {
                 Err(io::Error::other(PRIVATE_ERROR))
             } else {
