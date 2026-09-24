@@ -190,8 +190,15 @@ fn write_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> 
 }
 
 fn sandbox_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
-    let tool =
-        Bash::new(scratch.workspace.clone(), Arc::new(LocalSandbox::new())).sandboxing(false);
+    // The runtime each command's status is watched on, shaped as the
+    // application's is: several threads and a clock, no I/O driver. Built
+    // before the measured calls, as the application builds it before a turn.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_time()
+        .build()?;
+    let sandbox = LocalSandbox::new().watching_on(runtime.handle().clone());
+    let tool = Bash::new(scratch.workspace.clone(), Arc::new(sandbox)).sandboxing(false);
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let (output, elapsed) = invoke(

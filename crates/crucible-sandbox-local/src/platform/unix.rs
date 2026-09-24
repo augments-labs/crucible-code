@@ -18,10 +18,12 @@ use super::ReadState;
 #[derive(Debug)]
 pub(crate) struct Scope;
 
-/// Copyable process-group authority borrowed by a supervisor thread.
+/// Copyable process-group authority borrowed by a command's status task and
+/// the thread a violation's cancel runs on.
 ///
-/// The owning process handle remains unreaped until the supervisor is joined,
-/// so the numeric group leader cannot be reused while this value is live.
+/// Each of them signals with it only under the lock the leader is reaped
+/// under, and only while the leader is unreaped, so the numeric group leader
+/// cannot have been reused by the time a signal is sent.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Terminator(rustix::process::Pid);
 

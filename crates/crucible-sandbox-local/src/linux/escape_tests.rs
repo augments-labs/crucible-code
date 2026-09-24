@@ -8,7 +8,6 @@
 use crucible_sandbox::{SandboxManifest, SandboxService};
 
 use super::tests::{command, finish, request};
-use crate::LocalSandbox;
 use crate::sample::{Sample, skipped_without_enforcement};
 
 /// One line of `/proc/self/mountinfo`: where it is mounted and how.
@@ -43,7 +42,7 @@ const BOUND_DEVICES: [&str; 7] = [
 
 #[test]
 fn nothing_the_command_can_see_would_honour_a_setuid_bit() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -89,7 +88,7 @@ fn nothing_the_command_can_see_would_honour_a_setuid_bit() {
 
 #[test]
 fn a_setuid_bit_a_confined_command_sets_itself_grants_it_nothing() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -134,7 +133,7 @@ fn a_setuid_bit_a_confined_command_sets_itself_grants_it_nothing() {
 
 #[test]
 fn a_writable_root_does_not_let_a_confined_command_make_a_device() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -158,7 +157,7 @@ fn a_writable_root_does_not_let_a_confined_command_make_a_device() {
 
 #[test]
 fn a_confined_command_can_neither_see_nor_signal_a_host_process() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }

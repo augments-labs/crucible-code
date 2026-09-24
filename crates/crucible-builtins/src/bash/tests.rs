@@ -20,7 +20,7 @@ use crate::sample::{Sample, allowed, enforcing};
 
 /// This machine's confinement, as the service contract a tool is given.
 fn local() -> std::sync::Arc<dyn crucible_sandbox::SandboxService> {
-    std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new())
+    std::sync::Arc::new(crate::sample::sandbox())
 }
 
 fn compatibility(tool: Bash) -> Bash {
@@ -47,10 +47,19 @@ fn finalized(tool: &Bash, args: &str) -> Result<ToolOutput, ToolError> {
     Ok(output)
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct RecordingSandbox {
     inner: crucible_sandbox_local::LocalSandbox,
     limits: std::sync::Arc<std::sync::Mutex<Vec<SandboxResourceLimits>>>,
+}
+
+impl Default for RecordingSandbox {
+    fn default() -> Self {
+        Self {
+            inner: crate::sample::sandbox(),
+            limits: std::sync::Arc::default(),
+        }
+    }
 }
 
 impl SandboxService for RecordingSandbox {
@@ -76,8 +85,13 @@ impl SandboxService for RecordingSandbox {
 /// This machine's confinement, except that its launcher refuses every command
 /// released through it the way a system Bubblewrap refuses an option it does
 /// not know.
-#[derive(Default)]
 struct RefusingSandbox(crucible_sandbox_local::LocalSandbox);
+
+impl Default for RefusingSandbox {
+    fn default() -> Self {
+        Self(crate::sample::sandbox())
+    }
+}
 
 impl SandboxService for RefusingSandbox {
     fn probe(
@@ -267,7 +281,7 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     // into place instead of reading it back.
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };
@@ -1210,7 +1224,7 @@ fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() 
 
 #[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };
@@ -1239,7 +1253,7 @@ fn a_command_whose_writes_were_refused_tells_the_model_why() {
     // Reachable only since writers stopped holding the lock for their whole
     // lives: a command that runs across another's publication into the same
     // root publishes nothing, and the model is told by the call it made.
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };
@@ -1279,7 +1293,7 @@ fn a_command_whose_writes_were_refused_tells_the_model_why() {
 fn a_writer_left_running_does_not_keep_a_command_from_writing() {
     // A dev server or a watcher is left running because it has no end of its
     // own. Nothing else that writes may wait on it, or nothing else writes.
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };

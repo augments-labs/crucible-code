@@ -1,6 +1,14 @@
 //! What is kept of a command's output, and what is said about the rest.
 
-use super::{CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, cut};
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crucible_sandbox::{SandboxOutput, SandboxRead};
+
+use super::{
+    CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, PUBLICATION, Pipe, SETTLE, cut, settle,
+};
 
 #[test]
 fn a_command_stopped_for_running_too_long_says_so_once() {
@@ -211,9 +219,8 @@ fn admitted(
         policy,
         SandboxManifest::empty(),
     );
-    let mut session =
-        crucible_runtime::answered!(crucible_sandbox_local::LocalSandbox::new().prepare(request))
-            .expect("a prepared session");
+    let mut session = crucible_runtime::answered!(crate::sample::sandbox().prepare(request))
+        .expect("a prepared session");
     crucible_runtime::answered!(session.materialize()).expect("an empty manifest");
     crucible_runtime::answered!(session.start(command)).expect("the child started")
 }
@@ -331,5 +338,53 @@ fn nothing_arriving_hands_nothing_over() {
     assert!(
         kept.hand_over().is_empty(),
         "the same bytes were handed twice"
+    );
+}
+
+/// A standard output with nothing to read until `over` says the command is,
+/// telling `parked` each time its reader is about to wait out a tick.
+struct Quiet {
+    over: Arc<AtomicBool>,
+    parked: std::sync::mpsc::Sender<()>,
+}
+
+impl SandboxOutput for Quiet {
+    fn read_ready(&mut self, _buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if self.over.load(Ordering::Relaxed) {
+            return Ok(SandboxRead::End);
+        }
+        let _ = self.parked.send(());
+        Ok(SandboxRead::Pending)
+    }
+}
+
+#[test]
+fn a_reader_waiting_out_its_pause_is_woken_once_the_command_is_over() {
+    // The readers wait a tick between looks at their pipes, and the wait
+    // reaches `settle` a moment before they wake: a reader found still reading
+    // and left to its tick would cost every short command's answer the rest
+    // of that tick. This reader is told to wait far longer than `settle` does,
+    // so that the only way it reaches the end inside `settle` is being woken,
+    // and nothing here is measured against a clock: either it got there or it
+    // did not. Far longer, but not forever: a reader nobody woke is joined
+    // when its pipe is dropped, and a failure here is to be answered, not
+    // waited out.
+    let pause = SETTLE * 10;
+    let over = Arc::new(AtomicBool::new(false));
+    let (parked, parking) = std::sync::mpsc::channel();
+    let quiet = Quiet {
+        over: Arc::clone(&over),
+        parked,
+    };
+    let out = Pipe::drain(Some(Box::new(quiet)), "stdout", pause).expect("a reader for stdout");
+    let err = Pipe::drain(None, "stderr", pause).expect("nothing to read for stderr");
+    parking
+        .recv_timeout(PUBLICATION)
+        .expect("the reader looked at the pipe once");
+    over.store(true, Ordering::Relaxed);
+
+    assert!(
+        settle(&out, &err),
+        "the reader was left to its pause rather than woken"
     );
 }

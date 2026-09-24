@@ -19,7 +19,7 @@ pub(super) fn sandbox() -> (Arc<dyn SandboxService>, Arc<AtomicBool>) {
     let denied = Arc::new(AtomicBool::new(true));
     (
         Arc::new(Fallible {
-            inner: Box::new(LocalSandbox::new()),
+            inner: Box::new(super::local()),
             denied: Arc::clone(&denied),
         }),
         denied,

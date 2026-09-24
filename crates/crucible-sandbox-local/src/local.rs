@@ -38,16 +38,36 @@ use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 ///
 /// On Windows each pipe waited on gets a thread of its own instead, and needs
 /// no runtime; the process's stop joins its input's thread.
+///
+/// # A runtime to watch commands on
+///
+/// Each command this service starts is watched by a task of its own on the
+/// runtime [`Self::watching_on`] names: its time limit enforced, and its status
+/// looked at and kept. The task needs that runtime's clock and nothing else.
+/// A service given no runtime probes and prepares as any other does, and
+/// refuses to start a command.
 #[derive(Debug, Clone, Default)]
 pub struct LocalSandbox {
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 impl LocalSandbox {
-    /// A service with no active commands.
+    /// A service with no active commands, and no runtime to watch any on.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// This service, watching each command it starts on `runtime`.
+    ///
+    /// `runtime` needs its timer, as the application's has. On one without it
+    /// each command's status task panics at its first pause, which is recorded
+    /// as a failure the command's status and stop then report.
+    #[must_use]
+    pub fn watching_on(mut self, runtime: tokio::runtime::Handle) -> Self {
+        self.runtime = Some(runtime);
+        self
     }
 }
 
@@ -89,11 +109,12 @@ impl SandboxService for LocalSandbox {
                 SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
             )?;
             let prepared = if request.policy().enabled() {
-                enforcing(request, Arc::clone(&self.active))
+                enforcing(request, Arc::clone(&self.active), self.runtime.clone())
             } else {
                 compatibility(
                     request,
                     Arc::clone(&self.active),
+                    self.runtime.clone(),
                     "sandbox disabled by effective policy",
                 )
             };
@@ -120,22 +141,23 @@ impl SandboxService for LocalSandbox {
 fn enforcing(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     #[cfg(target_os = "linux")]
     {
-        super::linux::prepare(request, active)
+        super::linux::prepare(request, active, runtime)
     }
     #[cfg(target_os = "macos")]
     {
-        super::macos::prepare(request, active)
+        super::macos::prepare(request, active, runtime)
     }
     #[cfg(target_os = "windows")]
     {
-        super::windows::prepare(request, active)
+        super::windows::prepare(request, active, runtime)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        let _ = (request, active);
+        let _ = (request, active, runtime);
         Err(SandboxError::BackendUnavailable {
             reason: "required confinement is unsupported on this operating system".into(),
         })
@@ -145,6 +167,7 @@ fn enforcing(
 fn compatibility(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
     disabled_reason: &'static str,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     let (backend, capabilities) = compatibility_capabilities()?;
@@ -174,6 +197,7 @@ fn compatibility(
         request,
         inspection,
         reservation: Some(reservation),
+        runtime,
         materialized: false,
         transferred: false,
     }))
@@ -210,6 +234,8 @@ struct CompatibilitySession {
     request: SandboxRequest,
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
+    /// Where each command's status is watched.
+    runtime: Option<tokio::runtime::Handle>,
     materialized: bool,
     transferred: bool,
 }
@@ -289,6 +315,7 @@ impl SandboxSession for CompatibilitySession {
                     invocation: self.request.invocation_mode(),
                     call_result_key: self.request.call_result_key(),
                     canceller: None,
+                    runtime: self.runtime.clone(),
                     speech: command.speech(),
                     startup_input: None,
                     credentials: super::process::credential_values(command.environment()),
@@ -526,7 +553,7 @@ mod tests {
         )
         .with_audit(audit.clone())
         .expect("matching audit attribution");
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
@@ -581,7 +608,7 @@ mod tests {
         )
         .with_audit(audit.clone())
         .expect("matching audit attribution");
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
@@ -666,7 +693,7 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
@@ -713,7 +740,7 @@ mod tests {
         )
         .with_audit(audit.clone())
         .expect("matching audit attribution");
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
@@ -782,7 +809,7 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
@@ -846,7 +873,7 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
@@ -909,7 +936,7 @@ mod tests {
             .with_enabled(false)
             .with_limits(limits)
             .expect("limits");
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
             SandboxId::new(),
             Ancestry::new(),
@@ -1017,7 +1044,7 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
@@ -1091,7 +1118,7 @@ mod tests {
             environment,
         )
         .expect("command");
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
@@ -1185,7 +1212,7 @@ mod tests {
         )
         .expect("command")
         .spoken_to();
-        let service = LocalSandbox::new();
+        let service = crate::sample::service();
         let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
         crucible_runtime::answered!(session.materialize()).expect("materialized");
         let mut process = crucible_runtime::answered!(session.start(command)).expect("process");

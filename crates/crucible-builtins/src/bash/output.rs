@@ -85,6 +85,12 @@ pub(super) const CANCELLATION: Duration = Duration::from_millis(500);
 /// this is only ever spent when something else is still holding a pipe open.
 const SETTLE: Duration = Duration::from_millis(200);
 
+/// How often the readers are looked at for having reached the end, once they
+/// have been woken for it. Well above what a woken reader needs to take what
+/// is buffered and see its pipe's end, and well below a tick, which is what
+/// the answer paid otherwise.
+const WOKEN: Duration = Duration::from_millis(1);
+
 /// Waits for `child`, killing it if the deadline passes or the user stops the
 /// turn, and reports what it produced.
 ///
@@ -105,8 +111,8 @@ pub(super) fn collect(
     // therefore stops the process scope and performs only a bounded reap.
     let started = Instant::now();
     let mut running = Waited::new(process);
-    let mut out = Pipe::drain(running.taking()?.take_stdout(), "stdout")?;
-    let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr")?;
+    let mut out = Pipe::drain(running.taking()?.take_stdout(), "stdout", TICK)?;
+    let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr", TICK)?;
 
     let deadline = started + *allowed;
     let mut expiry = Expiry::No;
@@ -385,10 +391,12 @@ fn reap(
 /// awaited, and a stop that would have had to wait is refused as the failure it
 /// is, which keeps the drawing thread from waiting on a stop that pends. A stop
 /// that does not pend still runs its whole body inside that one poll, on
-/// whichever thread asked. The in-tree stops end the command's group, reap it
-/// within the reap bound, join its supervisor, stop its network proxy where it
-/// has one and clean up its stage, and a projected command's stop also rolls
-/// back what it wrote and had not published. Only the reap is bounded.
+/// whichever thread asked. The in-tree stops end the task watching the
+/// command's status, end the command's group, reap it within the reap bound,
+/// join a limit's cancel within a bound of its own, stop its network proxy
+/// where it has one and clean up its stage, and a projected command's stop also
+/// rolls back what it wrote and had not published. Only the reap and the
+/// cancel's join are bounded.
 pub(super) fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
     Bridge::BashSandbox
         .cross(process.stop())
@@ -756,10 +764,12 @@ pub(super) struct Pipe {
 }
 
 impl Pipe {
-    /// Starts reading `pipe` on a thread.
+    /// Starts reading `pipe` on a thread, which waits `pause` between looks
+    /// at a pipe with nothing to read, unless it is woken sooner.
     fn drain(
         pipe: Option<Box<dyn SandboxOutput>>,
         stream: &'static str,
+        pause: Duration,
     ) -> Result<Self, ToolError> {
         let kept = Arc::new(Mutex::new(Kept::default()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -791,8 +801,11 @@ impl Pipe {
                             retained,
                             discarded,
                         }) => (retained, discarded),
+                        // Nothing yet. The pause is waited out, unless somebody
+                        // who knows there is something now wakes the reader;
+                        // a wake with nothing behind it costs one more look.
                         Ok(SandboxRead::Pending) => {
-                            thread::sleep(TICK);
+                            thread::park_timeout(pause);
                             continue;
                         }
                         // An interrupted read, which `std::io::Read` documents as
@@ -837,6 +850,17 @@ impl Pipe {
         self.reader
             .as_ref()
             .is_none_or(thread::JoinHandle::is_finished)
+    }
+
+    /// Wakes the reader from a tick it is waiting out, so that it reads now.
+    ///
+    /// Said once the command is over: what it left in the pipe is there now,
+    /// and so is the end of it, and a reader left to find that at its next
+    /// tick would cost the answer the rest of that tick.
+    fn wake(&self) {
+        if let Some(reader) = &self.reader {
+            reader.thread().unpark();
+        }
     }
 
     /// What has arrived so far, and how many bytes were let go to keep it
@@ -928,18 +952,23 @@ pub(super) const DRAIN: Duration = SETTLE;
 /// Gives the readers a moment to reach the end once the command is over, and
 /// says whether they got there.
 ///
-/// Almost always they are already there: the bytes were read as they arrived,
-/// and the last of them land when the process ends. The wait is bounded because
-/// the case where they are not there is the case that never resolves — and
-/// `false` is how what was collected gets reported as the prefix it is.
+/// Almost always they are a moment from there: the bytes were read as they
+/// arrived, the last of them land when the process ends, and a reader waiting
+/// out its tick is woken to take them rather than left to find them at the
+/// next, which would cost every short command's answer a tick. The wait is
+/// bounded because the case where they never get there is the case that never
+/// resolves — and `false` is how what was collected gets reported as the
+/// prefix it is.
 fn settle(out: &Pipe, err: &Pipe) -> bool {
     let deadline = Instant::now() + SETTLE;
+    out.wake();
+    err.wake();
 
     while !(out.ended() && err.ended()) {
         if Instant::now() >= deadline {
             return false;
         }
-        thread::sleep(TICK);
+        thread::sleep(WOKEN);
     }
 
     true

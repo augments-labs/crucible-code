@@ -38,6 +38,11 @@ sha2.workspace = true
 # `answered!`, which the tests ask a tool's future once with.
 crucible-runtime = { workspace = true, features = ["proof"] }
 
+# The runtime the tests' sandbox watches each command it starts on: several
+# threads of its own, so a command's status task runs while a test waits on
+# it, and the clock that task pauses on.
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+
 [target.'cfg(windows)'.dependencies]
 # Windows refuses std::fs::rename over an existing file. Those bindings stay
 # inside the atomic boundary; all features and the exact version are pinned

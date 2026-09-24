@@ -187,7 +187,8 @@ impl StatusChannel {
         Ok(())
     }
 
-    /// A stop the supervisor hands the broker before it kills the launcher.
+    /// A stop a command's status task hands the broker, on a thread of its
+    /// own, before it kills the launcher.
     ///
     /// Killing Bubblewrap alone does not end the PID namespace: the broker,
     /// started in its own session, outlives it together with the workload. The
@@ -247,12 +248,13 @@ fn none_trusted(refused: &[(PathBuf, &'static str)]) -> SandboxError {
 
 /// How long a cancelled broker may take to end its workload and exit.
 ///
-/// The supervisor holds the process lifecycle lock meanwhile, so this also
-/// bounds how long a wait on the process can stall before the launcher's exit
-/// is known. Reading the broker's report, which includes its scan of the
+/// The cancel waits on a thread of its own and holds no lock the command's
+/// status is read under, so a status asked for meanwhile answers at once. A
+/// stop meanwhile kills and reaps the launcher itself, which ends this wait at
+/// its next look. Reading the broker's report, which includes its scan of the
 /// projection, is bounded separately by the protocol's own ceilings.
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
-/// How often the cancelling supervisor looks for the launcher's exit.
+/// How often the cancel looks for the launcher's exit.
 const CANCEL_POLL: Duration = Duration::from_millis(5);
 
 /// Waits, within the cancellation budget, for the launcher to exit.

@@ -239,8 +239,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let reaching = web(startup, settings);
 
     // Before the session, for the reason the provider is: the runtime every
-    // turn is waited for on is started here, the first thing in a run that
-    // asks for it, and a run whose runtime would not start writes no session.
+    // turn is waited for on, and every command the sandbox starts is watched
+    // on, is started here, the first thing in a run that asks for it, and a
+    // run whose runtime would not start writes no session.
     let runtime = startup.services.runtime().handle()?;
 
     let (session, earlier) = match &startup.resuming {
@@ -263,7 +264,8 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
 
     // Build the registry before the runner, because its exact immutable
     // generation is one of the typed facts the first pass assembles.
-    let sandbox: Arc<dyn crucible_sandbox::SandboxService> = Arc::new(LocalSandbox::new());
+    let sandbox: Arc<dyn crucible_sandbox::SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
     let offering = tools(startup, settings, reaching, Arc::clone(&sandbox))?;
 
     // Operator-authored instructions are the stable request prefix. Everything

@@ -98,6 +98,15 @@ change in any release with no deprecation period.
   `CredentialError::RenewalOnWorker` names a renewal that cannot yet run where
   it was polled. Every shipped implementation still answers the first time
   that future is polled, so nothing a user runs behaves differently.
+- **A sandboxed command's status no longer waits behind the cancel of a limit
+  it broke, and stopping it is bounded.** Each command the local sandbox starts
+  is watched by a task of its own on the runtime `startup::assemble` starts,
+  whose workers now also run its time and output limit kills, and a status
+  asked for while a broken limit's cancel runs, which can take up to 5 s on
+  Linux, now answers at once; a stop kills the command itself and gives that
+  cancel 250 ms before reporting its cleanup as failed. `LocalSandbox` takes
+  that runtime through `watching_on`, and one given none prepares but starts
+  no command.
 
 ### Fixed
 

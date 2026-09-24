@@ -54,6 +54,7 @@ pub(super) fn declared_capabilities() -> SandboxCapabilities {
 pub(super) fn prepare(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     let excluded: Vec<_> = request
         .policy()
@@ -128,6 +129,7 @@ pub(super) fn prepare(
         broker,
         inspection,
         reservation: Some(reservation),
+        runtime,
         view,
         materialization: None,
         materialized: false,
@@ -143,6 +145,8 @@ struct LinuxSession {
     broker: broker::Broker,
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
+    /// Where each command's status is watched.
+    runtime: Option<tokio::runtime::Handle>,
     view: command::View,
     materialization: Option<materialize::Materialization>,
     materialized: bool,
@@ -364,6 +368,7 @@ impl SandboxSession for LinuxSession {
                     invocation: self.request.invocation_mode(),
                     call_result_key: self.request.call_result_key(),
                     canceller: Some(canceller),
+                    runtime: self.runtime.clone(),
                     speech: command.speech(),
                     startup_input: None,
                     credentials: super::process::credential_values(command.environment()),

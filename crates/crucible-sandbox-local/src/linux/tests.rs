@@ -22,7 +22,6 @@ use crucible_sandbox::{
 use crucible_storage::{CallResultKey, CallResultReceipt, InvocationId};
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
-use crate::LocalSandbox;
 use crate::sample::{Sample, skipped_without_enforcement, symlink};
 
 pub(super) fn request(sample: &Sample, manifest: SandboxManifest) -> SandboxRequest {
@@ -125,7 +124,7 @@ pub(super) fn lifecycles(audit: &crucible_sandbox::SandboxAudit) -> Vec<SandboxL
 
 #[test]
 fn inline_manifest_files_are_committed_before_the_command_starts() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -153,7 +152,7 @@ fn inline_manifest_files_are_committed_before_the_command_starts() {
 
 #[test]
 fn explicit_read_only_mounts_are_descriptor_backed() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -186,7 +185,7 @@ fn explicit_read_only_mounts_are_descriptor_backed() {
 
 #[test]
 fn explicit_writable_directory_mounts_preserve_parent_authority() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -220,7 +219,7 @@ fn explicit_writable_directory_mounts_preserve_parent_authority() {
 
 #[test]
 fn writable_effects_stay_private_until_terminal_publication() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -259,7 +258,7 @@ fn writable_effects_stay_private_until_terminal_publication() {
 
 #[test]
 fn staging_a_writable_directory_does_not_copy_its_file_contents() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -285,7 +284,7 @@ fn staging_a_writable_directory_does_not_copy_its_file_contents() {
 
 #[test]
 fn cancellation_discards_private_workspace_effects() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -329,7 +328,7 @@ fn cancellation_discards_private_workspace_effects() {
 
 #[test]
 fn signal_terminated_leader_discards_private_workspace_effects() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -354,7 +353,7 @@ fn signal_terminated_leader_discards_private_workspace_effects() {
 
 #[test]
 fn ordinary_nonzero_exit_publishes_valid_workspace_effects() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -379,7 +378,7 @@ fn ordinary_nonzero_exit_publishes_valid_workspace_effects() {
 
 #[test]
 fn ordinary_high_nonzero_exit_is_not_confused_with_signal_termination() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -404,7 +403,7 @@ fn ordinary_high_nonzero_exit_is_not_confused_with_signal_termination() {
 
 #[test]
 fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -474,7 +473,7 @@ fn create_update_delete_rename_and_mode_publish_as_one_terminal_delta() {
 
 #[test]
 fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -528,7 +527,7 @@ fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
 
 #[test]
 fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -572,7 +571,7 @@ fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
 
 #[test]
 fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -604,7 +603,7 @@ fn complete_workspace_hardlink_groups_keep_one_projected_inode() {
 
 #[test]
 fn a_new_sparse_file_keeps_its_holes_after_terminal_publication() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -633,7 +632,7 @@ fn a_new_sparse_file_keeps_its_holes_after_terminal_publication() {
 
 #[test]
 fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -686,7 +685,7 @@ fn dropping_a_staged_launch_refuses_it_before_go_and_completes_cleanup() {
 
 #[test]
 fn background_ownership_precedes_release_and_command_start() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -740,7 +739,7 @@ fn background_ownership_precedes_release_and_command_start() {
 
 #[test]
 fn read_only_background_commands_have_a_durable_lifecycle() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -792,7 +791,7 @@ fn read_only_background_commands_have_a_durable_lifecycle() {
 
 #[test]
 fn background_release_without_an_application_owner_is_refused_before_go() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -829,7 +828,7 @@ fn background_release_without_an_application_owner_is_refused_before_go() {
 
 #[test]
 fn read_only_mounts_cannot_be_mutated() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -862,7 +861,7 @@ fn read_only_mounts_cannot_be_mutated() {
 
 #[test]
 fn replacing_a_writable_file_after_stage_cannot_retarget_publication() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -929,7 +928,7 @@ fn replacing_a_writable_file_after_stage_cannot_retarget_publication() {
 
 #[test]
 fn a_replaced_mount_source_cannot_retarget_the_prepared_descriptor() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -966,7 +965,7 @@ fn a_replaced_mount_source_cannot_retarget_the_prepared_descriptor() {
 
 #[test]
 fn mount_source_descriptors_do_not_reach_the_untrusted_command() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -998,7 +997,7 @@ fn mount_source_descriptors_do_not_reach_the_untrusted_command() {
 
 #[test]
 fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1041,7 +1040,7 @@ fn replacing_a_workspace_root_after_prepare_cannot_retarget_it() {
 
 #[test]
 fn workspace_symlinks_cannot_escape_the_mounted_view() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1064,7 +1063,7 @@ fn workspace_symlinks_cannot_escape_the_mounted_view() {
 
 #[test]
 fn nested_repository_and_crucible_metadata_stay_read_only_beneath_a_writable_root() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1106,7 +1105,7 @@ fn nested_repository_and_crucible_metadata_stay_read_only_beneath_a_writable_roo
 
 #[test]
 fn unreadable_rules_mask_only_the_selected_path() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1162,7 +1161,7 @@ fn unreadable_rules_mask_only_the_selected_path() {
 
 #[test]
 fn unreadable_patterns_expand_deterministically_without_hiding_siblings() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1210,7 +1209,7 @@ fn unreadable_patterns_expand_deterministically_without_hiding_siblings() {
 
 #[test]
 fn closed_network_cannot_reach_host_loopback_unix_sockets_dns_or_metadata() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1290,7 +1289,7 @@ finally:
 
 #[test]
 fn ungranted_sibling_home_and_credential_paths_are_unreachable() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1363,7 +1362,7 @@ for hidden in (".ssh", ".gnupg", ".config", ".crucible", ".aws"):
 
 #[test]
 fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1400,7 +1399,7 @@ fn arbitrary_inheritable_host_descriptors_do_not_reach_the_command() {
 
 #[test]
 fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1474,7 +1473,7 @@ fn explicit_credential_projection_reaches_only_its_named_environment_slot() {
 /// host masked, one `*` per byte, on both streams.
 #[test]
 fn a_credential_the_confined_command_prints_is_masked_on_both_streams() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1534,7 +1533,7 @@ fn a_credential_the_confined_command_prints_is_masked_on_both_streams() {
 
 #[test]
 fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1565,7 +1564,7 @@ fn proc_devices_capabilities_and_nested_user_namespaces_are_minimal() {
 
 #[test]
 fn command_deadline_kills_the_complete_bubblewrap_process_tree() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1676,7 +1675,7 @@ fn sandbox_crash_helper_process() {
     )
     .with_invocation_mode(SandboxInvocationMode::Background)
     .with_call_result_key(key);
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     let mut session =
         crucible_runtime::answered!(service.prepare(request)).expect("helper prepare");
     crucible_runtime::answered!(session.materialize()).expect("helper materialize");
@@ -1704,7 +1703,7 @@ fn sandbox_crash_helper_process() {
 
 #[test]
 fn abrupt_host_loss_kills_the_scope_and_the_next_prepare_reconciles_its_wal() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }

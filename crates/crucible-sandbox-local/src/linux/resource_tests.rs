@@ -13,7 +13,6 @@ use crucible_sandbox::{
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
 use super::tests::{command, finish};
-use crate::LocalSandbox;
 use crate::sample::{Sample, skipped_without_enforcement};
 
 /// What `/proc/self/limits` says the scope may hold, read back from inside it.
@@ -38,7 +37,7 @@ fn stated_process_ceiling(limits: &str) -> (u64, u64) {
 
 #[test]
 fn a_confined_command_holds_the_process_ceiling_the_broker_owns() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -74,7 +73,7 @@ fn a_confined_command_holds_the_process_ceiling_the_broker_owns() {
 
 #[test]
 fn a_stated_process_ceiling_stops_the_command_forking_past_it() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -133,7 +132,7 @@ fn a_stated_process_ceiling_stops_the_command_forking_past_it() {
 
 #[test]
 fn requested_open_file_limit_is_hard_before_workload_exec() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -172,7 +171,7 @@ fn requested_open_file_limit_is_hard_before_workload_exec() {
 
 #[test]
 fn requested_address_space_limit_is_hard_before_workload_exec() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -211,7 +210,7 @@ fn requested_address_space_limit_is_hard_before_workload_exec() {
 
 #[test]
 fn requested_cpu_limit_terminates_the_workload_scope() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }

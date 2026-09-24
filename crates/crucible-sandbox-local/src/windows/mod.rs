@@ -50,6 +50,7 @@ pub(super) fn declared_capabilities() -> SandboxCapabilities {
 pub(super) fn prepare(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     if !matches!(request.policy().network(), SandboxNetworkPolicy::Closed) {
         return Err(SandboxError::Unsupported {
@@ -123,6 +124,7 @@ pub(super) fn prepare(
         inspection,
         scratch: Some(scratch),
         reservation: Some(reservation),
+        runtime,
         materialized: false,
         transferred: false,
     }))
@@ -134,6 +136,8 @@ struct WindowsSession {
     inspection: SandboxInspection,
     scratch: Option<Stage>,
     reservation: Option<Reservation>,
+    /// Where each command's status is watched.
+    runtime: Option<tokio::runtime::Handle>,
     materialized: bool,
     transferred: bool,
 }
@@ -222,6 +226,7 @@ impl SandboxSession for WindowsSession {
                     invocation: self.request.invocation_mode(),
                     call_result_key: self.request.call_result_key(),
                     canceller: None,
+                    runtime: self.runtime.clone(),
                     speech: command.speech(),
                     startup_input: Some(startup_input),
                     credentials: super::process::credential_values(command.environment()),

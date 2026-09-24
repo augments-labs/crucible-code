@@ -15,7 +15,6 @@ use crucible_sandbox::{
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
 use super::tests::{command, finish};
-use crate::LocalSandbox;
 use crate::sample::{Sample, skipped_without_enforcement};
 
 /// A secret one directory over from the workspace, granted to nothing.
@@ -42,7 +41,7 @@ fn session_denying(sample: &Sample, rule: &[&str]) -> Box<dyn crucible_sandbox::
     let policy = SandboxPolicy::standard(&sample.workspace())
         .expect("policy")
         .with_command_policy(commands);
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     let mut session = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -57,7 +56,7 @@ fn session_denying(sample: &Sample, rule: &[&str]) -> Box<dyn crucible_sandbox::
 
 #[test]
 fn a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -96,7 +95,7 @@ fn a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead() 
 
 #[test]
 fn a_helper_the_script_makes_is_never_a_word_the_guardrail_reads() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }

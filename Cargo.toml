@@ -438,6 +438,10 @@ path = "src/main.rs"
 # drawn here or nowhere.
 [dependencies]
 arboard.workspace = true
+# The runtime the tools probe watches its sandbox command on, shaped as the
+# application's: several threads and a clock. The command line itself names
+# none of it; it reaches the application's runtime through `crucible-app`.
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 # The composition root: every concrete provider, tool, server and session a run
 # is assembled from, and the conversation the command line then drives. The
 # command line adapts it to a terminal and adds nothing to it.
