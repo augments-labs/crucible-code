@@ -1,7 +1,7 @@
 //! What a tool asks the person at the keyboard, and what they answer.
 //!
 //! A tool that needs a decision only a person can make sends the questions and
-//! blocks until they come back. The thread that would answer is the one drawing
+//! awaits their answer. The thread that would answer is the one drawing
 //! the screen, so the questions cross a thread boundary — which is why these
 //! values live here rather than in the crate that asks or the one that draws.
 //! Neither of those may depend on the other. What carries them across is `Put`,

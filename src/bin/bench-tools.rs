@@ -50,8 +50,12 @@ enum ProbeError {
 struct Unasked;
 
 impl Ask for Unasked {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Deny, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
 
@@ -97,7 +101,9 @@ fn invoke(
     tool.validate(&call.args)?;
     let sensitivity = tool.sensitivity(&call.args);
     let mut permission = Permission::with(Mode::FullAccess, crucible_core::Rules::new());
-    let Settled::Approved(approved) = permission.decide(&call, &sensitivity, &mut Unasked) else {
+    let Settled::Approved(approved) =
+        Bridge::Probes.cross(permission.decide(&call, &sensitivity, &mut Unasked))?
+    else {
         return Err(ProbeError::Permission(name.into()));
     };
     let cancel = Cancel::new();

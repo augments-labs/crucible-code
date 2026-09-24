@@ -1104,9 +1104,13 @@ mod tests {
 
         struct Counting(usize);
         impl crucible_tools::Ask for Counting {
-            fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+            fn ask<'a>(
+                &'a mut self,
+                _call: &'a ToolCall,
+                _sensitivity: &'a Sensitivity,
+            ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
                 self.0 += 1;
-                (Verdict::Allow, Remember::Never)
+                Box::pin(async { (Verdict::Allow, Remember::Never) })
             }
         }
 
@@ -1121,11 +1125,12 @@ mod tests {
 
         let sensitivity = tool.sensitivity(&call.args);
         let mut counting = Counting(0);
-        let settled = Permission::with(Mode::default(), Rules::new()).decide(
-            &call,
-            &sensitivity,
-            &mut counting,
-        );
+        let settled =
+            crucible_runtime::answered!(Permission::with(Mode::default(), Rules::new()).decide(
+                &call,
+                &sensitivity,
+                &mut counting,
+            ));
 
         assert_eq!(
             counting.0, 1,

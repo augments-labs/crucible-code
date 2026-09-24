@@ -439,10 +439,15 @@ path = "src/main.rs"
 # drawn here or nowhere.
 [dependencies]
 arboard.workspace = true
-# The runtime the tools probe watches its sandbox command on, shaped as the
-# application's: several threads and a clock. The command line itself names
-# none of it; it reaches the application's runtime through `crucible-app`.
-tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+# Two unrelated features, one entry: `rt-multi-thread` and `time` are the
+# runtime the tools probe watches its sandbox command on, shaped as the
+# application's — several threads and a clock. The command line itself names
+# none of that runtime; it reaches the application's own through
+# `crucible-app`. `sync` is the one-shot channel a pending permission question
+# or ask answers through: a human's reply is human-length, so the drawing
+# thread that holds the sending half must be able to hand it over without the
+# turn thread blocking inside a poll to receive it.
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 # The composition root: every concrete provider, tool, server and session a run
 # is assembled from, and the conversation the command line then drives. The
 # command line adapts it to a terminal and adds nothing to it.

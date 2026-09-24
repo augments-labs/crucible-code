@@ -20,18 +20,23 @@ impl Whoever {
 }
 
 impl Put for Whoever {
-    fn put(&self, questions: &[Question]) -> Option<Vec<Answered>> {
-        if let Ok(mut saw) = self.saw.lock() {
-            saw.extend(questions.iter().map(|one| one.question().to_owned()));
-        }
-        Some(
-            self.answers
-                .iter()
-                .map(|one| {
-                    Answered::new(one.chosen().map(str::to_owned)).noting(one.note().to_owned())
-                })
-                .collect(),
-        )
+    fn put<'a>(
+        &'a self,
+        questions: &'a [Question],
+    ) -> crucible_runtime::BoxFuture<'a, Option<Vec<Answered>>> {
+        Box::pin(async move {
+            if let Ok(mut saw) = self.saw.lock() {
+                saw.extend(questions.iter().map(|one| one.question().to_owned()));
+            }
+            Some(
+                self.answers
+                    .iter()
+                    .map(|one| {
+                        Answered::new(one.chosen().map(str::to_owned)).noting(one.note().to_owned())
+                    })
+                    .collect(),
+            )
+        })
     }
 }
 
@@ -39,8 +44,11 @@ impl Put for Whoever {
 struct Nobody;
 
 impl Put for Nobody {
-    fn put(&self, _questions: &[Question]) -> Option<Vec<Answered>> {
-        None
+    fn put<'a>(
+        &'a self,
+        _questions: &'a [Question],
+    ) -> crucible_runtime::BoxFuture<'a, Option<Vec<Answered>>> {
+        Box::pin(async { None })
     }
 }
 

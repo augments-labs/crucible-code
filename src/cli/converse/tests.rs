@@ -17,8 +17,6 @@ use crucible_runner::{Agent, Model, Tools};
 use crucible_session::Session;
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
 
-use std::sync::mpsc::channel;
-
 use crucible_tui::Key;
 
 use super::*;
@@ -267,9 +265,6 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         Tools::new(),
         Arc::new(Session::nowhere()),
     ));
-    let (reply, _) = channel();
-    let (give, _) = channel();
-    let answering = Answering { reply, give };
     let mut seen = Inbox::new(seen);
     let mut drawn = Ok(());
     let mut meanwhile = typing::Meanwhile::Nothing;
@@ -281,7 +276,6 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         held: &mut held,
         says: &mut says,
         seen: &mut seen,
-        answering: &answering,
         drawn: &mut drawn,
         meanwhile: &mut meanwhile,
         leaving: &mut leaving,

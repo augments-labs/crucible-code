@@ -73,9 +73,11 @@ fn running_with(
             args: ToolArgs::new(r#"{"command":"sleep 30","background":true}"#),
         };
 
-        let Settled::Approved(approved) =
-            engine.decide(&call, &tool.sensitivity(&call.args), &mut Nobody)
-        else {
+        let Settled::Approved(approved) = crucible_runtime::answered!(engine.decide(
+            &call,
+            &tool.sensitivity(&call.args),
+            &mut Nobody
+        )) else {
             panic!("full access asked about a command");
         };
 
@@ -241,8 +243,12 @@ impl JournalStore for Journal {
 }
 
 impl Ask for Nobody {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Deny, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
 

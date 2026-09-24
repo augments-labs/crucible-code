@@ -269,10 +269,12 @@ pub enum Bridge {
     /// - Owner: `crucible-code`
     /// - Retired: when the application runs on one runtime.
     SandboxPanel,
-    /// The performance probes timing a tool's run the way a turn runs one.
+    /// The performance probes timing a tool's run the way a turn runs one,
+    /// and the permission verdict their own fixture settles before it.
     ///
     /// - Crossing: polls once.
-    /// - Bound: one poll for each run timed.
+    /// - Bound: one poll for each run timed and each permission decided for
+    ///   it.
     /// - Owner: `crucible-code`
     /// - Retired: when the turn loop is asynchronous.
     Probes,

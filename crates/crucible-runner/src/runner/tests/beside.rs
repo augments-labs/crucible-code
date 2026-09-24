@@ -51,11 +51,19 @@ struct Deliberating {
 }
 
 impl Ask for Deliberating {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+        // A real rendezvous rather than a future that answers `Pending` and
+        // wakes: this fixture holds one run against another on the threads
+        // the test itself put them on, so it is those threads, and not a
+        // poll, that must wait here.
         self.asked += 1;
         self.put.send(()).expect("the test to be waiting");
         self.go.recv().expect("the test to let the reader answer");
-        (Verdict::Allow, Remember::Session)
+        Box::pin(async { (Verdict::Allow, Remember::Session) })
     }
 }
 

@@ -1098,8 +1098,12 @@ mod tests {
     struct Unasked;
 
     impl Ask for Unasked {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Deny, Remember::Never)
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+            Box::pin(async { (Verdict::Deny, Remember::Never) })
         }
     }
 
@@ -1110,13 +1114,13 @@ mod tests {
             name: "read".into(),
             args: ToolArgs::new("{}"),
         };
-        let settled = Permission::new().decide(
+        let settled = crucible_runtime::answered!(Permission::new().decide(
             &call,
             &Sensitivity::ReadOnly {
                 target: Target::at("/w/pictures/holiday.png", Some("pictures/holiday.png")),
             },
             &mut Unasked,
-        );
+        ));
 
         let Settled::Approved(approved) = settled else {
             panic!("a read is allowed without a question")
