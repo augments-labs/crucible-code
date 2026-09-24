@@ -3,13 +3,17 @@
 //! Fetch offers only URL context with one supplied URL, requires retrieval
 //! evidence, and returns model-extracted text rather than claiming raw HTML.
 
-use super::{CEILING, FETCH_CEILING, host_of, undelivered};
+use std::sync::Arc;
+
+use super::{CEILING, FETCH_CEILING, Sending, host_of, room, sent, undelivered};
+use crate::google::wire::Interactions;
 use crate::{Endpoint, Transport};
 use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 use crucible_credentials::{Credential, Outgoing};
 use crucible_models::Delta;
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{ContinuationScope, ProviderContinuation, StopReason};
+use tokio::sync::Semaphore;
 
 mod fetch;
 mod read;
@@ -21,8 +25,9 @@ const NAME: &str = "google";
 pub struct GoogleWeb {
     endpoint: Endpoint,
     credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    transport: Arc<dyn Transport>,
     model: Box<str>,
+    room: Arc<Semaphore>,
 }
 
 impl std::fmt::Debug for GoogleWeb {
@@ -48,8 +53,9 @@ impl GoogleWeb {
         Self {
             endpoint,
             credential,
-            transport,
+            transport: Arc::from(transport),
             model: model.into(),
+            room: room(),
         }
     }
 
@@ -61,7 +67,7 @@ impl GoogleWeb {
         cancel: &Cancel,
     ) -> Result<(String, ProviderContinuation), SourceError> {
         let scope = ContinuationScope::new(self.credential.scope(), self.endpoint.as_str());
-        let wire = crate::google::wire::Interactions::new(&self.model, scope)
+        let wire = Interactions::new(&self.model, scope)
             .map_err(|_| problem("invalid Google web model identity"))?;
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
@@ -70,7 +76,6 @@ impl GoogleWeb {
             .authorize(&mut outgoing)
             .await
             .map_err(|_| problem("Google web credential could not authorize the request"))?;
-        let redactions = outgoing.redactions();
         let mut json = crate::json::Json::new();
         json.object(|body| {
             body.text("model", &self.model);
@@ -84,55 +89,75 @@ impl GoogleWeb {
                 tools.object(|entry| entry.text("type", tool));
             });
         });
-        let response = self
-            .transport
-            .post(self.endpoint.as_str(), outgoing, json.finish(), cancel)
-            .map_err(|error| undelivered(NAME, &error, &redactions, cancel))?;
-        if cancel.requested() {
-            return Err(SourceError::Cancelled(NAME));
-        }
-        if response.status != 200 {
-            // Refusal text can include private model state. The HTTP status is
-            // sufficient for this non-retrying side request.
-            return Err(SourceError::Refused {
-                named: NAME,
-                status: response.status,
-                message: "Google refused the web request".into(),
-            });
-        }
-        let body = read::Limited::new(response.body, cancel.clone(), super::MOST, super::MAX_WAIT);
-        let mut stream =
-            crate::stream::Response::with_wire(Box::new(body), cancel.clone(), redactions, wire);
-        let mut text = String::new();
-        let mut state = None;
-        let mut stop = None;
-        while let Some(delta) = stream.next_delta() {
-            if cancel.requested() {
-                return Err(SourceError::Cancelled(NAME));
-            }
-            match delta.map_err(|_| problem("Google web response did not complete correctly"))? {
-                Delta::Text(part) => {
-                    text.reserve_exact(part.len());
-                    text.push_str(&part);
-                }
-                Delta::Continuation(next) if state.is_none() => state = Some(next),
-                Delta::Stopped(reason) if stop.is_none() => stop = Some(reason),
-                Delta::Progress | Delta::Usage(_) | Delta::Spent(_) | Delta::Carried(_) => {}
-                _ => return Err(problem("unexpected Google web response content")),
-            }
-        }
-        if cancel.requested() {
-            return Err(SourceError::Cancelled(NAME));
-        }
-        if stop != Some(StopReason::Yielded) {
-            return Err(problem("Google web response was incomplete"));
-        }
-        let state = state
-            .ok_or_else(|| problem("Google web response carried no retrieval evidence"))?
-            .finish(&text, 0, stop)
-            .map_err(|_| problem("invalid Google web retrieval evidence"))?;
-        Ok((text, state))
+        let body = json.finish();
+        sent(
+            (NAME, &self.transport, &self.endpoint),
+            &self.room,
+            cancel,
+            move |sending, cancel| answered(sending, outgoing, body, wire, cancel),
+        )
+        .await
     }
+}
+
+/// Posts one side request and reads its whole streamed answer, on the thread
+/// [`sent`] runs it on.
+fn answered(
+    sending: Sending<'_>,
+    outgoing: Outgoing,
+    body: String,
+    wire: Interactions,
+    cancel: &Cancel,
+) -> Result<(String, ProviderContinuation), SourceError> {
+    let redactions = outgoing.redactions();
+    let response = sending
+        .transport
+        .post(sending.endpoint, outgoing, body, cancel)
+        .map_err(|error| undelivered(NAME, &error, &redactions, cancel))?;
+    if cancel.requested() {
+        return Err(SourceError::Cancelled(NAME));
+    }
+    if response.status != 200 {
+        // Refusal text can include private model state. The HTTP status is
+        // sufficient for this non-retrying side request.
+        return Err(SourceError::Refused {
+            named: NAME,
+            status: response.status,
+            message: "Google refused the web request".into(),
+        });
+    }
+    let body = read::Limited::new(response.body, cancel.clone(), super::MOST, super::MAX_WAIT);
+    let mut stream =
+        crate::stream::Response::with_wire(Box::new(body), cancel.clone(), redactions, wire);
+    let mut text = String::new();
+    let mut state = None;
+    let mut stop = None;
+    while let Some(delta) = stream.next_delta() {
+        if cancel.requested() {
+            return Err(SourceError::Cancelled(NAME));
+        }
+        match delta.map_err(|_| problem("Google web response did not complete correctly"))? {
+            Delta::Text(part) => {
+                text.reserve_exact(part.len());
+                text.push_str(&part);
+            }
+            Delta::Continuation(next) if state.is_none() => state = Some(next),
+            Delta::Stopped(reason) if stop.is_none() => stop = Some(reason),
+            Delta::Progress | Delta::Usage(_) | Delta::Spent(_) | Delta::Carried(_) => {}
+            _ => return Err(problem("unexpected Google web response content")),
+        }
+    }
+    if cancel.requested() {
+        return Err(SourceError::Cancelled(NAME));
+    }
+    if stop != Some(StopReason::Yielded) {
+        return Err(problem("Google web response was incomplete"));
+    }
+    let state = state
+        .ok_or_else(|| problem("Google web response carried no retrieval evidence"))?
+        .finish(&text, 0, stop)
+        .map_err(|_| problem("invalid Google web retrieval evidence"))?;
+    Ok((text, state))
 }
 
 impl Fetch for GoogleWeb {

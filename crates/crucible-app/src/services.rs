@@ -24,15 +24,18 @@
 
 use std::sync::OnceLock;
 
+use crucible_provider::WEB_IN_FLIGHT;
 use crucible_tools::ToolWorker;
 
 use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 
-// Tool work may take every place the tool worker has and still leave the
-// runtime blocking threads for its other owners.
+// Every shipped owner of the runtime's blocking threads, each at its most, and
+// still at least one thread to spare: the tool worker's jobs, and the requests
+// of the one web source a run builds. An owner added to the blocking threads is added
+// here.
 const _: () = assert!(
-    ToolWorker::CAPACITY < BLOCKING,
-    "the tool worker would take every blocking thread the runtime has"
+    ToolWorker::CAPACITY + WEB_IN_FLIGHT < BLOCKING,
+    "the tool worker and the web source together would take every blocking thread the runtime has"
 );
 
 /// What the application owns for the length of a run.

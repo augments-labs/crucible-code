@@ -154,8 +154,9 @@ pub enum Bridge {
     ///   it to every step it awaits — the provider's stream and each read of
     ///   it, the run of a call that runs alone, the toolset's preparation and
     ///   disposal — and how soon a step still waiting heeds it is that step's
-    ///   own contract: nothing here enforces a deadline on a waiting step, and
-    ///   a tool's deadline is read only once its run has answered. What the
+    ///   own contract. The one deadline kept on a waiting step is a lone
+    ///   call's tool deadline: a run still waiting when it passes is dropped
+    ///   there, and the call is answered as timed out. What the
     ///   run keeps bounds how much the turn does rather than how long a step
     ///   waits: its retry attempts, whose pauses heed the cancel, and its
     ///   response, tool-output and spend ceilings. The crossing itself waits

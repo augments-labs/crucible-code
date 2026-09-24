@@ -18,14 +18,23 @@
 //! Responses transport to be streamed, so that source frames the events but
 //! keeps only the terminal response; the result is no more visible in halves
 //! than either vendor's unstreamed answer.
+//!
+//! The request itself is sent from a blocking thread of the runtime a search
+//! or a fetch is polled in, never from the thread polling it, and the call
+//! waits for it there racing the call's cancel, so a call the user stopped
+//! ends as the stop is asked for rather than when the request next looks —
+//! see [`sent`].
 
 use std::io::{self, Read};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError};
 use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_runtime::{BoxFuture, Cancel};
 use serde_json::Value;
+use tokio::runtime::Handle;
+use tokio::sync::Semaphore;
 
 use crate::endpoint::Endpoint;
 use crate::json::Json;
@@ -177,13 +186,113 @@ fn port_stripped(authority: &str) -> Option<&str> {
     }
 }
 
+/// How many of one web source's requests may be under way at once, each on a
+/// blocking thread of the runtime its caller polls it in, a request a call
+/// stopped waiting for counting until it has returned.
+///
+/// The tools run one call at a time, so this is room for the next call beside
+/// one request the last call gave up on and that is still winding down. A
+/// request that never winds down keeps its place, and once every place is
+/// held that way a call waits for one, as long as it is not cancelled. The
+/// most blocking threads one source holds is therefore this, which is what an
+/// owner of the runtime counts against its blocking-thread limit.
+pub const IN_FLIGHT: usize = 2;
+
+/// Room for one source's requests.
+fn room() -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(IN_FLIGHT))
+}
+
+/// Sends one side request from a blocking thread of the runtime this is polled
+/// in, and waits for it there until it answers or `cancel` is raised.
+///
+/// The transport blocks, so a request sent from the thread polling a search
+/// would hold that thread for as long as the vendor takes, and the call could
+/// stop no sooner than the request next looked at its cancel. Here the request
+/// runs on a blocking thread, and the call races its answer against `cancel`
+/// with [`Cancel::race`]: a call the user stopped ends as the stop is asked
+/// for, with [`SourceError::Cancelled`], whether or not the request has
+/// noticed yet.
+///
+/// The request is handed a child of `cancel`, raised as the call stops
+/// waiting for it however it stops, and holds one of its source's
+/// [`IN_FLIGHT`] places until it returns. A blocking thread cannot be stopped
+/// from outside, so a request the call gave up on runs until its next look at
+/// that token, and what it answers then is dropped as its place is given back.
+/// A request that came apart comes apart in the call, as it did when it ran
+/// there.
+async fn sent<T, R>(
+    (named, transport, endpoint): (&'static str, &Arc<dyn Transport>, &Endpoint),
+    room: &Arc<Semaphore>,
+    cancel: &Cancel,
+    request: R,
+) -> Result<T, SourceError>
+where
+    T: Send + 'static,
+    R: FnOnce(Sending<'_>, &Cancel) -> Result<T, SourceError> + Send + 'static,
+{
+    let Ok(runtime) = Handle::try_current() else {
+        return Err(unsent(named));
+    };
+    let place = match cancel.race(Arc::clone(room).acquire_owned()).await {
+        None => return Err(SourceError::Cancelled(named)),
+        Some(place) => place.map_err(|_| unsent(named))?,
+    };
+    if cancel.requested() {
+        return Err(SourceError::Cancelled(named));
+    }
+
+    let stop = StopOnDrop(cancel.child());
+    let told = stop.0.clone();
+    let (transport, endpoint) = (Arc::clone(transport), endpoint.clone());
+    let running = runtime.spawn_blocking(move || {
+        // Given back as the request returns or unwinds: the place is the
+        // request's, not the call's.
+        let _place = place;
+        let sending = Sending {
+            named,
+            transport: transport.as_ref(),
+            endpoint: endpoint.as_str(),
+        };
+        request(sending, &told)
+    });
+    match cancel.race(running).await {
+        None => Err(SourceError::Cancelled(named)),
+        Some(Ok(answered)) => answered,
+        Some(Err(ended)) => match ended.try_into_panic() {
+            Ok(panicked) => std::panic::resume_unwind(panicked),
+            Err(_) => Err(unsent(named)),
+        },
+    }
+}
+
+/// Raises the request's token when the call stops waiting for it, however it
+/// stops.
+struct StopOnDrop(Cancel);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.request();
+    }
+}
+
+/// A request with no running runtime to send it from: polled outside one, or
+/// after the one it was polled in began shutting down.
+fn unsent(named: &'static str) -> SourceError {
+    SourceError::Transport {
+        named,
+        problem: "no runtime was running to send the request from".into(),
+    }
+}
+
 /// Anthropic's server-side web search and web fetch, reached in a side request.
 #[derive(Debug)]
 pub struct AnthropicWeb {
     credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     model: Box<str>,
+    room: Arc<Semaphore>,
 }
 
 /// What this source is called, in errors and in what a rule is written about.
@@ -214,9 +323,10 @@ impl AnthropicWeb {
     ) -> Self {
         Self {
             credential,
-            transport,
+            transport: Arc::from(transport),
             endpoint,
             model: model.into(),
+            room: room(),
         }
     }
 
@@ -272,16 +382,14 @@ impl AnthropicWeb {
             });
         });
 
-        let answered = posted(
-            Sending {
-                named: ANTHROPIC,
-                transport: self.transport.as_ref(),
-                endpoint: self.endpoint.as_str(),
-            },
-            outgoing,
-            json.finish(),
+        let body = json.finish();
+        let answered = sent(
+            (ANTHROPIC, &self.transport, &self.endpoint),
+            &self.room,
             cancel,
+            move |sending, cancel| posted(sending, outgoing, body, cancel),
         )
+        .await
         .map_err(|error| self.failure(error))?;
         if self.model.as_ref() == crate::anthropic::FABLE_51
             && !matches!(
@@ -684,9 +792,10 @@ const OPENAI: &str = "openai";
 #[derive(Debug)]
 pub struct OpenAiWeb {
     credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     model: Box<str>,
+    room: Arc<Semaphore>,
 }
 
 impl OpenAiWeb {
@@ -700,9 +809,10 @@ impl OpenAiWeb {
     ) -> Self {
         Self {
             credential,
-            transport,
+            transport: Arc::from(transport),
             endpoint,
             model: model.into(),
+            room: room(),
         }
     }
 
@@ -723,16 +833,14 @@ impl OpenAiWeb {
 
     /// Posts a streamed Responses request and keeps its terminal response.
     async fn ask(&self, body: String, cancel: &Cancel) -> Result<Value, SourceError> {
-        posted_openai(
-            Sending {
-                named: OPENAI,
-                transport: self.transport.as_ref(),
-                endpoint: self.endpoint.as_str(),
-            },
-            self.headers().await?,
-            body,
+        let outgoing = self.headers().await?;
+        sent(
+            (OPENAI, &self.transport, &self.endpoint),
+            &self.room,
             cancel,
+            move |sending, cancel| posted_openai(sending, outgoing, body, cancel),
         )
+        .await
         .map_err(|error| {
             if self.model.as_ref() == "gpt-6-astra" {
                 match error {
@@ -1122,9 +1230,10 @@ const MOONSHOT_AGENT: &str = concat!("crucible/", env!("CARGO_PKG_VERSION"));
 #[derive(Debug)]
 pub struct MoonshotWeb {
     credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    transport: Arc<dyn Transport>,
     searching: Endpoint,
     fetching: Endpoint,
+    room: Arc<Semaphore>,
 }
 
 impl MoonshotWeb {
@@ -1139,9 +1248,10 @@ impl MoonshotWeb {
     pub fn new(credential: Box<dyn Credential>, transport: Box<dyn Transport>) -> Self {
         Self {
             credential,
-            transport,
+            transport: Arc::from(transport),
             searching: Self::SEARCH,
             fetching: Self::FETCH,
+            room: room(),
         }
     }
 
@@ -1192,16 +1302,15 @@ impl Search for MoonshotWeb {
                 body.number("timeout_seconds", 30);
             });
 
-            let answered = posted(
-                Sending {
-                    named: MOONSHOT,
-                    transport: self.transport.as_ref(),
-                    endpoint: self.searching.as_str(),
-                },
-                self.headers("application/json").await?,
-                json.finish(),
+            let outgoing = self.headers("application/json").await?;
+            let body = json.finish();
+            let answered = sent(
+                (MOONSHOT, &self.transport, &self.searching),
+                &self.room,
                 cancel,
-            )?;
+                move |sending, cancel| posted(sending, outgoing, body, cancel),
+            )
+            .await?;
 
             let found = answered
                 .pointer("/search_results")
@@ -1261,16 +1370,15 @@ impl Fetch for MoonshotWeb {
             // of. What was asked for is what it fetched, as far as anything
             // here can tell — and the tool compares the two, so saying
             // otherwise would make every fetch look like a redirect.
-            let text = posted_text(
-                Sending {
-                    named: MOONSHOT,
-                    transport: self.transport.as_ref(),
-                    endpoint: self.fetching.as_str(),
-                },
-                self.headers("text/markdown").await?,
-                json.finish(),
+            let outgoing = self.headers("text/markdown").await?;
+            let body = json.finish();
+            let text = sent(
+                (MOONSHOT, &self.transport, &self.fetching),
+                &self.room,
                 cancel,
-            )?;
+                move |sending, cancel| posted_text(sending, outgoing, body, cancel),
+            )
+            .await?;
 
             Ok(Page {
                 url: url.into(),
