@@ -34,19 +34,26 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
     running_with(case, count, std::sync::Arc::new(local()))
 }
 
-/// This machine's confinement, watching each command it starts on a runtime
-/// of this test binary's own, whose threads run a command's status task while
-/// a test waits on the command.
-fn local() -> LocalSandbox {
+/// A runtime of this test binary's own, whose threads run a command's status
+/// task, and own a command left running, while a test waits on the command.
+fn runtime() -> tokio::runtime::Handle {
     static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-    let runtime = RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_time()
-            .build()
-            .expect("a runtime to watch commands on")
-    });
-    LocalSandbox::new().watching_on(runtime.handle().clone())
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_time()
+                .build()
+                .expect("a runtime to watch commands on")
+        })
+        .handle()
+        .clone()
+}
+
+/// This machine's confinement, watching each command it starts on the test
+/// binary's runtime.
+fn local() -> LocalSandbox {
+    LocalSandbox::new().watching_on(runtime())
 }
 
 fn running_with(
@@ -54,8 +61,20 @@ fn running_with(
     count: usize,
     sandbox: std::sync::Arc<dyn crucible_core::SandboxService>,
 ) -> (Background, Sample) {
-    let here = Sample::new(case);
     let left = Background::new();
+    left.watching_on(runtime());
+    let here = started(&left, case, count, sandbox);
+    (left, here)
+}
+
+/// Starts `count` commands left running in `left`, through the real tool.
+fn started(
+    left: &Background,
+    case: &str,
+    count: usize,
+    sandbox: std::sync::Arc<dyn crucible_core::SandboxService>,
+) -> Sample {
+    let here = Sample::new(case);
     let cancel = Cancel::new();
     // This fixture exercises the real process/background path, but not Linux
     // namespace availability. Selecting the compatibility backend explicitly
@@ -115,7 +134,7 @@ fn running_with(
         "the registry did not take every command this test started"
     );
 
-    (left, here)
+    here
 }
 
 mod cleanup;
@@ -126,11 +145,20 @@ fn failed_stop_keeps_the_last_row_and_its_retry_notice() {
     let (left, _here) = running_with("failed-stop", 1, sandbox);
     let mut leaving = Leaving::default();
     let number = left.running().first().expect("running command").number;
+    drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
 
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
         Moved::Redraw,
         "failed cleanup closed the panel"
+    );
+    waiting_until("the refused stop", || {
+        left.running().first().is_some_and(|one| one.refused)
+    });
+    assert_eq!(
+        leaving.watched(&left),
+        Moved::Redraw,
+        "the refusal was not drawn on the next beat"
     );
     assert_eq!(left.running().first().map(|one| one.number), Some(number));
     for (columns, room, glyphs) in [(80, 24, Glyphs::Unicode), (24, 8, Glyphs::Ascii)] {
@@ -151,9 +179,68 @@ fn failed_stop_keeps_the_last_row_and_its_retry_notice() {
     denied.store(false, std::sync::atomic::Ordering::Relaxed);
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
-        Moved::Left
+        Moved::Redraw
     );
-    assert_eq!(left.count(), 0);
+    waiting_until("the stopped command's row going", || left.count() == 0);
+    assert_eq!(leaving.watched(&left), Moved::Left);
+}
+
+/// Waits, up to a ceiling no passing run comes near, until `until` holds.
+fn waiting_until(what: &str, until: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !until() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what} never happened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// The command line lets go of the registry of commands left running before it
+/// shuts the runtime down, so a command still running at exit is ended by its
+/// owner on a runtime that is still running, rather than on the thread
+/// letting go, or on one already draining where the stop would never run.
+#[test]
+fn a_command_left_running_at_exit_is_ended_on_the_runtime_before_it_is_shut_down() {
+    let (started_one, stopped) = crate::cli::leaving_first(Background::new, |services, left| {
+        let runtime = services.runtime().handle()?;
+        left.watching_on(runtime.clone());
+        let (sandbox, on_runtime) = cleanup::counting_on(runtime);
+        let here = started(left, "ended-at-exit", 1, sandbox);
+        Ok::<_, crucible_app::runtime::Unstarted>((here, on_runtime))
+    });
+
+    let (_here, on_runtime) = started_one.expect("the runtime could not be started");
+    assert_eq!(stopped, Ok(()), "the runtime was left with work on it");
+    assert_eq!(
+        on_runtime.load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "the command left running was not ended on the runtime before it shut down"
+    );
+}
+
+/// The beat a standing panel is looked at again on without a key: the frame
+/// a key's own outcome is shown on.
+const FRAME: std::time::Duration = std::time::Duration::from_millis(250);
+
+#[test]
+fn the_key_that_stops_one_returns_at_once_while_its_stop_stalls() {
+    let (sandbox, stalled) = cleanup::stalling();
+    let (left, _here) = running_with("stalled-stop", 1, sandbox);
+    let mut leaving = Leaving::default();
+    stalled.store(true, std::sync::atomic::Ordering::Release);
+
+    let began = std::time::Instant::now();
+    let moved = leaving.against(Pressed::Key(Key::Char('x')), &left);
+    let took = began.elapsed();
+    stalled.store(false, std::sync::atomic::Ordering::Release);
+
+    assert!(
+        took < FRAME,
+        "the key waited {took:?} on a stop that stalled"
+    );
+    assert_eq!(moved, Moved::Redraw);
 }
 
 /// Answers nothing, because in this mode nothing is asked.
@@ -322,21 +409,24 @@ fn stopping_the_last_one_takes_the_list_with_it() {
 
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
-        Moved::Left
+        Moved::Redraw
     );
-    assert_eq!(left.count(), 0, "the command was not ended");
+    waiting_until("the command ending", || left.count() == 0);
+    assert_eq!(leaving.watched(&left), Moved::Left);
 }
 
 #[test]
 fn stopping_one_of_several_keeps_the_list_open() {
     let (left, _here) = running("stopping-one", 2);
     let mut leaving = Leaving::default();
+    drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
 
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
         Moved::Redraw
     );
-    assert_eq!(left.count(), 1);
+    waiting_until("one command ending", || left.count() == 1);
+    assert_eq!(leaving.watched(&left), Moved::Redraw);
 }
 
 #[test]
@@ -367,6 +457,7 @@ fn a_command_that_ended_while_the_list_was_open_brings_the_mark_back_inside_it()
     if let Some(last) = numbers.last() {
         left.stop(*last).expect("background cleanup");
     }
+    waiting_until("the stopped command's row going", || left.count() == 1);
 
     drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
 

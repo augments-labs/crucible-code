@@ -14,7 +14,7 @@ use crucible_tools::{
 };
 use crucible_types::{ToolCall, ToolId};
 
-use super::background::{Background, MOST};
+use super::background::MOST;
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::sample::{Sample, allowed, enforcing};
 
@@ -831,7 +831,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
     // timeout on it. The call comes back in the time it takes to see whether the
     // command failed on the spot, and the process is still there afterwards.
     let sample = Sample::new("bash-background");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     let started = Instant::now();
@@ -867,7 +867,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
 
     // And it is ended by letting go of the registry, which is what the process
     // leaving does.
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
     assert!(left.running().is_empty());
 }
 
@@ -879,7 +879,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     // somebody decided the wait was not worth it, the useful move is to carry
     // on with whatever does not depend on it.
     let sample = Sample::new("bash-pressed");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     // Asked for before the command starts rather than raced with it: the wait
@@ -914,7 +914,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
         output.text()
     );
 
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -927,7 +927,7 @@ fn a_command_the_developer_let_go_of_still_reports_small_output_whole() {
     // the markers arrived, and a press read on the very first pass can land
     // before `printf` has run at all.
     let sample = Sample::new("bash-pressed-small");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     let output = thread::scope(|scope| {
@@ -951,7 +951,7 @@ fn a_command_the_developer_let_go_of_still_reports_small_output_whole() {
         output.text()
     );
 
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -968,7 +968,7 @@ fn the_panel_behind_ctrl_b_shows_kept_bytes_whole_and_untrimmed() {
     // the command goes on running after the press, and what it printed lands
     // in the readers whenever the shell gets to it, not by a fixed moment.
     let sample = Sample::new("bash-pressed-panel-whole");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     left.ask();
@@ -989,7 +989,7 @@ fn the_panel_behind_ctrl_b_shows_kept_bytes_whole_and_untrimmed() {
         "the panel cut or trimmed output that never needed either"
     );
 
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -1015,7 +1015,7 @@ fn the_panel_behind_ctrl_b_marks_where_each_stream_lost_bytes() {
     let head = crate::bound::OUTPUT / 2;
     let tail = crate::bound::OUTPUT - head;
     let sample = Sample::new("bash-panel-both-flooded");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     let stream = |pattern: &str| -> String {
@@ -1074,7 +1074,7 @@ fn the_panel_behind_ctrl_b_marks_where_each_stream_lost_bytes() {
         around(&expected),
     );
 
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -1102,7 +1102,7 @@ fn a_command_the_developer_let_go_of_says_where_bytes_were_omitted() {
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut wait = Duration::from_millis(50);
     let (output, left) = loop {
-        let left = Background::new();
+        let left = crate::sample::background();
         let tool = compatible(&sample).leaving(left.clone());
 
         // The pipeline floods the stream almost at once and the trailing
@@ -1141,7 +1141,7 @@ fn a_command_the_developer_let_go_of_says_where_bytes_were_omitted() {
         output.text()
     );
 
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -1168,7 +1168,7 @@ fn a_command_the_developer_let_go_of_survives_the_runners_own_result_ceiling() {
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut wait = Duration::from_millis(50);
     let (output, left) = loop {
-        let left = Background::new();
+        let left = crate::sample::background();
         let tool = compatible(&sample).leaving(left.clone());
 
         let output = thread::scope(|scope| {
@@ -1207,7 +1207,7 @@ fn a_command_the_developer_let_go_of_survives_the_runners_own_result_ceiling() {
         output.text()
     );
 
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -1229,7 +1229,7 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
         return;
     };
     let sample = Sample::new("bash-linux-detachable");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
     left.ask();
 
@@ -1239,7 +1239,7 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     assert!(!output.is_failed(), "{}", output.text());
     assert!(output.text().contains("ctrl+b"), "{}", output.text());
     assert_eq!(left.running().len(), 1);
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
     assert!(left.running().is_empty());
 }
 
@@ -1298,7 +1298,7 @@ fn a_writer_left_running_does_not_keep_a_command_from_writing() {
         return;
     };
     let sample = Sample::new("bash-writer-beside-a-running-one");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
 
     let started = finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
@@ -1316,7 +1316,7 @@ fn a_writer_left_running_does_not_keep_a_command_from_writing() {
         std::fs::read_to_string(sample.root().join("beside.txt")).expect("published file"),
         "beside\n"
     );
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -1324,7 +1324,7 @@ fn one_press_lets_go_of_one_command_rather_than_every_command_after_it() {
     // The request is spent when it is read. Without that, a press meant for a
     // slow build would leave every command after it running too, and the model
     // would be told the developer stepped in each time nobody had.
-    let left = Background::new();
+    let left = crate::sample::background();
 
     left.ask();
     assert!(left.wanted());
@@ -1337,7 +1337,7 @@ fn an_explicit_background_call_keeps_acceptance_as_its_only_result_after_a_fast_
     // acceptance into a terminal tool result, because recovery would then have
     // two possible owners for the one provider-projectable result.
     let sample = Sample::new("bash-background-failed");
-    let left = Background::new();
+    let left = crate::sample::background();
     // A window this test can be sure of. The default is a judgement about a
     // reader, and a host busy enough can take longer than it to start a shell
     // at all — which would leave this asserting how quickly the machine
@@ -1374,7 +1374,7 @@ fn a_command_that_ended_hands_over_what_it_printed() {
     // is to run something else that asks the same question — which is the work
     // the command was already doing.
     let sample = Sample::new("bash-background-printed");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     let output = finalized(
@@ -1412,7 +1412,7 @@ fn a_command_that_ended_says_where_bytes_were_omitted() {
     const FLOOD: usize = crate::bound::OUTPUT * 3;
     let share = crate::bound::OUTPUT / MOST;
     let sample = Sample::new("bash-background-flood");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     let output = finalized(
@@ -1444,9 +1444,53 @@ fn a_command_that_ended_says_where_bytes_were_omitted() {
 }
 
 #[test]
+fn a_command_left_running_holds_no_more_than_its_ceiling_however_much_it_floods() {
+    // Both streams, each far past a stream's head and tail, and together
+    // still under the ceiling that stops a command for its output, so what is
+    // measured is a command that goes on running with nobody reading it:
+    // what a registry holds for a watcher left printing all afternoon.
+    const FLOOD: usize = 1536 * 1024;
+    const _: () = assert!(2 * (FLOOD as u64) < super::PROCESS_OUTPUT_BYTES);
+    let sample = Sample::new("bash-background-flood-ceiling");
+    let left = crate::sample::background();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let output = finalized(
+        &tool,
+        &format!(
+            r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}; yes 0123456789abcdef | head -c {FLOOD} >&2; sleep 30","background":true}}"#
+        ),
+    )
+    .expect("the command started");
+    assert!(!output.is_failed(), "{}", output.text());
+    let number = left
+        .running()
+        .first()
+        .expect("the command left running")
+        .number;
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let printed = loop {
+        let printed = left.running().first().map_or(0, |standing| standing.bytes);
+        if printed >= 2 * FLOOD || Instant::now() >= deadline {
+            break printed;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let retained = left.retained(number).expect("the command is still kept");
+    stopped(&left, number);
+
+    assert_eq!(printed, 2 * FLOOD, "the flood never finished arriving");
+    assert!(
+        retained <= 2 * super::output::Pipe::CEILING,
+        "a command left running held {retained} bytes of the {printed} it printed"
+    );
+}
+
+#[test]
 fn an_explicit_background_command_has_no_foreground_deadline() {
     let sample = Sample::new("bash-background-no-deadline");
-    let left = Background::new();
+    let left = crate::sample::background();
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(recording))
@@ -1466,12 +1510,12 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
         Some(super::PROCESS_OUTPUT_BYTES)
     );
     drop(limits);
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
 fn background_capacity_is_owned_before_any_workload_release() {
-    let left = Background::new();
+    let left = crate::sample::background();
     let mut leases = Vec::new();
     for _ in 0..MOST {
         leases.push(left.reserve().expect("reserved application owner"));
@@ -1492,7 +1536,7 @@ fn background_capacity_is_owned_before_any_workload_release() {
 #[test]
 fn the_number_of_commands_left_running_is_capped() {
     let sample = Sample::new("bash-background-cap");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     for _ in 0..MOST {
@@ -1582,7 +1626,7 @@ fn a_line_that_does_not_say_what_runs_is_not_looking() {
 #[test]
 fn configured_command_ceilings_survive_foreground_and_background_requests() {
     let sample = Sample::new("bash-configured-ceilings");
-    let left = Background::new();
+    let left = crate::sample::background();
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
     let mut tool = Bash::new(sample.workspace(), std::sync::Arc::new(recording))
@@ -1612,7 +1656,7 @@ fn configured_command_ceilings_survive_foreground_and_background_requests() {
     assert_eq!(limits.len(), 2);
     assert!(limits.iter().all(|limits| *limits == configured));
     drop(limits);
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -1721,7 +1765,7 @@ fn a_command_that_begins_by_sleeping_to_reach_a_later_one_is_refused() {
     // again. Refusing it is the mechanism behind the sentence a backgrounded
     // command comes back with, which is otherwise only a request.
     let sample = Sample::new("bash-paced");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     let problem = tool
         .validate(&ToolArgs::new(
@@ -1743,7 +1787,7 @@ fn a_command_that_only_sleeps_is_still_a_command() {
     // Nothing runs after it, so there is nothing it is polling. A rule that
     // caught this would be a rule about the word rather than about the shape.
     let sample = Sample::new("bash-paced-alone");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(r#"{"command":"sleep 30"}"#))
         .expect("a bare wait is not a poll");
@@ -1755,7 +1799,7 @@ fn a_sleep_paced_command_left_running_is_not_a_poll() {
     // over what came after it. That is the move this refusal points at, so
     // refusing it too would leave nowhere to go.
     let sample = Sample::new("bash-paced-left");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(
         r#"{"command":"sleep 15 && gh pr checks 622","background":true}"#,
@@ -1769,7 +1813,7 @@ fn a_command_that_sleeps_after_doing_something_is_not_a_poll() {
     // that starts something and waits for it. The sleep is not what the line
     // is for, and a rule that read it as one would refuse ordinary work.
     let sample = Sample::new("bash-paced-after");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(r#"{"command":"printf 'up\n'; sleep 30"}"#))
         .expect("a sleep that is not the first thing is not a wait for a later one");
@@ -1780,10 +1824,34 @@ fn a_line_whose_text_does_not_say_what_runs_is_not_read_as_a_poll() {
     // `read` reports this one as opaque, and the permission engine asks about
     // it. A refusal here would be this rule guessing at a line it cannot read.
     let sample = Sample::new("bash-paced-opaque");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(
         r#"{"command":"(sleep 15) && gh pr checks 622"}"#,
     ))
     .expect("an unreadable line is not refused by a rule about a shape");
+}
+
+/// Stops the command running as `number` and waits, up to a ceiling no passing
+/// run comes near, for its owner to have ended it.
+fn stopped(left: &super::Background, number: usize) {
+    left.stop(number).expect("background cleanup");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while left
+        .running()
+        .iter()
+        .any(|standing| standing.number == number)
+    {
+        assert!(
+            left.running()
+                .iter()
+                .all(|standing| standing.number != number || !standing.refused),
+            "background cleanup was refused"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "background cleanup never finished"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
 }

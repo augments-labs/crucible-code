@@ -130,6 +130,17 @@ change in any release with no deprecation period.
   default `SandboxProcess::take_async_stdin` now writes on the runtime's
   blocking threads rather than the thread polling it; what a server is sent
   and answers with is unchanged.
+- **A command left running no longer holds up the screen.** Each one is owned
+  by a task of its own that asks its process everything on the application
+  runtime's blocking threads, which grow to 11 so these four still leave one
+  spare, so neither drawing nor a sandbox's limit kills wait on a process;
+  `Background` takes that runtime through `watching_on`, and one given none
+  ends a command rather than keeping it. Pressing <kbd>x</kbd> asks for the
+  stop and returns at once, the row going or `Stop failed; x retries`
+  appearing on a later frame, and the list of commands left running now
+  closes by itself once its last command has ended, however it ended; the end
+  of a run waits at most 7 s for its commands to be ended before ending what
+  their owners did not reach.
 
 ### Fixed
 

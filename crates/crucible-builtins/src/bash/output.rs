@@ -383,13 +383,13 @@ fn reap(
 
 /// Ends a command's whole process group, whatever the platform calls one.
 ///
-/// Named here rather than in two places because two modules end a command now:
-/// the wait that owns one, and the registry that took one over. Neither can
-/// await: the wait runs on whatever thread runs its call, and the registry on
-/// the drawing thread for its beat and its keys, on the thread handing a
-/// command over, and in destructors. So the stop is crossed rather than
-/// awaited, and a stop that would have had to wait is refused as the failure it
-/// is, which keeps the drawing thread from waiting on a stop that pends. A stop
+/// For the callers that cannot await: the wait that owns a command runs on
+/// whatever thread runs its call, and the registry ends a command it refuses
+/// on that same thread. A command the registry has taken is ended by the task
+/// that owns it, from one of the runtime's blocking threads, and one no owner
+/// reached by the registry's own end on the thread letting it go; see
+/// [`super::background`]. So the stop is crossed rather than awaited, and
+/// a stop that would have had to wait is refused as the failure it is. A stop
 /// that does not pend still runs its whole body inside that one poll, on
 /// whichever thread asked. The in-tree stops end the task watching the
 /// command's status, end the command's group, reap it within the reap bound,
@@ -913,8 +913,45 @@ impl Pipe {
     /// Stops and joins the reader, reporting one that failed or panicked as a
     /// tool error.
     pub(super) fn close(&mut self) -> Result<(), ToolError> {
+        self.release().join()
+    }
+
+    /// Tells the reader to stop and hands it back to be joined, so the join
+    /// can be made away from whatever lock this pipe is held under.
+    ///
+    /// What was kept stays readable, and [`Self::ended`] answers `true` from
+    /// here on, whether or not the reader had reached the end.
+    pub(super) fn release(&mut self) -> Released {
         self.stop.store(true, Ordering::Relaxed);
-        let Some(reader) = self.reader.take() else {
+        Released(self.reader.take())
+    }
+
+    /// The most one pipe holds on to however much arrives: its head, its
+    /// tail and the reader's window.
+    #[cfg(test)]
+    pub(super) const CEILING: usize = OUTPUT + FRESH;
+
+    /// How many bytes this pipe holds on to, the reader's window included.
+    #[cfg(test)]
+    pub(super) fn retained(&self) -> usize {
+        self.kept.lock().map_or(0, |kept| {
+            kept.head
+                .len()
+                .saturating_add(kept.tail.len())
+                .saturating_add(kept.fresh.len())
+        })
+    }
+}
+
+/// A reader told to stop and not yet joined: see [`Pipe::release`].
+pub(super) struct Released(Option<thread::JoinHandle<io::Result<()>>>);
+
+impl Released {
+    /// Joins the reader, reporting one that failed or panicked as a tool
+    /// error. Bounded because reads are pollable: a reader told to stop sees
+    /// it within one pause, even with a descendant still holding its writer.
+    pub(super) fn join(self) -> Result<(), ToolError> {
+        let Some(reader) = self.0 else {
             return Ok(());
         };
         match reader.join() {

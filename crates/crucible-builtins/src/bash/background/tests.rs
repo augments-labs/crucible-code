@@ -33,6 +33,32 @@ struct Observed {
     stopped_early: AtomicBool,
     /// How many times it was asked how it ended.
     looks: AtomicUsize,
+    /// While set, every look at it waits until it is cleared: a process
+    /// whose backend has stopped answering.
+    looks_held: AtomicBool,
+    /// While set, every stop of it waits until it is cleared.
+    stops_held: AtomicBool,
+    /// How many looks or stops have begun waiting on either.
+    stalled: AtomicUsize,
+}
+
+impl Observed {
+    /// Waits while `held` is set, counting the wait once it begins.
+    fn stall(&self, held: &AtomicBool) {
+        if !held.load(Ordering::Acquire) {
+            return;
+        }
+        self.stalled.fetch_add(1, Ordering::AcqRel);
+        while held.load(Ordering::Acquire) {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Lets every stalled look and stop go.
+    fn release(&self) {
+        self.looks_held.store(false, Ordering::Release);
+        self.stops_held.store(false, Ordering::Release);
+    }
 }
 
 struct Process {
@@ -56,6 +82,7 @@ impl SandboxProcess for Process {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.observed.stall(&self.observed.looks_held);
         self.observed.looks.fetch_add(1, Ordering::Relaxed);
         if self.observed.failed.load(Ordering::Relaxed) {
             return Err(io::Error::other(
@@ -66,11 +93,13 @@ impl SandboxProcess for Process {
     }
 
     fn ended(&mut self) -> bool {
+        self.observed.stall(&self.observed.looks_held);
         self.observed.ended.load(Ordering::Relaxed) || self.observed.exited.load(Ordering::Relaxed)
     }
 
     fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
         Box::pin(async move {
+            self.observed.stall(&self.observed.stops_held);
             self.observed.stops.fetch_add(1, Ordering::Relaxed);
             if !self.observed.exited.load(Ordering::Relaxed) {
                 self.observed.stopped_early.store(true, Ordering::Relaxed);
@@ -190,7 +219,8 @@ fn keeping(left: &Background, process: Process, accepting: bool) -> Kept {
 
 #[test]
 fn failed_stop_keeps_the_process_and_its_capacity_until_cleanup_succeeds() {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let kept = keep(&left, &observed, false);
     let number = kept.number();
@@ -198,7 +228,8 @@ fn failed_stop_keeps_the_process_and_its_capacity_until_cleanup_succeeds() {
         drop(keep(&left, &Arc::new(Observed::default()), false));
     }
 
-    let _ = left.stop(number);
+    left.stop(number).expect("the stop was asked for");
+    waiting_until("the refused stop", || refused(&left, number));
     assert_eq!(left.count(), MOST, "failed cleanup released capacity");
     assert!(!observed.dropped.load(Ordering::Relaxed));
     assert!(
@@ -206,7 +237,10 @@ fn failed_stop_keeps_the_process_and_its_capacity_until_cleanup_succeeds() {
         "an uncleaned command still owns its slot"
     );
     assert!(left.running().iter().any(|entry| entry.number == number));
-    let _ = left.stop(number);
+    left.stop(number).expect("the stop was asked for again");
+    waiting_until("the retried stop, refused", || {
+        observed.stops.load(Ordering::Relaxed) >= 2 && refused(&left, number)
+    });
     assert_eq!(
         observed.stops.load(Ordering::Relaxed),
         2,
@@ -214,8 +248,11 @@ fn failed_stop_keeps_the_process_and_its_capacity_until_cleanup_succeeds() {
     );
 
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
-    let _ = left.stop(number);
-    assert_eq!(left.count(), MOST - 1);
+    left.stop(number)
+        .expect("the stop was asked for a third time");
+    waiting_until("the stopped command's entry going", || {
+        left.count() == MOST - 1
+    });
     assert!(observed.dropped.load(Ordering::Relaxed));
     assert!(left.reserve().is_some());
     assert!(
@@ -226,10 +263,16 @@ fn failed_stop_keeps_the_process_and_its_capacity_until_cleanup_succeeds() {
 
 #[test]
 fn reaping_waits_for_cleanup_before_reporting_exactly_one_completion() {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let number = keep(&left, &observed, false).number();
     observed.exited.store(true, Ordering::Relaxed);
+    // Its owner has asked for what it left running to end, and been refused,
+    // more than once.
+    waiting_until("two refused stops", || {
+        observed.stops.load(Ordering::Relaxed) >= 2
+    });
 
     assert!(
         left.reap().is_empty(),
@@ -241,7 +284,7 @@ fn reaping_waits_for_cleanup_before_reporting_exactly_one_completion() {
     assert!(left.reap().is_empty());
 
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
-    let ended = left.reap();
+    let ended = vec![reaped(&left)];
     assert_eq!(ended.len(), 1);
     assert_eq!(ended.first().map(|one| one.number), Some(number));
     assert_eq!(left.reported(), ended);
@@ -252,11 +295,15 @@ fn reaping_waits_for_cleanup_before_reporting_exactly_one_completion() {
 
 #[test]
 fn abandoned_start_keeps_failed_cleanup_visible_and_retryable() {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let kept = keep(&left, &observed, true);
     let number = kept.number();
     drop(kept);
+    waiting_until("the abandoned start's refused stop", || {
+        observed.stops.load(Ordering::Relaxed) >= 1
+    });
 
     assert_eq!(left.count(), 1, "abandoned start lost cleanup ownership");
     assert_eq!(
@@ -266,16 +313,43 @@ fn abandoned_start_keeps_failed_cleanup_visible_and_retryable() {
     assert!(!observed.dropped.load(Ordering::Relaxed));
     observed.exited.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
-    assert_eq!(left.reap().len(), 1, "abandoned acceptance remained stuck");
+    assert_eq!(
+        reaped(&left).number,
+        number,
+        "abandoned acceptance remained stuck"
+    );
+}
+
+#[test]
+fn an_abandoned_result_ends_its_command_though_it_has_ended_and_reports_nothing() {
+    // Nothing recorded that the command was started, so nothing may report
+    // that it ended: it is ended, what it wrote with it, and it goes.
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    drop(keep(&left, &observed, true));
+
+    waiting_until("the abandoned command's entry going", || left.count() == 0);
+
+    assert_eq!(observed.stops.load(Ordering::Relaxed), 1);
+    assert!(observed.dropped.load(Ordering::Relaxed));
+    assert!(left.reap().is_empty(), "an abandoned command was reported");
+    assert!(left.reported().is_empty());
 }
 
 #[test]
 fn abandoned_receipt_keeps_failed_cleanup_visible_and_retryable() {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let kept = keep(&left, &observed, true);
     let number = kept.number();
     drop(kept.acceptance().expect("pending receipt"));
+    waiting_until("the abandoned receipt's refused stop", || {
+        observed.stops.load(Ordering::Relaxed) >= 1
+    });
 
     assert_eq!(left.count(), 1, "abandoned receipt lost cleanup ownership");
     assert_eq!(
@@ -284,8 +358,8 @@ fn abandoned_receipt_keeps_failed_cleanup_visible_and_retryable() {
     );
     assert!(!observed.dropped.load(Ordering::Relaxed));
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
-    let _ = left.stop(number);
-    assert_eq!(left.count(), 0);
+    left.stop(number).expect("the stop was asked for");
+    waiting_until("the stopped command's entry going", || left.count() == 0);
     assert!(left.reported().is_empty());
 }
 
@@ -378,7 +452,8 @@ fn stopping_a_command_that_has_ended_leaves_it_to_be_reported() {
     // The panel draws from a list a beat old, and a command whose ending waits
     // its turn still stands on it. Stopping that one would discard what it
     // wrote, and it is about to be reported anyway.
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let number = keep(&left, &observed, false).number();
     observed.ended.store(true, Ordering::Relaxed);
@@ -386,6 +461,7 @@ fn stopping_a_command_that_has_ended_leaves_it_to_be_reported() {
 
     left.stop(number)
         .expect("a command that has ended needs no stopping");
+    waiting_until("the owner taking up the stop", || !asked(&left, number));
 
     assert!(
         !observed.stopped_early.load(Ordering::Relaxed),
@@ -393,22 +469,22 @@ fn stopping_a_command_that_has_ended_leaves_it_to_be_reported() {
     );
     assert_eq!(left.count(), 1, "it went without being reported");
     observed.exited.store(true, Ordering::Relaxed);
-    let ended = left.reap();
-    assert_eq!(ended.first().map(|one| one.number), Some(number));
+    assert_eq!(reaped(&left).number, number);
 }
 
 #[test]
 fn a_command_whose_ending_went_wrong_is_reported_once_with_why() {
     // Kept as though still running, it would stand on the panel forever and
     // the model would never hear that what it wrote was not published.
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let number = keep(&left, &observed, false).number();
     observed.ended.store(true, Ordering::Relaxed);
     observed.failed.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
 
-    let ended = left.reap();
+    let ended = vec![reaped(&left)];
 
     assert_eq!(
         ended.len(),
@@ -433,7 +509,8 @@ fn letting_the_registry_go_waits_for_a_command_that_has_ended() {
     // The end of a run is when a command left running is most likely to have
     // just finished. Ending it before its ending completes would discard what
     // it wrote on the way out.
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     drop(keep(&left, &observed, false));
     observed.ended.store(true, Ordering::Relaxed);
@@ -495,23 +572,14 @@ fn a_kept_command_that_cannot_publish_is_reported_once_its_patience_has_passed()
     // registry's drop ever looked again, so it would keep one of the slots for
     // the rest of the run and say nothing. The assertions below are what
     // happens now.
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     drop(keep(&left, &observed, false));
     observed.ended.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
 
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let one = loop {
-        if let Some(one) = left.reap().into_iter().next() {
-            break one;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "a command that cannot publish was never reported"
-        );
-        thread::sleep(Duration::from_millis(10));
-    };
+    let one = reaped(&left);
 
     assert!(one.unpublished.is_some(), "{one:?}");
     assert_eq!(left.count(), 0, "it kept its slot");
@@ -524,7 +592,8 @@ fn a_publication_that_never_finishes_keeps_its_reason_after_end_stops_it() {
     // that nothing it wrote was published — must still be what is reported,
     // not a status a later beat reads back off the very leader `end` itself
     // just resolved.
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let mut printing = process(&observed);
     printing.stdout = Some(Box::new(Printing {
@@ -536,17 +605,7 @@ fn a_publication_that_never_finishes_keeps_its_reason_after_end_stops_it() {
     observed.ended.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
 
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let one = loop {
-        if let Some(one) = left.reap().into_iter().next() {
-            break one;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "a publication that never finished, held for its reader, was never reported"
-        );
-        thread::sleep(Duration::from_millis(10));
-    };
+    let one = reaped(&left);
 
     assert_eq!(one.code, None, "{one:?}");
     assert_eq!(
@@ -649,7 +708,8 @@ fn a_cancelled_turn_stops_a_command_whose_publication_never_finishes() {
 
 #[test]
 fn letting_the_registry_go_stops_waiting_once_its_patience_has_passed() {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     drop(keep(&left, &observed, false));
     observed.ended.store(true, Ordering::Relaxed);
@@ -669,7 +729,8 @@ fn letting_the_registry_go_stops_waiting_once_its_patience_has_passed() {
 
 #[test]
 fn letting_the_registry_go_ends_a_command_whose_ending_went_wrong() {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     drop(keep(&left, &observed, false));
     observed.ended.store(true, Ordering::Relaxed);
@@ -723,7 +784,8 @@ impl SandboxOutput for Printing {
 /// an ending whose readers are still going once a short grace has passed, and a
 /// reader starved past it would be stopped before it met the ending under test.
 fn ended_after_printing(said: &'static [u8], then: fn() -> io::Result<SandboxRead>) -> Ended {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let (told, heard) = std::sync::mpsc::channel();
     let mut printing = process(&observed);
@@ -739,14 +801,7 @@ fn ended_after_printing(said: &'static [u8], then: fn() -> io::Result<SandboxRea
     observed.exited.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
 
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(one) = left.reap().into_iter().next() {
-            return one;
-        }
-        assert!(Instant::now() < deadline, "the command was never reported");
-        thread::sleep(Duration::from_millis(10));
-    }
+    reaped(&left)
 }
 
 #[test]
@@ -791,7 +846,8 @@ fn drained(left: &Background, number: usize) -> bool {
 
 #[test]
 fn a_background_command_whose_output_was_read_to_the_end_says_only_what_it_printed() {
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let (told, heard) = std::sync::mpsc::channel();
     let mut printing = process(&observed);
@@ -824,14 +880,7 @@ fn a_background_command_whose_output_was_read_to_the_end_says_only_what_it_print
     observed.exited.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
 
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let one = loop {
-        if let Some(one) = left.reap().into_iter().next() {
-            break one;
-        }
-        assert!(Instant::now() < deadline, "the command was never reported");
-        thread::sleep(Duration::from_millis(10));
-    };
+    let one = reaped(&left);
 
     assert_eq!(&*one.printed, "compiled 7 of 7 crates");
     assert_eq!(one.lines, 1);
@@ -856,8 +905,8 @@ fn a_background_command_whose_reader_never_reached_the_end_says_it_is_incomplete
 /// `observed` shows `end` has stopped this command and the test has set
 /// `let_go`, and only then hands over `rest` before ending: the shape of a pipe
 /// a descendant kept open past the shell's own exit, which `end` is what makes
-/// let go. The second gate lets the test decide when that release is noticed,
-/// so no beat it asserts on races the reader.
+/// let go. The second gate lets the test hold the release back until the
+/// reader has parked.
 struct Releasing {
     said: Option<&'static [u8]>,
     observed: Arc<Observed>,
@@ -901,7 +950,8 @@ fn a_background_command_whose_reader_catches_up_once_stopped_says_the_whole() {
     // what is expected to make it let go. The bytes that then arrive are
     // still worth keeping, not losing to a check made before the reader had
     // caught up with them.
-    let left = Background::new();
+    let runtime = runtime();
+    let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
     let let_go = Arc::new(AtomicBool::new(false));
     let (parked, settled) = std::sync::mpsc::channel();
@@ -919,45 +969,264 @@ fn a_background_command_whose_reader_catches_up_once_stopped_says_the_whole() {
     settled
         .recv_timeout(Duration::from_secs(20))
         .expect("the reader parked waiting for the release");
+    // Released the moment `end` has stopped the command and not before: the
+    // reader then catches up within its own pause, well inside the grace its
+    // owner gives it from the stop. An owner that judged the pipe before that
+    // grace would report the marker instead.
+    let_go.store(true, Ordering::Relaxed);
     observed.exited.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
 
-    // This beat only starts the grace its own exit gets; nothing has asked
-    // `end` yet, so it must hold rather than report.
-    assert!(
-        left.reap().is_empty(),
-        "reported before its own exit was even held"
-    );
-    // A sleep only ever overshoots, so surpassing that grace this way holds
-    // by construction: the next beat is the one that ends it, not one still
-    // held by the first wait.
-    thread::sleep(output::DRAIN + Duration::from_millis(50));
+    let one = reaped(&left);
 
-    // This beat ends the command, and must hold rather than report the marker
-    // at once: the reader cannot catch up with that release until the test
-    // lets it go below, so the hold is what this beat has to show.
-    assert!(
-        left.reap().is_empty(),
-        "reported before the reader that end() itself released had a chance to catch up"
-    );
+    assert_eq!(one.number, number);
+    assert_eq!(&*one.printed, "still building: done");
+}
 
-    // The reader is let go only now, after the beat that held it; the test
-    // then waits on the fact itself, however long the host takes.
-    let_go.store(true, Ordering::Relaxed);
+/// A runtime of this test's own for the registry to own its commands on, so a
+/// command a test leaves stalled holds none of another test's workers.
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_time()
+        .build()
+        .expect("a runtime to own commands on")
+}
+
+/// A registry whose commands are owned on `runtime`.
+fn registry(runtime: &tokio::runtime::Runtime) -> Background {
+    let left = Background::new();
+    left.watching_on(runtime.handle().clone());
+    left
+}
+
+/// Waits, up to a ceiling no passing run comes near, until `until` holds.
+fn waiting_until(what: &str, until: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
-    while !drained(&left, number) {
-        assert!(
-            Instant::now() < deadline,
-            "the reader never caught up with what end() released"
-        );
-        thread::sleep(Duration::from_millis(10));
+    while !until() {
+        assert!(Instant::now() < deadline, "{what} never happened");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// How long the thread that draws may wait for an answer about what is
+/// running: far above taking a lock and copying a few rows, on a loaded runner
+/// too, and far below a process that never answers.
+const DRAWN: Duration = Duration::from_millis(500);
+
+#[test]
+fn what_is_running_is_answered_while_its_process_stalls() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    let number = keep(&left, &observed, false).number();
+    observed.looks_held.store(true, Ordering::Release);
+    observed.stops_held.store(true, Ordering::Release);
+    waiting_until("a stalled look", || {
+        observed.stalled.load(Ordering::Acquire) > 0
+    });
+
+    // Every question the thread that draws asks between frames, and the key
+    // that asks for the command to stop, while everything the process is
+    // asked stalls.
+    let (answered, heard) = std::sync::mpsc::channel();
+    let drawing = {
+        let left = left.clone();
+        thread::spawn(move || {
+            let _ = answered.send((
+                left.count(),
+                left.running().len(),
+                left.reap().len(),
+                left.wrote(number).is_some(),
+                left.reported().len(),
+                left.stop(number).is_ok(),
+            ));
+        })
+    };
+    let drawn = heard.recv_timeout(DRAWN);
+
+    observed.release();
+    drawing.join().expect("the drawing thread");
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
+
+    assert_eq!(
+        drawn.expect("the thread that draws waited on a process that stalled"),
+        (1, 1, 0, true, 0, true)
+    );
+}
+
+/// Waits, up to `patience`, until `until` holds, and says whether it did.
+fn within(patience: Duration, until: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + patience;
+    while !until() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    true
+}
+
+#[test]
+fn the_runtime_goes_on_while_every_command_left_running_stalls() {
+    // Fewer workers than there may be commands left running, and room for
+    // each command's owner on the blocking threads with one to spare: an
+    // owner that asked its process anything on a worker would hold it, and
+    // with it every timer the runtime drives — a sandbox's limit kill among
+    // them.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(MOST + 1)
+        .enable_time()
+        .build()
+        .expect("a runtime to own commands on");
+    let left = registry(&runtime);
+    let observed: Vec<Arc<Observed>> = (0..MOST).map(|_| Arc::new(Observed::default())).collect();
+    for one in &observed {
+        drop(keep(&left, one, false));
+        one.looks_held.store(true, Ordering::Release);
+    }
+    let every = within(Duration::from_secs(5), || {
+        observed
+            .iter()
+            .all(|one| one.stalled.load(Ordering::Acquire) > 0)
+    });
+
+    let (fired, heard) = std::sync::mpsc::channel();
+    runtime.spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = fired.send(());
+    });
+    let timely = heard.recv_timeout(Duration::from_secs(1));
+
+    for one in &observed {
+        one.release();
+    }
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
+
+    timely.expect("a timer on the runtime waited on commands whose processes stalled");
+    assert!(
+        every,
+        "not every command's owner was asking its process at once"
+    );
+}
+
+#[test]
+fn a_command_whose_owner_never_ran_is_ended_when_the_registry_goes() {
+    // A runtime nothing drives: the owner is spawned and never polled, as one
+    // queued behind workers that never come free.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("a runtime nothing drives");
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    drop(keep(&left, &observed, false));
+
+    drop(left);
+
+    assert_eq!(
+        observed.stops.load(Ordering::Relaxed),
+        1,
+        "a command whose owner never ran outlived the registry"
+    );
+    drop(runtime);
+}
+
+#[test]
+fn an_owner_leaves_the_process_to_a_result_still_being_accepted() {
+    // An acceptance borrows the process to bind its receipt. An owner that
+    // took it out on its own looks meanwhile would make the acceptance fail,
+    // and a failed acceptance ends the command.
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    let kept = keep(&left, &observed, true);
+    let cell = left
+        .standing
+        .lock()
+        .ok()
+        .and_then(|standing| standing.left.first().map(|one| Arc::clone(&one.process)))
+        .expect("the kept command's process");
+
+    // Watched across many of its owner's looks.
+    let until = Instant::now() + 20 * super::super::TICK;
+    let mut borrowed = 0_usize;
+    while Instant::now() < until {
+        if cell.lock().is_ok_and(|held| held.is_none()) {
+            borrowed += 1;
+        }
     }
 
-    let one = left
-        .reap()
-        .into_iter()
-        .next()
-        .expect("the command was reported once its reader had caught up");
+    drop(kept);
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
 
-    assert_eq!(&*one.printed, "still building: done");
+    assert_eq!(
+        borrowed, 0,
+        "the owner took the process from under a result still being accepted"
+    );
+}
+
+#[test]
+fn letting_the_registry_go_is_bounded_while_its_stops_stall() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    drop(keep(&left, &observed, false));
+    observed.stops_held.store(true, Ordering::Release);
+
+    let (went, heard) = std::sync::mpsc::channel();
+    let letting_go = thread::spawn(move || {
+        let began = Instant::now();
+        drop(left);
+        let _ = went.send(began.elapsed());
+    });
+    let took = heard.recv_timeout(LEAVING + Duration::from_secs(5));
+
+    observed.release();
+    letting_go.join().expect("the dropping thread");
+    runtime.shutdown_timeout(Duration::from_secs(5));
+
+    let took = took.expect("letting the registry go waited on a stop that stalled");
+    assert!(took < LEAVING + Duration::from_secs(1), "{took:?}");
+    assert!(
+        observed.stalled.load(Ordering::Acquire) > 0,
+        "nothing asked the process to end"
+    );
+}
+
+/// The one ending the registry reports, waited for up to a ceiling no passing
+/// run comes near: its owner finds it on the runtime, a tick at a time.
+fn reaped(left: &Background) -> Ended {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(one) = left.reap().into_iter().next() {
+            return one;
+        }
+        assert!(Instant::now() < deadline, "the command was never reported");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Whether the last stop asked for the command running as `number` was
+/// refused.
+fn refused(left: &Background, number: usize) -> bool {
+    left.running()
+        .iter()
+        .any(|standing| standing.number == number && standing.refused)
+}
+
+/// Whether a stop asked for the command running as `number` is still waiting
+/// for its owner to take it up.
+fn asked(left: &Background, number: usize) -> bool {
+    left.standing.lock().is_ok_and(|standing| {
+        standing
+            .left
+            .iter()
+            .any(|entry| entry.number == number && entry.asks.stop.load(Ordering::Acquire))
+    })
 }

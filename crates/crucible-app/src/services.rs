@@ -30,12 +30,14 @@ use crucible_tools::ToolWorker;
 use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 
 // Every shipped owner of the runtime's blocking threads, each at its most, and
-// still at least one thread to spare: the tool worker's jobs, and the requests
-// of the one web source a run builds. An owner added to the blocking threads is added
-// here.
+// still at least one thread to spare: the tool worker's jobs, the requests of
+// the one web source a run builds, and one step at a time for each command left
+// running, whose owner asks its process everything there. An owner added to
+// the blocking threads is added here.
 const _: () = assert!(
-    ToolWorker::CAPACITY + WEB_IN_FLIGHT < BLOCKING,
-    "the tool worker and the web source together would take every blocking thread the runtime has"
+    ToolWorker::CAPACITY + WEB_IN_FLIGHT + crucible_builtins::MOST < BLOCKING,
+    "the tool worker, the web source and the commands left running together would take every \
+     blocking thread the runtime has"
 );
 
 /// What the application owns for the length of a run.
