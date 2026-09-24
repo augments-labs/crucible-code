@@ -31,6 +31,7 @@ use crucible_types::{
 };
 
 use crate::permissions::{Approved, Sensitivity};
+use crate::worker::ToolWorker;
 
 /// Why a tool call did not produce a result.
 ///
@@ -437,8 +438,10 @@ impl fmt::Debug for PendingCallResult {
 /// The run-scoped capabilities one admitted tool call receives.
 ///
 /// Narrow by design: a tool can identify its run and call, observe its own
-/// child cancellation/deadline, and stream output under that call. It cannot
-/// emit arbitrary events, mint approval, steer the agent, or reach a session.
+/// child cancellation/deadline, stream output under that call, and hand
+/// blocking work to the [`ToolWorker`] its caller lent, where one was lent. It
+/// cannot emit arbitrary events, mint approval, steer the agent, or reach a
+/// session.
 ///
 /// A call's run borrows its context, so the work it started cannot outlive
 /// the context it was lent — the error code is what this fails with today and
@@ -482,13 +485,14 @@ pub struct ToolContext<'a> {
     cancel: Cancel,
     deadline: Option<Instant>,
     watch: &'a dyn Watch,
+    worker: Option<&'a ToolWorker>,
     sandbox: SandboxAudit,
     call_result: Option<CallResultKey>,
     pending_result: Mutex<Option<PendingCallResult>>,
 }
 
 impl<'a> ToolContext<'a> {
-    /// Builds a per-call context under `parent` cancellation.
+    /// Builds a per-call context under `parent` cancellation, lent no worker.
     #[must_use]
     pub fn new(
         ancestry: Ancestry,
@@ -504,10 +508,21 @@ impl<'a> ToolContext<'a> {
             cancel: parent.child_until(deadline),
             deadline,
             watch,
+            worker: None,
             sandbox,
             call_result: None,
             pending_result: Mutex::new(None),
         }
+    }
+
+    /// Lends this call `worker` for its blocking work.
+    ///
+    /// Work the call hands it is bounded together with the work of every
+    /// other call the same worker is lent to.
+    #[must_use]
+    pub fn with_worker(mut self, worker: &'a ToolWorker) -> Self {
+        self.worker = Some(worker);
+        self
     }
 
     /// Binds the source-qualified identity this call's durable result is kept under.
@@ -606,6 +621,17 @@ impl<'a> ToolContext<'a> {
     pub fn timed_out(&self) -> bool {
         self.deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    /// The worker this call's blocking work runs on, where its caller lent
+    /// one.
+    ///
+    /// Work handed to it is bounded with every other call's the same worker
+    /// was lent to, and is stopped by this call's [`ToolContext::cancel`] when
+    /// that is what it is handed.
+    #[must_use]
+    pub const fn worker(&self) -> Option<&'a ToolWorker> {
+        self.worker
     }
 
     /// Reports incremental output under this call's identity.
@@ -1136,6 +1162,42 @@ mod tests {
         context.cancel().request();
         assert!(context.cancel().requested());
         assert!(!parent.requested());
+    }
+
+    #[test]
+    fn a_tool_context_lends_the_worker_its_caller_gave_it_and_no_other() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let worker = crate::ToolWorker::new(runtime.handle().clone());
+        let parent = Cancel::new();
+
+        let lent = ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("call-lent"),
+            &parent,
+            None,
+            &Unwatched,
+        )
+        .with_worker(&worker);
+        let unlent = ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("call-unlent"),
+            &parent,
+            None,
+            &Unwatched,
+        );
+
+        assert!(
+            lent.worker()
+                .is_some_and(|lent| std::ptr::eq(lent, &raw const worker)),
+            "the context did not lend the worker it was built with"
+        );
+        assert!(
+            unlent.worker().is_none(),
+            "a context lent no worker lent one"
+        );
     }
 
     struct Accepted(Arc<Mutex<Option<CallResultReceipt>>>);

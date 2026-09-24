@@ -1,6 +1,6 @@
 //! What the application owns for the length of a run and lends to what it
-//! assembles: today the runtime, and whatever later needs to be owned once per
-//! run the same way.
+//! assembles: today the runtime and the worker tools hand their blocking work
+//! to, and whatever later needs to be owned once per run the same way.
 //!
 //! One value, [`Services`], made once by [`serving`] and lent to everything the
 //! run builds. [`crate::startup::Startup`] carries it, so a factory reaches
@@ -22,12 +22,24 @@
 //! outlives it. The runtime is the last thing shut down, because everything
 //! else here may have work on it.
 
-use crate::runtime::{RuntimeOwner, Unstopped};
+use std::sync::OnceLock;
+
+use crucible_tools::ToolWorker;
+
+use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
+
+// Tool work may take every place the tool worker has and still leave the
+// runtime blocking threads for its other owners.
+const _: () = assert!(
+    ToolWorker::CAPACITY < BLOCKING,
+    "the tool worker would take every blocking thread the runtime has"
+);
 
 /// What the application owns for the length of a run.
 #[derive(Debug)]
 pub struct Services {
     runtime: RuntimeOwner,
+    tool_worker: OnceLock<ToolWorker>,
 }
 
 impl Services {
@@ -35,6 +47,7 @@ impl Services {
     pub(crate) fn new() -> Self {
         Self {
             runtime: RuntimeOwner::new(),
+            tool_worker: OnceLock::new(),
         }
     }
 
@@ -43,6 +56,22 @@ impl Services {
     #[must_use]
     pub fn runtime(&self) -> &RuntimeOwner {
         &self.runtime
+    }
+
+    /// The worker tools hand their blocking work to, on the application's
+    /// runtime, built the first time it is asked for and the same one every
+    /// time after, so every call it is lent to shares its one bound.
+    ///
+    /// # Errors
+    ///
+    /// [`Unstarted`] where the runtime had not been built and the operating
+    /// system would not start it.
+    pub fn tool_worker(&self) -> Result<&ToolWorker, Unstarted> {
+        if let Some(worker) = self.tool_worker.get() {
+            return Ok(worker);
+        }
+        let handle = self.runtime.handle()?;
+        Ok(self.tool_worker.get_or_init(|| ToolWorker::new(handle)))
     }
 
     /// Shuts down everything here, the runtime last.
