@@ -717,6 +717,7 @@ dependencies = [
  "crucible-sandbox",
  "crucible-types",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
