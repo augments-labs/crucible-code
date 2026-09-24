@@ -35,7 +35,7 @@ use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::{Connect, capture_connection};
 use tokio::time::{Instant, sleep_until};
 
-use crate::connect::{ConnectError, Connector, Tls};
+use crate::connect::{ConnectError, Connector, Setups, Tls, Waiting};
 use crate::dns::{Lookups, PlainLookups};
 use crate::proxy::{ProxyEnv, Route, select};
 use crate::tasks::Tasks;
@@ -47,8 +47,8 @@ pub const DEFAULT_USER_AGENT: &str = "ureq/3.4.2";
 
 /// How long each part of a request may take before the response head.
 ///
-/// The response body has no clock here. It is the model talking, which can
-/// take minutes, and a deadline cannot tell a long answer from a dead peer.
+/// The response body has no clock here: its reader sets one, or none
+/// (`crate::body`).
 const TIMEOUT_HEAD: Duration = Duration::from_mins(1);
 
 /// How much of a response head may be buffered without finding its end, and
@@ -76,7 +76,7 @@ const FRAME: usize = 16 * 1024;
 /// blocking worker is not one of them: it runs until the platform answers.
 #[derive(Clone, Debug)]
 pub struct Http {
-    client: Client<Connector, Body>,
+    client: Client<Setups<Connector>, Body>,
     /// Held, never read: dropping the last one aborts every task in it.
     _tasks: Arc<Tasks>,
     /// The proxy settings its connector routes by, to find the credential a
@@ -156,6 +156,9 @@ impl Http {
     /// is sent a credential, that credential is registered on `headers` for
     /// redaction ([`Outgoing::protect`]).
     ///
+    /// Dropping the future before it answers closes the connection it was
+    /// making or awaiting an answer on.
+    ///
     /// # Errors
     ///
     /// [`HttpError`] when no response head arrived.
@@ -188,13 +191,28 @@ impl Http {
     }
 }
 
-/// The client every [`Http`] is, over whatever connects it, spawning into
-/// `tasks`.
-pub(crate) fn client<C: Connect + Clone>(connector: C, tasks: &Arc<Tasks>) -> Client<C, Body> {
+#[cfg(test)]
+impl Http {
+    /// The tasks this client owns, for a test to count.
+    // The field is named for being held rather than read, which it is
+    // everywhere but here.
+    #[allow(clippy::used_underscore_binding)]
+    pub(crate) fn tasks(&self) -> &Tasks {
+        &self._tasks
+    }
+}
+
+/// The client every [`Http`] is, over whatever connects it, making at most
+/// [`MAX_SETUPS`](crate::connect::MAX_SETUPS) connections at once and
+/// spawning into `tasks`.
+pub(crate) fn client<C>(connector: C, tasks: &Arc<Tasks>) -> Client<Setups<C>, Body>
+where
+    Setups<C>: Connect + Clone,
+{
     Client::builder(tasks.spawner())
         .http1_max_buf_size(MAX_HEAD)
         .http1_max_headers(MAX_FIELDS)
-        .build(connector)
+        .build(Setups::new(connector))
 }
 
 /// Sends `request`, giving each [`Phase`] of it a minute.
@@ -211,6 +229,7 @@ where
         stage: Arc::clone(&stage),
     });
     let mut chosen = capture_connection(&mut request);
+    let waiting = Waiting::new();
     let mut answer = pin!(client.request(request));
     let mut connected = pin!(async move {
         let _ = chosen.wait_for_connection_metadata().await;
@@ -218,7 +237,7 @@ where
     let mut connecting = true;
     let mut clock = pin!(sleep_until(Instant::now()));
     poll_fn(|cx| {
-        if let Poll::Ready(answered) = answer.as_mut().poll(cx) {
+        if let Poll::Ready(answered) = waiting.during(|| answer.as_mut().poll(cx)) {
             return Poll::Ready(answered.map_err(HttpError::from));
         }
         if connecting && connected.as_mut().poll(cx).is_ready() {
@@ -244,7 +263,8 @@ where
 }
 
 /// Which part of a request is under way, and since when; `None` until a
-/// connection is had, which has a deadline of its own.
+/// connection is had. Making the connection has a deadline of its own, from
+/// when it has a setup slot; waiting for the slot has none.
 struct Stage(Mutex<Option<(Phase, Instant)>>);
 
 impl Stage {

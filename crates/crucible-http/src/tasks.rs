@@ -14,7 +14,9 @@
 //! What bounds the set is what hyper-util spawns: one task per open
 //! connection, in use or idle in the pool; one per response whose connection
 //! is still busy; and one per request whose connection lost that race, which
-//! the 15 s connect deadline ends. Finished tasks are reaped at each spawn, so
+//! ends once that request is dropped or has its response head, or before
+//! that when the connection is made or fails
+//! ([`Setups`](crate::connect::Setups)). Finished tasks are reaped at each spawn, so
 //! only live ones are held. How many idle connections the pool keeps is the
 //! pool's setting, not this set's. Hostname lookups are not in the set: a
 //! lookup already on its blocking worker cannot be ended, and runs until the
@@ -40,6 +42,15 @@ impl Tasks {
 
     pub(crate) fn spawner(self: &Arc<Self>) -> Spawner {
         Spawner(Arc::downgrade(self))
+    }
+
+    /// How many of the tasks are still running, once the ended ones are
+    /// reaped.
+    #[cfg(test)]
+    pub(crate) fn live(&self) -> usize {
+        let mut set = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        while set.try_join_next().is_some() {}
+        set.len()
     }
 }
 
