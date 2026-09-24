@@ -269,15 +269,6 @@ pub enum Bridge {
     /// - Owner: `crucible-code`
     /// - Retired: when the application runs on one runtime.
     SandboxPanel,
-    /// The performance probes timing a tool's run the way a turn runs one,
-    /// and the permission verdict their own fixture settles before it.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each run timed and each permission decided for
-    ///   it.
-    /// - Owner: `crucible-code`
-    /// - Retired: when the turn loop is asynchronous.
-    Probes,
 }
 
 impl Bridge {
@@ -380,7 +371,6 @@ impl Bridge {
             Self::LocalBackend => "the local sandbox backend",
             Self::SandboxReport => "asking the sandbox what it can enforce",
             Self::SandboxPanel => "asking the sandbox whether it is available",
-            Self::Probes => "a probed tool",
         }
     }
 }
@@ -890,9 +880,9 @@ mod tests {
     fn a_future_coming_apart_unwinds_into_the_caller_as_a_crossing_always_has() {
         let runtime = runtime();
 
-        let crossed = std::panic::catch_unwind(|| Bridge::Probes.cross(async { comes_apart() }));
+        let crossed = std::panic::catch_unwind(|| Bridge::AppTurn.cross(async { comes_apart() }));
         let waited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Bridge::Probes.wait(Some(runtime.handle()), &Cancel::new(), async {
+            Bridge::AppTurn.wait(Some(runtime.handle()), &Cancel::new(), async {
                 comes_apart()
             })
         }));
@@ -900,7 +890,7 @@ mod tests {
         assert_eq!(payload(crossed), Some("came apart"));
         assert_eq!(payload(waited), Some("came apart"));
         assert_eq!(
-            Bridge::Probes.wait(Some(runtime.handle()), &Cancel::new(), async { 3 }),
+            Bridge::AppTurn.wait(Some(runtime.handle()), &Cancel::new(), async { 3 }),
             Ok(3),
             "the runtime a future came apart on would not answer the next crossing"
         );

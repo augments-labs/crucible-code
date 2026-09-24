@@ -72,6 +72,7 @@ mod args;
 mod ask;
 mod atomic;
 mod bash;
+mod blocking;
 mod bound;
 mod changed;
 mod edit;

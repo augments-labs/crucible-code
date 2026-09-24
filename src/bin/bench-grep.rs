@@ -19,9 +19,14 @@
 //! the warmer cache. The median owns the budget; p95 and its distance from the
 //! median are emitted as evidence of noise rather than hidden by independent
 //! best-case samples.
+//!
+//! Each search's call is lent a tool worker, on a runtime this probe builds
+//! shaped as the application's, so the walk runs there and what is timed
+//! includes handing it over; the probe waits on that runtime for the answer.
 
 use std::fmt::{self, Write as _};
 use std::fs;
+use std::future::Future;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,7 +38,8 @@ use crucible_core::{
     RuleError, Rules, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId,
     Unwatched, Verdict, Workspace,
 };
-use crucible_runtime::{Bridge, Unready};
+use crucible_tools::ToolWorker;
+use tokio::runtime::{Builder, Runtime};
 
 /// How far over `rg` the tool may be.
 const LIMIT: f64 = 1.25;
@@ -96,12 +102,13 @@ const DENIED: [&str; 4] = [
 
 fn main() -> Result<(), Problem> {
     let corpus = Corpus::build()?;
+    let driver = Driver::new()?;
     let mut worst_median = 0.0_f64;
     let mut worst_p95 = 0.0_f64;
     let mut widest = 0.0_f64;
 
     for workload in WORKLOADS {
-        let evidence = rounds(&corpus, workload)?;
+        let evidence = rounds(&corpus, &driver, workload)?;
         worst_median = worst_median
             .max(evidence.open.median)
             .max(evidence.ruled.median);
@@ -193,18 +200,18 @@ impl fmt::Display for Stats {
 }
 
 /// Paired readings, with order alternating each round.
-fn rounds(corpus: &Corpus, workload: Workload) -> Result<Evidence, Problem> {
+fn rounds(corpus: &Corpus, driver: &Driver, workload: Workload) -> Result<Evidence, Problem> {
     // Fill page caches and worker pools before the distribution starts.
-    let _ = ours(corpus, workload, false)?;
-    let _ = ours(corpus, workload, true)?;
+    let _ = ours(corpus, driver, workload, false)?;
+    let _ = ours(corpus, driver, workload, true)?;
     let _ = theirs(corpus, workload)?;
 
     let mut open = Vec::with_capacity(ROUNDS);
     let mut ruled = Vec::with_capacity(ROUNDS);
     for round in 0..ROUNDS {
         let ours_first = round % 2 == 0;
-        open.push(paired(corpus, workload, false, ours_first)?);
-        ruled.push(paired(corpus, workload, true, !ours_first)?);
+        open.push(paired(corpus, driver, workload, false, ours_first)?);
+        ruled.push(paired(corpus, driver, workload, true, !ours_first)?);
     }
 
     Ok(Evidence {
@@ -215,14 +222,21 @@ fn rounds(corpus: &Corpus, workload: Workload) -> Result<Evidence, Problem> {
 
 fn paired(
     corpus: &Corpus,
+    driver: &Driver,
     workload: Workload,
     ruled: bool,
     ours_first: bool,
 ) -> Result<f64, Problem> {
     let (mine, reference) = if ours_first {
-        (ours(corpus, workload, ruled)?, theirs(corpus, workload)?)
+        (
+            ours(corpus, driver, workload, ruled)?,
+            theirs(corpus, workload)?,
+        )
     } else {
-        (theirs(corpus, workload)?, ours(corpus, workload, ruled)?)
+        (
+            theirs(corpus, workload)?,
+            ours(corpus, driver, workload, ruled)?,
+        )
     };
     if mine.is_zero() || reference.is_zero() {
         return Err(Problem::Clock);
@@ -240,7 +254,12 @@ fn percentile(values: &[f64], percent: usize) -> Result<f64, Problem> {
 }
 
 /// One search through the tool, timed, with rules standing behind it or not.
-fn ours(corpus: &Corpus, workload: Workload, ruled: bool) -> Result<Duration, Problem> {
+fn ours(
+    corpus: &Corpus,
+    driver: &Driver,
+    workload: Workload,
+    ruled: bool,
+) -> Result<Duration, Problem> {
     let workspace = Workspace::open(corpus.path())?;
     let cancel = Cancel::new();
     let grep = Grep::new(workspace);
@@ -258,11 +277,11 @@ fn ours(corpus: &Corpus, workload: Workload, ruled: bool) -> Result<Duration, Pr
         &cancel,
         None,
         &Unwatched,
-    );
+    )
+    .with_worker(&driver.worker);
 
     let started = Instant::now();
-    let output =
-        Bridge::Probes.cross(grep.run(approved(&grep, args, &mut engine)?, &context))??;
+    let output = driver.answer(grep.run(approved(&grep, args, &mut engine, driver)?, &context))?;
     let took = started.elapsed();
 
     let expected = match workload.expected {
@@ -333,7 +352,12 @@ fn engine(written: bool) -> Result<Permission, Problem> {
 
 /// The call, permitted the only way one can be. A read is allowed without
 /// asking, so nothing is ever put to a user who is not there.
-fn approved(grep: &Grep, args: ToolArgs, engine: &mut Permission) -> Result<Approved, Problem> {
+fn approved(
+    grep: &Grep,
+    args: ToolArgs,
+    engine: &mut Permission,
+    driver: &Driver,
+) -> Result<Approved, Problem> {
     struct Nobody;
 
     impl Ask for Nobody {
@@ -352,9 +376,38 @@ fn approved(grep: &Grep, args: ToolArgs, engine: &mut Permission) -> Result<Appr
         args,
     };
 
-    match Bridge::Probes.cross(engine.decide(&call, &grep.sensitivity(&call.args), &mut Nobody))? {
+    match driver.answer(engine.decide(&call, &grep.sensitivity(&call.args), &mut Nobody)) {
         Settled::Approved(approved) => Ok(approved),
         Settled::Forbidden | Settled::Refused => Err(Problem::NoGrant),
+    }
+}
+
+/// The runtime each search is waited on, and the tool worker its call is lent.
+///
+/// Shaped as the application's in what a search reaches: four workers, a
+/// clock for the worker's wait for room, and at most eight blocking threads.
+/// No I/O driver, which a search does not wait on. Built once, before the
+/// first reading, as the application builds its own before a turn.
+struct Driver {
+    runtime: Runtime,
+    worker: ToolWorker,
+}
+
+impl Driver {
+    fn new() -> Result<Self, Problem> {
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(4)
+            .max_blocking_threads(8)
+            .enable_time()
+            .build()
+            .map_err(Problem::Runtime)?;
+        let worker = ToolWorker::new(runtime.handle().clone());
+        Ok(Self { runtime, worker })
+    }
+
+    /// Waits on the probe's own thread for `future` to answer.
+    fn answer<F: Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
     }
 }
 
@@ -451,8 +504,8 @@ enum Problem {
     #[error("the search failed: {0}")]
     Search(#[from] crucible_core::ToolError),
 
-    #[error("the search could not be timed: {0}")]
-    Unready(#[from] Unready),
+    #[error("the runtime searches are waited on could not be built: {0}")]
+    Runtime(io::Error),
 }
 
 // A `main` that returns `Err` prints the `Debug` form, and the derived one
