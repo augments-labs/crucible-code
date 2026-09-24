@@ -14,7 +14,7 @@ use crucible_workspace::{Workspace, WorkspacePath, written};
 
 use crate::args::Args;
 use crate::bound::OUTPUT;
-use crate::ledger::Ledger;
+use crate::ledger::{Ledger, Shown};
 use crate::schema::{Field, Schema, Shape, Whole};
 use crate::summary;
 use crate::target;
@@ -650,17 +650,24 @@ impl Read {
     /// handed back here: the model that cannot read one needs the sentence
     /// naming a converter, and that sentence is worth more than an attachment
     /// that would stand down on half the models crucible offers.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolError::Cancelled`] where `cancel` was raised before the picture
+    /// was taken whole. A read stopped part-way is the call ending, and never
+    /// a reason to open the file again as text.
     fn looked_at(
         approved: &Approved,
         kind: &Kind,
         requested: &str,
         path: &WorkspacePath,
-    ) -> Option<ToolOutput> {
+        cancel: &Cancel,
+    ) -> Result<Option<ToolOutput>, ToolError> {
         // A match rather than an equality, so a modality added to the enum
         // arrives here as a compiler error asking whether `read` hands it back.
         match kind.modality {
             Modality::Image => {}
-            Modality::Text | Modality::Pdf | Modality::Video | Modality::Audio => return None,
+            Modality::Text | Modality::Pdf | Modality::Video | Modality::Audio => return Ok(None),
         }
 
         // Through the workspace rather than by name, for the reason the text
@@ -671,35 +678,34 @@ impl Read {
         // large to carry is never read into this process to find that out.
         //
         // Anything this cannot open falls through to the text path, which has
-        // the sentence for it.
-        let taken = match Opened::reached(path).and_then(Opened::taken) {
+        // the sentence for it. The call's token is asked before each chunk,
+        // so a call stopped while a large picture is read ends at the next
+        // one rather than at the last.
+        let taken = match Opened::reached(path)
+            .and_then(|opened| opened.taken_until(|| cancel.requested()))
+        {
             Ok(taken) => taken,
+            Err(AttachmentError::Stopped) => return Err(ToolError::Cancelled(NAME.into())),
             Err(AttachmentError::TooLarge) => {
-                return Some(ToolOutput::failed(format!(
+                return Ok(Some(ToolOutput::failed(format!(
                     "{requested} is larger than the {} MB a request may carry, so it is not \
                      attached. A smaller copy of it would be.",
                     crucible_attachments::CEILING / (1024 * 1024),
-                )));
+                ))));
             }
-            // `Stopped` is unreachable here: `taken` passes a stop that never
-            // answers yes. It shares this arm only because the match is
-            // exhaustive, and falling through would reopen the file as text,
-            // so it needs an answer of its own before this read is handed a
-            // stop.
             Err(
                 AttachmentError::NotFile
                 | AttachmentError::Unread(_)
-                | AttachmentError::Unreached(_)
-                | AttachmentError::Stopped,
+                | AttachmentError::Unreached(_),
             ) => {
-                return None;
+                return Ok(None);
             }
         };
         if !taken.is(kind) {
-            return None;
+            return Ok(None);
         }
 
-        Some(
+        Ok(Some(
             ToolOutput::ok(format!(
                 "{requested} is attached as {} rather than read as text.",
                 kind.spoken()
@@ -716,7 +722,7 @@ impl Read {
                     hash: taken.hash(),
                 }],
             ),
-        )
+        ))
     }
 }
 
@@ -763,63 +769,75 @@ impl Tool for Read {
         approved: Approved,
         context: &'a ToolContext<'_>,
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        let workspace = self.workspace.clone();
+        let reading = crate::blocking::run(NAME, context, move |cancel| {
+            read_one(&workspace, &approved, cancel)
+        });
         Box::pin(async move {
-            let args = Args::parse(NAME, approved.args())?;
-            let requested = args.text(PATH)?;
-            let from = args.count(OFFSET, 1)?;
-            let limit = args.count(LIMIT, LINES)?.min(CEILING);
-
-            // A path that is not there is something the model can correct by
-            // sending a different path. One outside the workspace is opened only
-            // on the say-so the `Approved` in hand carries.
-            let path = match target::opened(&self.workspace, &approved, requested) {
-                Ok(path) => path,
-                Err(problem) => return Ok(ToolOutput::failed(problem)),
-            };
-
-            if path.as_path().is_dir() {
-                return Ok(ToolOutput::failed(format!("{requested} is a directory")));
-            }
-
-            // Asked before the file is opened for lines, because a picture is not
-            // made of them and nothing a decoder found in it would change the
-            // answer. A file that turns out not to be one falls through.
-            if let Some(output) =
-                kind(requested).and_then(|kind| Self::looked_at(&approved, kind, requested, &path))
-            {
-                if !output.is_failed() {
-                    self.seen.record(path.as_path());
-                }
-                return Ok(output);
-            }
-
-            // Through the workspace rather than by name, so a last component
-            // replaced with a symbolic link since the check above is refused rather
-            // than read out of the tree and into the transcript, where the answer
-            // to a question about a file in the project would be a file elsewhere.
-            let file = match path.open_regular() {
-                Ok(file) => file,
-                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-            };
-
-            let (output, shown) = Self::numbered(
-                BufReader::new(file),
-                requested,
-                from,
-                limit,
-                context.cancel(),
-            )?;
-
-            // The resolved path rather than the requested one, because `write` asks
-            // with a resolved path too — otherwise `./one.txt` and `one.txt` would
-            // be two different files to a record that exists to say they are one.
-            if shown > 0 {
-                self.seen.record(path.as_path());
-            }
-
-            Ok(output)
+            // A call cancelled while it waited for room on the worker did
+            // nothing, and answers as one cancelled at its first look does.
+            let read = reading
+                .await?
+                .unwrap_or_else(|| Err(ToolError::Cancelled(NAME.into())))?;
+            Ok(self.seen.shown(read))
         })
     }
+}
+
+/// The whole of a call's work, which is file work from its first step to its
+/// last, and so is done where [`crate::blocking::run`] says: on the worker the
+/// call was lent, or in place.
+///
+/// `cancel` is looked at between the pieces the file is read in, whether it
+/// is read as lines or taken whole as a picture.
+fn read_one(
+    workspace: &Workspace,
+    approved: &Approved,
+    cancel: &Cancel,
+) -> Result<Shown, ToolError> {
+    let args = Args::parse(NAME, approved.args())?;
+    let requested = args.text(PATH)?;
+    let from = args.count(OFFSET, 1)?;
+    let limit = args.count(LIMIT, LINES)?.min(CEILING);
+
+    // A path that is not there is something the model can correct by
+    // sending a different path. One outside the workspace is opened only
+    // on the say-so the `Approved` in hand carries.
+    let path = match target::opened(workspace, approved, requested) {
+        Ok(path) => path,
+        Err(problem) => return Ok(ToolOutput::failed(problem).into()),
+    };
+
+    if path.as_path().is_dir() {
+        return Ok(ToolOutput::failed(format!("{requested} is a directory")).into());
+    }
+
+    // Asked before the file is opened for lines, because a picture is not
+    // made of them and nothing a decoder found in it would change the
+    // answer. A file that turns out not to be one falls through.
+    if let Some(kind) = kind(requested)
+        && let Some(output) = Read::looked_at(approved, kind, requested, &path, cancel)?
+    {
+        let file = (!output.is_failed()).then(|| path.as_path().to_path_buf());
+        return Ok(Shown { output, file });
+    }
+
+    // Through the workspace rather than by name, so a last component
+    // replaced with a symbolic link since the check above is refused rather
+    // than read out of the tree and into the transcript, where the answer
+    // to a question about a file in the project would be a file elsewhere.
+    let file = match path.open_regular() {
+        Ok(file) => file,
+        Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
+    };
+
+    let (output, shown) = Read::numbered(BufReader::new(file), requested, from, limit, cancel)?;
+
+    // The resolved path rather than the requested one, because `write` asks
+    // with a resolved path too — otherwise `./one.txt` and `one.txt` would
+    // be two different files to a record that exists to say they are one.
+    let file = (shown > 0).then(|| path.as_path().to_path_buf());
+    Ok(Shown { output, file })
 }
 
 /// One line, numbered the way `cat -n` numbers them, and cut if it is longer
@@ -1440,6 +1458,170 @@ mod tests {
             output.text().contains("is not a regular file"),
             "{}",
             output.text()
+        );
+    }
+
+    #[test]
+    fn a_picture_read_that_is_told_to_stop_is_a_cancelled_read_and_not_a_text_read() {
+        // The attachment read is asked to stop by the call's own token. A read
+        // it stopped is the call being cancelled, and never a reason to open
+        // the file again as text.
+        let sample = Sample::new("read-picture-stopped");
+        sample.write_bytes("shot.png", PNG);
+        let seen = Ledger::new();
+        let tool = Read::new(sample.workspace(), seen.clone());
+        let cancel = Cancel::new();
+        cancel.request();
+
+        let answered = crucible_runtime::answered!(tool.run(
+            allowed(&tool, r#"{"path":"shot.png"}"#),
+            &crate::sample::cancelled_by(&cancel),
+        ));
+
+        assert!(
+            matches!(answered, Err(ToolError::Cancelled(ref tool)) if &**tool == NAME),
+            "{answered:?}"
+        );
+        assert!(
+            !seen.holds(sample.workspace().existing("shot.png").unwrap().as_path()),
+            "a stopped read counted as the agent having seen the file"
+        );
+    }
+
+    #[test]
+    fn a_stopped_picture_read_is_answered_where_it_stopped_and_never_falls_through_to_text() {
+        // Falling through would open the file a second time, as text, for a
+        // call that has already been told to stop. The text reader would then
+        // answer the cancellation itself, so only this seam tells the two
+        // apart.
+        let sample = Sample::new("read-picture-stopped-seam");
+        sample.write_bytes("shot.png", PNG);
+        let tool = Read::new(sample.workspace(), Ledger::new());
+        let approved = allowed(&tool, r#"{"path":"shot.png"}"#);
+        let path = sample.workspace().existing("shot.png").unwrap();
+        let cancel = Cancel::new();
+        cancel.request();
+
+        let answered = Read::looked_at(
+            &approved,
+            kind("shot.png").unwrap(),
+            "shot.png",
+            &path,
+            &cancel,
+        );
+
+        assert!(
+            matches!(answered, Err(ToolError::Cancelled(ref tool)) if &**tool == NAME),
+            "{answered:?}"
+        );
+    }
+
+    #[test]
+    fn a_read_lent_a_busy_worker_waits_for_room_and_then_reads() {
+        let sample = Sample::new("read-waits");
+        sample.write("one.txt", "alpha\n");
+        let tool = Read::new(sample.workspace(), Ledger::new());
+        let worker = crate::sample::worker();
+        let busy = crate::sample::occupied(&worker);
+        let context = crate::sample::lent(&worker, &Cancel::new());
+        let mut running =
+            std::pin::pin!(tool.run(allowed(&tool, r#"{"path":"one.txt"}"#), &context));
+
+        assert!(
+            crate::sample::asked_once(running.as_mut()).is_pending(),
+            "the read answered without waiting for room on the worker"
+        );
+
+        drop(busy);
+        let output = crate::sample::waited(running).unwrap();
+
+        assert_eq!(output.text(), "     1\talpha\n");
+    }
+
+    #[test]
+    fn a_read_cancelled_while_it_waits_for_the_worker_is_cancelled() {
+        let sample = Sample::new("read-cancelled-waiting");
+        sample.write_bytes("shot.png", PNG);
+        let tool = Read::new(sample.workspace(), Ledger::new());
+        let worker = crate::sample::worker();
+        let busy = crate::sample::occupied(&worker);
+        let cancel = Cancel::new();
+        let context = crate::sample::lent(&worker, &cancel);
+        let mut running =
+            std::pin::pin!(tool.run(allowed(&tool, r#"{"path":"shot.png"}"#), &context));
+
+        assert!(
+            crate::sample::asked_once(running.as_mut()).is_pending(),
+            "the read answered without waiting for room on the worker"
+        );
+        cancel.request();
+        let answered = crate::sample::waited(running);
+        drop(busy);
+
+        assert!(
+            matches!(answered, Err(ToolError::Cancelled(ref tool)) if &**tool == NAME),
+            "{answered:?}"
+        );
+    }
+
+    #[test]
+    fn a_read_whose_call_is_dropped_shows_the_agent_nothing_and_gives_its_place_back() {
+        // Work handed to the worker runs on after its call is dropped, until
+        // it next looks at its token, and whatever it comes to then reaches
+        // nobody. So it gives its place back when it returns, and the file is
+        // not one `write` may now replace.
+        let sample = Sample::new("read-dropped");
+        let mut bytes = PNG.to_vec();
+        bytes.resize(crucible_attachments::CEILING, 0);
+        sample.write_bytes("large.png", &bytes);
+        let seen = Ledger::new();
+        let tool = Read::new(sample.workspace(), seen.clone());
+        let worker = crate::sample::worker();
+        let context = crate::sample::lent(&worker, &Cancel::new());
+        {
+            let mut running =
+                Box::pin(tool.run(allowed(&tool, r#"{"path":"large.png"}"#), &context));
+            assert!(
+                crate::sample::asked_once(running.as_mut()).is_pending(),
+                "the read answered before its job could have read the picture"
+            );
+        }
+
+        crate::sample::idle(&worker);
+        assert!(
+            !seen.holds(sample.workspace().existing("large.png").unwrap().as_path()),
+            "a read nobody was answered with counted as the agent having seen the file"
+        );
+    }
+
+    #[test]
+    fn a_read_whose_job_answered_after_its_call_was_dropped_shows_the_agent_nothing() {
+        // The job has read the whole file and answered, and nobody is left to
+        // hand the answer to. Remembering the file then would let `write`
+        // replace a file the agent was never shown.
+        let sample = Sample::new("read-answered-late");
+        let mut bytes = PNG.to_vec();
+        bytes.resize(crucible_attachments::CEILING, 0);
+        sample.write_bytes("large.png", &bytes);
+        let seen = Ledger::new();
+        let tool = Read::new(sample.workspace(), seen.clone());
+        let worker = crate::sample::worker();
+        let context = crate::sample::lent(&worker, &Cancel::new());
+        {
+            let mut running =
+                Box::pin(tool.run(allowed(&tool, r#"{"path":"large.png"}"#), &context));
+            assert!(
+                crate::sample::asked_once(running.as_mut()).is_pending(),
+                "the read answered before its job could have read the picture"
+            );
+            // Every place free again is the job having returned, its answer
+            // waiting for a call that is about to be dropped without asking.
+            crate::sample::idle(&worker);
+        }
+
+        assert!(
+            !seen.holds(sample.workspace().existing("large.png").unwrap().as_path()),
+            "an answer nobody received counted as the agent having seen the file"
         );
     }
 

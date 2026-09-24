@@ -51,6 +51,12 @@
 //! record is handed to both when they are built rather than reached for by
 //! either, which keeps the binary the only place that knows they share it.
 //!
+//! `read`, `write` and `edit` do their file work on the tool worker their
+//! call was lent, where it was lent one, and in place where it was not, through
+//! the same private `blocking` module the searches use. The record above is told about a file only once the
+//! call has its answer in hand, because work that ran on after its call was
+//! dropped showed the agent nothing.
+//!
 //! `todo_write` touches no file at all, and that is the whole of its permission
 //! story: what it changes is a value inside this process, so there is no path
 //! for a rule to be written about and nobody is asked. It puts down the plan the
