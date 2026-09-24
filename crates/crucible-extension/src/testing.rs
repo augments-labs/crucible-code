@@ -1,9 +1,9 @@
 //! The runtime this crate's tests hand a hosted extension's streams to.
 //!
 //! One for every test, built the first time one asks and never shut down: a
-//! test binary ends with its threads. Multi-thread, because a test speaks to an
-//! extension synchronously from its own thread, which drives nothing; the
-//! runtime's workers are what run the transport's tasks meanwhile.
+//! test binary ends with its threads. Multi-thread, because a test waits on
+//! what it awaits from its own thread, which drives only that; the runtime's
+//! workers are what run the transport's tasks meanwhile.
 
 use std::sync::LazyLock;
 
