@@ -70,7 +70,9 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
-        subscriptions: crucible_app::subscription::Subscriptions::production(),
+        subscriptions: crucible_app::subscription::Subscriptions::production(
+            &crucible_auth::Renewals::new(),
+        ),
 
         // `/clear` never reaches it, and these terms have no provider to
         // build one from either — the loop they drive answers from a

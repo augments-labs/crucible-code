@@ -817,13 +817,18 @@ impl OpenAiWeb {
     }
 
     /// The headers both Responses services accept, including the secret.
-    async fn headers(&self) -> Result<Outgoing, SourceError> {
+    ///
+    /// Raced against `cancel`, as the request itself is: a credential
+    /// renewing its token waits for a renewal that is the renewal's own work,
+    /// so a call stopped meanwhile stops waiting and leaves it to finish.
+    async fn headers(&self, cancel: &Cancel) -> Result<Outgoing, SourceError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", "text/event-stream");
-        self.credential
-            .authorize(&mut outgoing)
+        cancel
+            .race(self.credential.authorize(&mut outgoing))
             .await
+            .ok_or(SourceError::Cancelled(OPENAI))?
             .map_err(|problem| SourceError::Transport {
                 named: OPENAI,
                 problem: problem.to_string().into(),
@@ -833,7 +838,7 @@ impl OpenAiWeb {
 
     /// Posts a streamed Responses request and keeps its terminal response.
     async fn ask(&self, body: String, cancel: &Cancel) -> Result<Value, SourceError> {
-        let outgoing = self.headers().await?;
+        let outgoing = self.headers(cancel).await?;
         sent(
             (OPENAI, &self.transport, &self.endpoint),
             &self.room,
@@ -1256,14 +1261,19 @@ impl MoonshotWeb {
     }
 
     /// The headers both services take, including the secret.
-    async fn headers(&self, accepting: &str) -> Result<Outgoing, SourceError> {
+    ///
+    /// Raced against `cancel`, as the request itself is: a credential
+    /// renewing its token waits for a renewal that is the renewal's own work,
+    /// so a call stopped meanwhile stops waiting and leaves it to finish.
+    async fn headers(&self, accepting: &str, cancel: &Cancel) -> Result<Outgoing, SourceError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", accepting);
         outgoing.set_header("user-agent", MOONSHOT_AGENT);
-        self.credential
-            .authorize(&mut outgoing)
+        cancel
+            .race(self.credential.authorize(&mut outgoing))
             .await
+            .ok_or(SourceError::Cancelled(MOONSHOT))?
             .map_err(|problem| SourceError::Transport {
                 named: MOONSHOT,
                 problem: problem.to_string().into(),
@@ -1302,7 +1312,7 @@ impl Search for MoonshotWeb {
                 body.number("timeout_seconds", 30);
             });
 
-            let outgoing = self.headers("application/json").await?;
+            let outgoing = self.headers("application/json", cancel).await?;
             let body = json.finish();
             let answered = sent(
                 (MOONSHOT, &self.transport, &self.searching),
@@ -1370,7 +1380,7 @@ impl Fetch for MoonshotWeb {
             // of. What was asked for is what it fetched, as far as anything
             // here can tell — and the tool compares the two, so saying
             // otherwise would make every fetch look like a redirect.
-            let outgoing = self.headers("text/markdown").await?;
+            let outgoing = self.headers("text/markdown", cancel).await?;
             let body = json.finish();
             let text = sent(
                 (MOONSHOT, &self.transport, &self.fetching),

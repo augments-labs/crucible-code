@@ -6,7 +6,8 @@
 //! launch does not have to ask again. The protected document can also hold the
 //! renewable secret state used by account credentials. Authorization methods
 //! meet the binary through the provider-neutral [`SubscriptionLogin`] trait;
-//! request renewal remains separate from this storage boundary.
+//! request renewal remains separate from this storage boundary, and runs as
+//! work of its own, one rotation per account at a time, under [`Renewals`].
 //!
 //! Two rules shape every line of it. **A secret this program wrote down is this
 //! program's fault if it leaks**, so the value inside the file is never returned
@@ -33,6 +34,6 @@ mod store;
 pub use error::AuthError;
 pub use oauth::{
     KimiCredential, KimiOAuth, LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError,
-    OpenAiCredential, OpenAiOAuth, SubscriptionLogin,
+    OpenAiCredential, OpenAiOAuth, Renewals, SubscriptionLogin, Unjoined,
 };
 pub use store::{Store, StoredCredentials};

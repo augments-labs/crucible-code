@@ -5,13 +5,17 @@
 //! is the sole closed list in the shipped binary: one provider implementation
 //! is paired with its fixed credential audience and one or more visible login
 //! routes. Adding a provider does not add a branch to the store or TUI.
+//!
+//! Every implementation here is built with the run's one [`Renewals`], so the
+//! credentials any of them resolves — the turn's, a web source's — renew one
+//! account's tokens once between them, on the run's runtime.
 
 use std::fmt;
 use std::sync::Arc;
 
 use crucible_auth::{
-    KimiOAuth, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Store, StoredCredentials,
-    SubscriptionLogin,
+    KimiOAuth, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Renewals, Store,
+    StoredCredentials, SubscriptionLogin,
 };
 use crucible_credentials::Credential;
 use crucible_provider::{Endpoint, Moonshot, OpenAi};
@@ -72,17 +76,18 @@ impl fmt::Debug for Resolved {
 }
 
 impl Subscriptions {
-    /// The registry compiled into this binary.
+    /// The registry compiled into this binary, renewing through `renewals`:
+    /// the run's own, from [`crate::services::Services::renewals`].
     #[must_use]
-    pub fn production() -> Self {
+    pub fn production(renewals: &Renewals) -> Self {
         Self {
             providers: Arc::new([
                 Registered {
-                    login: Arc::new(OpenAiOAuth::new()),
+                    login: Arc::new(OpenAiOAuth::new(renewals.clone())),
                     endpoint: OpenAi::SUBSCRIPTION,
                 },
                 Registered {
-                    login: Arc::new(KimiOAuth::new()),
+                    login: Arc::new(KimiOAuth::new(renewals.clone())),
                     endpoint: Moonshot::CODING,
                 },
             ]),

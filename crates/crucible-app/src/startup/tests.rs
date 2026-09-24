@@ -72,7 +72,7 @@ fn built(
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, AppError> {
     let stored = StoredCredentials::default();
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     provider(
         serving,
         NOTHING_TO_ASK,
@@ -241,7 +241,7 @@ fn an_openai_subscription_uses_its_fixed_audience() {
     // answer rather than as halves a call site could recombine.
     let sample = Sample::new("subscription-endpoint");
     let keys = sample.subscribed("openai");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -269,7 +269,7 @@ fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
     // shell was what it was. The deliberate credential signs the request.
     let sample = Sample::new("subscription-over-environment");
     let keys = sample.subscribed("openai");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -294,7 +294,7 @@ fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
 fn a_kimi_subscription_uses_the_managed_coding_audience() {
     let sample = Sample::new("kimi-subscription-endpoint");
     let keys = sample.subscribed("moonshot");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -323,7 +323,7 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
     let keys = sample.subscribed("openai");
     let settings =
         sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -354,7 +354,7 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
     let keys = sample.subscribed("openai");
     let settings =
         sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let problem = provider(
         Some(serving("openai")),
@@ -507,7 +507,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     }) else {
         panic!("a startup with no key was accepted");
     };
@@ -547,7 +547,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     })
     .expect("a session with nothing set up still starts");
 
@@ -589,7 +589,7 @@ fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &st
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     };
 
     coding(&startup, "anthropic", model, told)
@@ -731,7 +731,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             terminal: true,
             from: &|_| Some("sk-test".to_owned()),
             stored: &StoredCredentials::default(),
-            subscriptions: &Subscriptions::production(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         },
         &Settings::default(),
     )
@@ -760,7 +760,7 @@ fn google_serves_both_halves_from_interactions() {
 fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
     let sample = Sample::new("google-web-authority");
     let stored = sample.subscribed("google");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     let defaults = Settings::default();
     let absent = |_: &str| None;
     let auth = ProviderAuth {
@@ -866,7 +866,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             terminal,
             from: &|_| None,
             stored: &StoredCredentials::default(),
-            subscriptions: &Subscriptions::production(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         },
         &Settings::default(),
         Reaching {
@@ -1038,7 +1038,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     })
     .expect("a session to assemble");
     let runner = &mut conversation.runner;
@@ -1175,7 +1175,7 @@ fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     }) else {
         panic!("a run naming a server nothing wrote down was accepted");
     };
@@ -1225,7 +1225,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
             terminal: true,
             from: &|name| (name == "PATH").then(|| path.clone()),
             stored: &StoredCredentials::default(),
-            subscriptions: &Subscriptions::production(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         })
         .expect("a run this test wrote the record for")
     };
