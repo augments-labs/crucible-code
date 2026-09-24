@@ -19,20 +19,26 @@ use crate::sample::{Sample, skipped_without_enforcement};
 ///
 /// The file is the kernel's own answer rather than the shell's, so a shell that
 /// spells `ulimit` differently on another host cannot change what this reads.
-fn stated_process_ceiling(limits: &str) -> (u64, u64) {
+fn stated_process_ceiling(limits: &str) -> Option<(u64, u64)> {
     let line = limits
         .lines()
-        .find(|line| line.starts_with("Max processes"))
-        .expect("a process ceiling in /proc/self/limits");
+        .find(|line| line.starts_with("Max processes"))?;
     let mut fields = line.split_whitespace().skip(2);
-    let mut number = || {
-        fields
-            .next()
-            .expect("a ceiling")
-            .parse::<u64>()
-            .expect("a number")
-    };
-    (number(), number())
+    let mut number = || fields.next()?.parse::<u64>().ok();
+    Some((number()?, number()?))
+}
+
+#[test]
+fn stated_process_ceiling_distinguishes_absent_and_unlimited_limits() {
+    assert_eq!(stated_process_ceiling(""), None);
+    assert_eq!(
+        stated_process_ceiling("Max processes             unlimited            unlimited"),
+        None
+    );
+    assert_eq!(
+        stated_process_ceiling("Max processes             1024                 1024"),
+        Some((1024, 1024))
+    );
 }
 
 #[test]
@@ -68,7 +74,12 @@ fn a_confined_command_holds_the_process_ceiling_the_broker_owns() {
         String::from_utf8_lossy(&errors)
     );
     let limits = String::from_utf8(output).expect("utf8");
-    assert_eq!(stated_process_ceiling(&limits), (1024, 1024), "{limits}");
+    // A host that states no ceiling cannot be asked to hold one; the broker still
+    // sets one in the scope, which the second test covers.
+    let Some(ceiling) = stated_process_ceiling(&limits) else {
+        return;
+    };
+    assert_eq!(ceiling, (1024, 1024), "{limits}");
 }
 
 #[test]
@@ -122,7 +133,7 @@ fn a_stated_process_ceiling_stops_the_command_forking_past_it() {
 
     let output = String::from_utf8(output).expect("utf8");
     let errors = String::from_utf8(errors).expect("utf8");
-    assert_eq!(stated_process_ceiling(&output), (16, 16), "{output}");
+    assert_eq!(stated_process_ceiling(&output), Some((16, 16)), "{output}");
     // The ceiling is what the kernel hands back and also what it enforces: the
     // loop asks for 200 children and never reaches the end of its own script.
     assert!(!output.contains("unbounded"), "{output}");
