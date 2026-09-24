@@ -58,6 +58,11 @@ change in any release with no deprecation period.
   `ToolContext::with_worker` lends a call one and `Services::tool_worker`
   builds the run's worker when first asked for. No call is lent one yet, so
   nothing a user runs behaves differently.
+- **A future can stop waiting the moment its cancel is raised.**
+  `Cancel::race` awaits a future and hands back `None` instead, dropping it,
+  once the token, an ancestor of it or a deadline on either is requested. A
+  request wakes the race as it is made, and a deadline is timed on the timer
+  of the runtime the race is polled in.
 
 ### Changed
 
@@ -96,8 +101,9 @@ change in any release with no deprecation period.
   return a boxed `Send` future instead of an immediate result, so an adapter
   built against these traits adopts the new signatures; a new
   `CredentialError::RenewalOnWorker` names a renewal that cannot yet run where
-  it was polled. Every shipped implementation still answers the first time
-  that future is polled, so nothing a user runs behaves differently.
+  it was polled. Every shipped credential still answers the first time
+  `authorize`'s future is polled; how a web search or fetch now waits is the
+  entry below.
 - **A sandboxed command's status no longer waits behind the cancel of a limit
   it broke, and stopping it is bounded.** Each command the local sandbox starts
   is watched by a task of its own on the runtime `startup::assemble` starts,
@@ -107,6 +113,13 @@ change in any release with no deprecation period.
   cancel 250 ms before reporting its cleanup as failed. `LocalSandbox` takes
   that runtime through `watching_on`, and one given none prepares but starts
   no command.
+- **Esc stops a web search or fetch at once.** Every shipped web source sends
+  its request from the application runtime's blocking threads, at most two
+  per source at a time, and the call ends as soon as it is cancelled, even
+  while the request is still connecting or reading; a request left behind is
+  told to stop and its answer discarded. A lone tool call still waiting when
+  its deadline passes is now answered as timed out there, rather than once
+  its run returns.
 - **A hosted program's pipes are read and written by tasks the conversation
   owns, and can be awaited.** `crucible-transport`'s `Pipes::taken`,
   `Heard::new`, `Said::new` and `Muttered::draining`, and the MCP and extension

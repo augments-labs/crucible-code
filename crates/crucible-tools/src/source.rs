@@ -183,8 +183,9 @@ pub trait Search: Send + Sync {
 
     /// Answers `query`.
     ///
-    /// Every shipped implementation answers the first time this future is
-    /// polled, which is what a tool run's own one-poll crossing needs.
+    /// A shipped implementation waits for its request on the runtime this
+    /// future is polled in, and answers [`SourceError::Cancelled`] as soon as
+    /// `cancel` is raised, so its caller awaits it rather than asking once.
     ///
     /// # Errors
     ///
@@ -213,8 +214,9 @@ pub trait Fetch: Send + Sync {
 
     /// Fetches `url`.
     ///
-    /// Every shipped implementation answers the first time this future is
-    /// polled, which is what a tool run's own one-poll crossing needs.
+    /// A shipped implementation waits for its request on the runtime this
+    /// future is polled in, and answers [`SourceError::Cancelled`] as soon as
+    /// `cancel` is raised, so its caller awaits it rather than asking once.
     ///
     /// # Errors
     ///

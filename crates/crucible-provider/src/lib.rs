@@ -36,4 +36,4 @@ pub use openai::OpenAi;
 pub use transport::http::Https;
 pub use transport::{Response, Transport, TransportError};
 pub use unavailable::Unavailable;
-pub use web::{AnthropicWeb, GoogleWeb, MoonshotWeb, OpenAiWeb};
+pub use web::{AnthropicWeb, GoogleWeb, IN_FLIGHT as WEB_IN_FLIGHT, MoonshotWeb, OpenAiWeb};

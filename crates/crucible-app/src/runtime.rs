@@ -68,9 +68,11 @@ pub const WORKERS: usize = 4;
 
 /// The most threads the runtime starts for blocking work handed to it.
 ///
-/// Blocking work is disk and platform calls that have no asynchronous form,
-/// each bounded by its owner. Eight is twice the workers: enough for every
-/// worker's task to be waiting on one with room left over.
+/// Blocking work is disk and platform calls, and the web source's requests,
+/// that have no asynchronous form, each bounded by its owner; what every owner
+/// may hold at once is checked against this in [`crate::services`]. Eight is
+/// twice the workers: enough for every worker's task to be waiting on one with
+/// room left over.
 pub const BLOCKING: usize = 8;
 
 /// How long the runtime's threads are given to stop once it is shut down.
