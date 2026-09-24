@@ -34,6 +34,16 @@ crucible-privacy.workspace = true
 serde_json.workspace = true
 # `AuthError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
+# `not_worker`, which the renewal inside `Credential::authorize` checks before
+# it runs: the renewal is not yet owned work, so it must never run on a
+# runtime worker task.
+crucible-runtime.workspace = true
+
+[dev-dependencies]
+# Builds the tiny runtime a test spawns a task onto, to prove the renewal
+# refuses itself there. `rt` is enough: the distinction `not_worker` draws
+# does not depend on the runtime having more than one thread.
+tokio = { workspace = true, features = ["rt"] }
 
 [lints]
 workspace = true

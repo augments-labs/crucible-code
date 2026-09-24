@@ -139,12 +139,13 @@ impl Provider for Google {
             let mut outgoing = crucible_credentials::Outgoing::new();
             outgoing.set_header("content-type", "application/json");
             outgoing.set_header("accept", "text/event-stream");
-            self.credential.authorize(&mut outgoing).map_err(|source| {
-                ProviderError::Credential {
+            self.credential
+                .authorize(&mut outgoing)
+                .await
+                .map_err(|source| ProviderError::Credential {
                     provider: NAME,
                     source,
-                }
-            })?;
+                })?;
             let redactions = outgoing.redactions();
             let response = self
                 .transport

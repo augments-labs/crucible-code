@@ -36,6 +36,14 @@
 //! for the application how many threads it gets; [`Group`] runs on the runtime
 //! of whoever called it, a crossing that polls once enters none, and one that
 //! waits enters only the runtime its caller hands it.
+//!
+//! [`not_worker`] answers one narrower question: whether the code calling it
+//! is polled as a spawned task right now, which [`Handle::try_current`] cannot
+//! tell apart from the turn thread's own [`Bridge::wait`]. A step not yet
+//! built to run on a worker checks it and refuses itself with [`OnWorker`]
+//! rather than running where it is not safe to.
+//!
+//! [`Handle::try_current`]: tokio::runtime::Handle::try_current
 
 mod aside;
 mod bridge;
@@ -43,6 +51,7 @@ mod cancel;
 mod group;
 mod progress;
 mod steer;
+mod worker;
 
 pub use aside::Aside;
 #[cfg(feature = "proof")]
@@ -53,3 +62,4 @@ pub use cancel::Cancel;
 pub use group::{Ended, Full, Group};
 pub use progress::{Progress, Told};
 pub use steer::Steer;
+pub use worker::{OnWorker, not_worker};

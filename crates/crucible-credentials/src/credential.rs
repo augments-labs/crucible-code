@@ -14,12 +14,31 @@
 //! which is the moment a credential holding something perishable can renew it:
 //! how old a token is only matters where it is about to be used, and a renewal
 //! that fails there ends the turn before a request leaves.
+//!
+//! [`Credential::authorize`] hands back a future rather than an answer, because
+//! a renewal can have to reach a server before it knows whether the token it
+//! holds is still good. One holding only a key has nothing to wait for and
+//! answers the first time that future is polled; a caller that polls once and
+//! treats a future still pending as a failure loses nothing any credential
+//! shipped here or in `crucible-auth` ever needed to wait for.
 
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 
 use sha2::{Digest as _, Sha256};
 
 use crucible_types::CredentialScopeId;
+
+/// What [`Credential::authorize`] hands back.
+///
+/// Spelled with `std` alone rather than named from `crucible-runtime`'s own
+/// `BoxFuture`: this crate keeps `crucible-types` as its only internal
+/// dependency, so it cannot name a crate above it. `'a` is the shorter of
+/// `&self` and the `&mut Outgoing` the call was given, so the future cannot
+/// outlive either borrow; `Send` is what lets a caller poll it on whichever
+/// thread it is on.
+pub type Authorization<'a> = Pin<Box<dyn Future<Output = Result<(), CredentialError>> + Send + 'a>>;
 
 /// Why a credential could not be resolved or applied.
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +63,23 @@ pub enum CredentialError {
     /// this reaches a log line and the screen like every other error here.
     #[error("{0}")]
     NotRenewed(Box<str>),
+
+    /// This call was polled as a runtime worker task, where it must not wait
+    /// for a credential's renewal — whether that renewal is this call's own,
+    /// or another poll's already in progress.
+    ///
+    /// A renewal that is not yet owned work of its own does everything —
+    /// taking a cross-process lock, reaching the network — inside
+    /// [`Credential::authorize`]'s first poll, so a runtime worker task must
+    /// never block there. Nor may it wait for another poll to finish one: a
+    /// credential that serializes renewal through an in-process lock cannot
+    /// tell, from outside that lock, whether the poll holding it is
+    /// renewing or only applying a token already fresh, so a worker refuses
+    /// either way rather than risk the wait. Its caller decides what to do
+    /// about a worker. No runtime dependency is needed to say so: this
+    /// variant carries nothing but its own fixed sentence.
+    #[error("this credential's renewal cannot run or be waited for on a runtime worker task")]
+    RenewalOnWorker,
 }
 
 /// An API key.
@@ -170,9 +206,11 @@ impl Credential for HeaderKey {
         CredentialScopeId::from_digest(digest.finalize().into())
     }
 
-    fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
+    fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a> {
+        // Nothing here can fail or wait, so the key is applied before the
+        // future is even built; what is handed back only carries the answer.
         self.key.apply(request, &self.header);
-        Ok(())
+        Box::pin(std::future::ready(Ok(())))
     }
 }
 
@@ -490,14 +528,24 @@ pub trait Credential: Send + Sync + fmt::Debug {
     ///
     /// Called on every request, which is what makes this the place a token is
     /// renewed: a credential holding one is deciding here whether what it holds
-    /// is still good, at the only moment that can be answered about.
+    /// is still good, at the only moment that can be answered about. One
+    /// holding only a key has nothing to wait for and answers the first time
+    /// its future is polled; a caller that polls once and treats a future
+    /// still pending as a failure loses nothing any credential shipped here
+    /// needs to wait for.
     ///
     /// # Errors
     ///
     /// [`CredentialError::NotRenewed`] where the credential had to produce
     /// something before it could answer and could not. One holding a key has
     /// already applied it by this point and cannot fail.
-    fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError>;
+    ///
+    /// [`CredentialError::RenewalOnWorker`] where this future was polled as
+    /// a runtime worker task and either it would have to renew what the
+    /// credential holds, or another poll already renewing (or merely
+    /// applying an already-fresh token) holds the credential's own lock —
+    /// neither may run or be waited for there yet.
+    fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a>;
 }
 
 #[cfg(test)]
@@ -505,6 +553,12 @@ mod tests {
     use super::*;
 
     /// The exact string that must never appear anywhere but the header value.
+    ///
+    /// Tests that need to answer a credential's future — `authorize` cannot
+    /// be called synchronously — live in `tests/ready_body.rs` instead: this
+    /// crate cannot name `crucible-runtime`'s `Bridge`, and standing in for
+    /// its one poll by hand is something `scripts/python/bridge-ledger.py`
+    /// only allows outside the crate's shipped source.
     const SECRET: &str = "sk-ant-do-not-log-me";
 
     /// One header's value, by name.
@@ -718,40 +772,6 @@ mod tests {
     }
 
     #[test]
-    fn a_variable_padded_by_a_paste_sends_the_key_and_not_the_padding() {
-        // The two shapes a key arrives padded in: a space from a paste, and a
-        // CRLF from a key file written on Windows. The header value has to be
-        // what a key set correctly would send, since the alternative is a 401
-        // or a rejected header that names neither the variable nor the space.
-        let mut padded = Outgoing::new();
-        let key = ApiKey::from_lookup("KEY", |_| Some(format!(" {SECRET} \r\n"))).unwrap();
-        HeaderKey::new(key, Header::bare("x-api-key"))
-            .authorize(&mut padded)
-            .unwrap();
-
-        assert_eq!(header(&padded, "x-api-key"), SECRET);
-    }
-
-    #[test]
-    fn anthropic_and_openai_send_the_same_key_differently() {
-        // One credential type, two wire conventions — this is why a credential
-        // is handed a `Header` instead of hard-coding either.
-        let key = ApiKey::new(SECRET);
-
-        let mut anthropic = Outgoing::new();
-        HeaderKey::new(key.clone(), Header::bare("x-api-key"))
-            .authorize(&mut anthropic)
-            .unwrap();
-        assert_eq!(header(&anthropic, "x-api-key"), SECRET);
-
-        let mut openai = Outgoing::new();
-        HeaderKey::new(key, Header::bearer())
-            .authorize(&mut openai)
-            .unwrap();
-        assert_eq!(header(&openai, "authorization"), format!("Bearer {SECRET}"));
-    }
-
-    #[test]
     fn a_header_credential_has_a_restart_stable_redacted_scope() {
         let first = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
         let reconstructed = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
@@ -765,36 +785,6 @@ mod tests {
         let shown = format!("{:?}", first.scope());
         assert_eq!(shown, "CredentialScopeId([redacted])");
         assert!(!shown.contains(SECRET));
-    }
-
-    /// A credential that has to renew something before it can answer, and
-    /// cannot. The shape one takes when what it holds has expired and renewing
-    /// it was refused.
-    #[derive(Debug)]
-    struct Stale;
-
-    impl Credential for Stale {
-        fn scope(&self) -> crucible_types::CredentialScopeId {
-            crucible_types::CredentialScopeId::new()
-        }
-
-        fn authorize(&self, _request: &mut Outgoing) -> Result<(), CredentialError> {
-            Err(CredentialError::NotRenewed("the login has expired".into()))
-        }
-    }
-
-    #[test]
-    fn a_credential_that_cannot_renew_says_so_and_writes_nothing() {
-        // Authentication fails at two moments, not one. This is the second:
-        // the credential was found, and what it holds is no longer good. A
-        // request half-authorised is worse than one never sent, so a failure
-        // here leaves the headers as they were.
-        let mut request = Outgoing::new();
-
-        let problem = Stale.authorize(&mut request).unwrap_err();
-
-        assert_eq!(problem.to_string(), "the login has expired");
-        assert!(request.headers().is_empty(), "the request was written to");
     }
 
     #[test]

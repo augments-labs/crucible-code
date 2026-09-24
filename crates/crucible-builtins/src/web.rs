@@ -193,6 +193,7 @@ impl Tool for WebSearch {
             };
 
             self.answer(&approved, context)
+                .await
                 .map(|output| output.answered_by(provenance))
         })
     }
@@ -200,7 +201,7 @@ impl Tool for WebSearch {
 
 impl WebSearch {
     /// What the source answered, before it is marked with who answered it.
-    fn answer(
+    async fn answer(
         &self,
         approved: &Approved,
         context: &ToolContext<'_>,
@@ -209,7 +210,7 @@ impl WebSearch {
         let query = args.text(QUERY)?;
         let limit = args.count(LIMIT, RESULTS)?.min(CEILING);
 
-        let response = match self.source.search(query, context.cancel()) {
+        let response = match self.source.search(query, context.cancel()).await {
             Ok(response) => response,
             Err(problem) => return failed(SEARCH, &problem),
         };
@@ -356,7 +357,7 @@ impl Tool for WebFetch {
             let args = Args::parse(FETCH, approved.args())?;
             let url = args.text(URL)?;
 
-            let page = match self.source.fetch(url, context.cancel()) {
+            let page = match self.source.fetch(url, context.cancel()).await {
                 Ok(page) => page,
                 Err(problem) => return failed(FETCH, &problem),
             };

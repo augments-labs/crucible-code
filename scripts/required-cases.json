@@ -442,7 +442,7 @@
       },
       "case": "oauth::tests::an_expired_rotation_is_refreshed_and_rewritten_before_use",
       "source": "crates/crucible-auth/src/oauth/tests.rs",
-      "body_sha256": "7067e0b58e8ec1d0ed705b87f38689d786cf2e021a3a6f1dcd93e1f0d78905c6",
+      "body_sha256": "24f88f2a660a6abdcbf6426d99a90da314eacb55507e41621d95cdba2d3999bf",
       "platforms": [
         "linux",
         "macos",
@@ -460,7 +460,7 @@
       },
       "case": "oauth::tests::a_refresh_cannot_move_a_live_credential_scope_to_another_account",
       "source": "crates/crucible-auth/src/oauth/tests.rs",
-      "body_sha256": "5759ebeb8ec43685e25017921783a7fb275ea8b99e9fca0c18dfd2e00265813b",
+      "body_sha256": "a61c7ef9597f2ee744ce1dda4aeeacc84cdb18fe3e2ae8caddef8c02f4702381",
       "platforms": [
         "linux",
         "macos",

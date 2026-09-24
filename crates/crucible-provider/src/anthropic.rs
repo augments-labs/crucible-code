@@ -120,7 +120,7 @@ impl Anthropic {
     }
 
     /// The headers every request carries, including the secret.
-    fn headers(&self, model: &str) -> Result<Outgoing, ProviderError> {
+    async fn headers(&self, model: &str) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("anthropic-version", VERSION);
@@ -134,6 +134,7 @@ impl Anthropic {
 
         self.credential
             .authorize(&mut outgoing)
+            .await
             .map_err(|source| ProviderError::Credential {
                 provider: NAME,
                 source,
@@ -337,7 +338,7 @@ impl Provider for Anthropic {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let outgoing = self.headers(request.model)?;
+            let outgoing = self.headers(request.model).await?;
             let redactions = outgoing.redactions();
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,

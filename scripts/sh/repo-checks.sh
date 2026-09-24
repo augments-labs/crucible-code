@@ -583,6 +583,10 @@ fi
 # implements `SandboxProcess`.
 # `storage` hands back the same type spelled out, because it names no workspace
 # crate but `types`, and so it names no runtime.
+# `auth` names it for none of these either: only for `not_worker`, which the
+# renewal inside `Credential::authorize` checks before it runs, so it refuses
+# itself rather than running on a runtime worker task before that renewal is
+# owned work of its own.
 #
 # `http` is an HTTP client built for outgoing requests to share. It sends the
 # headers a credential was applied to and hands its connector's work back as a
@@ -634,6 +638,7 @@ attachments workspace
 client-api types
 auth core
 auth privacy
+auth runtime
 config core
 config models
 context models

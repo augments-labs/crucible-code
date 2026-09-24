@@ -169,6 +169,7 @@ impl ProviderError {
                     CredentialError::NotRenewed(problem) => {
                         CredentialError::NotRenewed(redactions.redact(&problem).into())
                     }
+                    CredentialError::RenewalOnWorker => CredentialError::RenewalOnWorker,
                 },
             },
             Self::Unconfigured(problem) => Self::Unconfigured(redactions.redact(&problem).into()),

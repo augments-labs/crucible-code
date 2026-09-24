@@ -12,9 +12,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crucible_runtime::{BoxFuture, Cancel, answered};
 use crucible_sandbox::SandboxError;
 use crucible_tools::{
-    Approved, Ask, CallResultAcceptance, CallResultReceipt, InvocationId, Permission, Remember,
-    Sensitivity, Settled, Summary, Target, Tool, ToolContext, ToolError, ToolOutput, ToolSnapshot,
-    Toolset, ToolsetContext, ToolsetError, Unwatched, Verdict,
+    Approved, Ask, CallResultAcceptance, CallResultReceipt, Fetch, Host, InvocationId, Page,
+    Permission, Remember, Search, SearchResponse, Sensitivity, Settled, SourceError, Summary,
+    Target, Tool, ToolContext, ToolError, ToolOutput, ToolSnapshot, Toolset, ToolsetContext,
+    ToolsetError, Unwatched, Verdict,
 };
 use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId};
 
@@ -233,4 +234,76 @@ fn an_external_toolset_is_driven_through_its_lifecycle_as_a_trait_object() {
     );
     assert_eq!(counted.disposed.load(Ordering::Relaxed), 2);
     assert!(toolset.registered("echo").is_none());
+}
+
+/// A source that answers from memory, over both `Search` and `Fetch`.
+struct Remembered;
+
+impl Search for Remembered {
+    fn name(&self) -> &'static str {
+        "remembered"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Named {
+            sent: "https://search.example/".into(),
+            host: "search.example".into(),
+        }
+    }
+
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move { Ok(SearchResponse::grounded(query.to_owned(), Vec::new(), "")) })
+    }
+}
+
+impl Fetch for Remembered {
+    fn name(&self) -> &'static str {
+        "remembered"
+    }
+
+    fn reaches(&self, url: &str) -> Host {
+        Host::Named {
+            sent: url.into(),
+            host: "example.com".into(),
+        }
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move {
+            Ok(Page {
+                url: url.into(),
+                title: None,
+                text: "remembered".into(),
+            })
+        })
+    }
+}
+
+#[test]
+fn an_external_search_source_runs_as_a_trait_object_and_answers_at_its_first_poll() {
+    let source: Arc<dyn Search> = Arc::new(Remembered);
+    let cancel = Cancel::new();
+
+    let response = answered!(source.search("crucible", &cancel)).expect("the search answers");
+
+    assert_eq!(response.answer.as_deref(), Some("crucible"));
+}
+
+#[test]
+fn an_external_fetch_source_runs_as_a_trait_object_and_answers_at_its_first_poll() {
+    let source: Arc<dyn Fetch> = Arc::new(Remembered);
+    let cancel = Cancel::new();
+
+    let page =
+        answered!(source.fetch("https://example.com/page", &cancel)).expect("the fetch answers");
+
+    assert_eq!(page.url.as_ref(), "https://example.com/page");
 }

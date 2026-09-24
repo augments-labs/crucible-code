@@ -38,7 +38,7 @@ pub use crucible_context::{
     SkillsSection, SystemPrompt, ToolsSection, WorkspaceSection, capture, seen,
 };
 pub use crucible_credentials::{
-    ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
+    ApiKey, Authorization, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };
 pub use crucible_models::{
     Attached, Content, Delta, DeltaStream, Effort, EffortError, MAX_PROMPT_CACHE_BOUNDARIES,

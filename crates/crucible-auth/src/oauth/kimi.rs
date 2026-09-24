@@ -14,7 +14,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{Cancel, Credential, CredentialError, CredentialScopeId, Outgoing};
+use crucible_core::{
+    Authorization, Cancel, Credential, CredentialError, CredentialScopeId, Outgoing,
+};
 
 use super::{
     LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, SubscriptionLogin, Tokens,
@@ -146,34 +148,42 @@ impl Credential for KimiCredential {
         self.scope
     }
 
-    fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
-        let mut tokens = self
-            .tokens
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if needs_refresh(&tokens, now()) {
-            *tokens = self
-                .store
-                .refresh_subscription("moonshot", needs_refresh, |current| {
-                    let refreshed = self.flow.refresh(current)?;
-                    if self.identity_bound
-                        && credential_scope(b"moonshot-device", refreshed.detail(DEVICE_ID))
-                            != Some(self.scope)
-                    {
-                        return Err(OAuthError::Invalid {
-                            step: "refreshed installation identity",
-                        });
-                    }
-                    Ok(refreshed)
-                })
+    fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a> {
+        Box::pin(async move {
+            let mut tokens = super::lock_tokens(&self.tokens)?;
+            if needs_refresh(&tokens, now()) {
+                // The renewal below is owned work only where whoever polls it
+                // is not a runtime worker task: it locks `auth.lock` and blocks
+                // on the network inside this future's one poll, which a worker
+                // must never do until the renewal is made owned work of its
+                // own. It is polled today only from the thread that drives
+                // the turn's runtime, or a crossing's caller thread, never
+                // from a spawned task, and this refuses itself rather than
+                // trusting that to stay true.
+                crucible_runtime::not_worker().map_err(|_| CredentialError::RenewalOnWorker)?;
+                *tokens = self
+                    .store
+                    .refresh_subscription("moonshot", needs_refresh, |current| {
+                        let refreshed = self.flow.refresh(current)?;
+                        if self.identity_bound
+                            && credential_scope(b"moonshot-device", refreshed.detail(DEVICE_ID))
+                                != Some(self.scope)
+                        {
+                            return Err(OAuthError::Invalid {
+                                step: "refreshed installation identity",
+                            });
+                        }
+                        Ok(refreshed)
+                    })
+                    .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
+            }
+            let identity = Identity::from_tokens(&tokens)
                 .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
-        }
-        let identity = Identity::from_tokens(&tokens)
-            .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
-        identity.apply(request);
-        request.protect(tokens.access().to_owned());
-        request.set_header("authorization", format!("Bearer {}", tokens.access()));
-        Ok(())
+            identity.apply(request);
+            request.protect(tokens.access().to_owned());
+            request.set_header("authorization", format!("Bearer {}", tokens.access()));
+            Ok(())
+        })
     }
 }
 
