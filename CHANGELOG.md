@@ -140,6 +140,14 @@ change in any release with no deprecation period.
   `decide_admitted_guarded` are now `async` to match. An implementer of any
   of these traits adopts the new signatures; nothing a user runs behaves
   differently.
+- **An extension host is awaited, and never settles a call another process
+  was asked.** `crucible-extension`'s `Hosted` is spoken to only by awaiting
+  it and gains `replace`; its calls are a `Call` carrying a generation no other
+  hosted process shares, in place of a bare `CallId`, and one from any other
+  process is refused with `CallError::Elsewhere` rather than answered by its
+  number. `Speaking` is no longer driven synchronously, `Speaking`'s and
+  `Conversation`'s constructors are crate-private, and `Conversation` no
+  longer implements `Default`; nothing in crucible hosts an extension yet.
 
 ### Fixed
 

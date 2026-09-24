@@ -1,9 +1,10 @@
 //! What hosting an extension over a confined process has to guarantee.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::io::{self, Write};
 use std::process::ExitStatus;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,9 +17,10 @@ use crucible_sandbox::{
     SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
-use serde_json::json;
+use serde_json::{Value, json};
 
-use crate::{Outcome, Over, Turn};
+use crate::calls::Generation;
+use crate::{Asking, CallError, Outcome, Over, Trouble, Turn};
 
 use super::{Finish, Hosted, Unstarted};
 
@@ -27,6 +29,11 @@ const PATIENCE: Duration = Duration::from_millis(500);
 
 /// How long a test waits for something it does not drive itself.
 const LATEST: Duration = Duration::from_secs(2);
+
+/// Drives one wait of the host to its answer.
+fn on<F: Future>(work: F) -> F::Output {
+    crate::testing::runtime().block_on(work)
+}
 
 /// An exit status a test can compare against, without a process to get one from.
 fn exited() -> ExitStatus {
@@ -95,6 +102,8 @@ enum Step {
     Says(&'static str),
     /// It has nothing yet, and its writer is still there.
     Waits,
+    /// It has nothing until this moment, and then a frame.
+    SaysFrom(Instant, &'static str),
 }
 
 /// A scripted stream that goes quiet forever once its script runs out.
@@ -102,9 +111,14 @@ struct Says(VecDeque<Step>);
 
 impl SandboxOutput for Says {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if let Some(Step::SaysFrom(from, _)) = self.0.front()
+            && Instant::now() < *from
+        {
+            return Ok(SandboxRead::Pending);
+        }
         match self.0.pop_front() {
             None | Some(Step::Waits) => Ok(SandboxRead::Pending),
-            Some(Step::Says(frame)) => {
+            Some(Step::Says(frame) | Step::SaysFrom(_, frame)) => {
                 let said = format!("{frame}\n");
                 let bytes = said.as_bytes();
                 let taken = bytes.len().min(buffer.len());
@@ -277,8 +291,12 @@ fn a_process_crucible_cannot_answer_is_refused_and_stopped() {
     let (mut process, watched) = Fake::new([], Ending::Stubborn);
     process.speaks = false;
 
-    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime())
-        .expect_err("no input, no conversation");
+    let refused = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect_err("no input, no conversation");
 
     assert!(matches!(refused, Unstarted::Unspeakable));
     assert_eq!(
@@ -293,8 +311,12 @@ fn a_process_crucible_cannot_hear_is_refused_and_stopped() {
     let (mut process, watched) = Fake::new([], Ending::Stubborn);
     process.stdout = None;
 
-    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime())
-        .expect_err("no output, nothing to host");
+    let refused = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect_err("no output, nothing to host");
 
     assert!(matches!(refused, Unstarted::Unheard));
     assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
@@ -312,10 +334,14 @@ fn what_the_extension_says_arrives_as_a_turn() {
         )],
         Ending::Exited,
     );
-    let mut hosted =
-        Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
+    let mut hosted = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
 
-    let turn = hosted.turn().expect("a turn");
+    let turn = on(hosted.turn()).expect("a turn");
 
     match turn {
         Turn::Told { method, params } => {
@@ -329,12 +355,14 @@ fn what_the_extension_says_arrives_as_a_turn() {
 #[test]
 fn what_crucible_asks_reaches_the_process() {
     let (process, watched) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted =
-        Hosted::<&str>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
+    let mut hosted = on(Hosted::<&str>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
 
-    hosted
-        .ask("tools/list", json!({}), "why crucible asked")
-        .expect("asked");
+    on(hosted.ask("tools/list", json!({}), "why crucible asked")).expect("asked");
 
     let said = String::from_utf8(watched.said.lock().expect("said").clone()).expect("utf-8");
     assert!(
@@ -347,13 +375,15 @@ fn what_crucible_asks_reaches_the_process() {
 #[test]
 fn stopping_closes_the_input_first_and_reports_a_quiet_ending() {
     let (process, watched) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted =
-        Hosted::<&str>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
-    hosted
-        .ask("tools/list", json!({}), "unanswered")
-        .expect("asked");
+    let mut hosted = on(Hosted::<&str>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
+    on(hosted.ask("tools/list", json!({}), "unanswered")).expect("asked");
 
-    let ended = hosted.stop(PATIENCE);
+    let ended = on(hosted.stop(PATIENCE));
 
     assert!(
         matches!(ended.finish, Finish::Exited(status) if status == exited()),
@@ -385,9 +415,14 @@ fn stopping_closes_the_input_first_and_reports_a_quiet_ending() {
 #[test]
 fn a_process_that_will_not_finish_is_stopped() {
     let (process, watched) = Fake::new([Step::Waits], Ending::Stubborn);
-    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
+    let hosted = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
 
-    let ended = hosted.stop(Duration::from_millis(20));
+    let ended = on(hosted.stop(Duration::from_millis(20)));
 
     assert!(
         matches!(ended.finish, Finish::Stopped),
@@ -400,9 +435,14 @@ fn a_process_that_will_not_finish_is_stopped() {
 #[test]
 fn a_scope_that_cannot_be_reaped_says_so() {
     let (process, _) = Fake::new([Step::Waits], Ending::Unreapable);
-    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
+    let hosted = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
 
-    let ended = hosted.stop(Duration::from_millis(20));
+    let ended = on(hosted.stop(Duration::from_millis(20)));
 
     match ended.finish {
         Finish::Unreaped(source) => {
@@ -415,14 +455,14 @@ fn a_scope_that_cannot_be_reaped_says_so() {
 #[test]
 fn a_silent_extension_ends_the_conversation_rather_than_waiting_forever() {
     let (process, _) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted = Hosted::<()>::over(
+    let mut hosted = on(Hosted::<()>::over(
         process,
         Duration::from_millis(20),
         &crate::testing::runtime(),
-    )
+    ))
     .expect("hosted");
 
-    let over = hosted.turn().expect_err("nothing is coming");
+    let over = on(hosted.turn()).expect_err("nothing is coming");
 
     assert!(
         matches!(over, Over::Unreadable { .. }),
@@ -438,7 +478,12 @@ fn what_the_extension_complains_about_is_drained_and_kept() {
             .into_iter()
             .collect(),
     ));
-    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
+    let hosted = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
 
     assert!(
         until(|| hosted.muttered().text().contains("libfoo.so")),
@@ -455,17 +500,19 @@ fn a_call_the_extension_makes_is_answered_on_the_wire() {
         )],
         Ending::Exited,
     );
-    let mut hosted =
-        Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
+    let mut hosted = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
 
-    let Turn::Asked { id, method, .. } = hosted.turn().expect("a turn") else {
+    let Turn::Asked { id, method, .. } = on(hosted.turn()).expect("a turn") else {
         panic!("a request is something to answer");
     };
     assert_eq!(&*method, "workspace/root");
 
-    hosted
-        .answer(id, Outcome::Worked(json!({"root": "/workspace"})))
-        .expect("answered");
+    on(hosted.answer(id, Outcome::Worked(json!({"root": "/workspace"})))).expect("answered");
 
     let said = String::from_utf8(watched.said.lock().expect("said").clone()).expect("utf-8");
     assert!(
@@ -479,21 +526,22 @@ fn a_call_the_extension_makes_is_answered_on_the_wire() {
 #[test]
 fn a_call_the_host_gave_up_on_is_not_owed_again_at_the_end() {
     let (process, _) = Fake::new([Step::Waits], Ending::Exited);
-    let mut hosted =
-        Hosted::<&str>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
-    let kept = hosted
-        .ask("tools/list", json!({}), "still wanted")
-        .expect("asked");
-    let given_up = hosted
-        .ask("tools/call", json!({}), "no longer wanted")
-        .expect("asked again");
+    let mut hosted = on(Hosted::<&str>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
+    let kept = on(hosted.ask("tools/list", json!({}), "still wanted")).expect("asked");
+    let given_up =
+        on(hosted.ask("tools/call", json!({}), "no longer wanted")).expect("asked again");
 
     assert_eq!(
         hosted.give_up(given_up).expect("giving up on it"),
         "no longer wanted"
     );
 
-    let ended = hosted.stop(PATIENCE);
+    let ended = on(hosted.stop(PATIENCE));
     let [(id, why)] = ended.waiting.as_slice() else {
         panic!("only the call still wanted comes back: {:?}", ended.waiting);
     };
@@ -512,9 +560,14 @@ fn an_extension_the_sandbox_stopped_says_what_it_was_stopped_for() {
         Ending::Stubborn,
         SandboxViolation::CommandTime,
     );
-    let hosted = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).expect("hosted");
+    let hosted = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
 
-    let ended = hosted.stop(Duration::from_millis(20));
+    let ended = on(hosted.stop(Duration::from_millis(20)));
 
     assert_eq!(ended.violation, Some(SandboxViolation::CommandTime));
     assert!(
@@ -528,7 +581,12 @@ fn an_extension_the_sandbox_stopped_says_what_it_was_stopped_for() {
 fn missing_input_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.speaks = false;
-    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
+    let refused = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("input"), "{message}");
     assert!(
@@ -558,7 +616,12 @@ fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
     // say it a second time.
     let (mut process, watched) = Fake::new([], Ending::Unanswering);
     process.speaks = false;
-    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
+    let refused = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .unwrap_err();
     assert_eq!(
         refused.to_string(),
         "the extension was started without crucible keeping its input, so there is \
@@ -581,7 +644,12 @@ fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
 fn missing_output_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.stdout = None;
-    let refused = Hosted::<()>::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
+    let refused = on(Hosted::<()>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("output"), "{message}");
     assert!(
@@ -594,4 +662,323 @@ fn missing_output_retains_failed_cleanup() {
     };
     assert!(matches!(*cause, Unstarted::Unheard));
     assert_eq!(cleanup.kind(), io::ErrorKind::Other);
+}
+
+/// Asking the extension something begins an exchange of its own. A turn given
+/// up on while the extension was quiet leaves that silence behind it, and once
+/// crucible has asked something new, the wait for the answer sits through a
+/// silence of its own rather than the remainder of the last one.
+#[test]
+fn a_new_request_sits_through_a_silence_of_its_own() {
+    let patience = Duration::from_secs(1);
+    let began = Instant::now();
+    let (process, _) = Fake::new(
+        [Step::SaysFrom(
+            began + Duration::from_millis(1300),
+            r#"{"jsonrpc":"2.0","id":0,"result":null}"#,
+        )],
+        Ending::Exited,
+    );
+    let mut hosted = on(Hosted::<&str>::over(
+        process,
+        patience,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
+
+    let given_up =
+        on(async { tokio::time::timeout(Duration::from_millis(900), hosted.turn()).await });
+    assert!(given_up.is_err(), "nothing was said yet: {given_up:?}");
+    on(hosted.ask("work", json!({}), "the new request")).expect("asked");
+
+    // The silence the first turn began would have ended a full patience after
+    // it began, three hundred milliseconds before the extension answers.
+    let turn = on(hosted.turn()).expect("the answer waits a patience of its own");
+    assert_eq!(
+        turn,
+        Turn::Answer {
+            waiting: "the new request",
+            outcome: Outcome::Worked(Value::Null),
+        }
+    );
+}
+
+/// What the extension says when it asks crucible for the workspace root.
+const ASKS_FOR_THE_ROOT: &str = r#"{"jsonrpc":"2.0","id":7,"method":"workspace/root","params":{}}"#;
+
+/// Once a replacement is hosted, a call the replaced extension made, or that
+/// crucible made to it, is refused by a typed outcome and never reaches the
+/// replacement, even where the replacement has calls open under the same
+/// numbers.
+#[test]
+fn a_call_on_a_replaced_generation_is_refused() {
+    let runtime = crate::testing::runtime();
+    let (old, replaced) = Fake::new([Step::Says(ASKS_FOR_THE_ROOT)], Ending::Stubborn);
+    let mut hosted = on(Hosted::<&str>::over(old, PATIENCE, &runtime)).expect("hosted");
+    let Turn::Asked { id: theirs, .. } = on(hosted.turn()).expect("a turn") else {
+        panic!("a request is something to answer");
+    };
+    let ours = on(hosted.ask("tools/list", json!({}), "the replaced one's")).expect("asked");
+
+    let (new, watched) = Fake::new([Step::Says(ASKS_FOR_THE_ROOT)], Ending::Exited);
+    let ended =
+        on(hosted.replace(new, PATIENCE, &runtime, Duration::from_millis(20))).expect("replaced");
+    assert_eq!(
+        ended.waiting,
+        vec![(ours, "the replaced one's")],
+        "the replaced extension's unanswered calls come back with it"
+    );
+    assert!(
+        matches!(ended.finish, Finish::Stopped),
+        "the replaced extension outlasted its grace and was stopped: {:?}",
+        ended.finish
+    );
+    assert_eq!(replaced.stopped.load(Ordering::Relaxed), 1);
+    assert!(
+        replaced.closed.load(Ordering::Relaxed),
+        "the replaced extension's input is closed"
+    );
+    let Turn::Asked { id: current, .. } = on(hosted.turn()).expect("the replacement's turn") else {
+        panic!("a request is something to answer");
+    };
+    let fresh = on(hosted.ask("tools/list", json!({}), "the replacement's")).expect("asked");
+
+    let refused = on(hosted.answer(theirs, Outcome::Worked(json!("meant for the first"))))
+        .expect_err("a replaced generation's call is not answered");
+    assert!(
+        matches!(refused, Asking::Refused(CallError::Elsewhere { call }) if call == theirs),
+        "{refused:?}"
+    );
+    let refused = hosted
+        .give_up(ours)
+        .expect_err("a replaced generation's call is not given up on");
+    assert!(
+        matches!(refused, Asking::Refused(CallError::Elsewhere { call }) if call == ours),
+        "{refused:?}"
+    );
+    let said = String::from_utf8(watched.said.lock().expect("said").clone()).expect("utf-8");
+    assert!(
+        !said.contains("meant for the first"),
+        "nothing meant for the replaced extension reaches its replacement: {said:?}"
+    );
+
+    on(hosted.answer(current, Outcome::Worked(json!("for the second"))))
+        .expect("the replacement's own call is answered");
+    let ended = on(hosted.stop(PATIENCE));
+    assert_eq!(
+        ended.waiting,
+        vec![(fresh, "the replacement's")],
+        "the replacement's own call is still waiting"
+    );
+}
+
+/// A replacement crucible cannot speak to never started, so the extension it
+/// would have replaced is still the one being spoken to.
+#[test]
+fn a_replacement_that_cannot_be_hosted_leaves_the_extension_as_it_was() {
+    let runtime = crate::testing::runtime();
+    let (old, _) = Fake::new([Step::Says(ASKS_FOR_THE_ROOT)], Ending::Exited);
+    let mut hosted = on(Hosted::<()>::over(old, PATIENCE, &runtime)).expect("hosted");
+    let Turn::Asked { id, .. } = on(hosted.turn()).expect("a turn") else {
+        panic!("a request is something to answer");
+    };
+    let (mut unspeakable, watched) = Fake::new([], Ending::Stubborn);
+    unspeakable.speaks = false;
+
+    let refused = on(hosted.replace(unspeakable, PATIENCE, &runtime, PATIENCE))
+        .expect_err("nothing to speak over");
+
+    assert!(matches!(refused, Unstarted::Unspeakable), "{refused:?}");
+    assert_eq!(
+        watched.stopped.load(Ordering::Relaxed),
+        1,
+        "a replacement that will not be hosted is not left running"
+    );
+    on(hosted.answer(id, Outcome::Worked(Value::Null)))
+        .expect("the extension that was not replaced is still spoken to");
+}
+
+/// A process offered once every generation has been handed out cannot be
+/// numbered, and a number used again would be one an earlier call still
+/// carries. It is stopped rather than hosted.
+#[test]
+fn a_process_offered_when_generations_have_run_out_is_stopped_rather_than_hosted() {
+    let spent = AtomicU64::new(u64::MAX);
+    let (process, watched) = Fake::new([Step::Waits], Ending::Stubborn);
+
+    let refused = on(Hosted::<()>::hosting(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+        Generation::drawn_from(&spent),
+    ))
+    .expect_err("there is no generation left to give it");
+
+    assert!(
+        matches!(
+            refused,
+            Unstarted::Spent {
+                finish: Finish::Stopped
+            }
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
+}
+
+/// Answers that arrive in another order than the calls went out each come back
+/// with what was remembered against the call they answer, and with their own
+/// outcome: the extension decides the order, and the number is what matches.
+#[test]
+fn out_of_order_answers_keep_their_outcomes() {
+    let (process, _) = Fake::new(
+        [
+            Step::Says(r#"{"jsonrpc":"2.0","id":2,"result":"third"}"#),
+            Step::Says(r#"{"jsonrpc":"2.0","id":0,"error":"first failed"}"#),
+            Step::Says(r#"{"jsonrpc":"2.0","id":1,"result":["second"]}"#),
+        ],
+        Ending::Exited,
+    );
+    let mut hosted = on(Hosted::<&str>::over(
+        process,
+        PATIENCE,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
+    for about in ["the first", "the second", "the third"] {
+        on(hosted.ask("work", json!({}), about)).expect("asked");
+    }
+
+    let answers: Vec<Turn<&str>> = (0..3)
+        .map(|_| on(hosted.turn()).expect("an answer"))
+        .collect();
+
+    assert_eq!(
+        answers,
+        vec![
+            Turn::Answer {
+                waiting: "the third",
+                outcome: Outcome::Worked(json!("third")),
+            },
+            Turn::Answer {
+                waiting: "the first",
+                outcome: Outcome::Failed(Trouble::new("first failed").expect("words")),
+            },
+            Turn::Answer {
+                waiting: "the second",
+                outcome: Outcome::Worked(json!(["second"])),
+            },
+        ]
+    );
+}
+
+/// A call is tied to the process it was made with, whichever host holds it: a
+/// host started afresh for a new process refuses a call an earlier host's
+/// process made, even where the new process has a call open under the same
+/// number.
+#[test]
+fn a_call_from_another_host_is_refused() {
+    let runtime = crate::testing::runtime();
+    let (old, _) = Fake::new([Step::Says(ASKS_FOR_THE_ROOT)], Ending::Exited);
+    let mut first = on(Hosted::<()>::over(old, PATIENCE, &runtime)).expect("hosted");
+    let Turn::Asked { id: stale, .. } = on(first.turn()).expect("a turn") else {
+        panic!("a request is something to answer");
+    };
+    let _ = on(first.stop(PATIENCE));
+
+    let (new, watched) = Fake::new([Step::Says(ASKS_FOR_THE_ROOT)], Ending::Exited);
+    let mut second = on(Hosted::<()>::over(new, PATIENCE, &runtime)).expect("hosted");
+    let Turn::Asked { .. } = on(second.turn()).expect("a turn") else {
+        panic!("a request is something to answer");
+    };
+
+    let refused = on(second.answer(stale, Outcome::Worked(json!("meant for the first"))))
+        .expect_err("another host's call is not answered");
+
+    assert!(
+        matches!(refused, Asking::Refused(CallError::Elsewhere { call }) if call == stale),
+        "{refused:?}"
+    );
+    let said = String::from_utf8(watched.said.lock().expect("said").clone()).expect("utf-8");
+    assert!(
+        !said.contains("meant for the first"),
+        "nothing meant for the first process reaches the second: {said:?}"
+    );
+}
+
+/// A turn given up on and taken up again is still waiting through the same
+/// silence. A host that steps away from a quiet extension and comes back more
+/// often than the patience still has it ended once the patience is out.
+#[test]
+fn a_turn_taken_up_again_keeps_its_silence() {
+    let (process, _) = Fake::new([Step::Waits], Ending::Exited);
+    let mut hosted = on(Hosted::<()>::over(
+        process,
+        Duration::from_millis(500),
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
+    let began = Instant::now();
+
+    let ended = on(async {
+        for _ in 0..10 {
+            if let Ok(ended) = tokio::time::timeout(Duration::from_millis(300), hosted.turn()).await
+            {
+                return Some(ended);
+            }
+        }
+        None
+    });
+
+    assert!(
+        matches!(ended, Some(Err(Over::Unreadable { .. }))),
+        "a silent extension is ended however often its turn is taken up again: \
+         {ended:?} after {:?}",
+        began.elapsed()
+    );
+}
+
+/// Answering the extension begins an exchange too: once crucible has answered,
+/// the extension is the one that owes something next. A silence the host began
+/// while it was still working out its answer does not carry across that
+/// answer, so an extension that replies promptly is not ended for the time
+/// crucible spent.
+#[test]
+fn an_answer_sent_sits_through_a_silence_of_its_own() {
+    let patience = Duration::from_secs(1);
+    let began = Instant::now();
+    let (process, _) = Fake::new(
+        [
+            Step::Says(ASKS_FOR_THE_ROOT),
+            Step::SaysFrom(
+                began + Duration::from_millis(1300),
+                r#"{"jsonrpc":"2.0","method":"ready","params":null}"#,
+            ),
+        ],
+        Ending::Exited,
+    );
+    let mut hosted = on(Hosted::<()>::over(
+        process,
+        patience,
+        &crate::testing::runtime(),
+    ))
+    .expect("hosted");
+    let Turn::Asked { id, .. } = on(hosted.turn()).expect("a turn") else {
+        panic!("a request is something to answer");
+    };
+
+    // The host steps away from a turn while it works the answer out.
+    let given_up =
+        on(async { tokio::time::timeout(Duration::from_millis(700), hosted.turn()).await });
+    assert!(given_up.is_err(), "nothing was said yet: {given_up:?}");
+    thread::sleep(Duration::from_millis(250));
+    on(hosted.answer(id, Outcome::Worked(json!({"root": "/workspace"})))).expect("answered");
+
+    // The silence the stepped-away turn began would have ended a full patience
+    // after it began, three hundred milliseconds before the extension speaks.
+    let turn = on(hosted.turn()).expect("the reply waits a patience of its own");
+    assert!(
+        matches!(turn, Turn::Told { ref method, .. } if &**method == "ready"),
+        "{turn:?}"
+    );
 }

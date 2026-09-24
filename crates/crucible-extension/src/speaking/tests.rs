@@ -2,15 +2,32 @@
 
 use std::cell::RefCell;
 use std::error::Error as _;
-use std::io::{self, Write};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::io::AsyncWrite;
 
 use super::{Asking, Over, Speaking, Turn};
 use crucible_transport::FRAME_BYTES;
 
+use crate::calls::{Call, Generation};
 use crate::{CallError, CallId, Outcome, Spoken};
+
+/// Call `number` of generation 0, which every conversation here is unless it
+/// says otherwise.
+const fn first(number: u64) -> Call {
+    Call::new(Generation::numbered(0), CallId::new(number))
+}
+
+/// Drives one wait of the conversation to its answer.
+fn on<F: Future>(work: F) -> F::Output {
+    crate::testing::runtime().block_on(work)
+}
 
 /// An extension that says these things and then closes its output.
 fn says(frames: &[&str]) -> Vec<u8> {
@@ -32,21 +49,33 @@ fn says(frames: &[&str]) -> Vec<u8> {
 #[derive(Clone, Debug, Default)]
 struct Kept(Rc<RefCell<Vec<u8>>>);
 
-impl Write for Kept {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+impl AsyncWrite for Kept {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<io::Result<usize>> {
         self.0.borrow_mut().extend_from_slice(bytes);
-        Ok(bytes.len())
+        Poll::Ready(Ok(bytes.len()))
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
 /// Speaks to an extension that says `frames`, keeping what crucible sends.
 fn talking_keeping(frames: &[&str]) -> (Speaking<io::Cursor<Vec<u8>>, Kept, &'static str>, Kept) {
     let kept = Kept::default();
-    let talk = Speaking::new(io::Cursor::new(says(frames)), kept.clone());
+    let talk = Speaking::new(
+        io::Cursor::new(says(frames)),
+        kept.clone(),
+        Generation::numbered(0),
+    );
     (talk, kept)
 }
 
@@ -60,13 +89,35 @@ fn talking(frames: &[&str]) -> Speaking<io::Cursor<Vec<u8>>, Kept, &'static str>
 /// gone.
 struct Gone;
 
-impl Write for Gone {
-    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-        Err(io::Error::from(io::ErrorKind::BrokenPipe))
+impl AsyncWrite for Gone {
+    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, _: &[u8]) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Err(io::Error::from(io::ErrorKind::BrokenPipe))
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
+    }
+}
+
+/// A writer that takes nothing, the way a pipe does once the far end has
+/// stopped reading it.
+struct Stuck;
+
+impl AsyncWrite for Stuck {
+    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, _: &[u8]) -> Poll<io::Result<usize>> {
+        Poll::Pending
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Pending
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Pending
     }
 }
 
@@ -86,9 +137,9 @@ fn what_the_extension_asks_for_comes_back_as_a_turn() {
     let mut talk = talking(&[r#"{"id":1,"method":"read","params":{"path":"notes"}}"#]);
 
     assert_eq!(
-        talk.turn().expect("a turn"),
+        on(talk.turn()).expect("a turn"),
         Turn::Asked {
-            id: CallId::new(1),
+            id: first(1),
             method: "read".into(),
             params: json!({ "path": "notes" }),
         }
@@ -102,7 +153,7 @@ fn what_expects_nothing_back_comes_back_as_a_turn() {
     let mut talk = talking(&[r#"{"method":"progress","params":{"done":3}}"#]);
 
     assert_eq!(
-        talk.turn().expect("a turn"),
+        on(talk.turn()).expect("a turn"),
         Turn::Told {
             method: "progress".into(),
             params: json!({ "done": 3 }),
@@ -116,7 +167,7 @@ fn what_expects_nothing_back_comes_back_as_a_turn() {
 fn an_extension_that_stops_speaking_ends_the_conversation() {
     let mut talk = talking(&[]);
 
-    assert!(matches!(talk.turn(), Err(Over::Silent)));
+    assert!(matches!(on(talk.turn()), Err(Over::Silent)));
 }
 
 /// A frame that is not readable has no identifier in it, so there is no call to
@@ -125,7 +176,7 @@ fn an_extension_that_stops_speaking_ends_the_conversation() {
 fn a_frame_that_cannot_be_understood_ends_the_conversation() {
     let mut talk = talking(&["{not json at all"]);
 
-    let over = talk.turn().expect_err("an unreadable frame is the end");
+    let over = on(talk.turn()).expect_err("an unreadable frame is the end");
     assert!(
         matches!(over, Over::Misspoken { .. }),
         "an unreadable frame is the extension misspeaking: {over:?}"
@@ -137,10 +188,13 @@ fn a_frame_that_cannot_be_understood_ends_the_conversation() {
 #[test]
 fn a_frame_that_cannot_be_read_ends_the_conversation() {
     let enormous = "x".repeat(FRAME_BYTES.saturating_add(1));
-    let mut talk: Speaking<io::Cursor<Vec<u8>>, Vec<u8>, &str> =
-        Speaking::new(io::Cursor::new(says(&[&enormous])), Vec::new());
+    let mut talk: Speaking<io::Cursor<Vec<u8>>, Vec<u8>, &str> = Speaking::new(
+        io::Cursor::new(says(&[&enormous])),
+        Vec::new(),
+        Generation::numbered(0),
+    );
 
-    let over = talk.turn().expect_err("an unreadable frame is the end");
+    let over = on(talk.turn()).expect_err("an unreadable frame is the end");
     assert!(
         matches!(over, Over::Unreadable { .. }),
         "a frame past the ceiling is unreadable: {over:?}"
@@ -152,10 +206,10 @@ fn a_frame_that_cannot_be_read_ends_the_conversation() {
 #[test]
 fn a_conversation_that_is_over_stays_over() {
     let mut talk = talking(&["{not json at all", r#"{"id":1,"method":"read"}"#]);
-    assert!(talk.turn().is_err());
+    assert!(on(talk.turn()).is_err());
 
     assert!(
-        matches!(talk.turn(), Err(Over::Finished)),
+        matches!(on(talk.turn()), Err(Over::Finished)),
         "a frame after the end must not be acted on"
     );
 }
@@ -166,7 +220,7 @@ fn a_conversation_that_is_over_stays_over() {
 fn an_answer_to_a_call_crucible_never_made_ends_the_conversation() {
     let mut talk = talking(&[r#"{"id":7,"result":null}"#]);
 
-    let over = talk.turn().expect_err("an unplaceable answer is the end");
+    let over = on(talk.turn()).expect_err("an unplaceable answer is the end");
     assert!(
         matches!(over, Over::Broke { .. }),
         "an unplaceable answer breaks the conversation: {over:?}"
@@ -186,10 +240,10 @@ fn a_refused_call_is_answered_without_troubling_the_host() {
     let (mut talk, kept) = talking_keeping(&borrowed);
 
     for _ in 0..ceiling {
-        assert!(matches!(talk.turn(), Ok(Turn::Asked { .. })));
+        assert!(matches!(on(talk.turn()), Ok(Turn::Asked { .. })));
     }
     assert_eq!(
-        talk.turn().expect("the turn after the refused one"),
+        on(talk.turn()).expect("the turn after the refused one"),
         Turn::Told {
             method: "done".into(),
             params: Value::Null,
@@ -211,15 +265,14 @@ fn a_refused_call_is_answered_without_troubling_the_host() {
 #[test]
 fn answering_a_call_sends_one_frame() {
     let (mut talk, kept) = talking_keeping(&[r#"{"id":2,"method":"read"}"#]);
-    assert!(matches!(talk.turn(), Ok(Turn::Asked { .. })));
+    assert!(matches!(on(talk.turn()), Ok(Turn::Asked { .. })));
 
-    talk.answer(CallId::new(2), Outcome::Worked(json!("notes")))
-        .expect("the answer goes out");
+    on(talk.answer(first(2), Outcome::Worked(json!("notes")))).expect("the answer goes out");
 
     assert_eq!(sent(&kept), vec![r#"{"id":2,"result":"notes"}"#.to_owned()]);
     assert!(
         matches!(
-            talk.answer(CallId::new(2), Outcome::Worked(Value::Null)),
+            on(talk.answer(first(2), Outcome::Worked(Value::Null))),
             Err(Asking::Refused(CallError::Unknown { .. }))
         ),
         "a call may only be answered once"
@@ -231,8 +284,7 @@ fn answering_a_call_sends_one_frame() {
 #[test]
 fn a_call_crucible_makes_comes_back_with_what_was_waiting() {
     let (mut talk, kept) = talking_keeping(&[r#"{"id":0,"result":["a kettle"]}"#]);
-    let id = talk
-        .ask("search", json!({ "for": "kettle" }), "the search")
+    let id = on(talk.ask("search", json!({ "for": "kettle" }), "the search"))
         .expect("the call goes out");
 
     assert_eq!(
@@ -240,13 +292,13 @@ fn a_call_crucible_makes_comes_back_with_what_was_waiting() {
         vec![r#"{"id":0,"method":"search","params":{"for":"kettle"}}"#.to_owned()]
     );
     assert_eq!(
-        talk.turn().expect("its answer"),
+        on(talk.turn()).expect("its answer"),
         Turn::Answer {
             waiting: "the search",
             outcome: Outcome::Worked(json!(["a kettle"])),
         }
     );
-    assert_eq!(id, CallId::new(0));
+    assert_eq!(id, first(0));
 }
 
 /// A pipe that has gone ends the conversation rather than reporting a call that
@@ -254,10 +306,9 @@ fn a_call_crucible_makes_comes_back_with_what_was_waiting() {
 #[test]
 fn a_call_that_cannot_be_sent_ends_the_conversation() {
     let mut talk: Speaking<io::Cursor<Vec<u8>>, Gone, &str> =
-        Speaking::new(io::Cursor::new(says(&[])), Gone);
+        Speaking::new(io::Cursor::new(says(&[])), Gone, Generation::numbered(0));
 
-    let amiss = talk
-        .ask("search", Value::Null, "the search")
+    let amiss = on(talk.ask("search", Value::Null, "the search"))
         .expect_err("a gone pipe cannot carry a call");
     assert!(
         matches!(amiss, Asking::Over(Over::Unanswerable { .. })),
@@ -269,11 +320,13 @@ fn a_call_that_cannot_be_sent_ends_the_conversation() {
 /// back, because nothing is ever going to answer it now.
 #[test]
 fn what_was_waiting_when_it_ended_comes_back() {
-    let mut talk: Speaking<io::Cursor<Vec<u8>>, Vec<u8>, &str> =
-        Speaking::new(io::Cursor::new(says(&[])), Vec::new());
-    talk.ask("search", Value::Null, "the search")
-        .expect("the call goes out");
-    assert!(matches!(talk.turn(), Err(Over::Silent)));
+    let mut talk: Speaking<io::Cursor<Vec<u8>>, Vec<u8>, &str> = Speaking::new(
+        io::Cursor::new(says(&[])),
+        Vec::new(),
+        Generation::numbered(0),
+    );
+    on(talk.ask("search", Value::Null, "the search")).expect("the call goes out");
+    assert!(matches!(on(talk.turn()), Err(Over::Silent)));
 
     let waiting: Vec<&str> = talk.ended().into_iter().map(|(_, about)| about).collect();
     assert_eq!(waiting, vec!["the search"]);
@@ -286,7 +339,7 @@ fn every_ending_says_what_it_was() {
     assert_eq!(Over::Silent.to_string(), "the extension stopped speaking");
 
     let mut talk = talking(&["{not json at all"]);
-    let over = talk.turn().expect_err("an unreadable frame is the end");
+    let over = on(talk.turn()).expect_err("an unreadable frame is the end");
     let underneath = over
         .source()
         .expect("a wrapped ending has a reason")
@@ -308,13 +361,11 @@ fn an_answer_to_a_call_crucible_gave_up_on_is_read_past() {
         r#"{"id":0,"result":["a kettle"]}"#,
         r#"{"method":"ready","params":null}"#,
     ]);
-    let id = talk
-        .ask("search", json!({ "for": "kettle" }), "the search")
-        .expect("a call");
+    let id = on(talk.ask("search", json!({ "for": "kettle" }), "the search")).expect("a call");
 
     assert_eq!(talk.give_up(id).expect("giving up on it"), "the search");
     assert_eq!(
-        talk.turn().expect("the conversation goes on"),
+        on(talk.turn()).expect("the conversation goes on"),
         Turn::Told {
             method: "ready".into(),
             params: Value::Null,
@@ -328,10 +379,8 @@ fn an_answer_to_a_call_crucible_gave_up_on_is_read_past() {
 #[test]
 fn a_call_cannot_be_given_up_on_once_the_conversation_is_over() {
     let mut talk = talking(&[]);
-    let id = talk
-        .ask("search", Value::Null, "the search")
-        .expect("a call");
-    talk.turn().expect_err("the extension said nothing");
+    let id = on(talk.ask("search", Value::Null, "the search")).expect("a call");
+    on(talk.turn()).expect_err("the extension said nothing");
 
     let refused = talk.give_up(id).expect_err("the conversation is over");
 
@@ -346,12 +395,45 @@ fn a_call_cannot_be_given_up_on_once_the_conversation_is_over() {
 #[test]
 fn a_call_crucible_is_not_waiting_on_cannot_be_given_up_on() {
     let mut talk = talking(&[]);
-    let invented = CallId::new(7);
+    let invented = first(7);
 
     let refused = talk.give_up(invented).expect_err("nothing waits on it");
 
     assert!(
-        matches!(refused, Asking::Refused(CallError::Unknown { id }) if id == invented),
+        matches!(refused, Asking::Refused(CallError::Unknown { id }) if id == invented.id()),
         "{refused:?}"
     );
+}
+
+/// A send given up on partway may have left part of a frame on the wire, and
+/// whatever went after it would be read as the rest of that frame. So the
+/// conversation is over from there, and the call it was sending comes back
+/// with everything else that was outstanding.
+#[test]
+fn a_send_given_up_on_leaves_the_conversation_over() {
+    let mut talk: Speaking<io::Cursor<Vec<u8>>, Stuck, &str> = Speaking::new(
+        io::Cursor::new(says(&[r#"{"method":"ready"}"#])),
+        Stuck,
+        Generation::numbered(0),
+    );
+
+    let given_up = on(async {
+        tokio::time::timeout(
+            Duration::from_millis(20),
+            talk.ask("search", Value::Null, "the search"),
+        )
+        .await
+    });
+    assert!(given_up.is_err(), "the send never finished: {given_up:?}");
+
+    assert!(
+        matches!(on(talk.turn()), Err(Over::Finished)),
+        "nothing the extension says is acted on after a half-sent frame"
+    );
+    assert!(matches!(
+        on(talk.answer(first(0), Outcome::Worked(Value::Null))),
+        Err(Asking::Over(Over::Finished))
+    ));
+    let waiting: Vec<&str> = talk.ended().into_iter().map(|(_, about)| about).collect();
+    assert_eq!(waiting, vec!["the search"]);
 }
