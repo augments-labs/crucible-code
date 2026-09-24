@@ -95,7 +95,7 @@ impl FrameError {
     /// A ceiling and a boundary are settled before a byte is written, and a
     /// pipe nobody is left reading cannot have handed the bytes to anybody. A
     /// patience is the one that cannot be claimed: [`Said`] gives the frame to
-    /// the thread that owns the pipe and then waits, so a wait that ran out
+    /// the task that owns the pipe and then waits, so a wait that ran out
     /// ended with those bytes already gone from here and possibly already read
     /// over there.
     ///

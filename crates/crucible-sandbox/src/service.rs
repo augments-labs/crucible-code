@@ -1430,9 +1430,16 @@ async fn pause() -> io::Result<()> {
 }
 
 /// What the default [`SandboxProcess::take_async_stdin`] hands back: the
-/// writer [`SandboxProcess::take_stdin`] hands over, written and flushed on
-/// the thread polling it.
-struct Written(Box<dyn io::Write + Send>);
+/// writer [`SandboxProcess::take_stdin`] hands over, written and flushed on a
+/// blocking thread of the runtime polling it.
+///
+/// A blocking thread rather than the thread polling the write, because that is
+/// a runtime worker and a pipe whose reader stopped reading holds whoever
+/// writes to it. The writer goes to the blocking thread for each write and
+/// comes back with the answer, so there is only ever one write outstanding on
+/// it; one given up on keeps the writer until the pipe answers, and every
+/// write after it is refused.
+struct Written(Option<Box<dyn io::Write + Send>>);
 
 impl SandboxInput for Written {
     fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
@@ -1440,9 +1447,24 @@ impl SandboxInput for Written {
             if bytes.is_empty() {
                 return Ok(0);
             }
-            let written = io::Write::write(&mut self.0, bytes)?;
-            io::Write::flush(&mut self.0)?;
-            Ok(written)
+            let runtime = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
+            let Some(mut input) = self.0.take() else {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "an earlier write to this input was given up on while the pipe held it",
+                ));
+            };
+            let bytes = bytes.to_vec();
+            let (input, written) = runtime
+                .spawn_blocking(move || {
+                    let written = io::Write::write(&mut input, &bytes)
+                        .and_then(|written| io::Write::flush(&mut input).map(|()| written));
+                    (input, written)
+                })
+                .await
+                .map_err(io::Error::other)?;
+            self.0 = Some(input);
+            written
         })
     }
 }
@@ -1502,14 +1524,21 @@ pub trait SandboxProcess: Send {
     /// The same pipe [`Self::take_stdin`] hands over, so whichever is asked
     /// first takes it and the other then hands back nothing.
     ///
-    /// The default adapts [`Self::take_stdin`]: each write is made on the
-    /// thread polling it, and then flushed. That is right for a writer that
-    /// never waits, such as one in memory, and wrong for a pipe that can fill,
-    /// which would hold that thread; a backend whose writer can fill overrides
-    /// this, and says what its override needs of the runtime polling it.
+    /// The default adapts [`Self::take_stdin`]: each write is made, and then
+    /// flushed, on a blocking thread of the Tokio runtime polling it, so a
+    /// pipe that fills holds that thread rather than a worker; polled outside
+    /// a runtime, a write answers that there is none. A write dropped before
+    /// it answers leaves the writer with that thread until the pipe takes the
+    /// bytes or breaks, and every later write is refused. So a peer that
+    /// stops reading holds one of the runtime's blocking threads for as long
+    /// as its input stays full, however long ago the write was given up on,
+    /// and only stopping the process frees it: a backend that relies on this
+    /// default answers for that, and one whose writer can wait without a
+    /// thread overrides this, and says what its override needs of the runtime
+    /// polling it.
     fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
         self.take_stdin()
-            .map(|input| Box::new(Written(input)) as Box<dyn SandboxInput>)
+            .map(|input| Box::new(Written(Some(input))) as Box<dyn SandboxInput>)
     }
 
     /// Takes stdout once.

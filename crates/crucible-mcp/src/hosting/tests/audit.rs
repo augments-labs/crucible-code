@@ -19,6 +19,7 @@ fn disposed_snapshots_do_not_consume_live_audit_capacity() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let mut snapshots = Vec::new();
     for _ in 0..=MAX_SANDBOX_AUDIT_LIFECYCLES {
@@ -104,6 +105,7 @@ fn hosted_audits_keep_attribution_through_restart_and_disposal() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(1)],
+        crate::testing::runtime(),
     );
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
     let initial = registry.take_records().unwrap();
@@ -159,6 +161,7 @@ fn hosted_audits_retain_preparation_failure_facts() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
     crucible_runtime::answered!(hosting.dispose(&context)).unwrap();
@@ -195,6 +198,7 @@ fn hosted_audits_refuse_full_registry_before_backend_effects() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
     assert!(sandbox.seen.lock().unwrap().is_empty());
@@ -212,6 +216,7 @@ fn hosted_audits_validate_identity_before_backend_effects() {
             builtin(&[]),
             sandbox.clone() as Arc<dyn SandboxService>,
             vec![chosen(&"x".repeat(length))],
+            crate::testing::runtime(),
         );
         assert!(crucible_runtime::answered!(hosting.prepare(&lifecycle())).is_err());
         assert!(

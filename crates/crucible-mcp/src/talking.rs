@@ -51,7 +51,7 @@ pub enum Trouble {
     /// that ran, and one that ran and lost its answer look the same.
     ///
     /// Can, not does: a write that ran out of patience left the bytes with the
-    /// thread that owns the pipe, and they may yet be read. Which of the two
+    /// task that owns the pipe, and they may yet be read. Which of the two
     /// this is, is [`FrameError::never_left`]'s answer and not the variant's.
     #[error("crucible could not send {method} to the server: {source}")]
     Unsent {
