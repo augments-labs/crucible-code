@@ -24,7 +24,7 @@
 //! do is ask once and be handed everything.
 
 use std::fmt::Write as _;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use crucible_runtime::BoxFuture;
 use crucible_tools::{
@@ -85,7 +85,9 @@ pub struct Held {
 /// Finds tools that were not advertised.
 #[derive(Debug)]
 pub struct ToolSearch {
-    held: Vec<Held>,
+    /// Shared rather than owned, so a call hands its search a copy of the list
+    /// for the price of a count.
+    held: Arc<[Held]>,
     revealed: Revealed,
 }
 
@@ -93,7 +95,10 @@ impl ToolSearch {
     /// A search over `held`, revealing into `revealed`.
     #[must_use]
     pub fn new(held: Vec<Held>, revealed: Revealed) -> Self {
-        Self { held, revealed }
+        Self {
+            held: held.into(),
+            revealed,
+        }
     }
 
     /// Whether there is anything to look up.
@@ -141,50 +146,61 @@ impl Tool for ToolSearch {
     fn run<'a>(
         &'a self,
         approved: Approved,
-        _context: &'a ToolContext<'_>,
+        context: &'a ToolContext<'_>,
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let args = Args::parse(NAME, approved.args())?;
-            let query = args.text(QUERY)?;
+            let query = args.text(QUERY)?.to_owned();
 
-            let mut ranked: Vec<(u8, &Held)> = self
-                .held
-                .iter()
-                .filter_map(|held| score(query, held).map(|score| (score, held)))
-                .collect();
-
-            // Best first, and ties in the order they were registered — which is the
-            // order the wiring thought sensible, and is at least an answer that does
-            // not move between two identical searches.
-            ranked.sort_by(|(one, _), (two, _)| two.cmp(one));
-            let found: Vec<&Held> = ranked
-                .into_iter()
-                .take(MOST)
-                .map(|(_, held)| held)
-                .collect();
-
-            if found.is_empty() {
-                return Ok(ToolOutput::ok(format!(
-                    "Nothing held back matches {query}. Everything else you can \
-                     call is already in your tool list."
-                )));
-            }
-
-            let mut said = String::new();
-            for held in &found {
-                self.revealed.reveal(&held.name);
-                let _ = writeln!(said, "{}: {}", held.name, held.about);
-            }
-
-            said.push_str(if found.len() == 1 {
-                "\nIt is in your tool list from your next message onward."
-            } else {
-                "\nThey are in your tool list from your next message onward."
-            });
-
-            Ok(ToolOutput::ok(said))
+            // Run where the call's blocking work runs, as the other searches
+            // are, on the list and the set it owns copies of. It reveals
+            // nothing until it runs, so a call cancelled before then has
+            // revealed nothing and says so.
+            let (held, revealed) = (Arc::clone(&self.held), self.revealed.clone());
+            crate::blocking::run(NAME, context, move |_| looked_up(&query, &held, &revealed))
+                .await?
+                .ok_or_else(|| ToolError::Cancelled(NAME.into()))
         })
     }
+}
+
+/// What `query` finds among `held`, each of it revealed into `revealed`.
+fn looked_up(query: &str, held: &[Held], revealed: &Revealed) -> ToolOutput {
+    let mut ranked: Vec<(u8, &Held)> = held
+        .iter()
+        .filter_map(|held| score(query, held).map(|score| (score, held)))
+        .collect();
+
+    // Best first, and ties in the order they were registered — which is the
+    // order the wiring thought sensible, and is at least an answer that does
+    // not move between two identical searches.
+    ranked.sort_by(|(one, _), (two, _)| two.cmp(one));
+    let found: Vec<&Held> = ranked
+        .into_iter()
+        .take(MOST)
+        .map(|(_, held)| held)
+        .collect();
+
+    if found.is_empty() {
+        return ToolOutput::ok(format!(
+            "Nothing held back matches {query}. Everything else you can \
+             call is already in your tool list."
+        ));
+    }
+
+    let mut said = String::new();
+    for held in &found {
+        revealed.reveal(&held.name);
+        let _ = writeln!(said, "{}: {}", held.name, held.about);
+    }
+
+    said.push_str(if found.len() == 1 {
+        "\nIt is in your tool list from your next message onward."
+    } else {
+        "\nThey are in your tool list from your next message onward."
+    });
+
+    ToolOutput::ok(said)
 }
 
 /// How well `query` asks for this tool, or nothing where it does not.

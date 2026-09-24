@@ -567,7 +567,9 @@ fi
 # directly and never the facade, and never the broker, which is the command
 # line's to install. `code extension` and `code mcp` are test-only edges: the
 # integration tests drive those two crates, and nothing that ships names them,
-# which the next section holds.
+# which the next section holds. `code tools` is the probes': `bench-grep` and
+# `bench-tools` lend the calls they time the tool worker, which the probe list
+# below writes down.
 #
 # `client-api` is what a front end and the application say to each other, so it
 # has one owner below it -- `types`, for the identity a session is resumed by --
@@ -608,6 +610,7 @@ code session
 code builtins
 code sandbox-broker
 code sandbox-local
+code tools
 code tui
 app agents
 app auth
@@ -1058,11 +1061,13 @@ fi
 # whole, so a new import is a decision taken here. `generate-models` imports
 # `crucible_core` alone; `crucible_types` is in the text of the table it writes,
 # which is compiled where the table is kept and not where it is generated.
-# `bench-grep` and `bench-tools` name `crucible_runtime` for the bridge a tool's
-# run is timed through the way a turn runs one, so what they time includes it.
+# `bench-grep` and `bench-tools` name `crucible_tools` for the tool worker they
+# lend the calls they time, so what they time includes handing the work to it,
+# and `crucible_runtime` for the future their permission prompts answer with.
 probes='src/bin/bench-grep.rs crucible_builtins
 src/bin/bench-grep.rs crucible_core
 src/bin/bench-grep.rs crucible_runtime
+src/bin/bench-grep.rs crucible_tools
 src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-session-rss.rs crucible_attachments
@@ -1071,6 +1076,7 @@ src/bin/bench-tools.rs crucible_builtins
 src/bin/bench-tools.rs crucible_core
 src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
+src/bin/bench-tools.rs crucible_tools
 src/bin/generate-models.rs crucible_core
 src/bin/generate-models.rs crucible_types'
 probe_sources=(src/bin/*.rs)
