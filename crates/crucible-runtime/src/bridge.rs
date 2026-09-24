@@ -144,19 +144,26 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub enum Bridge {
     /// The application waiting, on the thread that takes it, for a turn or
     /// a compaction it was asked for: the whole of the runner's asynchronous
-    /// turn or compaction, polled on that thread and never spawned.
+    /// turn or compaction, polled on that thread and never spawned. And,
+    /// after picking a session up or changing vendor, for the session to take
+    /// the lines clearing what a vendor may not be sent owes it.
     ///
     /// - Crossing: waits.
-    /// - Bound: one wait for each turn and each compaction.
-    /// - Wait bounded by: the turn's own cancel, as far as the steps the turn
-    ///   awaits heed it. The turn looks at that cancel between steps and hands
-    ///   it to every step it awaits — the provider's stream and each read of
-    ///   it, the run of a call that runs alone, the toolset's preparation and
-    ///   disposal — and how soon a step still waiting heeds it is that step's
-    ///   own contract. The one deadline kept on a waiting step is a lone
-    ///   call's tool deadline: a run still waiting when it passes is dropped
-    ///   there, and the call is answered as timed out. What the
-    ///   run keeps bounds how much the turn does rather than how long a step
+    /// - Bound: one wait for each turn, each compaction, and each pick-up or
+    ///   change of vendor.
+    /// - Wait bounded by: for the owed lines, the session taking each of them,
+    ///   as long as its store's own writes take. For a turn or a compaction,
+    ///   the turn's own cancel, as far as the steps the turn awaits heed it.
+    ///   The turn looks at that cancel between steps and hands it to the
+    ///   provider's stream and each read of it, the run of a call that runs
+    ///   alone, and the toolset's preparation and disposal, and how soon a step
+    ///   still waiting heeds it is that step's own contract. Its session writes
+    ///   take no cancel: each waits for the session's writer to take its line,
+    ///   as long as the log's own writes take, and answers once that writer
+    ///   has gone, however it went. The one deadline kept on a waiting step is
+    ///   a lone call's tool deadline: a run still waiting when it passes is
+    ///   dropped there, and the call is answered as timed out. What the run
+    ///   keeps bounds how much the turn does rather than how long a step
     ///   waits: its retry attempts, whose pauses heed the cancel, and its
     ///   response, tool-output and spend ceilings. The crossing itself waits
     ///   under a cancel nothing raises, so a stop ends the turn through its
@@ -165,21 +172,6 @@ pub enum Bridge {
     /// - Owner: `crucible-app`
     /// - Retired: when the application awaits a turn directly.
     AppTurn,
-    /// An account login's requests: the thread a login runs on waiting for
-    /// each request one of its steps sends — asking for a device code,
-    /// polling for its authorization, exchanging a code for tokens — on the
-    /// application's runtime. A renewal is not one of them: it is a task of
-    /// its own on that runtime, and nothing crosses to wait for it.
-    ///
-    /// - Crossing: waits.
-    /// - Bound: one wait for each request a login step sends.
-    /// - Wait bounded by: the login's own cancel, which the crossing heeds
-    ///   within its notice, and the request's own deadline of 30 s, from
-    ///   waiting for a connection to the last byte of the answer.
-    /// - Owner: `crucible-auth`
-    /// - Retired: when the login steps are awaited on the application's
-    ///   runtime.
-    AccountLogin,
     /// The runner's prompt-cache resources: a provider's lifecycle calls and
     /// the store their records are kept in. They are reached by a turn
     /// preparing its request, and by a compaction preparing its recap request
@@ -208,15 +200,6 @@ pub enum Bridge {
     /// - Retired: when the turn awaits a parallel wave's runs, a background
     ///   result's acceptance and the toolset's listing and refreshing.
     TurnTools,
-    /// The runner's writes to its session: the turn's, and the ones a
-    /// compaction, picking a session up or changing vendor makes between turns.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each write.
-    /// - Owner: `crucible-runner`
-    /// - Retired: when the turn loop, a compaction, picking a session up and
-    ///   changing vendor are asynchronous.
-    TurnSession,
     /// The bash tool's confined process: beginning a background result's
     /// acceptance, completing it, and stopping the process.
     ///
@@ -345,10 +328,8 @@ impl Bridge {
     const fn crossing(self) -> &'static str {
         match self {
             Self::AppTurn => "a turn or a compaction",
-            Self::AccountLogin => "an account login's request",
             Self::TurnCache => "a prompt-cache step",
             Self::TurnTools => "the turn's tools",
-            Self::TurnSession => "writing to the session",
             Self::BashSandbox => "the bash tool's sandbox",
             Self::LocalBackend => "the local sandbox backend",
             Self::SandboxReport => "asking the sandbox what it can enforce",
@@ -533,19 +514,19 @@ mod tests {
 
     #[test]
     fn a_future_that_would_wait_is_refused_naming_the_bridge() {
-        let refused = Bridge::TurnSession.cross(std::future::pending::<()>());
+        let refused = Bridge::TurnTools.cross(std::future::pending::<()>());
 
         assert_eq!(
             refused,
             Err(Unready {
-                bridge: Bridge::TurnSession
+                bridge: Bridge::TurnTools
             })
         );
         assert_eq!(
             refused.map_err(|unready| unready.to_string()),
             Err(
-                "writing to the session would have had to wait, and the caller cannot; the \
-                 waiting step was dropped before it answered, so whatever that step began is \
+                "the turn's tools would have had to wait, and the caller cannot; the waiting \
+                 step was dropped before it answered, so whatever that step began is \
                  unconfirmed"
                     .to_owned()
             )
@@ -561,7 +542,7 @@ mod tests {
             std::future::pending::<()>().await;
         });
 
-        let crossed = Bridge::TurnSession.cross(waiting);
+        let crossed = Bridge::TurnTools.cross(waiting);
 
         assert!(crossed.is_err(), "a future that waits was answered");
         assert!(

@@ -3,7 +3,8 @@
 //! Browser PKCE is the ordinary local login. Device authorization is a
 //! separate method for remote and headless use, matching the choice exposed by
 //! the official Codex client. Both methods produce the same stored credential
-//! and share one bounded worker slot.
+//! and share one login slot, running as a task on the runtime [`Renewals`]
+//! was given.
 //!
 //! Every request goes through the client [`Renewals`] owns, within 30 s end
 //! to end. A credential's renewal is a rotation that owner runs for the
@@ -14,19 +15,17 @@ mod callback;
 pub(super) use callback::PORTS;
 
 use std::fmt;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use crucible_core::{
-    Authorization, Cancel, Credential, CredentialError, CredentialScopeId, Outgoing,
-};
+use crucible_core::{Authorization, Credential, CredentialError, CredentialScopeId, Outgoing};
 use sha2::{Digest as _, Sha256};
+use tokio::sync::mpsc::Receiver;
 
 use super::{
-    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, Renewals, SubscriptionLogin,
-    Tokens, credential_scope, held, renewal::Due,
+    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, LoginUpdates, OAuthError, Renewals,
+    SubscriptionLogin, Tokens, credential_scope, held, renewal::Due,
 };
 use crate::{Store, StoredCredentials};
 
@@ -37,7 +36,6 @@ const DEVICE_REDIRECT: &str = "https://auth.openai.com/deviceauth/callback";
 const SCOPE: &str = "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const LOGIN_LIFETIME: Duration = Duration::from_mins(15);
 const REQUEST_LIFETIME: Duration = Duration::from_secs(30);
-const CANCEL_POLL: Duration = Duration::from_millis(50);
 const REFRESH_AFTER: u64 = 8 * 24 * 60 * 60;
 const EXPIRY_SKEW: u64 = 5 * 60;
 const ACCOUNT: &str = "account_id";
@@ -85,20 +83,18 @@ impl OpenAiOAuth {
             return Err(OAuthError::Method);
         }
         let flow = self.shared.flow.clone();
-        self.shared.worker.start_with_input(
-            "crucible-openai-login",
-            move |cancel, updates, input| {
-                let active = ActiveLogin {
-                    store: &store,
-                    cancel: &cancel,
-                    updates: &updates,
-                    input: &input,
-                };
-                if let Err(problem) = flow.login(method, &active) {
+        let runtime = flow
+            .renewals
+            .runtime()
+            .ok_or(OAuthError::NotStarted)?
+            .clone();
+        self.shared
+            .worker
+            .start_with_input(&runtime, move |updates, mut input| async move {
+                if let Err(problem) = flow.login(method, &store, &updates, &mut input).await {
                     let _ = updates.send(Err(problem));
                 }
-            },
-        )
+            })
     }
 
     fn stored_credential(&self, stored: &StoredCredentials) -> Option<Box<dyn Credential>> {
@@ -238,7 +234,7 @@ fn needs_refresh(tokens: &Tokens, at: u64) -> bool {
 #[derive(Clone)]
 pub(crate) struct Flow {
     /// The owner of this account's renewals, whose client every request goes
-    /// through and whose runtime a login step waits on.
+    /// through and whose runtime a login runs on.
     renewals: Renewals,
     /// How long one request may take, from waiting for a connection to the
     /// last byte of its answer.
@@ -251,13 +247,6 @@ pub(crate) struct Flow {
     login_lifetime: Duration,
     /// The loopback ports a browser login may be answered on.
     callback_ports: &'static [u16],
-}
-
-struct ActiveLogin<'a> {
-    store: &'a Store,
-    cancel: &'a Cancel,
-    updates: &'a mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-    input: &'a mpsc::Receiver<Box<str>>,
 }
 
 impl Flow {
@@ -308,79 +297,67 @@ impl Flow {
         self.callback_ports
     }
 
-    fn login(&self, method: LoginMethod, active: &ActiveLogin<'_>) -> Result<(), OAuthError> {
-        let ActiveLogin {
-            store,
-            cancel,
-            updates,
-            input,
-        } = *active;
+    async fn login(
+        &self,
+        method: LoginMethod,
+        store: &Store,
+        updates: &LoginUpdates,
+        input: &mut Receiver<Box<str>>,
+    ) -> Result<(), OAuthError> {
         let tokens = if method == OpenAiOAuth::BROWSER {
-            self.browser(cancel, updates, input)?
+            self.browser(updates, input).await?
         } else if method == OpenAiOAuth::DEVICE {
-            self.device(cancel, updates)?
+            self.device(updates).await?
         } else {
             return Err(OAuthError::Method);
         };
-        store.keep_subscription("openai", tokens)?;
-        updates
-            .send(Ok(LoginUpdate::Complete))
-            .map_err(|_| OAuthError::Cancelled)
+        let store = store.clone();
+        self.renewals
+            .login_store(move || store.keep_subscription("openai", tokens))
+            .await?;
+        updates.send(Ok(LoginUpdate::Complete))
     }
 
-    fn browser(
+    async fn browser(
         &self,
-        cancel: &Cancel,
-        updates: &mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-        input: &mpsc::Receiver<Box<str>>,
+        updates: &LoginUpdates,
+        input: &mut Receiver<Box<str>>,
     ) -> Result<Tokens, OAuthError> {
         let pkce = Pkce::new()?;
         let state = random_urlsafe::<32>()?;
         let callback = callback::Server::bind(self.callback_ports, self.login_lifetime)?;
         let redirect = callback.redirect_uri();
         let authorization = authorization_uri(&self.issuer, &redirect, &pkce.challenge, &state);
-        updates
-            .send(Ok(LoginUpdate::Authorize {
-                browser_uri: authorization.clone().into(),
-                shown_uri: callback.launch_uri().into(),
-                user_code: None,
-                manual: true,
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
-        let code = callback.wait(&authorization, &state, cancel, input)?;
-        updates
-            .send(Ok(LoginUpdate::Progress {
-                message: "finishing browser authorization…",
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
+        updates.send(Ok(LoginUpdate::Authorize {
+            browser_uri: authorization.clone().into(),
+            shown_uri: callback.launch_uri().into(),
+            user_code: None,
+            manual: true,
+        }))?;
+        let code = callback.wait(&authorization, &state, input).await?;
+        updates.send(Ok(LoginUpdate::Progress {
+            message: "finishing browser authorization…",
+        }))?;
         self.renewals
-            .login_step(cancel, self.exchange(&code, &pkce.verifier, &redirect))
+            .login_request(self.exchange(&code, &pkce.verifier, &redirect))
+            .await
     }
 
-    fn device(
-        &self,
-        cancel: &Cancel,
-        updates: &mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-    ) -> Result<Tokens, OAuthError> {
-        let device = self.renewals.login_step(cancel, self.request_device())?;
-        updates
-            .send(Ok(LoginUpdate::Authorize {
-                browser_uri: VERIFY.into(),
-                shown_uri: VERIFY.into(),
-                user_code: Some(device.user_code.clone()),
-                manual: false,
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
-        let authorized = self.poll(&device, cancel)?;
-        updates
-            .send(Ok(LoginUpdate::Progress {
-                message: "finishing device authorization…",
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
-        self.renewals.login_step(
-            cancel,
-            self.exchange(&authorized.code, &authorized.verifier, DEVICE_REDIRECT),
-        )
+    async fn device(&self, updates: &LoginUpdates) -> Result<Tokens, OAuthError> {
+        let device = self.renewals.login_request(self.request_device()).await?;
+        updates.send(Ok(LoginUpdate::Authorize {
+            browser_uri: VERIFY.into(),
+            shown_uri: VERIFY.into(),
+            user_code: Some(device.user_code.clone()),
+            manual: false,
+        }))?;
+        let authorized = self.poll(&device).await?;
+        updates.send(Ok(LoginUpdate::Progress {
+            message: "finishing device authorization…",
+        }))?;
+        self.renewals
+            .login_request(self.exchange(&authorized.code, &authorized.verifier, DEVICE_REDIRECT))
+            .await
     }
 
     async fn request_device(&self) -> Result<Device, OAuthError> {
@@ -402,12 +379,9 @@ impl Flow {
         })
     }
 
-    fn poll(&self, device: &Device, cancel: &Cancel) -> Result<Authorized, OAuthError> {
+    async fn poll(&self, device: &Device) -> Result<Authorized, OAuthError> {
         let started = Instant::now();
         loop {
-            if cancel.requested() {
-                return Err(OAuthError::Cancelled);
-            }
             if started.elapsed() >= self.login_lifetime {
                 return Err(OAuthError::Expired);
             }
@@ -416,10 +390,10 @@ impl Flow {
                 "user_code": &device.user_code,
             })
             .to_string();
-            let (status, response) = self.renewals.login_step(
-                cancel,
-                self.post(&self.device_token, "application/json", body),
-            )?;
+            let (status, response) = self
+                .renewals
+                .login_request(self.post(&self.device_token, "application/json", body))
+                .await?;
             if status == 200 {
                 let value: serde_json::Value =
                     serde_json::from_str(&response).map_err(|_| OAuthError::Invalid {
@@ -433,7 +407,7 @@ impl Flow {
             if !matches!(status, 403 | 404) {
                 return Err(OAuthError::Refused { status });
             }
-            pause(device.interval, cancel)?;
+            tokio::time::sleep(device.interval).await;
         }
     }
 
@@ -595,17 +569,6 @@ fn interval(value: &serde_json::Value) -> Duration {
         .unwrap_or(5)
         .clamp(1, 60);
     Duration::from_secs(seconds)
-}
-
-fn pause(duration: Duration, cancel: &Cancel) -> Result<(), OAuthError> {
-    let until = Instant::now() + duration;
-    while Instant::now() < until {
-        if cancel.requested() {
-            return Err(OAuthError::Cancelled);
-        }
-        std::thread::sleep(CANCEL_POLL.min(until.saturating_duration_since(Instant::now())));
-    }
-    Ok(())
 }
 
 fn account(jwt: &str) -> Option<String> {

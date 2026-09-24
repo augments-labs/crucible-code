@@ -375,6 +375,10 @@ impl Runner {
     /// The turn count comes with it. Numbering the first continued turn `1`
     /// would tell the user this is a new session, which is exactly what
     /// they asked it not to be.
+    ///
+    /// What this run's vendor may not be sent is cleared from the transcript,
+    /// and the lines saying so are owed to the session, as [`Runner::pick_up`]
+    /// says.
     #[must_use]
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.state.forget_checked();
@@ -424,10 +428,13 @@ impl Runner {
     /// What `/resume` runs. The store handed in is the one the caller opened
     /// and still holds: nothing is handed back, because closing the store this
     /// runner was writing to was never this crate's to do, and the caller that
-    /// opened it is the one that reports what its last write came to. That
-    /// report cannot see a line the session left behind would not take between
-    /// turns: such a line stays held, and the next turn or compaction reports
-    /// it on the session picked up.
+    /// opened it is the one that reports what its last write came to.
+    ///
+    /// What the vendor being asked may not be sent is cleared from the
+    /// transcript picked up here, and the lines saying so are owed to the
+    /// session picked up until [`Runner::record_clearings`], or the next turn
+    /// or compaction, writes them. A line still owed to the session left
+    /// behind is written to that session.
     ///
     /// Everything about the session that was answered is answered again. The
     /// transcript, the store and the turn count come from the session picked
@@ -764,7 +771,9 @@ impl Runner {
     ///
     /// The transcript is kept across the swap, and that is deliberate rather
     /// than incidental: what was said is what the user said, and a vendor is who
-    /// it gets sent to. What does not carry is anything the old vendor knows
+    /// it gets sent to. What the new vendor may not be sent is cleared from it,
+    /// and the lines saying so are owed to the session, as
+    /// [`Runner::pick_up`] says. What does not carry is anything the old vendor knows
     /// about the old messages, which is nothing this program was ever told.
     ///
     /// Reachable between turns, where [`Runner::ask`] is and for the same
@@ -779,8 +788,7 @@ impl Runner {
         self.provider = provider;
         // As though a report had measured every message: the estimate is taken
         // again from the byte total below, and that total follows every message.
-        let cleared = self.clear_untransferable(&clearing, self.state.transcript.messages().len());
-        self.hold(cleared);
+        self.clear_untransferable(&clearing, self.state.transcript.messages().len());
         // Cached-token and tokenizer semantics belong to the provider that
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
@@ -896,47 +904,35 @@ impl Runner {
     /// work around.
     ///
     /// [`TurnError::Unready`] where a step the turn crossed to rather than
-    /// awaited would have had to wait and was dropped: a session write, a
-    /// prompt-cache step, or listing or refreshing the toolset. What the
-    /// dropped step began is unconfirmed rather than undone. A message whose
-    /// own line was refused may or may not be in the log, and is left out of
-    /// the transcript unless it holds the results of a pass's calls, which
-    /// stay with the calls they answer, still cleared of what this run's
-    /// vendor may not be sent. A changing cache step is recorded as
+    /// awaited would have had to wait and was dropped: a prompt-cache step, or
+    /// listing or refreshing the toolset. What the dropped step began is
+    /// unconfirmed rather than undone. A changing cache step is recorded as
     /// ambiguous, to be reconciled, and a request for the model's answer being
     /// prepared has that answer recorded as far as it got, as a failed one
     /// does. A step of a compaction the turn made leaves what
-    /// [`Runner::compact`] says it does. A line the session would not take
-    /// between turns, still held, ends the turn the same way before anything
-    /// of it is recorded or sent.
+    /// [`Runner::compact`] says it does. The turn's session writes are
+    /// awaited, and a line the log could not keep is the session's to report
+    /// rather than the turn's to end on. Before anything of the turn is
+    /// recorded or sent, the lines picking a session up or changing vendor
+    /// still owe the session are written, as [`Runner::record_clearings`]
+    /// writes them.
     ///
     /// Every step the turn crosses to that would have had to wait ends the
     /// turn on the refusal, even while the turn is being stopped, rather than
-    /// as a clean stop, with two exceptions. The turn's cache steps, its
-    /// session lines and its toolset's listing and refreshing all end it so,
-    /// and a compaction the turn makes ends on a refusal as
-    /// [`Runner::compact`] says, taking the turn with it. The exceptions are a
-    /// call's run in a parallel wave and a background result's acceptance,
-    /// which never end the turn on a refusal. A run that would have had to
-    /// wait goes back to the model as a failed result that says what the run
-    /// began is unconfirmed, and where the turn is being stopped the pass then
-    /// ends on the stop at that call; but where reporting the call's sandbox
-    /// facts fails after the run, that failure is what the model is told, as
-    /// it is after any run, and the pass does not end on the stop at that
-    /// call. An acceptance that would have had to wait leaves the command to
-    /// the registry that owns its cleanup. A run in a wave of one call, the
-    /// provider's stream and the toolset's preparation and disposal are
-    /// awaited, and are never refused this way.
-    ///
-    /// A turn that had already failed, and whose line recording what it
-    /// reached was refused, ends on [`TurnError::RecordUnready`], carrying the
-    /// failure and the refusal together: a request that failed, or was itself
-    /// refused, with its answer as far as it got, and a pass that ended on a
-    /// refused call or on the output boundary, with its results. No automatic
-    /// compaction starts after a refused write. A provider that failed the
-    /// request because the window was exceeded is reported beside the refused
-    /// line, and one that stopped its answer there is reported as the refusal,
-    /// as any stop is.
+    /// as a clean stop, with two exceptions. The turn's cache steps and its
+    /// toolset's listing and refreshing all end it so, and a compaction the
+    /// turn makes ends on a refusal as [`Runner::compact`] says, taking the
+    /// turn with it. The exceptions are a call's run in a parallel wave and a
+    /// background result's acceptance, which never end the turn on a refusal.
+    /// A run that would have had to wait goes back to the model as a failed
+    /// result that says what the run began is unconfirmed, and where the turn
+    /// is being stopped the pass then ends on the stop at that call; but where
+    /// reporting the call's sandbox facts fails after the run, that failure is
+    /// what the model is told, as it is after any run, and the pass does not
+    /// end on the stop at that call. An acceptance that would have had to wait
+    /// leaves the command to the registry that owns its cleanup. A run in a
+    /// wave of one call, the provider's stream and the toolset's preparation
+    /// and disposal are awaited, and are never refused this way.
     ///
     /// A tool source's own step that was dropped before it answered is the
     /// source's failure, which [`TurnError::Toolset`] or
@@ -996,11 +992,9 @@ impl Runner {
         // entries are this and [`Runner::compact`].
         let run = &run.held_to(self.policy);
 
-        // A line the session would not take between turns ends the turn it was
-        // held for, before anything of this one is recorded or sent.
-        if let Some(unready) = self.state.unwritten.take() {
-            return Err(unready.into());
-        }
+        // What picking a session up or changing vendor still owes the
+        // session goes into its log before anything of this turn does.
+        self.record_clearings().await;
 
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
@@ -1053,7 +1047,8 @@ impl Runner {
                 text: prompt.into(),
                 attachments,
             },
-        )?;
+        )
+        .await?;
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
@@ -1343,11 +1338,8 @@ impl Runner {
     /// last one with nothing in between. Calls the model never finished asking
     /// for go no further, the same as when it stops early. What is recorded
     /// says the answer never reached an ending, which is what keeps the next
-    /// request and a later replay from reading it as one that did. Where the
-    /// session would not take that line, or the reading of the window after
-    /// it, the failure still leaves, with the refusal beside it:
-    /// [`TurnError::RecordUnready`] carries both. An answer whose own line was
-    /// refused is left out of the transcript, as [`Runner::turn`] says.
+    /// request and a later replay from reading it as one that did. The line is
+    /// awaited before the failure leaves, and the failure is what leaves.
     ///
     /// A stream that ends without saying why is that same failure: the socket
     /// went quiet, and quiet is what a finished response and a truncated one
@@ -1400,28 +1392,24 @@ impl Runner {
 
             let stop = answer.stop();
             let (text, _) = answer.finish();
-            let recorded = self.record(
-                listening.run.ancestry(),
-                Message::Agent {
-                    continuation: None,
-                    text,
-                    calls: Vec::new(),
-                    stop,
-                },
-            );
+            // The transcript refuses only a continuation, which this message
+            // does not carry, and the session's line is awaited rather than
+            // refused, so recording it meets nothing. Were it to, that would be
+            // about the record rather than the request, and must not stand in
+            // for the failure being recorded.
+            let _recorded = self
+                .record(
+                    listening.run.ancestry(),
+                    Message::Agent {
+                        continuation: None,
+                        text,
+                        calls: Vec::new(),
+                        stop,
+                    },
+                )
+                .await;
 
-            return Err(match recorded {
-                Err(TurnError::Unready(record)) => TurnError::RecordUnready {
-                    primary: Box::new(problem),
-                    record,
-                },
-                // The transcript refuses only a continuation, which this
-                // message does not carry, so a session write that would have
-                // had to wait is all recording it can meet. Anything else would
-                // still be about the record rather than the request, and must
-                // not stand in for the failure being recorded.
-                Ok(()) | Err(_) => problem,
-            });
+            return Err(problem);
         }
     }
 

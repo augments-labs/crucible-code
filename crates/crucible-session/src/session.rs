@@ -14,13 +14,25 @@
 //! before the handle that appends exists. A log already ending there loses
 //! nothing, which is every ordinary run. It is a truncation and not a rewrite:
 //! what survives is byte for byte what was written.
+//!
+//! One thread per session owns the file, for as long as the session lives: a
+//! write to a local file is a call that blocks, and it is made there rather
+//! than on whichever thread asked for the line. What asks through the store
+//! contract waits for that thread to say the line is taken — with the
+//! operating system, so it outlives this process being killed, or refused, so
+//! the failure is already [`Session::trouble`] — and waits without holding the
+//! thread it is polled on. What asks through the session's own methods queues
+//! the line and goes on. Either way the lines reach the file in the order they
+//! were queued, and the thread ends once the session is dropped and the queue
+//! it left is drained.
 
 use std::fs::File;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::pin::pin;
 use std::str::FromStr as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{SyncSender, sync_channel};
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
@@ -30,6 +42,7 @@ use crucible_core::{
     SessionOwner, SessionStore, ToolResult, Transcript, Workspace,
 };
 use crucible_runtime::BoxFuture;
+use tokio::sync::{Notify, oneshot};
 
 mod beside;
 mod claim;
@@ -63,8 +76,10 @@ use replay::{Replayed, belongs, newest, replay};
 /// How many lines may be waiting to be written.
 ///
 /// A local file drains far faster than turns produce messages, so this is
-/// never reached in practice. When it is, recording blocks — which is the
-/// right answer for a durable log, and a wrong one for a queue that drops.
+/// never reached in practice. When it is, a write through the session's own
+/// methods blocks, and one through the store contract waits for room without
+/// holding its thread — waiting is the right answer for a durable log, and a
+/// wrong one for a queue that drops.
 const QUEUE: usize = 256;
 
 /// What a session log is called.
@@ -198,6 +213,9 @@ pub struct Session {
     /// Taken by whichever of [`Session::finish`] and `drop` comes first, both
     /// of which wait for the queue.
     writer: Option<JoinHandle<()>>,
+    /// Told by the writer each time it takes a line off the queue, which is
+    /// what a write that found the queue full waits for.
+    room: Arc<Notify>,
     /// What keeps another crucible from continuing a log this one is still
     /// writing. `None` where the filesystem has no locks to take, and in a
     /// session that records nothing — see [`fn@claim`].
@@ -239,6 +257,10 @@ pub struct Session {
     /// observe the first writer's not-yet-synced file.
     result_lock: Mutex<()>,
     trouble: Trouble,
+    /// Lines whoever holds the session knows its log is missing, which the
+    /// writer cannot: see [`Session::missing`]. Not trouble, and gates
+    /// nothing.
+    missed: Mutex<Option<Box<str>>>,
 }
 
 impl Session {
@@ -472,6 +494,7 @@ impl Session {
             id: None,
             to: None,
             writer: None,
+            room: Arc::new(Notify::new()),
             claim: None,
             calibration: None,
             context: Mutex::new(Some(ContextSnapshot::new())),
@@ -479,6 +502,7 @@ impl Session {
             pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble: Trouble::default(),
+            missed: Mutex::new(None),
         }
     }
 
@@ -519,16 +543,13 @@ impl Session {
     /// which is the whole reason there is one.
     pub fn append(&self, message: &Message) {
         let Some(to) = &self.to else { return };
-        let line = wire::line(message);
-        // Resuming never rewrites an old header. A separate guard makes old
-        // readers refuse the new state instead of silently discarding it.
-        // Queue both lines together so no other append can split the pair.
-        let line = if message.continuation_bytes() > 0 {
-            format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT)
-        } else {
-            line
-        };
-        drop(to.send(LogRequest::Line(line.into())));
+        drop(to.send(LogRequest::Line(message_line(message))));
+        self.counted(message);
+    }
+
+    /// Counts `message`, once its line has been queued, where it is one a
+    /// listing counts.
+    fn counted(&self, message: &Message) {
         if is_conversation_message(message) {
             self.messages.fetch_add(1, Ordering::Relaxed);
         }
@@ -651,19 +672,7 @@ impl Session {
     /// differently sends one vendor's results to another.
     pub fn restricted(&self, freed: usize, results: &[crucible_core::ToolId], notice: &str) {
         let Some(to) = &self.to else { return };
-        // With the same guard a new private-state message carries, and needed
-        // for a sharper reason. Resuming never rewrites an old header, so a
-        // log written under an earlier format can gain this line; a reader with
-        // no word for it would call the file damaged, and a reader that skipped
-        // it would put the results back and send them on. The guard makes the
-        // refusal say which of those it is. Queued as one line so no other
-        // append can split the pair.
-        let line = format!(
-            "{{\"requires_format\":{}}}\n{}",
-            wire::FORMAT,
-            wire::restricted(freed, results, notice)
-        );
-        drop(to.send(LogRequest::Line(line.into())));
+        drop(to.send(LogRequest::Line(restricted_line(freed, results, notice))));
     }
 
     /// Records what the request behind the answer just written carried.
@@ -722,13 +731,127 @@ impl Session {
             .map_err(|_| CallResultStoreError::Storage)
     }
 
+    /// Queues the line `line` makes and waits for the writer to take it.
+    ///
+    /// Answers at once in a session that records nothing, which makes no
+    /// line. Where the queue is full it waits for the writer to take one off,
+    /// without holding the thread it is polled on. A line the writer never
+    /// acknowledged — its thread ended before taking it — is kept as trouble,
+    /// as a line the log refused is by the writer itself.
+    async fn written(&self, line: impl FnOnce() -> Box<str>) {
+        let Some(to) = &self.to else { return };
+        let (taken, told) = oneshot::channel();
+        let mut request = LogRequest::Acknowledged(line(), taken);
+        loop {
+            // Listening before offering, so a line taken off the queue between
+            // the offer and the wait still wakes it.
+            let mut room = pin!(self.room.notified());
+            room.as_mut().enable();
+            match to.try_send(request) {
+                Ok(()) => break,
+                Err(TrySendError::Full(back)) => request = back,
+                Err(TrySendError::Disconnected(_)) => return self.unacknowledged(),
+            }
+            room.await;
+        }
+        if told.await.is_err() {
+            self.unacknowledged();
+        }
+    }
+
+    /// [`Session::contextual`], waiting for the writer to take the patch.
+    ///
+    /// The state is advanced and the patch queued under one hold of the lock,
+    /// so two passes cannot interleave a patch with the state the next one is
+    /// applied to, and the lock is never held across a wait: where the queue
+    /// is full, the lock is let go, and the patch is applied again once there
+    /// is room, to whatever state it then finds.
+    async fn contextual_written(&self, patch: &ContextPatch) -> Result<(), ContextError> {
+        let (taken, told) = oneshot::channel();
+        let mut request = LogRequest::Acknowledged(wire::contextual(patch).into(), taken);
+        loop {
+            let mut room = pin!(self.room.notified());
+            room.as_mut().enable();
+            {
+                let mut held = self.context.lock().unwrap_or_else(PoisonError::into_inner);
+                let current = patch.apply(&held.clone().unwrap_or_default())?;
+                match self.to.as_ref().map(|to| to.try_send(request)) {
+                    Some(Err(TrySendError::Full(back))) => request = back,
+                    None => {
+                        *held = Some(current);
+                        return Ok(());
+                    }
+                    Some(Ok(())) => {
+                        *held = Some(current);
+                        break;
+                    }
+                    Some(Err(TrySendError::Disconnected(_))) => {
+                        *held = Some(current);
+                        drop(held);
+                        self.unacknowledged();
+                        return Ok(());
+                    }
+                }
+            }
+            room.await;
+        }
+        if told.await.is_err() {
+            self.unacknowledged();
+        }
+        Ok(())
+    }
+
+    /// Keeps `problem` as what this session's log is missing, where nothing
+    /// is kept already.
+    ///
+    /// For what whoever holds the session knows its log is missing and the
+    /// writer cannot: lines owed to it that were never handed over. Kept apart
+    /// from [`Session::trouble`], because the log has not stopped working:
+    /// every later line, result and read goes on as before, and
+    /// [`Session::missed`] is where this is read back.
+    pub fn missing(&self, problem: &str) {
+        self.missed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(|| problem.into());
+    }
+
+    /// What [`Session::missing`] was told, until
+    /// [`Session::no_longer_missing`] says it has been written.
+    #[must_use]
+    pub fn missed(&self) -> Option<Box<str>> {
+        self.missed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Says that what [`Session::missing`] was told about has since been
+    /// written.
+    pub fn no_longer_missing(&self) {
+        self.missed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+
+    /// Keeps, as trouble, that a line was never acknowledged.
+    fn unacknowledged(&self) {
+        log::record(
+            &self.trouble,
+            &io::Error::other("the thread writing it stopped before it took a line"),
+        );
+    }
+
     /// Ends the session and hands back the first write that failed, if one did.
     ///
     /// [`Session::trouble`] can only report what the writer thread has already
-    /// reached. When a loop ends, the last turn is usually still in the queue —
-    /// so the failure worth reporting most is the one nothing has had a chance
-    /// to see. Waiting here for everything already queued to reach the sink is
-    /// what turns that into an answer.
+    /// reached. A write through the store contract waits for that, but one
+    /// through the session's own methods does not, and the last of those can
+    /// still be in the queue when a loop ends — so the failure worth reporting
+    /// most is the one nothing has had a chance to see. Waiting here for
+    /// everything already queued to reach the sink is what turns that into an
+    /// answer.
     ///
     /// Takes a shared session rather than consuming one, because the
     /// application and the turn it is driving hold the same session: what ends
@@ -768,8 +891,10 @@ impl Session {
         let (to, lines) = sync_channel(QUEUE);
         let trouble = Trouble::default();
         let mine = Arc::clone(&trouble);
+        let room = Arc::new(Notify::new());
+        let told = Arc::clone(&room);
 
-        let writer = thread::spawn(move || log::write(sink, &lines, &mine));
+        let writer = thread::spawn(move || log::write(sink, lines, &mine, told));
 
         // Read back from the name rather than carried in, so that the two ways
         // to reach a log — minting a name, and finding one — cannot disagree
@@ -784,6 +909,7 @@ impl Session {
             id,
             to: Some(to),
             writer: Some(writer),
+            room,
             claim: None,
             calibration: None,
             context: Mutex::new(Some(ContextSnapshot::new())),
@@ -791,8 +917,40 @@ impl Session {
             pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble,
+            missed: Mutex::new(None),
         }
     }
+}
+
+/// The line `message` is recorded as.
+///
+/// Resuming never rewrites an old header. A separate guard makes old readers
+/// refuse the new state instead of silently discarding it, and the two are
+/// one request so no other append can split the pair.
+fn message_line(message: &Message) -> Box<str> {
+    let line = wire::line(message);
+    if message.continuation_bytes() > 0 {
+        format!("{{\"requires_format\":{}}}\n{line}", wire::FORMAT).into()
+    } else {
+        line.into()
+    }
+}
+
+/// The line a clearing of results a vendor restricts is recorded as.
+///
+/// With the same guard a new private-state message carries, and needed for a
+/// sharper reason. Resuming never rewrites an old header, so a log written
+/// under an earlier format can gain this line; a reader with no word for it
+/// would call the file damaged, and a reader that skipped it would put the
+/// results back and send them on. The guard makes the refusal say which of
+/// those it is. One request so no other append can split the pair.
+fn restricted_line(freed: usize, results: &[crucible_core::ToolId], notice: &str) -> Box<str> {
+    format!(
+        "{{\"requires_format\":{}}}\n{}",
+        wire::FORMAT,
+        wire::restricted(freed, results, notice)
+    )
+    .into()
 }
 
 /// Whether one persisted transcript entry belongs in the picker-facing count.
@@ -916,7 +1074,12 @@ impl SessionStore for Session {
     }
 
     fn append_message<'a>(&'a self, message: &'a Message) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self.append(message) })
+        Box::pin(async move {
+            if self.to.is_some() {
+                self.written(|| message_line(message)).await;
+                self.counted(message);
+            }
+        })
     }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
@@ -927,11 +1090,11 @@ impl SessionStore for Session {
         &'a self,
         patch: &'a ContextPatch,
     ) -> BoxFuture<'a, Result<(), ContextError>> {
-        Box::pin(async move { self.contextual(patch) })
+        Box::pin(self.contextual_written(patch))
     }
 
     fn compacted<'a>(&'a self, replaced: usize, recap: &'a str) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self.compacted(replaced, recap) })
+        Box::pin(self.written(move || wire::compacted(replaced, recap).into()))
     }
 
     fn display_compacted(
@@ -939,7 +1102,7 @@ impl SessionStore for Session {
         compacted: crucible_core::Compacted,
         pruned: bool,
     ) -> BoxFuture<'_, ()> {
-        Box::pin(async move { self.display_compacted(compacted, pruned) })
+        Box::pin(self.written(move || display::compacted(compacted, pruned).into()))
     }
 
     fn pruned<'a>(
@@ -947,7 +1110,7 @@ impl SessionStore for Session {
         freed: usize,
         results: &'a [crucible_core::ToolId],
     ) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self.pruned(freed, results) })
+        Box::pin(self.written(move || wire::pruned(freed, results).into()))
     }
 
     fn restricted<'a>(
@@ -956,11 +1119,11 @@ impl SessionStore for Session {
         results: &'a [crucible_core::ToolId],
         notice: &'a str,
     ) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self.restricted(freed, results, notice) })
+        Box::pin(self.written(move || restricted_line(freed, results, notice)))
     }
 
     fn measured<'a>(&'a self, calibration: &'a Calibration) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self.measured(calibration) })
+        Box::pin(self.written(|| wire::measured(calibration).into()))
     }
 
     fn calibrated(&self) -> Option<Calibration> {

@@ -25,7 +25,9 @@ use crucible_runner::{Event, EventEnvelope, Runner, Tools, TurnError, Turned};
 use crucible_runtime::{Aside, BoxFuture, Bridge, Cancel, Steer, Unwaited};
 use crucible_session::Session;
 use crucible_types::{
-    AgentId, CredentialScopeId, Modalities, Modality, PromptCacheEncoding, StopReason,
+    AgentId, CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding,
+    RecordedToolOutput, ResultProvenance, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
+    Transcript,
 };
 use tokio::runtime::Handle;
 
@@ -382,6 +384,344 @@ fn a_conversation_handed_no_runtime_refuses_its_turns_and_compactions() -> Resul
         "{room:?}"
     );
     assert_eq!(asked.load(Ordering::Relaxed), 0, "the model was asked");
+    Ok(())
+}
+
+/// The sentence a search result another vendor restricts is cleared to.
+const RESTRICTED: &str = "[cleared - restricted to the vendor that produced it]";
+
+/// A conversation over `provider`, picked up from a session whose one search
+/// result was answered by a vendor that restricts it to itself.
+fn resuming_a_restricted_result(tree: &Tree, provider: Watched) -> Result<Conversation, Failed> {
+    let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
+    let mut transcript = Transcript::new();
+    transcript.push(Message::said("search for rust"))?;
+    transcript.push(Message::Agent {
+        continuation: None,
+        text: "searching".into(),
+        calls: vec![ToolCall {
+            id: ToolId::new("search"),
+            name: "web_search".into(),
+            args: ToolArgs::new("{}"),
+        }],
+        stop: Some(StopReason::WantsTools),
+    })?;
+    transcript.push(Message::ToolResults(vec![ToolResult {
+        id: ToolId::new("search"),
+        output: RecordedToolOutput::ok("restricted canary")
+            .answered_by(ResultProvenance::answered("google", Some(RESTRICTED))?),
+    }]))?;
+    let agent = AgentBuilder::new(
+        AgentId::new("test"),
+        Model {
+            name: "watched".into(),
+            max_tokens: 64,
+            window: None,
+            accepts: None,
+            effort: None,
+        },
+    );
+    let work = tree.0.join("work");
+    Ok(Conversation::recording(session, None, |session| {
+        Runner::new(
+            Box::new(provider),
+            Tools::new(),
+            agent.build(),
+            crucible_context::ContextInputs::new(work),
+            session,
+        )
+        .resuming(transcript)
+    }))
+}
+
+#[test]
+fn a_clearing_line_the_conversation_could_not_wait_for_is_reported_until_a_turn_writes_it()
+-> Result<(), Failed> {
+    let tree = Tree::new("crossing-owed")?;
+    let conversation =
+        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("after")))?;
+
+    let (seen, stopped) = serving(|services| -> Result<_, String> {
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
+        // Handed its runtime on a thread entered into it, so the wait for
+        // what picking the session up owes is refused.
+        let entered = runtime.enter();
+        let mut conversation = conversation.on(runtime.clone());
+        drop(entered);
+        let refused = conversation.session().missed();
+
+        turned(&mut conversation, &Cancel::new())
+            .0
+            .map_err(|e| e.to_string())?;
+        let session = Arc::clone(conversation.session());
+        let written = session.missed();
+        drop(conversation);
+        let trouble = session.finish();
+        let log = std::fs::read_to_string(session.path()).map_err(|e| e.to_string())?;
+        Ok((refused, written, trouble, log))
+    });
+    let (refused, written, trouble, log) = seen?;
+
+    assert!(stopped.is_ok(), "{stopped:?}");
+    assert!(
+        refused.is_some(),
+        "a clearing line nobody waited for went unreported"
+    );
+    assert_eq!(
+        written, None,
+        "the report outlived the turn that wrote the line"
+    );
+    assert_eq!(trouble, None, "the log was said to have stopped recording");
+    let cleared = log.lines().position(|line| line.contains("\"restricted\""));
+    let asked = log.lines().position(|line| line == r#"{"user":"go"}"#);
+    assert!(
+        cleared.is_some() && cleared < asked,
+        "the turn did not write the owed line before its own: {log}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_clearing_line_dropped_with_the_conversation_stays_reported() -> Result<(), Failed> {
+    let tree = Tree::new("crossing-owed-dropped")?;
+    let conversation =
+        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
+
+    let (seen, stopped) = serving(|services| -> Result<_, String> {
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
+        let entered = runtime.enter();
+        let conversation = conversation.on(runtime.clone());
+        drop(entered);
+        let session = Arc::clone(conversation.session());
+        drop(conversation);
+        Ok((session.missed(), session.finish()))
+    });
+    let (missed, trouble) = seen?;
+
+    assert!(stopped.is_ok(), "{stopped:?}");
+    assert!(
+        missed.is_some(),
+        "clearing lines lost with the runner went unreported"
+    );
+    assert_eq!(trouble, None, "the log was said to have stopped recording");
+    Ok(())
+}
+
+#[test]
+fn a_conversation_that_owes_nothing_reports_nothing_where_it_could_not_wait() -> Result<(), Failed>
+{
+    // Nothing is owed, so there is nothing to wait for and nothing to report,
+    // even where waiting would have been refused.
+    let tree = Tree::new("crossing-owes-nothing")?;
+    let conversation = asking(&tree, Watched::new(Answering::Saying("never")))?;
+
+    let (seen, stopped) = serving(|services| -> Result<_, String> {
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
+        let entered = runtime.enter();
+        let conversation = conversation.on(runtime.clone());
+        drop(entered);
+        Ok((
+            conversation.session().missed(),
+            conversation.session().trouble(),
+        ))
+    });
+    let (missed, trouble) = seen?;
+
+    assert!(stopped.is_ok(), "{stopped:?}");
+    assert_eq!(missed, None, "a wait with nothing to write was reported");
+    assert_eq!(trouble, None, "a wait with nothing to write was trouble");
+    Ok(())
+}
+
+/// Whether `session`'s log holds a line clearing a restricted result.
+fn cleared_in(session: &Session) -> Result<bool, String> {
+    let log = std::fs::read_to_string(session.path()).map_err(|e| e.to_string())?;
+    Ok(log.lines().any(|line| line.contains("\"restricted\"")))
+}
+
+#[test]
+fn a_report_stays_through_a_refused_turn_and_names_only_the_session_owed() -> Result<(), Failed> {
+    // The line is owed to the session picked up first. A turn that could not
+    // be waited for writes nothing, so the report stays; and a new session
+    // started where the wait is refused again is owed nothing, so it is not
+    // said to be missing anything.
+    let tree = Tree::new("crossing-owed-refused-turn")?;
+    let conversation =
+        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+
+    let (seen, stopped) = serving(|services| -> Result<_, String> {
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
+        let entered = runtime.enter();
+        let mut conversation = conversation.on(runtime.clone());
+        let first = Arc::clone(conversation.session());
+        let refused = turned(&mut conversation, &Cancel::new()).0.is_err();
+        let after_turn = first.missed();
+        conversation
+            .clear(&sessions, &workspace, None)
+            .map_err(|e| e.to_string())?;
+        let started = conversation.session().missed();
+        drop(entered);
+        Ok((refused, after_turn, first.missed(), started))
+    });
+    let (refused, after_turn, first, started) = seen?;
+
+    assert!(stopped.is_ok(), "{stopped:?}");
+    assert!(refused, "the turn was not refused");
+    assert!(
+        after_turn.is_some(),
+        "a turn that wrote nothing withdrew the report"
+    );
+    assert!(
+        first.is_some(),
+        "the session still owed its line stopped being reported"
+    );
+    assert_eq!(
+        started, None,
+        "a session owed nothing was said to be missing lines"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_refused_pick_up_reports_the_session_left_that_is_owed_and_not_the_new_one()
+-> Result<(), Failed> {
+    // With no runtime, neither resuming nor the pick-up after it can wait. The
+    // line is owed to the session left behind, and the one started is owed
+    // nothing, so only the first is said to be missing it.
+    let tree = Tree::new("crossing-owed-pick-up")?;
+    let mut conversation =
+        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
+    let first = Arc::clone(conversation.session());
+
+    let left = conversation.clear(&tree.sessions(), &tree.workspace()?, None)?;
+
+    assert!(Arc::ptr_eq(&left, &first), "a different session was left");
+    assert!(
+        first.missed().is_some(),
+        "the session left owing a line was not reported"
+    );
+    assert_eq!(
+        conversation.session().missed(),
+        None,
+        "the session started, owed nothing, was said to be missing lines"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_waited_pick_up_clears_the_report_of_the_session_it_wrote_to() -> Result<(), Failed> {
+    // Refused twice — the first session is owed its line, and a second one is
+    // started without it — then a pick-up that is waited for writes the line
+    // to the first session, which is two sessions back by then.
+    let tree = Tree::new("crossing-owed-left")?;
+    let conversation =
+        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
+    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+
+    let (seen, stopped) = serving(|services| -> Result<_, String> {
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
+        let entered = runtime.enter();
+        let mut conversation = conversation.on(runtime.clone());
+        let first = Arc::clone(conversation.session());
+        let second = conversation
+            .clear(&sessions, &workspace, None)
+            .map(|_| Arc::clone(conversation.session()))
+            .map_err(|e| e.to_string())?;
+        drop(entered);
+        conversation
+            .clear(&sessions, &workspace, None)
+            .map_err(|e| e.to_string())?;
+        Ok((
+            cleared_in(&first)?,
+            first.missed(),
+            second.missed(),
+            conversation.session().missed(),
+        ))
+    });
+    let (written, first, second, third) = seen?;
+
+    assert!(stopped.is_ok(), "{stopped:?}");
+    assert!(written, "the waited pick-up did not write the owed line");
+    assert_eq!(first, None, "the report outlived the line it named");
+    assert_eq!(second, None, "a session owed nothing was reported");
+    assert_eq!(third, None, "a session owed nothing was reported");
+    Ok(())
+}
+
+#[test]
+fn a_report_clears_when_a_conversation_handed_its_runtime_writes_the_line() -> Result<(), Failed> {
+    // With no runtime yet, a pick-up cannot wait, and the session left behind
+    // is the one owed its line. Handing the runtime over writes it there.
+    let tree = Tree::new("crossing-owed-on")?;
+    let mut conversation =
+        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
+    let first = Arc::clone(conversation.session());
+    conversation.clear(&tree.sessions(), &tree.workspace()?, None)?;
+    let second = Arc::clone(conversation.session());
+    let refused = (first.missed(), second.missed());
+
+    let (seen, stopped) = serving(|services| -> Result<_, String> {
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
+        let conversation = conversation.on(runtime);
+        Ok((
+            cleared_in(&first)?,
+            first.missed(),
+            conversation.session().missed(),
+        ))
+    });
+    let (written, first_after, second_after) = seen?;
+
+    assert!(stopped.is_ok(), "{stopped:?}");
+    assert!(
+        refused.0.is_some(),
+        "the session owed the line was not reported"
+    );
+    assert_eq!(refused.1, None, "the session owed nothing was reported");
+    assert!(written, "handing the runtime over did not write the line");
+    assert_eq!(first_after, None, "the report outlived the line it named");
+    assert_eq!(second_after, None, "a session owed nothing was reported");
+    Ok(())
+}
+
+#[test]
+fn a_waited_compaction_clears_the_report_once_it_writes_the_line() -> Result<(), Failed> {
+    let tree = Tree::new("crossing-owed-compaction")?;
+    let conversation =
+        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
+
+    let (seen, stopped) = serving(|services| -> Result<_, String> {
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
+        let entered = runtime.enter();
+        let mut conversation = conversation.on(runtime.clone());
+        drop(entered);
+        let refused = conversation.session().missed();
+        {
+            let (events, _reported) = mpsc::channel::<EventEnvelope>();
+            let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+            let run = conversation
+                .runner()
+                .starting(&events, &cancel, &steer, &aside);
+            conversation
+                .compact(
+                    crucible_types::Compacting::Asked,
+                    &run,
+                    &mut crucible_types::Spend::default(),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        Ok((
+            refused,
+            cleared_in(conversation.session())?,
+            conversation.session().missed(),
+        ))
+    });
+    let (refused, written, after) = seen?;
+
+    assert!(stopped.is_ok(), "{stopped:?}");
+    assert!(refused.is_some(), "the refused wait went unreported");
+    assert!(written, "the compaction did not write the owed line");
+    assert_eq!(after, None, "the report outlived the line it named");
     Ok(())
 }
 

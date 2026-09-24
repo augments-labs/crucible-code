@@ -1,10 +1,8 @@
 //! Writing a message down: the one way a message is appended to both the
-//! transcript and the log. The two can still disagree where the session would
-//! not take the message's line, as [`Runner::record`] says, and a compaction,
-//! a pruning, a clearing and the context patch each write lines of their own.
+//! transcript and the log. A compaction, a pruning, a clearing and the context
+//! patch each write lines of their own.
 
 use crucible_core::{Ancestry, Message, ProviderError, RunItem};
-use crucible_runtime::Bridge;
 
 use super::Runner;
 
@@ -22,17 +20,15 @@ impl Runner {
     /// compaction's replacement, a pruning and a clearing change the
     /// transcript without appending to it, and each writes a line of its own.
     ///
-    /// A message whose line the session would not take is left out of the
-    /// transcript, except the results of a pass's calls. Those stay with the
-    /// calls they answer: the calls were answered and only the line is in
-    /// doubt, and a transcript left on calls nothing answered is one a
-    /// provider can refuse to build a request from. They are still cleared of
-    /// what this run's vendor may not be sent, and each clearing's line is
-    /// still attempted, since the results may have reached the log. What
-    /// accepted background work kept aside for them is not settled, since the
-    /// line that would replace it is not known to be in the log. No reading of
-    /// the window follows a results line either way: no response has measured
-    /// a request that carries it yet.
+    /// Each line is awaited: the message joins the transcript only once the
+    /// session has taken its line, and the reading of the window that follows
+    /// it, and any clearing of what this run's vendor may not be sent, are
+    /// written after it the same way. A line the log could not keep is the
+    /// session's to report, as its trouble, and does not end the turn. A pass's
+    /// results are cleared of what this run's vendor may not be sent once
+    /// they are recorded, and what accepted background work kept aside for
+    /// them is settled first. No reading of the window follows a results line:
+    /// no response has measured a request that carries it yet.
     ///
     /// # Errors
     ///
@@ -40,11 +36,11 @@ impl Runner {
     /// oversized provider continuation") where the transcript refuses the
     /// private provider state the message carries. It is returned before
     /// anything is written.
-    ///
-    /// [`TurnError::Unready`] for the first session write that would have had
-    /// to wait, in the order they are reported: the message's own line, a
-    /// clearing's line, then the reading.
-    pub(super) fn record(&mut self, ancestry: Ancestry, message: Message) -> Result<(), TurnError> {
+    pub(super) async fn record(
+        &mut self,
+        ancestry: Ancestry,
+        message: Message,
+    ) -> Result<(), TurnError> {
         self.state
             .transcript
             .check_continuation(&message)
@@ -53,22 +49,16 @@ impl Runner {
                 problem: "invalid or oversized provider continuation".into(),
             })?;
         let answers_calls = matches!(&message, Message::ToolResults(_));
-        let written = match RunItem::message(ancestry, message.clone()) {
+        match RunItem::message(ancestry, message.clone()) {
             Ok(item) => {
-                let written = Bridge::TurnSession.cross(self.store.append_message(&message));
-                if written.is_ok() {
-                    self.store.append_run_item(&item);
-                }
-                written
+                self.store.append_message(&message).await;
+                self.store.append_run_item(&item);
             }
             // The provider and tool admission boundaries already enforce
             // these bounds. Preserve the conversation if an internal caller
             // ever violates that contract, while its missing companion record
             // makes the defect visible instead of writing unsafe metadata.
-            Err(_) => Bridge::TurnSession.cross(self.store.append_message(&message)),
-        };
-        if !answers_calls {
-            written?;
+            Err(_) => self.store.append_message(&message).await,
         }
         self.state.load.recorded(&message);
         self.state
@@ -82,28 +72,18 @@ impl Runner {
         // After the message and not beside it: what this says covers the
         // transcript including what was just appended, and a reader that found
         // it in the other order would have it covering one message less.
-        let measured = self.state.load.calibrated().map_or(Ok(()), |calibration| {
-            Bridge::TurnSession.cross(self.store.measured(&calibration))
-        });
+        if let Some(calibration) = self.state.load.calibrated() {
+            self.store.measured(&calibration).await;
+        }
         if answers_calls {
-            if written.is_ok() {
-                self.store.settle_call_results();
-            }
+            self.store.settle_call_results();
             // After the results line, so the log reads what was answered and
             // then what was taken out of it. The search source was chosen when
             // the run started, so a session that moved away from its vendor
             // still searches through that vendor, and the next request of this
-            // turn is built from what was just recorded. Made whether or not
-            // the session took the line: a refused line must not carry what
-            // this vendor may not be sent into a later request.
-            let admitted = self.admit_recorded();
-            written?;
-            admitted?;
+            // turn is built from what was just recorded.
+            self.admit_recorded().await;
         }
-        // A reading the session would not take is reported last, since the
-        // message it covers is recorded either way. Whether the log kept it is
-        // not known: the store says nothing of a write dropped before it
-        // answered.
-        measured.map_err(TurnError::from)
+        Ok(())
     }
 }

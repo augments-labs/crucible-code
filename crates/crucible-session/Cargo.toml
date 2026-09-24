@@ -31,6 +31,10 @@ serde_json.workspace = true
 sha2.workspace = true
 # `SessionError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
+# The one-shot the writer thread acknowledges a line through, and the notice of
+# room in its queue a waiting write is woken by, so that a write the runner
+# awaits waits without holding the thread it is polled on (`sync`).
+tokio = { workspace = true, features = ["sync"] }
 
 # The DACL that holds a session log private on Windows. Unix does the same job
 # with a file mode and needs nothing.
@@ -40,6 +44,8 @@ windows-sys.workspace = true
 # `answered!`, which the tests ask a store's future once with.
 [dev-dependencies]
 crucible-runtime = { workspace = true, features = ["proof"] }
+# The runtime a test waits on a store's write with, as a turn is waited for.
+tokio = { workspace = true, features = ["rt"] }
 
 # A log that has stopped working cannot be made from outside this crate: every
 # public way in ends at a real file, and a real file on a real disk does not

@@ -222,6 +222,34 @@ change in any release with no deprecation period.
   unconfirmed cleanup. The `TransportProcess` bridge crossing is retired with
   them, and a repository check fails a `thread::spawn` in shipped source of
   the transport, MCP or extension crates.
+- **The runner awaits every session write, and a session answers once its
+  writer has the line.** A turn's, a compaction's and a clearing's writes
+  through `SessionStore` are now awaited rather than asked once, so a store
+  whose writes wait is waited for instead of ending the turn, and
+  `TurnError::RecordUnready` is gone; `Session`'s writes answer once its writer
+  thread has handed the line to the operating system or kept why not as
+  `Session::trouble`. `Runner::pick_up`, `serve` and `resuming` owe the session
+  their clearing lines until the new `Runner::record_clearings`, or the next
+  turn or compaction, writes them, and `Conversation` awaits it after each; a
+  consumer whose conversation cannot make that wait, having no runtime or
+  asking from a runtime's thread, now finds it reported by the new
+  `Session::missed` on each session the lines are owed to, until a later wait,
+  turn or compaction of that conversation writes them, while the log goes on
+  recording. Nothing a user runs behaves differently.
+
+- **An account login is a task its attempt owns, and leaving it closes its
+  callback.** A ChatGPT or Kimi login now runs on the application's runtime
+  rather than a thread of its own, and Esc, or dropping its `LoginAttempt`
+  off the runtime, aborts it and waits up to 1 s for it to stop, so the browser
+  callback's port is closed and the next `/login` starts rather than answering
+  that one is still stopping; dropped on a runtime thread, it aborts without
+  waiting, is never resumed, and frees its port and slot once a worker
+  carries the abort out. `LoginSlot::start` and `start_with_input` take the
+  runtime and a method that returns a future, reporting through
+  `LoginUpdates`, whose sends never wait, and handed pasted input on a Tokio
+  channel, while `OAuthError::Worker`, `OAuthError::Unwaited` and
+  `Bridge::AccountLogin` are gone and `OAuthError::NotStarted` refuses a login
+  begun with no runtime.
 
 ### Fixed
 

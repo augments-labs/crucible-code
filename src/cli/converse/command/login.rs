@@ -2,10 +2,12 @@
 //! a secret on the command line.
 //!
 //! With no argument, the first panel asks how the account is billed. A real
-//! subscription implementation starts its own bounded worker and reports the
-//! page the user must visit; the terminal thread continues serving resize and
-//! cancellation. Console credentials reach the provider panel and a key box.
-//! A vendor named directly keeps the existing API-key shortcut.
+//! subscription implementation starts its login as a task on the application's
+//! runtime and reports the page the user must visit; the terminal thread
+//! continues serving resize and cancellation, and leaving the panel stops the
+//! login, closing a browser login's callback port. Console credentials reach
+//! the provider panel and a key box. A vendor named directly keeps the
+//! existing API-key shortcut.
 //!
 //! A key typed after a command is a key in the shell's history file, in the
 //! process listing while the command runs, and in that shell's own scrollback

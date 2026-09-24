@@ -9,16 +9,13 @@
 //! one request and the next, and the loop carries on afterwards against a
 //! transcript that now fits. A session that ended its turn to make room would
 //! answer the question the user is still waiting on with a stop. A turn ends
-//! here only when somebody stopped it, when room could not be made, or when a
-//! session line of the compaction's own would have had to wait. Room is not
-//! made where the recap failed or came back incomplete, where a prompt-cache
-//! step of the recap request would have had to wait, or where two goes in a
-//! row freed nothing. A refused line leaves standing what was done before it,
-//! as [`Runner::compact`] says: any pruning, whichever line it was, and the
-//! replacement as well where the line reported what the recap freed; where
-//! the line recorded the recap, the replacement is not made. The turn ends on
-//! what it was: the stop, the failure, the incomplete recap, the refusal,
-//! named for the crossing it was met at, or a window left without room.
+//! here only when somebody stopped it or when room could not be made. Room is
+//! not made where the recap failed or came back incomplete, where a
+//! prompt-cache step of the recap request would have had to wait, or where two
+//! goes in a row freed nothing. The turn ends on what it was: the stop, the
+//! failure, the incomplete recap, the refusal, named for the crossing it was
+//! met at, or a window left without room. The compaction's own session lines
+//! are awaited, each before the step it records is taken or once it is.
 //!
 //! **The log is the record.** Compaction rewrites what the model is sent; what
 //! happened is what the session log holds, and it keeps every message this
@@ -44,7 +41,6 @@ use crucible_core::{
     PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request,
     RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
 };
-use crucible_runtime::{Bridge, Unready};
 use crucible_types::{Compacted, Compacting, RECAP};
 
 use crate::context::RunContext;
@@ -124,9 +120,10 @@ impl Runner {
     ///
     /// [`TurnError`] where the request for the recap failed. Nothing is
     /// replaced in that case: the transcript is replaced once the answer is
-    /// whole, so a failure part way through leaves it as pruning left it. A
-    /// line the session would not take between turns, still held, is reported
-    /// as [`TurnError::Unready`] before anything is recorded or sent.
+    /// whole, so a failure part way through leaves it as pruning left it.
+    /// Before anything is recorded or sent, the lines picking a session up or
+    /// changing vendor still owe the session are written, as
+    /// [`Runner::record_clearings`] writes them.
     ///
     /// Opening the recap's stream and reading it are awaited. A prompt-cache
     /// step of the recap request that would have had to wait is
@@ -136,13 +133,11 @@ impl Runner {
     /// recorded as ambiguous, to be reconciled, as a cancelled one is. The
     /// recap request is taken back out of the transcript.
     ///
-    /// A session write of this compaction's own that would have had to wait is
-    /// [`TurnError::Unready`] too. The line recording what pruning cleared, and
-    /// the line reporting what pruning alone freed, are refused after the
-    /// pruning, which stands; the line recording the recap after any pruning
-    /// and before the replacement, which is then not made; and the line
-    /// reporting what the recap freed after the replacement, which stands.
-    /// Whether the log kept a refused line is not known.
+    /// The compaction's own session lines are awaited: the line recording what
+    /// pruning cleared, and the line reporting what pruning alone freed, after
+    /// the pruning; the line recording the recap after any pruning and before
+    /// the replacement; and the line reporting what the recap freed after the
+    /// replacement. A line the log could not keep is the session's to report.
     pub async fn compact(
         &mut self,
         why: Compacting,
@@ -154,12 +149,9 @@ impl Runner {
         // more than the session allows does not get it.
         let run = &run.held_to(self.policy);
 
-        // A line the session would not take between turns ends the compaction
-        // it was held for, as it ends a turn: before anything is recorded or
-        // sent.
-        if let Some(unready) = self.state.unwritten.take() {
-            return Err(unready.into());
-        }
+        // What picking a session up or changing vendor still owes the
+        // session goes into its log before anything of this compaction does.
+        self.record_clearings().await;
 
         let events = run.reporting();
 
@@ -178,7 +170,7 @@ impl Runner {
         // themselves, and that is exactly where there is no older middle for a
         // recap to replace. Prune before giving up on finding one so those
         // results do not become untouchable merely because the turn is active.
-        let pruned = self.prune()?;
+        let pruned = self.prune().await;
 
         let replacing = if let Some(replacing) = replacing {
             replacing
@@ -192,7 +184,7 @@ impl Runner {
                     after,
                     kept: self.state.transcript.turns(),
                 };
-                Bridge::TurnSession.cross(self.store.display_compacted(compacted, pruned))?;
+                self.store.display_compacted(compacted, pruned).await;
                 events.post(crate::Event::Compacted { compacted });
                 events.post(crate::Event::Carried {
                     left: self.left_under(run.policy().compaction),
@@ -261,7 +253,7 @@ impl Runner {
         // Written to the log before the transcript is replaced, so a crash
         // between the two leaves a log that says what happened rather than one
         // that quietly lost the messages.
-        Bridge::TurnSession.cross(self.store.compacted(replacing, &standing_as))?;
+        self.store.compacted(replacing, &standing_as).await;
         self.store
             .append_run_item(&RunItem::Compaction(CompactionRecord::new(
                 run.ancestry(),
@@ -291,7 +283,7 @@ impl Runner {
             after: self.state.load.tokens(),
             kept,
         };
-        Bridge::TurnSession.cross(self.store.display_compacted(compacted, pruned))?;
+        self.store.display_compacted(compacted, pruned).await;
         events.post(crate::Event::Compacted { compacted });
         events.post(crate::Event::Carried {
             left: self.left_under(run.policy().compaction),
@@ -832,14 +824,9 @@ impl Runner {
     /// result that answered — only the bulk is gone, and only from what the
     /// model is sent.
     ///
-    /// # Errors
-    ///
-    /// [`Unready`] where the session would not take the line. The transcript
-    /// and the load have moved by then. Whether the log kept the line is not
-    /// known, since the store says nothing of a write dropped before it
-    /// answered, so a resume may read the results back uncleared, as it would
-    /// after a crash between the two.
-    fn prune(&mut self) -> Result<bool, Unready> {
+    /// The line is awaited once the transcript has moved. A resume after a
+    /// crash between the two reads the results back uncleared.
+    async fn prune(&mut self) -> bool {
         // The newest output is protected: a result the model just read is not
         // one to pull out from under it. Counted in bytes, the figure the
         // results are actually measured in.
@@ -877,7 +864,7 @@ impl Runner {
         }
 
         if savings < MINIMUM {
-            return Ok(false);
+            return false;
         }
 
         // The transcript first, because the log line names what was cleared:
@@ -886,7 +873,7 @@ impl Runner {
         // holds. The line goes out once the transcript has moved, and replay
         // reads it to make the same move again.
         let freed = self.state.transcript.prune(&clearing);
-        let written = Bridge::TurnSession.cross(self.store.pruned(freed, &clearing));
+        self.store.pruned(freed, &clearing).await;
 
         // The load drops by what was freed: the transcript is smaller, and the
         // next request is the thing that is measured. Recounted rather than
@@ -900,7 +887,7 @@ impl Runner {
             self.agent.instructions(),
             &super::advertising(&self.agent, &self.state.tools),
         );
-        written.map(|()| true)
+        true
     }
 }
 
