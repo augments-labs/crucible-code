@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use super::*;
+use crate::platform::tests::{Closing, refused};
 
 /// A runtime with a clock and nothing a thread-owned pipe needs besides.
 fn runtime() -> tokio::runtime::Runtime {
@@ -101,6 +102,7 @@ fn an_owned_reader_read_without_waiting_says_pending_until_bytes_arrive() {
 #[test]
 fn dropping_an_owned_reader_of_a_quiet_pipe_stops_its_thread_within_the_bound() {
     let (reader, mut writer) = pipe();
+    let (reader, watch) = Closing::new(reader, &writer);
     let reader = Reader::start(reader).expect("a reader thread");
     thread::sleep(PAUSE * 3);
 
@@ -112,10 +114,12 @@ fn dropping_an_owned_reader_of_a_quiet_pipe_stops_its_thread_within_the_bound() 
         took < BOUND,
         "dropping the reader took {took:?}, past its bound of {BOUND:?}"
     );
-    let refused = writer
-        .write(b"x")
-        .expect_err("the pipe outlived its reader");
-    assert_eq!(refused.kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(
+        watch.open(),
+        Vec::<String>::new(),
+        "the pipe outlived its reader"
+    );
+    assert_eq!(refused(&mut writer).kind(), io::ErrorKind::BrokenPipe);
 }
 
 /// Dropped while its thread waits to hand over a chunk nobody took: the

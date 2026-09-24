@@ -219,7 +219,7 @@ impl Watched {
     ///
     /// The opposite ending to [`Self::departs`] and the reason the two are
     /// separate: crucible spends a patience and gives up, but the bytes were
-    /// handed to the thread that owns the pipe before that wait began, so the
+    /// handed to the task that owns the pipe before that wait began, so the
     /// far end may read the call the moment after crucible stopped waiting for
     /// it to.
     fn deafens(&self) {
@@ -810,6 +810,7 @@ fn a_run_that_selected_no_server_hosts_nothing_and_offers_the_builtin_roster_its
         builtin(&["read"]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         Vec::new(),
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -830,6 +831,7 @@ fn a_selected_server_is_started_and_what_it_offered_is_named_under_it() {
         builtin(&["read"]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -859,6 +861,7 @@ fn a_server_naming_a_tool_the_builtin_roster_owns_takes_nothing_over() {
         builtin(&["read"]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -891,6 +894,7 @@ fn a_server_offering_two_names_a_rule_cannot_tell_apart_is_never_started() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -913,6 +917,7 @@ fn a_tool_the_catalogue_offered_is_called_over_the_conversation_that_read_it() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -958,6 +963,7 @@ fn a_server_that_will_not_start_fails_the_turn_and_names_which_one() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -991,6 +997,7 @@ fn a_server_answers_its_catalogue_under_the_request_wait_rather_than_the_handsha
                 .waiting(Duration::from_millis(40), PATIENCE, GRACE)
                 .required(true),
         ],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -1025,6 +1032,7 @@ fn a_server_too_slow_to_greet_is_refused_before_any_request_wait_applies() {
                 .waiting(Duration::from_millis(40), PATIENCE, GRACE)
                 .required(true),
         ],
+        crate::testing::runtime(),
     );
 
     let refused = crucible_runtime::answered!(hosting.prepare(&lifecycle()))
@@ -1046,6 +1054,7 @@ fn a_server_the_run_can_do_without_is_left_out_rather_than_fatal() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs"), optional("notes")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -1076,6 +1085,7 @@ fn a_start_that_fails_partway_stops_the_servers_that_already_ran() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs"), chosen("notes")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -1099,6 +1109,7 @@ fn refreshing_republishes_the_committed_generation_rather_than_reading_again() {
         builtin(&["read"]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1131,6 +1142,7 @@ fn disposal_stops_every_server_it_started() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs"), chosen("notes")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("both started");
@@ -1148,6 +1160,7 @@ fn disposing_twice_stops_nothing_a_second_time() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1172,6 +1185,7 @@ fn a_second_turn_starts_its_servers_again_over_the_same_hosting() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 
@@ -1211,6 +1225,7 @@ fn a_handle_from_a_disposed_lifecycle_refuses_rather_than_speaking() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1255,6 +1270,7 @@ fn a_tool_that_ran_and_failed_is_a_result_rather_than_a_broken_turn() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1288,6 +1304,7 @@ fn arguments_that_are_not_an_object_are_refused_before_anything_is_sent() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1330,6 +1347,7 @@ fn the_generation_names_the_servers_in_selection_order_and_each_catalogue_in_its
         builtin(&["read"]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs"), chosen("notes")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("both started");
@@ -1375,6 +1393,7 @@ fn a_generation_rebuilt_under_a_moved_roster_keeps_every_name_source_and_approva
         Arc::clone(&roster) as Arc<dyn Toolset>,
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1423,6 +1442,7 @@ fn a_call_interrupted_before_it_is_sent_reaches_no_server() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1490,6 +1510,7 @@ fn a_call_interrupted_after_the_frame_went_ends_at_the_press_rather_than_at_the_
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![patient("docs", Duration::from_secs(5))],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1543,6 +1564,7 @@ fn a_server_that_died_before_the_frame_went_is_started_again_and_the_call_answer
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(1)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1590,6 +1612,7 @@ fn a_call_whose_frame_ran_out_of_patience_is_never_sent_a_second_time() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(1)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1597,7 +1620,7 @@ fn a_call_whose_frame_ran_out_of_patience_is_never_sent_a_second_time() {
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     // The server stops reading rather than going. Crucible spends its patience
-    // and gives up on the write, but by then the bytes are with the thread that
+    // and gives up on the write, but by then the bytes are with the task that
     // owns the pipe: the far end may read that call a moment later, and there
     // is a restart in the budget for a crucible that believed otherwise.
     sandbox.server(0).deafens();
@@ -1630,6 +1653,7 @@ fn a_server_selected_with_no_restarts_is_not_started_again_and_the_answer_says_w
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1676,6 +1700,7 @@ fn a_refused_restart_is_said_about_the_server_it_was_refused_to() {
             builtin(&[]),
             Arc::clone(&sandbox) as Arc<dyn SandboxService>,
             vec![chosen],
+            crate::testing::runtime(),
         );
         let context = lifecycle();
         crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1719,6 +1744,7 @@ fn a_restarted_server_offering_the_tool_under_another_schema_is_refused_and_reti
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(1)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1768,6 +1794,7 @@ fn a_restarted_server_that_reshaped_a_tool_nobody_called_is_refused_just_the_sam
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(1)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1800,6 +1827,7 @@ fn a_call_still_outstanding_when_the_server_went_quiet_is_never_repeated() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(3)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -1845,6 +1873,7 @@ fn a_ceiling_of_one_restart_is_spent_once_and_the_next_ending_is_the_last() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(1)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");

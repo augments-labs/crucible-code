@@ -49,14 +49,14 @@
 //! A caller that has to let a future wait crosses with [`Bridge::wait`]
 //! instead, the one other kind of crossing there is. It polls on the caller's
 //! own thread too, entered into the application's runtime, whose workers run
-//! the drivers the future waits on — a timer, and no I/O driver, so a future
-//! that opens a socket there panics; it asks the future again each time the
-//! future wakes it, and it looks at the turn's [`Cancel`] before each poll and
-//! at least every [`NOTICED`] between them. The future answers, or the
-//! cancel is raised and the future is dropped, and nothing of it is spawned or
-//! outlives the call. It refuses, with [`Unwaited`], where there is no runtime
-//! to wait on and where the caller is already on a thread a runtime runs:
-//! waiting there would hold a thread the wait itself may need.
+//! the drivers the future waits on — a timer and an I/O driver; it asks the
+//! future again each time the future wakes it, and it looks at the turn's
+//! [`Cancel`] before each poll and at least every [`NOTICED`] between them.
+//! The future answers, or the cancel is raised and the future is dropped, and
+//! nothing of it is spawned or outlives the call. It refuses, with
+//! [`Unwaited`], where there is no runtime to wait on and where the caller is
+//! already on a thread a runtime runs: waiting there would hold a thread the
+//! wait itself may need.
 //!
 //! What bounds a wait is therefore the cancel and whatever the future bounds
 //! itself by — a deadline, a quiet tick — and never this crossing, which is why

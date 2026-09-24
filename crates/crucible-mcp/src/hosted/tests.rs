@@ -327,7 +327,8 @@ fn a_process_crucible_cannot_speak_to_is_stopped_rather_than_hosted() {
     let (mut fake, watched) = Fake::new([], Ending::Stubborn);
     fake.speaks = false;
 
-    let refused = Hosted::over(fake, PATIENCE).expect_err("a server with no input is no server");
+    let refused = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect_err("a server with no input is no server");
 
     assert!(matches!(refused, Unstarted::Unspeakable));
     assert_eq!(
@@ -342,7 +343,8 @@ fn a_process_crucible_cannot_hear_is_stopped_rather_than_hosted() {
     let (mut fake, watched) = Fake::new([], Ending::Stubborn);
     fake.stdout = None;
 
-    let refused = Hosted::over(fake, PATIENCE).expect_err("a server with no output is no server");
+    let refused = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect_err("a server with no output is no server");
 
     assert!(matches!(refused, Unstarted::Unheard));
     assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
@@ -358,7 +360,8 @@ fn a_handshake_and_a_catalogue_travel_over_the_process_streams() {
         Ending::Exited,
     );
 
-    let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let mut hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let greeting = hosted
         .greet(None)
         .expect("a server offering a version crucible speaks");
@@ -392,7 +395,8 @@ fn a_tool_the_catalogue_offered_can_then_be_called_over_the_same_streams() {
         Ending::Exited,
     );
 
-    let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let mut hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let greeting = hosted.greet(None).expect("an agreeable server");
     let offered = hosted
         .catalogue(&greeting, None)
@@ -425,7 +429,8 @@ fn a_tool_the_catalogue_offered_can_then_be_called_over_the_same_streams() {
 fn a_server_that_says_nothing_is_given_up_on_rather_than_waited_out_forever() {
     let (fake, _watched) = Fake::new([Step::Waits], Ending::Stubborn);
 
-    let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let mut hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let refused = hosted.greet(None).expect_err("a server that never answers");
 
     assert!(
@@ -436,11 +441,11 @@ fn a_server_that_says_nothing_is_given_up_on_rather_than_waited_out_forever() {
 
 /// Whether the server's input reaches the state of being closed.
 ///
-/// The pipe lives on the thread that writes to it, so ending the conversation
-/// closes it by leaving that thread nothing further to receive, and the close
-/// itself happens over there. Waiting for it is the only way to ask the
-/// question without asserting an ordering between two threads that nothing
-/// guarantees; a session that never let go of the pipe waits this out.
+/// The pipe lives with the task that writes to it, so ending the conversation
+/// closes it by ending that task, and the close itself happens when a runtime
+/// worker next runs it. Waiting for it is the only way to ask the question
+/// without asserting an ordering between the test's thread and a worker that
+/// nothing guarantees; a session that never let go of the pipe waits this out.
 fn closes(watched: &Watched) -> bool {
     let until = Instant::now() + PATIENCE;
     while Instant::now() < until {
@@ -456,7 +461,8 @@ fn closes(watched: &Watched) -> bool {
 fn ending_a_session_closes_crucibles_end_before_the_process_is_stopped() {
     let (fake, watched) = Fake::new([Step::Says(greeted(newest()))], Ending::Stubborn);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let ended = hosted.stop(Duration::ZERO);
 
     assert!(
@@ -471,7 +477,8 @@ fn ending_a_session_closes_crucibles_end_before_the_process_is_stopped() {
 fn a_server_that_goes_when_its_input_closes_is_given_the_chance_to() {
     let (fake, watched) = Fake::new([Step::Waits], Ending::OnEof);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let ended = hosted.stop(PATIENCE);
 
     assert!(
@@ -491,7 +498,8 @@ fn a_server_that_goes_when_its_input_closes_is_given_the_chance_to() {
 fn a_process_that_went_on_its_own_is_reaped_rather_than_stopped() {
     let (fake, watched) = Fake::new([], Ending::Exited);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let ended = hosted.stop(Duration::ZERO);
 
     assert!(matches!(ended.finish, Finish::Exited(_)));
@@ -506,7 +514,8 @@ fn a_process_that_went_on_its_own_is_reaped_rather_than_stopped() {
 fn a_process_that_cannot_be_reaped_says_so_rather_than_reporting_a_clean_ending() {
     let (fake, _watched) = Fake::new([], Ending::Unreapable);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let ended = hosted.stop(Duration::ZERO);
 
     assert!(matches!(ended.finish, Finish::Unreaped(_)));
@@ -517,7 +526,8 @@ fn confinement_that_killed_a_server_is_what_the_ending_carries() {
     let (mut fake, _watched) = Fake::new([Step::Waits], Ending::Exited);
     fake.violation = Some(SandboxViolation::CommandTime);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
     let ended = hosted.stop(Duration::ZERO);
 
     assert_eq!(
@@ -537,9 +547,10 @@ fn what_a_server_complained_about_survives_the_ending_that_it_explains() {
             .collect(),
     ));
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    // The drain runs on a thread of its own, so the complaint is read while
-    // crucible waits out the silence rather than before it starts.
+    let hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
+    // The drain is a task of its own, so the complaint is read while crucible
+    // waits out the silence rather than before it starts.
     let mut hosted = hosted;
     drop(hosted.greet(None));
     let ended = hosted.stop(Duration::ZERO);
@@ -559,8 +570,8 @@ fn a_handshake_nobody_is_waiting_for_any_more_ends_at_the_press() {
     let (fake, _watched) = Fake::new([Step::Waits], Ending::Exited);
     let cancel = Cancel::new();
     cancel.request();
-    let mut hosted =
-        Hosted::over(fake, Duration::from_secs(30)).expect("a process with both pipes");
+    let mut hosted = Hosted::over(fake, Duration::from_secs(30), &crate::testing::runtime())
+        .expect("a process with both pipes");
 
     let began = Instant::now();
     let rebuffed = hosted
@@ -588,7 +599,8 @@ fn a_server_that_speaks_just_often_enough_to_never_fall_silent_is_still_given_up
         std::iter::repeat_with(|| Step::Trickles).take(100),
         Ending::Exited,
     );
-    let mut hosted = Hosted::over(fake, patience).expect("a process with both pipes");
+    let mut hosted = Hosted::over(fake, patience, &crate::testing::runtime())
+        .expect("a process with both pipes");
 
     let began = Instant::now();
     let refused = hosted
@@ -608,7 +620,7 @@ fn a_server_that_speaks_just_often_enough_to_never_fall_silent_is_still_given_up
 fn missing_input_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.speaks = false;
-    let refused = Hosted::over(process, PATIENCE).unwrap_err();
+    let refused = Hosted::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("input"), "{message}");
     assert!(
@@ -638,7 +650,7 @@ fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
     // say it a second time.
     let (mut process, watched) = Fake::new([], Ending::Unanswering);
     process.speaks = false;
-    let refused = Hosted::over(process, PATIENCE).unwrap_err();
+    let refused = Hosted::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
     assert_eq!(
         refused.to_string(),
         "the MCP server was started without crucible keeping its input, so there is \
@@ -661,7 +673,7 @@ fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
 fn missing_output_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.stdout = None;
-    let refused = Hosted::over(process, PATIENCE).unwrap_err();
+    let refused = Hosted::over(process, PATIENCE, &crate::testing::runtime()).unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("output"), "{message}");
     assert!(

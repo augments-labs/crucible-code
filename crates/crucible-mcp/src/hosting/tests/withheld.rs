@@ -38,6 +38,7 @@ fn called(value: &str, frames: Vec<Value>) -> Result<ToolOutput, ToolError> {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![given(value)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -128,6 +129,7 @@ fn an_envfrom_value_a_server_echoes_in_its_catalogue_never_reaches_a_schema() {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![given(CANARY)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
@@ -177,6 +179,7 @@ fn an_envfrom_value_a_server_answers_as_its_version_never_reaches_the_refusal() 
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![given(CANARY)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
 

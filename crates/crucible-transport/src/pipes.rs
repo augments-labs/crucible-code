@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use crucible_runtime::Bridge;
 use crucible_sandbox::{SandboxOutput, SandboxProcess};
+use tokio::runtime::Handle;
 
 use crate::{Heard, Muttered, Said};
 
@@ -38,10 +39,27 @@ pub struct Pipes {
 impl Pipes {
     /// Takes `process`'s streams, giving up on one silence after `patience`.
     ///
-    /// Standard error is drained from here on, which is what keeps a talkative
-    /// program from wedging in a write nobody is reading. A process that has no
-    /// standard error is given one that will never say anything rather than an
-    /// absence every caller would have to spell out.
+    /// Each stream is handed to a task of its own on `on`: one reads the
+    /// output, one writes the input, and one drains standard error, which is
+    /// what keeps a talkative program from wedging in a write nobody is
+    /// reading. Each task ends when the value holding it is dropped, or once
+    /// its stream has ended or failed. A process that has no standard error is
+    /// given one that will never say anything rather than an absence every
+    /// caller would have to spell out.
+    ///
+    /// What comes back can be read and written by a host that awaits —
+    /// [`Heard`] is an [`AsyncBufRead`](tokio::io::AsyncBufRead) and [`Said`]
+    /// an [`AsyncWrite`](tokio::io::AsyncWrite) — and by one that waits on its
+    /// own thread, since each is also a [`BufRead`](std::io::BufRead) or a
+    /// [`Write`](std::io::Write) over the same task.
+    ///
+    /// The input is taken as the asynchronous writer
+    /// [`SandboxProcess::take_async_stdin`] hands over, and the output and
+    /// standard error are read through their waiting read, so the tasks need
+    /// of `on` what the backend's streams need of the runtime polling them:
+    /// the local backend's pipes on Unix need its I/O driver, every default
+    /// waiting read its timer, and the default asynchronous input its blocking
+    /// threads.
     ///
     /// # Errors
     ///
@@ -49,19 +67,23 @@ impl Pipes {
     /// listen to. The process is stopped before either is returned, and a stop
     /// that could not be confirmed comes back with it, whether it failed or
     /// would have had to wait and was dropped.
-    pub fn taken(process: &mut dyn SandboxProcess, patience: Duration) -> Result<Self, Unspoken> {
-        let Some(input) = process.take_stdin() else {
+    pub fn taken(
+        process: &mut dyn SandboxProcess,
+        patience: Duration,
+        on: &Handle,
+    ) -> Result<Self, Unspoken> {
+        let Some(input) = process.take_async_stdin() else {
             return Err(Unspoken::after(process, Absent::Input));
         };
         let Some(output) = process.take_stdout() else {
             return Err(Unspoken::after(process, Absent::Output));
         };
         Ok(Self {
-            heard: Heard::new(output, patience),
-            said: Said::new(input, patience),
+            heard: Heard::new(output, patience, on),
+            said: Said::new(input, patience, on),
             muttered: process
                 .take_stderr()
-                .map_or_else(Muttered::silent, Muttered::draining),
+                .map_or_else(Muttered::silent, |stderr| Muttered::draining(stderr, on)),
         })
     }
 }

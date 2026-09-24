@@ -23,8 +23,11 @@ thiserror.workspace = true
 # The asynchronous half of the framing and the finish: `io-util` is the buffered
 # reading and the whole-buffer writing a frame is read and sent with over any
 # asynchronous stream, and `time` is the clock a finish waits on and bounds its
-# stop by. Nothing here builds or chooses a runtime; both run on the caller's.
-tokio = { workspace = true, features = ["io-util", "time"] }
+# stop by. `rt` is the handle a hosted program's reader, writer and standard
+# error are spawned onto as tasks, and `sync` the bounded channels those tasks
+# hand bytes and answers over. Nothing here builds or chooses a runtime: every
+# task runs on the one its caller hands over.
+tokio = { workspace = true, features = ["io-util", "rt", "sync", "time"] }
 
 # The identities a sandbox request is made under, which only the tests that
 # build one need: nothing on this crate's surface names them.
@@ -32,9 +35,11 @@ tokio = { workspace = true, features = ["io-util", "time"] }
 crucible-types.workspace = true
 # `macros` and `rt` are the `#[tokio::test]` a test runs its streams on, and
 # `test-util` is the paused clock a finish's grace and bounds are asserted
-# against without spending the wall time they name. None of it reaches the
+# against without spending the wall time they name. `rt-multi-thread` is the
+# runtime the tests hand the transport's tasks: its workers run them while the
+# test's own thread waits as a synchronous host does. None of it reaches the
 # library.
-tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 
 [lints]
 workspace = true

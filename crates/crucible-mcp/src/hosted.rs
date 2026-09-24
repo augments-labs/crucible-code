@@ -31,6 +31,7 @@ use crate::catalogue::{Greeting, Offered, Rebuffed};
 use crate::talking::Talking;
 use crate::withheld::Withheld;
 use serde_json::Value;
+use tokio::runtime::Handle;
 
 /// An MCP server, hosted over a confined process.
 pub struct Hosted {
@@ -45,12 +46,16 @@ pub struct Hosted {
 }
 
 impl Hosted {
-    /// Speaks to `process`, giving up on one silence after `patience`.
+    /// Speaks to `process`, giving up on one silence after `patience`, with
+    /// its streams read and written by tasks on `runtime`.
     ///
     /// The patience is spent on a single quiet stretch in either direction and
     /// handed back whenever anything moves, so a slow server is slow rather
     /// than dead. Standard error is drained from here on, which is what keeps a
-    /// talkative server from wedging in a write nobody is reading.
+    /// talkative server from wedging in a write nobody is reading. The tasks
+    /// that read and write the conversation end when this is stopped or
+    /// dropped; the drain goes on into what [`Self::stop`] hands back, until
+    /// the stream ends or that is dropped too.
     ///
     /// # Errors
     ///
@@ -59,8 +64,12 @@ impl Hosted {
     /// [`Unstarted::Unreaped`] preserves an unconfirmed stop, whether it failed
     /// or would have had to wait and was dropped: a peer crucible cannot hold a
     /// conversation with is one it has no way to end politely later.
-    pub fn over(process: Box<dyn SandboxProcess>, patience: Duration) -> Result<Self, Unstarted> {
-        Self::withholding(process, patience, Withheld::nothing())
+    pub fn over(
+        process: Box<dyn SandboxProcess>,
+        patience: Duration,
+        runtime: &Handle,
+    ) -> Result<Self, Unstarted> {
+        Self::withholding(process, patience, Withheld::nothing(), runtime)
     }
 
     /// Speaks to `process` as [`Self::over`] does, hiding `withheld` in
@@ -77,8 +86,9 @@ impl Hosted {
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
         withheld: Withheld,
+        runtime: &Handle,
     ) -> Result<Self, Unstarted> {
-        let pipes = Pipes::taken(process.as_mut(), patience)?;
+        let pipes = Pipes::taken(process.as_mut(), patience, runtime)?;
         Ok(Self {
             process,
             talking: Talking::withholding(pipes.heard, pipes.said, withheld),

@@ -28,6 +28,8 @@ mod manifest;
 mod parse;
 mod speaking;
 mod spoken;
+#[cfg(test)]
+mod testing;
 mod trust;
 
 pub use calls::{Asked, CallError, EXTENSION_CALLS, Serving};

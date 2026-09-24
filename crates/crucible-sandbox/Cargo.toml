@@ -30,13 +30,19 @@ thiserror.workspace = true
 
 # `time` is the pause the default waiting read takes between asking a stream
 # that can say only whether bytes are ready now, and `rt` is how that read
-# finds out it was polled off a runtime and says so instead of panicking.
-# Nothing here builds a runtime: the read waits on its caller's.
+# finds out it was polled off a runtime and says so instead of panicking, and
+# the blocking thread the default asynchronous input writes on, so a pipe that
+# fills holds that thread rather than a worker. Nothing here builds a runtime:
+# both run on their caller's.
 tokio = { workspace = true, features = ["rt", "time"] }
 
 # `answered!`, which drives a fake's future by hand in a test.
 [dev-dependencies]
 crucible-runtime = { workspace = true, features = ["proof"] }
+# A runtime of one worker, which is how a test sees whether the default
+# asynchronous input holds the thread that polls it. Nothing of it reaches the
+# library.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [lints]
 workspace = true

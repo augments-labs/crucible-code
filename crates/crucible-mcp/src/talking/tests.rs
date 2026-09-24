@@ -216,7 +216,7 @@ fn a_frame_that_is_not_a_message_stops_the_call_rather_than_being_skipped() {
 ///
 /// Standing in for [`Said`](crucible_transport::Said), whose two ways of refusing
 /// mean opposite things about the far end: a write that timed out left the
-/// bytes with the thread that owns the pipe, and a broken one left them
+/// bytes with the task that owns the pipe, and a broken one left them
 /// nowhere.
 ///
 /// [`Said`]: crucible_transport::Said
