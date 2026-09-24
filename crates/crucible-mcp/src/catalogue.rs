@@ -25,11 +25,18 @@
 //! make two member names of one object the same is refused with the rest of
 //! the catalogue, as two tools under one name are, rather than shown with a
 //! property gone.
+//!
+//! Both steps are taken over either kind of stream the conversation is held
+//! on: [`hello`] and [`tools`] over a blocking one, [`hello_async`] and
+//! [`tools_async`] over an asynchronous one. Both kinds send the same
+//! questions and read what comes back in one place, so a version is agreed and
+//! a catalogue bounded the same way whichever it arrived on.
 
 use std::fmt;
 use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufRead, AsyncWrite};
 
 use crate::talking::{Talking, Trouble};
 use crate::withheld::Withheld;
@@ -262,18 +269,56 @@ impl fmt::Debug for Offered {
 /// [`Rebuffed`] where the conversation fails, the answer carries no version, or
 /// the version it carries is one crucible does not speak.
 pub fn hello<R: BufRead, W: Write>(talking: &mut Talking<R, W>) -> Result<Greeting, Rebuffed> {
-    let answer = talking.ask(
-        "initialize",
-        &json!({
-            "protocolVersion": VERSIONS[0],
-            // Nothing. Crucible offers a server no sampling, no roots and no
-            // elicitation, and saying so is what stops a server building a plan
-            // around asking for one.
-            "capabilities": {},
-            "clientInfo": { "name": "crucible", "version": env!("CARGO_PKG_VERSION") },
-        }),
-    )?;
+    let answer = talking.ask("initialize", &introduced())?;
+    let greeting = greeted(&answer, talking.withheld())?;
+    // The protocol's own order: nothing else may be asked until the server has
+    // been told the handshake finished.
+    talking.tell("notifications/initialized", &json!({}))?;
+    Ok(greeting)
+}
 
+/// Says hello over a conversation held on streams read and written
+/// asynchronously, and agrees which version of MCP both ends are speaking.
+///
+/// The same handshake as [`hello`], and the same reading of its answer.
+///
+/// # Errors
+///
+/// As [`hello`].
+///
+/// # Cancel safety
+///
+/// As [`Talking::ask_async`]'s: a handshake dropped part way leaves a
+/// conversation to ask nothing further of.
+pub async fn hello_async<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
+    talking: &mut Talking<R, W>,
+) -> Result<Greeting, Rebuffed> {
+    let answer = talking.ask_async("initialize", &introduced()).await?;
+    let greeting = greeted(&answer, talking.withheld())?;
+    talking
+        .tell_async("notifications/initialized", &json!({}))
+        .await?;
+    Ok(greeting)
+}
+
+/// What crucible says about itself when it says hello.
+fn introduced() -> Value {
+    json!({
+        "protocolVersion": VERSIONS[0],
+        // Nothing. Crucible offers a server no sampling, no roots and no
+        // elicitation, and saying so is what stops a server building a plan
+        // around asking for one.
+        "capabilities": {},
+        "clientInfo": { "name": "crucible", "version": env!("CARGO_PKG_VERSION") },
+    })
+}
+
+/// What the server's answer to hello settles, with `withheld` hidden in what
+/// is kept of it.
+///
+/// Both handshakes read an answer here, so a version is agreed or refused the
+/// same way whichever kind of stream it arrived on.
+fn greeted(answer: &Value, withheld: &Withheld) -> Result<Greeting, Rebuffed> {
     let Some(version) = answer.get("protocolVersion").and_then(Value::as_str) else {
         return Err(Rebuffed::Missing {
             field: "protocolVersion",
@@ -282,24 +327,19 @@ pub fn hello<R: BufRead, W: Write>(talking: &mut Talking<R, W>) -> Result<Greeti
     };
     if !VERSIONS.contains(&version) {
         return Err(Rebuffed::Version {
-            found: talking.withheld().hide(version).into(),
+            found: withheld.hide(version).into(),
             spoken: VERSIONS.join(", ").into(),
         });
     }
 
-    let greeting = Greeting {
+    Ok(Greeting {
         version: version.into(),
         named: answer
             .pointer("/serverInfo/name")
             .and_then(Value::as_str)
-            .map(|named| talking.withheld().hide(named).into()),
+            .map(|named| withheld.hide(named).into()),
         offers: answer.pointer("/capabilities/tools").is_some(),
-    };
-
-    // The protocol's own order: nothing else may be asked until the server has
-    // been told the handshake finished.
-    talking.tell("notifications/initialized", &json!({}))?;
-    Ok(greeting)
+    })
 }
 
 /// Reads every tool the server offers.
@@ -326,44 +366,97 @@ pub fn tools<R: BufRead, W: Write>(
     let mut read: Vec<Offered> = Vec::new();
     let mut cursor: Option<Box<str>> = None;
     for _ in 0..PAGES {
-        let params = cursor
-            .as_deref()
-            .map_or_else(|| json!({}), |held| json!({ "cursor": held }));
-        let page = talking.ask("tools/list", &params)?;
-
-        let Some(listed) = page.get("tools").and_then(Value::as_array) else {
-            return Err(Rebuffed::Missing {
-                field: "tools",
-                said: "tools/list answer",
-            });
-        };
-        for held in listed {
-            let offered = one(held, talking.withheld())?;
-            // Shown names too: two names that differ only where something was
-            // hidden are one name to everything that reads them.
-            if read.iter().any(|kept| {
-                kept.name().eq_ignore_ascii_case(offered.name())
-                    || kept.shown().eq_ignore_ascii_case(offered.shown())
-            }) {
-                return Err(Rebuffed::Twice {
-                    name: offered.shown.clone(),
-                });
-            }
-            if read.len() >= TOOLS {
-                return Err(Rebuffed::TooMany { most: TOOLS });
-            }
-            read.push(offered);
-        }
-
-        match page.get("nextCursor").and_then(Value::as_str) {
-            Some(next) => {
-                bounded("nextCursor", next.len(), CURSOR_BYTES)?;
-                cursor = Some(next.into());
-            }
+        let page = talking.ask("tools/list", &listing(cursor.as_deref()))?;
+        cursor = match paged(&page, &mut read, talking.withheld())? {
+            Some(next) => Some(next),
             None => return Ok(read),
-        }
+        };
     }
     Err(Rebuffed::Endless { most: PAGES })
+}
+
+/// Reads every tool the server offers, over a conversation held on streams
+/// read and written asynchronously.
+///
+/// The same pages as [`tools`], asked for and read the same way, under the
+/// same bounds.
+///
+/// # Errors
+///
+/// As [`tools`].
+///
+/// # Cancel safety
+///
+/// As [`Talking::ask_async`]'s: a catalogue dropped part way leaves a
+/// conversation to ask nothing further of.
+pub async fn tools_async<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
+    talking: &mut Talking<R, W>,
+    greeting: &Greeting,
+) -> Result<Vec<Offered>, Rebuffed> {
+    if !greeting.offers() {
+        return Ok(Vec::new());
+    }
+
+    let mut read: Vec<Offered> = Vec::new();
+    let mut cursor: Option<Box<str>> = None;
+    for _ in 0..PAGES {
+        let page = talking
+            .ask_async("tools/list", &listing(cursor.as_deref()))
+            .await?;
+        cursor = match paged(&page, &mut read, talking.withheld())? {
+            Some(next) => Some(next),
+            None => return Ok(read),
+        };
+    }
+    Err(Rebuffed::Endless { most: PAGES })
+}
+
+/// What is sent to ask for the page `cursor` points at, or the first.
+fn listing(cursor: Option<&str>) -> Value {
+    cursor.map_or_else(|| json!({}), |held| json!({ "cursor": held }))
+}
+
+/// Adds what one page offers to `read`, and hands back the cursor to the
+/// next page, where there is one.
+///
+/// Both ways of reading a catalogue read a page here, so every bound and
+/// every refusal is the same whichever kind of stream it arrived on.
+fn paged(
+    page: &Value,
+    read: &mut Vec<Offered>,
+    withheld: &Withheld,
+) -> Result<Option<Box<str>>, Rebuffed> {
+    let Some(listed) = page.get("tools").and_then(Value::as_array) else {
+        return Err(Rebuffed::Missing {
+            field: "tools",
+            said: "tools/list answer",
+        });
+    };
+    for held in listed {
+        let offered = one(held, withheld)?;
+        // Shown names too: two names that differ only where something was
+        // hidden are one name to everything that reads them.
+        if read.iter().any(|kept| {
+            kept.name().eq_ignore_ascii_case(offered.name())
+                || kept.shown().eq_ignore_ascii_case(offered.shown())
+        }) {
+            return Err(Rebuffed::Twice {
+                name: offered.shown.clone(),
+            });
+        }
+        if read.len() >= TOOLS {
+            return Err(Rebuffed::TooMany { most: TOOLS });
+        }
+        read.push(offered);
+    }
+
+    match page.get("nextCursor").and_then(Value::as_str) {
+        Some(next) => {
+            bounded("nextCursor", next.len(), CURSOR_BYTES)?;
+            Ok(Some(next.into()))
+        }
+        None => Ok(None),
+    }
 }
 
 /// One entry of a page.

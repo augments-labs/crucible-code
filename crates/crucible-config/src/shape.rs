@@ -1156,7 +1156,7 @@ const MCP_SERVER: Shape = Shape::Fields(&[
     },
     Field {
         name: "handshakeSeconds",
-        about: "How long to wait for the server to agree a protocol version before giving up on it. Read only from the configuration file in your home directory",
+        about: "How long to wait for the server to agree a protocol version, and for each step of starting its sandbox, before giving up on it. Read only from the configuration file in your home directory",
         shape: Shape::Count,
         examples: &[],
         usual: Some("10"),

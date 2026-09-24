@@ -446,13 +446,16 @@ fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
             Arc::new(roster(&revealed)),
             Arc::clone(&sandbox) as Arc<dyn SandboxService>,
             vec![chosen("docs")],
-            runtime,
+            runtime.clone(),
         );
         let context = lifecycle();
-        crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
+        runtime
+            .block_on(hosting.prepare(&context))
+            .expect("the server started");
 
-        let first =
-            crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+        let first = runtime
+            .block_on(hosting.snapshot(&context))
+            .expect("one generation");
         let before = first.find("mcp:docs/search").expect("the server's tool");
         let source = before.descriptor().provenance().id().to_owned();
         let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
@@ -461,8 +464,9 @@ fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
         // What `tool_search` does mid-turn: the built-in roster grows, so the
         // merged generation has to be rebuilt around it.
         revealed.reveal("grep");
-        let second =
-            crucible_runtime::answered!(hosting.refresh(&context)).expect("the generation after");
+        let second = runtime
+            .block_on(hosting.refresh(&context))
+            .expect("the generation after");
 
         assert_ne!(
             first.generation().context_id(),
@@ -484,7 +488,9 @@ fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
             read,
             "and must not go back to the server for a catalogue it already read"
         );
-        crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+        runtime
+            .block_on(hosting.dispose(&context))
+            .expect("the server stopped");
     });
     assert_eq!(
         shutdown,

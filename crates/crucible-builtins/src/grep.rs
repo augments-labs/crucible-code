@@ -389,6 +389,19 @@ struct Found {
     stopped: bool,
 }
 
+impl Found {
+    /// What a search stopped before its first file found: nothing, and that
+    /// it was stopped.
+    fn stopped() -> Self {
+        Self {
+            hits: Vec::new(),
+            more: false,
+            partly: Partial::default(),
+            stopped: true,
+        }
+    }
+}
+
 /// A fixed-size account of files a search did not finish.
 ///
 /// The total is separate from the names because an unreadable tree is input,
@@ -779,8 +792,19 @@ impl Tool for Grep {
                 context: args.whole(CONTEXT, 0)?.min(REACH),
                 limit,
             };
-            let found = self.hunt(&from, query, &approved, context.cancel());
-            Ok(report(&found, pattern, (mode, limit)))
+
+            // The walk and the search are the one piece of this call with no
+            // asynchronous form, so they run where the call's blocking work
+            // runs, on a copy of this tool they own along with the approval
+            // they ask about each file.
+            let pattern = pattern.to_owned();
+            let workspace = self.workspace.clone();
+            let found = crate::blocking::run(NAME, context, move |cancel| {
+                Grep::new(workspace).hunt(&from, query, &approved, cancel)
+            })
+            .await?
+            .unwrap_or_else(Found::stopped);
+            Ok(report(&found, &pattern, (mode, limit)))
         })
     }
 }

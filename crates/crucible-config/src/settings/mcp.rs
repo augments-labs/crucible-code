@@ -180,7 +180,8 @@ impl McpServer {
         pairs(&self.env_from)
     }
 
-    /// How long the server has to agree a protocol version.
+    /// How long the server has to agree a protocol version, and each step of
+    /// starting its sandbox has to answer.
     #[must_use]
     pub const fn handshake(&self) -> Duration {
         self.handshake

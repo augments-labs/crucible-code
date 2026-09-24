@@ -138,18 +138,17 @@ impl fmt::Debug for ToolsetContext {
 /// hands back a [`BoxFuture`] borrowing the toolset and its context. Naming
 /// what is registered reads what the toolset already holds and asks the source
 /// nothing, but an implementation may still make it wait behind its own
-/// lifecycle steps: the MCP toolset's `registered`, for a name its built-in
-/// tools do not hold, waits behind a dispose in progress.
+/// lifecycle steps.
 pub trait Toolset: Send + Sync {
     /// Acquires the resources this run needs before its first snapshot.
     ///
     /// # Errors
     ///
     /// [`ToolsetError`] when the source cannot be prepared. A step of it that
-    /// would have had to wait and was dropped may come back as
-    /// [`ToolsetError::Unready`], or in the source's own words as
-    /// [`ToolsetError::Source`]; either way what that step began is
-    /// unconfirmed rather than undone. A cleanup step that would have had to
+    /// was dropped before it answered comes back as [`ToolsetError::Unready`]
+    /// where the source crossed a bridge that could not wait, or in the
+    /// source's own words as [`ToolsetError::Source`]; either way what that
+    /// step began is unconfirmed rather than undone. A cleanup step that would have had to
     /// wait after another failure is reported as that failure, and named at
     /// most in its text. The caller still invokes [`Toolset::dispose`], after
     /// a refusal too.
@@ -164,7 +163,7 @@ pub trait Toolset: Send + Sync {
     ///
     /// [`ToolsetError`] when no bounded coherent snapshot can be produced,
     /// [`ToolsetError::Unready`] among them where a step of the source's own
-    /// would have had to wait and was dropped.
+    /// crossed a bridge that could not wait, and was dropped.
     fn snapshot<'a>(
         &'a self,
         context: &'a ToolsetContext,
@@ -179,8 +178,8 @@ pub trait Toolset: Send + Sync {
     ///
     /// [`ToolsetError`] when refresh or materialization fails,
     /// [`ToolsetError::Unready`] among them where a step of the source's own
-    /// would have had to wait and was dropped, leaving what it began
-    /// unconfirmed.
+    /// crossed a bridge that could not wait, and was dropped, leaving what it
+    /// began unconfirmed.
     fn refresh<'a>(
         &'a self,
         context: &'a ToolsetContext,
@@ -193,10 +192,10 @@ pub trait Toolset: Send + Sync {
     /// # Errors
     ///
     /// [`ToolsetError`] when cleanup could not be completed. A step of it that
-    /// would have had to wait and was dropped may come back as
-    /// [`ToolsetError::Unready`], or in the source's own words as
-    /// [`ToolsetError::Source`]; either way what that step began is
-    /// unconfirmed rather than undone. A repeated call must not repeat an
+    /// was dropped before it answered comes back as [`ToolsetError::Unready`]
+    /// where the source crossed a bridge that could not wait, or in the
+    /// source's own words as [`ToolsetError::Source`]; either way what that
+    /// step began is unconfirmed rather than undone. A repeated call must not repeat an
     /// effect merely to reproduce the error.
     fn dispose<'a>(
         &'a self,
@@ -1035,6 +1034,11 @@ pub enum ToolsetError {
     /// A caller may conclude that the step did not finish, and no more:
     /// whatever it began is unconfirmed, because dropping a step is not a
     /// promise that it cleaned up after itself.
+    ///
+    /// For a source that crosses a [`crucible_runtime::Bridge`] to reach a
+    /// step. No toolset this workspace ships does any more: MCP hosting
+    /// awaits its steps, and one it gives up on, at the lifecycle's cancel or
+    /// at a server's handshake patience, comes back as [`Self::Source`].
     #[error("tool source {id}: {refusal}")]
     Unready {
         /// Which source, by the stable spelling its provenance carries.

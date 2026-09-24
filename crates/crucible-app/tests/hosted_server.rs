@@ -124,11 +124,21 @@ fn hosted_once(service: &LocalSandbox, runtime: &Handle, enabled: bool) {
         .block_on(session.start(command))
         .expect("the server started");
 
+    // Awaited, as hosting speaks to a server.
     let mut hosted = Hosted::over(process, PATIENCE, runtime).expect("both pipes were there");
-    let greeting = hosted.greet(None).expect("the handshake");
-    let offered = hosted.catalogue(&greeting, None).expect("the catalogue");
-    let tool = offered.first().expect("one tool offered");
-    let answered = hosted.call(tool, &json!({}), None).expect("the call");
+    let (tool, answered) = runtime.block_on(async {
+        let greeting = hosted.greet_async(None).await.expect("the handshake");
+        let offered = hosted
+            .catalogue_async(&greeting, None)
+            .await
+            .expect("the catalogue");
+        let tool = offered.first().expect("one tool offered").clone();
+        let answered = hosted
+            .call_async(&tool, &json!({}), None)
+            .await
+            .expect("the call");
+        (tool, answered)
+    });
     let ended = hosted.stop(Duration::from_secs(10));
 
     assert_eq!(

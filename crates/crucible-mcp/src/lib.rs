@@ -31,7 +31,7 @@ mod withheld;
 pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call, call_async};
 pub use catalogue::{
     ABOUT_BYTES, CURSOR_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS,
-    VERSIONS, hello, tools,
+    VERSIONS, hello, hello_async, tools, tools_async,
 };
 pub use hosted::{Ended, Hosted, Unstarted};
 pub use hosting::{Chosen, Hosting};
