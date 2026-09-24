@@ -1,6 +1,7 @@
 //! What a side request sends, and what it reads back out of a real answer.
 
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 
 use crucible_core::{Fetch, Host, Search};
 use crucible_credentials::{ApiKey, Header, HeaderKey};
@@ -8,6 +9,40 @@ use serde_json::json;
 
 use super::*;
 use crate::transport::{Replay, Response, TransportError};
+
+/// `search`/`fetch` answer at their first poll for every source this crate
+/// ships; a test stands in for that one poll under its own name so a fixture
+/// keeps the synchronous call shape it has always had.
+trait AnsweredAtOnce: Search {
+    fn answered_search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        crucible_runtime::answered!(Search::search(self, query, cancel))
+    }
+}
+
+impl<T: Search + ?Sized> AnsweredAtOnce for T {}
+
+/// The `Fetch` twin of [`AnsweredAtOnce`].
+trait FetchedAtOnce: Fetch {
+    fn answered_fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
+        crucible_runtime::answered!(Fetch::fetch(self, url, cancel))
+    }
+}
+
+impl<T: Fetch + ?Sized> FetchedAtOnce for T {}
+
+/// Polls `future` once and asserts it answered: the must-prove's own test,
+/// named for the implementation it is about, rather than trusting
+/// `answered!`'s panic alone to stand in for it everywhere.
+fn assert_ready_once<T>(mut future: crucible_runtime::BoxFuture<'_, Result<T, SourceError>>) {
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(Ok(_)) => {}
+        Poll::Ready(Err(problem)) => panic!("the future answered with an error: {problem}"),
+        Poll::Pending => panic!("the future was still pending after one poll"),
+    }
+}
 
 /// The exact key that must never appear anywhere but a header value.
 const SECRET: &str = "sk-ant-do-not-log-me";
@@ -83,12 +118,47 @@ fn source(status: u16, body: impl Into<String>) -> AnthropicWeb {
 }
 
 #[test]
+fn anthropic_search_answers_at_its_first_poll() {
+    assert_ready_once(Search::search(
+        &source(200, answer()),
+        "when was claude shannon born",
+        &Cancel::new(),
+    ));
+}
+
+#[test]
+fn anthropic_fetch_answers_at_its_first_poll() {
+    let moved = json!({
+        "content": [{
+            "type": "web_fetch_tool_result",
+            "tool_use_id": "srvtoolu_2",
+            "content": {
+                "type": "web_fetch_result",
+                "url": "https://example.com/page",
+                "content": {
+                    "type": "document",
+                    "title": "Page",
+                    "source": { "type": "text", "media_type": "text/plain", "data": "body" }
+                },
+                "retrieved_at": "2026-08-18T10:30:00Z"
+            }
+        }]
+    });
+
+    assert_ready_once(Fetch::fetch(
+        &source(200, moved.to_string()),
+        "https://example.com/page",
+        &Cancel::new(),
+    ));
+}
+
+#[test]
 fn a_result_takes_its_extract_from_the_citation_written_off_it() {
     // The vendor's own result carries no readable body — it arrives encrypted
     // and only that vendor's model can read it. What is readable is the line
     // the model quoted, so the two are matched by address.
     let found = source(200, answer())
-        .search("when was claude shannon born", &Cancel::new())
+        .answered_search("when was claude shannon born", &Cancel::new())
         .expect("an answer that parses");
 
     assert_eq!(found.len(), 2);
@@ -112,7 +182,7 @@ fn a_result_nothing_was_quoted_from_keeps_its_place() {
     // answer depend on what the model happened to write about rather than on
     // what the search found.
     let found = source(200, answer())
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect("an answer that parses");
 
     let second = found.get(1).expect("a second result");
@@ -123,7 +193,9 @@ fn a_result_nothing_was_quoted_from_keeps_its_place() {
 #[test]
 fn a_search_declares_the_server_tool_and_sends_the_query_as_the_message() {
     let (source, replay) = built(200, answer());
-    source.search("rust async traits", &Cancel::new()).ok();
+    source
+        .answered_search("rust async traits", &Cancel::new())
+        .ok();
 
     let sent: serde_json::Value =
         serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
@@ -147,9 +219,12 @@ fn fable_51_native_web_uses_adaptive_thinking_without_forced_tools_or_chosen_eff
     for tool in [SEARCH_TOOL, FETCH_TOOL] {
         let (mut source, replay) = built(200, answer());
         source.model = "claude-fable-5-1".into();
-        source
-            .ask("Search or fetch this source", tool, &Cancel::new())
-            .unwrap();
+        crucible_runtime::answered!(source.ask(
+            "Search or fetch this source",
+            tool,
+            &Cancel::new()
+        ))
+        .unwrap();
         let sent = replay.sent();
         let body: Value = serde_json::from_str(&sent.body).unwrap();
         assert_eq!(sent.url, "https://api.anthropic.com/v1/messages");
@@ -184,7 +259,9 @@ fn fable_51_native_web_rejects_unfinished_side_answers() {
             .insert("stop_reason".into(), json!(reason));
         let (mut source, _) = built(200, payload.to_string());
         source.model = "claude-fable-5-1".into();
-        let error = source.search("search now", &Cancel::new()).unwrap_err();
+        let error = source
+            .answered_search("search now", &Cancel::new())
+            .unwrap_err();
         assert!(matches!(error, SourceError::Protocol { .. }));
     }
 }
@@ -201,14 +278,16 @@ fn fable_51_native_web_errors_never_echo_private_provider_payloads() {
     ] {
         let (mut source, _) = built(status, payload.to_string());
         source.model = "claude-fable-5-1".into();
-        let error = source.search("search now", &Cancel::new()).unwrap_err();
+        let error = source
+            .answered_search("search now", &Cancel::new())
+            .unwrap_err();
         assert!(!format!("{error:?} {error}").contains(private));
     }
     let payload = json!({"stop_reason":"end_turn","content":[{"type":"web_fetch_tool_result","content":{"error_code":private}}]});
     let (mut source, _) = built(200, payload.to_string());
     source.model = "claude-fable-5-1".into();
     let error = source
-        .fetch("https://example.com/", &Cancel::new())
+        .answered_fetch("https://example.com/", &Cancel::new())
         .unwrap_err();
     assert!(!format!("{error:?} {error}").contains(private));
 }
@@ -223,7 +302,7 @@ fn web_body_bound_rejects_one_byte_over_instead_of_accepting_a_truncated_json_pr
         }
         let (mut source, _) = built(200, payload);
         source.model = "claude-fable-5-1".into();
-        let result = source.search("search now", &Cancel::new());
+        let result = source.answered_search("search now", &Cancel::new());
         assert_eq!(
             result.is_ok(),
             extra == 0,
@@ -235,7 +314,7 @@ fn web_body_bound_rejects_one_byte_over_instead_of_accepting_a_truncated_json_pr
 #[test]
 fn the_key_travels_in_a_header_and_nowhere_else() {
     let (source, replay) = built(200, answer());
-    source.search("x", &Cancel::new()).ok();
+    source.answered_search("x", &Cancel::new()).ok();
 
     let sent = replay.sent();
     assert!(!sent.body.contains(SECRET), "the key reached the body");
@@ -262,7 +341,7 @@ fn a_search_reaches_the_vendor_host_a_rule_would_be_written_about() {
 #[test]
 fn a_refusal_carries_the_status_and_never_the_key() {
     let problem = source(401, r#"{"error":{"message":"invalid x-api-key"}}"#)
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a 401 to be refused");
 
     let said = problem.to_string();
@@ -273,7 +352,7 @@ fn a_refusal_carries_the_status_and_never_the_key() {
 #[test]
 fn an_answer_that_is_not_json_is_a_protocol_failure_rather_than_a_panic() {
     let problem = source(200, "<html>a gateway wrote this</html>")
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("unparseable bytes to be refused");
 
     assert!(matches!(problem, SourceError::Protocol { .. }), "{problem}");
@@ -289,7 +368,7 @@ fn a_search_that_found_nothing_answers_with_nothing_rather_than_failing() {
         }]
     });
     let found = source(200, empty.to_string())
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect("an empty search result to parse");
 
     assert!(found.is_empty());
@@ -302,7 +381,7 @@ fn an_anthropic_answer_without_its_required_search_call_is_not_no_results() {
     });
 
     let problem = source(200, answered.to_string())
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("an answer without the required search result to fail");
 
     assert!(
@@ -317,7 +396,7 @@ fn a_cancelled_search_sends_nothing() {
     cancel.request();
 
     let problem = source(200, answer())
-        .search("x", &cancel)
+        .answered_search("x", &cancel)
         .expect_err("a cancelled call not to be sent");
 
     assert!(matches!(problem, SourceError::Cancelled(_)), "{problem}");
@@ -335,7 +414,7 @@ fn an_address_carrying_user_information_is_opaque_and_never_fetched() {
     ));
 
     let problem = source
-        .fetch("https://docs.rs@evil.example/", &Cancel::new())
+        .answered_fetch("https://docs.rs@evil.example/", &Cancel::new())
         .expect_err("an address that names no host to be refused before it is sent");
 
     assert!(matches!(problem, SourceError::Address(_)), "{problem}");
@@ -348,7 +427,7 @@ fn a_scheme_that_is_not_http_is_refused_before_anything_is_sent() {
     for address in ["file:///etc/passwd", "ftp://example.com/x", "not a url"] {
         assert!(
             matches!(
-                source.fetch(address, &Cancel::new()),
+                source.answered_fetch(address, &Cancel::new()),
                 Err(SourceError::Address(_))
             ),
             "{address} was not refused",
@@ -376,7 +455,7 @@ fn a_fetched_page_reports_where_it_ended_up() {
     });
 
     let page = source(200, moved.to_string())
-        .fetch("https://example.com/asked-for", &Cancel::new())
+        .answered_fetch("https://example.com/asked-for", &Cancel::new())
         .expect("a page that parses");
 
     assert_eq!(page.url.as_ref(), "https://example.com/moved-here");
@@ -395,7 +474,7 @@ fn a_fetch_the_vendor_refused_says_which_way_it_refused() {
     });
 
     let problem = source(200, refused.to_string())
-        .fetch("https://example.com/gone", &Cancel::new())
+        .answered_fetch("https://example.com/gone", &Cancel::new())
         .expect_err("an error block to be a failure");
 
     assert!(
@@ -445,6 +524,46 @@ fn openai(status: u16, body: impl Into<String>) -> (OpenAiWeb, Arc<Replay>) {
 }
 
 #[test]
+fn openai_search_answers_at_its_first_poll() {
+    let (source, _replay) = openai(200, responded("an answer", &json!([])));
+    assert_ready_once(Search::search(
+        &source,
+        "when was rust released",
+        &Cancel::new(),
+    ));
+}
+
+#[test]
+fn openai_fetch_answers_at_its_first_poll() {
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_1",
+                    "status": "completed",
+                    "action": { "type": "open_page", "url": "https://docs.rs/serde" }
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "the page text", "annotations": [] }]
+                }
+            ]
+        }
+    });
+    let stream = format!("event: response.completed\ndata: {completed}\n\n");
+    let (source, _replay) = openai(200, stream);
+
+    assert_ready_once(Fetch::fetch(
+        &source,
+        "https://docs.rs/serde",
+        &Cancel::new(),
+    ));
+}
+
+#[test]
 fn astra_native_web_waits_for_clean_eof_and_rejects_a_late_failure() {
     let completed = responded("answer", &json!([]));
     for suffix in [
@@ -455,7 +574,7 @@ fn astra_native_web_waits_for_clean_eof_and_rejects_a_late_failure() {
         let (mut source, _) = openai(200, format!("{completed}{suffix}"));
         source.model = "gpt-6-astra".into();
         let error = source
-            .search("fixture", &Cancel::new())
+            .answered_search("fixture", &Cancel::new())
             .expect_err("an invalid tail must discard the side answer");
         assert!(!format!("{error:?} {error}").contains("private-late-error"));
     }
@@ -468,7 +587,7 @@ fn astra_native_web_rejects_oversized_bodies_even_after_a_valid_completion() {
         format!("{}{}", responded("answer", &json!([])), " ".repeat(MOST)),
     );
     source.model = "gpt-6-astra".into();
-    assert!(source.search("fixture", &Cancel::new()).is_err());
+    assert!(source.answered_search("fixture", &Cancel::new()).is_err());
 }
 
 #[test]
@@ -489,7 +608,9 @@ fn astra_native_web_diagnostics_do_not_repeat_private_response_details() {
     ] {
         let (mut source, _) = openai(status, body);
         source.model = "gpt-6-astra".into();
-        let error = source.search("fixture", &Cancel::new()).unwrap_err();
+        let error = source
+            .answered_search("fixture", &Cancel::new())
+            .unwrap_err();
         assert!(!format!("{error:?} {error}").contains("private-reasoning-payload"));
     }
 }
@@ -513,7 +634,7 @@ fn a_citation_becomes_a_result_whose_extract_is_the_run_it_marks() {
 
     let found = openai(200, body)
         .0
-        .search("rust release", &Cancel::new())
+        .answered_search("rust release", &Cancel::new())
         .expect("an answer that parses");
 
     let first = found.first().expect("a result");
@@ -540,7 +661,7 @@ fn an_extract_is_cut_by_characters_and_not_by_bytes() {
 
     let found = openai(200, body)
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect("an answer that parses");
 
     assert_eq!(
@@ -564,7 +685,7 @@ fn an_index_past_the_end_yields_no_extract_instead_of_dying() {
 
     let found = openai(200, body)
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect("an answer that parses");
 
     // Everything from the start, since the end ran off the string — never a
@@ -588,7 +709,7 @@ fn a_completed_openai_search_with_no_hosted_call_is_not_an_empty_result() {
 
     let problem = openai(200, stream)
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("an answer without the required search call to fail");
 
     assert!(
@@ -609,7 +730,7 @@ fn one_address_cited_twice_is_one_result() {
 
     let found = openai(200, body)
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect("an answer that parses");
 
     assert_eq!(found.len(), 1);
@@ -618,7 +739,9 @@ fn one_address_cited_twice_is_one_result() {
 #[test]
 fn a_search_declares_the_hosted_tool_and_keeps_the_query_off_the_vendor_store() {
     let (source, replay) = openai(200, responded("x", &json!([])));
-    source.search("rust async traits", &Cancel::new()).ok();
+    source
+        .answered_search("rust async traits", &Cancel::new())
+        .ok();
 
     let sent: serde_json::Value =
         serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
@@ -687,7 +810,7 @@ fn a_chatgpt_stream_can_carry_output_in_finished_item_events() {
 
     let found = openai(200, stream)
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect("an account response that parses");
 
     let first = found.first().expect("one account result");
@@ -709,7 +832,7 @@ fn an_openai_stream_failure_carries_its_code_and_message() {
 
     let problem = openai(200, stream)
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a failed stream to fail the search");
 
     let said = problem.to_string();
@@ -756,7 +879,7 @@ fn cancelling_while_an_openai_event_is_quiet_stays_a_cancel() {
     );
 
     let problem = source
-        .search("x", &cancel)
+        .answered_search("x", &cancel)
         .expect_err("a cancelled stream to stop");
 
     assert!(matches!(problem, SourceError::Cancelled(_)), "{problem}");
@@ -769,7 +892,7 @@ fn an_openai_stream_that_ends_without_a_completion_is_not_an_empty_search() {
 
     let problem = openai(200, stream)
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a truncated stream to fail the search");
 
     assert!(
@@ -782,7 +905,7 @@ fn an_openai_stream_that_ends_without_a_completion_is_not_an_empty_search() {
 fn a_done_sentinel_without_a_completion_is_not_a_completion() {
     let problem = openai(200, "data: [DONE]\n\n")
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a sentinel without its terminal event to fail");
 
     assert!(
@@ -821,7 +944,7 @@ fn an_address_with_a_second_url_hidden_after_it_reaches_no_host_rule() {
         );
         assert!(
             matches!(
-                source.fetch(address, &Cancel::new()),
+                source.answered_fetch(address, &Cancel::new()),
                 Err(SourceError::Address(_))
             ),
             "{address} was sent",
@@ -872,7 +995,7 @@ fn a_search_the_vendor_refused_is_not_reported_as_finding_nothing() {
     });
 
     let problem = source(200, refused.to_string())
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a refused search to be a failure");
 
     assert!(
@@ -899,7 +1022,7 @@ fn one_address_found_by_two_searches_is_one_result() {
     });
 
     let found = source(200, twice.to_string())
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect("an answer that parses");
 
     assert_eq!(found.len(), 1);
@@ -911,7 +1034,9 @@ fn a_fetch_asks_for_room_the_page_itself_will_take() {
     // sized for prose stops the answer part-way through the page and what comes
     // back is no page at all.
     let (source, replay) = built(200, answer());
-    source.fetch("https://example.com/x", &Cancel::new()).ok();
+    source
+        .answered_fetch("https://example.com/x", &Cancel::new())
+        .ok();
 
     let sent: serde_json::Value =
         serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
@@ -938,6 +1063,19 @@ fn kimi(status: u16, body: impl Into<String>) -> (MoonshotWeb, Arc<Replay>) {
 }
 
 #[test]
+fn moonshot_search_answers_at_its_first_poll() {
+    let answered = json!({ "search_results": [{ "url": "https://serde.rs" }] });
+    let (source, _replay) = kimi(200, answered.to_string());
+    assert_ready_once(Search::search(&source, "serde", &Cancel::new()));
+}
+
+#[test]
+fn moonshot_fetch_answers_at_its_first_poll() {
+    let (source, _replay) = kimi(200, "# Serde\n\nA framework.");
+    assert_ready_once(Fetch::fetch(&source, "https://serde.rs", &Cancel::new()));
+}
+
+#[test]
 fn kimi_code_answers_a_query_with_its_own_results() {
     // A plain service rather than a side request to a model: the query goes in
     // and addresses come back, already extracted.
@@ -954,7 +1092,7 @@ fn kimi_code_answers_a_query_with_its_own_results() {
 
     let (source, replay) = kimi(200, answered.to_string());
     let found = source
-        .search("serde", &Cancel::new())
+        .answered_search("serde", &Cancel::new())
         .expect("an answer that parses");
 
     assert_eq!(found.len(), 2);
@@ -993,7 +1131,7 @@ fn kimi_code_answers_an_address_with_the_page_it_extracted() {
     // describing one, which is why it is read as text and not as JSON.
     let (source, replay) = kimi(200, "# Serde\n\nA framework.");
     let page = source
-        .fetch("https://serde.rs/", &Cancel::new())
+        .answered_fetch("https://serde.rs/", &Cancel::new())
         .expect("a page");
 
     assert!(page.text.contains("A framework."), "{}", page.text);
@@ -1010,7 +1148,7 @@ fn kimi_code_refuses_an_address_that_names_no_host_before_sending_it() {
     let (source, replay) = kimi(200, "text");
 
     assert!(matches!(
-        source.fetch("https://docs.rs@evil.example/", &Cancel::new()),
+        source.answered_fetch("https://docs.rs@evil.example/", &Cancel::new()),
         Err(SourceError::Address(_))
     ));
     assert!(replay.sent().url.is_empty(), "an opaque address was sent");
@@ -1020,7 +1158,7 @@ fn kimi_code_refuses_an_address_that_names_no_host_before_sending_it() {
 fn a_kimi_success_without_its_required_results_list_is_not_no_results() {
     let problem = kimi(200, "{}")
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a malformed success to fail");
 
     assert!(problem.to_string().contains("search_results"), "{problem}");
@@ -1030,7 +1168,7 @@ fn a_kimi_success_without_its_required_results_list_is_not_no_results() {
 fn a_kimi_refusal_carries_its_status_and_never_the_key() {
     let problem = kimi(401, "unauthorized")
         .0
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a 401 to be refused");
 
     let said = problem.to_string();
@@ -1065,7 +1203,7 @@ fn an_openai_fetch_opens_the_page_and_is_confined_to_its_host() {
 
     let (source, replay) = openai(200, stream);
     let page = source
-        .fetch("https://docs.rs/serde", &Cancel::new())
+        .answered_fetch("https://docs.rs/serde", &Cancel::new())
         .expect("a page");
 
     assert_eq!(page.text.as_ref(), "the page text");
@@ -1112,7 +1250,7 @@ fn an_openai_fetch_that_only_searched_for_the_page_is_not_a_page() {
 
     let problem = openai(200, stream)
         .0
-        .fetch("https://docs.rs/serde", &Cancel::new())
+        .answered_fetch("https://docs.rs/serde", &Cancel::new())
         .expect_err("a search action not to count as opening a page");
 
     assert!(problem.to_string().contains("without opening"), "{problem}");
@@ -1137,7 +1275,7 @@ fn an_openai_fetch_that_never_opened_the_page_is_not_a_page() {
 
     let problem = openai(200, stream)
         .0
-        .fetch("https://docs.rs/serde", &Cancel::new())
+        .answered_fetch("https://docs.rs/serde", &Cancel::new())
         .expect_err("an unfetched answer to be refused");
 
     assert!(problem.to_string().contains("without opening"), "{problem}");
@@ -1148,7 +1286,7 @@ fn an_openai_fetch_refuses_an_address_that_names_no_host() {
     let (source, replay) = openai(200, responded("x", &json!([])));
 
     assert!(matches!(
-        source.fetch("https://docs.rs@evil.example/", &Cancel::new()),
+        source.answered_fetch("https://docs.rs@evil.example/", &Cancel::new()),
         Err(SourceError::Address(_))
     ));
     assert!(replay.sent().url.is_empty(), "an opaque address was sent");
@@ -1452,7 +1590,7 @@ fn kimi_over(transport: impl Transport + 'static) -> MoonshotWeb {
 #[test]
 fn an_anthropic_search_cancelled_before_its_answer_arrives_ends_the_call() {
     let problem = anthropic_over(CancelledDuringSetup)
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(
@@ -1464,7 +1602,7 @@ fn an_anthropic_search_cancelled_before_its_answer_arrives_ends_the_call() {
 #[test]
 fn an_anthropic_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
     let problem = anthropic_over(CancelledDuringSetup)
-        .fetch("https://example.com/page", &Cancel::new())
+        .answered_fetch("https://example.com/page", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(
@@ -1476,7 +1614,7 @@ fn an_anthropic_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
 #[test]
 fn an_openai_search_cancelled_before_its_answer_arrives_ends_the_call() {
     let problem = openai_over("gpt-5.6", CancelledDuringSetup)
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(
@@ -1491,7 +1629,7 @@ fn a_model_that_remaps_every_openai_failure_still_ends_a_cancelled_call() {
     // response details out of a diagnostic. A cancel rewritten there is a
     // cancel lost, so it goes through the remap untouched.
     let problem = openai_over("gpt-6-astra", CancelledDuringSetup)
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(
@@ -1506,7 +1644,7 @@ fn an_openai_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
     // Its own test is what keeps a later split of the two from quietly
     // leaving one of them failing a call the user stopped.
     let problem = openai_over("gpt-5.6", CancelledDuringSetup)
-        .fetch("https://example.com/page", &Cancel::new())
+        .answered_fetch("https://example.com/page", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(
@@ -1518,7 +1656,7 @@ fn an_openai_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
 #[test]
 fn a_kimi_search_cancelled_before_its_answer_arrives_ends_the_call() {
     let problem = kimi_over(CancelledDuringSetup)
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(
@@ -1530,7 +1668,7 @@ fn a_kimi_search_cancelled_before_its_answer_arrives_ends_the_call() {
 #[test]
 fn a_kimi_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
     let problem = kimi_over(CancelledDuringSetup)
-        .fetch("https://serde.rs/", &Cancel::new())
+        .answered_fetch("https://serde.rs/", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(
@@ -1544,7 +1682,7 @@ fn a_setup_that_broke_after_the_user_cancelled_is_still_a_cancel() {
     // Nothing promises the transport notices the cancel first. What the user
     // did is on the control, so the control is what decides.
     let problem = anthropic_over(BrokenAfterCancelling)
-        .search("x", &Cancel::new())
+        .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
     assert!(

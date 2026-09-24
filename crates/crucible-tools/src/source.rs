@@ -22,7 +22,7 @@
 
 use std::fmt;
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 
 use crate::permissions::Host;
 
@@ -183,11 +183,18 @@ pub trait Search: Send + Sync {
 
     /// Answers `query`.
     ///
+    /// Every shipped implementation answers the first time this future is
+    /// polled, which is what a tool run's own one-poll crossing needs.
+    ///
     /// # Errors
     ///
     /// [`SourceError`] where the source could not be reached or did not answer
     /// in a shape this implementation reads. No results is not an error.
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError>;
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>>;
 }
 
 /// Something that answers a URL.
@@ -206,11 +213,18 @@ pub trait Fetch: Send + Sync {
 
     /// Fetches `url`.
     ///
+    /// Every shipped implementation answers the first time this future is
+    /// polled, which is what a tool run's own one-poll crossing needs.
+    ///
     /// # Errors
     ///
     /// [`SourceError`] where the page could not be had. A page that came back
     /// empty is not an error.
-    fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError>;
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>>;
 }
 
 impl fmt::Debug for dyn Search {

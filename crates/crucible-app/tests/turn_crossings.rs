@@ -205,9 +205,9 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 /// turn: the runtime owner's documentation of why it is built multi-thread,
 /// the runner's test helper that drives a turn to its end on a runtime of
 /// the test's own, and the lines inside the `#[cfg(test)] mod tests` of the
-/// bridge ledger and of the sandbox's redaction, which only a test build
-/// compiles. The count makes the same line written once more in that file,
-/// wherever, one too many.
+/// bridge ledger, of the sandbox's redaction and of the worker-task check,
+/// which only a test build compiles. The count makes the same line written
+/// once more in that file, wherever, one too many.
 const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "crates/crucible-app/src/runtime.rs",
@@ -251,6 +251,21 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
         "crates/crucible-sandbox-local/src/redaction.rs",
         "runtime().block_on(async {",
         1,
+    ),
+    // Inside `crates/crucible-runtime/src/worker.rs`'s `#[cfg(test)] mod
+    // tests`: the test that drives the check on the thread that merely
+    // entered a runtime without being spawned onto it, and the two tests
+    // (current-thread and multi-thread) that drive it on a spawned task,
+    // whose bodies are the same line.
+    (
+        "crates/crucible-runtime/src/worker.rs",
+        "let seen = runtime.block_on(async { not_worker() });",
+        1,
+    ),
+    (
+        "crates/crucible-runtime/src/worker.rs",
+        "let seen = runtime.block_on(async { tokio::spawn(async { not_worker() }).await.unwrap() });",
+        2,
     ),
 ];
 

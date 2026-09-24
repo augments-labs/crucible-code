@@ -7,7 +7,42 @@ use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::io::{self, Read};
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
+
+/// `search`/`fetch` answer at their first poll for every source this crate
+/// ships; a test stands in for that one poll under its own name so a fixture
+/// keeps the synchronous call shape it has always had.
+trait AnsweredAtOnce: Search {
+    fn answered_search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        crucible_runtime::answered!(Search::search(self, query, cancel))
+    }
+}
+
+impl<T: Search + ?Sized> AnsweredAtOnce for T {}
+
+/// The `Fetch` twin of [`AnsweredAtOnce`].
+trait FetchedAtOnce: Fetch {
+    fn answered_fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
+        crucible_runtime::answered!(Fetch::fetch(self, url, cancel))
+    }
+}
+
+impl<T: Fetch + ?Sized> FetchedAtOnce for T {}
+
+/// Polls `future` once and asserts it answered: the must-prove's own test,
+/// named for the implementation it is about, rather than trusting
+/// `answered!`'s panic alone to stand in for it everywhere.
+fn assert_ready_once<T>(mut future: crucible_runtime::BoxFuture<'_, Result<T, SourceError>>) {
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(Ok(_)) => {}
+        Poll::Ready(Err(problem)) => panic!("the future answered with an error: {problem}"),
+        Poll::Pending => panic!("the future was still pending after one poll"),
+    }
+}
 
 fn answer(steps: &[Value]) -> String {
     let mut body = String::new();
@@ -45,6 +80,28 @@ fn source_body(status: u16, body: String) -> (GoogleWeb, Arc<Replay>) {
 }
 
 #[test]
+fn google_search_answers_at_its_first_poll() {
+    let query = "rust programming";
+    let suggestions_html =
+        "<div><a href=\"https://www.google.com/search?q=learn+rust\">learn rust</a></div>";
+    let (source, _replay) = source(&searched(
+        query,
+        "an answer",
+        suggestions_html,
+        "https://rust-lang.org",
+        "Rust",
+    ));
+    assert_ready_once(Search::search(&source, query, &Cancel::new()));
+}
+
+#[test]
+fn google_fetch_answers_at_its_first_poll() {
+    let url = "https://example.com/page";
+    let (source, _replay) = source(&fetched(url));
+    assert_ready_once(Fetch::fetch(&source, url, &Cancel::new()));
+}
+
+#[test]
 fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
     #[derive(Debug)]
     struct DuringSetup;
@@ -70,7 +127,7 @@ fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
         "gemini-3.8-flash",
     );
     let cancel = Cancel::new();
-    let result = source.fetch("https://example.com/", &cancel);
+    let result = source.answered_fetch("https://example.com/", &cancel);
     assert!(
         matches!(result, Err(SourceError::Cancelled("google"))),
         "{result:?}"
@@ -85,7 +142,7 @@ fn google_fetch_requires_the_requested_retrieval_and_enables_no_search() {
         json!({"type":"url_context_result","call_id":"fetch","result":[{"url":url,"status":"success"}]}),
         json!({"type":"model_output","content":[{"type":"text","text":"Page text","annotations":[{"type":"url_citation","url":url,"title":"A page","start_index":0,"end_index":9}]}]}),
     ]);
-    let page = source.fetch(url, &Cancel::new()).unwrap();
+    let page = source.answered_fetch(url, &Cancel::new()).unwrap();
     assert_eq!(
         page,
         Page {
@@ -103,10 +160,14 @@ fn google_fetch_requires_the_requested_retrieval_and_enables_no_search() {
     );
     assert!(
         source
-            .fetch("https://other.example/", &Cancel::new())
+            .answered_fetch("https://other.example/", &Cancel::new())
             .is_err()
     );
-    assert!(source.fetch("file:///secret", &Cancel::new()).is_err());
+    assert!(
+        source
+            .answered_fetch("file:///secret", &Cancel::new())
+            .is_err()
+    );
 }
 
 fn fetched(url: &str) -> Vec<Value> {
@@ -123,7 +184,7 @@ fn google_fetch_refuses_error_results_even_with_successful_url_metadata() {
     let mut steps = fetched(url);
     *steps.get_mut(1).unwrap().get_mut("is_error").unwrap() = json!(true);
     let (source, _) = source(&steps);
-    assert!(source.fetch(url, &Cancel::new()).is_err());
+    assert!(source.answered_fetch(url, &Cancel::new()).is_err());
 }
 
 #[test]
@@ -142,7 +203,7 @@ fn google_fetch_bounds_the_whole_stream_even_after_a_complete_answer() {
         Box::new(replay),
         "gemini-3.8-flash",
     );
-    assert!(source.fetch(url, &Cancel::new()).is_err());
+    assert!(source.answered_fetch(url, &Cancel::new()).is_err());
 }
 
 /// A body that hands its whole content over in one read, then sleeps past
@@ -230,7 +291,10 @@ fn google_fetch_accepts_documented_optional_citation_offsets() {
         .pointer_mut("/content/0/annotations/0")
         .unwrap() = json!({"type":"url_citation","url":url});
     let (source, _) = source(&steps);
-    assert_eq!(&*source.fetch(url, &Cancel::new()).unwrap().text, "é page");
+    assert_eq!(
+        &*source.answered_fetch(url, &Cancel::new()).unwrap().text,
+        "é page"
+    );
 }
 
 #[test]
@@ -254,7 +318,10 @@ fn google_fetch_rejects_wrong_calls_destinations_ranges_and_native_tools() {
         let mut steps = json!(fetched(url));
         *steps.pointer_mut(pointer).unwrap() = replacement;
         let (source, _) = source(steps.as_array().unwrap());
-        assert!(source.fetch(url, &Cancel::new()).is_err(), "{pointer}");
+        assert!(
+            source.answered_fetch(url, &Cancel::new()).is_err(),
+            "{pointer}"
+        );
     }
 }
 
@@ -262,7 +329,10 @@ fn google_fetch_rejects_wrong_calls_destinations_ranges_and_native_tools() {
 fn google_fetch_uses_key_only_and_does_not_replay_a_remote_interaction() {
     let url = "https://example.com/page";
     let (source, replay) = source(&fetched(url));
-    assert_eq!(&*source.fetch(url, &Cancel::new()).unwrap().text, "é page");
+    assert_eq!(
+        &*source.answered_fetch(url, &Cancel::new()).unwrap().text,
+        "é page"
+    );
     let sent = replay.sent();
     assert_eq!(
         sent.url,
@@ -312,7 +382,7 @@ fn google_fetch_never_returns_partial_or_failed_streams_or_echoes_private_errors
         (403, "private-signature-canary web-key-canary".into()),
     ] {
         let (source, _) = source_body(status, body);
-        let error = source.fetch(url, &Cancel::new()).unwrap_err();
+        let error = source.answered_fetch(url, &Cancel::new()).unwrap_err();
         let shown = format!("{error} {error:?}");
         assert!(!shown.contains("private-signature-canary"));
         assert!(!shown.contains("web-key-canary"));
@@ -328,12 +398,12 @@ fn google_fetch_invalid_urls_and_prior_cancellation_never_post() {
         "https://example.com/\nhttps://other.example/",
         "relative",
     ] {
-        assert!(source.fetch(url, &Cancel::new()).is_err());
+        assert!(source.answered_fetch(url, &Cancel::new()).is_err());
     }
     let cancel = Cancel::new();
     cancel.request();
     assert!(matches!(
-        source.fetch("https://example.com/page", &cancel),
+        source.answered_fetch("https://example.com/page", &cancel),
         Err(SourceError::Cancelled("google"))
     ));
     assert!(replay.sent().url.is_empty());
@@ -375,7 +445,7 @@ fn google_fetch_cancellation_during_a_quiet_read_discards_even_completed_text() 
         "gemini-3.8-flash",
     );
     assert!(matches!(
-        source.fetch("https://example.com/page", &Cancel::new()),
+        source.answered_fetch("https://example.com/page", &Cancel::new()),
         Err(SourceError::Cancelled("google"))
     ));
 }
@@ -424,7 +494,7 @@ fn google_search_success_with_grounded_answer_citations_and_suggestions() {
 
     let (source, replay) = source(&searched(query, answer_text, suggestions_html, url, title));
     let response = source
-        .search(query, &Cancel::new())
+        .answered_search(query, &Cancel::new())
         .expect("google search should succeed");
 
     assert_eq!(response.answer.as_deref(), Some(answer_text));
@@ -475,7 +545,7 @@ fn google_search_missing_suggestions_is_refused() {
         });
     }
     let (source, _) = source(&steps);
-    let error = source.search("query", &Cancel::new()).unwrap_err();
+    let error = source.answered_search("query", &Cancel::new()).unwrap_err();
     assert!(
         format!("{error}").contains("missing Google search suggestions"),
         "{error}"
@@ -503,7 +573,7 @@ fn google_search_missing_citations_is_refused() {
         });
     }
     let (source, _) = source(&steps);
-    let error = source.search("query", &Cancel::new()).unwrap_err();
+    let error = source.answered_search("query", &Cancel::new()).unwrap_err();
     assert!(
         format!("{error}").contains("Google search response carried no citations"),
         "{error}"
@@ -528,7 +598,7 @@ fn google_search_error_payload_is_refused() {
         });
     }
     let (source, _) = source(&steps);
-    let error = source.search("query", &Cancel::new()).unwrap_err();
+    let error = source.answered_search("query", &Cancel::new()).unwrap_err();
     assert!(
         format!("{error}").contains("Google search returned an error"),
         "{error}"
@@ -546,7 +616,7 @@ fn google_search_prior_cancellation_never_posts() {
     ));
     let cancel = Cancel::new();
     cancel.request();
-    let error = source.search("query", &cancel).unwrap_err();
+    let error = source.answered_search("query", &cancel).unwrap_err();
     assert!(matches!(error, SourceError::Cancelled("google")));
     assert!(replay.sent().url.is_empty());
 }

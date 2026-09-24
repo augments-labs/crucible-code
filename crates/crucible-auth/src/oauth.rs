@@ -16,18 +16,40 @@ mod openai;
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Mutex;
 use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use std::thread;
 use std::time::Duration;
 
-use crucible_core::{Cancel, Credential, CredentialScopeId};
+use crucible_core::{Cancel, Credential, CredentialError, CredentialScopeId};
 use sha2::{Digest as _, Sha256};
 
 use crate::{AuthError, Store, StoredCredentials};
 
 pub use kimi::{KimiCredential, KimiOAuth};
 pub use openai::{OpenAiCredential, OpenAiOAuth};
+
+/// Locks `tokens` for [`Credential::authorize`], refusing a runtime worker
+/// task that would otherwise block behind another thread's renewal.
+///
+/// The uncontended case — no renewal in flight — never blocks and never asks
+/// [`crucible_runtime::not_worker`] anything: `try_lock` returns at once. The
+/// only thread that can hold this mutex for any length of time is one already
+/// inside `refresh_subscription`'s network call, and that is exactly the wait
+/// a worker must not enter, so a worker refuses right there instead of taking
+/// `lock()` and blocking on it. The still-conditional renewal guard, run once
+/// this returns, is unaffected: it decides whether *this* poll may renew,
+/// this one only whether it may wait for *another* poll's renewal to finish.
+fn lock_tokens(tokens: &Mutex<Tokens>) -> Result<MutexGuard<'_, Tokens>, CredentialError> {
+    match tokens.try_lock() {
+        Ok(guard) => Ok(guard),
+        Err(TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
+        Err(TryLockError::WouldBlock) => {
+            crucible_runtime::not_worker().map_err(|_| CredentialError::RenewalOnWorker)?;
+            Ok(tokens.lock().unwrap_or_else(PoisonError::into_inner))
+        }
+    }
+}
 
 fn credential_scope(domain: &[u8], identity: Option<&str>) -> Option<CredentialScopeId> {
     let identity = identity.filter(|value| !value.is_empty())?;

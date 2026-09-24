@@ -50,7 +50,7 @@ use crucible_core::{
 };
 use crucible_core::{Answered, Fetch, Put, Search};
 use crucible_core::{
-    Cancel, Credential, CredentialError, CredentialScopeId, DescribeTool, Host, Message, Outgoing,
+    Authorization, Cancel, Credential, CredentialScopeId, DescribeTool, Host, Message, Outgoing,
     Page, PromptCacheFingerprint, PromptCacheIdentity, PromptCacheKey, PromptCacheMechanism,
     PromptCacheMechanisms, PromptCachePlan, PromptCachePolicy, PromptCacheProjection,
     PromptCacheRequest, PromptCacheRetention, PromptCacheScopeDigest, PromptCacheSelected,
@@ -60,6 +60,7 @@ use crucible_core::{
 };
 use crucible_extension::Extensions;
 use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
+use crucible_runtime::BoxFuture;
 use crucible_session::Session;
 
 /// The frozen answer for `name`, as a path.
@@ -314,7 +315,11 @@ impl Search for Unreached {
     fn reaches(&self) -> Host {
         Host::Opaque("nothing is asked of this source".into())
     }
-    fn search(&self, _: &str, _: &Cancel) -> Result<SearchResponse, SourceError> {
+    fn search<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
         panic!("the schema probe never searches")
     }
 }
@@ -325,7 +330,7 @@ impl Fetch for Unreached {
     fn reaches(&self, _: &str) -> Host {
         Host::Opaque("nothing is asked of this source".into())
     }
-    fn fetch(&self, _: &str, _: &Cancel) -> Result<Page, SourceError> {
+    fn fetch<'a>(&'a self, _: &'a str, _: &'a Cancel) -> BoxFuture<'a, Result<Page, SourceError>> {
         panic!("the schema probe never fetches")
     }
 }
@@ -753,11 +758,11 @@ impl Credential for Keyed {
         CredentialScopeId::from_digest([7; 32])
     }
 
-    fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
+    fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a> {
         request.set_header("authorization", format!("Bearer {KEY}"));
         request.set_header("x-api-key", KEY);
         request.protect(KEY);
-        Ok(())
+        Box::pin(std::future::ready(Ok(())))
     }
 }
 
