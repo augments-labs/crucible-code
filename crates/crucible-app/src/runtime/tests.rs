@@ -1,5 +1,6 @@
 //! How the runtime is shut down, and what it says when that runs out of time.
 
+#[cfg(unix)]
 use std::io;
 use std::sync::mpsc;
 use std::time::Duration;
