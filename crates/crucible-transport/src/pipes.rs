@@ -8,8 +8,9 @@
 //!
 //! Refusing has a second half that is easy to leave out. A process that will
 //! not be hosted is still running, so it is stopped here rather than dropped,
-//! and a stop the backend could not confirm is carried back beside the refusal:
-//! a conversation that never started is not a reason to forget a scope nothing
+//! awaited up to a bound, and a stop the backend could not confirm — including
+//! one that never answered — is carried back beside the refusal: a
+//! conversation that never started is not a reason to forget a scope nothing
 //! will ever reap.
 //!
 //! What it does not do is say any of that in words. Which end was missing is a
@@ -19,11 +20,11 @@
 use std::io;
 use std::time::Duration;
 
-use crucible_runtime::Bridge;
 use crucible_sandbox::{SandboxOutput, SandboxProcess};
 use tokio::runtime::Handle;
 
-use crate::{Heard, Muttered, Said};
+use crate::finish::STOPPING;
+use crate::{Heard, Muttered, Said, Unanswered};
 
 /// The three streams a hosted program is talked to over.
 #[derive(Debug)]
@@ -64,19 +65,26 @@ impl Pipes {
     /// # Errors
     ///
     /// [`Unspoken`] where the process has no pipe to speak over or none to
-    /// listen to. The process is stopped before either is returned, and a stop
-    /// that could not be confirmed comes back with it, whether it failed or
-    /// would have had to wait and was dropped.
-    pub fn taken(
+    /// listen to. The process is stopped before either is returned, awaited up
+    /// to a bound, and a stop that could not be confirmed comes back with it,
+    /// whether it failed or never answered.
+    ///
+    /// # Panics
+    ///
+    /// Panics if awaited on a runtime built without a time driver, which the
+    /// bound on a stop that does not answer needs. That is the runtime this is
+    /// awaited on, not `on`, which is reached only for the streams a process
+    /// that could be hosted is talked over.
+    pub async fn taken(
         process: &mut dyn SandboxProcess,
         patience: Duration,
         on: &Handle,
     ) -> Result<Self, Unspoken> {
         let Some(input) = process.take_async_stdin() else {
-            return Err(Unspoken::after(process, Absent::Input));
+            return Err(Unspoken::after(process, Absent::Input).await);
         };
         let Some(output) = process.take_stdout() else {
-            return Err(Unspoken::after(process, Absent::Output));
+            return Err(Unspoken::after(process, Absent::Output).await);
         };
         Ok(Self {
             heard: Heard::new(output, patience, on),
@@ -107,25 +115,28 @@ pub struct Unspoken {
     /// Why the backend could not confirm the stop, where it could not.
     ///
     /// A caller that reports only the missing pipe would retire a process scope
-    /// nothing has confirmed the end of. A stop that would have had to wait was
-    /// dropped, and is as unconfirmed: the error then holds the
-    /// [`Unready`](crucible_runtime::Unready) it was refused with, which
-    /// `get_ref` finds.
+    /// nothing has confirmed the end of. A stop that never answered is as
+    /// unconfirmed as one that failed: the error then holds the [`Unanswered`]
+    /// it gave up on, which `get_ref` finds.
     pub cleanup: Option<io::Error>,
 }
 
 impl Unspoken {
     /// Stops `process`, which will not be hosted, and keeps both facts.
-    fn after(process: &mut dyn SandboxProcess, absent: Absent) -> Self {
-        Self {
-            absent,
-            // A stop that would have had to wait is as unconfirmed as one that
-            // failed.
-            cleanup: Bridge::TransportProcess
-                .cross(process.stop())
-                .unwrap_or_else(|unready| Err(io::Error::other(unready)))
-                .err(),
-        }
+    ///
+    /// The stop is awaited up to [`STOPPING`]; one that has not answered by
+    /// then is given up on, and is as unconfirmed as one that failed.
+    async fn after(process: &mut dyn SandboxProcess, absent: Absent) -> Self {
+        let cleanup = tokio::time::timeout(STOPPING, process.stop())
+            .await
+            .unwrap_or_else(|_| {
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    Unanswered::new(STOPPING),
+                ))
+            })
+            .err();
+        Self { absent, cleanup }
     }
 }
 

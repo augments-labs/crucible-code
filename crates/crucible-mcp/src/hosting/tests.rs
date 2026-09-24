@@ -480,8 +480,8 @@ enum Answers {
 /// What stopping a server that did not finish when its input closed does.
 #[derive(Debug, Clone, Copy)]
 enum Stop {
-    /// It keeps running, and a stop never answers, so crucible drops the stop
-    /// rather than wait on it.
+    /// It keeps running, and a stop never answers, so an awaited caller gives
+    /// up on it at the bound on a stop that does not answer.
     Unanswered,
     /// It went, its ending never completes, and a stop never answers: the wait
     /// for what it wrote runs to its ceiling before the stop is tried.

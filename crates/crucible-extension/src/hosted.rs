@@ -85,7 +85,7 @@ impl<T> Hosted<T> {
     /// [`Unstarted`] where the process has no pipe to speak over or none to
     /// listen to. Stopping the process is attempted before either is returned, and
     /// [`Unstarted::Unreaped`] preserves an unconfirmed stop, whether it failed
-    /// or would have had to wait and was dropped: a peer crucible cannot hold a
+    /// or never answered: a peer crucible cannot hold a
     /// conversation with is one it has no way to end politely later.
     ///
     /// [`Unstarted::Spent`] where there is no generation left to host it as,
@@ -113,7 +113,7 @@ impl<T> Hosted<T> {
             let finish = Finish::after_async(process.as_mut(), Duration::ZERO).await;
             return Err(Unstarted::Spent { finish });
         };
-        let pipes = Pipes::taken(process.as_mut(), patience, runtime)?;
+        let pipes = Pipes::taken(process.as_mut(), patience, runtime).await?;
         Ok(Self {
             process,
             talk: Speaking::new(pipes.heard, pipes.said, generation),
@@ -349,11 +349,10 @@ pub enum Unstarted {
     Unheard,
 
     /// Hosting failed, and cleanup of the process scope is unconfirmed: the
-    /// stop failed, or would have had to wait and was dropped.
+    /// stop failed, or never answered.
     ///
-    /// Construction retains the missing-pipe cause and the stop's error or its
-    /// refusal; it emits one wrapper, never a chain of cleanup attempts. A
-    /// refusal already says that what the stop began is unconfirmed, so the
+    /// Construction retains the missing-pipe cause and the stop's error; it emits one wrapper, never a chain of cleanup attempts. A
+    /// stop that never answered already says that what it began is unconfirmed, so the
     /// message gives it as it stands; a failed stop's words need not say it, so
     /// the message says it before them.
     #[error("{cause}; {}: {cleanup}", process_cleanup(.cleanup))]
@@ -361,9 +360,10 @@ pub enum Unstarted {
         /// Why the process could not be hosted.
         #[source]
         cause: Box<Self>,
-        /// Why the backend could not confirm cleanup. A stop that would have had
-        /// to wait was dropped, and is as unconfirmed: this then holds the
-        /// refusal, which `get_ref` finds.
+        /// Why the backend could not confirm cleanup. A stop that never
+        /// answered is as unconfirmed as one that failed: this then holds the
+        /// [`Unanswered`](crucible_transport::Unanswered) it gave up on, which
+        /// `get_ref` finds.
         cleanup: io::Error,
     },
 
@@ -421,13 +421,17 @@ impl From<Unspoken> for Unstarted {
 
 /// What leads in a stop's error in [`Unstarted::Unreaped`]'s message.
 ///
-/// A stop dropped because it would have had to wait is the refusal the error
-/// holds, which `get_ref` finds; the transport keeps it there as it stands.
-/// One level is enough because this `cleanup` only ever reaches here from
+/// A stop that never answered, and a stop dropped because it would have had
+/// to wait, already say that what they began is unconfirmed: the first is the
+/// [`Unanswered`](crucible_transport::Unanswered) the error holds, the second
+/// the refusal, either of which `get_ref` finds; the transport keeps it there
+/// as it stands. No current stop path produces the dropped one; the `Unready`
+/// arm stays as defense, mirroring the MCP twin. One level is enough because this `cleanup` only ever reaches here from
 /// `Unspoken::after`, which hands back the stop's own error and never the
 /// wrapper a process stopped at its publication ceiling is given.
 fn process_cleanup(cleanup: &io::Error) -> &'static str {
-    if matches!(cleanup.get_ref(), Some(held) if held.is::<Unready>()) {
+    if matches!(cleanup.get_ref(), Some(held) if held.is::<Unready>() || held.is::<crucible_transport::Unanswered>())
+    {
         "process cleanup"
     } else {
         "process cleanup remains unconfirmed"

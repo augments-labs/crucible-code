@@ -72,8 +72,8 @@
 //! on or ended without its answer, is asked nothing further, as an interrupted
 //! one is, and is stopped by the next call to it or by disposal; one a
 //! preparation given up on had started is stopped by the next preparation too.
-//! Stopping a server still waits on the caller's thread, bounded by its grace
-//! and its publication ceiling.
+//! Stopping a server is awaited, bounded by its grace, its publication
+//! ceiling, and the bound on a stop that does not answer.
 
 use std::ffi::OsString;
 use std::fmt::{self, Write as _};
@@ -355,9 +355,14 @@ impl StartFailure {
     }
 
     /// Ends the conversation before returning its protocol refusal.
-    fn after(chosen: &Chosen, problem: &dyn std::fmt::Display, hosted: Hosted) -> Self {
-        match hosted.stop(chosen.grace).finish {
-            Finish::Exited(_) | Finish::Stopped => Self::refused(chosen, problem),
+    ///
+    /// # Cancel safety
+    ///
+    /// None, as [`Hosted::stop`]'s: dropped while the hosted server is being
+    /// ended, its process is left as a dropped stop leaves it.
+    async fn after(chosen: &Chosen, problem: impl std::fmt::Display, hosted: Hosted) -> Self {
+        match hosted.stop(chosen.grace).await.finish {
+            Finish::Exited(_) | Finish::Stopped => Self::refused(chosen, &problem),
             Finish::Unpublished(unpublished) => Self::refused(
                 chosen,
                 &format!("{problem}; nothing it wrote was published: {unpublished}"),
@@ -449,16 +454,18 @@ async fn launch(
         .map_err(|e| refused(&e))?;
 
     let withheld = Withheld::given(&chosen.environment);
-    Hosted::withholding(process, chosen.handshake, withheld, &starting.runtime).map_err(|error| {
-        let problem = ToolsetError::Source {
-            id: chosen.name.clone(),
-            problem: error.to_string().into(),
-        };
-        match error {
-            Unstarted::Unreaped { .. } => StartFailure::Unreaped(problem),
-            Unstarted::Unspeakable | Unstarted::Unheard => StartFailure::Refused(problem),
-        }
-    })
+    Hosted::withholding(process, chosen.handshake, withheld, &starting.runtime)
+        .await
+        .map_err(|error| {
+            let problem = ToolsetError::Source {
+                id: chosen.name.clone(),
+                problem: error.to_string().into(),
+            };
+            match error {
+                Unstarted::Unreaped { .. } => StartFailure::Unreaped(problem),
+                Unstarted::Unspeakable | Unstarted::Unheard => StartFailure::Refused(problem),
+            }
+        })
 }
 
 /// Agrees a version with a hosted server, and reads what it offers.
@@ -838,14 +845,19 @@ impl Server {
     /// because a consumed process handle is not proof its scope has ended.
     async fn release(&self) -> Result<(), ToolsetError> {
         let mut live = self.live.lock().await;
-        self.released(&mut live)
+        self.released(&mut live).await
     }
 
     /// [`Self::release`], for a caller already holding the conversation.
-    fn released(&self, live: &mut Speaking) -> Result<(), ToolsetError> {
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Hosted::stop`]'s, past taking the conversation, which this does
+    /// first: ending it is what stops anything further being asked of it.
+    async fn released(&self, live: &mut Speaking) -> Result<(), ToolsetError> {
         match live.ended() {
             Some(active) => {
-                let finished = self.reaped(&mut live.conversation, active.hosted);
+                let finished = self.reaped(&mut live.conversation, active.hosted).await;
                 drop(active.audit);
                 finished
             }
@@ -858,11 +870,15 @@ impl Server {
 
     /// Records the outcome while the caller holds the conversation lock.
     ///
-    /// The stop waits on the caller's thread, up to the grace and past that
-    /// up to the publication ceiling of a process that has ended, as
-    /// [`Hosted::stop`] does.
-    fn reaped(&self, live: &mut Conversation, hosted: Hosted) -> Result<(), ToolsetError> {
-        match hosted.stop(self.chosen.grace).finish {
+    /// The stop is awaited, up to the grace, past that up to the publication
+    /// ceiling of a process that has ended, and past that up to the bound on
+    /// a stop that does not answer, as [`Hosted::stop`] is.
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Hosted::stop`]'s.
+    async fn reaped(&self, live: &mut Conversation, hosted: Hosted) -> Result<(), ToolsetError> {
+        match hosted.stop(self.chosen.grace).await.finish {
             Finish::Exited(_) | Finish::Stopped => Ok(()),
             // Its scope ended and was reaped, so nothing keeps it from being
             // started again. What was lost is what it wrote, and that is said.
@@ -917,7 +933,7 @@ impl Server {
         let Some(active) = live.ended() else {
             return Err(StartFailure::refused(&self.chosen, &problem));
         };
-        let failure = StartFailure::after(&self.chosen, &problem, active.hosted);
+        let failure = StartFailure::after(&self.chosen, problem, active.hosted).await;
         if matches!(failure, StartFailure::Unreaped(_)) {
             live.conversation = Conversation::Unreaped;
         }
@@ -960,6 +976,7 @@ impl Server {
             ..
         } = *previous;
         self.reaped(&mut live.conversation, hosted)
+            .await
             .map_err(|error| error.to_string())?;
 
         // Unconfirmed until starting its replacement answers.
@@ -1023,7 +1040,7 @@ impl Server {
             })
             .map(|moved| moved.shown().to_owned());
         if let Some(moved) = moved {
-            let cleanup = self.released(&mut live);
+            let cleanup = self.released(&mut live).await;
             return Err(format!(
                 "it came back without {moved}, or offering it under a different schema, so the \
                  tools this run published no longer describe it{}",
@@ -1144,9 +1161,10 @@ impl Toolset for Hosting {
             // The servers are released, and the lifecycle given back, before
             // the built-in tools are disposed of. Releasing a server waits for
             // a call still speaking to it to answer, and then stops it on this
-            // thread, one server after another: up to its grace, past that up
+            // task, one server after another: up to its grace, past that up
             // to its publication ceiling where it has ended, and then, where it
-            // has not finished by then, for the whole of its stop, with each
+            // has not finished by then, awaiting its stop up to the bound on
+            // one that does not answer, with each
             // look at its status able to conclude its ending. A preparation
             // waits behind it; `snapshot`, `refresh`, `registered` and `Debug`
             // read what was published, which is withdrawn first, and do not.
@@ -1313,7 +1331,7 @@ impl Calling {
             // An exchange before this one was given up on while it waited, so
             // the server may be answering it still. It is finished with, as
             // an interrupted one is: its answer would be read as this call's.
-            drop(self.server.released(&mut live));
+            drop(self.server.released(&mut live).await);
             return Err(Refusal::Gone);
         }
         active.midway = true;

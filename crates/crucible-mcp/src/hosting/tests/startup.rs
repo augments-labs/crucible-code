@@ -145,31 +145,29 @@ fn unfinished_after_a_bad_catalogue(stop: Stop) -> (String, Arc<Watched>) {
 }
 
 #[test]
-fn a_stop_that_would_have_had_to_wait_is_said_to_be_unconfirmed_once() {
+fn a_stop_that_never_answers_is_said_to_be_unconfirmed_once() {
     let (message, server) = unfinished_after_a_bad_catalogue(Stop::Unanswered);
-    // The refusal's own words say that what the stop began is unconfirmed, so
+    // The timeout's own words say that what the stop began is unconfirmed, so
     // the message does not lead them in by saying it first.
     assert_eq!(
         message,
         "tool source broken: the server answered without tools, which every \
-         tools/list answer has to carry; cleanup: stopping a hosted program would \
-         have had to wait, and the caller cannot; the waiting step was dropped \
-         before it answered, so whatever that step began is unconfirmed"
+         tools/list answer has to carry; cleanup: stopping a hosted program did \
+         not answer within 10s, so whatever it began is unconfirmed"
     );
     assert_eq!(server.stop_attempts.load(Ordering::Relaxed), 1);
 }
 
 #[test]
-fn a_stop_refused_at_the_publication_ceiling_is_said_to_be_unconfirmed_once() {
+fn a_stop_that_never_answers_after_the_ceiling_is_said_to_be_unconfirmed_once() {
     let (message, server) = unfinished_after_a_bad_catalogue(Stop::UnansweredAfterEnding);
-    // What the ceiling cost it, and then the refusal, whose words say the rest.
+    // What the ceiling cost it, and then the timeout, whose words say the rest.
     assert_eq!(
         message,
         "tool source broken: the server answered without tools, which every \
          tools/list answer has to carry; cleanup: its publication did not finish \
-         in time, and stopping a hosted program would have had to wait, and the \
-         caller cannot; the waiting step was dropped before it answered, so \
-         whatever that step began is unconfirmed"
+         in time, and stopping a hosted program did not answer within 10s, so \
+         whatever it began is unconfirmed"
     );
     assert_eq!(server.stop_attempts.load(Ordering::Relaxed), 1);
 }
