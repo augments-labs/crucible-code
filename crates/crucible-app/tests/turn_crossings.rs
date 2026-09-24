@@ -19,8 +19,9 @@
 //! `_tests.rs`, is not shipped, and neither is a file listed in [`TEST_ONLY`].
 //! Inside a shipped file, an item marked `#[cfg(test)]` — a file's own test
 //! module above all — is compiled for tests alone and is left out, from its
-//! attribute to the `;` or the closing brace that ends it, braces counted
-//! outside strings, characters and comments; everything after it is read. The runner cannot name the
+//! attribute to the `;`, the `,` or the closing brace that ends it, brackets
+//! counted outside strings, characters and comments; everything after it is
+//! read, the rest of a struct or an argument list included. The runner cannot name the
 //! application, which the crate graph forbids, so the one waiting crossing
 //! the application makes is outside every turn it waits for.
 //!
@@ -152,11 +153,13 @@ fn declared_for_tests(root: &Path, path: &str) -> bool {
 /// `text` with every item marked `#[cfg(test)]` blanked out, lines kept.
 ///
 /// An item starts at a line reading exactly `#[cfg(test)]` and runs through
-/// any further attributes to the first `;` before any brace, or to the brace
-/// that closes the first one it opens. Braces and semicolons inside string,
-/// raw-string and character literals and inside comments are not counted; a
-/// lifetime is not a character literal. What the item held is replaced by
-/// its newlines, so the rest of the file keeps its line numbers.
+/// any further attributes to where [`item_end`] says it ends: a declaration
+/// to its `;`, a field or an argument to its `,` or to the bracket closing
+/// the list it is in, and anything with a body to the brace that closes it.
+/// Brackets, semicolons and commas inside string, raw-string and character
+/// literals and inside comments are not counted; a lifetime is not a
+/// character literal. What the item held is replaced by its newlines, so
+/// the rest of the file keeps its line numbers.
 fn without_tests(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let at = |index: usize| chars.get(index).copied();
@@ -195,12 +198,21 @@ fn without_tests(text: &str) -> String {
     kept
 }
 
-/// Where the item that begins at `from` ends: just past the first `;` met
-/// before any brace, or just past the brace that closes the first one.
+/// Where the item that begins at `from` ends, whichever comes first: just
+/// past a `;` or `,` met outside every bracket before a brace opens, which
+/// ends a declaration, a field or an argument; just before a closing
+/// bracket met outside every bracket, which ends the enclosing item and so
+/// ends a last entry with nothing after it; or just past the brace that
+/// closes the first one opened. Parentheses and square brackets nest too,
+/// so a `;` or `,` inside `[u8; 10]` or an argument list ends nothing, and
+/// so does a generic list: a `<` right after a name or a `:` opens one and
+/// a `>` that is not the `->` of a return type closes one, while a
+/// comparison or a shift, spaced from what it compares, opens nothing.
 fn item_end(chars: &[char], from: usize) -> usize {
     let at = |index: usize| chars.get(index).copied();
     let mut depth = 0_usize;
-    let mut opened = false;
+    let mut generic = 0_usize;
+    let mut brace_at: Option<usize> = None;
     let mut index = from;
     while let Some(c) = at(index) {
         match c {
@@ -273,16 +285,28 @@ fn item_end(chars: &[char], from: usize) -> usize {
                 }
             }
             '{' => {
+                if brace_at.is_none() {
+                    brace_at = Some(depth);
+                }
                 depth += 1;
-                opened = true;
             }
-            '}' => {
-                depth = depth.saturating_sub(1);
-                if opened && depth == 0 {
+            '(' | '[' => depth += 1,
+            '}' | ')' | ']' => {
+                if depth == 0 {
+                    return index;
+                }
+                depth -= 1;
+                if c == '}' && brace_at == Some(depth) {
                     return index + 1;
                 }
             }
-            ';' if !opened => return index + 1,
+            '<' if at(index.wrapping_sub(1))
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':') =>
+            {
+                generic += 1;
+            }
+            '>' if at(index.wrapping_sub(1)) != Some('-') => generic = generic.saturating_sub(1),
+            ';' | ',' if depth == 0 && generic == 0 && brace_at.is_none() => return index + 1,
             _ => {}
         }
         index += 1;
@@ -382,16 +406,76 @@ fn a_test_item_is_left_out_up_to_the_brace_that_closes_it_and_no_further() {
         "#[cfg(test)]",
         "const FIXTURE: &str = \"gone\";",
         "fn last() {}",
+        "struct Launch {",
+        "    kept_field: u8,",
+        "    #[cfg(test)]",
+        "    serial_field: Option<Lease>,",
+        "}",
+        "impl Launch {",
+        "    fn launch(&self) { impl_after_field(); }",
+        "}",
+        "fn literal() -> Launch {",
+        "    Launch {",
+        "        kept_field: 1,",
+        "        #[cfg(test)]",
+        "        serial_field: literal_entry(),",
+        "    }",
+        "}",
+        "fn call() {",
+        "    take(",
+        "        first_argument(),",
+        "        #[cfg(test)]",
+        "        fixture_argument(),",
+        "    );",
+        "    take(first_argument(),",
+        "        #[cfg(test)]",
+        "        last_argument());",
+        "    after_call();",
+        "}",
+        "#[cfg(test)]",
+        "fn sized(entropy: [u8; 10]) -> Self { sized_body(); }",
+        "fn after_sized() {}",
+        "#[cfg(test)]",
+        "fn generic<A, B>(shift: u8) -> Result<(), Vec<Vec<A>>> { generic_body(); }",
+        "fn after_generic() {}",
+        "#[cfg(test)]",
+        "const SHIFTED: u8 = 1 << 3;",
+        "fn after_shifted() {}",
     ]
     .join("\n");
 
     let kept = without_tests(&text);
 
     assert_eq!(kept.lines().count(), text.lines().count(), "{kept}");
-    for read in ["first()", "still_read()", "fn last()"] {
+    for read in [
+        "first()",
+        "still_read()",
+        "fn last()",
+        "kept_field: u8",
+        "impl_after_field()",
+        "kept_field: 1",
+        "first_argument()",
+        "after_call()",
+        "fn after_sized()",
+        "fn after_generic()",
+        "fn after_shifted()",
+    ] {
         assert!(kept.contains(read), "{read} was left out:\n{kept}");
     }
-    for gone in ["hidden_block_on", "OPEN", "LIFETIME", "RAW", "FIXTURE"] {
+    for gone in [
+        "hidden_block_on",
+        "OPEN",
+        "LIFETIME",
+        "RAW",
+        "FIXTURE",
+        "serial_field",
+        "literal_entry",
+        "fixture_argument",
+        "last_argument",
+        "sized_body",
+        "generic_body",
+        "SHIFTED",
+    ] {
         assert!(!kept.contains(gone), "{gone} was read:\n{kept}");
     }
 }
