@@ -23,11 +23,18 @@ crucible-runtime.workspace = true
 crucible-types.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# A web source sends its blocking request from the blocking threads of the
+# runtime its caller polls it in (`rt`), and bounds how many of its requests
+# hold one at once (`sync`). Nothing here builds a runtime.
+tokio = { workspace = true, features = ["rt", "sync"] }
 ureq.workspace = true
 
 # `answered!`, which the tests ask a provider's future once with.
 [dev-dependencies]
 crucible-runtime = { workspace = true, features = ["proof"] }
+# A runtime of the test's own to await a web source's answer on, as the turn
+# awaits one on the application's.
+tokio = { workspace = true, features = ["rt"] }
 
 [lints]
 workspace = true

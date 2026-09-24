@@ -48,9 +48,10 @@ thiserror.workspace = true
 [dev-dependencies]
 crucible-runtime = { workspace = true, features = ["proof"] }
 # The current-thread runtime a test drives a turn to its end on, now that a
-# turn is asynchronous. `rt` alone: the fakes that wait wake themselves, so no
-# test needs a timer, a socket or a worker thread.
-tokio = { workspace = true, features = ["rt"] }
+# turn is asynchronous, and the timer a tool's deadline is timed on while its
+# run waits (`time`). The fakes that wait wake themselves, so no test needs a
+# socket or a worker thread.
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [lints]
 workspace = true

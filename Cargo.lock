@@ -593,6 +593,7 @@ dependencies = [
  "crucible-types",
  "serde_json",
  "thiserror",
+ "tokio",
  "ureq",
 ]
 

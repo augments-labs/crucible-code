@@ -744,8 +744,14 @@ fn execute_contained(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation 
     }
 }
 
-/// Runs a call that runs alone, awaiting its run, and contains a panic in any
-/// poll of it.
+/// Runs a call that runs alone, awaiting its run until it answers or its
+/// deadline passes, and contains a panic in any poll of it.
+///
+/// A run still waiting when its deadline passes is dropped there, and the call
+/// is answered as timed out: the deadline is kept by the turn rather than left
+/// to whether the run heeds its context. It is timed on the timer of the
+/// runtime the turn is polled in. A run that is working inside a poll rather
+/// than waiting cannot be dropped until it returns from it.
 async fn execute_alone(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation {
     let fallback = PanicFallback::from(&prepared);
     let audit = match host
@@ -762,7 +768,14 @@ async fn execute_alone(prepared: Prepared, host: ExecutionHost<'_>) -> Invocatio
             Ok(context) => context,
             Err(problem) => return started.unattributed(&problem),
         };
-        let ran = started.entry.tool().run(approved, &context).await;
+        // A token only the clock raises, at this call's deadline. Once it has,
+        // `settled` finds the context timed out and answers the call so, and
+        // what stands in for the dropped run's answer is never read.
+        let deadline = Cancel::new().child_until(started.deadline);
+        let ran = deadline
+            .race(started.entry.tool().run(approved, &context))
+            .await
+            .unwrap_or_else(|| Err(ToolError::Cancelled(started.call.name.clone())));
         started.settled(Ok(ran), &context, host)
     }));
     match executing.await {

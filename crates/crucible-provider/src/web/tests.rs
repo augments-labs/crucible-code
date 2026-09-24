@@ -1,7 +1,6 @@
 //! What a side request sends, and what it reads back out of a real answer.
 
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 
 use crucible_core::{Fetch, Host, Search};
 use crucible_credentials::{ApiKey, Header, HeaderKey};
@@ -10,39 +9,41 @@ use serde_json::json;
 use super::*;
 use crate::transport::{Replay, Response, TransportError};
 
-/// `search`/`fetch` answer at their first poll for every source this crate
-/// ships; a test stands in for that one poll under its own name so a fixture
-/// keeps the synchronous call shape it has always had.
-trait AnsweredAtOnce: Search {
+/// Awaits `future` on a current-thread runtime of the test's own, made for the
+/// one future and gone with it, the way a turn awaits a tool's run on the
+/// application's.
+///
+/// The runtime is let go of rather than dropped, which would wait for every
+/// blocking thread it started: a request the call gave up on is left to wind
+/// down on its own, as the application's runtime, which outlives the call,
+/// leaves it.
+pub(super) fn awaited<F: std::future::IntoFuture>(future: F) -> F::Output {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a test runtime");
+    let answer = runtime.block_on(future.into_future());
+    runtime.shutdown_background();
+    answer
+}
+
+/// A search awaited to its answer, under its own name so a fixture keeps the
+/// synchronous call shape it has always had.
+trait Answered: Search {
     fn answered_search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        crucible_runtime::answered!(Search::search(self, query, cancel))
+        awaited(Search::search(self, query, cancel))
     }
 }
 
-impl<T: Search + ?Sized> AnsweredAtOnce for T {}
+impl<T: Search + ?Sized> Answered for T {}
 
-/// The `Fetch` twin of [`AnsweredAtOnce`].
-trait FetchedAtOnce: Fetch {
+/// The `Fetch` twin of [`Answered`].
+trait Fetched: Fetch {
     fn answered_fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
-        crucible_runtime::answered!(Fetch::fetch(self, url, cancel))
+        awaited(Fetch::fetch(self, url, cancel))
     }
 }
 
-impl<T: Fetch + ?Sized> FetchedAtOnce for T {}
-
-/// Polls `future` once and asserts it answered: the must-prove's own test,
-/// named for the implementation it is about, rather than trusting
-/// `answered!`'s panic alone to stand in for it everywhere.
-fn assert_ready_once<T>(mut future: crucible_runtime::BoxFuture<'_, Result<T, SourceError>>) {
-    match future
-        .as_mut()
-        .poll(&mut Context::from_waker(Waker::noop()))
-    {
-        Poll::Ready(Ok(_)) => {}
-        Poll::Ready(Err(problem)) => panic!("the future answered with an error: {problem}"),
-        Poll::Pending => panic!("the future was still pending after one poll"),
-    }
-}
+impl<T: Fetch + ?Sized> Fetched for T {}
 
 /// The exact key that must never appear anywhere but a header value.
 const SECRET: &str = "sk-ant-do-not-log-me";
@@ -118,41 +119,6 @@ fn source(status: u16, body: impl Into<String>) -> AnthropicWeb {
 }
 
 #[test]
-fn anthropic_search_answers_at_its_first_poll() {
-    assert_ready_once(Search::search(
-        &source(200, answer()),
-        "when was claude shannon born",
-        &Cancel::new(),
-    ));
-}
-
-#[test]
-fn anthropic_fetch_answers_at_its_first_poll() {
-    let moved = json!({
-        "content": [{
-            "type": "web_fetch_tool_result",
-            "tool_use_id": "srvtoolu_2",
-            "content": {
-                "type": "web_fetch_result",
-                "url": "https://example.com/page",
-                "content": {
-                    "type": "document",
-                    "title": "Page",
-                    "source": { "type": "text", "media_type": "text/plain", "data": "body" }
-                },
-                "retrieved_at": "2026-08-18T10:30:00Z"
-            }
-        }]
-    });
-
-    assert_ready_once(Fetch::fetch(
-        &source(200, moved.to_string()),
-        "https://example.com/page",
-        &Cancel::new(),
-    ));
-}
-
-#[test]
 fn a_result_takes_its_extract_from_the_citation_written_off_it() {
     // The vendor's own result carries no readable body — it arrives encrypted
     // and only that vendor's model can read it. What is readable is the line
@@ -219,12 +185,7 @@ fn fable_51_native_web_uses_adaptive_thinking_without_forced_tools_or_chosen_eff
     for tool in [SEARCH_TOOL, FETCH_TOOL] {
         let (mut source, replay) = built(200, answer());
         source.model = "claude-fable-5-1".into();
-        crucible_runtime::answered!(source.ask(
-            "Search or fetch this source",
-            tool,
-            &Cancel::new()
-        ))
-        .unwrap();
+        awaited(source.ask("Search or fetch this source", tool, &Cancel::new())).unwrap();
         let sent = replay.sent();
         let body: Value = serde_json::from_str(&sent.body).unwrap();
         assert_eq!(sent.url, "https://api.anthropic.com/v1/messages");
@@ -521,46 +482,6 @@ fn openai(status: u16, body: impl Into<String>) -> (OpenAiWeb, Arc<Replay>) {
         ),
         replay,
     )
-}
-
-#[test]
-fn openai_search_answers_at_its_first_poll() {
-    let (source, _replay) = openai(200, responded("an answer", &json!([])));
-    assert_ready_once(Search::search(
-        &source,
-        "when was rust released",
-        &Cancel::new(),
-    ));
-}
-
-#[test]
-fn openai_fetch_answers_at_its_first_poll() {
-    let completed = json!({
-        "type": "response.completed",
-        "response": {
-            "output": [
-                {
-                    "type": "web_search_call",
-                    "id": "ws_1",
-                    "status": "completed",
-                    "action": { "type": "open_page", "url": "https://docs.rs/serde" }
-                },
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{ "type": "output_text", "text": "the page text", "annotations": [] }]
-                }
-            ]
-        }
-    });
-    let stream = format!("event: response.completed\ndata: {completed}\n\n");
-    let (source, _replay) = openai(200, stream);
-
-    assert_ready_once(Fetch::fetch(
-        &source,
-        "https://docs.rs/serde",
-        &Cancel::new(),
-    ));
 }
 
 #[test]
@@ -1063,19 +984,6 @@ fn kimi(status: u16, body: impl Into<String>) -> (MoonshotWeb, Arc<Replay>) {
 }
 
 #[test]
-fn moonshot_search_answers_at_its_first_poll() {
-    let answered = json!({ "search_results": [{ "url": "https://serde.rs" }] });
-    let (source, _replay) = kimi(200, answered.to_string());
-    assert_ready_once(Search::search(&source, "serde", &Cancel::new()));
-}
-
-#[test]
-fn moonshot_fetch_answers_at_its_first_poll() {
-    let (source, _replay) = kimi(200, "# Serde\n\nA framework.");
-    assert_ready_once(Fetch::fetch(&source, "https://serde.rs", &Cancel::new()));
-}
-
-#[test]
 fn kimi_code_answers_a_query_with_its_own_results() {
     // A plain service rather than a side request to a model: the query goes in
     // and addresses come back, already extracted.
@@ -1141,6 +1049,28 @@ fn kimi_code_answers_an_address_with_the_page_it_extracted() {
     let sent: serde_json::Value =
         serde_json::from_str(&replay.sent().body).expect("a body that is JSON");
     assert_eq!(sent.pointer("/url").unwrap(), &json!("https://serde.rs/"));
+}
+
+#[test]
+fn a_page_one_byte_over_the_bound_is_reported_as_cut_rather_than_used() {
+    // Text rather than JSON, so nothing but the bound can refuse the longer
+    // one: the report is the only thing that says the page was cut.
+    let whole = "x".repeat(MOST);
+    let (source, _) = kimi(200, whole.clone());
+    let page = source
+        .answered_fetch("https://serde.rs/", &Cancel::new())
+        .expect("a page exactly at the bound");
+    assert_eq!(page.text.len(), MOST);
+
+    let (source, _) = kimi(200, format!("{whole}x"));
+    let problem = source
+        .answered_fetch("https://serde.rs/", &Cancel::new())
+        .expect_err("a page one byte over the bound");
+    assert_eq!(
+        problem.to_string(),
+        "moonshot: unexpected answer: the web response exceeded its byte limit; no partial \
+         result was used"
+    );
 }
 
 #[test]
@@ -1689,4 +1619,272 @@ fn a_setup_that_broke_after_the_user_cancelled_is_still_a_cancel() {
         matches!(problem, SourceError::Cancelled("anthropic")),
         "{problem}"
     );
+}
+
+/// A request that stalls, deaf to its cancel, until the test lets it go: the
+/// one wait nothing inside a request can end. It says when it has begun, and,
+/// once let go, whether it was told to stop by then.
+#[derive(Debug)]
+struct Stall {
+    begun: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+    go: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    told: std::sync::Mutex<std::sync::mpsc::Sender<bool>>,
+}
+
+impl Transport for Stall {
+    fn post(
+        &self,
+        _url: &str,
+        _headers: Outgoing,
+        _body: String,
+        cancel: &Cancel,
+    ) -> Result<Response, TransportError> {
+        if let Ok(begun) = self.begun.lock() {
+            begun.send(()).ok();
+        }
+        if let Ok(go) = self.go.lock() {
+            go.recv().ok();
+        }
+        if let Ok(told) = self.told.lock() {
+            told.send(cancel.requested()).ok();
+        }
+        Err(TransportError::Cancelled)
+    }
+}
+
+/// One call of each source this crate ships, over a request that stalls.
+type StalledCall = fn(Arc<Stall>, &Cancel) -> Result<(), SourceError>;
+
+const STALLED_CALLS: [(&str, StalledCall); 8] = [
+    ("anthropic", |stall, cancel| {
+        anthropic_over(stall).answered_search("x", cancel).map(drop)
+    }),
+    ("anthropic", |stall, cancel| {
+        anthropic_over(stall)
+            .answered_fetch("https://example.com/page", cancel)
+            .map(drop)
+    }),
+    ("openai", |stall, cancel| {
+        openai_over("gpt-5.6", stall)
+            .answered_search("x", cancel)
+            .map(drop)
+    }),
+    ("openai", |stall, cancel| {
+        openai_over("gpt-5.6", stall)
+            .answered_fetch("https://example.com/page", cancel)
+            .map(drop)
+    }),
+    ("moonshot", |stall, cancel| {
+        kimi_over(stall).answered_search("x", cancel).map(drop)
+    }),
+    ("moonshot", |stall, cancel| {
+        kimi_over(stall)
+            .answered_fetch("https://serde.rs/", cancel)
+            .map(drop)
+    }),
+    ("google", |stall, cancel| {
+        google_over(stall).answered_search("x", cancel).map(drop)
+    }),
+    ("google", |stall, cancel| {
+        google_over(stall)
+            .answered_fetch("https://example.com/page", cancel)
+            .map(drop)
+    }),
+];
+
+fn google_over(transport: impl Transport + 'static) -> GoogleWeb {
+    GoogleWeb::new(
+        crate::Google::VENDOR,
+        Box::new(HeaderKey::new(
+            ApiKey::new(SECRET),
+            Header::bare("x-goog-api-key"),
+        )),
+        Box::new(transport),
+        "gemini-3.8-flash",
+    )
+}
+
+/// How long a test waits on something that should happen at once, before it
+/// says it did not rather than hanging.
+const PROMPTLY: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[test]
+fn a_call_cancelled_while_its_request_stalls_returns_promptly_and_leaves_no_work_behind() {
+    use std::sync::mpsc;
+
+    for (named, call) in STALLED_CALLS {
+        let (begun, beginning) = mpsc::channel();
+        let (go, stalled) = mpsc::channel();
+        let (told, heard) = mpsc::channel();
+        let stall = Arc::new(Stall {
+            begun: std::sync::Mutex::new(begun),
+            go: std::sync::Mutex::new(stalled),
+            told: std::sync::Mutex::new(told),
+        });
+        let cancel = Cancel::new();
+
+        // The call is made on a thread of its own, so a call that does not
+        // return fails this test instead of hanging it.
+        let (answered, answer) = mpsc::channel();
+        let (transport, cancelling) = (Arc::clone(&stall), cancel.clone());
+        let calling = std::thread::spawn(move || answered.send(call(transport, &cancelling)).ok());
+
+        beginning
+            .recv_timeout(PROMPTLY)
+            .unwrap_or_else(|_| panic!("{named}: the request never began"));
+        cancel.request();
+        let answer = answer.recv_timeout(PROMPTLY);
+        // Let the request go whatever came back, so a failure below leaves no
+        // thread stalled behind it.
+        go.send(()).ok();
+
+        let answer = answer.unwrap_or_else(|_| {
+            panic!(
+                "{named}: a call cancelled while its request stalled had not returned {} s \
+                 later",
+                PROMPTLY.as_secs()
+            )
+        });
+        assert!(
+            matches!(answer, Err(SourceError::Cancelled(said)) if said == named),
+            "{named}: {answer:?}"
+        );
+        assert_eq!(
+            heard.recv_timeout(PROMPTLY),
+            Ok(true),
+            "{named}: the stalled request was never told to stop"
+        );
+        calling.join().unwrap();
+
+        // Nothing still holds the transport once the request has returned:
+        // the request, and everything it held, is gone rather than left
+        // running behind the call that stopped waiting for it.
+        let since = std::time::Instant::now();
+        while Arc::strong_count(&stall) > 1 && since.elapsed() < PROMPTLY {
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            Arc::strong_count(&stall),
+            1,
+            "{named}: something still held the request after it returned"
+        );
+    }
+}
+
+#[test]
+fn a_source_keeps_no_more_requests_under_way_than_it_has_places_for() {
+    use std::sync::mpsc;
+
+    let (begun, beginning) = mpsc::channel();
+    let (go, stalled) = mpsc::channel();
+    let (told, _heard) = mpsc::channel();
+    let source = Arc::new(anthropic_over(Stall {
+        begun: std::sync::Mutex::new(begun),
+        go: std::sync::Mutex::new(stalled),
+        told: std::sync::Mutex::new(told),
+    }));
+
+    // A search on a thread of its own, under `cancel`, answering on the
+    // channel handed back.
+    let searching = |cancel: &Cancel| {
+        let (answered, answer) = mpsc::channel();
+        let (source, cancel) = (Arc::clone(&source), cancel.clone());
+        std::thread::spawn(move || answered.send(source.answered_search("x", &cancel)).ok());
+        answer
+    };
+
+    // Every place taken by a request its call gave up on, still stalled.
+    for _ in 0..IN_FLIGHT {
+        let cancel = Cancel::new();
+        let answer = searching(&cancel);
+        beginning
+            .recv_timeout(PROMPTLY)
+            .expect("the request to begin");
+        cancel.request();
+        assert!(matches!(
+            answer.recv_timeout(PROMPTLY),
+            Ok(Err(SourceError::Cancelled("anthropic")))
+        ));
+    }
+
+    // One more call waits for a place instead of beginning a request, and
+    // stops waiting when it is cancelled.
+    let cancel = Cancel::new();
+    let answer = searching(&cancel);
+    assert!(
+        beginning
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "a request began while every place the source has was held"
+    );
+    cancel.request();
+    assert!(
+        matches!(
+            answer.recv_timeout(PROMPTLY),
+            Ok(Err(SourceError::Cancelled("anthropic")))
+        ),
+        "a call waiting for a place did not end when it was cancelled"
+    );
+
+    // A stalled request let go gives its place back, and the next call's
+    // request begins.
+    go.send(()).unwrap();
+    let cancel = Cancel::new();
+    let answer = searching(&cancel);
+    assert!(
+        beginning.recv_timeout(PROMPTLY).is_ok(),
+        "a place a request gave back was not taken by the next call"
+    );
+    cancel.request();
+    assert!(answer.recv_timeout(PROMPTLY).is_ok());
+    for _ in 0..IN_FLIGHT {
+        go.send(()).ok();
+    }
+}
+
+#[test]
+fn a_call_dropped_while_its_request_stalls_tells_the_request_to_stop() {
+    use std::sync::mpsc;
+    use std::task::{Context, Waker};
+
+    let (begun, beginning) = mpsc::channel();
+    let (go, stalled) = mpsc::channel();
+    let (told, heard) = mpsc::channel();
+    let source = anthropic_over(Stall {
+        begun: std::sync::Mutex::new(begun),
+        go: std::sync::Mutex::new(stalled),
+        told: std::sync::Mutex::new(told),
+    });
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let cancel = Cancel::new();
+
+    // Asked once inside the runtime, as a crossing that asks once would, and
+    // dropped while its request stalls: nobody cancels the call.
+    {
+        let _entered = runtime.enter();
+        let mut searching = Search::search(&source, "x", &cancel);
+        assert!(
+            searching
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        beginning
+            .recv_timeout(PROMPTLY)
+            .expect("the request to begin");
+    }
+    go.send(()).unwrap();
+
+    assert_eq!(
+        heard.recv_timeout(PROMPTLY),
+        Ok(true),
+        "a request whose call was dropped was never told to stop"
+    );
+    assert!(
+        !cancel.requested(),
+        "dropping the call raised the call's own cancel"
+    );
+    runtime.shutdown_background();
 }
