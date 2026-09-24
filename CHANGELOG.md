@@ -63,6 +63,12 @@ change in any release with no deprecation period.
   once the token, an ancestor of it or a deadline on either is requested. A
   request wakes the race as it is made, and a deadline is timed on the timer
   of the runtime the race is polled in.
+- **An MCP conversation can be awaited.** In `crucible-mcp`,
+  `Talking::ask_async`, `Talking::tell_async` and `call_async` speak to a
+  server over asynchronous streams with the same numbering, the same bound of
+  64 frames read past while waiting and the same errors as the blocking calls,
+  and an answer to a call given up on is refused rather than taken for the
+  next. Nothing uses them yet, so nothing a user runs behaves differently.
 
 ### Changed
 

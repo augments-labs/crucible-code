@@ -13,19 +13,26 @@
 //! is how it says it is not all of it.
 //!
 //! What the server was given in confidence is hidden in the text before it is
-//! kept, as [`Withheld`](crate::Withheld) says.
+//! kept, as [`Withheld`] says.
 //!
 //! A server reporting that the tool itself failed is not an error of crucible's
 //! making. The model asked for something, the something did not work, and that
 //! is a result to react to rather than a conversation to end — so it arrives as
 //! [`Answered::failed`] and the words come with it.
+//!
+//! A tool is called over either kind of stream the conversation is held on:
+//! [`call`] over a blocking one, [`call_async`] over an asynchronous one. Both
+//! send the same call and read what comes back in one place, so a result is
+//! bounded, hidden and cut the same way whichever it arrived on.
 
 use std::io::{BufRead, Write};
 
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufRead, AsyncWrite};
 
 use crate::catalogue::Offered;
 use crate::talking::{Talking, Trouble};
+use crate::withheld::Withheld;
 
 /// The most bytes of one result crucible retains.
 ///
@@ -147,11 +154,47 @@ pub fn call<R: BufRead, W: Write>(
     tool: &Offered,
     arguments: &Value,
 ) -> Result<Answered, Unanswered> {
-    let answer = talking.ask(
-        "tools/call",
-        &json!({ "name": tool.name(), "arguments": arguments }),
-    )?;
+    let answer = talking.ask("tools/call", &called(tool, arguments))?;
+    answered(&answer, talking.withheld())
+}
 
+/// Calls one tool the server offered, over a conversation held on streams
+/// read and written asynchronously, and reads back what it produced.
+///
+/// The same call as [`call`], and the same reading of what comes back.
+///
+/// # Errors
+///
+/// As [`call`].
+///
+/// # Cancel safety
+///
+/// As [`Talking::ask_async`]'s: a call dropped once its frame has gone is a
+/// tool that may be running still, and whose answer the conversation will
+/// meet while waiting on the next. A silence it was sitting through carries
+/// to the next awaited call as that says, unless the host marks a new
+/// exchange.
+pub async fn call_async<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
+    talking: &mut Talking<R, W>,
+    tool: &Offered,
+    arguments: &Value,
+) -> Result<Answered, Unanswered> {
+    let answer = talking
+        .ask_async("tools/call", &called(tool, arguments))
+        .await?;
+    answered(&answer, talking.withheld())
+}
+
+/// What is sent to call `tool` with `arguments`.
+fn called(tool: &Offered, arguments: &Value) -> Value {
+    json!({ "name": tool.name(), "arguments": arguments })
+}
+
+/// What the server's answer to a call comes to, with `withheld` hidden in it.
+///
+/// Both ways of calling read an answer here, so a result is bounded, hidden
+/// and cut the same way whichever kind of stream it arrived on.
+fn answered(answer: &Value, withheld: &Withheld) -> Result<Answered, Unanswered> {
     let Some(content) = answer.get("content").and_then(Value::as_array) else {
         return Err(Unanswered::Missing { field: "content" });
     };
@@ -177,7 +220,7 @@ pub fn call<R: BufRead, W: Write>(
     // would have landed inside it, and over the joined text, so one a server
     // spread over two blocks it had split at a line is found too. Hiding
     // keeps every length, so the count above still counts the server's bytes.
-    let said = talking.withheld().hide(&said).into_owned();
+    let said = withheld.hide(&said).into_owned();
     let (text, cut) = cut(said);
     Ok(Answered {
         text,
