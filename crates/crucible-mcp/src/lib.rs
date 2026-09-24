@@ -28,7 +28,7 @@ mod testing;
 mod wire;
 mod withheld;
 
-pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call};
+pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call, call_async};
 pub use catalogue::{
     ABOUT_BYTES, CURSOR_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS,
     VERSIONS, hello, tools,
