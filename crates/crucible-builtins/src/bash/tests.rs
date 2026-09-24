@@ -610,9 +610,13 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
     struct Watching(bool);
 
     impl Ask for Watching {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
             self.0 = true;
-            (Verdict::Allow, Remember::Never)
+            Box::pin(async { (Verdict::Allow, Remember::Never) })
         }
     }
 
@@ -624,11 +628,11 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
     };
 
     let mut watching = Watching(false);
-    Permission::with(mode, Rules::new()).decide(
+    crucible_runtime::answered!(Permission::with(mode, Rules::new()).decide(
         &call,
         &tool.sensitivity(&call.args),
         &mut watching,
-    );
+    ));
 
     watching.0
 }

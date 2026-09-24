@@ -778,8 +778,12 @@ fn allowed(tool: &dyn Tool, name: &str, args: &str) -> Approved {
     struct Yes;
 
     impl Ask for Yes {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Allow, Remember::Never)
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+            Box::pin(async { (Verdict::Allow, Remember::Never) })
         }
     }
 
@@ -789,7 +793,11 @@ fn allowed(tool: &dyn Tool, name: &str, args: &str) -> Approved {
         args: ToolArgs::new(args),
     };
     let sensitivity = tool.sensitivity(&call.args);
-    match Permission::with(Mode::default(), Rules::new()).decide(&call, &sensitivity, &mut Yes) {
+    match crucible_runtime::answered!(Permission::with(Mode::default(), Rules::new()).decide(
+        &call,
+        &sensitivity,
+        &mut Yes
+    )) {
         Settled::Approved(approved) => approved,
         Settled::Forbidden | Settled::Refused => panic!("the answer above is yes"),
     }

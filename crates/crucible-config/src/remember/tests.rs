@@ -39,6 +39,20 @@ fn allowing_command(text: &str, command: &str) -> String {
     allowing(text, FILE, &rule(command)).expect("the test wrote a spliceable file")
 }
 
+/// Drives a future to its answer, the way a test drives a fake's future by
+/// hand: this suite's [`Ask`] fake never really waits, so asking it once
+/// always has one, and a fake that did not would fail here rather than hang.
+fn answered_now<F: std::future::Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => panic!("the fake did not answer on the first poll"),
+    }
+}
+
 /// What the engine this file describes does with one command.
 ///
 /// Nobody answers, so a call that still reaches the user comes back refused —
@@ -47,17 +61,24 @@ fn settles(text: &str, command: &str) -> Settled {
     struct Nobody;
 
     impl Ask for Nobody {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Deny, Remember::Never)
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = (Verdict, Remember)> + Send + 'a>>
+        {
+            Box::pin(async { (Verdict::Deny, Remember::Never) })
         }
     }
 
     let document = Document::parse(text, FILE, Origin::User)
         .expect("what was written is a document crucible reads");
 
-    Settings::resolve(vec![document])
-        .permission(Mode::Ask)
-        .decide(&call(), &running(command), &mut Nobody)
+    answered_now(
+        Settings::resolve(vec![document])
+            .permission(Mode::Ask)
+            .decide(&call(), &running(command), &mut Nobody),
+    )
 }
 
 /// The property every case owes: the call that was said `always` to runs

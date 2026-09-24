@@ -290,7 +290,7 @@ impl Tool for AskUser {
             let args = Args::parse(NAME, approved.args())?;
             let asked = questions(&args)?;
 
-            let Some(given) = self.put.put(&asked) else {
+            let Some(given) = self.put.put(&asked).await else {
                 return Ok(ToolOutput::ok(
                     "Nobody answered. Ask in the prompt instead, in your own words.",
                 ));

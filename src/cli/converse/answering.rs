@@ -20,7 +20,6 @@
 //! own keyboard and a test cannot drive them; this much of the reading it can.
 
 use std::io::{self, BufRead};
-use std::sync::mpsc::{Receiver, Sender, SyncSender, channel};
 
 use crucible_core::{
     Answer as Chosen, Answered, Question, Remember, Sensitivity, ToolCall, Verdict,
@@ -29,7 +28,7 @@ use crucible_tui::{Key, Pressed, Renderer, Terminal};
 
 use super::super::Fatal;
 use super::super::draw;
-use super::super::seen::{Answer, Given, Putting, Seen};
+use super::super::seen::{Answer, Given};
 use super::super::style::Style;
 use super::{QUEUED_BYTES, asking};
 
@@ -39,36 +38,6 @@ pub(super) struct Answers<'a> {
     pub(super) input: &'a mut dyn BufRead,
     /// Whether keys are being read rather than lines.
     pub(super) keys: bool,
-}
-
-/// Where the two kinds of answer go back.
-///
-/// Two channels rather than one carrying both: a verdict and an ask's answers
-/// are different types, and one channel would need a union nothing keeps apart.
-/// One value rather than two arguments, because they are made together, handed
-/// over together, and neither is ever the other's.
-pub(super) struct Answering {
-    /// Where a permission verdict goes.
-    pub(super) reply: Sender<Answer>,
-    /// Where an ask's answers go.
-    pub(super) give: Sender<Given>,
-}
-
-impl Answering {
-    /// Both reply channels for one turn, with the ask's end already lent to
-    /// whoever asks.
-    ///
-    /// Fresh for each turn, because a reply channel that outlived its turn could
-    /// hand the next question an answer meant for the last one. Making the
-    /// channel and lending its far end are one act here, so there is no state in
-    /// between where one exists and the other has not been given away.
-    pub(super) fn new(putting: &Putting, post: &SyncSender<Seen>) -> (Self, Receiver<Answer>) {
-        let (reply, hear) = channel();
-        let (give, given) = channel();
-        putting.open(post.clone(), given);
-
-        (Self { reply, give }, hear)
-    }
 }
 
 /// One answer to one question.

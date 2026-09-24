@@ -44,6 +44,8 @@ use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tokio::sync::oneshot;
+
 use crucible_app::Conversation;
 use crucible_app::client::Ended;
 use crucible_app::providers::{Served, Serving, unasked};
@@ -66,7 +68,7 @@ use super::kept::Kept;
 use super::seen::{Asking, CAPACITY, Inbox, Putting, Relay, Seen};
 use super::style::Style;
 use super::{Fatal, standing};
-use answering::{Answering, Answers, asked, cramped, read, verdict};
+use answering::{Answers, asked, cramped, read, verdict};
 use command::Ran;
 use expanding::Standing;
 use planning::Planning;
@@ -868,8 +870,6 @@ struct Turn<'a, 'h> {
     says: &'a mut Says,
     /// Where the worker's events arrive.
     seen: &'a mut Inbox,
-    /// The two channels a question is answered down.
-    answering: &'a Answering,
     /// Whether the terminal is still being written to, or the last write
     /// failed and the rest of the turn is only being drained.
     drawn: &'a mut Result<(), Fatal>,
@@ -1008,17 +1008,25 @@ impl Turn<'_, '_> {
 
                 if self.drawn.is_ok() {
                     *self.drawn = stop_if_failed(
-                        shown(one, renderer, self.terms, self.held, self.answering),
+                        shown(one, renderer, self.terms, self.held),
                         &self.terms.cancel,
                     );
-                } else if matches!(one, Seen::Question { .. } | Seen::Asked { .. }) {
+                } else {
                     // Nothing is drawn and nothing is read once the terminal
                     // has failed, and both kinds of question still have to be
-                    // answered or the worker waits for ever. A refusal and
-                    // nobody-answered are what a drawing thread that has
-                    // stopped means, said out loud rather than by going quiet.
-                    let _ = self.answering.reply.send(verdict(None));
-                    let _ = self.answering.give.send(None);
+                    // answered on the channel they arrived with, or the
+                    // worker waits for ever. A refusal and nobody-answered
+                    // are what a drawing thread that has stopped means, said
+                    // out loud rather than by going quiet.
+                    match one {
+                        Seen::Question { reply, .. } => {
+                            let _ = reply.send(verdict(None));
+                        }
+                        Seen::Asked { reply, .. } => {
+                            let _ = reply.send(None);
+                        }
+                        Seen::Turn(_) => {}
+                    }
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -1251,10 +1259,10 @@ fn take<T: Terminal>(
     held: &mut Held<'_>,
 ) -> Result<Took, Fatal> {
     let (post, seen) = sync_channel(CAPACITY);
-    let (answering, hear) = Answering::new(&terms.putting, &post);
+    terms.putting.open(post.clone());
     let mut seen = Inbox::new(seen);
 
-    let asking = Asking::new(post.clone(), hear, terms.client.clone());
+    let asking = Asking::new(post.clone(), terms.client.clone());
     let relay = Relay::new(post, terms.putting.clone());
     let running = terms.cancel.clone();
 
@@ -1357,7 +1365,6 @@ fn take<T: Terminal>(
         held,
         says: &mut says,
         seen: &mut seen,
-        answering: &answering,
         drawn: &mut drawn,
         meanwhile: &mut meanwhile,
         leaving: &mut leaving,
@@ -1893,15 +1900,21 @@ fn settling<T: Terminal>(
     )
 }
 
+/// Refuses a pending action already off the channel: the drain cannot meet
+/// the same [`Seen::Question`] or [`Seen::Asked`] again, so silence must
+/// still carry a refusal, or the worker waits forever beside it.
+fn refuse<T>(reply: oneshot::Sender<T>, refusal: T, problem: Fatal) -> Result<(), Fatal> {
+    let _ = reply.send(refusal);
+    Err(problem)
+}
+
 /// Draws one thing the worker sent, and answers it if it was a question.
 fn shown<T: Terminal>(
     one: Seen,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     held: &mut Held<'_>,
-    answering: &Answering,
 ) -> Result<(), Fatal> {
-    let Answering { reply, give } = answering;
     let style = terms.style();
 
     match one {
@@ -1916,7 +1929,11 @@ fn shown<T: Terminal>(
         Seen::Turn(event) => {
             draw::event(renderer, event, &terms.workspace, style, &mut held.kept)?;
         }
-        Seen::Question { call, sensitivity } => {
+        Seen::Question {
+            call,
+            sensitivity,
+            reply,
+        } => {
             // A durable rule cannot live in either project configuration file:
             // both names can arrive with a checkout, whatever an ignore rule
             // says. Until policy has a per-workspace store outside the checkout,
@@ -1926,22 +1943,15 @@ fn shown<T: Terminal>(
             let answer = terms.ending.unclocked().and_then(|_unclocked| {
                 asked(renderer, &call, &sensitivity, &mut held.answers, style)
             });
-            let answer = match answer {
-                Ok(answer) => answer,
-                Err(problem) => {
-                    // This question has already left the channel, so the drain
-                    // cannot encounter and refuse it again. Silence must still
-                    // be a refusal or the worker waits forever beside the
-                    // terminal failure this returns.
-                    let _ = reply.send(verdict(None));
-                    return Err(problem);
+            match answer {
+                Ok(answer) => {
+                    // A worker that stopped waiting has already denied itself.
+                    let _ = reply.send(answer);
                 }
-            };
-
-            // A worker that stopped waiting has already denied itself.
-            let _ = reply.send(answer);
+                Err(problem) => return refuse(reply, verdict(None), problem),
+            }
         }
-        Seen::Asked { questions } => {
+        Seen::Asked { questions, reply } => {
             // A loop reading lines rather than keys has nobody to put a panel
             // to, and neither has one whose raw mode never came up. The tool is
             // not registered in either, so this is the belt rather than the
@@ -1949,27 +1959,19 @@ fn shown<T: Terminal>(
             // ever, and waiting for ever is the one failure this loop may not
             // have.
             if !held.answers.keys {
-                let _ = give.send(None);
+                let _ = reply.send(None);
                 return Ok(());
             }
 
-            // The same wait as a permission question's, for as long as the
-            // panel stands — the cramped reading below included.
-            let unclocked = terms.ending.unclocked().inspect_err(|_| {
-                let _ = give.send(None);
-            })?;
+            // The same wait as a permission question's: as long as the panel stands.
+            let unclocked = match terms.ending.unclocked() {
+                Ok(unclocked) => unclocked,
+                Err(problem) => return refuse(reply, None, problem),
+            };
 
-            let given = putting::put(renderer, style, &questions);
-            let given = match given {
+            let given = match putting::put(renderer, style, &questions) {
                 Ok(given) => given,
-                Err(problem) => {
-                    // This ask has already left the channel, so the drain
-                    // cannot meet it again. Nobody answered is what the worker
-                    // has to hear, or it waits for ever beside the terminal
-                    // failure this returns.
-                    let _ = give.send(None);
-                    return Err(problem);
-                }
+                Err(problem) => return refuse(reply, None, problem),
             };
 
             let given = match given {
@@ -1980,15 +1982,12 @@ fn shown<T: Terminal>(
                 // have to be put: a window this small is not somebody saying no.
                 putting::Put::Cramped => match cramped(renderer, &questions, style) {
                     Ok(given) => given,
-                    Err(problem) => {
-                        let _ = give.send(None);
-                        return Err(problem);
-                    }
+                    Err(problem) => return refuse(reply, None, problem),
                 },
             };
 
             drop(unclocked);
-            let _ = give.send(given);
+            let _ = reply.send(given);
         }
     }
 
