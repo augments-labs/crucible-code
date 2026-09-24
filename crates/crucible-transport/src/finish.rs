@@ -20,19 +20,15 @@
 //! outside this process: past it the program is stopped, and the ending says
 //! that nothing it wrote was published rather than reading as a clean stop.
 //!
-//! The wait comes in two kinds, as the framing does. [`Finish::after`] holds
-//! the calling thread, and can only ask a stop once and drop it if it would
-//! have had to wait. [`Finish::after_async`] waits on the caller's runtime, so
-//! it can wait for a stop too — a stop that yields, up to a bound, past which
-//! it is given up on and the ending is cleanup nobody confirmed. The blocking
-//! kind stays until the transport above it is asynchronous throughout.
+//! The wait is [`Finish::after_async`]'s: on the caller's runtime, so a stop
+//! that yields is waited for too, up to a bound, past which it is given up on
+//! and the ending is cleanup nobody confirmed.
 
 use std::io;
 use std::process::ExitStatus;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crucible_runtime::{Bridge, Unready};
+use crucible_runtime::Unready;
 use crucible_sandbox::SandboxProcess;
 
 /// How long the wait for a process to finish sleeps between looks.
@@ -53,15 +49,21 @@ const PUBLICATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const PUBLICATION: Duration = Duration::from_millis(1500);
 
-/// How long the asynchronous finish waits for a stop to answer.
+/// How long an awaited stop is given to answer, in [`Finish::after_async`]
+/// and in [`crate::Unspoken::after`]'s cleanup.
 ///
 /// A stop that is working is waiting on the operating system to end a process
 /// tree, which takes moments; one that has not answered in seconds is not
 /// going to, and waiting on it further would keep a turn or a shutdown from
 /// ending on its account. Longer than the publication ceiling, because giving
 /// up here leaves an end nobody confirmed, where giving up there only loses
-/// what the program wrote.
-const STOPPING: Duration = Duration::from_secs(10);
+/// what the program wrote. Shorter under test, where nothing holds a stop up.
+#[cfg(not(test))]
+pub(crate) const STOPPING: Duration = Duration::from_secs(10);
+// Short enough that a suite exercising an unanswering process stays fast;
+// nothing in a test holds a stop up, so nothing needs the production bound.
+#[cfg(test)]
+pub(crate) const STOPPING: Duration = Duration::from_millis(50);
 
 /// How a confined process finished.
 #[derive(Debug)]
@@ -77,20 +79,19 @@ pub enum Finish {
     /// published: most often because a root it wrote into changed while it ran.
     Unpublished(io::Error),
 
-    /// It did not, and stopping it failed, would have had to wait and was
-    /// dropped, or was waited on and did not answer in time.
+    /// It did not, and stopping it failed, or was waited on and did not
+    /// answer in time.
     ///
     /// The sandbox could not confirm scope termination and leader exit: one of
     /// the two endings, with an ending that went wrong, that are somebody's
     /// problem afterwards. It does not say the program is still running — a
     /// program stopped at its publication ceiling reaches this too, and then
     /// the error's message says what it lost, and its source is the stop that
-    /// could not be confirmed. A stop dropped because it would have had to wait
-    /// is carried as the [`Unready`] it was refused with: `get_ref` on this
+    /// could not be confirmed. A stop that was waited on and did not answer in
+    /// time is carried as the [`Unanswered`] it gave up on: `get_ref` on this
     /// error finds it, or, at the publication ceiling, `get_ref` on the
-    /// `io::Error` that is its source. A stop that was waited on and did not
-    /// answer in time is an error of kind [`io::ErrorKind::TimedOut`], found
-    /// the same way at the publication ceiling.
+    /// `io::Error` that is its source, both of kind
+    /// [`io::ErrorKind::TimedOut`].
     Unreaped(io::Error),
 }
 
@@ -110,49 +111,22 @@ enum Look {
 }
 
 impl Finish {
-    /// Waits out `grace` for `process` to finish, and stops it where it does not.
-    ///
-    /// The caller closes its end of the conversation first; this is only the
-    /// waiting and the stopping.
-    #[must_use]
-    pub fn after(process: &mut dyn SandboxProcess, grace: Duration) -> Self {
-        let began = Instant::now();
-        let unpublished = loop {
-            match Self::look(process, grace, || began.elapsed()) {
-                Look::Over(finish) => return finish,
-                Look::Again(pause) => thread::sleep(pause),
-                Look::Stop { unpublished } => break unpublished,
-            }
-        };
-        // A stop that would have had to wait is dropped rather than waited
-        // on, which leaves the process's end as unconfirmed as a stop that
-        // failed.
-        let stop = Bridge::TransportProcess
-            .cross(process.stop())
-            .unwrap_or_else(|unready| Err(io::Error::other(unready)));
-        Self::stopped(stop, unpublished)
-    }
-
     /// Waits out `grace` for `process` to finish, and stops it where it does
     /// not, on the caller's runtime.
     ///
-    /// The same looks, the same publication ceiling and the same four endings
-    /// as [`after`](Self::after), with the waiting done on the runtime's clock
-    /// rather than by holding a thread. The stop differs: it is waited for
-    /// rather than dropped for not answering at once.
-    ///
-    /// What ten seconds bound is the wait for a stop that yields to the
-    /// runtime while it works. One still unanswered then is given up on, and
-    /// the ending is [`Finish::Unreaped`] with an error of kind
-    /// [`io::ErrorKind::TimedOut`]: a failed cleanup, never an ordinary stop.
-    /// A stop that does its work synchronously inside its first poll is not
-    /// bounded by them: it runs to completion on the calling task before the
-    /// timer is looked at, and its answer is taken however long it took.
+    /// What bounds the wait for a stop that yields to the runtime while it
+    /// works is a fixed ceiling, ten seconds in production and shorter under
+    /// test. One still unanswered then is given up on, and the ending is
+    /// [`Finish::Unreaped`] with an error of kind [`io::ErrorKind::TimedOut`]:
+    /// a failed cleanup, never an ordinary stop. A stop that does its work
+    /// synchronously inside its first poll is not bounded by it: it runs to
+    /// completion on the calling task before the timer is looked at, and its
+    /// answer is taken however long it took.
     ///
     /// The waits for the process to finish are bounded by `grace` and the
     /// publication ceiling, provided `process`'s synchronous looks answer at
     /// once as its contract has them do; with a stop that yields, the whole
-    /// finish answers within those and the stop's ten seconds together.
+    /// finish answers within those and the stop's own ceiling together.
     ///
     /// # Cancel safety
     ///
@@ -179,7 +153,7 @@ impl Finish {
             .unwrap_or_else(|_| {
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    Unanswered { waited: STOPPING },
+                    Unanswered::new(STOPPING),
                 ))
             });
         Self::stopped(stop, unpublished)
@@ -247,11 +221,13 @@ impl Finish {
 /// A process stopped at its publication ceiling whose stop was not confirmed.
 ///
 /// Why its end is not known is its source, kept as the error it is, so that a
-/// stop dropped because it would have had to wait is still told apart from one
+/// stop that never answered is still told apart from one
 /// that failed. What the ceiling cost it is said in its message, and a caller
-/// reaches it nowhere else. A dropped stop's refusal, and a stop that did not
-/// answer in time, already say that what the stop began is unconfirmed, so the
-/// message gives their words as they stand; a failed stop's words need not say
+/// reaches it nowhere else. A stop that never answered, and a stop dropped
+/// because it would have had to wait, already say that what they began is
+/// unconfirmed, so the
+/// message gives their words as they stand; no current stop path produces the
+/// dropped one, and the arm stays for the refusal it names. A failed stop's words need not say
 /// it, so the message says it before them.
 #[derive(Debug, thiserror::Error)]
 struct Unconfirmed {
@@ -276,18 +252,28 @@ impl std::fmt::Display for Unconfirmed {
     }
 }
 
-/// A stop the asynchronous finish waited its whole bound on.
+/// A stop an awaited caller waited its whole bound on: [`Finish::after_async`]
+/// stopping a program whose finish gave up on it, or an
+/// [`Unspoken`](crate::Unspoken) refusal stopping one whose pipes could not
+/// be taken.
 ///
-/// Its words say that the stop's end is unconfirmed, as a dropped stop's
-/// refusal does, because that is what a caller reading only this has to learn.
+/// Its words say that the stop's end is unconfirmed, which is what a caller
+/// reading only this has to learn.
 #[derive(Debug, thiserror::Error)]
 #[error(
     "stopping a hosted program did not answer within {waited:?}, so whatever it began is \
      unconfirmed"
 )]
-struct Unanswered {
+pub struct Unanswered {
     /// How long it was waited on.
     waited: Duration,
+}
+
+impl Unanswered {
+    /// Built for a stop that was waited on for `waited` and never answered.
+    pub(crate) const fn new(waited: Duration) -> Self {
+        Self { waited }
+    }
 }
 
 /// What a process that had ended lost when it was stopped at its publication

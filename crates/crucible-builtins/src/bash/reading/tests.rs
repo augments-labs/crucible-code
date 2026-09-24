@@ -16,7 +16,7 @@ fn started(sample: &Sample, left: &Background, command: &str) -> Bash {
     .leaving(left.clone());
     let context = crate::sample::context();
     let args = format!(r#"{{"command":{command},"background":true}}"#);
-    let output = crucible_runtime::answered!(tool.run(allowed(&tool, &args), &context))
+    let output = crate::bash::tests::awaited(tool.run(allowed(&tool, &args), &context))
         .expect("the command started");
     crate::sample::finalize_call_result(&context, &output);
     assert!(!output.is_failed(), "{}", output.text());

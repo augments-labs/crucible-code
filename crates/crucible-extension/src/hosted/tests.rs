@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::{BoxFuture, Unready};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
@@ -170,8 +170,8 @@ enum Ending {
     Stubborn,
     /// It never exits, and cannot be reaped.
     Unreapable,
-    /// It never exits, and a stop never answers, so crucible drops the stop
-    /// rather than wait on it.
+    /// It never exits, and a stop never answers, so an awaited caller gives up
+    /// on it at the bound on a stop that does not answer.
     Unanswering,
 }
 
@@ -610,10 +610,10 @@ fn missing_input_retains_failed_cleanup() {
 }
 
 #[test]
-fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
-    // The stop is dropped rather than waited on, and the refusal it was dropped
-    // with already says that what it began is unconfirmed: the message does not
-    // say it a second time.
+fn missing_input_retains_a_stop_that_never_answered() {
+    // The stop is awaited up to its bound and then given up on, and the
+    // timeout it was given up with already says that what it began is
+    // unconfirmed: the message does not say it a second time.
     let (mut process, watched) = Fake::new([], Ending::Unanswering);
     process.speaks = false;
     let refused = on(Hosted::<()>::over(
@@ -625,18 +625,21 @@ fn missing_input_retains_a_stop_that_would_have_had_to_wait() {
     assert_eq!(
         refused.to_string(),
         "the extension was started without crucible keeping its input, so there is \
-         no way to answer it; process cleanup: stopping a hosted program would have \
-         had to wait, and the caller cannot; the waiting step was dropped before it \
-         answered, so whatever that step began is unconfirmed"
+         no way to answer it; process cleanup: stopping a hosted program did not \
+         answer within 10s, so whatever it began is unconfirmed"
     );
     assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
     let Unstarted::Unreaped { cause, cleanup } = refused else {
         panic!("cleanup uncertainty must be typed");
     };
     assert!(matches!(*cause, Unstarted::Unspeakable));
+    assert_eq!(cleanup.kind(), io::ErrorKind::TimedOut);
     assert!(
-        matches!(cleanup.get_ref(), Some(held) if held.is::<Unready>()),
-        "the refusal is carried as itself, not as its words: {cleanup:?}"
+        matches!(
+            cleanup.get_ref(),
+            Some(held) if held.is::<crucible_transport::Unanswered>()
+        ),
+        "the timeout is carried as itself, not as its words: {cleanup:?}"
     );
 }
 

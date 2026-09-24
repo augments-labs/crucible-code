@@ -18,8 +18,7 @@
 //! or asks through and ended when that value is dropped. A host awaits what
 //! those tasks hand over — frames through [`Frames::next_frame_async`] and
 //! [`Written::send_async`], and how the program ended through
-//! [`Finish::after_async`] — or, while it is still synchronous, waits for the
-//! same from its own thread; both ride the same tasks and the same bounded
+//! [`Finish::after_async`] — riding the same tasks and the same bounded
 //! queues.
 //!
 //! Nothing here starts a process either. What to run, under what confinement
@@ -37,7 +36,7 @@ mod said;
 #[cfg(test)]
 mod testing;
 
-pub use finish::Finish;
+pub use finish::{Finish, Unanswered};
 pub use framing::{FRAME_BYTES, FrameError, Frames, Written};
 pub use heard::Heard;
 pub use muttered::Muttered;

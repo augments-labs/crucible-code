@@ -189,7 +189,7 @@ fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
 }
 
 fn keeping(left: &Background, process: Process, accepting: bool) -> Kept {
-    let taken = output::collect(
+    let taken = crate::bash::tests::awaited(output::collect(
         Box::new(process),
         &output::Waiting {
             allowed: Duration::from_secs(1),
@@ -200,7 +200,7 @@ fn keeping(left: &Background, process: Process, accepting: bool) -> Kept {
                 after: Some(Duration::ZERO),
             }),
         },
-    )
+    ))
     .expect("immediate background handover");
     let output::Left::Running(taking) = taken else {
         panic!("fixture must enter the registry before observing exit");
@@ -390,7 +390,7 @@ fn a_command_that_ended_in_time_is_not_stopped_while_its_ending_completes() {
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
     let completing = completes(&observed, Duration::from_millis(100));
 
-    let answered = output::collect(
+    let answered = crate::bash::tests::awaited(output::collect(
         Box::new(process(&observed)),
         &output::Waiting {
             allowed: Duration::from_millis(50),
@@ -398,7 +398,7 @@ fn a_command_that_ended_in_time_is_not_stopped_while_its_ending_completes() {
             watch: &Unwatched,
             leaving: None,
         },
-    );
+    ));
     completing.join().expect("the ending completed");
 
     assert!(
@@ -426,7 +426,7 @@ fn a_cancelled_turn_keeps_a_command_that_had_already_ended() {
     cancel.request();
     let completing = completes(&observed, Duration::from_millis(20));
 
-    let answered = output::collect(
+    let answered = crate::bash::tests::awaited(output::collect(
         Box::new(process(&observed)),
         &output::Waiting {
             allowed: Duration::from_secs(10),
@@ -434,7 +434,7 @@ fn a_cancelled_turn_keeps_a_command_that_had_already_ended() {
             watch: &Unwatched,
             leaving: None,
         },
-    );
+    ));
     completing.join().expect("the ending completed");
 
     assert!(
@@ -538,7 +538,7 @@ fn a_command_whose_publication_never_finishes_is_stopped_once_its_patience_has_p
     let process = process(&observed);
     let (told, hears) = std::sync::mpsc::channel();
     let waiting = thread::spawn(move || {
-        let answered = output::collect(
+        let answered = crate::bash::tests::awaited(output::collect(
             Box::new(process),
             &output::Waiting {
                 allowed: Duration::from_millis(50),
@@ -546,7 +546,7 @@ fn a_command_whose_publication_never_finishes_is_stopped_once_its_patience_has_p
                 watch: &Unwatched,
                 leaving: None,
             },
-        );
+        ));
         told.send(match answered {
             Ok(output::Left::Answered(report)) => report.text().to_owned(),
             Ok(output::Left::Running(_)) => "handed over".to_owned(),
@@ -628,7 +628,7 @@ fn a_cancel_waits_less_for_a_publication_than_a_deadline_does() {
         let cancel = Cancel::new();
         cancel.request();
         let began = Instant::now();
-        let answered = output::collect(
+        let answered = crate::bash::tests::awaited(output::collect(
             Box::new(process),
             &output::Waiting {
                 allowed: Duration::from_secs(30),
@@ -636,7 +636,7 @@ fn a_cancel_waits_less_for_a_publication_than_a_deadline_does() {
                 watch: &Unwatched,
                 leaving: None,
             },
-        );
+        ));
         told.send((
             began.elapsed(),
             match answered {
@@ -678,7 +678,7 @@ fn a_cancelled_turn_stops_a_command_whose_publication_never_finishes() {
     let waiting = thread::spawn(move || {
         let cancel = Cancel::new();
         cancel.request();
-        let answered = output::collect(
+        let answered = crate::bash::tests::awaited(output::collect(
             Box::new(process),
             &output::Waiting {
                 allowed: Duration::from_secs(30),
@@ -686,7 +686,7 @@ fn a_cancelled_turn_stops_a_command_whose_publication_never_finishes() {
                 watch: &Unwatched,
                 leaving: None,
             },
-        );
+        ));
         told.send(match answered {
             Ok(_) => "answered".to_owned(),
             Err(problem) => format!("error: {problem}"),
@@ -863,7 +863,7 @@ fn a_background_command_whose_output_was_read_to_the_end_says_only_what_it_print
         .recv_timeout(Duration::from_secs(20))
         .expect("the reader met the ending under test");
 
-    // `told` fires as the reader decides to end, a moment before its thread
+    // `told` fires as the reader decides to end, a moment before its task
     // has actually finished. Waited out here, rather than left to the grace
     // `reap` gives a reader that has not: that grace is what the other two
     // tests below mean to exercise, and this one would otherwise pass or fail

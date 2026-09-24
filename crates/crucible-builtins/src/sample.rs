@@ -21,14 +21,17 @@ use crucible_workspace::Workspace;
 use sha2::{Digest as _, Sha256};
 
 /// A runtime of this test binary's own, whose threads run a command's status
-/// task, and own a command left running, while a test waits on the command,
-/// and on whose blocking threads a tool worker's jobs run.
-fn runtime() -> tokio::runtime::Handle {
+/// task, read its output and own a command left running, while a test waits
+/// on the command, and on whose blocking threads a tool worker's jobs run.
+/// Built with the I/O driver a command's pipes are waited on with on Unix,
+/// as the application's is.
+pub(crate) fn runtime() -> tokio::runtime::Handle {
     static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     RUNTIME
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
+                .enable_io()
                 .enable_time()
                 .build()
                 .expect("a runtime for the tests")

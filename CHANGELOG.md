@@ -211,6 +211,14 @@ change in any release with no deprecation period.
   already made may remain; a picture `read` stops between chunks and answers
   cancelled rather than opening the file again as text. A file counts as seen
   only once the call that touched it has its answer.
+- **The synchronous transport is gone, and stopping a hosted server no longer
+  blocks.** `Finish::after`, the blocking wait for a confined process, is
+  deleted in favor of the awaited `Finish::after_async`; `Pipes::taken` and
+  `crucible-mcp`'s `Hosted::over`, `Hosted::withholding` and `Hosted::stop` are
+  now `async`, with a stop that never answers given up on after 10 s as
+  unconfirmed cleanup. The `TransportProcess` bridge crossing is retired with
+  them, and a repository check fails a `thread::spawn` in shipped source of
+  the transport, MCP or extension crates.
 - **The runner awaits every session write, and a session answers once its
   writer has the line.** A turn's, a compaction's and a clearing's writes
   through `SessionStore` are now awaited rather than asked once, so a store
@@ -249,6 +257,13 @@ change in any release with no deprecation period.
   answered even after a stop. `Runner::lending` lends every call a
   `ToolWorker`, which `crucible-core` now re-exports, and `startup::assemble`
   lends the run's own.
+- **A bash call's output is read by tasks the call awaits.** `Bash` reads a
+  command's output through the sandbox's waiting reads, in tasks on the Tokio
+  runtime polling the call, and waits between its looks at the command on that
+  runtime's clock, so the thread polling the call is free while the command
+  runs. Its run is therefore awaited on a runtime with a timer and, for the
+  local sandbox on Unix, an I/O driver, as the application's is; what a
+  command is answered with, its bounds and its redaction are unchanged.
 
 ### Fixed
 

@@ -6,9 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crucible_sandbox::{SandboxOutput, SandboxRead};
 
-use super::{
-    CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, PUBLICATION, Pipe, SETTLE, cut, settle,
-};
+use super::{CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, PUBLICATION, Pipe, cut, settle};
 
 #[test]
 fn a_command_stopped_for_running_too_long_says_so_once() {
@@ -342,7 +340,7 @@ fn nothing_arriving_hands_nothing_over() {
 }
 
 /// A standard output with nothing to read until `over` says the command is,
-/// telling `parked` each time its reader is about to wait out a tick.
+/// telling `parked` each time its reader finds nothing and waits.
 struct Quiet {
     over: Arc<AtomicBool>,
     parked: std::sync::mpsc::Sender<()>,
@@ -359,32 +357,70 @@ impl SandboxOutput for Quiet {
 }
 
 #[test]
-fn a_reader_waiting_out_its_pause_is_woken_once_the_command_is_over() {
-    // The readers wait a tick between looks at their pipes, and the wait
-    // reaches `settle` a moment before they wake: a reader found still reading
-    // and left to its tick would cost every short command's answer the rest
-    // of that tick. This reader is told to wait far longer than `settle` does,
-    // so that the only way it reaches the end inside `settle` is being woken,
-    // and nothing here is measured against a clock: either it got there or it
-    // did not. Far longer, but not forever: a reader nobody woke is joined
-    // when its pipe is dropped, and a failure here is to be answered, not
-    // waited out.
-    let pause = SETTLE * 10;
+fn a_reader_waiting_on_a_quiet_pipe_is_at_its_end_once_the_pipe_ends() {
+    // A reader waits on its pipe, not out a tick of its own, so the pipe
+    // ending is what finds it: the wait for the readers sees the end rather
+    // than running out, and nothing had to wake the reader for that. Nothing
+    // here is measured against a clock beyond `settle`'s own bound: either the
+    // reader got there or it did not.
     let over = Arc::new(AtomicBool::new(false));
     let (parked, parking) = std::sync::mpsc::channel();
     let quiet = Quiet {
         over: Arc::clone(&over),
         parked,
     };
-    let out = Pipe::drain(Some(Box::new(quiet)), "stdout", pause).expect("a reader for stdout");
-    let err = Pipe::drain(None, "stderr", pause).expect("nothing to read for stderr");
-    parking
-        .recv_timeout(PUBLICATION)
-        .expect("the reader looked at the pipe once");
-    over.store(true, Ordering::Relaxed);
 
+    let ended = crate::bash::tests::awaited(async {
+        let on = tokio::runtime::Handle::current();
+        let out = Pipe::drain(Some(Box::new(quiet)), &on);
+        let err = Pipe::drain(None, &on);
+        parking
+            .recv_timeout(PUBLICATION)
+            .expect("the reader looked at the pipe once");
+        over.store(true, Ordering::Relaxed);
+        settle(&out, &err).await
+    });
+
+    assert!(ended, "the reader was not at the end of a pipe that ended");
+}
+
+#[test]
+fn a_reader_given_up_on_is_gone_from_its_runtime() {
+    // A pipe held open by something nothing here can end never shows its
+    // end, and its reader would wait on it for as long as the holder lives.
+    // The call gives up on such a reader once the command is over, and an
+    // error path drops it: either way nothing of it may stay on the runtime,
+    // and a reader told to stop is not a reader that failed.
+    let runtime = crate::bash::tests::alone();
+    let (parked, parking) = std::sync::mpsc::channel();
+    let held = Quiet {
+        over: Arc::new(AtomicBool::new(false)),
+        parked,
+    };
+    let (dropped, _dropping) = std::sync::mpsc::channel();
+    let also_held = Quiet {
+        over: Arc::new(AtomicBool::new(false)),
+        parked: dropped,
+    };
+
+    let (ended, closed) = runtime.block_on(async {
+        let on = tokio::runtime::Handle::current();
+        let mut out = Pipe::drain(Some(Box::new(held)), &on);
+        let err = Pipe::drain(Some(Box::new(also_held)), &on);
+        // The one thread is the readers' too, so it is handed to them here
+        // rather than blocked on waiting for them.
+        while parking.try_recv().is_err() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        let ended = settle(&out, &err).await;
+        drop(err);
+        (ended, out.close().await)
+    });
+
+    assert!(!ended, "a pipe that never ends was read to its end");
     assert!(
-        settle(&out, &err),
-        "the reader was left to its pause rather than woken"
+        closed.is_ok(),
+        "a reader told to stop was reported as failing: {closed:?}"
     );
+    crate::bash::tests::quiesced(&runtime, "its readers were given up on");
 }

@@ -203,14 +203,6 @@ pub enum Bridge {
     /// - Retired: when the bash tool runs asynchronously and so does the
     ///   registry that takes its background commands over.
     BashSandbox,
-    /// Stopping a hosted program's process once talking to it is over, or
-    /// once its pipes could not be taken.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each stop.
-    /// - Owner: `crucible-transport`
-    /// - Retired: when the transport to a hosted program is asynchronous.
-    TransportProcess,
     /// The local backend's own synchronous paths through the contract: the
     /// Linux backend stopping the process it wraps when a launch is refused,
     /// rolled back, quarantined or stopped, and the conformance audit probing a
@@ -331,7 +323,6 @@ impl Bridge {
             Self::AppTurn => "a turn or a compaction",
             Self::TurnCache => "a prompt-cache step",
             Self::BashSandbox => "the bash tool's sandbox",
-            Self::TransportProcess => "stopping a hosted program",
             Self::LocalBackend => "the local sandbox backend",
             Self::SandboxReport => "asking the sandbox what it can enforce",
             Self::SandboxPanel => "asking the sandbox whether it is available",

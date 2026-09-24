@@ -23,8 +23,8 @@
 //! which hosting uses. Every exchange, either way, begins by setting its own
 //! interrupt and deadline on the stream, so an awaited one given up on part
 //! way leaves the next exchange a silence of its own rather than what was left
-//! of the last one's. Stopping one waits on the caller's thread either way, until the
-//! transport's finish is awaited too.
+//! of the last one's. Starting one and stopping one are awaited, on the runtime
+//! the transport's finish is awaited on too.
 
 use std::fmt;
 use std::io;
@@ -70,14 +70,20 @@ impl Hosted {
     /// [`Unstarted`] where the process has no pipe to speak over or none to
     /// listen to. Stopping the process is attempted before either is returned, and
     /// [`Unstarted::Unreaped`] preserves an unconfirmed stop, whether it failed
-    /// or would have had to wait and was dropped: a peer crucible cannot hold a
+    /// or never answered: a peer crucible cannot hold a
     /// conversation with is one it has no way to end politely later.
-    pub fn over(
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped while the refused process is being stopped, that stop is
+    /// dropped with it, leaving the process's end as unconfirmed as a stop
+    /// that did not answer.
+    pub async fn over(
         process: Box<dyn SandboxProcess>,
         patience: Duration,
         runtime: &Handle,
     ) -> Result<Self, Unstarted> {
-        Self::withholding(process, patience, Withheld::nothing(), runtime)
+        Self::withholding(process, patience, Withheld::nothing(), runtime).await
     }
 
     /// Speaks to `process` as [`Self::over`] does, hiding `withheld` in
@@ -90,13 +96,17 @@ impl Hosted {
     /// # Errors
     ///
     /// As [`Self::over`].
-    pub fn withholding(
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::over`]'s.
+    pub async fn withholding(
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
         withheld: Withheld,
         runtime: &Handle,
     ) -> Result<Self, Unstarted> {
-        let pipes = Pipes::taken(process.as_mut(), patience, runtime)?;
+        let pipes = Pipes::taken(process.as_mut(), patience, runtime).await?;
         Ok(Self {
             process,
             talking: Talking::withholding(pipes.heard, pipes.said, withheld),
@@ -332,11 +342,19 @@ impl Hosted {
     ///
     /// Crucible's end of the pipe closes first, which is how a server is told
     /// there is nothing further to wait for, and the grace is the chance to act
-    /// on it.
+    /// on it. Only then is it stopped, because a process killed while it
+    /// was still tidying up left whatever it was tidying half done. The wait
+    /// is [`Finish::after_async`]'s, on the runtime this is awaited on.
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped before it answers, it stops nothing further, and what it
+    /// would have handed back goes with it: the process's end is as
+    /// unconfirmed as a stop that did not answer.
     #[must_use]
-    pub fn stop(mut self, grace: Duration) -> Ended {
+    pub async fn stop(mut self, grace: Duration) -> Ended {
         drop(self.talking);
-        let finish = Finish::after(self.process.as_mut(), grace);
+        let finish = Finish::after_async(self.process.as_mut(), grace).await;
         Ended {
             // Asked after the process has finished, because the supervisor
             // records a violation at the moment it acts on one and this is the
@@ -380,11 +398,10 @@ pub enum Unstarted {
     Unheard,
 
     /// Hosting failed, and cleanup of the process scope is unconfirmed: the
-    /// stop failed, or would have had to wait and was dropped.
+    /// stop failed, or never answered.
     ///
-    /// Construction retains the missing-pipe cause and the stop's error or its
-    /// refusal; it emits one wrapper, never a chain of cleanup attempts. A
-    /// refusal already says that what the stop began is unconfirmed, so the
+    /// Construction retains the missing-pipe cause and the stop's error; it emits one wrapper, never a chain of cleanup attempts. A
+    /// stop that never answered already says that what it began is unconfirmed, so the
     /// message gives it as it stands; a failed stop's words need not say it, so
     /// the message says it before them.
     #[error("{cause}; {}: {cleanup}", process_cleanup(.cleanup))]
@@ -392,9 +409,10 @@ pub enum Unstarted {
         /// Why the process could not be hosted.
         #[source]
         cause: Box<Self>,
-        /// Why the backend could not confirm cleanup. A stop that would have had
-        /// to wait was dropped, and is as unconfirmed: this then holds the
-        /// refusal, which `get_ref` finds.
+        /// Why the backend could not confirm cleanup. A stop that never
+        /// answered is as unconfirmed as one that failed: this then holds the
+        /// [`Unanswered`](crucible_transport::Unanswered) it gave up on, which
+        /// `get_ref` finds.
         cleanup: io::Error,
     },
 }
@@ -445,8 +463,14 @@ fn process_cleanup(cleanup: &io::Error) -> &'static str {
     }
 }
 
-/// Whether `stop` is a stop dropped because it would have had to wait, rather
-/// than one that failed.
+/// Whether `stop` is a stop that was never waited out, rather than one that
+/// failed.
+///
+/// A stop that never answered, and a stop dropped because it would have had
+/// to wait, already say that what they began is unconfirmed, which is what
+/// the message around them must not say a second time. No current stop path
+/// produces the dropped one; the `Unready` arm stays as defense, mirroring
+/// the extension twin.
 ///
 /// The refusal is the error `stop` holds; or, for a process stopped at its
 /// publication ceiling, the error held by the stop's own error, which the one
@@ -460,7 +484,9 @@ pub(crate) fn refused_stop(stop: &io::Error) -> bool {
         .source()
         .and_then(|source| source.downcast_ref::<io::Error>())
         .and_then(io::Error::get_ref);
-    held.is::<Unready>() || matches!(beneath, Some(inner) if inner.is::<Unready>())
+    held.is::<Unready>()
+        || held.is::<crucible_transport::Unanswered>()
+        || matches!(beneath, Some(inner) if inner.is::<Unready>() || inner.is::<crucible_transport::Unanswered>())
 }
 
 #[cfg(test)]
