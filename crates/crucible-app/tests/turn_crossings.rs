@@ -16,8 +16,11 @@
 //! `src/` — which a terminal turn reaches too, through the permission prompt
 //! and the event relay — the way the bridge ledger's own check reads them. A
 //! file under a directory named `tests`, or named `tests.rs` or ending in
-//! `_tests.rs`, is not shipped, and neither is a file listed in [`TEST_ONLY`];
-//! an inline test module in a shipped file is. The runner cannot name the
+//! `_tests.rs`, is not shipped, and neither is a file listed in [`TEST_ONLY`].
+//! Inside a shipped file, an item marked `#[cfg(test)]` — a file's own test
+//! module above all — is compiled for tests alone and is left out, from its
+//! attribute to the `;` or the closing brace that ends it, braces counted
+//! outside strings, characters and comments; everything after it is read. The runner cannot name the
 //! application, which the crate graph forbids, so the one waiting crossing
 //! the application makes is outside every turn it waits for.
 //!
@@ -83,7 +86,7 @@ fn shipped() -> Vec<(String, String)> {
                 let text = fs::read_to_string(&path)
                     .unwrap_or_else(|problem| panic!("{relative} unreadable: {problem}"));
                 if !TEST_ONLY.contains(&relative.as_str()) {
-                    found.push((relative, text));
+                    found.push((relative, without_tests(&text)));
                 }
             }
         }
@@ -146,6 +149,147 @@ fn declared_for_tests(root: &Path, path: &str) -> bool {
     })
 }
 
+/// `text` with every item marked `#[cfg(test)]` blanked out, lines kept.
+///
+/// An item starts at a line reading exactly `#[cfg(test)]` and runs through
+/// any further attributes to the first `;` before any brace, or to the brace
+/// that closes the first one it opens. Braces and semicolons inside string,
+/// raw-string and character literals and inside comments are not counted; a
+/// lifetime is not a character literal. What the item held is replaced by
+/// its newlines, so the rest of the file keeps its line numbers.
+fn without_tests(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let at = |index: usize| chars.get(index).copied();
+    let mut kept = String::with_capacity(text.len());
+    let mut index = 0;
+    let mut line_start = true;
+    while index < chars.len() {
+        if line_start {
+            let mut first = index;
+            while at(first).is_some_and(|c| c == ' ' || c == '\t') {
+                first += 1;
+            }
+            let attribute: String = chars
+                .get(first..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|&&c| c != '\n')
+                .collect();
+            if attribute.trim_end() == "#[cfg(test)]" {
+                let end = item_end(&chars, first + attribute.len());
+                for skipped in chars.get(index..end).unwrap_or_default() {
+                    if *skipped == '\n' {
+                        kept.push('\n');
+                    }
+                }
+                index = end;
+                line_start = at(index.wrapping_sub(1)) == Some('\n') || index == 0;
+                continue;
+            }
+        }
+        let Some(c) = at(index) else { break };
+        kept.push(c);
+        line_start = c == '\n';
+        index += 1;
+    }
+    kept
+}
+
+/// Where the item that begins at `from` ends: just past the first `;` met
+/// before any brace, or just past the brace that closes the first one.
+fn item_end(chars: &[char], from: usize) -> usize {
+    let at = |index: usize| chars.get(index).copied();
+    let mut depth = 0_usize;
+    let mut opened = false;
+    let mut index = from;
+    while let Some(c) = at(index) {
+        match c {
+            '/' if at(index + 1) == Some('/') => {
+                while at(index).is_some_and(|c| c != '\n') {
+                    index += 1;
+                }
+                continue;
+            }
+            '/' if at(index + 1) == Some('*') => {
+                index += 2;
+                while at(index).is_some() && !(at(index) == Some('*') && at(index + 1) == Some('/'))
+                {
+                    index += 1;
+                }
+                index += 2;
+                continue;
+            }
+            'r' if matches!(at(index + 1), Some('"' | '#'))
+                && !at(index.wrapping_sub(1)).is_some_and(|c| c.is_alphanumeric() || c == '_') =>
+            {
+                let mut hashes = 0;
+                let mut open = index + 1;
+                while at(open) == Some('#') {
+                    hashes += 1;
+                    open += 1;
+                }
+                if at(open) == Some('"') {
+                    index = open + 1;
+                    loop {
+                        match at(index) {
+                            None => return chars.len(),
+                            Some('"') if (1..=hashes).all(|n| at(index + n) == Some('#')) => {
+                                index += 1 + hashes;
+                                break;
+                            }
+                            Some(_) => index += 1,
+                        }
+                    }
+                    continue;
+                }
+            }
+            '"' => {
+                index += 1;
+                loop {
+                    match at(index) {
+                        None => return chars.len(),
+                        Some('\\') => index += 2,
+                        Some('"') => {
+                            index += 1;
+                            break;
+                        }
+                        Some(_) => index += 1,
+                    }
+                }
+                continue;
+            }
+            '\'' => {
+                if at(index + 1) == Some('\\') {
+                    index += 3;
+                    while at(index).is_some_and(|c| c != '\'') {
+                        index += 1;
+                    }
+                    index += 1;
+                    continue;
+                }
+                if at(index + 2) == Some('\'') {
+                    index += 3;
+                    continue;
+                }
+            }
+            '{' => {
+                depth += 1;
+                opened = true;
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if opened && depth == 0 {
+                    return index + 1;
+                }
+            }
+            ';' if !opened => return index + 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    chars.len()
+}
+
 /// The lines of `text` that are code, a line whose first characters are `//`
 /// left out, as the bridge ledger's own check leaves them out.
 fn code(text: &str) -> impl Iterator<Item = &str> {
@@ -196,10 +340,10 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
     );
 }
 
-/// Every line mentioning `block_on` a shipped file may hold, and none of them
-/// is reached by a turn: the runtime owner's documentation of why it is built
-/// multi-thread, the bridge's own tests, and the runner's test helper that
-/// drives a turn to its end on a runtime of the test's own.
+/// Every line mentioning `block_on` a shipped file may hold outside its test
+/// items, and none of them is reached by a turn: the runtime owner's
+/// documentation of why it is built multi-thread, and the runner's test
+/// helper that drives a turn to its end on a runtime of the test's own.
 const BLOCK_ON_ALLOWED: &[(&str, &str)] = &[
     (
         "crates/crucible-app/src/runtime.rs",
@@ -217,16 +361,40 @@ const BLOCK_ON_ALLOWED: &[(&str, &str)] = &[
         "crates/crucible-app/src/runtime.rs",
         "//! timers does not work unless another thread is inside `Runtime::block_on` on",
     ),
-    (
-        "crates/crucible-runtime/src/bridge.rs",
-        "/// A worker thread is where a `block_on` would panic or deadlock, so both",
-    ),
-    (
-        "crates/crucible-runtime/src/bridge.rs",
-        ".block_on(async move {",
-    ),
     ("crates/crucible-runner/src/fake.rs", ".block_on(self)"),
 ];
+
+#[test]
+fn a_test_item_is_left_out_up_to_the_brace_that_closes_it_and_no_further() {
+    let text = [
+        "fn shipped() { first(); }",
+        "#[cfg(test)]",
+        "#[allow(dead_code)]",
+        "mod tests {",
+        "    const OPEN: char = '{';",
+        "    const LIFETIME: &'static str = \"}}} not a brace\";",
+        "    const RAW: &str = r#\"{ \"quoted\" }\"#;",
+        "    // a comment with a } in it",
+        "    /* and a { in this one */",
+        "    fn inner() { if true { hidden_block_on(); } }",
+        "}",
+        "fn after() { still_read(); }",
+        "#[cfg(test)]",
+        "const FIXTURE: &str = \"gone\";",
+        "fn last() {}",
+    ]
+    .join("\n");
+
+    let kept = without_tests(&text);
+
+    assert_eq!(kept.lines().count(), text.lines().count(), "{kept}");
+    for read in ["first()", "still_read()", "fn last()"] {
+        assert!(kept.contains(read), "{read} was left out:\n{kept}");
+    }
+    for gone in ["hidden_block_on", "OPEN", "LIFETIME", "RAW", "FIXTURE"] {
+        assert!(!kept.contains(gone), "{gone} was read:\n{kept}");
+    }
+}
 
 #[test]
 fn nothing_a_turn_reaches_calls_block_on() {
