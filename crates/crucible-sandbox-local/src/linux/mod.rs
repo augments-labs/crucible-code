@@ -38,6 +38,8 @@ use crucible_sandbox::{
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 
+pub(super) use projection::BoundedPublication;
+
 pub(super) fn probe(
     excluded: &[&Path],
 ) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
@@ -55,6 +57,7 @@ pub(super) fn prepare(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
     runtime: Option<tokio::runtime::Handle>,
+    publications: BoundedPublication,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     let excluded: Vec<_> = request
         .policy()
@@ -130,6 +133,7 @@ pub(super) fn prepare(
         inspection,
         reservation: Some(reservation),
         runtime,
+        publications,
         view,
         materialization: None,
         materialized: false,
@@ -147,6 +151,8 @@ struct LinuxSession {
     reservation: Option<Reservation>,
     /// Where each command's status is watched.
     runtime: Option<tokio::runtime::Handle>,
+    /// Where each command's ending is written.
+    publications: BoundedPublication,
     view: command::View,
     materialization: Option<materialize::Materialization>,
     materialized: bool,
@@ -248,6 +254,7 @@ impl SandboxSession for LinuxSession {
                 process: None,
                 stop_mark: None,
                 projection: Some(projection),
+                publications: self.publications.clone(),
                 network: None,
                 materialization: self.materialization.take(),
                 reservation: self.reservation.take(),
@@ -401,6 +408,7 @@ struct LinuxLaunch {
     process: Option<Box<dyn SandboxProcess>>,
     stop_mark: Option<super::process::StopMark>,
     projection: Option<projection::Projection>,
+    publications: BoundedPublication,
     network: Option<super::network::Mediator>,
     materialization: Option<materialize::Materialization>,
     reservation: Option<Reservation>,
@@ -537,6 +545,7 @@ impl SandboxLaunch for LinuxLaunch {
                 process,
                 projection::ProcessPlan {
                     projection: self.projection.take(),
+                    publications: self.publications.clone(),
                     status_channel,
                     stop_mark: self.stop_mark.take(),
                     audit: self.audit.clone(),

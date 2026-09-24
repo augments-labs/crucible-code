@@ -221,8 +221,8 @@ pub struct Ended {
     /// only move left — which is the polling the note exists to make
     /// unnecessary.
     pub printed: Box<str>,
-    /// Why nothing it wrote was published, where its ending could not be
-    /// completed: most often a root it wrote into changed while it ran.
+    /// Why no successful publication was confirmed, where its ending could not
+    /// be completed: most often a root it wrote into changed while it ran.
     pub unpublished: Option<Box<str>>,
 }
 
@@ -869,8 +869,9 @@ impl Owner {
     /// Stops the command, as a key asked.
     ///
     /// One that has ended is waiting to be reported, or waiting its turn to
-    /// publish what it wrote, and stopping it would discard that: it is left.
-    /// A stop that fails is marked on its entry, for the panel to say so.
+    /// publish what it wrote. Stopping it could cut short that publication, so
+    /// it is left to the ending. A stop that fails is marked on its entry, for
+    /// the panel to say so.
     fn stopping(&mut self, process: &mut (dyn SandboxProcess + 'static)) -> Step {
         if process.ended() {
             return Step::Again;
