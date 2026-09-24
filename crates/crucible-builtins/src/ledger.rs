@@ -23,6 +23,8 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crucible_tools::ToolOutput;
+
 /// How many files are remembered at once.
 ///
 /// A path is a hundred-odd bytes, so this is a tenth of a megabyte against the
@@ -91,6 +93,45 @@ impl Ledger {
         self.seen
             .lock()
             .is_ok_and(|seen| seen.iter().any(|remembered| remembered == path))
+    }
+
+    /// The answer a call came to, remembering the file it showed the agent.
+    ///
+    /// Asked by the call once its work has answered, and never by the work.
+    /// Work handed to a worker runs on after its call is dropped, and what it
+    /// comes to then reaches nobody: remembering the file it read would let
+    /// `write` replace a file the agent was never shown.
+    pub(crate) fn shown(&self, shown: Shown) -> ToolOutput {
+        if let Some(file) = &shown.file {
+            self.record(file);
+        }
+        shown.output
+    }
+
+    /// The record itself, held, so that a test can stop a call at the moment
+    /// it asks.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> std::sync::MutexGuard<'_, VecDeque<PathBuf>> {
+        self.seen.lock().expect("a record no test has poisoned")
+    }
+}
+
+/// What a call's work came to: the answer, and the file it showed the agent
+/// where it showed one.
+///
+/// The file travels beside the answer rather than into the record, for the
+/// reason [`Ledger::shown`] gives.
+pub(crate) struct Shown {
+    /// What the model is answered with.
+    pub(crate) output: ToolOutput,
+    /// The resolved path of the file the answer showed.
+    pub(crate) file: Option<PathBuf>,
+}
+
+impl From<ToolOutput> for Shown {
+    /// An answer that showed the agent no file: a refusal, or a failure.
+    fn from(output: ToolOutput) -> Self {
+        Self { output, file: None }
     }
 }
 

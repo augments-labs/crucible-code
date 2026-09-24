@@ -9,7 +9,7 @@
 use std::fs;
 use std::io::Read as _;
 
-use crucible_runtime::BoxFuture;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{
     Approved, DescribeTool, Remembered, Sensitivity, Summary, Tool, ToolContext, ToolError,
     ToolOutput,
@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 use crate::args::Args;
 use crate::atomic;
 use crate::changed;
-use crate::ledger::Ledger;
+use crate::ledger::{Ledger, Shown};
 use crate::schema::{Field, Schema, Shape};
 use crate::summary;
 use crate::target;
@@ -125,110 +125,158 @@ impl Tool for Write {
     fn run<'a>(
         &'a self,
         approved: Approved,
-        _context: &'a ToolContext<'_>,
+        context: &'a ToolContext<'_>,
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        let workspace = self.workspace.clone();
+        let seen = self.seen.clone();
+        let putting = crate::blocking::run(NAME, context, move |cancel| {
+            put(&workspace, &seen, &approved, cancel)
+        });
         Box::pin(async move {
-            let args = Args::parse(NAME, approved.args())?;
-            let requested = args.text(PATH)?;
-            let content = args.exact(CONTENT)?;
-
-            // The parent has to exist before the path can be contained, because
-            // containment is decided on a resolved path and only a directory that
-            // is really there can be resolved. So the directories are made first,
-            // through a parent that has itself been checked.
-            if let Some(problem) = self.prepare(requested) {
-                return Ok(problem);
-            }
-
-            let path = match self.workspace.creatable(requested) {
-                Ok(path) => path,
-                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-            };
-
-            // What is at the name now, asked about the name itself rather than
-            // through it: `creatable` proved the last component was not a symbolic
-            // link, so one there now arrived since, and `symlink_metadata` is the
-            // question that sees it rather than the far end. All this decides is
-            // which of the two opens the write is — both of them refuse a name that
-            // has become a link, so nothing rests on getting it right.
-            let already = fs::symlink_metadata(&path);
-            if already.as_ref().is_ok_and(fs::Metadata::is_dir) {
-                return Ok(ToolOutput::failed(format!("{requested} is a directory")));
-            }
-
-            let replaced = already.is_ok();
-
-            // Asked before anything is opened, because the answer is about what is
-            // already there rather than about the write. A file the agent has not
-            // read is one it cannot know it is discarding — including one another
-            // program wrote a moment ago, which is the case a model has no way at
-            // all to see.
-            if replaced && !self.seen.holds(path.as_path()) {
-                return Ok(ToolOutput::failed(format!(
-                    "{requested} has not been read, so replacing it would discard what is in it: read it first"
-                )));
-            }
-
-            let mut original = if replaced {
-                let file = match path.open_regular_to_change() {
-                    Ok(file) => file,
-                    Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-                };
-                Some(file)
-            } else {
-                None
-            };
-            let permissions = original
-                .as_ref()
-                .map(|file| file.metadata().map(|metadata| metadata.permissions()))
-                .transpose()
-                .map_err(|source| ToolError::Io {
-                    tool: NAME.into(),
-                    problem: format!("could not inspect {requested}").into(),
-                    source,
-                })?;
-
-            // What is about to go, read back so that whoever is watching can see
-            // what went. Nothing else will ever hold both versions: the model is
-            // sent a line count, and by the time anything downstream reads that,
-            // the old file is gone.
-            let before = if replaced {
-                original.as_mut().and_then(discarded)
-            } else {
-                Some(String::new())
-            };
-
-            // Prepared beside the destination and flushed before the namespace
-            // changes atomically. Unix also flushes the directory; Windows flushes
-            // the renamed file because its handle-relative rename has no
-            // write-through form. A failure before commit leaves the old file
-            // whole, and a file whose identity changed before the final pre-commit
-            // check is refused rather than overwritten.
-            if let Err(problem) =
-                atomic::replace(&path, content.as_bytes(), permissions, original.as_ref())
-            {
-                return Ok(ToolOutput::failed(problem.to_string()));
-            }
-
-            // What the agent just put down it has by definition seen, so the next
-            // call may replace it. Without this a file has to be created and then
-            // read back before it can be corrected, which is a round trip spent
-            // learning what the same turn wrote.
-            self.seen.record(path.as_path());
-
-            let lines = content.lines().count();
-            let what = if replaced { "replaced" } else { "created" };
-            let answer = ToolOutput::ok(format!("{what} {requested}, {lines} lines"));
-
-            // No block rather than a wrong one. A file that could not be read back
-            // is not one that was empty, and a diff drawn from an empty string would
-            // say every line here is new when the truth is that nobody can say.
-            Ok(match before {
-                Some(before) => answer.showing(changed::between(&before, content)),
-                None => answer,
-            })
+            // A call cancelled while it waited for room on the worker did
+            // nothing, and answers as one cancelled at its first look does.
+            let put = putting
+                .await?
+                .unwrap_or_else(|| Err(ToolError::Cancelled(NAME.into())))?;
+            Ok(self.seen.shown(put))
         })
     }
+}
+
+/// The whole of a call's work, which is file work from its first step to its
+/// last, and so is done where [`crate::blocking::run`] says: on the worker the
+/// call was lent, or in place.
+///
+/// `cancel` is looked at before each step whose effect outlives the process:
+/// before each directory is made and before the replacement is renamed into
+/// place. A call stopped anywhere before the rename leaves the file as it
+/// was, never half-written or half-renamed. The directories it had already
+/// made for the file by then stay where they are, and the call answers only
+/// that it was cancelled.
+fn put(
+    workspace: &Workspace,
+    seen: &Ledger,
+    approved: &Approved,
+    cancel: &Cancel,
+) -> Result<Shown, ToolError> {
+    let args = Args::parse(NAME, approved.args())?;
+    let requested = args.text(PATH)?;
+    let content = args.exact(CONTENT)?;
+
+    // The parent has to exist before the path can be contained, because
+    // containment is decided on a resolved path and only a directory that
+    // is really there can be resolved. So the directories are made first,
+    // through a parent that has itself been checked.
+    if let Some(problem) = prepare(workspace, requested, cancel)? {
+        return Ok(problem.into());
+    }
+
+    let path = match workspace.creatable(requested) {
+        Ok(path) => path,
+        Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
+    };
+
+    // What is at the name now, asked about the name itself rather than
+    // through it: `creatable` proved the last component was not a symbolic
+    // link, so one there now arrived since, and `symlink_metadata` is the
+    // question that sees it rather than the far end. All this decides is
+    // which of the two opens the write is — both of them refuse a name that
+    // has become a link, so nothing rests on getting it right.
+    let already = fs::symlink_metadata(&path);
+    if already.as_ref().is_ok_and(fs::Metadata::is_dir) {
+        return Ok(ToolOutput::failed(format!("{requested} is a directory")).into());
+    }
+
+    let replaced = already.is_ok();
+
+    // Asked before anything is opened, because the answer is about what is
+    // already there rather than about the write. A file the agent has not
+    // read is one it cannot know it is discarding — including one another
+    // program wrote a moment ago, which is the case a model has no way at
+    // all to see.
+    if replaced && !seen.holds(path.as_path()) {
+        return Ok(ToolOutput::failed(format!(
+            "{requested} has not been read, so replacing it would discard what is in it: read it first"
+        ))
+        .into());
+    }
+
+    let mut original = if replaced {
+        let file = match path.open_regular_to_change() {
+            Ok(file) => file,
+            Err(problem) => return Ok(ToolOutput::failed(problem.to_string()).into()),
+        };
+        Some(file)
+    } else {
+        None
+    };
+    let permissions = original
+        .as_ref()
+        .map(|file| file.metadata().map(|metadata| metadata.permissions()))
+        .transpose()
+        .map_err(|source| ToolError::Io {
+            tool: NAME.into(),
+            problem: format!("could not inspect {requested}").into(),
+            source,
+        })?;
+
+    // What is about to go, read back so that whoever is watching can see
+    // what went. Nothing else will ever hold both versions: the model is
+    // sent a line count, and by the time anything downstream reads that,
+    // the old file is gone.
+    let before = if replaced {
+        original.as_mut().and_then(discarded)
+    } else {
+        Some(String::new())
+    };
+
+    // The last look before the one step that cannot be taken back.
+    heeded(cancel)?;
+
+    // Prepared beside the destination and flushed before the namespace
+    // changes atomically. Unix also flushes the directory; Windows flushes
+    // the renamed file because its handle-relative rename has no
+    // write-through form. A failure before commit leaves the old file
+    // whole, and a file whose identity changed before the final pre-commit
+    // check is refused rather than overwritten.
+    if let Err(problem) = atomic::replace(&path, content.as_bytes(), permissions, original.as_ref())
+    {
+        return Ok(ToolOutput::failed(problem.to_string()).into());
+    }
+
+    let lines = content.lines().count();
+    let what = if replaced { "replaced" } else { "created" };
+    let answer = ToolOutput::ok(format!("{what} {requested}, {lines} lines"));
+
+    // No block rather than a wrong one. A file that could not be read back
+    // is not one that was empty, and a diff drawn from an empty string would
+    // say every line here is new when the truth is that nobody can say.
+    let output = match before {
+        Some(before) => answer.showing(changed::between(&before, content)),
+        None => answer,
+    };
+
+    // What the agent just put down it has by definition seen, so the next
+    // call may replace it. Without this a file has to be created and then
+    // read back before it can be corrected, which is a round trip spent
+    // learning what the same turn wrote.
+    Ok(Shown {
+        output,
+        file: Some(path.as_path().to_path_buf()),
+    })
+}
+
+/// Whether the call should stop before its next step, answered as the error
+/// it then ends with.
+///
+/// A job cannot be stopped from outside once it has started, and one whose
+/// call was dropped runs on until it next looks at its token, so this is
+/// asked before each step whose effect outlives the process.
+fn heeded(cancel: &Cancel) -> Result<(), ToolError> {
+    if cancel.requested() {
+        return Err(ToolError::Cancelled(NAME.into()));
+    }
+    Ok(())
 }
 
 /// The most of a file being replaced that is read back to show what went.
@@ -257,53 +305,61 @@ fn discarded(file: &mut fs::File) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-impl Write {
-    /// Makes the directories the path needs, one contained level at a time.
-    ///
-    /// Returns the failure the model should see, if there is one. Walking down
-    /// rather than calling `create_dir_all` on the whole path is what keeps
-    /// every level inside the workspace. The file itself is contained either
-    /// way, by the check that follows this; what one call would leave behind is
-    /// the *directories* — `../stray/one.txt` is refused at the end, after
-    /// `stray` has already been made outside the tree.
-    ///
-    /// Creation itself refuses when anything is already at the leaf, a symbolic
-    /// link included. A link planted there between the check and creation is
-    /// therefore an error rather than a path redirection.
-    fn prepare(&self, requested: &str) -> Option<ToolOutput> {
-        let parent = std::path::Path::new(requested).parent()?;
+/// Makes the directories the path needs, one contained level at a time.
+///
+/// Returns the failure the model should see, if there is one, and
+/// [`ToolError::Cancelled`] where `cancel` was raised before a directory that
+/// was about to be made. Walking down rather than calling `create_dir_all` on
+/// the whole path is what keeps every level inside the workspace. The file
+/// itself is contained either way, by the check that follows this; what one
+/// call would leave behind is the *directories* — `../stray/one.txt` is
+/// refused at the end, after `stray` has already been made outside the tree.
+///
+/// Creation itself refuses when anything is already at the leaf, a symbolic
+/// link included. A link planted there between the check and creation is
+/// therefore an error rather than a path redirection.
+fn prepare(
+    workspace: &Workspace,
+    requested: &str,
+    cancel: &Cancel,
+) -> Result<Option<ToolOutput>, ToolError> {
+    let Some(parent) = std::path::Path::new(requested).parent() else {
+        return Ok(None);
+    };
 
-        let mut so_far = std::path::PathBuf::new();
-        for part in parent.components() {
-            so_far.push(part);
+    let mut so_far = std::path::PathBuf::new();
+    for part in parent.components() {
+        so_far.push(part);
 
-            let Some(step) = so_far.to_str() else {
-                return Some(ToolOutput::failed(format!("{requested} is not valid text")));
-            };
+        let Some(step) = so_far.to_str() else {
+            return Ok(Some(ToolOutput::failed(format!(
+                "{requested} is not valid text"
+            ))));
+        };
 
-            // A level that is already there is not one to make, and there are
-            // two ways of being there. `Ok` is one inside the tree. `Escapes`
-            // is one above it: an absolute path names every directory between
-            // the filesystem root and the workspace on the way down, and those
-            // exist without the workspace reaching them. Refusing that pair
-            // was refusing every absolute path — with a message naming `/`,
-            // which the caller never sent.
-            if let Ok(_) | Err(PathError::Escapes { .. }) = self.workspace.existing(step) {
-                continue;
-            }
-
-            let at = match self.workspace.creatable(step) {
-                Ok(at) => at,
-                Err(problem) => return Some(ToolOutput::failed(problem.to_string())),
-            };
-
-            if let Err(problem) = at.create_directory() {
-                return Some(ToolOutput::failed(problem.to_string()));
-            }
+        // A level that is already there is not one to make, and there are
+        // two ways of being there. `Ok` is one inside the tree. `Escapes`
+        // is one above it: an absolute path names every directory between
+        // the filesystem root and the workspace on the way down, and those
+        // exist without the workspace reaching them. Refusing that pair
+        // was refusing every absolute path — with a message naming `/`,
+        // which the caller never sent.
+        if let Ok(_) | Err(PathError::Escapes { .. }) = workspace.existing(step) {
+            continue;
         }
 
-        None
+        let at = match workspace.creatable(step) {
+            Ok(at) => at,
+            Err(problem) => return Ok(Some(ToolOutput::failed(problem.to_string()))),
+        };
+
+        heeded(cancel)?;
+        if let Err(problem) = at.create_directory() {
+            return Ok(Some(ToolOutput::failed(problem.to_string())));
+        }
     }
+
+    Ok(None)
 }
 
 #[cfg(test)]
