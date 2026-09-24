@@ -28,6 +28,17 @@
 //! recorded with no result. The runtime is the one the application owns,
 //! handed over by [`Conversation::on`]; a conversation never handed one
 //! refuses every turn and compaction with [`TurnError::Unwaited`].
+//!
+//! **So is what picking a session up or changing vendor owes the session.**
+//! Each clears from the transcript what the vendor being asked may not be
+//! sent, and the runner owes the session the lines saying so. The
+//! conversation waits for the session to take them through the same crossing,
+//! once it is handed its runtime, after each pick-up and each change of
+//! vendor. Where that wait is refused, they stay owed, and a later wait, turn
+//! or compaction writes them before anything of its own. The refusal is kept
+//! as what the log of each session they are owed to is missing, since without
+//! one they are never written, and withdrawn once that session's lines are
+//! written, by whichever wait writes them; the log goes on working meanwhile.
 
 use std::future::Future;
 use std::path::Path;
@@ -58,6 +69,9 @@ pub struct Conversation {
     /// The runtime a turn and a compaction are waited for on, or `None`
     /// where none was handed over, which refuses them.
     runtime: Option<Handle>,
+    /// The sessions told they are missing lines the runner still owes them,
+    /// held until those lines are written and the report is withdrawn.
+    missing: Vec<Arc<Session>>,
 }
 
 impl Conversation {
@@ -81,17 +95,21 @@ impl Conversation {
             session,
             serving,
             runtime: None,
+            missing: Vec::new(),
         }
     }
 
     /// The same conversation, waiting for its turns and compactions on
-    /// `runtime`, the application's own.
+    /// `runtime`, the application's own, once it has waited there for what
+    /// picking its session up owes the session.
     #[must_use]
     pub fn on(self, runtime: Handle) -> Self {
-        Self {
+        let mut on = Self {
             runtime: Some(runtime),
             ..self
-        }
+        };
+        on.clearings_recorded(None);
+        on
     }
 
     /// The same conversation, remembering the persistent prompt-cache
@@ -149,19 +167,12 @@ impl Conversation {
     /// failure leaves. A failed request for the recap replaces nothing, so the
     /// transcript is as it was but for any pruning before it.
     ///
-    /// Three refusals come back as [`TurnError::Unready`], even when the
-    /// compaction is being stopped: a refusal outranks a stop. A line the
-    /// session would not take between turns, still held, is refused before
-    /// anything is recorded or sent, and the transcript is as it was. A step of
-    /// the recap request that would have had to wait replaces nothing, as a
-    /// failed request does; what the step began is unconfirmed, and its
-    /// prompt-cache attempt, or the cache step refused, is recorded as
-    /// [`Runner::compact`] says. A session write of the compaction's own that
-    /// would have had to wait leaves standing what came before it: a refused
-    /// line about the pruning leaves the pruning, a refused line recording the
-    /// recap leaves the pruning without the replacement, which comes after that
-    /// line, and a refused line reporting what the recap freed leaves both.
-    /// Whether the log kept a refused line is not known.
+    /// A step of the recap request that would have had to wait comes back as
+    /// [`TurnError::Unready`], even when the compaction is being stopped: a
+    /// refusal outranks a stop. It replaces nothing, as a failed request does;
+    /// what the step began is unconfirmed, and its prompt-cache attempt, or
+    /// the cache step refused, is recorded as [`Runner::compact`] says. The
+    /// compaction's session lines are awaited.
     ///
     /// [`TurnError::Unwaited`] where the compaction could not be waited for at
     /// all: this conversation was handed no runtime, or the caller is on a
@@ -172,7 +183,9 @@ impl Conversation {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        waited(self.runtime.as_ref(), self.runner.compact(why, run, spent))
+        let compacted = waited(self.runtime.as_ref(), self.runner.compact(why, run, spent));
+        self.made_good();
+        compacted
     }
 
     /// The persistent prompt-cache resources this conversation remembers
@@ -225,10 +238,9 @@ impl Conversation {
     /// [`TurnError`] where the turn could not be taken at all, or was not
     /// finished, as [`Runner::turn`] says, which also says what each failure
     /// leaves. [`TurnError::Unready`] is a step that would have had to wait and
-    /// was dropped, leaving what it began unconfirmed rather than undone, or a
-    /// line the session would not take between turns, still held, which ends
-    /// the turn before anything of it is recorded or sent. A tool source's own
-    /// step that would have had to wait comes back as that source's failure.
+    /// was dropped, leaving what it began unconfirmed rather than undone. A
+    /// tool source's own step that would have had to wait comes back as that
+    /// source's failure.
     ///
     /// [`TurnError::Unwaited`] where the turn could not be waited for at all:
     /// this conversation was handed no runtime, or the caller is on a thread a
@@ -240,10 +252,12 @@ impl Conversation {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        waited(
+        let turned = waited(
             self.runtime.as_ref(),
             self.runner.turn(prompt, attached, ask, run),
-        )
+        );
+        self.made_good();
+        turned
     }
 
     /// Starts a new session and records into it from here on, with nothing
@@ -291,12 +305,75 @@ impl Conversation {
     fn pick_up(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
         let left = std::mem::replace(&mut self.session, Arc::clone(&session));
         self.runner.pick_up(session, transcript);
+        self.clearings_recorded(Some(&left));
         left
+    }
+
+    /// Waits for the sessions owed lines by picking a session up or changing
+    /// vendor to take them, as the module says; `left` is the session a
+    /// pick-up has just left, if one has.
+    ///
+    /// Refused — no runtime was handed over, or the caller is on a thread a
+    /// runtime runs — the lines stay owed, and a later wait, turn or
+    /// compaction of this conversation writes them before anything of its
+    /// own; with none, they are never written. So each session a line is
+    /// still owed to is told, through [`Session::missing`], and the report is
+    /// withdrawn once its lines are written. It is not the session's trouble:
+    /// the log goes on working.
+    pub(crate) fn clearings_recorded(&mut self, left: Option<&Arc<Session>>) {
+        if self.runner.owes_clearings() {
+            let runner = &mut self.runner;
+            let written = waited(self.runtime.as_ref(), async {
+                runner.record_clearings().await;
+                Ok::<(), TurnError>(())
+            });
+            if written.is_err() {
+                self.report_missing(left);
+            }
+        }
+        self.made_good();
+    }
+
+    /// Tells each session the runner still owes a line that it is missing it.
+    ///
+    /// A line is owed only to a session this conversation has held: the one
+    /// in hand, the one a pick-up has just left, or one already told, which
+    /// is held until its lines are written.
+    fn report_missing(&mut self, left: Option<&Arc<Session>>) {
+        for session in std::iter::once(&self.session).chain(left) {
+            let told = self
+                .missing
+                .iter()
+                .any(|missing| Arc::ptr_eq(missing, session));
+            if !told && self.runner.owes_clearings_to(&**session) {
+                session.missing(UNWAITED_CLEARINGS);
+                self.missing.push(Arc::clone(session));
+            }
+        }
+    }
+
+    /// Withdraws the report from each session told it is missing lines once
+    /// the runner owes it none, whichever wait wrote them.
+    fn made_good(&mut self) {
+        let runner = &self.runner;
+        self.missing.retain(|session| {
+            let owed = runner.owes_clearings_to(&**session);
+            if !owed {
+                session.no_longer_missing();
+            }
+            owed
+        });
     }
 }
 
-/// Waits on the calling thread for `work`, a turn or a compaction, on
-/// `runtime`.
+/// What a session is told where the lines clearing what a vendor may not be
+/// sent could not be waited for.
+const UNWAITED_CLEARINGS: &str = "lines clearing results a vendor may not be sent could not be \
+                                  waited for, and reach this log only if a later wait, turn or \
+                                  compaction of the conversation writes them";
+
+/// Waits on the calling thread for `work`, a turn, a compaction or the lines
+/// a pick-up or a change of vendor owes the session, on `runtime`.
 ///
 /// Under a cancel nothing raises, so the crossing never drops the work part
 /// way: a stop reaches the work through the cancel on its own run, and the

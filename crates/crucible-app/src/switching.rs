@@ -210,6 +210,7 @@ impl Conversation {
                 Err(problem) => return Switched::CacheHeld(problem),
             };
             self.runner.serve(set.provider);
+            self.clearings_recorded(None);
             self.serving = Some(provider);
             retained
         };
@@ -276,6 +277,7 @@ impl Conversation {
             Err(problem) => return LoggedIn::CacheHeld(problem),
         };
         self.runner.serve(set.provider);
+        self.clearings_recorded(None);
         self.serving = Some(named.name);
 
         let unwritten = remember::asking(with.choosing, named.name).err();
@@ -319,6 +321,7 @@ impl Conversation {
         let stored = with.logins.read();
         if let Ok(remaining) = (with.serving)(named, &stored) {
             self.runner.serve(remaining.provider);
+            self.clearings_recorded(None);
             return LoggedOut::StillServed {
                 retained,
                 source: remaining.source,
@@ -333,6 +336,7 @@ impl Conversation {
         };
         self.runner.ask("", UNKNOWN_CEILING, None, None);
         self.runner.serve(Box::new(Unavailable::new(warning)));
+        self.clearings_recorded(None);
         self.serving = None;
         LoggedOut::SignedOut { retained }
     }

@@ -1,9 +1,8 @@
 //! What making room changes, preserves, and reports.
 
-use super::unanswered::{Withheld, Withholding};
+use super::waiting::{Slow, Waits};
 use super::*;
 use crucible_core::TOOL_RESULT_BYTES;
-use crucible_runtime::Bridge;
 
 /// A response that reports it carried `carried` tokens and then calls a tool.
 fn carrying(carried: u64, id: &str) -> Vec<Delta> {
@@ -657,16 +656,14 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
 }
 
 #[test]
-fn a_pruning_the_session_never_takes_ends_the_turn_refused() {
-    // The window of the test above, over a session that never answers the
-    // pruning's line. The transcript has moved by then and the log may not
-    // have, so the turn stops there rather than asking on from a record that
-    // cannot say what it holds.
+fn a_pruning_the_session_waits_to_take_is_in_the_log_before_the_turn_asks_again() {
+    // The window of the test above, over a session that waits before it
+    // takes the pruning's line. The turn carries on once the log has it.
     let script = Script::new(vec![
         calling("a", "read", "{}"),
         calling("b", "read", "{}"),
         calling("c", "read", "{}"),
-        saying("never asked"),
+        saying("asked once there was room"),
     ]);
     let output = "x".repeat(90_000);
     let store = Recording::started("making room");
@@ -676,9 +673,9 @@ fn a_pruning_the_session_never_takes_ends_the_turn_refused() {
         Verdict::Allow,
         Arc::clone(&store),
     );
-    scripted.runner.store = Arc::new(Withholding {
-        recording: store,
-        withheld: Withheld::Pruned,
+    scripted.runner.store = Arc::new(Slow {
+        recording: Arc::clone(&store),
+        waits: Waits::Pruned,
     });
     scripted.runner.state.window = Some(25_000);
     scripted.runner.policy.compaction = Compaction {
@@ -686,27 +683,27 @@ fn a_pruning_the_session_never_takes_ends_the_turn_refused() {
         ..Compaction::default()
     };
 
-    let problem = scripted.turn("go").unwrap_err();
+    let turned = scripted.turn("go");
 
-    assert!(
-        matches!(
-            &problem,
-            TurnError::Unready(unready) if unready.bridge() == Bridge::TurnSession
-        ),
-        "{problem:?}"
+    assert_eq!(turned.unwrap(), StopReason::Yielded);
+    let kept = store.kept();
+    let pruned = kept
+        .iter()
+        .position(|one| matches!(one, Kept::Pruned { .. }));
+    let answered = kept.iter().position(
+        |one| matches!(one, Kept::Said(Message::Agent { text, .. }) if text.contains("asked once")),
     );
-    assert_eq!(
-        scripted.asked(),
-        [7, 9, 11],
-        "the request the pruning made room for was sent anyway"
+    assert!(
+        pruned.is_some() && pruned < answered,
+        "the pruning's line was not written before the answer it made room for: {kept:?}"
     );
 }
 
 #[test]
-fn a_pruning_line_refused_while_stopping_ends_the_compaction_refused() {
-    // A refusal outranks a stop. The pruning has cleared results from what
-    // the model is sent, and the session never took the line that says so:
-    // a clean stop would say nothing of a record that may be missing it.
+fn a_pruning_line_the_session_waits_to_take_while_stopping_is_still_written() {
+    // The pruning has cleared results from what the model is sent before the
+    // stop is heard, so its line is written whether or not the compaction
+    // goes on to a recap.
     let script = Script::new(vec![
         calling("a", "read", "{}"),
         calling("b", "read", "{}"),
@@ -724,20 +721,21 @@ fn a_pruning_line_refused_while_stopping_ends_the_compaction_refused() {
     scripted
         .turn("go")
         .expect("a turn whose results a pruning can clear");
-    scripted.runner.store = Arc::new(Withholding {
-        recording: store,
-        withheld: Withheld::Pruned,
+    scripted.runner.store = Arc::new(Slow {
+        recording: Arc::clone(&store),
+        waits: Waits::Pruned,
     });
     scripted.cancel.request();
 
     let compacted = scripted.compacting();
 
+    assert!(compacted.is_ok(), "{compacted:?}");
     assert!(
-        matches!(
-            &compacted,
-            Err(TurnError::Unready(unready)) if unready.bridge() == Bridge::TurnSession
-        ),
-        "{compacted:?}"
+        store
+            .kept()
+            .iter()
+            .any(|one| matches!(one, Kept::Pruned { .. })),
+        "the pruning's line was not written"
     );
 }
 
@@ -1253,6 +1251,7 @@ fn a_pass_is_measured_against_the_room_its_own_run_holds() {
                     attachments: Box::new([]),
                 },
             )
+            .awaited()
             .expect("valid fixture transcript");
         scripted
             .runner
@@ -1604,6 +1603,7 @@ fn a_session_that_never_compacts_holds_nothing_back_from_its_window_reading() {
     scripted
         .runner
         .record(Ancestry::new(), Message::said("x".repeat(150_000)))
+        .awaited()
         .expect("valid fixture transcript");
 
     let never = scripted.runner.left();
@@ -1637,6 +1637,7 @@ fn a_session_told_something_longer_reads_its_window_as_fuller_at_once() {
     scripted
         .runner
         .record(Ancestry::new(), Message::said("x".repeat(150_000)))
+        .awaited()
         .expect("valid fixture transcript");
     scripted.runner.telling("mind the workspace");
 

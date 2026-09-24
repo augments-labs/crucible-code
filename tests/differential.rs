@@ -1360,6 +1360,73 @@ fn a_session_writes_down_the_same_record_of_the_same_turn() {
     same("session-record", &written);
 }
 
+#[test]
+fn a_session_written_through_its_store_writes_down_the_same_record() {
+    // The runner writes through the store contract, whose writes wait for the
+    // log to take each line; the calls above do not wait. Both have to leave
+    // the same bytes, or a session written by a turn would stop being the one
+    // every build before it reads back.
+    let kept = Kept::default();
+    let path = PathBuf::from("/nowhere/01900000-0000-7000-8000-0000000000aa.jsonl");
+    let session = Session::onto(path, kept.clone());
+    // Named as the contract, which is how the runner holds it: the session's
+    // own methods of the same names are the calls that do not wait.
+    let store: &dyn crucible_core::JournalStore = &session;
+    let run = RunId::parse("01900000-0000-7000-8000-0000000000b1").expect("a run identity");
+    let ancestry = Ancestry::restore(run, None, run, 0).expect("a top-level ancestry");
+    let item = |said: &str| {
+        RunItem::message(ancestry, Message::said(said)).expect("a message inside its ceilings")
+    };
+    let snapshot = ContextSnapshot::from_value(serde_json::json!({
+        "workspace": { "root": "/work", "trees": 1 }
+    }))
+    .expect("a snapshot of one section");
+    let established = snapshot
+        .patch_from(&ContextSnapshot::new())
+        .expect("a first snapshot to be a patch against an empty one");
+
+    let written = async {
+        for message in spoken().messages() {
+            store.append_message(message).await;
+        }
+        let context = Message::Context(Fragment::new("workspace", "one checked-out tree"));
+        store.append_message(&context).await;
+        let framework = item("the framework's own copy of a prompt");
+        let said = framework.model_message().expect("a conversation item");
+        store.append_message(said).await;
+        store.append_run_item(&framework);
+        store.append_run_item(&item("journal only, no conversation line"));
+        store
+            .compacted(3, "they renamed a field and found its readers")
+            .await;
+        let pruned = [ToolId::new("probe-call-1"), ToolId::new("probe-call-2")];
+        store.pruned(2, &pruned).await;
+        let reading = Calibration {
+            carried: Carried::new(4_725),
+            spent: Spend::new(128),
+            sent: 18_898,
+            overhead: 1_024,
+        };
+        store.measured(&reading).await;
+        store.contextual(&established).await
+    };
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime to wait on the log with")
+        .block_on(written)
+        .expect("a legal patch");
+
+    let trouble = session.finish();
+    assert!(
+        trouble.is_none(),
+        "the probe's own log failed while it was being written: {trouble:?}"
+    );
+
+    let written = kept.0.lock().expect("a lock").clone();
+    let written = String::from_utf8(written).expect("a log of text");
+    same("session-record", &written);
+}
+
 // ---------------------------------------------------------------------- turn
 
 /// Whether every step of the probed turn answers when first asked, as every
