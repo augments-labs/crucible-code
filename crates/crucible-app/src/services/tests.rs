@@ -103,3 +103,31 @@ fn every_ask_is_answered_by_the_one_runtime_with_the_workers_it_states() {
     );
     assert_eq!(stopped, Ok(()));
 }
+
+/// The worker tools hand their blocking work to is the run's, on the run's
+/// runtime: not built until something asks for it, the same one to everything
+/// that asks, and running its work on the blocking threads the runtime states.
+#[test]
+fn the_tool_worker_is_built_on_the_run_s_runtime_when_asked_for_and_is_one_worker() {
+    let (asked, stopped) = serving(|services| {
+        let built_before = services.runtime().is_built();
+        let first = services.tool_worker()?;
+        let second = services.tool_worker()?;
+        let cancel = crucible_runtime::Cancel::new();
+        let ran_on = services
+            .runtime()
+            .handle()?
+            .block_on(first.run(&cancel, |_| {
+                std::thread::current().name().map(str::to_owned)
+            }));
+        Ok::<_, crate::runtime::Unstarted>((built_before, std::ptr::eq(first, second), ran_on))
+    });
+
+    assert_eq!(
+        asked.map_err(|unstarted| unstarted.to_string()),
+        Ok((false, true, Ok(Some("crucible-runtime".to_owned())))),
+        "the tool worker was built before it was asked for, a second ask built a second \
+         worker, or its work ran somewhere other than the run's runtime"
+    );
+    assert_eq!(stopped, Ok(()));
+}

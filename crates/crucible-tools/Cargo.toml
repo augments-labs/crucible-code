@@ -21,6 +21,11 @@ crucible-workspace.workspace = true
 # search, and the two would disagree exactly where it costs most.
 globset.workspace = true
 thiserror.workspace = true
+# The tool worker's blocking work: `rt` for the handle it is spawned onto, `sync`
+# for the permits that bound how much of it runs at once, and `time` for the
+# tick a call waiting for a permit looks at its cancellation on. The runtime is
+# the application's, handed in; nothing here builds one.
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 uuid.workspace = true
 
 # `answered!`, which drives a fake's future by hand in a test.
