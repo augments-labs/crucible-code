@@ -131,15 +131,19 @@ impl Toolset for Counted {
 struct Unasked;
 
 impl Ask for Unasked {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Deny, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
 
 /// A verdict the permission engine reached about `call`.
 #[allow(clippy::panic)] // A read the engine will not settle is a test failure.
 fn approved(tool: &dyn Tool, call: &ToolCall) -> Approved {
-    match Permission::new().decide(call, &tool.sensitivity(&call.args), &mut Unasked) {
+    match answered!(Permission::new().decide(call, &tool.sensitivity(&call.args), &mut Unasked)) {
         Settled::Approved(approved) => approved,
         Settled::Forbidden | Settled::Refused => panic!("a read is settled without a question"),
     }

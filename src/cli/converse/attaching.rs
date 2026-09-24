@@ -345,8 +345,14 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str) -> Named {
                 CEILING / (1024 * 1024),
             ));
         }
+        // `Stopped` cannot arrive from `taken`, which is never asked to stop;
+        // it is answered with the rest so a stop added here has to say what it
+        // means.
         Err(
-            AttachmentError::NotFile | AttachmentError::Unread(_) | AttachmentError::Unreached(_),
+            AttachmentError::NotFile
+            | AttachmentError::Unread(_)
+            | AttachmentError::Unreached(_)
+            | AttachmentError::Stopped,
         ) => return Named::Nothing,
     };
     if !taken.is(kind) {

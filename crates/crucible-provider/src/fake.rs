@@ -211,8 +211,12 @@ fn cache_fixture(
 struct Allows;
 
 impl Ask for Allows {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Allow, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Allow, Remember::Never) })
     }
 }
 
@@ -233,7 +237,7 @@ fn showing(output: ToolOutput, attachments: Vec<Attachment>) -> RecordedToolOutp
         name: "bash".into(),
         args: ToolArgs::new("{}"),
     };
-    let settled = Permission::new().decide(
+    let settled = crucible_runtime::answered!(Permission::new().decide(
         &call,
         &Sensitivity::SpawnsProcess {
             command: Command::Understood {
@@ -242,7 +246,7 @@ fn showing(output: ToolOutput, attachments: Vec<Attachment>) -> RecordedToolOutp
             },
         },
         &mut Allows,
-    );
+    ));
 
     let Settled::Approved(approved) = settled else {
         panic!("the fake said yes")

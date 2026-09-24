@@ -48,35 +48,42 @@ impl Scripted {
 }
 
 impl Front for Scripted {
-    fn put(&mut self, pending: &Pending, _shown: Shown<'_>) -> Option<Decision> {
-        self.put.push(pending.clone());
-        let id = pending.id();
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> crucible_runtime::BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            self.put.push(pending.clone());
+            let id = pending.id();
 
-        // Out of replies is nobody answering, which is how every script ends.
-        Some(match self.replies.pop_front()? {
-            Reply::Fitting(ruling, lasting) => Decision::Ruled {
-                id,
-                ruling,
-                lasting,
-            },
-            Reply::Naming(number, ruling) => Decision::Ruled {
-                id: PendingId::new(number),
-                ruling,
-                lasting: Lasting::Session,
-            },
-            Reply::Answers(many) => Decision::Answered {
-                id,
-                answers: (0..many)
-                    .map(|_| {
-                        Ok(Picked {
-                            chosen: vec![Said::new("yes")?],
-                            note: Said::new("a note")?,
+            // Out of replies is nobody answering, which is how every script
+            // ends.
+            Some(match self.replies.pop_front()? {
+                Reply::Fitting(ruling, lasting) => Decision::Ruled {
+                    id,
+                    ruling,
+                    lasting,
+                },
+                Reply::Naming(number, ruling) => Decision::Ruled {
+                    id: PendingId::new(number),
+                    ruling,
+                    lasting: Lasting::Session,
+                },
+                Reply::Answers(many) => Decision::Answered {
+                    id,
+                    answers: (0..many)
+                        .map(|_| {
+                            Ok(Picked {
+                                chosen: vec![Said::new("yes")?],
+                                note: Said::new("a note")?,
+                            })
                         })
-                    })
-                    .collect::<Result<_, Refusal>>()
-                    .ok()?,
-            },
-            Reply::Declining => Decision::Declined { id },
+                        .collect::<Result<_, Refusal>>()
+                        .ok()?,
+                },
+                Reply::Declining => Decision::Declined { id },
+            })
         })
     }
 
@@ -101,7 +108,7 @@ fn changing() -> Sensitivity {
 
 /// What the engine is handed when `front` is asked about one call.
 fn asked(front: &mut Scripted, has: Capabilities) -> (Verdict, Remember) {
-    Deciding::new(front, has).ask(&call(), &changing())
+    crucible_runtime::answered!(Deciding::new(front, has).ask(&call(), &changing()))
 }
 
 fn one_question() -> Vec<Question> {
@@ -216,11 +223,15 @@ fn questions_are_settled_only_by_one_answer_each_under_their_own_identity() {
     let asking = one_question();
 
     let mut ruled = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Once)]);
-    assert!(questions(Capabilities::every(), &mut ruled, &asking).is_none());
+    assert!(
+        crucible_runtime::answered!(questions(Capabilities::every(), &mut ruled, &asking))
+            .is_none()
+    );
     assert_eq!(ruled.refused, [ErrorCode::WrongDecision]);
 
     let mut short = Scripted::saying([Reply::Answers(2), Reply::Answers(1)]);
-    let given = questions(Capabilities::every(), &mut short, &asking).expect("the second fits");
+    let given = crucible_runtime::answered!(questions(Capabilities::every(), &mut short, &asking))
+        .expect("the second fits");
     assert_eq!(short.refused, [ErrorCode::InvalidArgument]);
     assert_eq!(given.len(), 1);
     let answer = given.first().expect("one answer");
@@ -228,12 +239,15 @@ fn questions_are_settled_only_by_one_answer_each_under_their_own_identity() {
     assert_eq!(answer.note(), "a note");
 
     let mut declined = Scripted::saying([Reply::Declining]);
-    assert!(questions(Capabilities::every(), &mut declined, &asking).is_none());
+    assert!(
+        crucible_runtime::answered!(questions(Capabilities::every(), &mut declined, &asking))
+            .is_none()
+    );
     assert!(declined.refused.is_empty());
 
     let mut unheard = Scripted::saying([Reply::Answers(1)]);
     let without = Capabilities::none().with(Capability::Permissions);
-    assert!(questions(without, &mut unheard, &asking).is_none());
+    assert!(crucible_runtime::answered!(questions(without, &mut unheard, &asking)).is_none());
     assert!(unheard.put.is_empty());
 }
 
@@ -245,7 +259,10 @@ fn a_question_that_cannot_be_put_whole_is_not_put_short() {
     let many = (0..=ITEMS).map(|number| Answer::new(format!("answer {number}")));
     let crowded = vec![Question::new("Colour", "Which colour?", many)];
     let mut front = Scripted::saying([Reply::Answers(1)]);
-    assert!(questions(Capabilities::every(), &mut front, &crowded).is_none());
+    assert!(
+        crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &crowded))
+            .is_none()
+    );
     assert!(front.put.is_empty(), "put with answers left out");
 
     let long = "n".repeat(TEXT_BYTES + 1);
@@ -255,13 +272,18 @@ fn a_question_that_cannot_be_put_whole_is_not_put_short() {
         [Answer::new(long), Answer::new("no")],
     )];
     let mut front = Scripted::saying([Reply::Answers(1)]);
-    assert!(questions(Capabilities::every(), &mut front, &named).is_none());
+    assert!(
+        crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &named)).is_none()
+    );
     assert!(front.put.is_empty(), "put with an answer's name cut");
 
     let full = (0..ITEMS).map(|number| Answer::new(format!("answer {number}")));
     let fitting = vec![Question::new("Colour", "Which colour?", full)];
     let mut front = Scripted::saying([Reply::Answers(1)]);
-    assert!(questions(Capabilities::every(), &mut front, &fitting).is_some());
+    assert!(
+        crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &fitting))
+            .is_some()
+    );
 }
 
 #[test]
@@ -281,7 +303,10 @@ fn questions_declined_without_being_put_spend_no_identity() {
     let before = minted().expect("a permission question is put");
     for _ in 0..DECLINED {
         let mut front = Scripted::default();
-        assert!(questions(Capabilities::every(), &mut front, &crowded).is_none());
+        assert!(
+            crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &crowded))
+                .is_none()
+        );
         assert!(front.put.is_empty());
     }
     let after = minted().expect("a permission question is put");
@@ -306,8 +331,9 @@ fn a_call_whose_subject_would_be_cut_is_denied_rather_than_put_short() {
     // end that reads the pending action alone is not asked, and the call is
     // refused as it is where nobody answers.
     let mut front = Scripted::saying([Reply::Fitting(Ruling::Allow, Lasting::Session)]);
-    let handed =
-        Deciding::new(&mut front, Capabilities::every()).ask(&call(), &running_a_long_line());
+    let handed = crucible_runtime::answered!(
+        Deciding::new(&mut front, Capabilities::every()).ask(&call(), &running_a_long_line())
+    );
 
     assert_eq!(handed, (Verdict::Deny, Remember::Never));
     assert!(front.put.is_empty(), "put with its subject cut");
@@ -317,8 +343,9 @@ fn a_call_whose_subject_would_be_cut_is_denied_rather_than_put_short() {
         Ruling::Allow,
         Lasting::Once,
     )]));
-    let handed =
-        Deciding::new(&mut whole, Capabilities::every()).ask(&call(), &running_a_long_line());
+    let handed = crucible_runtime::answered!(
+        Deciding::new(&mut whole, Capabilities::every()).ask(&call(), &running_a_long_line())
+    );
     assert_eq!(handed, (Verdict::Allow, Remember::Never));
     assert_eq!(whole.0.put.len(), 1);
 }
@@ -327,7 +354,11 @@ fn a_call_whose_subject_would_be_cut_is_denied_rather_than_put_short() {
 struct Whole(Scripted);
 
 impl Front for Whole {
-    fn put(&mut self, pending: &Pending, shown: Shown<'_>) -> Option<Decision> {
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        shown: Shown<'a>,
+    ) -> crucible_runtime::BoxFuture<'a, Option<Decision>> {
         self.0.put(pending, shown)
     }
 
@@ -346,7 +377,11 @@ fn an_identity_is_never_minted_twice() {
 
     asked(&mut front, Capabilities::every());
     asked(&mut front, Capabilities::every());
-    questions(Capabilities::every(), &mut front, &one_question());
+    crucible_runtime::answered!(questions(
+        Capabilities::every(),
+        &mut front,
+        &one_question()
+    ));
 
     let mut ids: Vec<u64> = front.put.iter().map(|put| put.id().number()).collect();
     assert_eq!(ids.len(), 3);
@@ -369,13 +404,18 @@ impl Stubborn {
 }
 
 impl Front for Stubborn {
-    fn put(&mut self, _pending: &Pending, _shown: Shown<'_>) -> Option<Decision> {
+    fn put<'a>(
+        &'a mut self,
+        _pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> crucible_runtime::BoxFuture<'a, Option<Decision>> {
         self.puts += 1;
-        (self.puts < Self::PATIENCE).then_some(Decision::Ruled {
+        let decided = (self.puts < Self::PATIENCE).then_some(Decision::Ruled {
             id: PendingId::new(u64::MAX),
             ruling: Ruling::Allow,
             lasting: Lasting::Session,
-        })
+        });
+        Box::pin(async move { decided })
     }
 
     fn refused(&mut self, refusal: Refusal) {
@@ -386,13 +426,19 @@ impl Front for Stubborn {
 #[test]
 fn a_front_end_that_never_fits_its_answer_is_asked_a_few_times_and_then_no_more() {
     let mut permission = Stubborn::default();
-    let handed = Deciding::new(&mut permission, Capabilities::every()).ask(&call(), &changing());
+    let handed = crucible_runtime::answered!(
+        Deciding::new(&mut permission, Capabilities::every()).ask(&call(), &changing())
+    );
     assert_eq!(handed, (Verdict::Deny, Remember::Never));
     assert!(permission.puts <= 8, "put {} times", permission.puts);
     assert_eq!(permission.refused.last(), Some(&"abandoned"));
 
     let mut asking = Stubborn::default();
-    let given = questions(Capabilities::every(), &mut asking, &one_question());
+    let given = crucible_runtime::answered!(questions(
+        Capabilities::every(),
+        &mut asking,
+        &one_question()
+    ));
     assert!(given.is_none());
     assert!(asking.puts <= 8, "put {} times", asking.puts);
     assert_eq!(asking.refused.last(), Some(&"abandoned"));

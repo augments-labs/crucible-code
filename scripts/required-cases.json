@@ -137,7 +137,7 @@
       },
       "case": "tools::tests::an_admission_is_reachable_only_through_the_generation_that_minted_it",
       "source": "crates/crucible-runner/src/tools.rs",
-      "body_sha256": "b21453dc28272750943e961eba6017ed1ed8d8ce846c0f52fab9ade07581289e",
+      "body_sha256": "2fc915c3f2e657868c35d835434a68732be708b47d9300fcc7c75fb4d33fa70d",
       "platforms": [
         "linux",
         "macos",

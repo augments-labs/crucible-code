@@ -494,10 +494,14 @@ fn a_failed_durable_result_write_reclaims_the_background_scope() {
 struct TracedAsk(Trace);
 
 impl Ask for TracedAsk {
-    fn ask(&mut self, call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
         assert_eq!(call.args.as_str(), "transformed");
         marked(&self.0, "approval");
-        (Verdict::Allow, Remember::Never)
+        Box::pin(async { (Verdict::Allow, Remember::Never) })
     }
 }
 
@@ -1035,7 +1039,11 @@ impl CountedAsk {
 }
 
 impl Ask for CountedAsk {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
         self.state.approvals.fetch_add(1, Ordering::SeqCst);
         let answer = self
             .answers
@@ -1044,7 +1052,7 @@ impl Ask for CountedAsk {
             .or_else(|| self.answers.last().copied())
             .unwrap_or(Verdict::Deny);
         self.at += 1;
-        (answer, Remember::Never)
+        Box::pin(async move { (answer, Remember::Never) })
     }
 }
 

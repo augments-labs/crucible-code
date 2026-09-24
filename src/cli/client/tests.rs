@@ -277,20 +277,26 @@ struct Headless {
 }
 
 impl Front for Headless {
-    fn put(&mut self, pending: &Pending, _shown: Shown<'_>) -> Option<Decision> {
-        self.journal.note(Noted::Put(pending.clone()));
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            self.journal.note(Noted::Put(pending.clone()));
 
-        let sent = self.wire.sent(Command::Decide(Decision::Ruled {
-            id: pending.id(),
-            ruling: self.rulings.next()?,
-            lasting: Lasting::Once,
-        }));
-        let Command::Decide(decision) = sent.command() else {
-            return None;
-        };
-        self.journal.note(Noted::Decided(decision.clone()));
+            let sent = self.wire.sent(Command::Decide(Decision::Ruled {
+                id: pending.id(),
+                ruling: self.rulings.next()?,
+                lasting: Lasting::Once,
+            }));
+            let Command::Decide(decision) = sent.command() else {
+                return None;
+            };
+            self.journal.note(Noted::Decided(decision.clone()));
 
-        Some(decision.clone())
+            Some(decision.clone())
+        })
     }
 
     fn refused(&mut self, _: Refusal) {}
