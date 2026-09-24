@@ -23,12 +23,8 @@
 //! than told apart from shipped code by a reading of the source, which can
 //! only err by hiding one. The runner cannot name the application, which the
 //! crate graph forbids, so the one waiting crossing the application makes is
-//! outside every turn it waits for. The other waiting crossing is an account
-//! login's, which `crucible-auth` takes on the thread a login runs on to wait
-//! for each of its requests; a turn reaches that crate only through a
-//! credential, whose renewal is a task of its own that nothing crosses to
-//! wait for, so the crossing is named once, in the owner of renewals, and
-//! nowhere a credential's authorization runs.
+//! outside every turn it waits for, and it is the only waiting crossing there
+//! is.
 //!
 //! What is looked for is the name itself, which no import can hide: a
 //! `block_on` is a method or a function named that, and a waiting entry is
@@ -358,13 +354,9 @@ fn waiting_entries() -> Vec<String> {
 }
 
 #[test]
-fn the_waiting_crossings_are_the_application_s_around_a_turn_and_a_login_s_around_its_requests() {
+fn the_one_waiting_crossing_is_the_application_s_around_a_turn() {
     let waiting = waiting_entries();
-    assert_eq!(
-        waiting,
-        ["AppTurn", "AccountLogin"],
-        "the ledger's waiting entries changed"
-    );
+    assert_eq!(waiting, ["AppTurn"], "the ledger's waiting entries changed");
 
     let mut crossed: Vec<(String, String)> = Vec::new();
     for (path, text) in shipped() {
@@ -385,18 +377,11 @@ fn the_waiting_crossings_are_the_application_s_around_a_turn_and_a_login_s_aroun
     crossed.sort();
     assert_eq!(
         crossed,
-        [
-            (
-                "crates/crucible-app/src/conversation.rs".to_owned(),
-                "AppTurn".to_owned()
-            ),
-            (
-                "crates/crucible-auth/src/oauth/renewal.rs".to_owned(),
-                "AccountLogin".to_owned()
-            ),
-        ],
+        [(
+            "crates/crucible-app/src/conversation.rs".to_owned(),
+            "AppTurn".to_owned()
+        ),],
         "a waiting crossing is named somewhere other than the conversation's one wait around a \
-         whole turn and a login's one wait around each of its requests, where a turn could \
-         reach it"
+         whole turn, where a turn could reach it"
     );
 }

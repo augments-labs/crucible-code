@@ -17,13 +17,19 @@ mod renewal;
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
-use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::thread;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
-use crucible_core::{Cancel, Credential, CredentialScopeId};
+use crucible_core::{Credential, CredentialScopeId};
+use crucible_runtime::BoxFuture;
 use sha2::{Digest as _, Sha256};
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::task::JoinHandle;
 
 use crate::{AuthError, Store, StoredCredentials};
 
@@ -131,12 +137,12 @@ impl fmt::Debug for LoginUpdate {
     }
 }
 
-/// How long a test waits for something a worker is going to do.
+/// How long a test waits for something a login is going to do.
 ///
-/// A login here runs on its own thread and answers through a channel, and every
-/// wait in these tests is for an answer that is coming — so the number is not a
-/// deadline anything is measured against, it is the point at which a test that
-/// would otherwise hang gives up and says so. Which makes short the wrong
+/// A login here runs as a task on a runtime and answers through a channel, and
+/// every wait in these tests is for an answer that is coming — so the number is
+/// not a deadline anything is measured against, it is the point at which a test
+/// that would otherwise hang gives up and says so. Which makes short the wrong
 /// answer: a shared runner hands a thread out when it feels like it, and two
 /// seconds bought nothing over thirty except a suite that failed on a busy
 /// machine and passed on a quiet one. Nothing waits the whole thirty — a channel
@@ -145,20 +151,56 @@ impl fmt::Debug for LoginUpdate {
 #[cfg(test)]
 pub(crate) const PATIENCE: Duration = Duration::from_secs(30);
 
+/// How long dropping a [`LoginAttempt`] off the runtime waits for its login
+/// to stop.
+///
+/// Stopping is dropping the login's future, which a runtime worker does the
+/// next time it is free: its callback listener, its request in flight and its
+/// pause go with it. A second covers a runtime busy with other work; the wait
+/// ends as soon as the future is gone.
+pub(crate) const STOPPING: Duration = Duration::from_secs(1);
+
+/// How many updates a login can report before the attempt takes one.
+///
+/// Three is every update a browser or device login reports: the page to
+/// authorize on, the progress after it and the outcome. A reader that falls
+/// further behind than that is not following the login, which stops rather
+/// than wait for it (see [`LoginUpdates::send`]).
+const UPDATES: usize = 3;
+
 /// A running login.
+///
+/// The login is a task on the application's runtime, and this owns it:
+/// [`LoginAttempt::cancel`] aborts it, and so does dropping the attempt. The
+/// abort is final at once — the login is never resumed after it, so it
+/// answers no request it was not already answering — and the login's
+/// resources go when a runtime worker next carries it out.
+///
+/// Dropped on a thread outside the runtime, as the terminal drops it, the
+/// attempt also waits up to a second for that, so once the drop has returned —
+/// unless the runtime was too busy to carry the abort out within the second —
+/// a browser login's callback port is closed and the slot it ran on takes the
+/// next login. Dropped on a thread inside the runtime — a worker, a blocking
+/// thread, or one that has entered it — the drop returns without waiting,
+/// since waiting there could hold the very thread the abort needs: for a
+/// moment after it the port can still take a connection it never answers,
+/// and the slot can still answer [`OAuthError::Busy`].
 pub struct LoginAttempt {
     updates: mpsc::Receiver<Result<LoginUpdate, OAuthError>>,
-    input: mpsc::SyncSender<Box<str>>,
-    cancel: Cancel,
+    input: tokio::sync::mpsc::Sender<Box<str>>,
+    task: JoinHandle<()>,
+    /// Never sent on: disconnected once the login's future has been dropped,
+    /// finished or aborted.
+    stopped: mpsc::Receiver<()>,
 }
 
 impl LoginAttempt {
-    /// Waits briefly for the next update, returning `None` while the worker is
+    /// Waits briefly for the next update, returning `None` while the login is
     /// still running.
     ///
     /// # Errors
     ///
-    /// [`OAuthError`] when login failed or its worker stopped unexpectedly.
+    /// [`OAuthError`] when login failed or its task stopped unexpectedly.
     pub fn wait(&self, patience: Duration) -> Result<Option<LoginUpdate>, OAuthError> {
         match self.updates.recv_timeout(patience) {
             Ok(update) => update.map(Some),
@@ -167,9 +209,10 @@ impl LoginAttempt {
         }
     }
 
-    /// Asks the login worker to stop before its next request or pause.
+    /// Stops the login at whatever it is waiting on: a callback, a request in
+    /// flight or a pause between polls.
     pub fn cancel(&self) {
-        self.cancel.request();
+        self.task.abort();
     }
 
     /// Hands bounded manual authorization input to the running method.
@@ -177,7 +220,7 @@ impl LoginAttempt {
     /// # Errors
     ///
     /// [`OAuthError`] when the value is empty or oversized, an earlier value
-    /// is still being checked, or the worker has stopped.
+    /// is still being checked, or the login has stopped.
     pub fn submit(&self, value: &str) -> Result<(), OAuthError> {
         let value = value.trim();
         if value.is_empty() || value.len() > 16 * 1024 {
@@ -189,7 +232,7 @@ impl LoginAttempt {
             .try_send(value.into())
             .map_err(|problem| match problem {
                 TrySendError::Full(_) => OAuthError::InputBusy,
-                TrySendError::Disconnected(_) => OAuthError::WorkerStopped,
+                TrySendError::Closed(_) => OAuthError::WorkerStopped,
             })
     }
 }
@@ -208,13 +251,45 @@ impl fmt::Debug for LoginSlot {
 
 impl Drop for LoginAttempt {
     fn drop(&mut self) {
-        self.cancel.request();
+        self.task.abort();
+        // The abort is carried out by a runtime worker. Waiting for it on a
+        // thread a runtime runs could hold the very worker it needs, so there
+        // the abort is left to happen without a wait.
+        if Handle::try_current().is_err() {
+            let _ = self.stopped.recv_timeout(STOPPING);
+        }
     }
 }
 
 impl fmt::Debug for LoginAttempt {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("LoginAttempt").finish_non_exhaustive()
+    }
+}
+
+/// Where a running login reports what it is doing, without ever waiting.
+///
+/// A login is a task on a runtime, and a task that waited on a send would hold
+/// the worker it runs on. So this has no waiting send at all: an update the
+/// attempt has no room for ends the login instead.
+pub struct LoginUpdates(mpsc::SyncSender<Result<LoginUpdate, OAuthError>>);
+
+impl LoginUpdates {
+    /// Hands one update to the attempt, at once.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError::Cancelled`] where the attempt is gone, or has left three
+    /// updates untaken: either way nobody is following the login, and it
+    /// stops rather than wait.
+    pub fn send(&self, update: Result<LoginUpdate, OAuthError>) -> Result<(), OAuthError> {
+        self.0.try_send(update).map_err(|_| OAuthError::Cancelled)
+    }
+}
+
+impl fmt::Debug for LoginUpdates {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("LoginUpdates").finish_non_exhaustive()
     }
 }
 
@@ -227,7 +302,9 @@ impl fmt::Debug for LoginAttempt {
 /// The set is open outside this crate too. What an implementation needs is a
 /// [`LoginSlot`] to run its method on, [`LoginUpdate`] to say what it is doing,
 /// and [`Store`] to write the result down; all three are public, and none of
-/// them hands over a token:
+/// them hands over a token. The method is a future, run as a task on the
+/// runtime the implementation hands the slot, and the store's work is blocking
+/// work, handed to that runtime's blocking threads:
 ///
 /// ```
 /// use std::fmt;
@@ -237,9 +314,10 @@ impl fmt::Debug for LoginAttempt {
 ///     SubscriptionLogin,
 /// };
 /// use crucible_core::{Credential, Header, HeaderKey};
+/// use tokio::runtime::Handle;
 ///
 /// #[derive(Debug)]
-/// struct Ledger(LoginSlot);
+/// struct Ledger(LoginSlot, Handle);
 ///
 /// impl SubscriptionLogin for Ledger {
 ///     fn provider(&self) -> &'static str {
@@ -250,20 +328,21 @@ impl fmt::Debug for LoginAttempt {
 ///         if method != LoginMethod::new("paste") {
 ///             return Err(OAuthError::Method);
 ///         }
-///         self.0.start_with_input("ledger-login", move |cancel, updates, typed| {
-///             let _ = updates.send(Ok(LoginUpdate::Authorize {
+///         self.0.start_with_input(&self.1, move |updates, mut typed| async move {
+///             let authorize = updates.send(Ok(LoginUpdate::Authorize {
 ///                 browser_uri: "https://example.invalid/authorize".into(),
 ///                 shown_uri: "example.invalid/authorize".into(),
 ///                 user_code: None,
 ///                 manual: true,
 ///             }));
-///             let Ok(pasted) = typed.recv() else { return };
-///             if cancel.requested() {
+///             if authorize.is_err() {
 ///                 return;
 ///             }
-///             let _ = match store.keep("ledger", &pasted) {
-///                 Ok(()) => updates.send(Ok(LoginUpdate::Complete)),
-///                 Err(_) => updates.send(Err(OAuthError::WorkerStopped)),
+///             let Some(pasted) = typed.recv().await else { return };
+///             let kept = tokio::task::spawn_blocking(move || store.keep("ledger", &pasted)).await;
+///             let _ = match kept {
+///                 Ok(Ok(())) => updates.send(Ok(LoginUpdate::Complete)),
+///                 Ok(Err(_)) | Err(_) => updates.send(Err(OAuthError::WorkerStopped)),
 ///             };
 ///         })
 ///     }
@@ -291,8 +370,8 @@ pub trait SubscriptionLogin: Send + Sync + fmt::Debug {
     ///
     /// # Errors
     ///
-    /// [`OAuthError`] when the method is unknown, a worker cannot start, or an
-    /// earlier attempt has not stopped yet.
+    /// [`OAuthError`] when the method is unknown, there is no runtime to run
+    /// it on, or an earlier attempt has not stopped yet.
     fn start(&self, method: LoginMethod, store: Store) -> Result<LoginAttempt, OAuthError>;
 
     /// Resolves a stored credential without exposing its tokens.
@@ -306,16 +385,18 @@ pub enum OAuthError {
     /// The selected method is not implemented by this provider.
     #[error("this account login method is unavailable")]
     Method,
-    /// Another login worker has not finished stopping.
+    /// Another login on the same slot is still running, or has not finished
+    /// stopping.
     #[error("an earlier account login is still stopping — try again")]
     Busy,
     /// One pasted callback is still waiting for the implementation to read it.
     #[error("the previous authorization input is still being checked")]
     InputBusy,
-    /// The worker thread could not be created.
-    #[error("account login could not start: {0}")]
-    Worker(std::io::Error),
-    /// The worker ended without reporting a result.
+    /// The login was started before the application had given it a runtime
+    /// to run on.
+    #[error("account login could not start: there is no runtime to run it on")]
+    NotStarted,
+    /// The login ended without reporting a result.
     #[error("account login ended unexpectedly")]
     WorkerStopped,
     /// Cryptographic state could not be obtained from the operating system.
@@ -369,10 +450,6 @@ pub enum OAuthError {
     /// or it came apart.
     #[error("the account renewal stopped before it finished")]
     Abandoned,
-    /// A login step could not wait for its request on the application's
-    /// runtime.
-    #[error(transparent)]
-    Unwaited(#[from] crucible_runtime::Unwaited),
 }
 
 /// The provider-neutral portion of a renewable credential.
@@ -447,89 +524,109 @@ impl fmt::Debug for Tokens {
     }
 }
 
-/// One bounded worker slot shared by every method of one implementation.
+/// One login at a time, shared by every method of one implementation.
 ///
 /// A [`LoginAttempt`] is what [`SubscriptionLogin::start`] has to return, and
 /// this is the only thing that makes one. It is public because the trait is:
 /// an implementation living outside this crate can hold a slot, run its method
-/// on the thread the slot owns, and report the same bounded updates every other
-/// method reports. Nothing about a token crosses here — the worker is handed a
-/// [`Cancel`], a sender of [`LoginUpdate`] and, for a method with a manual
+/// as a task on the runtime it hands the slot, and report the same bounded
+/// updates every other method reports. Nothing about a token crosses here —
+/// the method is handed [`LoginUpdates`] and, for a method with a manual
 /// fallback, the pasted values a user typed. Where the secret goes afterwards
 /// is [`Store`]'s answer, not this type's.
 ///
-/// One slot runs one login at a time. A second start while the first worker is
-/// still stopping is [`OAuthError::Busy`] rather than a second thread, so an
-/// implementation cannot leave two browser callbacks listening at once.
-pub struct LoginSlot(Mutex<Option<thread::JoinHandle<()>>>);
+/// One slot runs one login at a time. A second start while the first login is
+/// still running, or still stopping, is [`OAuthError::Busy`] rather than a
+/// second task, so an implementation cannot leave two browser callbacks
+/// listening at once.
+pub struct LoginSlot(Mutex<Weak<Running>>);
 
 impl LoginSlot {
     /// An implementation's empty slot, held for the life of the implementation.
     #[must_use]
     pub const fn new() -> Self {
-        Self(Mutex::new(None))
+        Self(Mutex::new(Weak::new()))
     }
 
-    /// Runs one method that needs nothing typed back at it.
+    /// Runs one method that needs nothing typed back at it, as a task on
+    /// `runtime`.
     ///
     /// # Errors
     ///
-    /// [`OAuthError::Busy`] when an earlier attempt has not stopped yet, and
-    /// [`OAuthError::Worker`] when the thread cannot be created.
-    pub fn start(
+    /// [`OAuthError::Busy`] when an earlier attempt has not stopped yet.
+    pub fn start<F>(
         &self,
-        name: &str,
-        run: impl FnOnce(Cancel, mpsc::SyncSender<Result<LoginUpdate, OAuthError>>) + Send + 'static,
-    ) -> Result<LoginAttempt, OAuthError> {
-        self.start_with_input(name, move |cancel, updates, _| run(cancel, updates))
+        runtime: &Handle,
+        run: impl FnOnce(LoginUpdates) -> F,
+    ) -> Result<LoginAttempt, OAuthError>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.start_with_input(runtime, move |updates, _| run(updates))
     }
 
-    /// Runs one method that can also be finished by hand.
+    /// Runs one method that can also be finished by hand, as a task on
+    /// `runtime`.
     ///
     /// The receiver hands over what [`LoginAttempt::submit`] accepted, already
     /// trimmed and bounded, for a method that announced itself with
-    /// `manual: true`.
+    /// `manual: true`; it ends once the attempt is gone.
     ///
     /// # Errors
     ///
-    /// [`OAuthError::Busy`] when an earlier attempt has not stopped yet, and
-    /// [`OAuthError::Worker`] when the thread cannot be created.
-    pub fn start_with_input(
+    /// [`OAuthError::Busy`] when an earlier attempt has not stopped yet.
+    pub fn start_with_input<F>(
         &self,
-        name: &str,
-        run: impl FnOnce(
-            Cancel,
-            mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-            mpsc::Receiver<Box<str>>,
-        ) + Send
-        + 'static,
-    ) -> Result<LoginAttempt, OAuthError> {
-        let mut slot = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(worker) = slot.take() {
-            if !worker.is_finished() {
-                *slot = Some(worker);
-                return Err(OAuthError::Busy);
-            }
-            worker.join().map_err(|_| OAuthError::WorkerStopped)?;
+        runtime: &Handle,
+        run: impl FnOnce(LoginUpdates, tokio::sync::mpsc::Receiver<Box<str>>) -> F,
+    ) -> Result<LoginAttempt, OAuthError>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot.strong_count() > 0 {
+            return Err(OAuthError::Busy);
         }
 
-        let cancel = Cancel::new();
-        let stopping = cancel.clone();
-        let (send, updates) = mpsc::sync_channel(3);
-        let (input, submitted) = mpsc::sync_channel(1);
-        let worker = thread::Builder::new()
-            .name(name.to_owned())
-            .spawn(move || run(stopping, send, submitted))
-            .map_err(OAuthError::Worker)?;
-        *slot = Some(worker);
+        let (send, updates) = mpsc::sync_channel(UPDATES);
+        let (input, submitted) = tokio::sync::mpsc::channel(1);
+        let (signal, stopped) = mpsc::sync_channel(0);
+        let running = Arc::new(Running { _stopped: signal });
+        *slot = Arc::downgrade(&running);
+        let task = runtime.spawn(Owned {
+            login: Box::pin(run(LoginUpdates(send), submitted)),
+            _running: running,
+        });
         Ok(LoginAttempt {
             updates,
             input,
-            cancel,
+            task,
+            stopped,
         })
+    }
+}
+
+/// Held by a login's task for as long as its future lives: the slot sees the
+/// login running through a weak reference to it, and the attempt sees it
+/// stop when the channel it holds the sending end of disconnects.
+struct Running {
+    _stopped: mpsc::SyncSender<()>,
+}
+
+/// A login's future as its task holds it.
+///
+/// The fields are dropped in the order they are declared, so the login — its
+/// listener, its request in flight — is gone before [`Running`] says it is.
+struct Owned {
+    login: BoxFuture<'static, ()>,
+    _running: Arc<Running>,
+}
+
+impl Future for Owned {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<()> {
+        self.login.as_mut().poll(context)
     }
 }
 

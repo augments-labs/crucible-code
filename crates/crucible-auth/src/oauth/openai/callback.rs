@@ -6,15 +6,23 @@
 //! Headers, targets and query fields are bounded before parsing. Invalid or
 //! forged requests receive a fixed response and leave the real attempt
 //! waiting.
+//!
+//! The listener is a socket on the login's runtime, owned by the login's
+//! future: the login awaits the next connection or the next pasted value,
+//! whichever comes first, and dropping the login closes the port. One
+//! connection is served at a time: its request's head is read within 2 s, and
+//! its answer is given 2 s more to be taken.
 
-use std::io::{ErrorKind, Read as _, Write as _};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::{Duration, Instant};
+use std::future::poll_fn;
+use std::net::{Ipv4Addr, SocketAddr, TcpListener as Bound};
+use std::task::Poll;
+use std::time::Duration;
 
-use crucible_core::Cancel;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::Receiver;
 
-use super::{CANCEL_POLL, OAuthError, random_urlsafe};
+use super::{OAuthError, random_urlsafe};
 
 /// The loopback ports the provider will redirect a browser back to.
 ///
@@ -45,13 +53,16 @@ impl Server {
     /// Listens on the first free port of `ports`, which is `PORTS` in
     /// production and one ephemeral port under test.
     ///
+    /// Called on the login's runtime, whose I/O driver the socket is
+    /// registered with.
+    ///
     /// A test that took the registered pair would depend on two fixed ports
     /// being free on whatever host it runs on, which no test controls: another
     /// process holding them, or a second test in the same binary, turns a
     /// working login into a bind failure that reads as a broken one.
     pub(super) fn bind(ports: &[u16], lifetime: Duration) -> Result<Self, OAuthError> {
         for port in ports {
-            let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, *port)) else {
+            let Ok(listener) = Bound::bind((Ipv4Addr::LOCALHOST, *port)) else {
                 continue;
             };
             listener
@@ -61,6 +72,7 @@ impl Server {
                 .local_addr()
                 .map_err(|_| OAuthError::Callback)?
                 .port();
+            let listener = TcpListener::from_std(listener).map_err(|_| OAuthError::Callback)?;
             return Ok(Self {
                 listener,
                 port,
@@ -79,75 +91,94 @@ impl Server {
         format!("http://localhost:{}{}", self.port, self.launch)
     }
 
-    pub(super) fn wait(
+    /// Waits for the browser's callback, or a pasted one, whose state is
+    /// `expected_state`, until this server's lifetime runs out.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError::Expired`] once the lifetime has run out,
+    /// [`OAuthError::Cancelled`] once nothing can be pasted any more because
+    /// the attempt is gone, [`OAuthError::Callback`] where the listener fails,
+    /// and a pasted value's or an authorized callback's own refusal.
+    pub(super) async fn wait(
         &self,
         authorization: &str,
         expected_state: &str,
-        cancel: &Cancel,
-        manual: &Receiver<Box<str>>,
+        manual: &mut Receiver<Box<str>>,
     ) -> Result<Box<str>, OAuthError> {
-        let started = Instant::now();
-        loop {
-            if cancel.requested() {
-                return Err(OAuthError::Cancelled);
-            }
-            if started.elapsed() >= self.lifetime {
-                return Err(OAuthError::Expired);
-            }
-            match manual.try_recv() {
-                Ok(submitted) => return self.manual(&submitted, expected_state),
-                Err(TryRecvError::Disconnected) if cancel.requested() => {
-                    return Err(OAuthError::Cancelled);
-                }
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
-            }
+        tokio::time::timeout(
+            self.lifetime,
+            self.answered(authorization, expected_state, manual),
+        )
+        .await
+        .map_err(|_| OAuthError::Expired)?
+    }
 
-            match self.listener.accept() {
-                Ok((mut stream, peer)) => {
-                    if !peer.ip().is_loopback() {
+    async fn answered(
+        &self,
+        authorization: &str,
+        expected_state: &str,
+        manual: &mut Receiver<Box<str>>,
+    ) -> Result<Box<str>, OAuthError> {
+        loop {
+            let (mut stream, peer) = match self.next(manual).await {
+                Next::Pasted(Some(submitted)) => return self.manual(&submitted, expected_state),
+                Next::Pasted(None) => return Err(OAuthError::Cancelled),
+                Next::Connected(Ok(accepted)) => accepted,
+                Next::Connected(Err(_)) => return Err(OAuthError::Callback),
+            };
+            if !peer.ip().is_loopback() {
+                continue;
+            }
+            match request(&mut stream, self.port, &self.launch).await {
+                Ok(Request::Launch) => {
+                    respond_redirect(&mut stream, authorization).await;
+                }
+                Ok(Request::Callback {
+                    code,
+                    state,
+                    denied,
+                }) => {
+                    if state.as_deref() != Some(expected_state) {
+                        respond(&mut stream, 400, "This sign-in request is not current.").await;
                         continue;
                     }
-                    match request(&mut stream, self.port, &self.launch, cancel) {
-                        Ok(Request::Launch) => {
-                            respond_redirect(&mut stream, authorization);
-                        }
-                        Ok(Request::Callback {
-                            code,
-                            state,
-                            denied,
-                        }) => {
-                            if state.as_deref() != Some(expected_state) {
-                                respond(&mut stream, 400, "This sign-in request is not current.");
-                                continue;
-                            }
-                            if denied {
-                                respond(
-                                    &mut stream,
-                                    200,
-                                    "Authorization did not complete. You can return to Crucible.",
-                                );
-                                return Err(OAuthError::Denied);
-                            }
-                            let Some(code) = code else {
-                                respond(&mut stream, 400, "The authorization code is missing.");
-                                continue;
-                            };
-                            respond(
-                                &mut stream,
-                                200,
-                                "Authorization complete. You can return to Crucible.",
-                            );
-                            return Ok(code);
-                        }
-                        Err(()) => respond(&mut stream, 400, "This request is not accepted."),
+                    if denied {
+                        respond(
+                            &mut stream,
+                            200,
+                            "Authorization did not complete. You can return to Crucible.",
+                        )
+                        .await;
+                        return Err(OAuthError::Denied);
                     }
+                    let Some(code) = code else {
+                        respond(&mut stream, 400, "The authorization code is missing.").await;
+                        continue;
+                    };
+                    respond(
+                        &mut stream,
+                        200,
+                        "Authorization complete. You can return to Crucible.",
+                    )
+                    .await;
+                    return Ok(code);
                 }
-                Err(problem) if problem.kind() == ErrorKind::WouldBlock => {
-                    std::thread::sleep(CANCEL_POLL);
-                }
-                Err(_) => return Err(OAuthError::Callback),
+                Err(()) => respond(&mut stream, 400, "This request is not accepted.").await,
             }
         }
+    }
+
+    /// Whichever comes first: a value pasted into the terminal, or a
+    /// connection to the listener. A pasted value is looked at first.
+    async fn next(&self, manual: &mut Receiver<Box<str>>) -> Next {
+        poll_fn(|context| {
+            if let Poll::Ready(pasted) = manual.poll_recv(context) {
+                return Poll::Ready(Next::Pasted(pasted));
+            }
+            self.listener.poll_accept(context).map(Next::Connected)
+        })
+        .await
     }
 
     fn manual(&self, submitted: &str, expected_state: &str) -> Result<Box<str>, OAuthError> {
@@ -189,6 +220,13 @@ impl Server {
     }
 }
 
+enum Next {
+    /// A value pasted into the terminal, or `None` once the attempt that
+    /// could paste one is gone.
+    Pasted(Option<Box<str>>),
+    Connected(std::io::Result<(TcpStream, SocketAddr)>),
+}
+
 enum Request {
     Launch,
     Callback {
@@ -198,38 +236,33 @@ enum Request {
     },
 }
 
-fn request(
-    stream: &mut TcpStream,
-    port: u16,
-    launch: &str,
-    cancel: &Cancel,
-) -> Result<Request, ()> {
-    stream.set_read_timeout(Some(CANCEL_POLL)).map_err(|_| ())?;
-    let started = Instant::now();
+/// Reads and parses one request's head, within 2 s of the connection.
+async fn request(stream: &mut TcpStream, port: u16, launch: &str) -> Result<Request, ()> {
+    let bytes = tokio::time::timeout(REQUEST_LIFETIME, head(stream))
+        .await
+        .map_err(|_| ())??;
+    parse(&bytes, port, launch)
+}
+
+/// The bytes of a request up to the blank line ending its head, refused past
+/// [`MAX_HEADERS`].
+async fn head(stream: &mut TcpStream) -> Result<Vec<u8>, ()> {
     let mut bytes = Vec::with_capacity(1024);
     let mut buffer = [0_u8; 1024];
     loop {
-        if cancel.requested() || started.elapsed() >= REQUEST_LIFETIME {
+        let read = stream.read(&mut buffer).await.map_err(|_| ())?;
+        if read == 0 || bytes.len().saturating_add(read) > MAX_HEADERS {
             return Err(());
         }
-        match stream.read(&mut buffer) {
-            Ok(0) => return Err(()),
-            Ok(read) => {
-                if bytes.len().saturating_add(read) > MAX_HEADERS {
-                    return Err(());
-                }
-                bytes.extend_from_slice(buffer.get(..read).ok_or(())?);
-                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            Err(problem)
-                if matches!(problem.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-            Err(_) => return Err(()),
+        bytes.extend_from_slice(buffer.get(..read).ok_or(())?);
+        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            return Ok(bytes);
         }
     }
+}
 
-    let text = std::str::from_utf8(&bytes).map_err(|_| ())?;
+fn parse(bytes: &[u8], port: u16, launch: &str) -> Result<Request, ()> {
+    let text = std::str::from_utf8(bytes).map_err(|_| ())?;
     let mut lines = text.split("\r\n");
     let mut words = lines.next().ok_or(())?.split_ascii_whitespace();
     if words.next() != Some("GET") {
@@ -336,144 +369,26 @@ fn one(fields: &Fields, name: &str) -> Result<Option<Box<str>>, ()> {
     Ok(first.filter(|value| !value.is_empty()))
 }
 
-fn respond_redirect(stream: &mut TcpStream, location: &str) {
+async fn respond_redirect(stream: &mut TcpStream, location: &str) {
     let response = format!(
         "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n"
     );
-    let _ = stream.write_all(response.as_bytes());
+    written(stream, response.as_bytes()).await;
 }
 
-fn respond(stream: &mut TcpStream, status: u16, body: &str) {
+async fn respond(stream: &mut TcpStream, status: u16, body: &str) {
     let reason = if status == 200 { "OK" } else { "Bad Request" };
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n{body}",
         body.len()
     );
-    let _ = stream.write_all(response.as_bytes());
+    written(stream, response.as_bytes()).await;
+}
+
+/// Writes an answer, giving a client that will not take it 2 s.
+async fn written(stream: &mut TcpStream, answer: &[u8]) {
+    let _ = tokio::time::timeout(REQUEST_LIFETIME, stream.write_all(answer)).await;
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::TcpStream;
-    use std::sync::mpsc;
-
-    #[test]
-    fn percent_decoding_is_strict_and_bounded() {
-        assert_eq!(decoded("a%2Fb+c").unwrap().as_ref(), "a/b c");
-        assert!(decoded("%2").is_err());
-        assert!(decoded("%GG").is_err());
-        assert!(decoded(&"x".repeat(MAX_VALUE + 1)).is_err());
-    }
-
-    #[test]
-    fn a_forged_state_does_not_consume_the_real_callback() {
-        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
-        let port = server.port;
-        let launch = server.launch_uri();
-        let cancel = Cancel::new();
-        let (_input, submitted) = mpsc::sync_channel(1);
-        let worker = std::thread::spawn(move || {
-            server.wait(
-                "https://example.invalid/authorize",
-                "right",
-                &cancel,
-                &submitted,
-            )
-        });
-
-        let path = launch
-            .strip_prefix(&format!("http://localhost:{port}"))
-            .expect("the launch address names this server");
-        let launched = get(port, path);
-        assert!(launched.starts_with("HTTP/1.1 302"));
-        assert!(launched.contains("Location: https://example.invalid/authorize"));
-
-        let forged = get(port, "/auth/callback?code=stolen&state=wrong");
-        assert!(forged.starts_with("HTTP/1.1 400"));
-        let accepted = get(port, "/auth/callback?code=kept%2Fcode&state=right");
-        assert!(accepted.starts_with("HTTP/1.1 200"));
-        assert_eq!(worker.join().unwrap().unwrap().as_ref(), "kept/code");
-    }
-
-    #[test]
-    fn a_launch_without_its_token_reveals_nothing() {
-        // The launch address is handed to the user's own terminal and browser
-        // and nowhere else. Loopback is every local account's, not just this
-        // one's, so a bare `/launch` polled by somebody else must not answer
-        // with the authorization URI — the state inside it is what lets a
-        // forged callback through.
-        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
-        let port = server.port;
-        let cancel = Cancel::new();
-        let (_input, submitted) = mpsc::sync_channel(1);
-        let stopping = cancel.clone();
-        let worker = std::thread::spawn(move || {
-            server.wait(
-                "https://example.invalid/authorize",
-                "right",
-                &stopping,
-                &submitted,
-            )
-        });
-
-        let bare = get(port, "/launch");
-        assert!(bare.starts_with("HTTP/1.1 400"), "{bare}");
-        assert!(!bare.contains("example.invalid"), "{bare}");
-        let guessed = get(port, "/launch/wrong-token");
-        assert!(guessed.starts_with("HTTP/1.1 400"), "{guessed}");
-
-        cancel.request();
-        assert!(matches!(worker.join().unwrap(), Err(OAuthError::Cancelled)));
-    }
-
-    #[test]
-    fn cancellation_ends_an_idle_callback_promptly() {
-        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
-        let cancel = Cancel::new();
-        let stopping = cancel.clone();
-        let (_input, submitted) = mpsc::sync_channel(1);
-        let (send, done) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            send.send(server.wait("https://example.invalid", "state", &stopping, &submitted))
-                .unwrap();
-        });
-        cancel.request();
-        assert!(matches!(
-            done.recv_timeout(Duration::from_millis(200)).unwrap(),
-            Err(OAuthError::Cancelled)
-        ));
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn manual_input_accepts_a_code_or_the_matching_redirect_only() {
-        let server = Server::bind(&[0], Duration::from_secs(2)).unwrap();
-        assert_eq!(
-            server.manual("raw-code", "state").unwrap().as_ref(),
-            "raw-code"
-        );
-        let callback = format!("{}?code=kept%2Fcode&state=right", server.redirect_uri());
-        assert_eq!(
-            server.manual(&callback, "right").unwrap().as_ref(),
-            "kept/code"
-        );
-        assert!(matches!(
-            server.manual(&callback, "wrong"),
-            Err(OAuthError::State)
-        ));
-        assert!(server.manual("not a code", "state").is_err());
-    }
-
-    fn get(port: u16, target: &str) -> String {
-        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-        write!(
-            stream,
-            "GET {target} HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n"
-        )
-        .unwrap();
-        let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
-        response
-    }
-}
+mod tests;

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::task::{Context, Poll, Waker};
 use std::thread;
 
