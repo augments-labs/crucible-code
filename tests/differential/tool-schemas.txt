@@ -105,6 +105,26 @@ schema
   "required": ["command"]
 }
 
+## bash_output
+effect      NonIdempotent
+execution   Sequential
+timeout     None
+result      None
+provenance  Provenance { kind: Builtin, id: "crucible:bash_output", label: "[redacted]" }
+schema
+{
+  "description": "Answers with what a command left running has printed so far. Use it instead of running something else to find out how one is going: the number is the one the call that left it running was answered with. A command that has already ended is not here — what it printed arrives on its own when it ends.",
+  "type": "object",
+  "properties": {
+    "number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The number the command is running as, as the call that left it running answered with."
+    }
+  },
+  "required": ["number"]
+}
+
 ## edit
 effect      NonIdempotent
 execution   Sequential

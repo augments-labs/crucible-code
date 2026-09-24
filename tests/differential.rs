@@ -41,8 +41,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_builtins::{
-    AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
-    WebSearch, Write,
+    AskUser, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch,
+    WebFetch, WebSearch, Write,
 };
 use crucible_config::{HOME, Home, Settings};
 use crucible_core::{
@@ -370,12 +370,13 @@ fn every_built_in_tool_advertises_what_it_did() {
         about: "one held tool, so the search has something to offer".into(),
     }];
 
-    let tools: [Box<dyn DescribeTool>; 11] = [
+    let tools: [Box<dyn DescribeTool>; 12] = [
         Box::new(AskUser::new(Arc::new(Silent))),
         Box::new(Bash::new(
             workspace.clone(),
             Arc::new(crucible_sandbox_local::LocalSandbox::new()),
         )),
+        Box::new(BashOutput::new(crucible_builtins::Background::new())),
         Box::new(Edit::new(workspace.clone())),
         Box::new(Glob::new(workspace.clone())),
         Box::new(Grep::new(workspace.clone())),
