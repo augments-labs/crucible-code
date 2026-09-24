@@ -148,9 +148,13 @@ impl Post for Sample {
 }
 struct Permit<'a>(&'a Sample);
 impl Ask for Permit<'_> {
-    fn ask(&mut self, _: &ToolCall, _: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        _: &'a ToolCall,
+        _: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
         self.0.approved.fetch_add(1, Ordering::SeqCst);
-        (Verdict::Allow, Remember::Never)
+        Box::pin(async { (Verdict::Allow, Remember::Never) })
     }
 }
 struct Count(Arc<Mutex<Vec<String>>>, usize);

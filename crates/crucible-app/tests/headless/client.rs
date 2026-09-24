@@ -181,27 +181,33 @@ impl Remote {
 }
 
 impl Front for Remote {
-    fn put(&mut self, pending: &Pending, _shown: Shown<'_>) -> Option<Decision> {
-        self.put.push(pending.clone());
-        let (id, ruling) = match self.script.next()? {
-            Saying::Fitting(ruling) => (pending.id(), ruling),
-            Saying::Elsewhere => (PendingId::new(pending.id().number() + 40), Ruling::Allow),
-            Saying::Naming(id) => (id, Ruling::Allow),
-            Saying::Gone => return None,
-        };
-        let sent = self
-            .wire
-            .sent(Command::Decide(Decision::Ruled {
-                id,
-                ruling,
-                lasting: Lasting::Once,
-            }))
-            .ok()?;
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            self.put.push(pending.clone());
+            let (id, ruling) = match self.script.next()? {
+                Saying::Fitting(ruling) => (pending.id(), ruling),
+                Saying::Elsewhere => (PendingId::new(pending.id().number() + 40), Ruling::Allow),
+                Saying::Naming(id) => (id, Ruling::Allow),
+                Saying::Gone => return None,
+            };
+            let sent = self
+                .wire
+                .sent(Command::Decide(Decision::Ruled {
+                    id,
+                    ruling,
+                    lasting: Lasting::Once,
+                }))
+                .ok()?;
 
-        match sent.command() {
-            Command::Decide(decision) => Some(decision.clone()),
-            _ => None,
-        }
+            match sent.command() {
+                Command::Decide(decision) => Some(decision.clone()),
+                _ => None,
+            }
+        })
     }
 
     fn refused(&mut self, refusal: Refusal) {

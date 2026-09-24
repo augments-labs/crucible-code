@@ -63,6 +63,11 @@ change in any release with no deprecation period.
   once the token, an ancestor of it or a deadline on either is requested. A
   request wakes the race as it is made, and a deadline is timed on the timer
   of the runtime the race is polled in.
+- **An attachment read that can be told to stop.** `Opened::taken_until` is
+  the same bounded read as `Opened::taken`, done 64 KiB at a time with a stop
+  asked before each chunk, and answers `AttachmentError::Stopped` without the
+  bytes once the stop says yes. Nothing calls it yet, so nothing a user runs
+  behaves differently.
 - **An MCP conversation can be awaited.** In `crucible-mcp`,
   `Talking::ask_async`, `Talking::tell_async` and `call_async` speak to a
   server over asynchronous streams with the same numbering, the same bound of
@@ -136,6 +141,16 @@ change in any release with no deprecation period.
   default `SandboxProcess::take_async_stdin` now writes on the runtime's
   blocking threads rather than the thread polling it; what a server is sent
   and answers with is unchanged.
+- **A question, a permission ask and the panel front end hand back futures.**
+  `Put::put`, which a tool puts its questions to whoever is at the keyboard
+  through, the permission engine's `Ask::ask`, and `crucible_app::client`'s
+  `Front::put` (now `Front: Send`) return a boxed `Send` future rather than
+  blocking inside a ready one; `client::questions` is now `async`, awaiting
+  `Front::put` in turn, so a human-length wait for an answer never occupies
+  the thread polling it. `Permission::decide`, `decide_admitted` and
+  `decide_admitted_guarded` are now `async` to match. An implementer of any
+  of these traits adopts the new signatures; nothing a user runs behaves
+  differently.
 
 ### Fixed
 
