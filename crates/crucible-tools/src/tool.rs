@@ -53,8 +53,9 @@ pub enum ToolError {
         problem: Box<str>,
     },
 
-    /// The operating system refused, or a step that would have had to wait was
-    /// dropped before it answered.
+    /// The operating system refused, a step that would have had to wait was
+    /// dropped before it answered, or the tool worker would not start the
+    /// tool's work because its runtime was shutting down.
     ///
     /// A dropped step leaves whatever it began unconfirmed. The
     /// [`Unready`](crucible_runtime::Unready) it was refused with is in
@@ -68,8 +69,8 @@ pub enum ToolError {
         tool: Box<str>,
         /// What failed, without the underlying path if it is sensitive.
         problem: Box<str>,
-        /// What the operating system reported, or the refusal of a step that
-        /// would have had to wait.
+        /// What the operating system reported, the refusal of a step that
+        /// would have had to wait, or the tool worker's [`Unrun`](crate::Unrun).
         source: std::io::Error,
     },
 

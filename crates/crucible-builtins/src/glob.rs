@@ -4,14 +4,14 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::time::SystemTime;
 
-use crucible_runtime::BoxFuture;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{
     Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolContext, ToolEffect,
     ToolError, ToolOutput,
 };
 use crucible_types::ToolArgs;
-use crucible_workspace::Workspace;
-use globset::GlobBuilder;
+use crucible_workspace::{Workspace, WorkspacePath};
+use globset::{GlobBuilder, GlobMatcher};
 
 use std::sync::LazyLock;
 
@@ -207,6 +207,15 @@ impl Found {
         }
     }
 
+    /// What a walk stopped before its first file found: nothing, and that it
+    /// was stopped.
+    fn stopped(limit: usize) -> Self {
+        Self {
+            stopped: true,
+            ..Self::new(limit)
+        }
+    }
+
     /// Takes one matched path, keeping it only if it belongs in the answer.
     fn keep(&mut self, ranked: Ranked) {
         self.seen += 1;
@@ -245,6 +254,61 @@ impl Glob {
     #[must_use]
     pub fn new(workspace: Workspace) -> Self {
         Self { workspace }
+    }
+
+    /// Walks `from` and, until `cancel` is raised, keeps the best paths the
+    /// glob it `wants` matches — as many as its limit, in its sort — passing
+    /// over every file a rule behind `approved` names.
+    fn walk(
+        &self,
+        from: &WorkspacePath,
+        wants: (&GlobMatcher, Sort, usize),
+        approved: &Approved,
+        cancel: &Cancel,
+    ) -> Found {
+        let (glob, sort, limit) = wants;
+
+        // The walk runs to the end even once `limit` paths are in hand, which
+        // is deliberate and is the one cost this bound does not remove. The
+        // answer is the lowest paths in the tree rather than the first ones
+        // reached, so a walk that stopped early would answer with whichever
+        // files the directory order happened to reach first — and could not say
+        // how many more there were, only that there were some. The walk is the
+        // one `grep` runs and the ignore rules are what bound it.
+        //
+        // Which is exactly why the user has to be able to stop it: running to
+        // the end is a promise about the answer, not about how long a tree may
+        // take. A stopped walk keeps what it had and says what that cost.
+        let mut found = Found::new(limit);
+        for entry in crate::tree::walk(from.as_path())
+            .build()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
+            // A listing is decided about the directory, so a rule about a file
+            // under it is honoured here — where the file is reached. `grep`
+            // does the same, which is what keeps the two from disagreeing
+            // about what is in the workspace.
+            .filter(|entry| !approved.denies(&self.workspace, from, entry.path()))
+        {
+            if cancel.requested() {
+                found.stopped = true;
+                break;
+            }
+
+            // Matched against the name it will be reported under, which is the
+            // one `grep` reports too. Dropping every entry that would not strip
+            // to a relative path answered "no path matched" for a directory the
+            // workspace was widened to reach and `grep` searched happily.
+            let shown = crate::tree::named(&self.workspace, entry.path());
+            if glob.is_match(&shown) {
+                found.keep(Ranked {
+                    age: Reverse(sort.aged(&entry)),
+                    path: shown,
+                });
+            }
+        }
+
+        found
     }
 }
 
@@ -316,47 +380,18 @@ impl Tool for Glob {
                 Err(problem) => return Ok(ToolOutput::failed(problem)),
             };
 
-            // The walk runs to the end even once `limit` paths are in hand, which
-            // is deliberate and is the one cost this bound does not remove. The
-            // answer is the lowest paths in the tree rather than the first ones
-            // reached, so a walk that stopped early would answer with whichever
-            // files the directory order happened to reach first — and could not say
-            // how many more there were, only that there were some. The walk is the
-            // one `grep` runs and the ignore rules are what bound it.
-            //
-            // Which is exactly why the user has to be able to stop it: running to
-            // the end is a promise about the answer, not about how long a tree may
-            // take. A stopped walk keeps what it had and says what that cost.
-            let mut found = Found::new(limit);
-            for entry in crate::tree::walk(from.as_path())
-                .build()
-                .filter_map(Result::ok)
-                .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
-                // A listing is decided about the directory, so a rule about a file
-                // under it is honoured here — where the file is reached. `grep`
-                // does the same, which is what keeps the two from disagreeing
-                // about what is in the workspace.
-                .filter(|entry| !approved.denies(&self.workspace, &from, entry.path()))
-            {
-                if context.cancel().requested() {
-                    found.stopped = true;
-                    break;
-                }
+            // The walk is the one piece of this call with no asynchronous form,
+            // so it runs where the call's blocking work runs, on a copy of this
+            // tool it owns along with the approval it asks about each file.
+            let pattern = pattern.to_owned();
+            let workspace = self.workspace.clone();
+            let found = crate::blocking::run(NAME, context, move |cancel| {
+                Glob::new(workspace).walk(&from, (&glob, sort, limit), &approved, cancel)
+            })
+            .await?
+            .unwrap_or_else(|| Found::stopped(limit));
 
-                // Matched against the name it will be reported under, which is the
-                // one `grep` reports too. Dropping every entry that would not strip
-                // to a relative path answered "no path matched" for a directory the
-                // workspace was widened to reach and `grep` searched happily.
-                let shown = crate::tree::named(&self.workspace, entry.path());
-                if glob.is_match(&shown) {
-                    found.keep(Ranked {
-                        age: Reverse(sort.aged(&entry)),
-                        path: shown,
-                    });
-                }
-            }
-
-            Ok(report(found, pattern, sort))
+            Ok(report(found, &pattern, sort))
         })
     }
 }

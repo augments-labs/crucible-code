@@ -459,6 +459,7 @@ dependencies = [
  "crucible-sandbox-broker",
  "crucible-sandbox-local",
  "crucible-session",
+ "crucible-tools",
  "crucible-tui",
  "image",
  "insta",

@@ -440,13 +440,15 @@ path = "src/main.rs"
 [dependencies]
 arboard.workspace = true
 # Two unrelated features, one entry: `rt-multi-thread` and `time` are the
-# runtime the tools probe watches its sandbox command on, shaped as the
-# application's — several threads and a clock. The command line itself names
-# none of that runtime; it reaches the application's own through
-# `crucible-app`. `sync` is the one-shot channel a pending permission question
-# or ask answers through: a human's reply is human-length, so the drawing
-# thread that holds the sending half must be able to hand it over without the
-# turn thread blocking inside a poll to receive it.
+# runtime the tools and grep probes build for themselves, shaped as the
+# application's — several threads and a clock. Each waits on it for the calls
+# it times, lends those calls a tool worker on it, and the tools probe watches
+# its sandbox command on it. The command line itself names none of that
+# runtime; it reaches the application's own through `crucible-app`. `sync` is
+# the one-shot channel a pending permission question or ask answers through: a
+# human's reply is human-length, so the drawing thread that holds the sending
+# half must be able to hand it over without the turn thread blocking inside a
+# poll to receive it.
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 # The composition root: every concrete provider, tool, server and session a run
 # is assembled from, and the conversation the command line then drives. The
@@ -465,9 +467,9 @@ crucible-core.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
 crucible-runner.workspace = true
-# The bridges the command line crosses into an asynchronous contract by while
-# it is synchronous: the `/sandbox` panel asking the local backend, and the
-# probes timing a tool the way a turn runs one.
+# The future an asynchronous contract hands back, which the command line and
+# its probes implement, and the bridge the `/sandbox` panel crosses to ask the
+# local backend while the command line is synchronous.
 crucible-runtime.workspace = true
 # The main binary exposes the explicit Windows administrator setup and removal
 # commands from the same audited crate that owns the native broker. Running the
@@ -478,6 +480,10 @@ crucible-sandbox-broker.workspace = true
 # confinement to every tool that runs a command, so no tool has to name an
 # operating system.
 crucible-sandbox-local.workspace = true
+# The tool worker the tools and grep probes lend the calls they time, so what
+# they time includes handing the work to it. Nothing the command line ships
+# names it.
+crucible-tools.workspace = true
 # The file a persistent prompt-cache resource is remembered in. Composition
 # hands the store to the runner, which keeps records through the contract and
 # never names the file.

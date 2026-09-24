@@ -185,6 +185,14 @@ change in any release with no deprecation period.
   at once, with `SandboxProcess::ended` answering `true`, and settles on a
   later look; a stop takes no more of that scan than has already been sent,
   rather than waiting for the rest.
+- **`glob`, `grep` and `tool_search` hand their work to a lent tool worker.**
+  A call lent a `ToolWorker` searches on it, waiting there for room, and stops
+  and gives its place back when the call is cancelled or dropped; a call lent
+  none searches on the thread polling it, as before, with the same answer, and
+  a search that comes apart is contained as a panic either way. The benchmark
+  probes build their own runtime and lend the calls they time a worker, so
+  `Bridge::Probes` is gone. No call is lent a worker yet, so nothing a user
+  runs behaves differently.
 
 ### Fixed
 
