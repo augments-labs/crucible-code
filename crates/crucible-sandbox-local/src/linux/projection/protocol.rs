@@ -29,6 +29,17 @@ pub(super) struct Terminal {
     pub(super) roots: Vec<Snapshot>,
 }
 
+/// Reads one command's terminal report on a thread of its own, from the start
+/// of the command until the report has been read to its end.
+///
+/// The scan finishes there, not on whoever asks how the command ended: that
+/// caller looks at [`Self::finished`] and joins only a thread that has already
+/// ended, so a scan still arriving, or one that has stalled, holds up no
+/// status. A stop, which discards the report, shuts the stream down before it
+/// joins, and nothing more can be sent on it after that. The join then waits
+/// only for the work already queued on the stream — reading it, and writing,
+/// syncing and digesting every payload in it — which is bounded by what the
+/// stream holds, and never for the workload or the broker.
 pub(super) struct Receiver {
     thread: Option<JoinHandle<io::Result<Terminal>>>,
 }
@@ -43,6 +54,13 @@ impl Receiver {
         })
     }
 
+    /// Whether [`Self::finish`] would answer without waiting: the report has
+    /// been read, or reading it went wrong, or it was already taken.
+    pub(super) fn finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    /// The report, once the thread reading it has ended, waiting for it to end.
     pub(super) fn finish(&mut self) -> io::Result<Terminal> {
         self.thread
             .take()

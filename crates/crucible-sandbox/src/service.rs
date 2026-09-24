@@ -1560,8 +1560,9 @@ pub trait SandboxProcess: Send {
     /// Non-blocking process status.
     ///
     /// `None` while the command runs. On a backend that publishes what a command
-    /// wrote, also `None` while a command that has ended waits its turn behind
-    /// another command's publication; [`Self::ended`] tells the two apart.
+    /// wrote, also `None` while a command that has ended is still having what
+    /// it wrote reported back, or waits its turn behind another command's
+    /// publication; [`Self::ended`] tells the two apart.
     ///
     /// # Errors
     ///
@@ -1573,13 +1574,13 @@ pub trait SandboxProcess: Send {
     /// Whether the command has ended, whatever becomes of what it wrote.
     ///
     /// [`Self::try_wait`] goes on answering `None` for a command that has ended
-    /// while what it wrote waits for another command's publication, because its
-    /// ending is complete only once its own publication is. This is how a caller
-    /// holding a deadline or a grace tells that wait from a command still
-    /// running: stopping a command discards what it wrote, so one that finished
-    /// in time is waited for rather than stopped. An error from `try_wait` once
-    /// this has answered `true` is how that ending went wrong, not a status that
-    /// could not be read.
+    /// while what it wrote is still being reported back or waits for another
+    /// command's publication, because its ending is complete only once its own
+    /// publication is. This is how a caller holding a deadline or a grace tells
+    /// that wait from a command still running: stopping a command discards what
+    /// it wrote, so one that finished in time is waited for rather than
+    /// stopped. An error from `try_wait` once this has answered `true` is how
+    /// that ending went wrong, not a status that could not be read.
     ///
     /// A status that cannot be read reads as not ended, so a caller stops the
     /// command as it would have without asking.

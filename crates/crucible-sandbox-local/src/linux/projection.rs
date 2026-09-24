@@ -996,7 +996,8 @@ impl ProjectedProcess {
         self.lifecycle(SandboxLifecycle::RolledBack)
     }
 
-    /// Reads the broker's terminal report once it has exited, and journals the scan.
+    /// Takes the broker's terminal report once the leader has exited and the
+    /// receiver's thread has read it, and journals the scan.
     fn report(&mut self) -> io::Result<()> {
         let Some(terminal) = self.receiver.as_mut().map(protocol::Receiver::finish) else {
             return Err(self.failed(io::Error::other(
@@ -1155,6 +1156,14 @@ impl ProjectedProcess {
         let scope_reaped =
             self.process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete;
         if let Some(receiver) = &mut self.receiver {
+            // The report is discarded, so a scan that has not ended gets no
+            // more of the stream than is already queued on it: a broker that
+            // stalled, whose end of the stream a failed stop left open, would
+            // otherwise hold this join for as long as it stalls. See
+            // `protocol::Receiver` for what the join still waits for.
+            if let Some(control) = &self.control {
+                let _ = control.shutdown(std::net::Shutdown::Both);
+            }
             let _ = receiver.finish();
         }
         self.receiver.take();
@@ -1282,6 +1291,18 @@ impl SandboxProcess for ProjectedProcess {
         }
         if self.reported.is_none() {
             if self.process.try_wait()?.is_none() {
+                return Ok(None);
+            }
+            // The leader has exited, but the broker's scan may still be
+            // arriving, or have stalled. It finishes on the receiver's own
+            // thread; this look is answered again on the next one rather than
+            // waiting for it here, where the caller may be the thread that
+            // draws.
+            if !self
+                .receiver
+                .as_ref()
+                .is_none_or(protocol::Receiver::finished)
+            {
                 return Ok(None);
             }
             self.report()?;
@@ -1490,6 +1511,149 @@ mod tests {
         assert!(gave_up, "a write to a command that never reads answered");
         assert_eq!(ticks, Some(10), "other work stopped while the write waited");
         projected.stop().unwrap();
+    }
+
+    /// A command with nothing to publish whose leader has already exited, and
+    /// the broker's end of its status stream, which the test writes the
+    /// terminal report into as slowly as it likes.
+    fn exited_with_its_report_to_come() -> (ProjectedProcess, std::os::unix::net::UnixStream) {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        let plan =
+            crate::process::testing_plan(crucible_sandbox::SandboxSpeech::Closed, None).unwrap();
+        let audit = plan.audit.clone();
+        let sandbox = plan.sandbox;
+        let (mut process, stop_mark) = crate::process::spawn_marked(command, plan).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !matches!(process.try_wait(), Ok(Some(_))) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the leader did not exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (control, broker) = std::os::unix::net::UnixStream::pair().unwrap();
+        let receiver = protocol::Receiver::spawn(control.try_clone().unwrap(), None).unwrap();
+        let inspection = process.inspection().clone();
+        let projected = ProjectedProcess {
+            process,
+            projection: None,
+            receiver: Some(receiver),
+            status: None,
+            terminal: false,
+            reported: None,
+            failure: None,
+            unrecorded: None,
+            audit,
+            sandbox,
+            control: Some(control),
+            invocation: SandboxInvocationMode::Foreground,
+            call_result_key: None,
+            acceptance_pending: false,
+            inspection,
+            cleanup: crucible_sandbox::SandboxCleanup::Pending,
+            stop_mark: Some(stop_mark),
+            on_cancel: None,
+            _serial: None,
+        };
+        (projected, broker)
+    }
+
+    /// Says the command exited with `code`, and starts the scan without
+    /// finishing it: what a broker still sending, or one that has stalled,
+    /// has written so far.
+    fn begin_the_report(broker: &mut std::os::unix::net::UnixStream, code: i32) {
+        broker
+            .write_all(&crucible_sandbox_broker::encode_wait_status(code << 8))
+            .unwrap();
+        broker
+            .write_all(&crucible_sandbox_broker::SCAN_FRAME)
+            .unwrap();
+    }
+
+    /// Finishes a report [`begin_the_report`] began, with no root in it.
+    fn end_the_report(broker: &mut std::os::unix::net::UnixStream) {
+        broker.write_all(&0_u32.to_le_bytes()).unwrap();
+        broker
+            .write_all(&crucible_sandbox_broker::SCAN_END_FRAME)
+            .unwrap();
+    }
+
+    /// How long a look or a stop may take here before it counts as waiting on
+    /// the scan: far more than either takes, far less than a stall.
+    const PROMPT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// A command whose leader has exited but whose terminal scan is still
+    /// arriving is asked how it ended. The answer is that it has ended and is
+    /// not settled yet, given at once, rather than a look that waits for the
+    /// scan; and once the scan arrives, the status is the one it reported.
+    #[test]
+    fn a_stalled_scan_does_not_hold_up_a_status() {
+        let (mut projected, mut broker) = exited_with_its_report_to_come();
+        begin_the_report(&mut broker, 3);
+
+        let (answered, answer) = std::sync::mpsc::channel();
+        let looking = std::thread::spawn(move || {
+            let look = projected.try_wait().map_err(|problem| problem.to_string());
+            let ended = projected.ended();
+            let _ = answered.send((look, ended));
+            projected
+        });
+        let looked = answer.recv_timeout(PROMPT);
+        // Ended either way, so a look that was waiting on it is let go.
+        end_the_report(&mut broker);
+        drop(broker);
+        let mut projected = looking.join().unwrap();
+
+        let (look, ended) = looked.expect("a status waited for a stalled scan");
+        assert_eq!(look, Ok(None), "a status settled before its scan arrived");
+        assert!(ended, "a command whose leader exited did not read as ended");
+        let deadline = std::time::Instant::now() + PROMPT;
+        let status = loop {
+            if let Some(status) = projected.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the status never settled once its scan arrived"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(status.code(), Some(3), "{status}");
+        projected.stop().unwrap();
+    }
+
+    /// A stop of a command whose terminal scan has stalled, with the broker's
+    /// end of the stream held open, takes no more of that scan than was
+    /// already sent rather than waiting for the rest, and still joins the
+    /// thread it ran on.
+    #[test]
+    fn a_stalled_scan_does_not_hold_up_a_stop() {
+        let (mut projected, mut broker) = exited_with_its_report_to_come();
+        begin_the_report(&mut broker, 0);
+
+        let (answered, answer) = std::sync::mpsc::channel();
+        let stopping = std::thread::spawn(move || {
+            let stopped = projected.stop().map_err(|problem| problem.to_string());
+            let _ = answered.send(stopped);
+            projected
+        });
+        let stopped = answer.recv_timeout(PROMPT);
+        // Held until now, so the stalled scan cannot have ended by itself.
+        drop(broker);
+        let projected = stopping.join().unwrap();
+
+        stopped
+            .expect("a stop waited for a stalled scan")
+            .expect("cleanup");
+        assert_eq!(
+            projected.inspection.cleanup(),
+            crucible_sandbox::SandboxCleanup::Complete
+        );
+        assert!(
+            projected.receiver.is_none(),
+            "the scan's thread was left to a later stop"
+        );
     }
 
     #[test]
