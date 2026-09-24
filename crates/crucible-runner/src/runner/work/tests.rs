@@ -865,6 +865,101 @@ fn a_descriptor_timeout_finalizes_once_without_stopping_the_run() {
     )));
 }
 
+/// Never answers, and says when its run is dropped.
+struct Waits(Arc<std::sync::atomic::AtomicBool>);
+
+/// Raises its flag as it is dropped.
+struct Raised(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for Raised {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+impl Tool for Waits {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
+
+    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+        Sensitivity::ReadOnly {
+            target: Target::unresolved(),
+        }
+    }
+
+    fn summary(&self, _args: &ToolArgs) -> Summary {
+        Summary::new("waits")
+    }
+
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        let dropped = Raised(Arc::clone(&self.0));
+        Box::pin(async move {
+            let _dropped = dropped;
+            std::future::pending().await
+        })
+    }
+}
+
+#[test]
+fn a_lone_run_still_waiting_at_its_deadline_is_dropped_there_and_timed_out() {
+    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = Arc::clone(&dropped);
+    let (answered, answer) = channel();
+
+    // The pass runs on a thread of its own, so one that goes on waiting past
+    // the deadline fails this test instead of hanging it.
+    std::thread::spawn(move || {
+        let descriptor = ToolDescriptor::new(
+            "waits",
+            "{}",
+            ToolProvenance::new(ToolSourceKind::User, "test:waits", "waits test").unwrap(),
+        )
+        .unwrap()
+        .timing_out_after(Duration::from_millis(50))
+        .unwrap();
+        let mut tools = Tools::new();
+        tools.add(descriptor, Arc::new(Waits(seen))).unwrap();
+
+        let (results, went, events) = invoke(
+            &tools,
+            &mut Permission::new(),
+            &mut Says::new(Verdict::Allow),
+            call("waits-call", "waits"),
+        );
+        let timed_out = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::ToolFinished {
+                    receipt: Some(receipt),
+                    ..
+                } if receipt.outcome() == ToolOutcome::TimedOut
+            )
+        });
+        let text = results
+            .first()
+            .map(|result| result.output.text().to_owned());
+        answered
+            .send((text, matches!(went, Went::On), timed_out))
+            .ok();
+    });
+
+    let (text, went_on, timed_out) = answer
+        .recv_timeout(Duration::from_secs(2))
+        .expect("a lone run still waiting at its 50 ms deadline was still awaited 2 s later");
+    assert_eq!(text.as_deref(), Some("tool timed out"));
+    assert!(went_on, "a timed-out call stopped the run around it");
+    assert!(timed_out, "the call was not finished as timed out");
+    assert!(
+        dropped.load(Ordering::Acquire),
+        "the run was still alive after its call was answered"
+    );
+}
+
 #[derive(Default)]
 struct ScheduleState {
     active: AtomicUsize,

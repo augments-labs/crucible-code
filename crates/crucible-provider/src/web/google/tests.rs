@@ -7,42 +7,28 @@ use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::io::{self, Read};
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
-/// `search`/`fetch` answer at their first poll for every source this crate
-/// ships; a test stands in for that one poll under its own name so a fixture
-/// keeps the synchronous call shape it has always had.
-trait AnsweredAtOnce: Search {
+use crate::web::tests::awaited;
+
+/// A search awaited to its answer, under its own name so a fixture keeps the
+/// synchronous call shape it has always had.
+trait Answered: Search {
     fn answered_search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        crucible_runtime::answered!(Search::search(self, query, cancel))
+        awaited(Search::search(self, query, cancel))
     }
 }
 
-impl<T: Search + ?Sized> AnsweredAtOnce for T {}
+impl<T: Search + ?Sized> Answered for T {}
 
-/// The `Fetch` twin of [`AnsweredAtOnce`].
-trait FetchedAtOnce: Fetch {
+/// The `Fetch` twin of [`Answered`].
+trait Fetched: Fetch {
     fn answered_fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
-        crucible_runtime::answered!(Fetch::fetch(self, url, cancel))
+        awaited(Fetch::fetch(self, url, cancel))
     }
 }
 
-impl<T: Fetch + ?Sized> FetchedAtOnce for T {}
-
-/// Polls `future` once and asserts it answered: the must-prove's own test,
-/// named for the implementation it is about, rather than trusting
-/// `answered!`'s panic alone to stand in for it everywhere.
-fn assert_ready_once<T>(mut future: crucible_runtime::BoxFuture<'_, Result<T, SourceError>>) {
-    match future
-        .as_mut()
-        .poll(&mut Context::from_waker(Waker::noop()))
-    {
-        Poll::Ready(Ok(_)) => {}
-        Poll::Ready(Err(problem)) => panic!("the future answered with an error: {problem}"),
-        Poll::Pending => panic!("the future was still pending after one poll"),
-    }
-}
+impl<T: Fetch + ?Sized> Fetched for T {}
 
 fn answer(steps: &[Value]) -> String {
     let mut body = String::new();
@@ -77,28 +63,6 @@ fn source_body(status: u16, body: String) -> (GoogleWeb, Arc<Replay>) {
         ),
         replay,
     )
-}
-
-#[test]
-fn google_search_answers_at_its_first_poll() {
-    let query = "rust programming";
-    let suggestions_html =
-        "<div><a href=\"https://www.google.com/search?q=learn+rust\">learn rust</a></div>";
-    let (source, _replay) = source(&searched(
-        query,
-        "an answer",
-        suggestions_html,
-        "https://rust-lang.org",
-        "Rust",
-    ));
-    assert_ready_once(Search::search(&source, query, &Cancel::new()));
-}
-
-#[test]
-fn google_fetch_answers_at_its_first_poll() {
-    let url = "https://example.com/page";
-    let (source, _replay) = source(&fetched(url));
-    assert_ready_once(Fetch::fetch(&source, url, &Cancel::new()));
 }
 
 #[test]

@@ -29,11 +29,13 @@ const SCRIPT: &str = "script";
 /// A turn is asynchronous and a test is not, so a test awaits one on a
 /// current-thread runtime of its own, made for the one future and gone with
 /// it: whatever the turn awaits is polled on the test's own thread, as it is
-/// on the thread the application takes a turn on.
+/// on the thread the application takes a turn on. It has a timer, as the
+/// application's has, for a tool's deadline to be timed on.
 pub(crate) trait Awaited: std::future::Future + Sized {
     /// The future's answer, once it has one.
     fn awaited(self) -> Self::Output {
         tokio::runtime::Builder::new_current_thread()
+            .enable_time()
             .build()
             .expect("a test runtime")
             .block_on(self)
