@@ -243,6 +243,10 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // on, is started here, the first thing in a run that asks for it, and a
     // run whose runtime would not start writes no session.
     let runtime = startup.services.runtime().handle()?;
+    // And the renewals every subscription login was built with run there too,
+    // from here on: a credential this run resolved renews on it, and a login
+    // `/login` starts sends its requests through it.
+    startup.services.renewals().runs_on(runtime.clone());
 
     let (session, earlier) = match &startup.resuming {
         Resuming::Newest => {

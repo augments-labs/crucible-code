@@ -66,7 +66,8 @@ thiserror.workspace = true
 # because a synchronous caller waiting on a future does not drive a runtime's
 # drivers, so the runtime has to have workers of its own that do; `time` for
 # the timer; `net` for the I/O driver, which is what a hosted program's pipes
-# are waited on through on Unix by the tasks that read and write them there.
+# are waited on through on Unix by the tasks that read and write them there,
+# and what the sockets of account requests register with.
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "time"] }
 
 [dev-dependencies]

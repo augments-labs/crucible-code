@@ -37,7 +37,9 @@ fn in_force(sample: &Sample) -> Terms {
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
-        subscriptions: crucible_app::subscription::Subscriptions::production(),
+        subscriptions: crucible_app::subscription::Subscriptions::production(
+            &crucible_auth::Renewals::new(),
+        ),
         serving: Box::new(|named, _| {
             Ok(crucible_app::providers::Resolved {
                 provider: Box::new(crucible_provider::Unavailable::new(

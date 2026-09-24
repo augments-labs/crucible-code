@@ -28,6 +28,9 @@ mod transport;
 mod unavailable;
 mod web;
 
+#[cfg(test)]
+mod renewing_tests;
+
 pub use anthropic::Anthropic;
 pub use endpoint::{Endpoint, EndpointError};
 pub use google::Google;
