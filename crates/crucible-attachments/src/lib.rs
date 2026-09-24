@@ -37,6 +37,9 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! A read on a thread its caller cannot interrupt, only ask, is that same read
+//! with a question asked between chunks: [`Opened::taken_until`].
 
 use std::fmt;
 use std::fs::File;
@@ -76,6 +79,14 @@ use sha2::{Digest as _, Sha256};
 /// [`Opened::taken`] is where that refusal is made, from the descriptor.
 pub const CEILING: usize = 4 * 1024 * 1024;
 
+/// How much of a file is read between two looks at whether to stop.
+///
+/// A read handed to a worker thread cannot be interrupted from outside, so this
+/// is the most it reads after its caller has asked it to stop: small enough
+/// that the answer comes at once from a local disk, and large enough that a
+/// file at [`CEILING`] is sixty-four looks rather than thousands.
+const CHUNK: usize = 64 * 1024;
+
 /// Why a named file did not become attachable bytes.
 #[derive(Debug, thiserror::Error)]
 pub enum AttachmentError {
@@ -103,6 +114,12 @@ pub enum AttachmentError {
     /// conversion the paragraph above is about.
     #[error("{0}")]
     Unreached(#[source] PathError),
+    /// The read was told to stop before it had read the whole file.
+    ///
+    /// Only [`Opened::taken_until`] produces this, and only when the stop it
+    /// was handed answered yes.
+    #[error("stopped before the whole file was read")]
+    Stopped,
 }
 
 /// Opens a file whose path did not come from the workspace, for its bytes.
@@ -144,11 +161,19 @@ fn opened(path: &Path) -> Result<File, AttachmentError> {
 /// the ceiling and checks the length again, because the file may grow between
 /// the two questions and a descriptor already open would follow it.
 ///
+/// The bytes arrive [`CHUNK`] at a time, and `stopped` is asked before each
+/// chunk. A read on a thread nobody can interrupt is stopped by asking it, so
+/// once `stopped` answers yes this reads nothing more and hands back nothing it
+/// read. A caller with no reason to stop hands in a `stopped` that never
+/// answers yes, and the read is the same one.
+///
 /// # Errors
 ///
 /// [`AttachmentError::TooLarge`] where the file is over the ceiling at either
-/// question, and [`AttachmentError::Unread`] where the read did not finish.
-fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
+/// question, [`AttachmentError::Stopped`] where `stopped` answered yes before
+/// the end of the file, and [`AttachmentError::Unread`] where the read did not
+/// finish.
+fn carried(file: &mut File, stopped: &dyn Fn() -> bool) -> Result<Vec<u8>, AttachmentError> {
     let size = file.metadata()?.len();
     if size > CEILING as u64 {
         return Err(AttachmentError::TooLarge);
@@ -157,9 +182,18 @@ fn carried(file: &mut File) -> Result<Vec<u8>, AttachmentError> {
     // The size is at most the ceiling by the check above, so this asks for
     // exactly what the file holds and no more.
     let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(CEILING));
-    file.by_ref()
-        .take(CEILING as u64 + 1)
-        .read_to_end(&mut bytes)?;
+    let mut within = file.by_ref().take(CEILING as u64 + 1);
+    loop {
+        if stopped() {
+            return Err(AttachmentError::Stopped);
+        }
+        // A chunk that comes back short is the end of the file, or the end of
+        // the one byte past the ceiling that the length check below is for.
+        let read = within.by_ref().take(CHUNK as u64).read_to_end(&mut bytes)?;
+        if read < CHUNK {
+            break;
+        }
+    }
     if bytes.len() > CEILING {
         return Err(AttachmentError::TooLarge);
     }
@@ -236,8 +270,34 @@ impl Opened {
     /// [`AttachmentError::TooLarge`] where the file is over the ceiling at
     /// either question, and [`AttachmentError::Unread`] where the read did not
     /// finish.
-    pub fn taken(mut self) -> Result<Taken, AttachmentError> {
-        let bytes = carried(&mut self.0)?;
+    pub fn taken(self) -> Result<Taken, AttachmentError> {
+        self.taken_until(|| false)
+    }
+
+    /// [`Self::taken`], asking `stopped` before each chunk it reads.
+    ///
+    /// For a read done on a thread that cannot be interrupted from outside,
+    /// such as a blocking worker's. `stopped` is how the caller that is no
+    /// longer waiting asks the read to end. It is asked before the first chunk
+    /// and before each one after, and nowhere else. A stop raised while a chunk
+    /// is being read is seen before the next one, so at most that one chunk is
+    /// read after it. A chunk that comes back short ends the read without
+    /// asking again: a stop raised during the last chunk of a file still
+    /// answers with the whole file. A file whose length is an exact multiple of
+    /// 64 KiB is asked once more after its last byte, before the read that
+    /// finds its end, and a stop seen there answers
+    /// [`AttachmentError::Stopped`] although every byte was read. Whenever it
+    /// answers that, it keeps none of what it read and closes the descriptor.
+    ///
+    /// It is the same bounded read as [`Self::taken`], which is this with a
+    /// `stopped` that never answers yes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::taken`], and [`AttachmentError::Stopped`] where `stopped`
+    /// answered yes before the file was read whole.
+    pub fn taken_until(mut self, stopped: impl Fn() -> bool) -> Result<Taken, AttachmentError> {
+        let bytes = carried(&mut self.0, &stopped)?;
         let hash = <[u8; 32]>::from(Sha256::digest(&bytes));
         Ok(Taken { bytes, hash })
     }
@@ -249,7 +309,8 @@ impl Opened {
 /// to answer whether they are still the file that was attached, and a digest
 /// taken somewhere else is a second answer to that question. Nothing here can
 /// be built from bytes a caller already had: the digest is over what
-/// [`Opened::taken`] read, and the ceiling had already been applied to it.
+/// [`Opened::taken`] or [`Opened::taken_until`] read, and the ceiling had
+/// already been applied to it.
 /// That is what lets a caller compare this digest against a recorded one and
 /// conclude something about the file, so it is checked rather than asserted —
 /// the error code is what this fails with today and not a gate, since
@@ -520,7 +581,7 @@ mod tests {
         // megabytes it was handed when this regresses, and a failure nobody can
         // read is a failure nobody acts on. The error side still says what it
         // got, which is the half that fits on a line.
-        let refused = carried(&mut file);
+        let refused = carried(&mut file, &|| false);
 
         match refused {
             Err(AttachmentError::TooLarge) => {}
@@ -548,7 +609,7 @@ mod tests {
         // which is the point: this is about the guard behind that refusal.
         let mut file = File::open("/dev/zero").expect("every unix has one");
 
-        let refused = carried(&mut file);
+        let refused = carried(&mut file, &|| false);
 
         match refused {
             Err(AttachmentError::TooLarge) => {}
@@ -596,7 +657,7 @@ mod tests {
         drop(file);
 
         let mut file = opened(&at).expect("a regular file opens");
-        let bytes = carried(&mut file).expect("the ceiling is a file that fits");
+        let bytes = carried(&mut file, &|| false).expect("the ceiling is a file that fits");
 
         assert_eq!(bytes.len(), CEILING);
     }
@@ -608,9 +669,58 @@ mod tests {
         std::fs::write(&at, vec![7; 64]).expect("a writable temporary directory");
 
         let mut file = opened(&at).expect("a regular file opens");
-        let bytes = carried(&mut file).expect("under the ceiling");
+        let bytes = carried(&mut file, &|| false).expect("under the ceiling");
 
         assert_eq!(bytes, vec![7; 64]);
+    }
+
+    #[test]
+    fn a_read_stopped_between_chunks_answers_stopped_and_reads_no_further() {
+        let base = Scratch::new("stopped");
+        let at = base.0.join("long.png");
+        std::fs::write(&at, vec![7; CHUNK * 3]).expect("a writable temporary directory");
+        let mut file = opened(&at).expect("a regular file opens");
+
+        // Asked before every chunk, and says stop at its second asking, which
+        // comes once the first chunk has been read: a stop that arrives while
+        // the read is under way.
+        let asked = std::cell::Cell::new(0_usize);
+        let stopped = || {
+            asked.set(asked.get() + 1);
+            asked.get() > 1
+        };
+        let answered = carried(&mut file, &stopped);
+
+        match answered {
+            Err(AttachmentError::Stopped) => {}
+            Ok(bytes) => panic!("carried {} bytes after being told to stop", bytes.len()),
+            Err(other) => panic!("{other}"),
+        }
+        assert_eq!(asked.get(), 2, "the read did not ask before each chunk");
+        // The offset is what was read. One chunk and not a byte more is the
+        // whole of what a stop that came after it may cost.
+        assert_eq!(
+            file.stream_position().expect("an open file has an offset"),
+            CHUNK as u64,
+            "the read went on past the chunk it was stopped after"
+        );
+    }
+
+    #[test]
+    fn a_taken_file_told_to_stop_before_it_starts_is_not_taken() {
+        let base = Scratch::new("stopped-first");
+        let at = base.0.join("shot.png");
+        std::fs::write(&at, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a])
+            .expect("a writable temporary directory");
+
+        let answered = Opened::named(&at)
+            .expect("a regular file opens")
+            .taken_until(|| true);
+
+        assert!(
+            matches!(answered, Err(AttachmentError::Stopped)),
+            "{answered:?}"
+        );
     }
 
     #[test]

@@ -3,7 +3,8 @@
 //! One for every test, built the first time one asks and never shut down: a
 //! test binary ends with its threads. Multi-thread, because a test speaks to a
 //! server synchronously from its own thread, which drives nothing; the
-//! runtime's workers are what run the transport's tasks meanwhile.
+//! runtime's workers are what run the transport's tasks meanwhile. A test that
+//! awaits a conversation blocks its own thread on the runtime for it.
 
 use std::sync::LazyLock;
 

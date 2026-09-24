@@ -199,14 +199,18 @@ impl OpenAi {
     ///
     /// No version header: this API is versioned by its path, and behaviour
     /// changes arrive under new model names rather than new dates.
-    async fn headers(&self) -> Result<Outgoing, ProviderError> {
+    async fn headers(&self, cancel: &Cancel) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", "text/event-stream");
 
-        self.credential
-            .authorize(&mut outgoing)
+        // Raced against the turn's cancel: a credential renewing its token
+        // waits for a renewal that is the renewal's own work, so a turn
+        // stopped meanwhile stops waiting here and leaves it to finish.
+        cancel
+            .race(self.credential.authorize(&mut outgoing))
             .await
+            .ok_or(ProviderError::Cancelled(NAME))?
             .map_err(|source| ProviderError::Credential {
                 provider: NAME,
                 source,
@@ -479,7 +483,7 @@ impl Provider for OpenAi {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let outgoing = self.headers().await?;
+            let outgoing = self.headers(cancel).await?;
             let redactions = outgoing.redactions();
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,

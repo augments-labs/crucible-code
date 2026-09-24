@@ -142,10 +142,11 @@ pub enum AppError {
         provider: Box<str>,
     },
 
-    /// The run is over, and some of the threads the application ran its work
-    /// on had not stopped within their bound: a cleanup that failed.
+    /// The run is over, and some of the work the application owned for it
+    /// had not finished within its bound: renewals still in flight, or
+    /// threads its work ran on. A cleanup that failed.
     #[error(transparent)]
-    Unstopped(#[from] crate::runtime::Unstopped),
+    Unfinished(#[from] crate::services::Unfinished),
 
     /// The runtime a conversation waits for its turns on could not be
     /// started, so no conversation was assembled.

@@ -101,10 +101,14 @@ fn read(attachment: &Attachment, spent: &mut usize, carries: Modalities) -> Carr
             return instead(attachment, "because it changed after it was attached");
         }
         // `Unreached` cannot arrive from a named path — it is the workspace
-        // walk's refusal — but it is answered rather than ignored, so a route
-        // added here later has to say what it means.
+        // walk's refusal — and `Stopped` cannot arrive from `taken`, which is
+        // never asked to stop; both are answered rather than ignored, so a
+        // route added here later has to say what it means.
         Err(
-            AttachmentError::NotFile | AttachmentError::Unread(_) | AttachmentError::Unreached(_),
+            AttachmentError::NotFile
+            | AttachmentError::Unread(_)
+            | AttachmentError::Unreached(_)
+            | AttachmentError::Stopped,
         ) => {
             return instead(attachment, "because it could not be read");
         }

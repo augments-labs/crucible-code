@@ -13,42 +13,32 @@
 
 mod kimi;
 mod openai;
+mod renewal;
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
-use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use crucible_core::{Cancel, Credential, CredentialError, CredentialScopeId};
+use crucible_core::{Cancel, Credential, CredentialScopeId};
 use sha2::{Digest as _, Sha256};
 
 use crate::{AuthError, Store, StoredCredentials};
 
 pub use kimi::{KimiCredential, KimiOAuth};
 pub use openai::{OpenAiCredential, OpenAiOAuth};
+pub use renewal::{Renewals, Unjoined};
 
-/// Locks `tokens` for [`Credential::authorize`], refusing a runtime worker
-/// task that would otherwise block behind another thread's renewal.
+/// A credential's own copy of its tokens, for the moment it takes to read or
+/// replace them.
 ///
-/// The uncontended case — no renewal in flight — never blocks and never asks
-/// [`crucible_runtime::not_worker`] anything: `try_lock` returns at once. The
-/// only thread that can hold this mutex for any length of time is one already
-/// inside `refresh_subscription`'s network call, and that is exactly the wait
-/// a worker must not enter, so a worker refuses right there instead of taking
-/// `lock()` and blocking on it. The still-conditional renewal guard, run once
-/// this returns, is unaffected: it decides whether *this* poll may renew,
-/// this one only whether it may wait for *another* poll's renewal to finish.
-fn lock_tokens(tokens: &Mutex<Tokens>) -> Result<MutexGuard<'_, Tokens>, CredentialError> {
-    match tokens.try_lock() {
-        Ok(guard) => Ok(guard),
-        Err(TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
-        Err(TryLockError::WouldBlock) => {
-            crucible_runtime::not_worker().map_err(|_| CredentialError::RenewalOnWorker)?;
-            Ok(tokens.lock().unwrap_or_else(PoisonError::into_inner))
-        }
-    }
+/// Never held across an `.await`: a renewal is awaited with the lock released,
+/// so a poll on any thread — a runtime worker's among them — waits on this for
+/// no longer than another poll takes to copy tokens in or out.
+fn held(tokens: &Mutex<Tokens>) -> MutexGuard<'_, Tokens> {
+    tokens.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn credential_scope(domain: &[u8], identity: Option<&str>) -> Option<CredentialScopeId> {
@@ -368,6 +358,21 @@ pub enum OAuthError {
     /// The protected store could not be updated.
     #[error(transparent)]
     Store(#[from] AuthError),
+    /// The client account requests are sent through could not be made.
+    #[error("account requests could not set up TLS")]
+    Tls(#[source] rustls::Error),
+    /// A renewal was due before the application had given its renewals a
+    /// runtime to run on.
+    #[error("the account could not be renewed: there is no runtime to renew it on")]
+    NoRuntime,
+    /// A renewal ended without an outcome: the runtime it ran on stopped it,
+    /// or it came apart.
+    #[error("the account renewal stopped before it finished")]
+    Abandoned,
+    /// A login step could not wait for its request on the application's
+    /// runtime.
+    #[error(transparent)]
+    Unwaited(#[from] crucible_runtime::Unwaited),
 }
 
 /// The provider-neutral portion of a renewable credential.

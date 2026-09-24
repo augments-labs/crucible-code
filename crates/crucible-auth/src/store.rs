@@ -60,7 +60,7 @@ const PARTIAL: &str = "auth.json.new";
 /// Five seconds, then: long enough for that queue on a machine under load,
 /// short enough that a crucible which died holding the lock is a sentence
 /// telling them to try again rather than something that looks like a hang.
-const ATTEMPTS: u32 = 250;
+const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// What this version of crucible writes, and the highest it can read.
@@ -219,22 +219,27 @@ impl Store {
         self.write(&document)
     }
 
-    /// Refreshes one provider's current rotation while holding the store lock.
+    /// Takes the store lock for one provider's rotation and rereads the
+    /// rotation inside it: the first half of a renewal.
     ///
     /// Reading the latest rotation after taking the lock is what prevents two
-    /// processes from presenting the same one-use refresh token. The network
-    /// request is deliberately inside the lock: another process waits or
-    /// fails visibly rather than invalidating the rotation in flight.
-    pub(crate) fn refresh_subscription(
+    /// processes from presenting the same one-use refresh token. A rotation no
+    /// longer due — another process renewed it first — comes back with the
+    /// lock released. One still due comes back holding the lock, which the
+    /// caller keeps across its request and releases only by writing the new
+    /// rotation ([`Rotating::persist`]) or dropping it: another process waits
+    /// or fails visibly rather than invalidating the rotation in flight.
+    ///
+    /// Blocking: taking the lock waits up to 5 s, and the reread is file work.
+    pub(crate) fn take_rotation(
         &self,
         provider: &str,
         needs_refresh: impl Fn(&Tokens, u64) -> bool,
-        refresh: impl FnOnce(&Tokens) -> Result<Tokens, OAuthError>,
-    ) -> Result<Tokens, OAuthError> {
+    ) -> Result<Taken, OAuthError> {
         self.directory()?;
-        let _held = Lock::take(&self.home.join(LOCK), &self.path)?;
+        let lock = Lock::take(&self.home.join(LOCK), &self.path)?;
         let _secured = self.secure_existing()?;
-        let mut document = match self.read_text()? {
+        let document = match self.read_text()? {
             Some(text) => document::parse(&text).map_err(|_| AuthError::Unreadable {
                 path: self.path.clone(),
             })?,
@@ -246,15 +251,16 @@ impl Store {
             .cloned()
             .ok_or(OAuthError::SignedOut)?;
         if !needs_refresh(&current, document::now()) {
-            return Ok(current);
+            return Ok(Taken::Fresh(current));
         }
 
-        let fresh = refresh(&current)?;
-        document
-            .subscriptions
-            .insert(provider.to_owned(), fresh.clone());
-        self.write(&document)?;
-        Ok(fresh)
+        Ok(Taken::Due(Rotating {
+            store: self.clone(),
+            provider: provider.to_owned(),
+            document,
+            current,
+            _lock: lock,
+        }))
     }
 
     /// Replaces the complete protected document after its caller took the
@@ -321,6 +327,47 @@ impl Store {
         }
 
         Ok(Some(text))
+    }
+}
+
+/// What taking a rotation found.
+pub(crate) enum Taken {
+    /// The rotation the store holds is not due, and the lock is released.
+    Fresh(Tokens),
+    /// It is due, and the lock is held until it is replaced.
+    Due(Rotating),
+}
+
+/// A rotation being replaced, holding the store lock until it is.
+///
+/// The lock is a file held open rather than a guard of a mutex, so holding it
+/// across the request that renews the rotation blocks no thread; dropping it,
+/// on any path, releases it.
+pub(crate) struct Rotating {
+    store: Store,
+    provider: String,
+    /// The whole document as it was read inside the lock, which nothing else
+    /// can have changed since.
+    document: Document,
+    current: Tokens,
+    _lock: Lock,
+}
+
+impl Rotating {
+    /// The rotation being replaced.
+    pub(crate) fn current(&self) -> &Tokens {
+        &self.current
+    }
+
+    /// Writes `fresh` in place of the rotation, then releases the lock.
+    ///
+    /// Blocking: the write is synced to the disk before the rename.
+    pub(crate) fn persist(mut self, fresh: Tokens) -> Result<Tokens, AuthError> {
+        self.document
+            .subscriptions
+            .insert(self.provider.clone(), fresh.clone());
+        self.store.write(&self.document)?;
+        Ok(fresh)
     }
 }
 
@@ -489,17 +536,24 @@ impl Lock {
         let file = crucible_privacy::lock(lock)
             .map_err(|problem| AuthError::at(lock)(problem.into_io()))?;
 
-        for _ in 0..ATTEMPTS {
+        // Bounded by the clock, not by a count of pauses: a pause only
+        // bounds how long a thread sleeps from below, and a kernel that
+        // coalesces timers stretches each one, so the wait is measured on
+        // the clock.
+        let until = std::time::Instant::now().checked_add(WAIT);
+        loop {
             match file.try_lock() {
                 Ok(()) => return Ok(Self { file }),
-                Err(fs::TryLockError::WouldBlock) => std::thread::sleep(PAUSE),
+                Err(fs::TryLockError::WouldBlock) => {}
                 Err(fs::TryLockError::Error(trouble)) => return Err(AuthError::at(lock)(trouble)),
             }
+            if until.is_none_or(|until| std::time::Instant::now() >= until) {
+                return Err(AuthError::Busy {
+                    path: store.to_path_buf(),
+                });
+            }
+            std::thread::sleep(PAUSE);
         }
-
-        Err(AuthError::Busy {
-            path: store.to_path_buf(),
-        })
     }
 }
 

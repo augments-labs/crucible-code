@@ -93,7 +93,9 @@ pub(crate) fn plain() -> Terms {
         // watched, and a loop these terms drive must not write a key into
         // whatever home the machine running the suite has.
         logins: Store::in_home(&unwritten),
-        subscriptions: crucible_app::subscription::Subscriptions::production(),
+        subscriptions: crucible_app::subscription::Subscriptions::production(
+            &crucible_auth::Renewals::new(),
+        ),
 
         // Unreachable from here and truthful about it: `/login` asks for a key
         // from a keyboard, and a loop driven off a pipe has none. What a key

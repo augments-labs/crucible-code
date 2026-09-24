@@ -67,9 +67,10 @@ impl ToolWorker {
     /// How many jobs run on a worker at once.
     ///
     /// Four: enough for a wave of reads, writes and searches to overlap, and
-    /// half of the application runtime's eight blocking threads, which leaves
-    /// the other half to the runtime's other owners however much tool work is
-    /// waiting.
+    /// a share of the application runtime's blocking threads that leaves room
+    /// for the runtime's other owners however much tool work is waiting: the
+    /// application's budget check keeps what every owner may hold at once,
+    /// together, below the threads the runtime has, with one to spare.
     pub const CAPACITY: usize = 4;
 
     /// A worker that runs its jobs on the blocking threads of `handle`'s
