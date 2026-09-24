@@ -1078,8 +1078,8 @@ fn lock_released(home: &Path) -> bool {
 }
 
 /// The blocking adapter's bound: a renewal whose lock another process holds
-/// waits for it 250 times 20 ms apart, then says another crucible is writing,
-/// having sent nothing and written nothing.
+/// waits for it up to 5 s, retried every 20 ms, then says another crucible is
+/// writing, having sent nothing and written nothing.
 #[test]
 fn a_renewal_waits_five_seconds_for_a_lock_another_process_holds_then_says_so() {
     let (base, requests, server) = holding_server(

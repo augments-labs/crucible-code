@@ -25,8 +25,8 @@
 //! rotation is written, so no other process can present the old token while
 //! it is in flight.
 //!
-//! **The one blocking adapter, in one place.** Taking the lock (250 tries
-//! 20 ms apart, then `Busy`), rereading the store and writing it have no
+//! **The one blocking adapter, in one place.** Taking the lock (up to 5 s,
+//! retried every 20 ms, then `Busy`), rereading the store and writing it have no
 //! asynchronous form, so each runs on the runtime's blocking threads, and so
 //! does looking up the host of an account request. All of that waits for one
 //! place the owner holds: a rotation takes it for the whole of its work and a

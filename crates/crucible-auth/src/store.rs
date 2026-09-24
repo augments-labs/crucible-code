@@ -60,7 +60,7 @@ const PARTIAL: &str = "auth.json.new";
 /// Five seconds, then: long enough for that queue on a machine under load,
 /// short enough that a crucible which died holding the lock is a sentence
 /// telling them to try again rather than something that looks like a hang.
-const ATTEMPTS: u32 = 250;
+const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// What this version of crucible writes, and the highest it can read.
@@ -536,17 +536,24 @@ impl Lock {
         let file = crucible_privacy::lock(lock)
             .map_err(|problem| AuthError::at(lock)(problem.into_io()))?;
 
-        for _ in 0..ATTEMPTS {
+        // Bounded by the clock, not by a count of pauses: a pause is a lower
+        // bound on how long a thread sleeps, and a kernel that coalesces
+        // timers stretches each one, so counting them would count time that
+        // never passed the same on every platform.
+        let until = std::time::Instant::now().checked_add(WAIT);
+        loop {
             match file.try_lock() {
                 Ok(()) => return Ok(Self { file }),
-                Err(fs::TryLockError::WouldBlock) => std::thread::sleep(PAUSE),
+                Err(fs::TryLockError::WouldBlock) => {}
                 Err(fs::TryLockError::Error(trouble)) => return Err(AuthError::at(lock)(trouble)),
             }
+            if until.is_none_or(|until| std::time::Instant::now() >= until) {
+                return Err(AuthError::Busy {
+                    path: store.to_path_buf(),
+                });
+            }
+            std::thread::sleep(PAUSE);
         }
-
-        Err(AuthError::Busy {
-            path: store.to_path_buf(),
-        })
     }
 }
 
