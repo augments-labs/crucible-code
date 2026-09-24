@@ -91,6 +91,13 @@ change in any release with no deprecation period.
   `Conversation::on`, which `startup::assemble` now starts, and refusing with
   the new `TurnError::Unwaited` without one;
   `TurnError::ToolsetCleanupUnready` is gone.
+- **Applying a credential and running a web search or fetch now return a
+  future.** `Credential::authorize`, `Search::search` and `Fetch::fetch`
+  return a boxed `Send` future instead of an immediate result, so an adapter
+  built against these traits adopts the new signatures; a new
+  `CredentialError::RenewalOnWorker` names a renewal that cannot yet run where
+  it was polled. Every shipped implementation still answers the first time
+  that future is polled, so nothing a user runs behaves differently.
 
 ### Fixed
 

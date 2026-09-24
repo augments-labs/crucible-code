@@ -1,6 +1,6 @@
 //! What the two web tools answer with, over sources that answer from memory.
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError, Tool};
 use crucible_types::{ResultProvenance, ToolArgs};
 
@@ -22,8 +22,12 @@ impl Search for Answers {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(self.0.clone().into())
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move { Ok(self.0.clone().into()) })
     }
 }
 
@@ -46,12 +50,18 @@ impl Search for GroundedAnswers {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(SearchResponse::grounded(
-            self.answer,
-            self.results.clone(),
-            self.suggestions,
-        ))
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Ok(SearchResponse::grounded(
+                self.answer,
+                self.results.clone(),
+                self.suggestions,
+            ))
+        })
     }
 }
 
@@ -74,16 +84,22 @@ impl Search for Kept {
         Some("[cleared — kept to the vendor that answered it]")
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(SearchResponse::grounded(
-            "an answer",
-            vec![SearchResult {
-                title: "A page".into(),
-                url: "https://example.com".into(),
-                extract: "what it says".into(),
-            }],
-            "",
-        ))
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Ok(SearchResponse::grounded(
+                "an answer",
+                vec![SearchResult {
+                    title: "A page".into(),
+                    url: "https://example.com".into(),
+                    extract: "what it says".into(),
+                }],
+                "",
+            ))
+        })
     }
 }
 
@@ -110,9 +126,15 @@ impl Search for Oversized {
         Some(self.notice)
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
-        Ok(SearchResponse::results(Vec::new()))
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(SearchResponse::results(Vec::new()))
+        })
     }
 }
 
@@ -131,15 +153,21 @@ impl Search for Breaks {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Err(if self.0 {
-            SourceError::Cancelled("fake")
-        } else {
-            SourceError::Refused {
-                named: "fake",
-                status: 503,
-                message: "busy".into(),
-            }
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Err(if self.0 {
+                SourceError::Cancelled("fake")
+            } else {
+                SourceError::Refused {
+                    named: "fake",
+                    status: 503,
+                    message: "busy".into(),
+                }
+            })
         })
     }
 }
@@ -159,11 +187,17 @@ impl Search for Refuses {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Err(SourceError::Refused {
-            named: "fake",
-            status: 400,
-            message: self.0.as_str().into(),
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Err(SourceError::Refused {
+                named: "fake",
+                status: 400,
+                message: self.0.as_str().into(),
+            })
         })
     }
 }
@@ -191,8 +225,12 @@ impl Fetch for Pages {
         }
     }
 
-    fn fetch(&self, _url: &str, _cancel: &Cancel) -> Result<Page, SourceError> {
-        Ok(self.0.clone())
+    fn fetch<'a>(
+        &'a self,
+        _url: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move { Ok(self.0.clone()) })
     }
 }
 

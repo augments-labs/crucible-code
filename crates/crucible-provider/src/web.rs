@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError};
 use crucible_credentials::{Credential, Outgoing, Redactions};
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use serde_json::Value;
 
 use crate::endpoint::Endpoint;
@@ -221,7 +221,7 @@ impl AnthropicWeb {
     }
 
     /// Posts one message carrying one server tool, and reads the whole answer.
-    fn ask(&self, said: &str, tool: &str, cancel: &Cancel) -> Result<Value, SourceError> {
+    async fn ask(&self, said: &str, tool: &str, cancel: &Cancel) -> Result<Value, SourceError> {
         let fetching = tool == FETCH_TOOL;
         if cancel.requested() {
             return Err(SourceError::Cancelled(ANTHROPIC));
@@ -233,6 +233,7 @@ impl AnthropicWeb {
         outgoing.set_header("accept", "application/json");
         self.credential
             .authorize(&mut outgoing)
+            .await
             .map_err(|problem| SourceError::Transport {
                 named: ANTHROPIC,
                 problem: problem.to_string().into(),
@@ -480,11 +481,17 @@ impl Search for AnthropicWeb {
         host_of(self.endpoint.as_str())
     }
 
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        let answered = self.ask(query, SEARCH_TOOL, cancel)?;
-        results(&answered)
-            .map(SearchResponse::from)
-            .map_err(|error| self.failure(error))
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            let answered = self.ask(query, SEARCH_TOOL, cancel).await?;
+            results(&answered)
+                .map(SearchResponse::from)
+                .map_err(|error| self.failure(error))
+        })
     }
 }
 
@@ -596,19 +603,27 @@ impl Fetch for AnthropicWeb {
         host_of(url)
     }
 
-    fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
-        if matches!(Fetch::reaches(self, url), Host::Opaque(_)) {
-            return Err(SourceError::Address(
-                format!("{url} is not an http or https address naming a host").into(),
-            ));
-        }
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move {
+            if matches!(Fetch::reaches(self, url), Host::Opaque(_)) {
+                return Err(SourceError::Address(
+                    format!("{url} is not an http or https address naming a host").into(),
+                ));
+            }
 
-        // The address goes in the message because this vendor's fetch will only
-        // reach a URL that already appeared in the conversation — a rule of its
-        // own against a model inventing one, and here the conversation is one
-        // message long and crucible wrote it.
-        let answered = self.ask(&format!("Fetch {url}"), FETCH_TOOL, cancel)?;
-        page(&answered, url).map_err(|error| self.failure(error))
+            // The address goes in the message because this vendor's fetch will
+            // only reach a URL that already appeared in the conversation — a
+            // rule of its own against a model inventing one, and here the
+            // conversation is one message long and crucible wrote it.
+            let answered = self
+                .ask(&format!("Fetch {url}"), FETCH_TOOL, cancel)
+                .await?;
+            page(&answered, url).map_err(|error| self.failure(error))
+        })
     }
 }
 
@@ -692,12 +707,13 @@ impl OpenAiWeb {
     }
 
     /// The headers both Responses services accept, including the secret.
-    fn headers(&self) -> Result<Outgoing, SourceError> {
+    async fn headers(&self) -> Result<Outgoing, SourceError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", "text/event-stream");
         self.credential
             .authorize(&mut outgoing)
+            .await
             .map_err(|problem| SourceError::Transport {
                 named: OPENAI,
                 problem: problem.to_string().into(),
@@ -706,14 +722,14 @@ impl OpenAiWeb {
     }
 
     /// Posts a streamed Responses request and keeps its terminal response.
-    fn ask(&self, body: String, cancel: &Cancel) -> Result<Value, SourceError> {
+    async fn ask(&self, body: String, cancel: &Cancel) -> Result<Value, SourceError> {
         posted_openai(
             Sending {
                 named: OPENAI,
                 transport: self.transport.as_ref(),
                 endpoint: self.endpoint.as_str(),
             },
-            self.headers()?,
+            self.headers().await?,
             body,
             cancel,
         )
@@ -949,38 +965,45 @@ impl Search for OpenAiWeb {
         host_of(self.endpoint.as_str())
     }
 
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        if cancel.requested() {
-            return Err(SourceError::Cancelled(OPENAI));
-        }
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            if cancel.requested() {
+                return Err(SourceError::Cancelled(OPENAI));
+            }
 
-        let mut json = Json::new();
-        json.object(|body| {
-            body.text("model", &self.model);
-            body.boolean("stream", true);
-            openai_input(body, query);
-            // This endpoint retains a response for retrieval unless told
-            // otherwise, and a query is the user's words.
-            body.boolean("store", false);
-            // Search is the operation this method was called to perform, not a
-            // tool the side model may decline in favour of remembered prose.
-            body.text("tool_choice", "required");
-            body.array("tools", |tools| {
-                tools.object(|declared| {
-                    declared.text("type", "web_search");
+            let mut json = Json::new();
+            json.object(|body| {
+                body.text("model", &self.model);
+                body.boolean("stream", true);
+                openai_input(body, query);
+                // This endpoint retains a response for retrieval unless told
+                // otherwise, and a query is the user's words.
+                body.boolean("store", false);
+                // Search is the operation this method was called to perform,
+                // not a tool the side model may decline in favour of
+                // remembered prose.
+                body.text("tool_choice", "required");
+                body.array("tools", |tools| {
+                    tools.object(|declared| {
+                        declared.text("type", "web_search");
+                    });
                 });
             });
-        });
 
-        let answered = self.ask(json.finish(), cancel)?;
-        if !web_called(&answered) {
-            return Err(SourceError::Protocol {
-                named: OPENAI,
-                problem: "the answer was written without searching the web".into(),
-            });
-        }
+            let answered = self.ask(json.finish(), cancel).await?;
+            if !web_called(&answered) {
+                return Err(SourceError::Protocol {
+                    named: OPENAI,
+                    problem: "the answer was written without searching the web".into(),
+                });
+            }
 
-        Ok(cited(&answered).into())
+            Ok(cited(&answered).into())
+        })
     }
 }
 
@@ -1123,13 +1146,14 @@ impl MoonshotWeb {
     }
 
     /// The headers both services take, including the secret.
-    fn headers(&self, accepting: &str) -> Result<Outgoing, SourceError> {
+    async fn headers(&self, accepting: &str) -> Result<Outgoing, SourceError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", accepting);
         outgoing.set_header("user-agent", MOONSHOT_AGENT);
         self.credential
             .authorize(&mut outgoing)
+            .await
             .map_err(|problem| SourceError::Transport {
                 named: MOONSHOT,
                 problem: problem.to_string().into(),
@@ -1147,54 +1171,60 @@ impl Search for MoonshotWeb {
         host_of(self.searching.as_str())
     }
 
-    fn search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        if cancel.requested() {
-            return Err(SourceError::Cancelled(MOONSHOT));
-        }
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            if cancel.requested() {
+                return Err(SourceError::Cancelled(MOONSHOT));
+            }
 
-        let mut json = Json::new();
-        json.object(|body| {
-            body.text("text_query", query);
-            // Match Kimi Code's own bounded defaults. Page bodies belong to the
-            // fetch tool; carrying five of them through search would spend the
-            // caller's result budget on duplicate content.
-            body.number("limit", 5);
-            body.boolean("enable_page_crawling", false);
-            body.number("timeout_seconds", 30);
-        });
+            let mut json = Json::new();
+            json.object(|body| {
+                body.text("text_query", query);
+                // Match Kimi Code's own bounded defaults. Page bodies belong to
+                // the fetch tool; carrying five of them through search would
+                // spend the caller's result budget on duplicate content.
+                body.number("limit", 5);
+                body.boolean("enable_page_crawling", false);
+                body.number("timeout_seconds", 30);
+            });
 
-        let answered = posted(
-            Sending {
-                named: MOONSHOT,
-                transport: self.transport.as_ref(),
-                endpoint: self.searching.as_str(),
-            },
-            self.headers("application/json")?,
-            json.finish(),
-            cancel,
-        )?;
+            let answered = posted(
+                Sending {
+                    named: MOONSHOT,
+                    transport: self.transport.as_ref(),
+                    endpoint: self.searching.as_str(),
+                },
+                self.headers("application/json").await?,
+                json.finish(),
+                cancel,
+            )?;
 
-        let found = answered
-            .pointer("/search_results")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .ok_or_else(|| SourceError::Protocol {
-                named: MOONSHOT,
-                problem: "the answer carried no search_results list".into(),
-            })?;
+            let found = answered
+                .pointer("/search_results")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .ok_or_else(|| SourceError::Protocol {
+                    named: MOONSHOT,
+                    problem: "the answer carried no search_results list".into(),
+                })?;
 
-        let results: Vec<SearchResult> = found
-            .iter()
-            .filter_map(|result| {
-                let url = text_at(result, "/url")?;
-                Some(SearchResult {
-                    title: text_at(result, "/title").unwrap_or_else(|| url.clone()),
-                    extract: text_at(result, "/snippet").unwrap_or_default(),
-                    url,
+            let results: Vec<SearchResult> = found
+                .iter()
+                .filter_map(|result| {
+                    let url = text_at(result, "/url")?;
+                    Some(SearchResult {
+                        title: text_at(result, "/title").unwrap_or_else(|| url.clone()),
+                        extract: text_at(result, "/snippet").unwrap_or_default(),
+                        url,
+                    })
                 })
-            })
-            .collect();
-        Ok(results.into())
+                .collect();
+            Ok(results.into())
+        })
     }
 }
 
@@ -1207,40 +1237,46 @@ impl Fetch for MoonshotWeb {
         host_of(url)
     }
 
-    fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
-        if matches!(Fetch::reaches(self, url), Host::Opaque(_)) {
-            return Err(SourceError::Address(
-                format!("{url} is not an http or https address naming a host").into(),
-            ));
-        }
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move {
+            if matches!(Fetch::reaches(self, url), Host::Opaque(_)) {
+                return Err(SourceError::Address(
+                    format!("{url} is not an http or https address naming a host").into(),
+                ));
+            }
 
-        if cancel.requested() {
-            return Err(SourceError::Cancelled(MOONSHOT));
-        }
+            if cancel.requested() {
+                return Err(SourceError::Cancelled(MOONSHOT));
+            }
 
-        let mut json = Json::new();
-        json.object(|body| body.text("url", url));
+            let mut json = Json::new();
+            json.object(|body| body.text("url", url));
 
-        // The service answers with the page's text rather than a document
-        // describing it, so there is nothing to read a final address out of.
-        // What was asked for is what it fetched, as far as anything here can
-        // tell — and the tool compares the two, so saying otherwise would make
-        // every fetch look like a redirect.
-        let text = posted_text(
-            Sending {
-                named: MOONSHOT,
-                transport: self.transport.as_ref(),
-                endpoint: self.fetching.as_str(),
-            },
-            self.headers("text/markdown")?,
-            json.finish(),
-            cancel,
-        )?;
+            // The service answers with the page's text rather than a document
+            // describing it, so there is nothing to read a final address out
+            // of. What was asked for is what it fetched, as far as anything
+            // here can tell — and the tool compares the two, so saying
+            // otherwise would make every fetch look like a redirect.
+            let text = posted_text(
+                Sending {
+                    named: MOONSHOT,
+                    transport: self.transport.as_ref(),
+                    endpoint: self.fetching.as_str(),
+                },
+                self.headers("text/markdown").await?,
+                json.finish(),
+                cancel,
+            )?;
 
-        Ok(Page {
-            url: url.into(),
-            title: None,
-            text: text.into(),
+            Ok(Page {
+                url: url.into(),
+                title: None,
+                text: text.into(),
+            })
         })
     }
 }
@@ -1254,47 +1290,55 @@ impl Fetch for OpenAiWeb {
         host_of(url)
     }
 
-    fn fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
-        let reached = Fetch::reaches(self, url);
-        let Host::Named { host, .. } = &reached else {
-            return Err(SourceError::Address(
-                format!("{url} is not an http or https address naming a host").into(),
-            ));
-        };
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move {
+            let reached = Fetch::reaches(self, url);
+            let Host::Named { host, .. } = &reached else {
+                return Err(SourceError::Address(
+                    format!("{url} is not an http or https address naming a host").into(),
+                ));
+            };
 
-        if cancel.requested() {
-            return Err(SourceError::Cancelled(OPENAI));
-        }
+            if cancel.requested() {
+                return Err(SourceError::Cancelled(OPENAI));
+            }
 
-        let mut json = Json::new();
-        json.object(|body| {
-            body.text("model", &self.model);
-            body.boolean("stream", true);
-            openai_input(
-                body,
-                &format!("Open {url} and reproduce its contents as text."),
-            );
-            body.boolean("store", false);
-            // Opening is the operation this method was called to perform, not
-            // a tool the side model may decline in favour of remembered prose.
-            body.text("tool_choice", "required");
-            body.array("tools", |tools| {
-                tools.object(|declared| {
-                    declared.text("type", "web_search");
-                    // Confined to the host a verdict was reached about. The
-                    // tool is free to search as well as open, and a search let
-                    // loose would reach hosts nobody approved — this is the
-                    // vendor's own control for saying which ones it may touch.
-                    declared.object("filters", |filters| {
-                        filters.array("allowed_domains", |domains| domains.text(host));
+            let mut json = Json::new();
+            json.object(|body| {
+                body.text("model", &self.model);
+                body.boolean("stream", true);
+                openai_input(
+                    body,
+                    &format!("Open {url} and reproduce its contents as text."),
+                );
+                body.boolean("store", false);
+                // Opening is the operation this method was called to perform,
+                // not a tool the side model may decline in favour of
+                // remembered prose.
+                body.text("tool_choice", "required");
+                body.array("tools", |tools| {
+                    tools.object(|declared| {
+                        declared.text("type", "web_search");
+                        // Confined to the host a verdict was reached about.
+                        // The tool is free to search as well as open, and a
+                        // search let loose would reach hosts nobody approved —
+                        // this is the vendor's own control for saying which
+                        // ones it may touch.
+                        declared.object("filters", |filters| {
+                            filters.array("allowed_domains", |domains| domains.text(host));
+                        });
                     });
                 });
             });
-        });
 
-        let answered = self.ask(json.finish(), cancel)?;
+            let answered = self.ask(json.finish(), cancel).await?;
 
-        opened(&answered, url)
+            opened(&answered, url)
+        })
     }
 }
 

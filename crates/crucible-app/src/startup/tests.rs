@@ -1,6 +1,9 @@
 //! Which key is read, and what a startup that fails leaves behind.
 
 use std::cell::RefCell;
+use std::future::Future;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
 
 use crucible_credentials::Outgoing;
 use crucible_runtime::{Aside, Cancel, Steer};
@@ -75,6 +78,19 @@ fn built(
     )
 }
 
+/// Polls `authorizing` once and panics if it was not ready: every credential
+/// built by this crate's own wiring answers at its first poll.
+fn authorized<T>(authorizing: impl Future<Output = T>) -> T {
+    let mut authorizing = pin!(authorizing);
+    match authorizing
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(answer) => answer,
+        Poll::Pending => panic!("a credential built here would have had to wait"),
+    }
+}
+
 /// What a credential writes into the header it signs with.
 ///
 /// The one place a key is legitimately read back, and the only way to tell two
@@ -83,9 +99,7 @@ fn built(
 /// used has to look.
 fn signing(credential: &dyn Credential) -> String {
     let mut request = Outgoing::new();
-    credential
-        .authorize(&mut request)
-        .expect("a key is applied rather than renewed");
+    authorized(credential.authorize(&mut request)).expect("a key is applied rather than renewed");
 
     request
         .headers()

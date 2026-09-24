@@ -199,13 +199,14 @@ impl OpenAi {
     ///
     /// No version header: this API is versioned by its path, and behaviour
     /// changes arrive under new model names rather than new dates.
-    fn headers(&self) -> Result<Outgoing, ProviderError> {
+    async fn headers(&self) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", "text/event-stream");
 
         self.credential
             .authorize(&mut outgoing)
+            .await
             .map_err(|source| ProviderError::Credential {
                 provider: NAME,
                 source,
@@ -478,7 +479,7 @@ impl Provider for OpenAi {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let outgoing = self.headers()?;
+            let outgoing = self.headers().await?;
             let redactions = outgoing.redactions();
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,

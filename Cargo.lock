@@ -395,10 +395,12 @@ dependencies = [
  "base64 0.23.1",
  "crucible-core",
  "crucible-privacy",
+ "crucible-runtime",
  "getrandom 0.4.3",
  "serde_json",
  "sha2",
  "thiserror",
+ "tokio",
  "ureq",
 ]
 

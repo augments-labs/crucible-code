@@ -109,7 +109,7 @@ impl Moonshot {
     }
 
     /// The headers every request carries, including the secret.
-    fn headers(&self) -> Result<Outgoing, ProviderError> {
+    async fn headers(&self) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", "text/event-stream");
@@ -117,6 +117,7 @@ impl Moonshot {
 
         self.credential
             .authorize(&mut outgoing)
+            .await
             .map_err(|source| ProviderError::Credential {
                 provider: NAME,
                 source,
@@ -201,7 +202,7 @@ impl Provider for Moonshot {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let outgoing = self.headers()?;
+            let outgoing = self.headers().await?;
             let redactions = outgoing.redactions();
             let body = body::serialize(&request);
 

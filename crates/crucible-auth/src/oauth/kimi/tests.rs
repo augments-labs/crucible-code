@@ -5,9 +5,23 @@ use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::task::{Context, Poll, Waker};
 use std::thread;
 
-use crucible_core::Outgoing;
+use crucible_core::{Authorization, Outgoing};
+
+/// Polls `authorizing` once and panics if it was not ready: every credential
+/// this crate ships answers at its first poll.
+fn authorized(authorizing: Authorization<'_>) -> Result<(), CredentialError> {
+    let mut authorizing = authorizing;
+    match authorizing
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(answer) => answer,
+        Poll::Pending => panic!("the credential would have had to wait"),
+    }
+}
 
 struct Scratch(PathBuf);
 
@@ -175,7 +189,7 @@ fn device_login_uses_crucibles_identity_and_persists_before_completion() {
     assert!(keys.has("moonshot"));
     let credential = oauth.credential(&keys).unwrap();
     let mut outgoing = Outgoing::new();
-    credential.authorize(&mut outgoing).unwrap();
+    authorized(credential.authorize(&mut outgoing)).unwrap();
     let headers: BTreeMap<_, _> = outgoing
         .headers()
         .iter()
@@ -259,7 +273,7 @@ fn renewal_keeps_the_installation_identity() {
     let credential = oauth.credential(&store.read()).unwrap();
     let scope = credential.scope();
     let mut outgoing = Outgoing::new();
-    credential.authorize(&mut outgoing).unwrap();
+    authorized(credential.authorize(&mut outgoing)).unwrap();
     assert_eq!(credential.scope(), scope);
 
     let sent = requests.recv_timeout(PATIENCE).unwrap();
@@ -276,6 +290,124 @@ fn renewal_keeps_the_installation_identity() {
 
     let reconstructed = oauth.credential(&store.read()).unwrap();
     assert_eq!(reconstructed.scope(), scope);
+}
+
+#[test]
+fn authorize_answers_at_its_first_poll_when_nothing_needs_renewing() {
+    // A tool run's crossing polls a future once; a fresh token that pended
+    // there would be refused on every request, exactly like a pending
+    // renewal, even though nothing here has anything to wait for.
+    const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
+    // Nothing here is ever dialed: the token is fresh, so `needs_refresh` is
+    // false and the flow's address is never read.
+    let oauth = KimiOAuth::testing(Flow::testing("http://127.0.0.1:1"));
+    let scratch = Scratch::new("fresh-token");
+    let store = Store::in_home(scratch.path());
+    store
+        .keep_subscription(
+            "moonshot",
+            Tokens::new("access-fresh".into(), "refresh-fresh".into(), u64::MAX, 0)
+                .with_detail(DEVICE_ID, STABLE)
+                .with_detail(EXPIRES_IN, "3600"),
+        )
+        .unwrap();
+    let credential = oauth.credential(&store.read()).unwrap();
+    let mut request = Outgoing::new();
+    let mut authorizing = credential.authorize(&mut request);
+
+    assert!(
+        matches!(
+            authorizing
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ),
+        "the future was still pending after one poll"
+    );
+}
+
+/// The renewal is not owned work yet, so it must never run where a runtime
+/// could offer it a worker task: everything it does — the cross-process lock,
+/// the network call — runs inside this future's one poll, and a worker task
+/// blocked there is exactly what making it owned work exists to fix. Until
+/// then, polling from a worker refuses instead of running, proven here by
+/// actually polling from one rather than trusting the call site, and by
+/// checking what the refusal actually left behind rather than a timing
+/// window or a channel that would report nothing either way.
+#[test]
+fn renewal_refuses_when_polled_as_a_runtime_task_and_touches_neither_lock_nor_store() {
+    const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
+    // A server that would actually renew the credential if it were ever
+    // reached: a missing or misplaced guard then rewrites the store with
+    // these fresh tokens, which the byte comparison below would catch. An
+    // address nothing answers cannot prove this — the store would stay
+    // unchanged whether or not the guard ran, because the renewal itself
+    // would fail before writing anything.
+    let (base, requests, server) = server(|_| {
+        vec![(
+            200,
+            serde_json::json!({
+                "access_token": "access-fresh",
+                "refresh_token": "refresh-fresh",
+                "expires_in": 3600,
+            })
+            .to_string(),
+        )]
+    });
+    let oauth = KimiOAuth::testing(Flow::testing(&base));
+    let scratch = Scratch::new("worker-refusal");
+    let store = Store::in_home(scratch.path());
+    store
+        .keep_subscription(
+            "moonshot",
+            Tokens::new("access-old".into(), "refresh-old".into(), 1, 1)
+                .with_detail(DEVICE_ID, STABLE)
+                .with_detail(EXPIRES_IN, "3600"),
+        )
+        .unwrap();
+    let credential = oauth.credential(&store.read()).unwrap();
+    let store_path = scratch.path().join("auth.json");
+    let lock_path = scratch.path().join("auth.lock");
+    let store_before = std::fs::read(&store_path).unwrap();
+    // `keep_subscription` already took and released this lock file, which
+    // leaves it present but empty either way — its bytes cannot say whether
+    // the poll below touched it. Removed here so its *presence* after the
+    // poll is the signal: `Lock::take` recreates it with `O_CREAT` the
+    // moment anything takes it again.
+    std::fs::remove_file(&lock_path).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let refused = runtime.block_on(async move {
+        tokio::spawn(async move {
+            let mut outgoing = Outgoing::new();
+            authorized(credential.authorize(&mut outgoing))
+        })
+        .await
+        .unwrap()
+    });
+
+    assert!(
+        matches!(refused, Err(CredentialError::RenewalOnWorker)),
+        "polling the renewal from a worker task did not refuse with the typed error: {refused:?}"
+    );
+    assert_eq!(
+        std::fs::read(&store_path).unwrap(),
+        store_before,
+        "a refused renewal rewrote the store with the server's fresh tokens"
+    );
+    assert!(
+        !lock_path.exists(),
+        "a refused renewal recreated the lock file"
+    );
+    assert!(
+        requests.try_recv().is_err(),
+        "a refused renewal reached the token server"
+    );
+    // The server thread is blocked in `accept` forever when the guard holds
+    // (as it should here): nothing to join, since nothing was ever sent.
+    drop(server);
 }
 
 #[test]

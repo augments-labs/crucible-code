@@ -7,6 +7,7 @@ use crucible_core::{
     SourceError, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript, Workspace,
 };
 use crucible_runner::{Agent, Model, Tools};
+use crucible_runtime::BoxFuture;
 use crucible_tui::Picture;
 
 use crate::cli::fake::Script;
@@ -40,8 +41,12 @@ impl Search for Nowhere {
         }
     }
 
-    fn search(&self, _: &str, _: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(SearchResponse::results(Vec::new()))
+    fn search<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move { Ok(SearchResponse::results(Vec::new())) })
     }
 }
 
@@ -55,11 +60,17 @@ impl Fetch for Nowhere {
             host: "example.com".into(),
         }
     }
-    fn fetch(&self, url: &str, _: &Cancel) -> Result<Page, SourceError> {
-        Ok(Page {
-            url: url.into(),
-            title: None,
-            text: "page".into(),
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        _: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move {
+            Ok(Page {
+                url: url.into(),
+                title: None,
+                text: "page".into(),
+            })
         })
     }
 }
