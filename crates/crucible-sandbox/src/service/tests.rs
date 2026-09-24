@@ -468,11 +468,13 @@ fn restricted_requests_inspect_requested_and_effective_policy_separately() {
 struct Counted {
     exited: bool,
     inspection: SandboxInspection,
+    /// The writing end of its input, where a test gives it one.
+    stdin: Option<Box<dyn io::Write + Send>>,
 }
 
 impl SandboxProcess for Counted {
     fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>> {
-        None
+        self.stdin.take()
     }
 
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
@@ -552,6 +554,7 @@ fn the_default_ending_follows_the_status_the_backend_reports() {
     let mut process = Counted {
         exited: false,
         inspection,
+        stdin: None,
     };
 
     assert!(!process.ended(), "a command still running read as ended");
@@ -562,4 +565,94 @@ fn the_default_ending_follows_the_status_the_backend_reports() {
         process.ended(),
         "a command that exited did not read as ended"
     );
+}
+
+/// An input whose reader has stopped reading: a write to it takes nothing
+/// until the test lets it go.
+struct Stuck(std::sync::mpsc::Receiver<()>);
+
+impl io::Write for Stuck {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let _ = self.0.recv();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An inspection for a process a test builds, which confines nothing.
+fn unconfined_inspection() -> SandboxInspection {
+    let request = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("call"),
+        SandboxPolicy::new(
+            false,
+            [SandboxFilesystemRule::new(
+                "/workspace",
+                SandboxFilesystemAccess::ReadWrite,
+                SandboxFilesystemProvenance::Workspace,
+            )
+            .expect("rule")],
+            "/workspace",
+            SandboxNetworkPolicy::Closed,
+            SandboxResourceLimits::default(),
+        )
+        .expect("policy"),
+        SandboxManifest::empty(),
+    );
+    SandboxInspection::unconfined_for_request(
+        SandboxBackendIdentity::new(
+            SandboxBackendId::new("test").expect("a backend name"),
+            "1",
+            SandboxBackendProvenance::Compatibility,
+            None,
+        )
+        .expect("a backend identity"),
+        SandboxCapabilities::none(),
+        &request,
+        "a test, which confines nothing",
+    )
+    .expect("an inspection of a request a test built")
+}
+
+#[test]
+fn the_default_asynchronous_input_does_not_hold_the_worker_that_polls_it() {
+    // A backend that adapts its blocking writer rather than writing it
+    // asynchronously is a backend whose peer can stop reading. On one worker,
+    // a write that held the worker until the peer read again would be a
+    // runtime on which nothing else runs meanwhile.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("a runtime of one worker");
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let mut process = Counted {
+        exited: false,
+        inspection: unconfined_inspection(),
+        stdin: Some(Box::new(Stuck(held))),
+    };
+    let mut input = process
+        .take_async_stdin()
+        .expect("the default adapts the writer taken");
+    let writing = runtime.spawn(async move { input.write(b"a frame\n").await });
+    std::thread::sleep(Duration::from_millis(50));
+    let (answered, answer) = std::sync::mpsc::channel();
+    let _probe = runtime.spawn(async move {
+        let _ = answered.send(());
+    });
+
+    let ran = answer.recv_timeout(Duration::from_secs(2));
+    drop(release);
+    runtime.shutdown_timeout(Duration::from_secs(2));
+
+    assert!(
+        ran.is_ok(),
+        "a write into an input nobody reads held the only worker, so nothing else on the \
+         runtime ran meanwhile"
+    );
+    drop(writing);
 }

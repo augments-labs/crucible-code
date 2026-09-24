@@ -297,7 +297,7 @@ fn the_default_input_writes_and_flushes_the_pipe_take_stdin_hands_over() {
     let mut input = process
         .take_async_stdin()
         .expect("a process with a standard input hands it over");
-    let written = answered!(input.write(b"hello")).expect("a write");
+    let written = runtime().block_on(input.write(b"hello")).expect("a write");
     let nothing = answered!(input.write(b"")).expect("an empty write");
 
     let told = told.lock().expect("the fixture's lock");
@@ -307,5 +307,25 @@ fn the_default_input_writes_and_flushes_the_pipe_take_stdin_hands_over() {
     assert!(
         process.take_async_stdin().is_none() && process.take_stdin().is_none(),
         "standard input was handed over twice"
+    );
+}
+
+#[test]
+fn a_default_input_written_off_a_runtime_is_an_error_rather_than_a_write() {
+    let told = Arc::new(Mutex::new(Told::default()));
+    let mut process = listening(&told);
+    let mut input = process
+        .take_async_stdin()
+        .expect("a process with a standard input hands it over");
+
+    let answer = answered!(input.write(b"hello"));
+
+    assert!(
+        answer.is_err(),
+        "a write off a runtime has no blocking thread to be made on: {answer:?}"
+    );
+    assert!(
+        told.lock().expect("the fixture's lock").bytes.is_empty(),
+        "and nothing reached the pipe"
     );
 }

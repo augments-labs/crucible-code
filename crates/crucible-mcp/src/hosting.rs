@@ -31,14 +31,14 @@
 //! mid-turn.
 //!
 //! **A call that was sent cannot be unsent, and that decides everything after
-//! it.** An interrupt reaches into the wait — the reading side is a poll loop,
-//! not a blocked syscall, so escape ends a slow call at the press rather than
-//! at `requestSeconds`. What it cannot do is reach the server. The request has
-//! gone, the tool may be running, and from this side a tool that never started,
-//! one that finished, and one whose answer was lost are the same silence. So an
-//! interrupted server is finished with for the run: the conversation would
-//! otherwise read the abandoned call's answer as the reply to the next
-//! question.
+//! it.** An interrupt reaches into the wait — the reading side looks up between
+//! short waits rather than blocking in a syscall, so escape ends a slow call at
+//! the press rather than at `requestSeconds`. What it cannot do is reach the
+//! server. The request has gone, the tool may be running, and from this side a
+//! tool that never started, one that finished, and one whose answer was lost
+//! are the same silence. So an interrupted server is finished with for the
+//! run: the conversation would otherwise read the abandoned call's answer as
+//! the reply to the next question.
 //!
 //! **`restarts` is spent on the endings where asking again is asking once.** A
 //! server whose process died before crucible let go of the frame left the far
@@ -78,6 +78,7 @@ use crucible_tools::{
 use crucible_transport::{Ambiguity, Finish, Restarts};
 use crucible_types::{Ancestry, SandboxId, ToolArgs, ToolId};
 use serde_json::Value;
+use tokio::runtime::Handle;
 
 use crate::hosted::refused_stop;
 use crate::{Answered, Hosted, Offered, Unanswered, Unstarted, Withheld};
@@ -360,7 +361,7 @@ impl StartFailure {
 /// catalogue bound to drift.
 fn start(
     chosen: &Chosen,
-    sandbox: &dyn SandboxService,
+    starting: &Starting,
     ancestry: Ancestry,
     audit: &SandboxAudit,
     interrupt: Option<&Cancel>,
@@ -385,7 +386,7 @@ fn start(
     // never passed over.
     let waited = |refusal| StartFailure::waited(chosen, refusal);
     let mut session = Bridge::McpHosting
-        .cross(sandbox.prepare(request))
+        .cross(starting.sandbox.prepare(request))
         .map_err(waited)?
         .map_err(|e| refused(&e))?;
     Bridge::McpHosting
@@ -408,16 +409,17 @@ fn start(
         .map_err(|e| refused(&e))?;
 
     let withheld = Withheld::given(&chosen.environment);
-    let mut hosted = Hosted::withholding(process, chosen.handshake, withheld).map_err(|error| {
-        let problem = ToolsetError::Source {
-            id: chosen.name.clone(),
-            problem: error.to_string().into(),
-        };
-        match error {
-            Unstarted::Unreaped { .. } => StartFailure::Unreaped(problem),
-            Unstarted::Unspeakable | Unstarted::Unheard => StartFailure::Refused(problem),
-        }
-    })?;
+    let mut hosted = Hosted::withholding(process, chosen.handshake, withheld, &starting.runtime)
+        .map_err(|error| {
+            let problem = ToolsetError::Source {
+                id: chosen.name.clone(),
+                problem: error.to_string().into(),
+            };
+            match error {
+                Unstarted::Unreaped { .. } => StartFailure::Unreaped(problem),
+                Unstarted::Unspeakable | Unstarted::Unheard => StartFailure::Refused(problem),
+            }
+        })?;
     let greeting = match hosted.greet(interrupt) {
         Ok(greeting) => greeting,
         Err(problem) => return Err(StartFailure::after(chosen, &problem, hosted)),
@@ -442,8 +444,19 @@ pub struct Hosting {
     /// would tie one protocol client to whatever else that type grows.
     builtin: Arc<dyn Toolset>,
     chosen: Vec<Arc<Chosen>>,
-    sandbox: Arc<dyn SandboxService>,
+    starting: Starting,
     live: Mutex<Live>,
+}
+
+/// What a server is started by and spoken to on, the same for every server of
+/// one hosting and every restart of one server.
+#[derive(Clone)]
+struct Starting {
+    /// What starts it confined.
+    sandbox: Arc<dyn SandboxService>,
+    /// Where its streams are read and written, by tasks its conversation
+    /// holds.
+    runtime: Handle,
 }
 
 /// What one prepared lifecycle is holding.
@@ -469,8 +482,9 @@ struct Server {
     /// The selection it was started from, kept because a restart starts it
     /// again from exactly the same words.
     chosen: Arc<Chosen>,
-    /// What starts it, which is the same service the lifecycle used.
-    sandbox: Arc<dyn SandboxService>,
+    /// What starts it and where it is spoken to, which are the same as the
+    /// lifecycle used.
+    starting: Starting,
     /// Whose run this process belongs to, for the audit a restart also owes.
     ancestry: Ancestry,
     /// Every tool this run published for it, as it was offered at start-up.
@@ -508,16 +522,23 @@ struct ActiveConversation {
 }
 
 impl Hosting {
-    /// The built-in roster with `chosen` servers hosted beside it.
+    /// The built-in roster with `chosen` servers hosted beside it, each
+    /// spoken to by tasks on `runtime`.
+    ///
+    /// The runtime is what each server's streams need of it: the local
+    /// backend's pipes on Unix need its I/O driver, every default waiting
+    /// read its timer, and the default asynchronous input its blocking
+    /// threads.
     pub fn new(
         builtin: Arc<dyn Toolset>,
         sandbox: Arc<dyn SandboxService>,
         chosen: Vec<Chosen>,
+        runtime: Handle,
     ) -> Self {
         Self {
             builtin,
             chosen: chosen.into_iter().map(Arc::new).collect(),
-            sandbox,
+            starting: Starting { sandbox, runtime },
             live: Mutex::new(Live::default()),
         }
     }
@@ -542,7 +563,7 @@ impl Hosting {
             })?;
         let Started { hosted, offered } = start(
             chosen,
-            self.sandbox.as_ref(),
+            &self.starting,
             context.ancestry(),
             &audit,
             Some(context.cancel()),
@@ -552,7 +573,7 @@ impl Hosting {
         let server = Arc::new(Server {
             name: chosen.name.clone(),
             chosen: Arc::clone(chosen),
-            sandbox: Arc::clone(&self.sandbox),
+            starting: self.starting.clone(),
             ancestry: context.ancestry(),
             published: offered.clone(),
             live: Mutex::new(Conversation::Active(Box::new(ActiveConversation {
@@ -722,7 +743,7 @@ impl Server {
 
         let Started { hosted, offered } = start(
             &self.chosen,
-            self.sandbox.as_ref(),
+            &self.starting,
             self.ancestry,
             &active.audit,
             interrupt,

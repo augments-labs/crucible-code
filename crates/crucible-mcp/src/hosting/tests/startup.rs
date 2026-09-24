@@ -24,6 +24,7 @@ fn failed_preparation(script: Answers, required: bool, expected_cause: &str) {
             chosen("broken").required(required),
             chosen("later"),
         ],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     let error = crucible_runtime::answered!(hosting.prepare(&context))
@@ -94,6 +95,7 @@ fn failed_restart_handshake_retains_unconfirmed_cleanup() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(3)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
@@ -135,6 +137,7 @@ fn unfinished_after_a_bad_catalogue(stop: Stop) -> (String, Arc<Watched>) {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![optional("broken")],
+        crate::testing::runtime(),
     );
     let error = crucible_runtime::answered!(hosting.prepare(&lifecycle()))
         .expect_err("a server whose stop is not confirmed is never passed over");
@@ -195,6 +198,7 @@ fn optional_bad_greeting_with_confirmed_cleanup_still_allows_later_server() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![optional("broken"), chosen("later")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
@@ -320,6 +324,7 @@ fn unanswered(at: Waits, server: Chosen) {
         builtin(&[]),
         Arc::clone(&sandbox) as Arc<dyn SandboxService>,
         vec![server],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     let Err(error) = crucible_runtime::answered!(hosting.prepare(&context)) else {

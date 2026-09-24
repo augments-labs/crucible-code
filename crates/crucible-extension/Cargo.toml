@@ -40,6 +40,16 @@ sha2.workspace = true
 # Every refusal here is a module-owned enum, and the derive writes the
 # `Display` and `source` impls rather than shipping a runtime.
 thiserror.workspace = true
+# `Handle`, the runtime a hosted extension's streams are read and written on
+# by the transport's tasks. Named here only to be handed down: nothing in this
+# crate spawns, builds or enters a runtime.
+tokio = { workspace = true, features = ["rt"] }
+
+# The runtime the tests hand a hosted extension's streams to: its workers run
+# the transport's tasks while the test's own thread speaks to the extension
+# synchronously, and it has the timer a stream's waiting read needs.
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

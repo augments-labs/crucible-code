@@ -32,6 +32,7 @@ use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken}
 
 use crate::{Asking, CallId, Outcome, Over, Speaking, Turn};
 use serde_json::Value;
+use tokio::runtime::Handle;
 
 /// An extension, hosted over a confined process.
 ///
@@ -47,12 +48,16 @@ pub struct Hosted<T> {
 }
 
 impl<T> Hosted<T> {
-    /// Speaks to `process`, giving up on one silence after `patience`.
+    /// Speaks to `process`, giving up on one silence after `patience`, with
+    /// its streams read and written by tasks on `runtime`.
     ///
     /// The patience is spent on a single quiet stretch in either direction and
     /// handed back whenever anything moves, so a slow extension is slow rather
     /// than dead. Standard error is drained from here on, which is what keeps a
-    /// talkative extension from wedging in a write nobody is reading.
+    /// talkative extension from wedging in a write nobody is reading. The tasks
+    /// that read and write the conversation end when this is stopped or
+    /// dropped; the drain goes on into what [`Self::stop`] hands back, until
+    /// the stream ends or that is dropped too.
     ///
     /// # Errors
     ///
@@ -64,8 +69,9 @@ impl<T> Hosted<T> {
     pub fn over(
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
+        runtime: &Handle,
     ) -> Result<Self, Unstarted> {
-        let pipes = Pipes::taken(process.as_mut(), patience)?;
+        let pipes = Pipes::taken(process.as_mut(), patience, runtime)?;
         Ok(Self {
             process,
             talk: Speaking::new(pipes.heard, pipes.said),

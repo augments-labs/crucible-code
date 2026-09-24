@@ -18,6 +18,7 @@ fn unconfirmed_cleanup_refuses_server_replacement() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(3)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
@@ -50,6 +51,7 @@ fn a_server_whose_writes_were_refused_says_so_and_can_be_started_again() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
@@ -80,6 +82,7 @@ fn unconfirmed_disposal_remains_failed_and_blocks_repreparation() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs"), chosen("notes")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
@@ -121,6 +124,7 @@ fn unconfirmed_partial_preparation_cleanup_stays_owned() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs"), chosen("notes")],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     let error = crucible_runtime::answered!(hosting.prepare(&context)).unwrap_err();
@@ -147,6 +151,7 @@ fn rejected_catalogue_preserves_unconfirmed_replacement_cleanup() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(3)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
@@ -186,6 +191,7 @@ fn a_server_whose_writes_were_refused_is_not_started_again_behind_that_call() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(3)],
+        crate::testing::runtime(),
     );
     let context = lifecycle();
     crucible_runtime::answered!(hosting.prepare(&context)).unwrap();

@@ -292,7 +292,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
         } else {
             Runner::with_toolset(
                 provider,
-                Hosting::new(Arc::new(offering), sandbox, chosen),
+                // The same runtime the turns are waited for on: each selected
+                // server's streams are read and written by tasks there.
+                Hosting::new(Arc::new(offering), sandbox, chosen, runtime.clone()),
                 asking,
                 context,
                 session,

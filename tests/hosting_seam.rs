@@ -433,47 +433,62 @@ fn roster(revealed: &Revealed) -> Tools {
 /// what decides it.
 #[test]
 fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
-    let revealed = Revealed::new();
-    let sandbox = Pretend::saying(opening("docs", &json!([offers("search")])));
-    let hosting = Hosting::new(
-        Arc::new(roster(&revealed)),
-        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
-        vec![chosen("docs")],
-    );
-    let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
+    // On the application's own runtime, as a run hosts a server: the
+    // server's streams are read and written by tasks there.
+    let ((), shutdown) = crucible_app::services::serving(|services| {
+        let runtime = services
+            .runtime()
+            .handle()
+            .expect("the application's runtime");
+        let revealed = Revealed::new();
+        let sandbox = Pretend::saying(opening("docs", &json!([offers("search")])));
+        let hosting = Hosting::new(
+            Arc::new(roster(&revealed)),
+            Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+            vec![chosen("docs")],
+            runtime,
+        );
+        let context = lifecycle();
+        crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
 
-    let first = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
-    let before = first.find("mcp:docs/search").expect("the server's tool");
-    let source = before.descriptor().provenance().id().to_owned();
-    let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
-    let read = sandbox.watched.frames();
+        let first =
+            crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+        let before = first.find("mcp:docs/search").expect("the server's tool");
+        let source = before.descriptor().provenance().id().to_owned();
+        let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
+        let read = sandbox.watched.frames();
 
-    // What `tool_search` does mid-turn: the built-in roster grows, so the
-    // merged generation has to be rebuilt around it.
-    revealed.reveal("grep");
-    let second =
-        crucible_runtime::answered!(hosting.refresh(&context)).expect("the generation after");
+        // What `tool_search` does mid-turn: the built-in roster grows, so the
+        // merged generation has to be rebuilt around it.
+        revealed.reveal("grep");
+        let second =
+            crucible_runtime::answered!(hosting.refresh(&context)).expect("the generation after");
 
-    assert_ne!(
-        first.generation().context_id(),
-        second.generation().context_id(),
-        "a roster that moved is a new generation"
-    );
-    assert!(second.find("grep").is_some(), "the revealed tool arrived");
-    let after = second
-        .find("mcp:docs/search")
-        .expect("the server's tool survived the swap");
-    assert_eq!(after.descriptor().provenance().id(), source);
+        assert_ne!(
+            first.generation().context_id(),
+            second.generation().context_id(),
+            "a roster that moved is a new generation"
+        );
+        assert!(second.find("grep").is_some(), "the revealed tool arrived");
+        let after = second
+            .find("mcp:docs/search")
+            .expect("the server's tool survived the swap");
+        assert_eq!(after.descriptor().provenance().id(), source);
+        assert_eq!(
+            after.tool().sensitivity(&ToolArgs::new("{}")),
+            approval,
+            "a swap must not change what a call is approved as"
+        );
+        assert_eq!(
+            sandbox.watched.frames(),
+            read,
+            "and must not go back to the server for a catalogue it already read"
+        );
+        crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    });
     assert_eq!(
-        after.tool().sensitivity(&ToolArgs::new("{}")),
-        approval,
-        "a swap must not change what a call is approved as"
+        shutdown,
+        Ok(()),
+        "every task the server's streams had was over by the end"
     );
-    assert_eq!(
-        sandbox.watched.frames(),
-        read,
-        "and must not go back to the server for a catalogue it already read"
-    );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
 }
