@@ -41,13 +41,14 @@ sha2.workspace = true
 # `Display` and `source` impls rather than shipping a runtime.
 thiserror.workspace = true
 # `Handle`, the runtime a hosted extension's streams are read and written on
-# by the transport's tasks. Named here only to be handed down: nothing in this
-# crate spawns, builds or enters a runtime.
+# by the transport's tasks, and the reading and writing traits a conversation
+# is awaited over. Named here only to be handed down and bound on: nothing in
+# this crate spawns, builds or enters a runtime.
 tokio = { workspace = true, features = ["rt"] }
 
 # The runtime the tests hand a hosted extension's streams to: its workers run
-# the transport's tasks while the test's own thread speaks to the extension
-# synchronously, and it has the timer a stream's waiting read needs.
+# the transport's tasks while a test's own thread waits on what it awaits, and
+# it has the timer a stream's waiting read and a test's own timeout need.
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 

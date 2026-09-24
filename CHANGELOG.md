@@ -160,6 +160,14 @@ change in any release with no deprecation period.
   is written down. The login implementations and `Subscriptions::production`
   take the run's `Renewals`, and `services::serving` reports a renewal still
   unfinished 5 s after the run.
+- **An extension host is awaited, and never settles a call another process
+  was asked.** `crucible-extension`'s `Hosted` is spoken to only by awaiting
+  it and gains `replace`; its calls are a `Call` carrying a generation no other
+  hosted process shares, in place of a bare `CallId`, and one from any other
+  process is refused with `CallError::Elsewhere` rather than answered by its
+  number. `Speaking` is no longer driven synchronously, `Speaking`'s and
+  `Conversation`'s constructors are crate-private, and `Conversation` no
+  longer implements `Default`; nothing in crucible hosts an extension yet.
 - **A command left running no longer holds up the screen.** Each one is owned
   by a task of its own that asks its process everything on the application
   runtime's blocking threads, which grow to 13 so these four still leave one
