@@ -35,13 +35,16 @@ fn running(case: &str, count: usize) -> (Background, Sample) {
 }
 
 /// A runtime of this test binary's own, whose threads run a command's status
-/// task, and own a command left running, while a test waits on the command.
+/// task, read its output and own a command left running, while a test waits
+/// on the command. Built with the I/O driver a command's pipes are waited on
+/// with on Unix, as the application's is.
 fn runtime() -> tokio::runtime::Handle {
     static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     RUNTIME
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
+                .enable_io()
                 .enable_time()
                 .build()
                 .expect("a runtime to watch commands on")
@@ -102,8 +105,11 @@ fn started(
 
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched)
             .with_invocation(InvocationId::new());
-        let output =
-            crucible_runtime::answered!(tool.run(approved, &context)).expect("the command started");
+        // Awaited on the test's runtime, as a turn awaits a call: the tool
+        // starts the readers of a command's output on the runtime awaiting it.
+        let output = runtime()
+            .block_on(tool.run(approved, &context))
+            .expect("the command started");
         assert!(
             !output.is_failed(),
             "a command this test needs running was refused: {}",

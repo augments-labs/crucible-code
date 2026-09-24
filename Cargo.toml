@@ -443,13 +443,14 @@ arboard.workspace = true
 # runtime the tools and grep probes build for themselves, shaped as the
 # application's — several threads and a clock. Each waits on it for the calls
 # it times, lends those calls a tool worker on it, and the tools probe watches
-# its sandbox command on it. The command line itself names none of that
-# runtime; it reaches the application's own through `crucible-app`. `sync` is
-# the one-shot channel a pending permission question or ask answers through: a
-# human's reply is human-length, so the drawing thread that holds the sending
-# half must be able to hand it over without the turn thread blocking inside a
-# poll to receive it.
-tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
+# its sandbox command on it. `net` is the I/O driver that command's output is
+# read through on Unix, as the application's runtime has it. The command line
+# itself names none of that runtime; it reaches the application's own through
+# `crucible-app`. `sync` is the one-shot channel a pending permission question
+# or ask answers through: a human's reply is human-length, so the drawing
+# thread that holds the sending half must be able to hand it over without the
+# turn thread blocking inside a poll to receive it.
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync", "time"] }
 # The composition root: every concrete provider, tool, server and session a run
 # is assembled from, and the conversation the command line then drives. The
 # command line adapts it to a terminal and adds nothing to it.
