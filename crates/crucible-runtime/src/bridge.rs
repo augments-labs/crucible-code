@@ -154,21 +154,27 @@ pub enum Bridge {
     /// - Wait bounded by: for the owed lines, the session taking each of them,
     ///   as long as its store's own writes take. For a turn or a compaction,
     ///   the turn's own cancel, as far as the steps the turn awaits heed it.
-    ///   The turn looks at that cancel between steps and hands it to the
-    ///   provider's stream and each read of it, the run of a call that runs
-    ///   alone, and the toolset's preparation and disposal, and how soon a step
-    ///   still waiting heeds it is that step's own contract. Its session writes
-    ///   take no cancel: each waits for the session's writer to take its line,
-    ///   as long as the log's own writes take, and answers once that writer
-    ///   has gone, however it went. The one deadline kept on a waiting step is
-    ///   a lone call's tool deadline: a run still waiting when it passes is
-    ///   dropped there, and the call is answered as timed out. What the run
-    ///   keeps bounds how much the turn does rather than how long a step
-    ///   waits: its retry attempts, whose pauses heed the cancel, and its
-    ///   response, tool-output and spend ceilings. The crossing itself waits
-    ///   under a cancel nothing raises, so a stop ends the turn through its
-    ///   own ending rather than by dropping it at a step, which could leave a
-    ///   recorded call without its result.
+    ///   The turn looks at that cancel between steps and hands it to every
+    ///   step it awaits — the provider's stream and each read of it, every
+    ///   call's run, and the toolset's preparation, listing, refreshing and
+    ///   disposal — and how soon a step still waiting heeds it is that step's
+    ///   own contract. A call's tool
+    ///   deadline makes that call's cancel read as raised, which a run learns
+    ///   at its next look or through a race on that cancel, so the deadline
+    ///   is cooperative; no run is dropped part way, so what bounds a run
+    ///   past its deadline or a stop is how soon it heeds its cancel, and a
+    ///   run that never does is waited for until it answers. The turn's
+    ///   session writes take no cancel: each waits for the session's writer
+    ///   to take its line, as long as the log's own writes take, and answers
+    ///   once that writer has gone, however it went. What the run keeps
+    ///   bounds how much the turn does rather than how long a step waits: its
+    ///   retry attempts, whose pauses heed the cancel, and its response,
+    ///   tool-output and spend ceilings. The crossing itself waits under a
+    ///   cancel nothing raises, so a stop ends the turn through its own
+    ///   ending rather than by dropping it at a step, which could leave a
+    ///   recorded call without its result. The calls' runs are spawned onto
+    ///   the runtime's workers, a bounded few at once; the turn itself is
+    ///   still polled here.
     /// - Owner: `crucible-app`
     /// - Retired: when the application awaits a turn directly.
     AppTurn,
@@ -187,19 +193,6 @@ pub enum Bridge {
     /// - Retired: when the turn loop, a compaction, the runner's cache
     ///   inspection and its cleanup pass are asynchronous.
     TurnCache,
-    /// The turn's tools where the turn does not await them yet: running a
-    /// call in a parallel wave, on the wave's own thread for it; accepting a
-    /// background result; and listing and refreshing the toolset at the top
-    /// of each pass. A call that runs alone, and preparing and disposing of
-    /// the toolset, are awaited.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each call run in a parallel wave, each result
-    ///   accepted, and each listing or refreshing of the toolset.
-    /// - Owner: `crucible-runner`
-    /// - Retired: when the turn awaits a parallel wave's runs, a background
-    ///   result's acceptance and the toolset's listing and refreshing.
-    TurnTools,
     /// The bash tool's confined process: beginning a background result's
     /// acceptance, completing it, and stopping the process.
     ///
@@ -337,7 +330,6 @@ impl Bridge {
         match self {
             Self::AppTurn => "a turn or a compaction",
             Self::TurnCache => "a prompt-cache step",
-            Self::TurnTools => "the turn's tools",
             Self::BashSandbox => "the bash tool's sandbox",
             Self::TransportProcess => "stopping a hosted program",
             Self::LocalBackend => "the local sandbox backend",
@@ -518,23 +510,23 @@ mod tests {
     fn a_future_that_answers_at_once_is_handed_back_its_answer() {
         let answered: BoxFuture<'_, u32> = Box::pin(async { 7 });
 
-        assert_eq!(Bridge::TurnTools.cross(answered), Ok(7));
+        assert_eq!(Bridge::TurnCache.cross(answered), Ok(7));
     }
 
     #[test]
     fn a_future_that_would_wait_is_refused_naming_the_bridge() {
-        let refused = Bridge::TurnTools.cross(std::future::pending::<()>());
+        let refused = Bridge::TurnCache.cross(std::future::pending::<()>());
 
         assert_eq!(
             refused,
             Err(Unready {
-                bridge: Bridge::TurnTools
+                bridge: Bridge::TurnCache
             })
         );
         assert_eq!(
             refused.map_err(|unready| unready.to_string()),
             Err(
-                "the turn's tools would have had to wait, and the caller cannot; the waiting \
+                "a prompt-cache step would have had to wait, and the caller cannot; the waiting \
                  step was dropped before it answered, so whatever that step began is \
                  unconfirmed"
                     .to_owned()
@@ -551,7 +543,7 @@ mod tests {
             std::future::pending::<()>().await;
         });
 
-        let crossed = Bridge::TurnTools.cross(waiting);
+        let crossed = Bridge::TurnCache.cross(waiting);
 
         assert!(crossed.is_err(), "a future that waits was answered");
         assert!(
@@ -671,7 +663,7 @@ mod tests {
         let runtime = runtime();
         let begun = std::time::Instant::now();
 
-        let waited = Bridge::TurnTools.wait(
+        let waited = Bridge::AppTurn.wait(
             Some(runtime.handle()),
             &Cancel::new(),
             WakesEachTime { left: WAKES },
@@ -718,13 +710,13 @@ mod tests {
             raising.request();
         });
 
-        let waited = Bridge::TurnTools.wait(Some(runtime.handle()), &cancel, async move {
+        let waited = Bridge::AppTurn.wait(Some(runtime.handle()), &cancel, async move {
             let _held = held;
             std::future::pending::<()>().await;
         });
         raiser.join().unwrap();
 
-        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::TurnTools)));
+        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::AppTurn)));
         assert!(
             dropped.load(Ordering::Acquire),
             "the cancelled future was still alive after the crossing returned"
@@ -743,11 +735,11 @@ mod tests {
         let polled = Arc::new(AtomicBool::new(false));
         let seen = Arc::clone(&polled);
 
-        let waited = Bridge::TurnTools.wait(Some(runtime.handle()), &cancel, async move {
+        let waited = Bridge::AppTurn.wait(Some(runtime.handle()), &cancel, async move {
             seen.store(true, Ordering::Release);
         });
 
-        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::TurnTools)));
+        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::AppTurn)));
         assert!(
             !polled.load(Ordering::Acquire),
             "a turn already cancelled had its step started anyway"

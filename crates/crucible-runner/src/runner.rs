@@ -15,16 +15,18 @@
 //! what decides whether the session continues.
 //!
 //! A turn is asynchronous. It awaits the provider's stream and each read of
-//! it, the run of a call that runs alone, and the toolset's preparation and
-//! disposal, so a step that has to wait for its answer is waited for rather
-//! than refused. It spawns nothing and starts no runtime: whoever awaits it
-//! polls it, on that caller's own thread. It hands its [`Cancel`] to every
-//! step it awaits and looks at it between them, so a stop ends it as it
-//! always has, and how soon an awaited step heeds that stop is the step's own
-//! contract. The steps still reached through a bridge that asks once — a
-//! session write, a prompt-cache step, the toolset's listing and refreshing,
-//! a background result's acceptance and a run in a parallel wave — are
-//! refused where they would have had to wait.
+//! it, every call's run, the toolset's preparation, listing, refreshing and
+//! disposal, and a background result's acceptance, so a step that has to
+//! wait for its answer is waited for rather than refused. It starts no
+//! runtime: whoever awaits it polls it, on that caller's own thread, and the
+//! one thing it spawns is its calls' runs, onto the runtime it is polled in,
+//! at most [`TOOL_RUNS`] at once and each awaited before the pass goes on —
+//! so a turn is polled inside a runtime, as the application's wait for one
+//! is. It hands its [`Cancel`] to every step it awaits and looks at it between
+//! them, so a stop ends it as it always has, and how soon an awaited step
+//! heeds that stop is the step's own contract. The one step still reached
+//! through a bridge that asks once — a prompt-cache step — is refused where it
+//! would have had to wait.
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,
@@ -48,8 +50,8 @@ use crucible_core::{
     PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
     PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
     Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer, StopReason, Summary, ToolCall,
-    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
-    Transcript, TurnId, UsageCost,
+    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, ToolWorker, Toolset,
+    ToolsetContext, Transcript, TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
@@ -81,6 +83,7 @@ use load::{Counting, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
+pub use work::TOOL_RUNS;
 use work::{Went, Work};
 
 /// How many compactions one turn may run without getting anywhere.
@@ -179,6 +182,9 @@ pub struct Runner {
     policy: RunPolicy,
     prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
     sandbox_audits: SandboxAuditRegistry,
+    /// The worker every call is lent for its blocking work, where the wiring
+    /// gave one.
+    worker: Option<ToolWorker>,
 }
 
 /// What `agent` would be advertised out of `tools`, between turns.
@@ -281,6 +287,7 @@ impl Runner {
             policy: RunPolicy::default(),
             prompt_cache_store: None,
             sandbox_audits: SandboxAuditRegistry::new(),
+            worker: None,
         };
         runner.state.load.requesting(
             runner.agent.instructions(),
@@ -311,6 +318,17 @@ impl Runner {
     #[must_use]
     pub const fn under(mut self, policy: RunPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Lends every call this runner runs `worker` for its blocking work.
+    ///
+    /// One worker for every call of every turn, so what all of them hand it
+    /// is held to its one bound. A runner lent none leaves a tool to do that
+    /// work wherever its run is polled.
+    #[must_use]
+    pub fn lending(mut self, worker: ToolWorker) -> Self {
+        self.worker = Some(worker);
         self
     }
 
@@ -904,35 +922,25 @@ impl Runner {
     /// work around.
     ///
     /// [`TurnError::Unready`] where a step the turn crossed to rather than
-    /// awaited would have had to wait and was dropped: a prompt-cache step, or
-    /// listing or refreshing the toolset. What the dropped step began is
-    /// unconfirmed rather than undone. A changing cache step is recorded as
-    /// ambiguous, to be reconciled, and a request for the model's answer being
-    /// prepared has that answer recorded as far as it got, as a failed one
-    /// does. A step of a compaction the turn made leaves what
-    /// [`Runner::compact`] says it does. The turn's session writes are
-    /// awaited, and a line the log could not keep is the session's to report
-    /// rather than the turn's to end on. Before anything of the turn is
-    /// recorded or sent, the lines picking a session up or changing vendor
-    /// still owe the session are written, as [`Runner::record_clearings`]
-    /// writes them.
+    /// awaited would have had to wait and was dropped: a prompt-cache step.
+    /// What the dropped step began is unconfirmed rather than undone.
+    /// A changing cache step is recorded as ambiguous, to be reconciled, and
+    /// a request for the model's answer being prepared has that answer
+    /// recorded as far as it got, as a failed one does. A step of a
+    /// compaction the turn made leaves what [`Runner::compact`] says it does.
+    /// The turn's session writes are awaited, and a line the log could not
+    /// keep is the session's to report rather than the turn's to end on.
+    /// Before anything of the turn is recorded or sent, the lines picking a
+    /// session up or changing vendor still owe the session are written, as
+    /// [`Runner::record_clearings`] writes them.
     ///
     /// Every step the turn crosses to that would have had to wait ends the
     /// turn on the refusal, even while the turn is being stopped, rather than
-    /// as a clean stop, with two exceptions. The turn's cache steps and its
-    /// toolset's listing and refreshing all end it so, and a compaction the
-    /// turn makes ends on a refusal as [`Runner::compact`] says, taking the
-    /// turn with it. The exceptions are a call's run in a parallel wave and a
-    /// background result's acceptance, which never end the turn on a refusal.
-    /// A run that would have had to wait goes back to the model as a failed
-    /// result that says what the run began is unconfirmed, and where the turn
-    /// is being stopped the pass then ends on the stop at that call; but where
-    /// reporting the call's sandbox facts fails after the run, that failure is
-    /// what the model is told, as it is after any run, and the pass does not
-    /// end on the stop at that call. An acceptance that would have had to wait
-    /// leaves the command to the registry that owns its cleanup. A run in a
-    /// wave of one call, the provider's stream and the toolset's preparation
-    /// and disposal are awaited, and are never refused this way.
+    /// as a clean stop. The turn's cache steps end it so, and a compaction
+    /// the turn makes ends on a refusal as [`Runner::compact`] says, taking
+    /// the turn with it. Every call's run, a background result's acceptance,
+    /// the provider's stream and the toolset's preparation, listing,
+    /// refreshing and disposal are awaited, and are never refused this way.
     ///
     /// A tool source's own step that was dropped before it answered is the
     /// source's failure, which [`TurnError::Toolset`] or
@@ -943,6 +951,14 @@ impl Runner {
     /// is unconfirmed rather than undone. A cleanup step of the source's that
     /// would have had to wait after another failure is reported as that
     /// failure, and named at most in its text.
+    ///
+    /// # Panics
+    ///
+    /// At the turn's first tool call where it is polled outside a Tokio
+    /// runtime: every call's run is spawned onto the runtime the turn is
+    /// polled in, and spawning outside one panics. The application waits for
+    /// a turn inside its own runtime; a caller of its own polls the turn
+    /// inside one, with a timer where a call has a deadline.
     ///
     /// [`ToolsetError::Unready`]: crucible_core::ToolsetError::Unready
     /// [`ToolsetError::Source`]: crucible_core::ToolsetError::Source

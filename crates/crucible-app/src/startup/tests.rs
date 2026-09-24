@@ -1272,3 +1272,5 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
         0o600
     );
 }
+
+mod lending;

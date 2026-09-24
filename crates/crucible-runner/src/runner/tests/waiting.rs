@@ -3,9 +3,10 @@
 //! Each stand-in here says it is not ready the first time it is asked, wakes
 //! whoever asked, and answers the next time: the smallest wait there is, and
 //! one no step of a turn can mistake for an answer. A turn awaits every such
-//! step it takes — the provider's stream and each of its reads, a tool's run,
-//! the toolset's preparation and disposal, and each line written to the
-//! session — and ends as it would have had every step answered at once.
+//! step it takes — the provider's stream and each of its reads, every call's
+//! run, a background result's acceptance, the toolset's preparation, listing,
+//! refreshing and disposal, and each line written to the session — and ends
+//! as it would have had every step answered at once.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -14,7 +15,7 @@ use std::task::{Context, Poll};
 use crucible_core::{
     Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Compacted, ContextError,
     ContextPatch, ContextSnapshot, PromptCacheCapabilities, PromptCacheRoute, SessionId,
-    SessionOwner,
+    SessionOwner, ToolDescriptor, ToolExecutionMode, ToolProvenance, ToolSourceKind,
 };
 
 use super::aiming::left_behind;
@@ -657,4 +658,180 @@ fn a_restricted_result_is_cleared_once_the_session_has_taken_its_results_line() 
         1,
         "the clearing's own line was not written"
     );
+}
+
+#[test]
+fn a_run_in_a_parallel_wave_that_waits_before_it_answers_is_awaited() {
+    // The calls of a wave are awaited like a call that runs alone: a run that
+    // has to wait for something — a credential being renewed, a body still
+    // arriving — is waited for rather than answered as unconfirmed.
+    let provenance =
+        ToolProvenance::new(ToolSourceKind::User, "test:deliberate", "a waiting tool").unwrap();
+    let descriptor = ToolDescriptor::new(
+        "deliberate",
+        r#"{"type":"object","properties":{}}"#,
+        provenance,
+    )
+    .unwrap()
+    .executing(ToolExecutionMode::Parallel);
+    let mut offered = Tools::new();
+    offered
+        .add(descriptor, Arc::new(Deliberate { answer: "found it" }))
+        .unwrap();
+    let mut scripted = Scripted::new(
+        Script::new(vec![
+            vec![
+                Delta::ToolStarted {
+                    id: ToolId::new("a"),
+                    name: "deliberate".into(),
+                },
+                Delta::ToolArgs("{}".into()),
+                Delta::ToolStarted {
+                    id: ToolId::new("b"),
+                    name: "deliberate".into(),
+                },
+                Delta::ToolArgs("{}".into()),
+                Delta::Stopped(StopReason::WantsTools),
+            ],
+            saying("done"),
+        ]),
+        offered,
+        Verdict::Allow,
+    );
+    scripted.runner.policy.tools = crate::ToolScheduling::bounded(2).unwrap();
+
+    let turned = scripted.turn("go");
+
+    assert_eq!(turned.unwrap(), StopReason::Yielded);
+    let conversation = conversation(scripted.runner.transcript());
+    let answered: Vec<&str> = conversation
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResults(results) => Some(results),
+            _ => None,
+        })
+        .flatten()
+        .map(|result| result.output.text())
+        .collect();
+    assert_eq!(answered, ["found it", "found it"]);
+}
+
+/// A toolset whose listing and refreshing each wait once before they answer
+/// what `Tools` would.
+struct Listing(Tools);
+
+impl Toolset for Listing {
+    fn prepare<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+        Toolset::prepare(&self.0, context)
+    }
+
+    fn snapshot<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, crucible_core::ToolsetError>> {
+        Box::pin(Later::new(Toolset::snapshot(&self.0, context)))
+    }
+
+    fn refresh<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, crucible_core::ToolsetError>> {
+        Box::pin(Later::new(Toolset::refresh(&self.0, context)))
+    }
+
+    fn dispose<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+        Toolset::dispose(&self.0, context)
+    }
+}
+
+#[test]
+fn a_toolset_listing_that_waits_before_it_answers_is_awaited() {
+    let mut offered = Tools::new();
+    offered
+        .add_builtin(Deliberate { answer: "found it" })
+        .unwrap();
+    let mut scripted = Scripted::new(
+        Script::new(vec![calling("a", "deliberate", "{}"), saying("done")]),
+        Tools::new(),
+        Verdict::Allow,
+    );
+    scripted.runner.toolset = Arc::new(Listing(offered));
+
+    let turned = scripted.turn("go");
+
+    assert_eq!(turned.unwrap(), StopReason::Yielded);
+    assert_eq!(only_result(&scripted).output.text(), "found it");
+}
+
+#[test]
+fn every_call_of_a_turn_is_lent_the_runner_s_worker() {
+    // What the runner was lent reaches each call's context: the tool finds a
+    // worker there and says so.
+    struct Asks;
+
+    impl DescribeTool for Asks {
+        fn name(&self) -> &'static str {
+            "asks"
+        }
+
+        fn schema(&self) -> &'static str {
+            r#"{"type":"object","properties":{}}"#
+        }
+    }
+
+    impl Tool for Asks {
+        fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+            Ok(())
+        }
+
+        fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+            Sensitivity::ReadOnly {
+                target: Target::unresolved(),
+            }
+        }
+
+        fn summary(&self, args: &ToolArgs) -> Summary {
+            Summary::new(args.as_str())
+        }
+
+        fn run<'a>(
+            &'a self,
+            _approved: Approved,
+            context: &'a ToolContext<'_>,
+        ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+            let lent = context.worker().is_some();
+            Box::pin(async move {
+                Ok(ToolOutput::ok(if lent {
+                    "lent a worker"
+                } else {
+                    "lent nothing"
+                }))
+            })
+        }
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
+    let mut offered = Tools::new();
+    offered.add_builtin(Asks).unwrap();
+    let mut scripted = Scripted::new(
+        Script::new(vec![calling("a", "asks", "{}"), saying("done")]),
+        offered,
+        Verdict::Allow,
+    );
+    scripted.runner.worker = Some(crucible_core::ToolWorker::new(runtime.handle().clone()));
+
+    let turned = scripted.turn("go");
+
+    assert_eq!(turned.unwrap(), StopReason::Yielded);
+    assert_eq!(only_result(&scripted).output.text(), "lent a worker");
 }
