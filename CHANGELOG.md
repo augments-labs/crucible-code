@@ -179,6 +179,12 @@ change in any release with no deprecation period.
   closes by itself once its last command has ended, however it ended; the end
   of a run waits at most 7 s for its commands to be ended before ending what
   their owners did not reach.
+- **On Linux, a sandboxed command's status no longer waits for what it wrote
+  to be reported back.** Once the command has exited, a status asked for while
+  the sandbox is still sending its scan of the writable roots answers `None`
+  at once, with `SandboxProcess::ended` answering `true`, and settles on a
+  later look; a stop takes no more of that scan than has already been sent,
+  rather than waiting for the rest.
 - **`glob`, `grep` and `tool_search` hand their work to a lent tool worker.**
   A call lent a `ToolWorker` searches on it, waiting there for room, and stops
   and gives its place back when the call is cancelled or dropped; a call lent
