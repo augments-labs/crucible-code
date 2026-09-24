@@ -45,8 +45,10 @@ crucible-runtime = { workspace = true, features = ["proof"] }
 
 # The runtime the tests' sandbox watches each command it starts on: several
 # threads of its own, so a command's status task runs while a test waits on
-# it, and the clock that task pauses on.
-tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+# it, and the clock that task pauses on. `net` is the I/O driver a command's
+# output is read through on Unix, which a test awaiting a command builds its
+# runtime with, as the application builds its own.
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "time"] }
 
 [target.'cfg(windows)'.dependencies]
 # Windows refuses std::fs::rename over an existing file. Those bindings stay

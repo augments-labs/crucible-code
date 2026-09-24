@@ -18,6 +18,10 @@ use super::background::MOST;
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::sample::{Sample, allowed, enforcing};
 
+#[cfg(target_os = "linux")]
+mod masked;
+mod owned;
+
 /// This machine's confinement, as the service contract a tool is given.
 fn local() -> std::sync::Arc<dyn crucible_sandbox::SandboxService> {
     std::sync::Arc::new(crate::sample::sandbox())
@@ -33,7 +37,7 @@ fn compatible(sample: &Sample) -> Bash {
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
     let tool = compatible(sample);
-    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
+    awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
@@ -42,7 +46,7 @@ fn ran(sample: &Sample, args: &str) -> ToolOutput {
 
 fn finalized(tool: &Bash, args: &str) -> Result<ToolOutput, ToolError> {
     let context = crate::sample::context();
-    let output = crucible_runtime::answered!(tool.run(allowed(tool, args), &context))?;
+    let output = awaited(tool.run(allowed(tool, args), &context))?;
     crate::sample::finalize_call_result(&context, &output);
     Ok(output)
 }
@@ -200,10 +204,8 @@ fn what_a_command_prints_is_handed_over_while_it_is_still_running() {
     let watched = Watched::default();
 
     let args = r#"{"command":"printf 'Compiling one\nCompiling two\n'; sleep 1"}"#;
-    let output = crucible_runtime::answered!(
-        tool.run(allowed(&tool, args), &crate::sample::watching(&watched))
-    )
-    .expect("the command ran");
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::watching(&watched)))
+        .expect("the command ran");
 
     assert_eq!(
         watched.said(),
@@ -288,9 +290,8 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
-    let output =
-        crucible_runtime::answered!(tool.run(allowed(&tool, &args), &crate::sample::context()))
-            .expect("a probed backend ran the command");
+    let output = awaited(tool.run(allowed(&tool, &args), &crate::sample::context()))
+        .expect("a probed backend ran the command");
 
     assert!(output.is_failed(), "{}", output.text());
     assert!(
@@ -436,6 +437,42 @@ fn a_pipeline_the_command_started_is_stopped_with_it() {
     );
 }
 
+/// Awaits `future` on the test binary's runtime, on the test's own thread,
+/// the way a turn awaits a call on the application's: for a run that waits,
+/// which a single poll would refuse.
+pub(super) fn awaited<F: std::future::Future>(future: F) -> F::Output {
+    crate::sample::runtime().block_on(future)
+}
+
+/// A runtime of one thread, with the drivers a command's pipes are waited on
+/// with, that nothing else in this test binary shares: what is alive on it is
+/// what the code under test started there.
+pub(super) fn alone() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .expect("a runtime of the test's own")
+}
+
+/// Drives `runtime` until nothing is alive on it, failing where something
+/// still is once a ceiling no passing run comes near has passed.
+///
+/// Driven rather than looked at: a task told to stop is dropped by the
+/// runtime that owns it, and a runtime of one thread does that only while
+/// somebody lets it run.
+pub(super) fn quiesced(runtime: &tokio::runtime::Runtime, after: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while runtime.metrics().num_alive_tasks() > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "{} task(s) were still alive after {after}",
+            runtime.metrics().num_alive_tasks()
+        );
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(5)).await });
+    }
+}
+
 #[test]
 fn a_timeout_past_the_ceiling_is_refused_rather_than_quietly_shortened() {
     let sample = Sample::new("bash-ceiling");
@@ -461,7 +498,7 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
 
     let started = Instant::now();
     let tool = compatible(&sample);
-    let problem = crucible_runtime::answered!(tool.run(
+    let problem = awaited(tool.run(
         allowed(&tool, r#"{"command":"sleep 30"}"#),
         &crate::sample::cancelled_by(&cancel),
     ))
@@ -481,7 +518,7 @@ fn a_turn_already_stopped_never_starts_the_command() {
     cancel.request();
 
     let tool = compatible(&sample);
-    let problem = crucible_runtime::answered!(tool.run(
+    let problem = awaited(tool.run(
         allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
         &crate::sample::cancelled_by(&cancel),
     ))
@@ -520,7 +557,7 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
         local(),
         empty_element_first,
     ));
-    let output = crucible_runtime::answered!(tool.run(
+    let output = awaited(tool.run(
         allowed(&tool, r#"{"command":"echo hello"}"#),
         &crate::sample::context(),
     ))
@@ -546,9 +583,9 @@ fn a_launch_the_launcher_refused_tells_the_model_what_it_said() {
         std::sync::Arc::new(RefusingSandbox::default()),
     ));
 
-    let problem = crucible_runtime::answered!(tool.run(
+    let problem = awaited(tool.run(
         allowed(&tool, r#"{"command":"true"}"#),
-        &crate::sample::context()
+        &crate::sample::context(),
     ))
     .expect_err("the launcher refused the command");
 
@@ -719,9 +756,8 @@ fn the_variables_the_tool_was_given_reach_the_command() {
 
     let tool = compatible(&sample).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
     let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
-    let output =
-        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
-            .expect("the command ran");
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
+        .expect("the command ran");
 
     assert_eq!(output.text(), "cat");
 }
@@ -753,9 +789,8 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
 
     let tool = compatible(&sample).exporting([("HOME", "/nowhere-in-particular")]);
     let args = r#"{"command":"echo $HOME"}"#;
-    let output =
-        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
-            .expect("the command ran");
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
+        .expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
 }
@@ -792,9 +827,8 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
 
     let tool = compatibility(Bash::inheriting(sample.workspace(), local(), crucibles_own));
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
-    let output =
-        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
-            .expect("the command ran");
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
+        .expect("the command ran");
 
     assert!(output.text().starts_with("[]"), "{}", output.text());
     assert!(!output.text().contains("s3cr3t"), "{}", output.text());
@@ -1700,7 +1734,7 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
     for choice in [false, true, false] {
         control.set_enabled(choice).unwrap();
         assert!(
-            crucible_runtime::answered!(tool.run(
+            awaited(tool.run(
                 allowed(&tool, r#"{"command":"echo fixture"}"#),
                 &crate::sample::context()
             ))
@@ -1750,7 +1784,7 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
         .under_policy(template.with_enabled(false))
         .following_enablement(control);
     assert!(
-        crucible_runtime::answered!(invalid.run(
+        awaited(invalid.run(
             allowed(&invalid, r#"{"command":"echo fixture"}"#),
             &crate::sample::context()
         ))

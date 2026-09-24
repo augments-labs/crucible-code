@@ -66,10 +66,11 @@ impl Ask for Unasked {
 /// The runtime each call is waited on, and the tool worker it is lent.
 ///
 /// Shaped as the application's in what these calls reach: four workers, a
-/// clock for the worker's wait for room and a command's limits, and at most
-/// eight blocking threads. No I/O driver, which nothing timed here waits on.
-/// Built before the measured calls, as the application builds its own before
-/// a turn. A sandboxed command's status is watched on it too.
+/// clock for the worker's wait for room and a command's limits, the I/O
+/// driver a sandboxed command's output is read through on Unix, and at most
+/// eight blocking threads. Built before the measured calls, as the
+/// application builds its own before a turn. A sandboxed command's status is
+/// watched on it too, and its output read on it.
 struct Driver {
     runtime: Runtime,
     worker: ToolWorker,
@@ -80,6 +81,7 @@ impl Driver {
         let runtime = Builder::new_multi_thread()
             .worker_threads(4)
             .max_blocking_threads(8)
+            .enable_io()
             .enable_time()
             .build()?;
         let worker = ToolWorker::new(runtime.handle().clone());
