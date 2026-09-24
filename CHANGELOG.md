@@ -63,6 +63,17 @@ change in any release with no deprecation period.
   once the token, an ancestor of it or a deadline on either is requested. A
   request wakes the race as it is made, and a deadline is timed on the timer
   of the runtime the race is polled in.
+- **An attachment read that can be told to stop.** `Opened::taken_until` is
+  the same bounded read as `Opened::taken`, done 64 KiB at a time with a stop
+  asked before each chunk, and answers `AttachmentError::Stopped` without the
+  bytes once the stop says yes. Nothing calls it yet, so nothing a user runs
+  behaves differently.
+- **An MCP conversation can be awaited.** In `crucible-mcp`,
+  `Talking::ask_async`, `Talking::tell_async` and `call_async` speak to a
+  server over asynchronous streams with the same numbering, the same bound of
+  64 frames read past while waiting and the same errors as the blocking calls,
+  and an answer to a call given up on is refused rather than taken for the
+  next. Nothing uses them yet, so nothing a user runs behaves differently.
 
 ### Changed
 
