@@ -18,7 +18,17 @@ use crucible_types::{Ancestry, SandboxId, ToolId};
 use crate::testing::runtime;
 use crate::{FrameError, Frames, Written};
 
-use super::{Absent, Pipes};
+use super::{Absent, Pipes, Unspoken};
+
+/// Drives [`Pipes::taken`] to its answer, for a test that does not itself
+/// await it.
+fn taken(
+    process: &mut dyn SandboxProcess,
+    patience: std::time::Duration,
+    on: &tokio::runtime::Handle,
+) -> Result<Pipes, Unspoken> {
+    runtime().block_on(Pipes::taken(process, patience, on))
+}
 
 /// How long one silence is sat through here.
 ///
@@ -202,8 +212,8 @@ fn process(withheld: Withheld) -> (Process, Arc<Held>) {
 fn a_process_with_every_stream_is_spoken_to_heard_and_drained() {
     let (mut process, held) = process(Withheld::none());
 
-    let mut pipes = Pipes::taken(&mut process, PATIENCE, crate::testing::runtime())
-        .expect("every stream was there");
+    let mut pipes =
+        taken(&mut process, PATIENCE, crate::testing::runtime()).expect("every stream was there");
     Written::new(&mut pipes.said)
         .send("asked")
         .expect("the pipe took it");
@@ -239,7 +249,7 @@ fn a_process_whose_input_was_not_kept_is_refused_and_stopped() {
         ..Withheld::none()
     });
 
-    let unspoken = Pipes::taken(&mut process, PATIENCE, crate::testing::runtime()).expect_err(
+    let unspoken = taken(&mut process, PATIENCE, crate::testing::runtime()).expect_err(
         "a process crucible cannot speak to is not a peer, whatever else it \
          handed back",
     );
@@ -265,7 +275,7 @@ fn a_process_whose_output_was_not_kept_is_refused_after_its_input_was_taken() {
         ..Withheld::none()
     });
 
-    let unspoken = Pipes::taken(&mut process, PATIENCE, crate::testing::runtime())
+    let unspoken = taken(&mut process, PATIENCE, crate::testing::runtime())
         .expect_err("a process with nothing to read is not a peer either");
 
     assert_eq!(unspoken.absent, Absent::Output);
@@ -284,7 +294,7 @@ fn a_refusal_whose_stop_was_not_confirmed_carries_the_cleanup_beside_it() {
         ..Withheld::none()
     });
 
-    let unspoken = Pipes::taken(&mut process, PATIENCE, crate::testing::runtime())
+    let unspoken = taken(&mut process, PATIENCE, crate::testing::runtime())
         .expect_err("the process was refused");
 
     assert_eq!(unspoken.absent, Absent::Input);
@@ -301,7 +311,7 @@ fn a_process_with_no_standard_error_is_given_one_that_never_says_anything() {
     let (mut process, _held) = process(Withheld::none());
     process.mutters = None;
 
-    let pipes = Pipes::taken(&mut process, PATIENCE, crate::testing::runtime())
+    let pipes = taken(&mut process, PATIENCE, crate::testing::runtime())
         .expect("both conversation streams were there");
 
     assert_eq!(
@@ -433,7 +443,7 @@ fn a_host_that_dies_ends_every_stream_with_the_outcome_it_always_had() {
         heard,
         said,
         muttered,
-    } = Pipes::taken(&mut died, PATIENCE, runtime()).expect("every stream was there");
+    } = taken(&mut died, PATIENCE, runtime()).expect("every stream was there");
     let mut frames = Frames::new(heard);
     let mut written = Written::new(said);
 
@@ -497,6 +507,7 @@ async fn a_host_that_dies_is_met_the_same_way_by_a_host_that_awaits() {
         said,
         muttered,
     } = Pipes::taken(&mut died, PATIENCE, &tokio::runtime::Handle::current())
+        .await
         .expect("every stream was there");
     let mut frames = Frames::new(heard);
     let mut written = Written::new(said);
@@ -650,8 +661,7 @@ fn a_flood_on_standard_error_does_not_hold_up_the_conversation_beside_it() {
         inspection: process.inspection,
     };
 
-    let pipes =
-        Pipes::taken(&mut talkative, PATIENCE, runtime.handle()).expect("every stream was there");
+    let pipes = taken(&mut talkative, PATIENCE, runtime.handle()).expect("every stream was there");
     let mut frames = Frames::new(pipes.heard);
     let answer = frames.next_frame();
     assert!(

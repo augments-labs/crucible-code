@@ -909,6 +909,36 @@ if ! python3 scripts/python/bridge-ledger.py crates/crucible-runtime/src/bridge.
     failed=1
 fi
 
+section "no spawned thread in the hosted crates"
+# No shipped source in the transport, MCP, or extension crates starts its own
+# thread: a `thread::spawn` in any of the three fails, which is also what keeps
+# a detached pipe thread from coming back. Sync calls remain —
+# `Frames::next_frame`/`Written::send` and `Hosted::greet`/`catalogue`/`call` —
+# so this checks threads, not all blocking. Files that
+# compile only under test are left out, by the same path rule the shipping
+# source boundary uses: a `tests.rs`, anything under a `tests/` directory, and
+# a `testing.rs` never ship.
+shipped=()
+while IFS= read -r file; do
+    shipped+=("$file")
+done < <(
+    find crates/crucible-transport/src crates/crucible-mcp/src crates/crucible-extension/src \
+        -name '*.rs' -type f \
+        -not -name 'tests.rs' -not -name 'testing.rs' -not -path '*/tests/*' |
+        LC_ALL=C sort
+)
+if ((${#shipped[@]} == 0)); then
+    printf '    FAIL no shipped sources found in the hosted crates; this check measured nothing\n'
+    failed=1
+else
+    spawned=$(grep -Hn 'thread::spawn' -- "${shipped[@]}" || true)
+    if [[ -n "$spawned" ]]; then
+        printf '%s\n' "$spawned"
+        printf '    FAIL the lines above start a thread in shipped source of the hosted crates\n'
+        failed=1
+    fi
+fi
+
 section "shipping source boundary"
 # The crate graph above is about packages, and the root package is three things
 # at once: the command line that ships, the probes that measure it, and the

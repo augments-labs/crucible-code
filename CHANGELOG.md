@@ -214,6 +214,14 @@ change in any release with no deprecation period.
   cancelled rather than opening the file again as text. A file counts as seen
   only once the call that touched it has its answer, and no call is lent a
   worker yet, so nothing else a user runs behaves differently.
+- **The synchronous transport is gone, and stopping a hosted server no longer
+  blocks.** `Finish::after`, the blocking wait for a confined process, is
+  deleted in favor of the awaited `Finish::after_async`; `Pipes::taken` and
+  `crucible-mcp`'s `Hosted::over`, `Hosted::withholding` and `Hosted::stop` are
+  now `async`, with a stop that never answers given up on after 10 s as
+  unconfirmed cleanup. The `TransportProcess` bridge crossing is retired with
+  them, and a repository check fails a `thread::spawn` in shipped source of
+  the transport, MCP or extension crates.
 
 ### Fixed
 
