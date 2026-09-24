@@ -385,6 +385,9 @@ fn an_attempt_dropped_inside_the_runtime_serves_nothing_and_frees_its_port_and_s
         // login has not run since, so only the abort stands between it and
         // an answer.
         let mut waiting = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        // Arm the read timeout while the connection is healthy: once the
+        // login's listener is gone some platforms refuse a timeout change.
+        waiting.set_read_timeout(Some(PATIENCE)).unwrap();
         write!(
             waiting,
             "GET /auth/callback?code=late&state=wrong HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n"
@@ -402,7 +405,6 @@ fn an_attempt_dropped_inside_the_runtime_serves_nothing_and_frees_its_port_and_s
             next = oauth.start(OpenAiOAuth::BROWSER, store.clone());
         }
         let refused = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err();
-        waiting.set_read_timeout(Some(PATIENCE)).unwrap();
         let mut answered = Vec::new();
         let _ = waiting.read_to_end(&mut answered);
         (took, answered, refused, next.map(drop))
