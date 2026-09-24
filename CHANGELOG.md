@@ -24,7 +24,7 @@ change in any release with no deprecation period.
   `Bridge::wait` polls a future on the caller's thread against a runtime
   handle until it answers or the turn's `Cancel` is raised, noticed within
   20 ms, and refuses with `Unwaited` on a runtime thread or with no handle.
-  `crucible-app` lends a multi-thread runtime of 4 workers and at most 9
+  `crucible-app` lends a multi-thread runtime of 4 workers and at most 13
   blocking threads, with a timer and an I/O driver, through
   `services::Services`, built only when first asked for and shut down within
   2 s once a run ends.
@@ -168,6 +168,17 @@ change in any release with no deprecation period.
   number. `Speaking` is no longer driven synchronously, `Speaking`'s and
   `Conversation`'s constructors are crate-private, and `Conversation` no
   longer implements `Default`; nothing in crucible hosts an extension yet.
+- **A command left running no longer holds up the screen.** Each one is owned
+  by a task of its own that asks its process everything on the application
+  runtime's blocking threads, which grow to 13 so these four still leave one
+  spare, so neither drawing nor a sandbox's limit kills wait on a process;
+  `Background` takes that runtime through `watching_on`, and one given none
+  ends a command rather than keeping it. Pressing <kbd>x</kbd> asks for the
+  stop and returns at once, the row going or `Stop failed; x retries`
+  appearing on a later frame, and the list of commands left running now
+  closes by itself once its last command has ended, however it ended; the end
+  of a run waits at most 7 s for its commands to be ended before ending what
+  their owners did not reach.
 
 ### Fixed
 

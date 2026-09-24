@@ -270,6 +270,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // generation is one of the typed facts the first pass assembles.
     let sandbox: Arc<dyn crucible_sandbox::SandboxService> =
         Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
+    // And every command left running is owned on the same runtime, by a task
+    // of its own, so the thread that draws never asks a process anything.
+    startup.leaving.watching_on(runtime.clone());
     let offering = tools(startup, settings, reaching, Arc::clone(&sandbox))?;
 
     // Operator-authored instructions are the stable request prefix. Everything
