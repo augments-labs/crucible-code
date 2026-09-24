@@ -1,6 +1,8 @@
 //! The host's publication lock, durable transaction journals and the closed command
 //! lifecycle grammar.
 
+mod state_directory;
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStrExt as _;
@@ -13,6 +15,10 @@ use crucible_storage::CallResultKey;
 use crucible_types::SandboxId;
 use rustix::fs::{FlockOperation, Mode, OFlags};
 use sha2::{Digest as _, Sha256};
+use state_directory::{
+    StateDirectoryFound, StateDirectoryOwner, StateDirectoryProblem, private_directory_problem,
+    refuse_state_directory, registry_admission_reason,
+};
 
 const WAL_MAGIC: &[u8; 8] = b"CRSBWAL1";
 const WAL_VERSION: u16 = 2;
@@ -1042,8 +1048,18 @@ pub(super) struct RegistryLease {
 impl RegistryLease {
     pub(super) fn acquire(request: &SandboxRequest) -> Result<Self, SandboxError> {
         let state = state_directory(request)?;
-        Self::acquire_at(&state).map_err(|_| SandboxError::BackendUnavailable {
-            reason: "sandbox lifecycle registry admission is unavailable".into(),
+        Self::acquire_at_classified(&state)
+    }
+
+    /// [`Self::acquire_at`], mapped to [`SandboxError::BackendUnavailable`]'s
+    /// classified, model-visible reason. [`Self::acquire`] is a thin wrapper
+    /// around this with the path it resolved, so a test that wants to prove
+    /// the classified reason actually reaches a caller — not just that
+    /// `registry_admission_reason` computes it — calls this, the same
+    /// function `acquire` does, instead of reimplementing its mapping.
+    fn acquire_at_classified(path: &Path) -> Result<Self, SandboxError> {
+        Self::acquire_at(path).map_err(|error| SandboxError::BackendUnavailable {
+            reason: registry_admission_reason(&error),
         })
     }
 
@@ -1362,22 +1378,40 @@ fn create_state_directory(path: &Path) -> io::Result<()> {
 }
 
 fn open_state_directory(path: &Path) -> io::Result<File> {
-    let descriptor = rustix::fs::open(
+    let descriptor = match rustix::fs::open(
         path,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
-    )?;
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(rustix::io::Errno::NOTDIR) => {
+            // `O_DIRECTORY | O_NOFOLLOW` refuses to open anything but a
+            // directory at the final path component, including a symlink to
+            // one, with `ENOTDIR` either way; an `lstat` (which does not
+            // follow one) tells the two apart for the message.
+            let problem = if fs::symlink_metadata(path).is_ok_and(|found| found.is_symlink()) {
+                StateDirectoryProblem::Symlink
+            } else {
+                StateDirectoryProblem::NotADirectory
+            };
+            return Err(refuse_state_directory(problem, path));
+        }
+        Err(problem) => return Err(problem.into()),
+    };
     let state = File::from(descriptor);
     let metadata = state.metadata()?;
-    if !metadata.is_dir()
-        || metadata.uid() != rustix::process::getuid().as_raw()
-        || metadata.gid() != rustix::process::getgid().as_raw()
-        || metadata.mode() & 0o7777 != 0o700
-    {
-        return Err(io::Error::other(format!(
-            "sandbox state directory {} is not this user's private directory",
-            path.display()
-        )));
+    let found = StateDirectoryFound {
+        is_dir: metadata.is_dir(),
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        mode: metadata.mode(),
+    };
+    let owner = StateDirectoryOwner {
+        uid: rustix::process::getuid().as_raw(),
+        gid: rustix::process::getgid().as_raw(),
+    };
+    if let Some(problem) = private_directory_problem(found, owner) {
+        return Err(refuse_state_directory(problem, path));
     }
     state.sync_all()?;
     Ok(state)

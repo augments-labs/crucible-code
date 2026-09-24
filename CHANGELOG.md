@@ -281,6 +281,16 @@ change in any release with no deprecation period.
   stretched it to about twenty because the wait counted a fixed number of
   pauses rather than the clock. It now ends after five seconds on every
   platform.
+- **A sandbox state directory crucible refuses now says why.** On Linux, a
+  squat on the sandbox's private state path — another local user's directory,
+  a symlink, or a plain file — and this user's own directory left with the
+  wrong group or permissions both used to fail every confined run with the
+  same opaque `sandbox lifecycle registry admission is unavailable`,
+  indistinguishable from any other cause. The reason now names which was
+  found, without the path or another user's numeric id: removing it, which
+  may need an administrator, is the fix for a squat; restoring this user's own
+  group and mode 0700 is the fix for their own directory, so its unrecovered
+  transaction journals and quarantine evidence are kept rather than deleted.
 
 ### Security
 
