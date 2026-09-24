@@ -5,9 +5,8 @@
 //! contract stays a trait object; `Send`, so the work can be moved to whichever
 //! worker is free; and borrowing nothing past the arguments it was given, so a
 //! context lent to one call cannot be kept by it. What only describes or
-//! classifies stays synchronous, because it asks no source to do any work; an
-//! implementation may still wait on its own state, as the MCP toolset's
-//! `registered` can wait behind a dispose in progress.
+//! classifies stays synchronous, because it asks no source to do any work,
+//! though an implementation may still wait on its own state to answer.
 //!
 //! Most callers of those contracts are still synchronous. A [`Bridge`] is how
 //! one of them crosses, and there is one for each caller that has not been made
@@ -228,13 +227,6 @@ pub enum Bridge {
     /// - Retired: when the bash tool runs asynchronously and so does the
     ///   registry that takes its background commands over.
     BashSandbox,
-    /// Starting an MCP server inside its sandbox.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each of preparing, materializing and starting.
-    /// - Owner: `crucible-mcp`
-    /// - Retired: when hosting an MCP server is asynchronous.
-    McpHosting,
     /// Stopping a hosted program's process once talking to it is over, or
     /// once its pipes could not be taken.
     ///
@@ -375,7 +367,6 @@ impl Bridge {
             Self::TurnTools => "the turn's tools",
             Self::TurnSession => "writing to the session",
             Self::BashSandbox => "the bash tool's sandbox",
-            Self::McpHosting => "starting an MCP server",
             Self::TransportProcess => "stopping a hosted program",
             Self::LocalBackend => "the local sandbox backend",
             Self::SandboxReport => "asking the sandbox what it can enforce",
@@ -828,11 +819,11 @@ mod tests {
         let polled = Arc::new(AtomicBool::new(false));
         let seen = Arc::clone(&polled);
 
-        let refused = Bridge::McpHosting.wait(None, &Cancel::new(), async move {
+        let refused = Bridge::AppTurn.wait(None, &Cancel::new(), async move {
             seen.store(true, Ordering::Release);
         });
 
-        assert_eq!(refused, Err(Unwaited::NoRuntime(Bridge::McpHosting)));
+        assert_eq!(refused, Err(Unwaited::NoRuntime(Bridge::AppTurn)));
         assert!(
             !polled.load(Ordering::Acquire),
             "a future with no runtime to wait on was polled anyway"

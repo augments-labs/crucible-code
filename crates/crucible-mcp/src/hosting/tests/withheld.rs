@@ -41,10 +41,10 @@ fn called(value: &str, frames: Vec<Value>) -> Result<ToolOutput, ToolError> {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
-    let ran = crucible_runtime::answered!(entry.tool().run(
+    let ran = awaited(entry.tool().run(
         allowed(entry.tool(), "mcp:docs/search", "{}"),
         &ToolContext::new(
             Ancestry::new(),
@@ -55,7 +55,7 @@ fn called(value: &str, frames: Vec<Value>) -> Result<ToolOutput, ToolError> {
         ),
     ));
     // Settled answers leave the conversation able to stop politely.
-    drop(crucible_runtime::answered!(hosting.dispose(&context)));
+    drop(awaited(hosting.dispose(&context)));
     ran
 }
 
@@ -132,15 +132,15 @@ fn an_envfrom_value_a_server_echoes_in_its_catalogue_never_reaches_a_schema() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let schema = snapshot
         .find("mcp:docs/search")
         .expect("the offered tool")
         .descriptor()
         .schema()
         .to_owned();
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 
     // The schema is JSON the model reads, so the value would be in it escaped.
     let escaped = serde_json::to_string(CANARY).expect("a string serializes");
@@ -183,9 +183,9 @@ fn an_envfrom_value_a_server_answers_as_its_version_never_reaches_the_refusal() 
     );
     let context = lifecycle();
 
-    let refused = crucible_runtime::answered!(hosting.prepare(&context))
-        .expect_err("a version crucible does not speak");
-    drop(crucible_runtime::answered!(hosting.dispose(&context)));
+    let refused =
+        awaited(hosting.prepare(&context)).expect_err("a version crucible does not speak");
+    drop(awaited(hosting.dispose(&context)));
 
     let said = format!("{refused} / {refused:?}");
     assert!(

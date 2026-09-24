@@ -179,6 +179,16 @@ change in any release with no deprecation period.
   closes by itself once its last command has ended, however it ended; the end
   of a run waits at most 7 s for its commands to be ended before ending what
   their owners did not reach.
+- **MCP servers are started, greeted and called asynchronously.** A call to an
+  MCP tool no longer holds a thread while its server thinks, and a sandbox step
+  of a server's start that waits is given up on at its `handshakeSeconds`, or
+  sooner when the turn is cancelled, holding the server as unconfirmed cleanup
+  as a refused step was. A call or a
+  start given up on part way leaves its server asked nothing further and
+  stopped by the next call to it, the next preparation or disposal;
+  `Bridge::McpHosting` is gone, and `crucible-mcp` gains `hello_async`,
+  `tools_async` and `Hosted`'s `greet_async`, `catalogue_async` and
+  `call_async`.
 
 ### Fixed
 

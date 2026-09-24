@@ -30,6 +30,7 @@ use super::{Chosen, Hosting};
 
 mod audit;
 mod cleanup;
+mod given_up;
 mod startup;
 mod withheld;
 
@@ -469,6 +470,8 @@ enum Answers {
     Slowly(Vec<Value>, usize, Duration),
     /// It refuses to start at all.
     Refuses,
+    /// Preparing its sandbox never answers.
+    Hangs,
     /// It talks normally, does not finish when its input closes, and stopping
     /// it does what the second says.
     Unfinished(Vec<Value>, Stop),
@@ -558,6 +561,7 @@ impl SandboxService for Pretend {
                 _ => None,
             };
             let (frames, slow, cleanup_refused) = match script {
+                Some(Answers::Hangs) => return std::future::pending().await,
                 None | Some(Answers::Refuses) => {
                     return Err(SandboxError::Lifecycle(io::Error::other(
                         "this machine has no such program",
@@ -750,6 +754,15 @@ impl Toolset for Roster {
     }
 }
 
+/// Awaits `work` on the tests' runtime until it answers.
+///
+/// Every lifecycle step and every call here is awaited the way a turn awaits
+/// it: a server's greeting, catalogue and calls wait on its streams, so a step
+/// that is asked once and dropped would be a test of something no turn does.
+fn awaited<F: Future>(work: F) -> F::Output {
+    crate::testing::runtime().block_on(work)
+}
+
 /// A built-in roster offering these names and nothing else.
 fn builtin(names: &[&'static str]) -> Arc<dyn Toolset> {
     Roster::of(names)
@@ -793,10 +806,10 @@ fn allowed(tool: &dyn Tool, name: &str, args: &str) -> Approved {
         args: ToolArgs::new(args),
     };
     let sensitivity = tool.sensitivity(&call.args);
-    match crucible_runtime::answered!(Permission::with(Mode::default(), Rules::new()).decide(
+    match awaited(Permission::with(Mode::default(), Rules::new()).decide(
         &call,
         &sensitivity,
-        &mut Yes
+        &mut Yes,
     )) {
         Settled::Approved(approved) => approved,
         Settled::Forbidden | Settled::Refused => panic!("the answer above is yes"),
@@ -814,14 +827,13 @@ fn a_run_that_selected_no_server_hosts_nothing_and_offers_the_builtin_roster_its
     );
     let context = lifecycle();
 
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("nothing to prepare");
-    let snapshot =
-        crucible_runtime::answered!(hosting.snapshot(&context)).expect("the built-in roster");
+    awaited(hosting.prepare(&context)).expect("nothing to prepare");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("the built-in roster");
 
     assert_eq!(sandbox.started(), 0, "no process may be started");
     assert_eq!(snapshot.entries().len(), 1);
     assert!(snapshot.find("read").is_some());
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing to dispose");
+    awaited(hosting.dispose(&context)).expect("nothing to dispose");
 }
 
 #[test]
@@ -835,8 +847,8 @@ fn a_selected_server_is_started_and_what_it_offered_is_named_under_it() {
     );
     let context = lifecycle();
 
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
 
     assert_eq!(sandbox.started(), 1);
     let entry = snapshot
@@ -851,7 +863,7 @@ fn a_selected_server_is_started_and_what_it_offered_is_named_under_it() {
         snapshot.find("read").is_some(),
         "the built-ins are still here"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 #[test]
@@ -865,8 +877,8 @@ fn a_server_naming_a_tool_the_builtin_roster_owns_takes_nothing_over() {
     );
     let context = lifecycle();
 
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
 
     assert!(
         snapshot.find("read").is_some(),
@@ -876,7 +888,7 @@ fn a_server_naming_a_tool_the_builtin_roster_owns_takes_nothing_over() {
         snapshot.find("mcp:docs/read").is_some(),
         "and the server is still offered"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 #[test]
@@ -898,14 +910,14 @@ fn a_server_offering_two_names_a_rule_cannot_tell_apart_is_never_started() {
     );
     let context = lifecycle();
 
-    let refused = crucible_runtime::answered!(hosting.prepare(&context))
-        .expect_err("two names one rule cannot tell apart");
+    let refused =
+        awaited(hosting.prepare(&context)).expect_err("two names one rule cannot tell apart");
 
     assert!(
         refused.to_string().contains("Search"),
         "the refusal names the pair: {refused}"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing to stop");
+    awaited(hosting.dispose(&context)).expect("nothing to stop");
 }
 
 #[test]
@@ -920,11 +932,11 @@ fn a_tool_the_catalogue_offered_is_called_over_the_conversation_that_read_it() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
-    let output = crucible_runtime::answered!(entry.tool().run(
+    let output = awaited(entry.tool().run(
         allowed(entry.tool(), "mcp:docs/search", r#"{"query":"crates"}"#),
         &ToolContext::new(
             Ancestry::new(),
@@ -953,7 +965,7 @@ fn a_tool_the_catalogue_offered_is_called_over_the_conversation_that_read_it() {
             .and_then(Value::as_str),
         Some("crates")
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 #[test]
@@ -967,8 +979,7 @@ fn a_server_that_will_not_start_fails_the_turn_and_names_which_one() {
     );
     let context = lifecycle();
 
-    let refused =
-        crucible_runtime::answered!(hosting.prepare(&context)).expect_err("nothing started");
+    let refused = awaited(hosting.prepare(&context)).expect_err("nothing started");
 
     assert!(
         matches!(&refused, ToolsetError::Source { id, .. } if id.as_ref() == "docs"),
@@ -1001,17 +1012,17 @@ fn a_server_answers_its_catalogue_under_the_request_wait_rather_than_the_handsha
     );
     let context = lifecycle();
 
-    crucible_runtime::answered!(hosting.prepare(&context))
+    awaited(hosting.prepare(&context))
         .expect("the greeting was prompt and the catalogue is a request");
 
-    let named: Vec<_> = crucible_runtime::answered!(hosting.snapshot(&context))
+    let named: Vec<_> = awaited(hosting.snapshot(&context))
         .expect("one generation")
         .entries()
         .iter()
         .map(|entry| entry.descriptor().name().to_owned())
         .collect();
     assert_eq!(named, vec!["mcp:docs/search".to_owned()]);
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("it stops");
+    awaited(hosting.dispose(&context)).expect("it stops");
 }
 
 #[test]
@@ -1035,8 +1046,7 @@ fn a_server_too_slow_to_greet_is_refused_before_any_request_wait_applies() {
         crate::testing::runtime(),
     );
 
-    let refused = crucible_runtime::answered!(hosting.prepare(&lifecycle()))
-        .expect_err("it never agreed a version");
+    let refused = awaited(hosting.prepare(&lifecycle())).expect_err("it never agreed a version");
 
     assert!(
         refused.to_string().contains("docs"),
@@ -1058,10 +1068,9 @@ fn a_server_the_run_can_do_without_is_left_out_rather_than_fatal() {
     );
     let context = lifecycle();
 
-    crucible_runtime::answered!(hosting.prepare(&context))
-        .expect("a server nobody required cannot fail the turn");
+    awaited(hosting.prepare(&context)).expect("a server nobody required cannot fail the turn");
 
-    let named: Vec<_> = crucible_runtime::answered!(hosting.snapshot(&context))
+    let named: Vec<_> = awaited(hosting.snapshot(&context))
         .expect("one generation")
         .entries()
         .iter()
@@ -1072,7 +1081,7 @@ fn a_server_the_run_can_do_without_is_left_out_rather_than_fatal() {
         vec!["mcp:docs/search".to_owned()],
         "the run carries on with the tools it does have"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("and stops the one that ran");
+    awaited(hosting.dispose(&context)).expect("and stops the one that ran");
 }
 
 #[test]
@@ -1089,7 +1098,7 @@ fn a_start_that_fails_partway_stops_the_servers_that_already_ran() {
     );
     let context = lifecycle();
 
-    crucible_runtime::answered!(hosting.prepare(&context))
+    awaited(hosting.prepare(&context))
         .expect_err("the second server refused, so the lifecycle has none");
 
     // Nothing will ever dispose these: the lifecycle they belong to did not
@@ -1112,12 +1121,11 @@ fn refreshing_republishes_the_committed_generation_rather_than_reading_again() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
+    awaited(hosting.prepare(&context)).expect("the server started");
 
-    let first = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    let first = awaited(hosting.snapshot(&context)).expect("one generation");
     let after = sandbox.server(0).sent().len();
-    let second =
-        crucible_runtime::answered!(hosting.refresh(&context)).expect("the same generation");
+    let second = awaited(hosting.refresh(&context)).expect("the same generation");
 
     assert_eq!(
         first.generation().context_id(),
@@ -1129,7 +1137,7 @@ fn refreshing_republishes_the_committed_generation_rather_than_reading_again() {
         after,
         "a refresh must not go back to the server"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 #[test]
@@ -1145,9 +1153,9 @@ fn disposal_stops_every_server_it_started() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("both started");
+    awaited(hosting.prepare(&context)).expect("both started");
 
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("both stopped");
+    awaited(hosting.dispose(&context)).expect("both stopped");
 
     assert_eq!(sandbox.server(0).stops(), 1);
     assert_eq!(sandbox.server(1).stops(), 1);
@@ -1163,10 +1171,10 @@ fn disposing_twice_stops_nothing_a_second_time() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
+    awaited(hosting.prepare(&context)).expect("the server started");
 
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("and stays stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("and stays stopped");
 
     assert_eq!(
         sandbox.server(0).stops(),
@@ -1193,13 +1201,12 @@ fn a_second_turn_starts_its_servers_again_over_the_same_hosting() {
     // second turn of an ordinary conversation is this exact path. A disposal
     // that left its dead servers behind would make it a turn with no tools
     // whose handles all refuse.
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the first turn started it");
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("and stopped it");
-    crucible_runtime::answered!(hosting.prepare(&context))
-        .expect("the second turn started it again");
+    awaited(hosting.prepare(&context)).expect("the first turn started it");
+    awaited(hosting.dispose(&context)).expect("and stopped it");
+    awaited(hosting.prepare(&context)).expect("the second turn started it again");
 
     assert_eq!(sandbox.started(), 2, "each turn hosts a server of its own");
-    let named: Vec<_> = crucible_runtime::answered!(hosting.snapshot(&context))
+    let named: Vec<_> = awaited(hosting.snapshot(&context))
         .expect("one generation")
         .entries()
         .iter()
@@ -1212,7 +1219,7 @@ fn a_second_turn_starts_its_servers_again_over_the_same_hosting() {
         "the second one is still running"
     );
 
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("and it stops too");
+    awaited(hosting.dispose(&context)).expect("and it stops too");
     assert_eq!(sandbox.server(1).stops(), 1);
 }
 
@@ -1228,15 +1235,15 @@ fn a_handle_from_a_disposed_lifecycle_refuses_rather_than_speaking() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let held = snapshot
         .find("mcp:docs/search")
         .expect("the offered tool")
         .shared_tool();
 
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
-    let refused = crucible_runtime::answered!(held.run(
+    awaited(hosting.dispose(&context)).expect("the server stopped");
+    let refused = awaited(held.run(
         allowed(held.as_ref(), "mcp:docs/search", "{}"),
         &ToolContext::new(
             Ancestry::new(),
@@ -1273,11 +1280,11 @@ fn a_tool_that_ran_and_failed_is_a_result_rather_than_a_broken_turn() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
-    let output = crucible_runtime::answered!(entry.tool().run(
+    let output = awaited(entry.tool().run(
         allowed(entry.tool(), "mcp:docs/search", "{}"),
         &ToolContext::new(
             Ancestry::new(),
@@ -1294,7 +1301,7 @@ fn a_tool_that_ran_and_failed_is_a_result_rather_than_a_broken_turn() {
         "what the server said failed is a failed result"
     );
     assert!(output.text().contains("no such index"));
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 #[test]
@@ -1307,8 +1314,8 @@ fn arguments_that_are_not_an_object_are_refused_before_anything_is_sent() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     let refused = entry
@@ -1324,7 +1331,7 @@ fn arguments_that_are_not_an_object_are_refused_before_anything_is_sent() {
             .any(|frame| frame.get("method").and_then(Value::as_str) == Some("tools/call")),
         "a call crucible refused reaches no server"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 /// A watcher that keeps nothing, for the calls whose progress no test reads.
@@ -1350,9 +1357,9 @@ fn the_generation_names_the_servers_in_selection_order_and_each_catalogue_in_its
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("both started");
+    awaited(hosting.prepare(&context)).expect("both started");
 
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let named: Vec<&str> = snapshot
         .entries()
         .iter()
@@ -1381,7 +1388,7 @@ fn the_generation_names_the_servers_in_selection_order_and_each_catalogue_in_its
         "mcp:notes",
         "a tool says which server answered for it, not merely that one did"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("both stopped");
+    awaited(hosting.dispose(&context)).expect("both stopped");
 }
 
 #[test]
@@ -1396,9 +1403,9 @@ fn a_generation_rebuilt_under_a_moved_roster_keeps_every_name_source_and_approva
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
+    awaited(hosting.prepare(&context)).expect("the server started");
 
-    let first = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    let first = awaited(hosting.snapshot(&context)).expect("one generation");
     let before = first.find("mcp:docs/search").expect("the server's tool");
     let source = before.descriptor().provenance().id().to_owned();
     let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
@@ -1407,8 +1414,7 @@ fn a_generation_rebuilt_under_a_moved_roster_keeps_every_name_source_and_approva
     // What `tool_search` does mid-turn: the built-in roster grows, so the
     // merged generation has to be rebuilt around it.
     roster.offer("grep");
-    let second =
-        crucible_runtime::answered!(hosting.refresh(&context)).expect("the generation after");
+    let second = awaited(hosting.refresh(&context)).expect("the generation after");
 
     assert_ne!(
         first.generation().context_id(),
@@ -1430,7 +1436,7 @@ fn a_generation_rebuilt_under_a_moved_roster_keeps_every_name_source_and_approva
         read,
         "and must not go back to the server for a catalogue it already read"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 #[test]
@@ -1445,13 +1451,13 @@ fn a_call_interrupted_before_it_is_sent_reaches_no_server() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     let cancel = Cancel::new();
     cancel.request();
-    let refused = crucible_runtime::answered!(entry.tool().run(
+    let refused = awaited(entry.tool().run(
         allowed(entry.tool(), "mcp:docs/search", r#"{"query":"crates"}"#),
         &ToolContext::new(
             Ancestry::new(),
@@ -1472,7 +1478,7 @@ fn a_call_interrupted_before_it_is_sent_reaches_no_server() {
             .any(|frame| frame.get("method").and_then(Value::as_str) == Some("tools/call")),
         "an interrupted call must not start somebody else's program working"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the server stopped");
+    awaited(hosting.dispose(&context)).expect("the server stopped");
 }
 
 /// Runs one offered tool the way a turn does, under an interrupt of its own.
@@ -1482,7 +1488,7 @@ fn calls(
     args: &str,
     cancel: &Cancel,
 ) -> Result<ToolOutput, ToolError> {
-    crucible_runtime::answered!(tool.run(
+    awaited(tool.run(
         allowed(tool, named, args),
         &ToolContext::new(Ancestry::new(), ToolId::new("test"), cancel, None, &Nothing),
     ))
@@ -1513,8 +1519,8 @@ fn a_call_interrupted_after_the_frame_went_ends_at_the_press_rather_than_at_the_
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     let cancel = Cancel::new();
@@ -1550,7 +1556,7 @@ fn a_call_interrupted_after_the_frame_went_ends_at_the_press_rather_than_at_the_
         1,
         "and a call whose fate is unknown buys no restart"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing left to stop");
+    awaited(hosting.dispose(&context)).expect("nothing left to stop");
 }
 
 #[test]
@@ -1567,8 +1573,8 @@ fn a_server_that_died_before_the_frame_went_is_started_again_and_the_call_answer
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     // The process goes between reading the catalogue and taking the call, which
@@ -1598,7 +1604,7 @@ fn a_server_that_died_before_the_frame_went_is_started_again_and_the_call_answer
         Some("crates"),
         "with the arguments it was written with"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the replacement stopped");
+    awaited(hosting.dispose(&context)).expect("the replacement stopped");
 }
 
 #[test]
@@ -1615,8 +1621,8 @@ fn a_call_whose_frame_ran_out_of_patience_is_never_sent_a_second_time() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     // The server stops reading rather than going. Crucible spends its patience
@@ -1656,8 +1662,8 @@ fn a_server_selected_with_no_restarts_is_not_started_again_and_the_answer_says_w
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     sandbox.server(0).departs();
@@ -1674,7 +1680,7 @@ fn a_server_selected_with_no_restarts_is_not_started_again_and_the_answer_says_w
         said.contains("will not be asked again"),
         "the model is told the tool is gone rather than left to retry it: {said}"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing left to stop");
+    awaited(hosting.dispose(&context)).expect("nothing left to stop");
 }
 
 #[test]
@@ -1703,9 +1709,8 @@ fn a_refused_restart_is_said_about_the_server_it_was_refused_to() {
             crate::testing::runtime(),
         );
         let context = lifecycle();
-        crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-        let snapshot =
-            crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+        awaited(hosting.prepare(&context)).expect("the server started");
+        let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
         let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
         if departs {
             sandbox.server(0).departs();
@@ -1723,7 +1728,7 @@ fn a_refused_restart_is_said_about_the_server_it_was_refused_to() {
             !said.contains("extension"),
             "an MCP server was called an extension: {said}"
         );
-        crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing left to stop");
+        awaited(hosting.dispose(&context)).expect("nothing left to stop");
     }
 }
 
@@ -1747,8 +1752,8 @@ fn a_restarted_server_offering_the_tool_under_another_schema_is_refused_and_reti
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     sandbox.server(0).departs();
@@ -1769,7 +1774,7 @@ fn a_restarted_server_offering_the_tool_under_another_schema_is_refused_and_reti
         refused.to_string().contains("will not be asked again"),
         "and the tool is finished with: {refused}"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing left to stop");
+    awaited(hosting.dispose(&context)).expect("nothing left to stop");
 }
 
 #[test]
@@ -1797,8 +1802,8 @@ fn a_restarted_server_that_reshaped_a_tool_nobody_called_is_refused_just_the_sam
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     sandbox.server(0).departs();
@@ -1811,7 +1816,7 @@ fn a_restarted_server_that_reshaped_a_tool_nobody_called_is_refused_just_the_sam
         refused.to_string().contains("fetch"),
         "and the refusal names the tool that moved: {refused}"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing left to stop");
+    awaited(hosting.dispose(&context)).expect("nothing left to stop");
 }
 
 #[test]
@@ -1830,8 +1835,8 @@ fn a_call_still_outstanding_when_the_server_went_quiet_is_never_repeated() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     let refused = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
@@ -1852,7 +1857,7 @@ fn a_call_still_outstanding_when_the_server_went_quiet_is_never_repeated() {
         matches!(&after, ToolError::StaleGeneration { tool } if tool.as_ref() == "mcp:docs/search"),
         "the conversation ended with the call it lost: {after}"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing left to stop");
+    awaited(hosting.dispose(&context)).expect("nothing left to stop");
 }
 
 #[test]
@@ -1876,8 +1881,8 @@ fn a_ceiling_of_one_restart_is_spent_once_and_the_next_ending_is_the_last() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).expect("the server started");
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).expect("one generation");
+    awaited(hosting.prepare(&context)).expect("the server started");
+    let snapshot = awaited(hosting.snapshot(&context)).expect("one generation");
     let entry = snapshot.find("mcp:docs/search").expect("the offered tool");
 
     sandbox.server(0).departs();
@@ -1899,7 +1904,7 @@ fn a_ceiling_of_one_restart_is_spent_once_and_the_next_ending_is_the_last() {
         said.contains("will not be asked again"),
         "and the run is told the tool is finished with: {said}"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("nothing left to stop");
+    awaited(hosting.dispose(&context)).expect("nothing left to stop");
 }
 
 #[test]

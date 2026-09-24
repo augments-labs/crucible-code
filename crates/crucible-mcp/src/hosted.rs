@@ -17,6 +17,14 @@
 //! Nothing here connects on its own. A [`Hosted`] exists because something
 //! above it decided to start one server, for one run, and no part of reading a
 //! configuration file or registering an adapter reaches this module.
+//!
+//! A server is greeted, read and called either way the conversation is held:
+//! waited on from the caller's thread, or awaited through the `_async` forms,
+//! which hosting uses. Every exchange, either way, begins by setting its own
+//! interrupt and deadline on the stream, so an awaited one given up on part
+//! way leaves the next exchange a silence of its own rather than what was left
+//! of the last one's. Stopping one waits on the caller's thread either way, until the
+//! transport's finish is awaited too.
 
 use std::fmt;
 use std::io;
@@ -150,14 +158,34 @@ impl Hosted {
         interrupt: Option<&Cancel>,
         work: impl FnOnce(&mut Talking<Heard<Box<dyn SandboxOutput>>, Said>) -> Result<T, E>,
     ) -> Result<T, E> {
+        self.exchanging(interrupt);
+        let done = work(&mut self.talking);
+        self.exchanged();
+        done
+    }
+
+    /// Begins one exchange: its token and its deadline are set, which is also
+    /// what marks its edge.
+    ///
+    /// Every exchange begins here, awaited or not, and that is what an awaited
+    /// one given up on needs of the next. It left its silence running on the
+    /// stream, and setting the next exchange's token or deadline is what ends
+    /// that silence, so the next exchange sits through one of its own rather
+    /// than only what was left of the last one's.
+    fn exchanging(&mut self, interrupt: Option<&Cancel>) {
         let heard = self.talking.heard_mut();
         heard.abandoned_when(interrupt.cloned());
         heard.bounded_until(Instant::now().checked_add(self.patience));
-        let done = work(&mut self.talking);
+    }
+
+    /// Ends one exchange: its token and its deadline are put down.
+    ///
+    /// An awaited exchange given up on never reaches this, and leaves both on
+    /// the stream until the next exchange sets its own.
+    fn exchanged(&mut self) {
         let heard = self.talking.heard_mut();
         heard.abandoned_when(None);
         heard.bounded_until(None);
-        done
     }
 
     /// Reads every tool the server offers, under crucible's own bounds.
@@ -209,6 +237,73 @@ impl Hosted {
         self.during(interrupt, |talking| {
             crate::calling::call(talking, tool, arguments)
         })
+    }
+
+    /// Agrees a protocol version and finishes the handshake, awaited.
+    ///
+    /// The same handshake as [`Self::greet`], under the same deadline and the
+    /// same `interrupt`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::greet`].
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped part way, it leaves a conversation to ask nothing further
+    /// of, as [`Talking::ask_async`] says; what it does not leave is its
+    /// silence, which the next exchange begun here ends.
+    pub async fn greet_async(&mut self, interrupt: Option<&Cancel>) -> Result<Greeting, Rebuffed> {
+        self.exchanging(interrupt);
+        let greeting = crate::catalogue::hello_async(&mut self.talking).await;
+        self.exchanged();
+        greeting
+    }
+
+    /// Reads every tool the server offers, awaited.
+    ///
+    /// The same catalogue as [`Self::catalogue`], under the same bounds.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::catalogue`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::greet_async`]'s.
+    pub async fn catalogue_async(
+        &mut self,
+        greeting: &Greeting,
+        interrupt: Option<&Cancel>,
+    ) -> Result<Vec<Offered>, Rebuffed> {
+        self.exchanging(interrupt);
+        let offered = crate::catalogue::tools_async(&mut self.talking, greeting).await;
+        self.exchanged();
+        offered
+    }
+
+    /// Calls one tool the server offered, awaited.
+    ///
+    /// The same call as [`Self::call`], under the same bounds.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::call`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::greet_async`]'s. A call dropped once its frame has gone is a
+    /// tool that may be running still, as [`crate::call_async`] says.
+    pub async fn call_async(
+        &mut self,
+        tool: &Offered,
+        arguments: &Value,
+        interrupt: Option<&Cancel>,
+    ) -> Result<Answered, Unanswered> {
+        self.exchanging(interrupt);
+        let answered = crate::calling::call_async(&mut self.talking, tool, arguments).await;
+        self.exchanged();
+        answered
     }
 
     /// What the server has written to standard error so far.

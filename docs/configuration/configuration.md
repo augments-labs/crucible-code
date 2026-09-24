@@ -964,7 +964,7 @@ them has an answer already:
 
 | Key | Default | What it decides |
 | --- | --- | --- |
-| `handshakeSeconds` | `10` | How long to wait for the server to agree a protocol version |
+| `handshakeSeconds` | `10` | How long to wait for the server to agree a protocol version, and for each step of starting its sandbox |
 | `requestSeconds` | `60` | How long to wait for one request |
 | `shutdownSeconds` | `5` | How long the server is given to stop before it is killed |
 | `restarts` | `0` | How many times it may be started again after it ends |
