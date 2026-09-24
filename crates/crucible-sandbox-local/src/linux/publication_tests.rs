@@ -103,7 +103,10 @@ fn a_writer_left_running_does_not_keep_another_from_writing() {
         crucible_runtime::answered!(service.prepare(request(&running, SandboxManifest::empty())))
             .expect("first writer");
     crucible_runtime::answered!(first.materialize()).expect("first writer materialized");
-    let mut held = crucible_runtime::answered!(first.start(command("sleep 30")))
+    // Far longer than `finish` waits for the second, so the first is still
+    // running when the second has published however slow the host, and a
+    // second that waited on it would be caught as hung.
+    let mut held = crucible_runtime::answered!(first.start(command("sleep 300")))
         .expect("first writer running");
 
     let mut second =
