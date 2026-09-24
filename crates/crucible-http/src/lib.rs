@@ -31,12 +31,35 @@
 //! - **Deadlines**: 15 s to connect, then a minute each for the request head,
 //!   its body and the response head ([`Phase`]). hyper hands the head over
 //!   before writing it, so its write falls inside the body's or the answer's
-//!   minute: about two minutes before the response head at worst, where the
-//!   previous client gave three. The body of a response has no clock here.
+//!   minute. From having a setup slot to the response head is therefore at
+//!   most 15 s to connect, plus a minute for the body, plus a minute for the
+//!   answer: 2 min 15 s, where the previous client gave three minutes after
+//!   connecting. A response body has only the clock its reader sets.
+//! - **At most four connections are made at once** by one client. A request
+//!   that needs a connection past that waits for one of the four to be made,
+//!   fail or be given up, and its 15 s start once it has a slot. The wait for
+//!   a slot has no clock of its own: it lasts until a slot comes free or the
+//!   request is dropped, and a slot is held for at most 15 s.
 //! - **The response head** is refused once 64 KiB of it is buffered without
 //!   its end, or when it has more than 128 fields. A head that ends inside the
 //!   read crossing 64 KiB still parses, so the largest accepted is under
 //!   128 KiB, not exactly 64 KiB as before.
+//! - **A response body** is read by one of three readers, each keeping no
+//!   more than its caller allows: [`Chunks`], as it arrives, with no
+//!   deadline and a [`Chunk::Quiet`] after each [`QUIET`] with nothing;
+//!   [`read_limited`], whole, within a limit and a deadline the caller gives;
+//!   and [`read_refusal`], the first [`MAX_REFUSAL`] bytes within
+//!   [`REFUSAL_WAIT`]. A bounded read takes one byte past its limit and so
+//!   tells a body that ended at the limit from one that was cut there.
+//! - **Cancelling is dropping.** Dropping the future [`Http::send`] returns,
+//!   while its connection is being made or while the response head is
+//!   awaited, or dropping a body's reader before the body has ended, closes
+//!   the connection the request was using. A connection being made for a
+//!   request, including one hyper-util carries on making after the request
+//!   took an idle one, is ended with its setup slot and anything it carries,
+//!   such as a proxy's credential, once that request is dropped or has its
+//!   response head. A hostname lookup already on its blocking worker still
+//!   runs until the platform answers, holding nothing but the name.
 //! - **Nothing is logged here.** This crate installs no logger or subscriber
 //!   and writes nothing to a terminal. hyper-util emits `tracing` events that
 //!   name hosts and addresses; they go nowhere only while nothing in the
@@ -50,12 +73,17 @@
 //! dropped; a lookup already on a blocking worker is not a task of the
 //! client's, and runs until the platform answers, holding its owner's permit.
 
+mod body;
 mod client;
 mod connect;
 mod dns;
 mod proxy;
 mod tasks;
 
+pub use body::{
+    BodyError, Chunk, Chunks, End, MAX_REFUSAL, QUIET, REFUSAL_WAIT, Refusal, read_limited,
+    read_refusal,
+};
 pub use client::{DEFAULT_USER_AGENT, Http, HttpError, Phase};
 pub use connect::{ConnectError, Tls};
 pub use dns::{LookupError, Lookups, PlainLookups, Poison};

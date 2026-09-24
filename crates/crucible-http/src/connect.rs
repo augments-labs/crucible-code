@@ -7,15 +7,23 @@
 //! over TLS, and an `https` target's own TLS runs inside the tunnel, so the
 //! proxy carries bytes it cannot read. The one deadline covers every step,
 //! the proxy's lookup included, because what it promises is that a
-//! connection is up within 15 s.
+//! connection is up within 15 s of starting to make it.
+//!
+//! A client makes at most [`MAX_SETUPS`] connections at once ([`Setups`]).
+//! One asked for past that waits for a slot, with no clock of its own, for
+//! as long as its request is waiting, and its 15 s start once it has one. A
+//! connection being made for a request ends once the request is dropped or
+//! has its response head, even where hyper-util carries on making it after
+//! the request took an idle connection instead.
 //!
 //! A failure says which step it was ([`ConnectError`]), with the error that
 //! step gave. Its message names no address; the `Debug` of a TCP failure
 //! does, because hyper-util's error records the address it tried.
 
 use std::error::Error;
+use std::future::{Future, poll_fn};
 use std::io;
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
@@ -29,6 +37,7 @@ use hyper_util::rt::TokioIo;
 use rustls::ClientConfig;
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::{Semaphore, watch};
 use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
@@ -37,6 +46,18 @@ use crate::proxy::{ConnectProxy, Leg, ProxyEnv, Route, select};
 
 /// How long a connection may take, from its lookup to its last handshake.
 const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
+
+/// How many connections one client may be making at once.
+///
+/// A connection being made holds a socket and, through a proxy, the
+/// proxy's credential, and a request that finds no idle connection starts
+/// one; so without a bound, a burst of requests to hosts that stall is a
+/// burst of sockets. The previous client made one connection at a time
+/// across the whole process, and held that one slot until the response head.
+/// This holds a slot only while a connection is being made, and lets four
+/// be made at once, so connections that stall hold up the rest only once
+/// four of them do.
+pub(crate) const MAX_SETUPS: usize = 4;
 
 type BoxError = Box<dyn Error + Send + Sync>;
 
@@ -410,6 +431,124 @@ impl Service<Uri> for Connector {
                 Err(_) => Err(ConnectError::Deadline),
             }
         })
+    }
+}
+
+tokio::task_local! {
+    /// The request whose future is being polled, for a connection started
+    /// during that poll to be bound to.
+    static REQUEST: Pending;
+}
+
+/// Held by a request for as long as it is waiting for its response head:
+/// every connection started for it is ended once this is dropped.
+#[derive(Debug)]
+pub(crate) struct Waiting(watch::Sender<()>);
+
+/// A connection's view of the request it was started for.
+#[derive(Clone)]
+struct Pending(watch::Receiver<()>);
+
+/// A connection given up because the request it was for is gone.
+#[derive(Debug, thiserror::Error)]
+#[error("the request this connection was being made for is gone")]
+struct Abandoned;
+
+impl Waiting {
+    pub(crate) fn new() -> Self {
+        Self(watch::channel(()).0)
+    }
+
+    /// Runs `poll` with this request as the one any connection it starts is
+    /// for.
+    pub(crate) fn during<T>(&self, poll: impl FnOnce() -> T) -> T {
+        REQUEST.sync_scope(Pending(self.0.subscribe()), poll)
+    }
+}
+
+impl Pending {
+    /// Runs `connecting` until it ends or the request is gone, whichever is
+    /// first.
+    async fn unless_gone<T>(
+        mut self,
+        connecting: impl Future<Output = Result<T, BoxError>>,
+    ) -> Result<T, BoxError> {
+        let mut connecting = pin!(connecting);
+        // Nothing is ever sent, so this ends only when the sender is dropped.
+        let mut gone = pin!(async move { while self.0.changed().await.is_ok() {} });
+        poll_fn(|cx| {
+            if let Poll::Ready(made) = connecting.as_mut().poll(cx) {
+                return Poll::Ready(made);
+            }
+            ready!(gone.as_mut().poll(cx));
+            Poll::Ready(Err(Box::new(Abandoned).into()))
+        })
+        .await
+    }
+}
+
+/// A connector that makes at most [`MAX_SETUPS`] connections at once, each
+/// for as long as the request it was started for is waiting.
+///
+/// A connection asked for past the bound waits for a slot for as long as
+/// its request is waiting, and the 15 s deadline of [`Connector`] starts
+/// only once it has one. Each slot is held until its connection is made,
+/// fails or is given up, so behind the production connector a slot is never
+/// held for more than 15 s.
+///
+/// hyper-util starts a connection when a request finds none idle, and if
+/// another request's connection comes free first, it takes that one and
+/// carries on making its own in a task of the client's, to pool it. Here
+/// that connection is ended, with its slot and anything it carries, such as
+/// a proxy's credential, once the request it was started for is gone:
+/// dropped, or answered on the other connection. The request is the one
+/// whose poll started it ([`Waiting::during`]); one started outside any
+/// request's poll, which [`Http`](crate::Http) never does, is bound to
+/// nothing and runs until it is made or fails.
+#[derive(Clone)]
+pub(crate) struct Setups<C> {
+    connector: C,
+    slots: Arc<Semaphore>,
+}
+
+impl<C> Setups<C> {
+    pub(crate) fn new(connector: C) -> Self {
+        Self {
+            connector,
+            slots: Arc::new(Semaphore::new(MAX_SETUPS)),
+        }
+    }
+}
+
+impl<C> Service<Uri> for Setups<C>
+where
+    C: Service<Uri> + Clone + Send + 'static,
+    C::Future: Send,
+    C::Error: Into<BoxError>,
+{
+    type Response = C::Response;
+    type Error = BoxError;
+    type Future = BoxFuture<'static, Result<C::Response, BoxError>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), BoxError>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, target: Uri) -> Self::Future {
+        let slots = Arc::clone(&self.slots);
+        let mut connector = self.connector.clone();
+        let connecting = async move {
+            // Never closed, so this waits and never fails.
+            let _slot = slots.acquire_owned().await?;
+            poll_fn(|cx| connector.poll_ready(cx))
+                .await
+                .map_err(Into::into)?;
+            connector.call(target).await.map_err(Into::into)
+        };
+        match REQUEST.try_with(Pending::clone) {
+            Ok(request) => Box::pin(request.unless_gone(connecting)),
+            Err(_) => Box::pin(connecting),
+        }
     }
 }
 

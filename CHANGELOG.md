@@ -43,6 +43,13 @@ change in any release with no deprecation period.
   before reporting it as unconfirmed cleanup, while a stop that does its work in
   its first poll runs to completion. Nothing uses them yet, so nothing a user
   runs behaves differently.
+- **Response bodies read within bounds, and a cancelled request closed.**
+  `crucible-http` reads a body as it arrives with a tick every 250 ms of
+  quiet, whole within a caller's limit and deadline, or as a refusal's first
+  8 KiB within 10 s, each reading one byte past its limit so a cut body is
+  reported as cut; dropping a request or a body's reader closes its
+  connection, and a client makes at most four connections at once. Nothing
+  uses it yet, so nothing a user runs behaves differently.
 
 ### Changed
 
