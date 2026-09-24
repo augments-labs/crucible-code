@@ -53,13 +53,24 @@ fn durable_result_key(call: &str) -> CallResultKey {
     CallResultKey::derive(Ancestry::new(), InvocationId::new(), &ToolId::new(call))
 }
 
+/// How long [`finish`] waits for a command to end before calling it hung.
+///
+/// A hang detector, not a claim about speed: no caller proves how fast a
+/// command ends through it, and the tests that do — a cancellation's stop, a
+/// deadline's kill, one writer not waiting on another — hold their own bound
+/// or a check that does not read the clock. A correct command here ends in a
+/// second or so on an idle host, but it is a real launch whose transaction
+/// journal is synced to disk some thirty times, and with other writers keeping
+/// the disk busy one took up to fourteen seconds.
+const HUNG: Duration = Duration::from_secs(30);
+
 pub(super) fn finish(mut process: Box<dyn SandboxProcess>) -> (ExitStatus, Vec<u8>, Vec<u8>) {
     let mut stdout = process.take_stdout();
     let mut stderr = process.take_stderr();
     let mut output = Vec::new();
     let mut errors = Vec::new();
     let mut status = None;
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + HUNG;
     while stdout.is_some() || stderr.is_some() || status.is_none() {
         read_ready(&mut stdout, &mut output);
         read_ready(&mut stderr, &mut errors);

@@ -8,6 +8,8 @@
 
 use std::io::Write as _;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -238,17 +240,151 @@ fn a_flood_on_standard_error_is_read_beside_standard_output_to_both_ends() {
 }
 
 /// A pipe with no command behind it, ready to be waited on.
+#[cfg(unix)]
 fn plain_pipe() -> (Box<dyn Stream>, io::PipeWriter) {
     let (reader, writer) = io::pipe().expect("a pipe");
     (stream(reader).expect("a prepared pipe"), writer)
 }
 
+/// A pipe whose reading end can be asked whether this process still holds it.
+///
+/// A writer refused is the pipe's answer about every copy of its reading end,
+/// and not every copy is the adapter's: a test of this process that forks to
+/// start a command holds one until its child execs, and a write made in that
+/// window succeeds although the adapter closed its own. So the drop tests ask
+/// this process, at the moment the drop returns: the value the adapter was
+/// handed must have been dropped and, where the process's descriptors can be
+/// listed, none of them may still be the pipe's reading end — which a copy the
+/// adapter made and closes later would be, while a forked child's is not. The
+/// writer's refusal is then only asked for once any such window has passed.
+pub(super) struct Closing {
+    pipe: io::PipeReader,
+    // Declared after the pipe, so dropped after it: it says the pipe is closed.
+    _closed: Closed,
+}
+
+struct Closed(Arc<AtomicBool>);
+
+impl Drop for Closed {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// What a test asks, once the adapter holding a [`Closing`] pipe is dropped.
+pub(super) struct Watch {
+    dropped: Arc<AtomicBool>,
+    /// The pipe's identity, and the descriptor of its writing end, which
+    /// shares that identity on Linux and is the test's own to hold.
+    #[cfg(target_os = "linux")]
+    pipe: ((u64, u64), std::os::fd::RawFd),
+}
+
+impl Closing {
+    /// `pipe`, whose writing end is `writer`, and what watches it close.
+    pub(super) fn new(pipe: io::PipeReader, writer: &io::PipeWriter) -> (Self, Watch) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = writer;
+        let dropped = Arc::default();
+        let watch = Watch {
+            dropped: Arc::clone(&dropped),
+            #[cfg(target_os = "linux")]
+            pipe: (
+                identity(std::os::fd::AsRawFd::as_raw_fd(&pipe)).expect("the pipe's identity"),
+                std::os::fd::AsRawFd::as_raw_fd(writer),
+            ),
+        };
+        let pipe = Self {
+            pipe,
+            _closed: Closed(dropped),
+        };
+        (pipe, watch)
+    }
+}
+
+impl Watch {
+    /// What in this process still holds the pipe's reading end: nothing, once
+    /// it is closed here.
+    pub(super) fn open(&self) -> Vec<String> {
+        let mut open = Vec::new();
+        if !self.dropped.load(Ordering::SeqCst) {
+            open.push("the pipe the adapter was handed".to_owned());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let (pipe, writer) = self.pipe;
+            let listed = std::fs::read_dir("/proc/self/fd").expect("this process's descriptors");
+            for entry in listed.flatten() {
+                let Some(descriptor) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<std::os::fd::RawFd>().ok())
+                else {
+                    continue;
+                };
+                // One another thread closed since the listing has no identity
+                // left to compare, and is passed over; the listing's own stays
+                // open throughout and is the directory, never the pipe.
+                if descriptor != writer && identity(descriptor).is_ok_and(|seen| seen == pipe) {
+                    open.push(format!("descriptor {descriptor}"));
+                }
+            }
+        }
+        open
+    }
+}
+
+/// The device and inode `descriptor` of this process refers to.
+#[cfg(target_os = "linux")]
+fn identity(descriptor: std::os::fd::RawFd) -> io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = std::fs::metadata(format!("/proc/self/fd/{descriptor}"))?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+impl Read for Closing {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.pipe.read(buffer)
+    }
+}
+
+impl Output for Closing {
+    fn prepare(&self) -> io::Result<()> {
+        self.pipe.prepare()
+    }
+
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<ReadState> {
+        self.pipe.read_ready(buffer)
+    }
+}
+
+#[cfg(unix)]
+impl std::os::fd::AsRawFd for Closing {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.pipe.as_raw_fd()
+    }
+}
+
+/// How `writer` is refused, once no copy of its pipe's reading end is left.
+pub(super) fn refused(writer: &mut io::PipeWriter) -> io::Error {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        if let Err(refused) = writer.write_all(b"x") {
+            return refused;
+        }
+        assert!(Instant::now() < deadline, "the pipe was never closed");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// Whatever waits on the pipe for this stream — the reactor's registration on
 /// Unix, the thread on Windows — is gone once the stream is, and the pipe with
-/// it: the writer hears that at once.
+/// it: closed by the time the drop returns, and the writer refused.
 #[test]
 fn dropping_a_stream_mid_wait_closes_its_pipe_within_the_bound() {
-    let (mut stream, mut writer) = plain_pipe();
+    let (reader, mut writer) = io::pipe().expect("a pipe");
+    let (reader, watch) = Closing::new(reader, &writer);
+    let mut stream = stream(reader).expect("a prepared pipe");
     let gave_up = runtime().block_on(async {
         let mut buffer = [0; 16];
         tokio::time::timeout(Duration::from_millis(50), stream.read(&mut buffer))
@@ -262,10 +398,12 @@ fn dropping_a_stream_mid_wait_closes_its_pipe_within_the_bound() {
     let took = dropping.elapsed();
 
     assert!(took < Duration::from_secs(1), "dropping took {took:?}");
-    let refused = writer
-        .write(b"x")
-        .expect_err("the pipe outlived its stream");
-    assert_eq!(refused.kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(
+        watch.open(),
+        Vec::<String>::new(),
+        "the pipe outlived its stream"
+    );
+    assert_eq!(refused(&mut writer).kind(), io::ErrorKind::BrokenPipe);
 }
 
 /// Only Unix needs the runtime: the reactor is the runtime's. A Windows pipe
