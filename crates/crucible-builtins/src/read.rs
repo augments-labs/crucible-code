@@ -681,10 +681,16 @@ impl Read {
                     crucible_attachments::CEILING / (1024 * 1024),
                 )));
             }
+            // `Stopped` is unreachable here: `taken` passes a stop that never
+            // answers yes. It shares this arm only because the match is
+            // exhaustive, and falling through would reopen the file as text,
+            // so it needs an answer of its own before this read is handed a
+            // stop.
             Err(
                 AttachmentError::NotFile
                 | AttachmentError::Unread(_)
-                | AttachmentError::Unreached(_),
+                | AttachmentError::Unreached(_)
+                | AttachmentError::Stopped,
             ) => {
                 return None;
             }
