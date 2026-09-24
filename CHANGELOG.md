@@ -242,6 +242,13 @@ change in any release with no deprecation period.
   channel, while `OAuthError::Worker`, `OAuthError::Unwaited` and
   `Bridge::AccountLogin` are gone and `OAuthError::NotStarted` refuses a login
   begun with no runtime.
+- **A bash call's output is read by tasks the call awaits.** `Bash` reads a
+  command's output through the sandbox's waiting reads, in tasks on the Tokio
+  runtime polling the call, and waits between its looks at the command on that
+  runtime's clock, so the thread polling the call is free while the command
+  runs. Its run is therefore awaited on a runtime with a timer and, for the
+  local sandbox on Unix, an I/O driver, as the application's is; what a
+  command is answered with, its bounds and its redaction are unchanged.
 
 ### Fixed
 

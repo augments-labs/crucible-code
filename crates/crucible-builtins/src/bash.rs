@@ -750,7 +750,7 @@ impl Tool for Bash {
                 leaving,
             };
 
-            match output::collect(process, &waiting)? {
+            match output::collect(process, &waiting).await? {
                 output::Left::Answered(output) => Ok(output),
 
                 // Kept, or refused and ended — the registry owns both, because it

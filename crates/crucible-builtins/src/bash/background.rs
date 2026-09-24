@@ -59,7 +59,7 @@ use tokio::task::JoinHandle;
 /// How many commands may be left running at once.
 ///
 /// A server, a watcher and a tunnel with one spare. It is a budget rather than a
-/// number picked to be generous: each one holds two reader threads and its own
+/// number picked to be generous: each one holds two reader tasks and its own
 /// bounded output for as long as it runs, and at most one of the runtime's
 /// blocking threads while its owner asks its process something, and a fifth
 /// call is answered with a refusal naming the four in the way — which the model
@@ -791,8 +791,8 @@ impl Owner {
         match self.look() {
             Step::Again => Next::Tick,
             Step::Stopped => {
-                // Dropped here rather than under the lock, since dropping it
-                // joins its readers.
+                // Dropped here rather than under the lock; dropping it tells
+                // its readers to stop.
                 drop(self.removed());
                 Next::Done
             }
@@ -927,7 +927,7 @@ impl Owner {
         };
 
         // Ended, but what it printed last may still be in flight: the readers
-        // own their own threads, and the bytes a command wrote as it died land
+        // are tasks of their own, and the bytes a command wrote as it died land
         // after the status does. The ending is worth nothing to the model
         // without them, so it is held back a tick at a time.
         let gone = *self.reaping.exited.get_or_insert_with(Instant::now);
@@ -1002,8 +1002,8 @@ impl Owner {
     }
 
     /// Takes this command's entry out of the registry, for a stop that left
-    /// nothing running. Dropped by the caller with the lock let go, since
-    /// dropping it joins its readers.
+    /// nothing running. Dropped by the caller with the lock let go; dropping
+    /// it tells its readers to stop.
     fn removed(&self) -> Option<Left> {
         let mut held = self.held.lock().ok()?;
         let at = held
