@@ -11,8 +11,8 @@ use std::task::{Context, Poll, Waker};
 use base64::Engine as _;
 use crucible_core::{Authorization, CredentialError, Outgoing};
 
-/// Polls `authorizing` once and panics if it was not ready: every credential
-/// this crate ships answers at its first poll.
+/// Polls `authorizing` once and panics if it was not ready: a credential with
+/// nothing to renew answers at its first poll.
 fn authorized(authorizing: Authorization<'_>) -> Result<(), CredentialError> {
     let mut authorizing = authorizing;
     match authorizing
@@ -22,6 +22,23 @@ fn authorized(authorizing: Authorization<'_>) -> Result<(), CredentialError> {
         Poll::Ready(answer) => answer,
         Poll::Pending => panic!("the credential would have had to wait"),
     }
+}
+
+/// The runtime a test's renewals and login requests run on, shaped as the
+/// application's: several workers, a clock and sockets.
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+/// An owner of renewals that runs them on `runtime`.
+fn renewing(runtime: &tokio::runtime::Runtime) -> Renewals {
+    let renewals = Renewals::new();
+    renewals.runs_on(runtime.handle().clone());
+    renewals
 }
 
 struct Scratch(PathBuf);
@@ -211,7 +228,7 @@ fn an_openai_account_scope_survives_store_reconstruction_without_token_identity(
                 .with_detail("account_id", "account-stable"),
         )
         .unwrap();
-    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:9"));
+    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:9", &Renewals::new()));
 
     let first = oauth.credential(&store.read()).unwrap().scope();
     store
@@ -282,7 +299,8 @@ fn device_login_follows_the_protocol_and_persists_before_completion() {
         .to_string(),
         tokens("unused-canary", "refresh-one", "account-one", expires),
     ]);
-    let flow = Flow::testing(&base);
+    let runtime = runtime();
+    let flow = Flow::testing(&base, &renewing(&runtime));
     let oauth = OpenAiOAuth::testing(flow);
     let scratch = Scratch::new("device");
     let store = Store::in_home(scratch.path());
@@ -356,7 +374,8 @@ fn browser_login_binds_state_pkce_and_the_loopback_redirect() {
         "browser-account",
         expires,
     )]);
-    let oauth = OpenAiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
     let scratch = Scratch::new("browser");
     let store = Store::in_home(scratch.path());
     let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
@@ -421,7 +440,8 @@ fn browser_login_can_finish_with_a_code_pasted_into_the_terminal() {
         "manual-account",
         expires,
     )]);
-    let oauth = OpenAiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
     let scratch = Scratch::new("browser-manual");
     let store = Store::in_home(scratch.path());
     let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
@@ -466,7 +486,8 @@ fn a_browser_login_is_not_refused_because_the_registered_ports_are_busy() {
         "busy-account",
         expires,
     )]);
-    let oauth = OpenAiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
     let scratch = Scratch::new("browser-busy");
     let store = Store::in_home(scratch.path());
     let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
@@ -504,16 +525,20 @@ fn a_real_login_still_answers_only_where_the_provider_will_redirect() {
     // The ephemeral port above is a test convenience. A production flow that
     // took one would receive no callback at all, because the provider refuses a
     // redirect it never registered, so the two must not converge.
-    assert_eq!(Flow::production().callback_ports(), &PORTS);
-    assert_eq!(Flow::testing("http://127.0.0.1:1").callback_ports(), &[0]);
+    assert_eq!(Flow::production(Renewals::new()).callback_ports(), &PORTS);
+    assert_eq!(
+        Flow::testing("http://127.0.0.1:1", &Renewals::new()).callback_ports(),
+        &[0]
+    );
 }
 
 #[test]
 fn authorize_answers_at_its_first_poll_when_nothing_needs_renewing() {
     // A tool run's crossing polls a future once; a fresh token that pended
-    // there would be refused on every request, exactly like a pending
-    // renewal, even though nothing here has anything to wait for.
-    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:1"));
+    // there would be refused on every request, even though nothing here has
+    // anything to wait for. The owner has no runtime, so a renewal started
+    // here would be refused rather than pend.
+    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:1", &Renewals::new()));
     let scratch = Scratch::new("fresh-token");
     let store = Store::in_home(scratch.path());
     let fresh = now() + 30 * 24 * 60 * 60;
@@ -548,7 +573,8 @@ fn an_expired_rotation_is_refreshed_and_rewritten_before_use() {
         "account-old",
         expires,
     )]);
-    let flow = Flow::testing(&base);
+    let runtime = runtime();
+    let flow = Flow::testing(&base, &renewing(&runtime));
     let oauth = OpenAiOAuth::testing(flow);
     let scratch = Scratch::new("refresh");
     let store = Store::in_home(scratch.path());
@@ -568,7 +594,9 @@ fn an_expired_rotation_is_refreshed_and_rewritten_before_use() {
     let credential = oauth.credential(&store.read()).unwrap();
     let scope = credential.scope();
     let mut outgoing = Outgoing::new();
-    authorized(credential.authorize(&mut outgoing)).unwrap();
+    runtime
+        .block_on(credential.authorize(&mut outgoing))
+        .unwrap();
     assert_eq!(credential.scope(), scope);
 
     let sent = requests.recv_timeout(PATIENCE).unwrap();
@@ -598,7 +626,8 @@ fn a_refresh_cannot_move_a_live_credential_scope_to_another_account() {
         "account-other",
         expires,
     )]);
-    let oauth = OpenAiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
     let scratch = Scratch::new("refresh-scope-change");
     let store = Store::in_home(scratch.path());
     store
@@ -616,7 +645,9 @@ fn a_refresh_cannot_move_a_live_credential_scope_to_another_account() {
 
     let credential = oauth.credential(&store.read()).unwrap();
     let mut outgoing = Outgoing::new();
-    let problem = authorized(credential.authorize(&mut outgoing)).unwrap_err();
+    let problem = runtime
+        .block_on(credential.authorize(&mut outgoing))
+        .unwrap_err();
 
     let sent = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
@@ -629,34 +660,222 @@ fn a_refresh_cannot_move_a_live_credential_scope_to_another_account() {
     assert!(!text.contains("refresh-other"));
 }
 
-/// The renewal is not owned work yet, so it must never run where a runtime
-/// could offer it a worker task: everything it does — the cross-process lock,
-/// the network call — runs inside this future's one poll, and a worker task
-/// blocked there is exactly what making it owned work exists to fix. Until
-/// then, polling from a worker refuses instead of running, proven here by
-/// actually polling from one rather than trusting the call site, and by
-/// checking what the refusal actually left behind rather than a timing
-/// window or a channel that would report nothing either way.
+/// A renewal is a rotation its owner runs as a task of its own, and an
+/// authorization only waits for it, so one polled as a runtime worker task
+/// waits the way any task does — without holding the worker — and completes.
+/// It used to refuse there with a typed error, because the renewal then ran
+/// inside the poll: this is that test, inverted. The server really renews, so
+/// the store's bytes say whether the rotation was written.
 #[test]
-fn renewal_refuses_when_polled_as_a_runtime_task_and_touches_neither_lock_nor_store() {
-    // A server that would actually renew the credential if it were ever
-    // reached: a missing or misplaced guard then rewrites the store with
-    // these fresh tokens, which the byte comparison below would catch. An
-    // address nothing answers cannot prove this — the store would stay
-    // unchanged whether or not the guard ran, because the renewal itself
-    // would fail before writing anything.
-    // The account must match the stored one: the refresh closure checks the
-    // identity-bound scope before anything is written, and a mismatch would
-    // be caught there instead of by the assertions this test is about.
+fn a_renewal_awaited_from_a_runtime_task_completes_and_writes_its_rotation() {
+    // The account must match the stored one: the refresh checks the
+    // identity-bound scope before anything is written.
     let (base, requests, server) = server(vec![tokens(
         "unused-canary",
         "refresh-fresh",
         "account-old",
         now() + 3600,
     )]);
-    let oauth = OpenAiOAuth::testing(Flow::testing(&base));
-    let scratch = Scratch::new("worker-refusal");
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("worker-renewal");
     let store = Store::in_home(scratch.path());
+    expired(&store);
+    let credential = oauth.credential(&store.read()).unwrap();
+
+    let answered = runtime.block_on(async move {
+        tokio::spawn(async move {
+            let mut outgoing = Outgoing::new();
+            credential
+                .authorize(&mut outgoing)
+                .await
+                .map(|()| header(&outgoing, "chatgpt-account-id"))
+        })
+        .await
+        .unwrap()
+    });
+
+    assert!(
+        matches!(answered, Ok(Some(ref account)) if account == "account-old"),
+        "an authorization polled as a runtime worker task did not complete: {answered:?}"
+    );
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert!(sent.body.contains("refresh-old"));
+    let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
+    assert!(text.contains("refresh-fresh") && !text.contains("refresh-old"));
+}
+
+/// Worker tasks authorizing with credentials for one account at once — the
+/// turn's and a web source's are separate credentials — wait for the one
+/// rotation in flight for that account rather than refusing, and rather than
+/// each starting their own. A second rotation of the same expired tokens would
+/// be seen as a second request after the first was refused; one rotation
+/// shares its refusal with every waiter.
+#[test]
+fn worker_tasks_renewing_one_account_at_once_share_one_rotation() {
+    const WAITERS: usize = 4;
+    let expires = now() + 3600;
+    let fresh = jwt(&serde_json::json!({ "exp": expires }));
+    let (base, requests, server) = holding_server(
+        tokens("unused-canary", "refresh-new", "account-old", expires),
+        Duration::from_millis(300),
+    );
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("shared-rotation");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
+    let credentials: Vec<_> = (0..WAITERS)
+        .map(|_| oauth.credential(&store.read()).unwrap())
+        .collect();
+
+    let answers = runtime.block_on(async move {
+        let waiting: Vec<_> = credentials
+            .into_iter()
+            .map(|credential| {
+                tokio::spawn(async move {
+                    let mut outgoing = Outgoing::new();
+                    credential
+                        .authorize(&mut outgoing)
+                        .await
+                        .map(|()| header(&outgoing, "authorization"))
+                })
+            })
+            .collect();
+        let mut answers = Vec::new();
+        for waiter in waiting {
+            answers.push(waiter.await.unwrap());
+        }
+        answers
+    });
+
+    let expected = format!("Bearer {fresh}");
+    for answer in &answers {
+        assert!(
+            matches!(answer, Ok(Some(said)) if *said == expected),
+            "a waiter did not end on the shared rotation: {answer:?}"
+        );
+    }
+    let sent: Vec<_> = requests.try_iter().collect();
+    assert_eq!(sent.len(), 1, "{} rotations were sent", sent.len());
+    assert!(persisted(scratch.path(), "refresh-new"));
+    drop(server);
+}
+
+/// The other half of the test above: one rotation's refusal is every
+/// waiter's, so the refresh token is presented once however many are waiting
+/// and whether or not the service accepts it.
+#[test]
+fn worker_tasks_renewing_one_account_at_once_share_one_refusal() {
+    const WAITERS: usize = 4;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (heard, requests) = mpsc::channel();
+    let server = thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            if heard.send(read_request(&mut stream)).is_err() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(300));
+            let _ = write!(
+                stream,
+                "HTTP/1.1 400 Bad Request\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            );
+        }
+    });
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("shared-refusal");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
+    let credentials: Vec<_> = (0..WAITERS)
+        .map(|_| oauth.credential(&store.read()).unwrap())
+        .collect();
+
+    let answers = runtime.block_on(async move {
+        let waiting: Vec<_> = credentials
+            .into_iter()
+            .map(|credential| {
+                tokio::spawn(async move {
+                    let mut outgoing = Outgoing::new();
+                    credential.authorize(&mut outgoing).await
+                })
+            })
+            .collect();
+        let mut answers = Vec::new();
+        for waiter in waiting {
+            answers.push(waiter.await.unwrap());
+        }
+        answers
+    });
+
+    for answer in &answers {
+        assert!(
+            matches!(answer, Err(CredentialError::NotRenewed(said)) if said.contains("HTTP 400")),
+            "a waiter was not handed the rotation's refusal: {answer:?}"
+        );
+    }
+    let sent: Vec<_> = requests.try_iter().collect();
+    assert_eq!(
+        sent.len(),
+        1,
+        "the expired rotation was presented {} times",
+        sent.len()
+    );
+    let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
+    assert!(
+        text.contains("refresh-old"),
+        "a refused rotation changed the store"
+    );
+    drop(server);
+}
+
+/// A token server that answers its one renewal only once `hold` has passed
+/// since the request arrived, and reports every request it is sent, answered
+/// or not, so a second rotation cannot hide behind the first one's answer.
+fn holding_server(
+    response: String,
+    hold: Duration,
+) -> (
+    String,
+    std::sync::mpsc::Receiver<Request>,
+    thread::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let (send, requests) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let mut answered = false;
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let request = read_request(&mut stream);
+            if send.send(request).is_err() {
+                return;
+            }
+            // Only the first request is answered with the rotation; a second
+            // one is a second rotation, which the test counts and refuses.
+            let body = if answered {
+                "{}".to_owned()
+            } else {
+                thread::sleep(hold);
+                response.clone()
+            };
+            answered = true;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    (base, requests, worker)
+}
+
+/// An `openai` subscription whose access token has expired, so the next
+/// authorization renews it with `refresh-old`.
+fn expired(store: &Store) {
     store
         .keep_subscription(
             "openai",
@@ -669,105 +888,437 @@ fn renewal_refuses_when_polled_as_a_runtime_task_and_touches_neither_lock_nor_st
             .with_detail("account_id", "account-old"),
         )
         .unwrap();
+}
+
+/// Waits, within [`PATIENCE`], for the store to hold `refresh`.
+fn persisted(store: &Path, refresh: &str) -> bool {
+    let until = std::time::Instant::now() + PATIENCE;
+    while std::time::Instant::now() < until {
+        if std::fs::read_to_string(store.join("auth.json")).is_ok_and(|text| text.contains(refresh))
+        {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// The header a credential set, by name.
+fn header(outgoing: &Outgoing, name: &str) -> Option<String> {
+    outgoing
+        .headers()
+        .iter()
+        .find(|(present, _)| present.as_ref() == name)
+        .map(|(_, value)| value.to_string())
+}
+
+/// A turn cancelled while its credential renews stops waiting for that
+/// renewal: whoever waits drops its wait, and nothing else. The rotation it
+/// started is not the waiter's to end — the token server may already have
+/// spent the old refresh token — so it still finishes and is written down.
+///
+/// The server holds its answer for [`HOLD`] seconds, and the waiter gives up
+/// after [`GIVES_UP`], as a waiting crossing does once its cancel is raised.
+/// A renewal done inside the waiter's own poll cannot be given up on at all:
+/// the waiter comes back only once the server has answered.
+#[test]
+fn a_waiter_given_up_on_mid_renewal_returns_at_once_and_the_rotation_still_lands() {
+    const HOLD: Duration = Duration::from_secs(3);
+    const GIVES_UP: Duration = Duration::from_millis(250);
+    let (base, requests, server) = holding_server(
+        tokens("unused-canary", "refresh-new", "account-old", now() + 3600),
+        HOLD,
+    );
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("given-up-waiter");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
     let credential = oauth.credential(&store.read()).unwrap();
-    let store_path = scratch.path().join("auth.json");
-    let lock_path = scratch.path().join("auth.lock");
-    let store_before = std::fs::read(&store_path).unwrap();
-    // `keep_subscription` already took and released this lock file, which
-    // leaves it present but empty either way — its bytes cannot say whether
-    // the poll below touched it. Removed here so its *presence* after the
-    // poll is the signal: `Lock::take` recreates it with `O_CREAT` the
-    // moment anything takes it again.
-    std::fs::remove_file(&lock_path).unwrap();
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    let refused = runtime.block_on(async move {
-        tokio::spawn(async move {
-            let mut outgoing = Outgoing::new();
-            authorized(credential.authorize(&mut outgoing))
-        })
-        .await
-        .unwrap()
+    let begun = std::time::Instant::now();
+    let given_up = runtime.block_on(async {
+        let mut outgoing = Outgoing::new();
+        tokio::time::timeout(GIVES_UP, credential.authorize(&mut outgoing))
+            .await
+            .is_err()
     });
+    let took = begun.elapsed();
 
     assert!(
-        matches!(refused, Err(CredentialError::RenewalOnWorker)),
-        "polling the renewal from a worker task did not refuse with the typed error: {refused:?}"
+        took < HOLD / 2,
+        "the waiter came back {took:?} after it began, not within its bound of {GIVES_UP:?}: \
+         it could not stop waiting until the token server answered"
     );
-    assert_eq!(
-        std::fs::read(&store_path).unwrap(),
-        store_before,
-        "a refused renewal rewrote the store with the server's fresh tokens"
-    );
+    assert!(given_up, "the waiter was answered rather than given up on");
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
+    assert!(sent.body.contains("refresh-old"));
     assert!(
-        !lock_path.exists(),
-        "a refused renewal recreated the lock file"
+        persisted(scratch.path(), "refresh-new"),
+        "the rotation the waiter started was not written down after the waiter gave up"
     );
     assert!(
         requests.try_recv().is_err(),
-        "a refused renewal reached the token server"
+        "a second rotation was sent after the first"
     );
-    // The server thread is blocked in `accept` forever when the guard holds
-    // (as it should here): nothing to join, since nothing was ever sent.
     drop(server);
 }
 
-/// The uncontended case (no renewal in flight) never asks `not_worker`
-/// anything: `try_lock` answers at once regardless of which thread asks. The
-/// only thread that can hold `tokens` for any length of time is one already
-/// inside `refresh_subscription`'s network call, so that is the one case
-/// checked here — with the mutex held by this test's own thread standing in
-/// for that renewal, and the poll coming from an actual spawned task.
+/// Where the second process of the two-process renewal test finds its store,
+/// its token server and the file it writes the header it was given into.
+const SECOND_HOME: &str = "CRUCIBLE_TEST_SECOND_RENEWAL_HOME";
+const SECOND_BASE: &str = "CRUCIBLE_TEST_SECOND_RENEWAL_BASE";
+
+/// The second process of the test below, which runs this test binary again
+/// with only this test selected. Run any other way it has no store to renew
+/// and does nothing.
 #[test]
-fn lock_tokens_refuses_a_worker_task_instead_of_waiting_on_another_threads_renewal() {
-    let tokens = std::sync::Arc::new(Mutex::new(Tokens::new(
-        "access".into(),
-        "refresh".into(),
-        u64::MAX,
-        0,
-    )));
-    let held = tokens
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-    // The poll runs on a thread of its own, so a regressed guard blocks that
-    // thread rather than this one: `held` is on this thread, and a worker
-    // that called the blocking `lock()` would deadlock against it if the two
-    // shared a thread, turning a real failure into a hang instead of the
-    // bounded, named one below.
-    let (send, recv) = mpsc::channel();
-    let for_worker = std::sync::Arc::clone(&tokens);
-    let probe = thread::Builder::new()
-        .name("lock-tokens-probe".into())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .build()
-                .unwrap();
-            let refused = runtime.block_on(async move {
-                tokio::spawn(async move {
-                    lock_tokens(&for_worker).map(|guard| guard.access().to_owned())
-                })
-                .await
-                .unwrap()
-            });
-            // A closed channel means the `recv_timeout` below already gave
-            // up; nothing left to report to.
-            let _ = send.send(refused);
-        })
+fn a_second_process_renewing() {
+    let (Some(home), Some(base)) = (std::env::var_os(SECOND_HOME), std::env::var_os(SECOND_BASE))
+    else {
+        return;
+    };
+    let home = PathBuf::from(home);
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(base.to_str().unwrap(), &renewing(&runtime)));
+    let credential = oauth.credential(&Store::in_home(&home).read()).unwrap();
+    let mut outgoing = Outgoing::new();
+    runtime
+        .block_on(credential.authorize(&mut outgoing))
         .unwrap();
+    std::fs::write(
+        home.join("second-authorization"),
+        header(&outgoing, "authorization").unwrap(),
+    )
+    .unwrap();
+}
 
-    let refused = recv.recv_timeout(Duration::from_secs(5)).expect(
-        "a regressed guard blocks a worker instead of refusing it; this bound turns that into \
-         a fast, named failure rather than a hang",
+/// Two crucibles renewing the same expired rotation at once present the
+/// one-use refresh token once between them: the second takes `auth.lock`
+/// after the first, rereads the store inside it, and uses the rotation the
+/// first wrote rather than spending the one it read at startup.
+#[test]
+fn two_processes_renewing_at_once_rotate_once_and_persist_once() {
+    // Longer than a second process takes to start and reach the lock, and
+    // shorter than the 5 s it waits there before giving up.
+    const HOLD: Duration = Duration::from_secs(2);
+    let expires = now() + 3600;
+    let fresh = jwt(&serde_json::json!({ "exp": expires }));
+    let (base, requests, server) = holding_server(
+        tokens("unused-canary", "refresh-new", "account-old", expires),
+        HOLD,
     );
+    let scratch = Scratch::new("two-processes");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let credential = oauth.credential(&store.read()).unwrap();
 
-    drop(held);
-    let _ = probe.join();
+    let second = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "oauth::tests::a_second_process_renewing"])
+        .env(SECOND_HOME, scratch.path())
+        .env(SECOND_BASE, &base)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut outgoing = Outgoing::new();
+    runtime
+        .block_on(credential.authorize(&mut outgoing))
+        .unwrap();
+    let finished = second.wait_with_output().unwrap();
 
     assert!(
-        matches!(refused, Err(CredentialError::RenewalOnWorker)),
-        "a worker task waited on the mutex instead of refusing: {refused:?}"
+        finished.status.success(),
+        "the second process failed to renew"
     );
+    let second = std::fs::read_to_string(scratch.path().join("second-authorization")).unwrap();
+    let first = header(&outgoing, "authorization").unwrap();
+    assert_eq!(first, format!("Bearer {fresh}"));
+    assert_eq!(
+        second, first,
+        "the two processes ended on different rotations"
+    );
+    let sent: Vec<_> = requests.try_iter().collect();
+    assert_eq!(
+        sent.len(),
+        1,
+        "the two processes sent {} renewals between them",
+        sent.len()
+    );
+    let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
+    assert!(text.contains("refresh-new") && !text.contains("refresh-old"));
+    drop(server);
+}
+
+/// The store's lock, opened on its own as another process opens it: a lock
+/// taken on this description contends with the store's exactly as another
+/// crucible's does.
+fn another_process_lock(home: &Path) -> std::fs::File {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(home.join("auth.lock"))
+        .unwrap()
+}
+
+/// Whether another process could take the store's lock within a second.
+fn lock_released(home: &Path) -> bool {
+    let other = another_process_lock(home);
+    let until = std::time::Instant::now() + Duration::from_secs(1);
+    while std::time::Instant::now() < until {
+        if other.try_lock().is_ok() {
+            let _ = other.unlock();
+            return true;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// The blocking adapter's bound: a renewal whose lock another process holds
+/// waits for it 250 times 20 ms apart, then says another crucible is writing,
+/// having sent nothing and written nothing.
+#[test]
+fn a_renewal_waits_five_seconds_for_a_lock_another_process_holds_then_says_so() {
+    let (base, requests, server) = holding_server(
+        tokens("unused-canary", "refresh-new", "account-old", now() + 3600),
+        Duration::ZERO,
+    );
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("lock-held-elsewhere");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
+    let before = std::fs::read(scratch.path().join("auth.json")).unwrap();
+    let credential = oauth.credential(&store.read()).unwrap();
+    let other = another_process_lock(scratch.path());
+    other.lock().unwrap();
+
+    let begun = std::time::Instant::now();
+    let mut outgoing = Outgoing::new();
+    let refused = runtime.block_on(credential.authorize(&mut outgoing));
+    let took = begun.elapsed();
+    other.unlock().unwrap();
+
+    assert!(
+        matches!(&refused, Err(CredentialError::NotRenewed(said)) if said.contains("another crucible is writing")),
+        "a renewal behind another process's lock was not refused as busy: {refused:?}"
+    );
+    assert!(
+        took >= Duration::from_secs(5) && took < Duration::from_secs(10),
+        "the wait for another process's lock took {took:?}, not the 5 s it is bounded by"
+    );
+    assert!(
+        requests.try_recv().is_err(),
+        "a busy renewal reached the token server"
+    );
+    assert_eq!(
+        std::fs::read(scratch.path().join("auth.json")).unwrap(),
+        before
+    );
+    assert!(outgoing.headers().is_empty());
+    drop(server);
+}
+
+/// The blocking adapter's cleanup, and the owner's bound: a rotation still
+/// waiting for its answer when the owner stops waiting for it is aborted, the
+/// owner says how many it abandoned, and the lock it held is released with
+/// nothing written.
+#[test]
+fn the_owner_aborts_a_rotation_it_stopped_waiting_for_and_its_lock_is_released() {
+    let (base, requests, server) = holding_server(
+        tokens("unused-canary", "refresh-new", "account-old", now() + 3600),
+        Duration::from_secs(5),
+    );
+    let runtime = runtime();
+    let renewals = renewing(&runtime);
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewals));
+    let scratch = Scratch::new("abandoned-rotation");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
+    let before = std::fs::read(scratch.path().join("auth.json")).unwrap();
+    let credential = oauth.credential(&store.read()).unwrap();
+    let given_up = runtime.block_on(async {
+        let mut outgoing = Outgoing::new();
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            credential.authorize(&mut outgoing),
+        )
+        .await
+        .is_err()
+    });
+    assert!(given_up);
+    // The rotation's request is in flight, holding the lock.
+    requests.recv_timeout(PATIENCE).unwrap();
+    assert!(
+        !lock_released(scratch.path()),
+        "the rotation in flight held no lock"
+    );
+
+    let begun = std::time::Instant::now();
+    let joined = renewals.join_within(Duration::from_millis(100));
+    let took = begun.elapsed();
+
+    assert_eq!(
+        joined.map_err(|unjoined| unjoined.to_string()),
+        Err(
+            "1 of the account renewals in flight had not finished 100 ms after the run ended, \
+             and were abandoned; whether their new tokens were written down is unconfirmed"
+                .to_owned()
+        )
+    );
+    assert!(took < Duration::from_secs(1), "the owner waited {took:?}");
+    assert!(
+        lock_released(scratch.path()),
+        "the aborted rotation kept the store's lock"
+    );
+    assert_eq!(
+        std::fs::read(scratch.path().join("auth.json")).unwrap(),
+        before
+    );
+    drop(server);
+}
+
+/// Shutdown joins the owner within its bound: a rotation whose answer arrives
+/// inside the bound is written down before the join returns.
+#[test]
+fn the_owner_joins_a_rotation_that_ends_within_its_bound() {
+    let (base, requests, server) = holding_server(
+        tokens("unused-canary", "refresh-new", "account-old", now() + 3600),
+        Duration::from_millis(300),
+    );
+    let runtime = runtime();
+    let renewals = renewing(&runtime);
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewals));
+    let scratch = Scratch::new("joined-rotation");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
+    let credential = oauth.credential(&store.read()).unwrap();
+    runtime.block_on(async {
+        let mut outgoing = Outgoing::new();
+        let _ = tokio::time::timeout(
+            Duration::from_millis(50),
+            credential.authorize(&mut outgoing),
+        )
+        .await;
+    });
+    requests.recv_timeout(PATIENCE).unwrap();
+
+    let begun = std::time::Instant::now();
+    let joined = renewals.join_within(PATIENCE);
+    let took = begun.elapsed();
+
+    assert_eq!(joined, Ok(()));
+    assert!(took < PATIENCE / 2, "the join took {took:?}");
+    let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
+    assert!(
+        text.contains("refresh-new") && !text.contains("refresh-old"),
+        "the joined rotation was not written down by the time the join returned"
+    );
+    assert!(lock_released(scratch.path()));
+    drop(server);
+}
+
+/// Each request is given its deadline from the start, so the wait for one of
+/// the client's four connection slots counts against it: with four
+/// connections stalled in their handshake, a fifth request gives up at its
+/// own deadline rather than at the slots' 15 s.
+#[test]
+fn a_request_waiting_for_a_connection_slot_gives_up_at_its_own_deadline() {
+    const DEADLINE: Duration = Duration::from_millis(500);
+    // Accepts every connection and never answers, so a TLS handshake stalls
+    // holding its slot.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let held = thread::spawn(move || {
+        let mut open = Vec::new();
+        for stream in listener.incoming().take(5) {
+            open.push(stream);
+        }
+        thread::sleep(PATIENCE);
+    });
+    let runtime = runtime();
+    let flow = Flow::testing_within(&format!("https://{address}"), &renewing(&runtime), DEADLINE);
+
+    let begun = std::time::Instant::now();
+    let answers = runtime.block_on(async {
+        let requests: Vec<_> = (0..5)
+            .map(|_| {
+                let flow = flow.clone();
+                tokio::spawn(async move {
+                    let current = Tokens::new("access".into(), "refresh".into(), 1, 1);
+                    flow.refresh(&current).await
+                })
+            })
+            .collect();
+        let mut answers = Vec::new();
+        for request in requests {
+            answers.push(request.await.unwrap());
+        }
+        answers
+    });
+    let took = begun.elapsed();
+
+    assert!(
+        answers
+            .iter()
+            .all(|answer| matches!(answer, Err(OAuthError::Unreachable))),
+        "a stalled request did not give up as unreachable: {answers:?}"
+    );
+    assert!(
+        took < DEADLINE * 4,
+        "five requests with a {DEADLINE:?} deadline took {took:?}: one waited for a slot past it"
+    );
+    drop(held);
+}
+
+/// A rotation whose waiter was dropped — a crossing that polls once gave up on
+/// it — still lands, and then every credential for the account answers at its
+/// first poll with it: the one that started it, whose own copy was never
+/// replaced by the waiter it lost, and another built from the store before the
+/// rotation. Without that, each would start a rotation of its own at every
+/// first poll, and a crossing that polls once would refuse it every time.
+#[test]
+fn a_rotation_whose_waiter_was_dropped_answers_every_credential_at_its_first_poll() {
+    let expires = now() + 3600;
+    let fresh = jwt(&serde_json::json!({ "exp": expires }));
+    let (base, requests, server) = holding_server(
+        tokens("unused-canary", "refresh-new", "account-old", expires),
+        Duration::from_millis(200),
+    );
+    let runtime = runtime();
+    let renewals = renewing(&runtime);
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewals));
+    let scratch = Scratch::new("dropped-waiter");
+    let store = Store::in_home(scratch.path());
+    expired(&store);
+    let started = oauth.credential(&store.read()).unwrap();
+    let other = oauth.credential(&store.read()).unwrap();
+
+    let mut dropped = Outgoing::new();
+    assert!(
+        matches!(
+            started
+                .authorize(&mut dropped)
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ),
+        "a renewal answered at its first poll"
+    );
+    requests.recv_timeout(PATIENCE).unwrap();
+    assert_eq!(renewals.join_within(PATIENCE), Ok(()));
+
+    for credential in [&started, &other] {
+        let mut outgoing = Outgoing::new();
+        authorized(credential.authorize(&mut outgoing)).unwrap();
+        assert_eq!(
+            header(&outgoing, "authorization"),
+            Some(format!("Bearer {fresh}"))
+        );
+    }
+    assert!(requests.try_recv().is_err(), "a second rotation was sent");
+    drop(server);
 }

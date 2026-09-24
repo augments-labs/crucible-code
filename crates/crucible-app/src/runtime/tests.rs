@@ -112,3 +112,47 @@ async fn through_a_pipe() -> io::Result<[u8; 1]> {
         }
     }
 }
+
+/// Work the run owns can talk over a socket: a task spawned onto the runtime
+/// connects, and is woken when its peer has said something. A runtime built
+/// without its I/O driver refuses the connection outright, saying I/O is
+/// disabled.
+#[test]
+fn a_socket_in_work_on_the_runtime_makes_progress() {
+    use std::io::Write as _;
+
+    let owner = RuntimeOwner::new();
+    let runtime = owner.handle().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.write_all(b"ping").unwrap();
+    });
+
+    let heard = runtime.block_on(runtime.spawn(async move {
+        let stream = tokio::net::TcpStream::connect(address).await?;
+        let mut said = Vec::new();
+        let mut more = [0_u8; 4];
+        while said.len() < more.len() {
+            stream.readable().await?;
+            match stream.try_read(&mut more) {
+                Ok(0) => break,
+                Ok(read) => said.extend(more.iter().take(read)),
+                Err(problem) if problem.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(problem) => return Err(problem),
+            }
+        }
+        Ok::<_, std::io::Error>(said)
+    }));
+    peer.join().unwrap();
+
+    assert_eq!(
+        heard
+            .map(|read| read.map_err(|problem| problem.to_string()))
+            .map_err(|failed| failed.to_string()),
+        Ok(Ok(b"ping".to_vec())),
+        "a socket in a task on the runtime made no progress"
+    );
+    assert_eq!(owner.shutdown(), Ok(()));
+}

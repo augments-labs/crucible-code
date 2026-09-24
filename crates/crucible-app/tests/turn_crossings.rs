@@ -23,7 +23,12 @@
 //! than told apart from shipped code by a reading of the source, which can
 //! only err by hiding one. The runner cannot name the application, which the
 //! crate graph forbids, so the one waiting crossing the application makes is
-//! outside every turn it waits for.
+//! outside every turn it waits for. The other waiting crossing is an account
+//! login's, which `crucible-auth` takes on the thread a login runs on to wait
+//! for each of its requests; a turn reaches that crate only through a
+//! credential, whose renewal is a task of its own that nothing crosses to
+//! wait for, so the crossing is named once, in the owner of renewals, and
+//! nowhere a credential's authorization runs.
 //!
 //! What is looked for is the name itself, which no import can hide: a
 //! `block_on` is a method or a function named that, and a waiting entry is
@@ -347,9 +352,13 @@ fn waiting_entries() -> Vec<String> {
 }
 
 #[test]
-fn the_only_waiting_crossing_is_the_application_s_around_a_turn() {
+fn the_waiting_crossings_are_the_application_s_around_a_turn_and_a_login_s_around_its_requests() {
     let waiting = waiting_entries();
-    assert_eq!(waiting, ["AppTurn"], "the ledger's waiting entries changed");
+    assert_eq!(
+        waiting,
+        ["AppTurn", "AccountLogin"],
+        "the ledger's waiting entries changed"
+    );
 
     let mut crossed: Vec<(String, String)> = Vec::new();
     for (path, text) in shipped() {
@@ -357,19 +366,31 @@ fn the_only_waiting_crossing_is_the_application_s_around_a_turn() {
             continue;
         }
         for line in code(&text) {
-            if waiting.iter().any(|entry| names(line, entry)) {
-                crossed.push((path.clone(), line.to_owned()));
+            for entry in waiting.iter().filter(|entry| names(line, entry)) {
+                crossed.push((path.clone(), entry.clone()));
             }
         }
     }
 
+    // Each line naming an entry is one pair, so an entry named twice in a
+    // file is seen twice. The entry is recorded rather than the line, since
+    // a line written here that names a bridge by its path would read, to the
+    // bridge ledger's own check, as this crate crossing it.
+    crossed.sort();
     assert_eq!(
         crossed,
-        [(
-            "crates/crucible-app/src/conversation.rs".to_owned(),
-            "Bridge::AppTurn".to_owned()
-        )],
+        [
+            (
+                "crates/crucible-app/src/conversation.rs".to_owned(),
+                "AppTurn".to_owned()
+            ),
+            (
+                "crates/crucible-auth/src/oauth/renewal.rs".to_owned(),
+                "AccountLogin".to_owned()
+            ),
+        ],
         "a waiting crossing is named somewhere other than the conversation's one wait around a \
-         whole turn, where a turn could reach it"
+         whole turn and a login's one wait around each of its requests, where a turn could \
+         reach it"
     );
 }

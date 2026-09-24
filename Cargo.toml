@@ -46,6 +46,7 @@ crucible-context = { path = "crates/crucible-context" }
 crucible-core = { path = "crates/crucible-core" }
 crucible-credentials = { path = "crates/crucible-credentials" }
 crucible-extension = { path = "crates/crucible-extension" }
+crucible-http = { path = "crates/crucible-http" }
 crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-models = { path = "crates/crucible-models" }
 crucible-privacy = { path = "crates/crucible-privacy" }

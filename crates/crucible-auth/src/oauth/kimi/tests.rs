@@ -2,7 +2,7 @@ use super::*;
 use crate::oauth::PATIENCE;
 
 use std::collections::BTreeMap;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::task::{Context, Poll, Waker};
@@ -10,8 +10,8 @@ use std::thread;
 
 use crucible_core::{Authorization, Outgoing};
 
-/// Polls `authorizing` once and panics if it was not ready: every credential
-/// this crate ships answers at its first poll.
+/// Polls `authorizing` once and panics if it was not ready: a credential with
+/// nothing to renew answers at its first poll.
 fn authorized(authorizing: Authorization<'_>) -> Result<(), CredentialError> {
     let mut authorizing = authorizing;
     match authorizing
@@ -21,6 +21,23 @@ fn authorized(authorizing: Authorization<'_>) -> Result<(), CredentialError> {
         Poll::Ready(answer) => answer,
         Poll::Pending => panic!("the credential would have had to wait"),
     }
+}
+
+/// The runtime a test's renewals and login requests run on, shaped as the
+/// application's: several workers, a clock and sockets.
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+/// An owner of renewals that runs them on `runtime`.
+fn renewing(runtime: &tokio::runtime::Runtime) -> Renewals {
+    let renewals = Renewals::new();
+    renewals.runs_on(runtime.handle().clone());
+    renewals
 }
 
 struct Scratch(PathBuf);
@@ -141,7 +158,8 @@ fn device_login_uses_crucibles_identity_and_persists_before_completion() {
     });
     let scratch = Scratch::new("device");
     let store = Store::in_home(scratch.path());
-    let oauth = KimiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = KimiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
 
     let attempt = oauth.start(KimiOAuth::DEVICE, store.clone()).unwrap();
     let authorize = attempt.wait(PATIENCE).unwrap().unwrap();
@@ -215,10 +233,18 @@ fn production_browser_addresses_are_separate_from_the_token_service() {
             .to_string(),
         )]
     });
-    let flow = Flow::at(&base, VERIFY, PATIENCE, PATIENCE, Duration::from_millis(1));
+    let runtime = runtime();
+    let flow = Flow::at(
+        renewing(&runtime),
+        &base,
+        VERIFY,
+        PATIENCE,
+        PATIENCE,
+        Duration::from_millis(1),
+    );
     let identity = Identity::new("01234567-89ab-4cde-8fab-0123456789ab".to_owned()).unwrap();
 
-    let device = flow.request_device(&identity).unwrap();
+    let device = runtime.block_on(flow.request_device(&identity)).unwrap();
 
     let request = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
@@ -258,7 +284,8 @@ fn renewal_keeps_the_installation_identity() {
             .to_string(),
         )]
     });
-    let oauth = KimiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = KimiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
     let scratch = Scratch::new("refresh");
     let store = Store::in_home(scratch.path());
     store
@@ -273,7 +300,9 @@ fn renewal_keeps_the_installation_identity() {
     let credential = oauth.credential(&store.read()).unwrap();
     let scope = credential.scope();
     let mut outgoing = Outgoing::new();
-    authorized(credential.authorize(&mut outgoing)).unwrap();
+    runtime
+        .block_on(credential.authorize(&mut outgoing))
+        .unwrap();
     assert_eq!(credential.scope(), scope);
 
     let sent = requests.recv_timeout(PATIENCE).unwrap();
@@ -299,8 +328,9 @@ fn authorize_answers_at_its_first_poll_when_nothing_needs_renewing() {
     // renewal, even though nothing here has anything to wait for.
     const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
     // Nothing here is ever dialed: the token is fresh, so `needs_refresh` is
-    // false and the flow's address is never read.
-    let oauth = KimiOAuth::testing(Flow::testing("http://127.0.0.1:1"));
+    // false and the flow's address is never read. The owner has no runtime,
+    // so a renewal started here would be refused rather than pend.
+    let oauth = KimiOAuth::testing(Flow::testing("http://127.0.0.1:1", &Renewals::new()));
     let scratch = Scratch::new("fresh-token");
     let store = Store::in_home(scratch.path());
     store
@@ -326,23 +356,16 @@ fn authorize_answers_at_its_first_poll_when_nothing_needs_renewing() {
     );
 }
 
-/// The renewal is not owned work yet, so it must never run where a runtime
-/// could offer it a worker task: everything it does — the cross-process lock,
-/// the network call — runs inside this future's one poll, and a worker task
-/// blocked there is exactly what making it owned work exists to fix. Until
-/// then, polling from a worker refuses instead of running, proven here by
-/// actually polling from one rather than trusting the call site, and by
-/// checking what the refusal actually left behind rather than a timing
-/// window or a channel that would report nothing either way.
+/// A renewal is a rotation its owner runs as a task of its own, and an
+/// authorization only waits for it, so one polled as a runtime worker task
+/// waits the way any task does — without holding the worker — and completes,
+/// keeping the installation's identity. It used to refuse there with a typed
+/// error, because the renewal then ran inside the poll: this is that test,
+/// inverted. The server really renews, so the store's bytes say whether the
+/// rotation was written.
 #[test]
-fn renewal_refuses_when_polled_as_a_runtime_task_and_touches_neither_lock_nor_store() {
+fn a_renewal_awaited_from_a_runtime_task_completes_and_writes_its_rotation() {
     const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
-    // A server that would actually renew the credential if it were ever
-    // reached: a missing or misplaced guard then rewrites the store with
-    // these fresh tokens, which the byte comparison below would catch. An
-    // address nothing answers cannot prove this — the store would stay
-    // unchanged whether or not the guard ran, because the renewal itself
-    // would fail before writing anything.
     let (base, requests, server) = server(|_| {
         vec![(
             200,
@@ -354,8 +377,9 @@ fn renewal_refuses_when_polled_as_a_runtime_task_and_touches_neither_lock_nor_st
             .to_string(),
         )]
     });
-    let oauth = KimiOAuth::testing(Flow::testing(&base));
-    let scratch = Scratch::new("worker-refusal");
+    let runtime = runtime();
+    let oauth = KimiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("worker-renewal");
     let store = Store::in_home(scratch.path());
     store
         .keep_subscription(
@@ -366,48 +390,39 @@ fn renewal_refuses_when_polled_as_a_runtime_task_and_touches_neither_lock_nor_st
         )
         .unwrap();
     let credential = oauth.credential(&store.read()).unwrap();
-    let store_path = scratch.path().join("auth.json");
-    let lock_path = scratch.path().join("auth.lock");
-    let store_before = std::fs::read(&store_path).unwrap();
-    // `keep_subscription` already took and released this lock file, which
-    // leaves it present but empty either way — its bytes cannot say whether
-    // the poll below touched it. Removed here so its *presence* after the
-    // poll is the signal: `Lock::take` recreates it with `O_CREAT` the
-    // moment anything takes it again.
-    std::fs::remove_file(&lock_path).unwrap();
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
-    let refused = runtime.block_on(async move {
+    let answered = runtime.block_on(async move {
         tokio::spawn(async move {
             let mut outgoing = Outgoing::new();
-            authorized(credential.authorize(&mut outgoing))
+            credential.authorize(&mut outgoing).await.map(|()| {
+                outgoing
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect::<BTreeMap<_, _>>()
+            })
         })
         .await
         .unwrap()
     });
 
-    assert!(
-        matches!(refused, Err(CredentialError::RenewalOnWorker)),
-        "polling the renewal from a worker task did not refuse with the typed error: {refused:?}"
+    let headers = answered.unwrap_or_else(|problem| {
+        panic!("an authorization polled as a runtime worker task did not complete: {problem}")
+    });
+    assert_eq!(
+        headers.get("authorization").map(String::as_str),
+        Some("Bearer access-fresh")
     );
     assert_eq!(
-        std::fs::read(&store_path).unwrap(),
-        store_before,
-        "a refused renewal rewrote the store with the server's fresh tokens"
+        headers.get("x-msh-device-id").map(String::as_str),
+        Some(STABLE)
     );
-    assert!(
-        !lock_path.exists(),
-        "a refused renewal recreated the lock file"
-    );
-    assert!(
-        requests.try_recv().is_err(),
-        "a refused renewal reached the token server"
-    );
-    // The server thread is blocked in `accept` forever when the guard holds
-    // (as it should here): nothing to join, since nothing was ever sent.
-    drop(server);
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert!(sent.body.contains("refresh-old"));
+    assert_eq!(sent.headers.get("x-msh-device-id").unwrap(), STABLE);
+    let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
+    assert!(text.contains("refresh-fresh") && !text.contains("refresh-old"));
 }
 
 #[test]
@@ -430,7 +445,7 @@ fn identity_and_tokens_are_redacted_from_debug() {
 
 #[test]
 fn an_unknown_method_is_rejected_before_a_worker_starts() {
-    let oauth = KimiOAuth::new();
+    let oauth = KimiOAuth::new(Renewals::new());
     let scratch = Scratch::new("method");
     let problem = oauth
         .start(LoginMethod::new("browser"), Store::in_home(scratch.path()))

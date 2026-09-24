@@ -40,8 +40,7 @@ use crucible_app::AppError;
 use crucible_app::providers::{
     Providers, Served, available, chosen, opening_unasked, providers, re_serving,
 };
-use crucible_app::runtime::Unstopped;
-use crucible_app::services::Services;
+use crucible_app::services::{Services, Unfinished};
 use crucible_app::startup::{self, Startup, assemble, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
@@ -477,7 +476,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
 fn leaving_first<L, T>(
     registry: impl FnOnce() -> L,
     session: impl FnOnce(&Services, &L) -> T,
-) -> (T, Result<(), Unstopped>) {
+) -> (T, Result<(), Unfinished>) {
     crucible_app::services::serving(|services| {
         let leaving = registry();
         session(services, &leaving)
@@ -521,7 +520,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // ever an alternative to an exported variable must not be what ends a run
     // that never needed it.
     let keys = Store::in_home(home.path()).read();
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
     // `.crucible/config.json` is looked for in the directory crucible was

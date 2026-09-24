@@ -219,22 +219,27 @@ impl Store {
         self.write(&document)
     }
 
-    /// Refreshes one provider's current rotation while holding the store lock.
+    /// Takes the store lock for one provider's rotation and rereads the
+    /// rotation inside it: the first half of a renewal.
     ///
     /// Reading the latest rotation after taking the lock is what prevents two
-    /// processes from presenting the same one-use refresh token. The network
-    /// request is deliberately inside the lock: another process waits or
-    /// fails visibly rather than invalidating the rotation in flight.
-    pub(crate) fn refresh_subscription(
+    /// processes from presenting the same one-use refresh token. A rotation no
+    /// longer due — another process renewed it first — comes back with the
+    /// lock released. One still due comes back holding the lock, which the
+    /// caller keeps across its request and releases only by writing the new
+    /// rotation ([`Rotating::persist`]) or dropping it: another process waits
+    /// or fails visibly rather than invalidating the rotation in flight.
+    ///
+    /// Blocking: taking the lock waits up to 5 s, and the reread is file work.
+    pub(crate) fn take_rotation(
         &self,
         provider: &str,
         needs_refresh: impl Fn(&Tokens, u64) -> bool,
-        refresh: impl FnOnce(&Tokens) -> Result<Tokens, OAuthError>,
-    ) -> Result<Tokens, OAuthError> {
+    ) -> Result<Taken, OAuthError> {
         self.directory()?;
-        let _held = Lock::take(&self.home.join(LOCK), &self.path)?;
+        let lock = Lock::take(&self.home.join(LOCK), &self.path)?;
         let _secured = self.secure_existing()?;
-        let mut document = match self.read_text()? {
+        let document = match self.read_text()? {
             Some(text) => document::parse(&text).map_err(|_| AuthError::Unreadable {
                 path: self.path.clone(),
             })?,
@@ -246,15 +251,16 @@ impl Store {
             .cloned()
             .ok_or(OAuthError::SignedOut)?;
         if !needs_refresh(&current, document::now()) {
-            return Ok(current);
+            return Ok(Taken::Fresh(current));
         }
 
-        let fresh = refresh(&current)?;
-        document
-            .subscriptions
-            .insert(provider.to_owned(), fresh.clone());
-        self.write(&document)?;
-        Ok(fresh)
+        Ok(Taken::Due(Rotating {
+            store: self.clone(),
+            provider: provider.to_owned(),
+            document,
+            current,
+            _lock: lock,
+        }))
     }
 
     /// Replaces the complete protected document after its caller took the
@@ -321,6 +327,47 @@ impl Store {
         }
 
         Ok(Some(text))
+    }
+}
+
+/// What taking a rotation found.
+pub(crate) enum Taken {
+    /// The rotation the store holds is not due, and the lock is released.
+    Fresh(Tokens),
+    /// It is due, and the lock is held until it is replaced.
+    Due(Rotating),
+}
+
+/// A rotation being replaced, holding the store lock until it is.
+///
+/// The lock is a file held open rather than a guard of a mutex, so holding it
+/// across the request that renews the rotation blocks no thread; dropping it,
+/// on any path, releases it.
+pub(crate) struct Rotating {
+    store: Store,
+    provider: String,
+    /// The whole document as it was read inside the lock, which nothing else
+    /// can have changed since.
+    document: Document,
+    current: Tokens,
+    _lock: Lock,
+}
+
+impl Rotating {
+    /// The rotation being replaced.
+    pub(crate) fn current(&self) -> &Tokens {
+        &self.current
+    }
+
+    /// Writes `fresh` in place of the rotation, then releases the lock.
+    ///
+    /// Blocking: the write is synced to the disk before the rename.
+    pub(crate) fn persist(mut self, fresh: Tokens) -> Result<Tokens, AuthError> {
+        self.document
+            .subscriptions
+            .insert(self.provider.clone(), fresh.clone());
+        self.store.write(&self.document)?;
+        Ok(fresh)
     }
 }
 
