@@ -337,8 +337,12 @@ fn approved(grep: &Grep, args: ToolArgs, engine: &mut Permission) -> Result<Appr
     struct Nobody;
 
     impl Ask for Nobody {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Deny, Remember::Never)
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+            Box::pin(async { (Verdict::Deny, Remember::Never) })
         }
     }
 
@@ -348,7 +352,7 @@ fn approved(grep: &Grep, args: ToolArgs, engine: &mut Permission) -> Result<Appr
         args,
     };
 
-    match engine.decide(&call, &grep.sensitivity(&call.args), &mut Nobody) {
+    match Bridge::Probes.cross(engine.decide(&call, &grep.sensitivity(&call.args), &mut Nobody))? {
         Settled::Approved(approved) => Ok(approved),
         Settled::Forbidden | Settled::Refused => Err(Problem::NoGrant),
     }

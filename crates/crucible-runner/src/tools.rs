@@ -433,7 +433,9 @@ mod tests {
         let sensitivity = entry.tool().sensitivity(&call.args);
         let mut permission = Permission::new();
         let mut ask = Says::new(Verdict::Allow);
-        let Settled::Approved(approved) = permission.decide(&call, &sensitivity, &mut ask) else {
+        let Settled::Approved(approved) =
+            crucible_runtime::answered!(permission.decide(&call, &sensitivity, &mut ask))
+        else {
             panic!("the read-only fixture was not approved");
         };
 
@@ -577,9 +579,11 @@ mod tests {
         let sensitivity = entry.tool().sensitivity(&call.args);
         let mut permission = Permission::new();
         let mut ask = Says::new(Verdict::Allow);
-        let Settled::Approved(approved) =
-            permission.decide_admitted(&admission, &sensitivity, &mut ask)
-        else {
+        let Settled::Approved(approved) = crucible_runtime::answered!(permission.decide_admitted(
+            &admission,
+            &sensitivity,
+            &mut ask
+        )) else {
             panic!("the admitted read-only fixture was not approved");
         };
         revealed.forget();

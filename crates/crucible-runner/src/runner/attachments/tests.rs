@@ -42,13 +42,13 @@ fn permitted(workspace: &Workspace) -> Approved {
         name: "read".into(),
         args: ToolArgs::new("{}"),
     };
-    let settled = Permission::new().decide(
+    let settled = crucible_runtime::answered!(Permission::new().decide(
         &call,
         &Sensitivity::ReadOnly {
             target: Target::resolved(workspace, &from),
         },
         &mut Says::new(Verdict::Allow),
-    );
+    ));
 
     let Settled::Approved(approved) = settled else {
         panic!("a read is allowed without a question")
