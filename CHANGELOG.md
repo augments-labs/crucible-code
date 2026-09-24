@@ -193,6 +193,16 @@ change in any release with no deprecation period.
   probes build their own runtime and lend the calls they time a worker, so
   `Bridge::Probes` is gone. No call is lent a worker yet, so nothing a user
   runs behaves differently.
+- **MCP servers are started, greeted and called asynchronously.** A call to an
+  MCP tool no longer holds a thread while its server thinks, and a sandbox step
+  of a server's start that waits is given up on at its `handshakeSeconds`, or
+  sooner when the turn is cancelled, holding the server as unconfirmed cleanup
+  as a refused step was. A call or a
+  start given up on part way leaves its server asked nothing further and
+  stopped by the next call to it, the next preparation or disposal;
+  `Bridge::McpHosting` is gone, and `crucible-mcp` gains `hello_async`,
+  `tools_async` and `Hosted`'s `greet_async`, `catalogue_async` and
+  `call_async`.
 
 ### Fixed
 

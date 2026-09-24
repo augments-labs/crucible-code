@@ -27,8 +27,8 @@ fn failed_preparation(script: Answers, required: bool, expected_cause: &str) {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    let error = crucible_runtime::answered!(hosting.prepare(&context))
-        .expect_err("uncertain cleanup is never optional");
+    let error =
+        awaited(hosting.prepare(&context)).expect_err("uncertain cleanup is never optional");
     let message = error.to_string();
     assert!(message.contains("broken"), "{message}");
     assert!(message.contains(expected_cause), "{message}");
@@ -37,14 +37,14 @@ fn failed_preparation(script: Answers, required: bool, expected_cause: &str) {
     assert_eq!(sandbox.server(0).stops(), 1, "earlier peers are stopped");
     assert_eq!(sandbox.server(1).stop_attempts.load(Ordering::Relaxed), 1);
     assert!(
-        crucible_runtime::answered!(hosting.snapshot(&context))
+        awaited(hosting.snapshot(&context))
             .unwrap()
             .entries()
             .is_empty()
     );
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert_eq!(sandbox.started(), 2);
 }
 
@@ -98,8 +98,8 @@ fn failed_restart_handshake_retains_unconfirmed_cleanup() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
+    let snapshot = awaited(hosting.snapshot(&context)).unwrap();
     let entry = snapshot.find("mcp:docs/search").unwrap();
     sandbox.server(0).departs();
     let error = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new()).unwrap_err();
@@ -110,9 +110,9 @@ fn failed_restart_handshake_retains_unconfirmed_cleanup() {
     );
     assert_eq!(sandbox.started(), 2);
     assert_eq!(sandbox.server(1).stop_attempts.load(Ordering::Relaxed), 1);
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert_eq!(sandbox.started(), 2);
 }
 
@@ -139,7 +139,7 @@ fn unfinished_after_a_bad_catalogue(stop: Stop) -> (String, Arc<Watched>) {
         vec![optional("broken")],
         crate::testing::runtime(),
     );
-    let error = crucible_runtime::answered!(hosting.prepare(&lifecycle()))
+    let error = awaited(hosting.prepare(&lifecycle()))
         .expect_err("a server whose stop is not confirmed is never passed over");
     (error.to_string(), sandbox.server(0))
 }
@@ -201,7 +201,7 @@ fn optional_bad_greeting_with_confirmed_cleanup_still_allows_later_server() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
     assert_eq!(sandbox.started(), 2);
     assert_eq!(
         sandbox.server(0).stops(),
@@ -209,34 +209,13 @@ fn optional_bad_greeting_with_confirmed_cleanup_still_allows_later_server() {
         "cleanup confirmed before continuing"
     );
     assert!(
-        crucible_runtime::answered!(hosting.snapshot(&context))
+        awaited(hosting.snapshot(&context))
             .unwrap()
             .find("mcp:later/search")
             .is_some()
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).unwrap();
-    crucible_runtime::answered!(hosting.dispose(&context)).unwrap();
-}
-
-/// The refusal somewhere beneath `error`, however it was carried.
-///
-/// An [`io::Error`] hides the error it holds from `source`, so the walk looks
-/// inside one before stepping past it.
-fn refusal(error: &(dyn std::error::Error + 'static)) -> Option<crucible_runtime::Unready> {
-    let mut next = Some(error);
-    while let Some(link) = next {
-        if let Some(unready) = link.downcast_ref::<crucible_runtime::Unready>() {
-            return Some(*unready);
-        }
-        next = match link
-            .downcast_ref::<io::Error>()
-            .and_then(io::Error::get_ref)
-        {
-            Some(inner) => Some(inner as &(dyn std::error::Error + 'static)),
-            None => link.source(),
-        };
-    }
-    None
+    awaited(hosting.dispose(&context)).unwrap();
+    awaited(hosting.dispose(&context)).unwrap();
 }
 
 /// The one step of a start that is never answered.
@@ -248,7 +227,7 @@ enum Waits {
 }
 
 /// A sandbox whose start never gets past one step: that step's future is
-/// pending forever, so dropping it is all a caller that cannot wait can do.
+/// pending forever, so giving it up is all a caller can do.
 struct Waiting {
     at: Waits,
     /// How many preparations it was asked for.
@@ -309,11 +288,14 @@ impl SandboxSession for Unanswered {
     }
 }
 
-/// Prepares `server` over a sandbox that never answers step `at`.
+/// Prepares `server` over a sandbox that never answers step `at`, and gives the
+/// preparation up once it has waited a while.
 ///
-/// Whatever the dropped step had begun is not known to be undone, since no
-/// sandbox contract says what dropping a step leaves: so the server is held as
-/// unconfirmed cleanup, required or not, and the refusal comes back as itself.
+/// Nothing but the lifecycle's cancel ends a step that never answers, and the
+/// step is dropped there. Whatever the dropped step had begun is not known to
+/// be undone, since no sandbox contract says what dropping a step leaves: so
+/// the server is held as unconfirmed cleanup, required or not, and the refusal
+/// says which step was given up on.
 fn unanswered(at: Waits, server: Chosen) {
     let name = server.name.clone();
     let sandbox = Arc::new(Waiting {
@@ -326,22 +308,35 @@ fn unanswered(at: Waits, server: Chosen) {
         vec![server],
         crate::testing::runtime(),
     );
-    let context = lifecycle();
-    let Err(error) = crucible_runtime::answered!(hosting.prepare(&context)) else {
+    let cancel = Cancel::new();
+    let context = ToolsetContext::new(Ancestry::new(), cancel.clone(), None);
+    let raising = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        cancel.request();
+    });
+    let began = Instant::now();
+    let Err(error) = awaited(hosting.prepare(&context)) else {
         panic!("{at:?}: a dropped step confirms no cleanup, so its server cannot be left out");
     };
-    assert_eq!(
-        refusal(&error).map(|unready| unready.bridge()),
-        Some(crucible_runtime::Bridge::McpHosting),
-        "{at:?}: the refusal is carried as itself, not as its words: {error:?}",
+    let waited = began.elapsed();
+    raising.join().expect("the cancel was raised");
+
+    assert!(
+        waited < Duration::from_secs(5),
+        "{at:?}: a step that never answers is given up on when the cancel is raised: {waited:?}"
     );
-    assert!(error.to_string().contains(&*name), "{at:?}: {error}");
+    let said = error.to_string();
+    assert!(said.contains(&*name), "{at:?}: {said}");
+    assert!(
+        said.contains("crucible stopped waiting while") && said.contains("unconfirmed"),
+        "{at:?}: the refusal says the step was given up on and what that leaves: {said}"
+    );
     for _ in 0..2 {
-        let disposed = crucible_runtime::answered!(hosting.dispose(&context))
+        let disposed = awaited(hosting.dispose(&context))
             .expect_err("disposal reports the cleanup nobody confirmed");
         assert!(disposed.to_string().contains("unconfirmed"), "{disposed}");
     }
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert_eq!(
         sandbox.asked.load(Ordering::Relaxed),
         1,
@@ -365,16 +360,87 @@ fn optional_server_whose_start_never_answers_is_held_unconfirmed() {
 }
 
 #[test]
-fn required_server_whose_preparation_never_answers_keeps_the_refusal_typed() {
+fn required_server_whose_preparation_never_answers_is_held_unconfirmed() {
     unanswered(Waits::Preparing, chosen("docs"));
 }
 
 #[test]
-fn required_server_whose_materialization_never_answers_keeps_the_refusal_typed() {
+fn required_server_whose_materialization_never_answers_is_held_unconfirmed() {
     unanswered(Waits::Materializing, chosen("docs"));
 }
 
 #[test]
-fn required_server_whose_start_never_answers_keeps_the_refusal_typed() {
+fn required_server_whose_start_never_answers_is_held_unconfirmed() {
     unanswered(Waits::Starting, chosen("docs"));
+}
+
+/// Prepares `server` over a sandbox that never answers step `at`, with nobody
+/// raising the lifecycle's cancel.
+///
+/// The step is given up on at the server's handshake patience, which is a
+/// step given up on all the same: the server is held as unconfirmed cleanup,
+/// and the refusal says how long was waited.
+fn unanswered_with_nobody_cancelling(at: Waits, server: Chosen) {
+    let name = server.name.clone();
+    let patience = server.handshake();
+    let sandbox = Arc::new(Waiting {
+        at,
+        asked: AtomicUsize::new(0),
+    });
+    let hosting = Hosting::new(
+        builtin(&[]),
+        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+        vec![server],
+        crate::testing::runtime(),
+    );
+    let context = lifecycle();
+    let guard = Cancel::new().child_until(Instant::now().checked_add(Duration::from_secs(5)));
+    let began = Instant::now();
+    let prepared = crate::testing::runtime().block_on(guard.race(hosting.prepare(&context)));
+    let waited = began.elapsed();
+
+    let Some(Err(error)) = prepared else {
+        panic!(
+            "{at:?}: a step that never answers is given up on at the handshake patience with no \
+             cancel raised; after {waited:?} it came to {prepared:?}"
+        );
+    };
+    assert!(
+        waited >= patience && waited < Duration::from_secs(3),
+        "{at:?}: given up on after {waited:?}"
+    );
+    let said = error.to_string();
+    assert!(said.contains(&*name), "{at:?}: {said}");
+    assert!(
+        said.contains(&format!(
+            "crucible stopped waiting after {patience:?} while"
+        )) && said.contains("unconfirmed"),
+        "{at:?}: the refusal says how long was waited and what that leaves: {said}"
+    );
+    for _ in 0..2 {
+        let disposed = awaited(hosting.dispose(&context))
+            .expect_err("disposal reports the cleanup nobody confirmed");
+        assert!(disposed.to_string().contains("unconfirmed"), "{disposed}");
+    }
+    assert!(awaited(hosting.prepare(&context)).is_err());
+    assert_eq!(
+        sandbox.asked.load(Ordering::Relaxed),
+        1,
+        "{at:?}: nothing after it"
+    );
+}
+
+#[test]
+fn a_preparation_that_never_answers_is_given_up_on_at_the_handshake_patience() {
+    unanswered_with_nobody_cancelling(Waits::Preparing, optional("notes"));
+}
+
+#[test]
+fn a_materialization_that_never_answers_is_given_up_on_at_the_handshake_patience() {
+    unanswered_with_nobody_cancelling(Waits::Materializing, chosen("docs"));
+}
+
+#[test]
+fn a_start_that_never_answers_is_given_up_on_at_the_handshake_patience() {
+    unanswered_with_nobody_cancelling(Waits::Starting, optional("notes"));
 }

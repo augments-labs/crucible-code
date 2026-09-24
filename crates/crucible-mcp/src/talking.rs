@@ -28,7 +28,8 @@
 //! [`Talking::ask_async`] and [`Talking::tell_async`]. Both number calls from
 //! one count and hand every frame to one reading of it, so a server is
 //! answered, refused and reported on the same way whichever kind of stream it
-//! is heard over. The blocking kind stays until MCP hosting is asynchronous.
+//! is heard over. Hosting a server awaits it; the blocking kind stays until
+//! the transport's own blocking kind is removed.
 
 use std::io::{self, BufRead, Write};
 use std::time::Duration;

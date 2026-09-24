@@ -91,6 +91,12 @@ enum Step {
     Says(String),
     /// It has nothing yet, and its writer is still there.
     Waits,
+    /// It has nothing for this long, counted from when it is first asked, and
+    /// its writer is still there.
+    ///
+    /// Real time rather than a count of asks, because what it has to exercise
+    /// is a silence measured against a clock.
+    Holds(Duration),
     /// It waits a moment, and then has a byte that finishes nothing.
     ///
     /// A silence is measured between bytes, so a run of these is never quiet
@@ -105,13 +111,22 @@ enum Step {
 /// never runs out.
 const TRICKLE: Duration = Duration::from_millis(20);
 
-/// A scripted stream that goes quiet forever once its script runs out.
-struct Says(VecDeque<Step>);
+/// A scripted stream that goes quiet forever once its script runs out, and
+/// when a [`Step::Holds`] it is in ends.
+struct Says(VecDeque<Step>, Option<Instant>);
 
 impl SandboxOutput for Says {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if let Some(Step::Holds(held)) = self.0.front() {
+            let due = *self.1.get_or_insert_with(|| Instant::now() + *held);
+            if Instant::now() < due {
+                return Ok(SandboxRead::Pending);
+            }
+            self.0.pop_front();
+            self.1 = None;
+        }
         match self.0.pop_front() {
-            None | Some(Step::Waits) => Ok(SandboxRead::Pending),
+            None | Some(Step::Waits | Step::Holds(_)) => Ok(SandboxRead::Pending),
             Some(Step::Trickles) => {
                 thread::sleep(TRICKLE);
                 match buffer.first_mut() {
@@ -221,7 +236,7 @@ impl Fake {
         let watched = Arc::new(Watched::default());
         (
             Box::new(Self {
-                stdout: Some(Says(steps.into_iter().collect())),
+                stdout: Some(Says(steps.into_iter().collect(), None)),
                 stderr: None,
                 speaks: true,
                 ending,
@@ -545,6 +560,7 @@ fn what_a_server_complained_about_survives_the_ending_that_it_explains() {
         [Step::Says("docs-mcp: no index at /srv/docs".to_owned())]
             .into_iter()
             .collect(),
+        None,
     ));
 
     let hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
@@ -686,4 +702,146 @@ fn missing_output_retains_failed_cleanup() {
     };
     assert!(matches!(*cause, Unstarted::Unheard));
     assert_eq!(cleanup.kind(), io::ErrorKind::Other);
+}
+
+#[test]
+fn a_catalogue_and_a_call_can_be_awaited_over_the_same_streams() {
+    let (fake, watched) = Fake::new(
+        [
+            Step::Says(greeted(newest())),
+            Step::Says(listed(2, &["search"])),
+            Step::Says(produced(3, "one match")),
+        ],
+        Ending::Exited,
+    );
+
+    let mut hosted = Hosted::over(fake, PATIENCE, &crate::testing::runtime())
+        .expect("a process with both pipes");
+    let (greeting, offered, answered) = crate::testing::runtime().block_on(async {
+        let greeting = hosted.greet_async(None).await.expect("an agreeable server");
+        let offered = hosted
+            .catalogue_async(&greeting, None)
+            .await
+            .expect("a catalogue within bounds");
+        let tool = offered
+            .first()
+            .expect("the server offered one tool")
+            .clone();
+        let answered = hosted
+            .call_async(&tool, &json!({"query": "sandbox"}), None)
+            .await
+            .expect("the server answered the call");
+        (greeting, offered, answered)
+    });
+
+    assert_eq!(greeting.version(), newest());
+    assert_eq!(
+        offered.iter().map(Offered::name).collect::<Vec<_>>(),
+        ["search"]
+    );
+    assert_eq!(answered.text(), "one match");
+    assert_eq!(
+        watched
+            .sent()
+            .iter()
+            .filter_map(|message| message.get("method").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        [
+            "initialize",
+            "notifications/initialized",
+            "tools/list",
+            "tools/call"
+        ],
+    );
+}
+
+#[test]
+fn an_awaited_handshake_nobody_is_waiting_for_any_more_ends_at_the_press() {
+    let patience = Duration::from_secs(5);
+    let (fake, _watched) = Fake::new([Step::Waits], Ending::Exited);
+    let cancel = Cancel::new();
+    cancel.request();
+    let mut hosted = Hosted::over(fake, patience, &crate::testing::runtime())
+        .expect("a process with both pipes");
+
+    let began = Instant::now();
+    let rebuffed = crate::testing::runtime()
+        .block_on(hosted.greet_async(Some(&cancel)))
+        .expect_err("a handshake that was called off is not a greeting");
+    let waited = began.elapsed();
+
+    assert!(
+        waited < patience / 2,
+        "an awaited handshake carries the press as a waited one does: {waited:?} against \
+         {rebuffed}"
+    );
+}
+
+#[test]
+fn an_awaited_exchange_ends_at_its_deadline_however_the_server_dribbles() {
+    let patience = Duration::from_millis(200);
+    let dribbling = TRICKLE * 100;
+    let (fake, _watched) = Fake::new(
+        std::iter::repeat_with(|| Step::Trickles).take(100),
+        Ending::Exited,
+    );
+    let mut hosted = Hosted::over(fake, patience, &crate::testing::runtime())
+        .expect("a process with both pipes");
+
+    let began = Instant::now();
+    let refused = crate::testing::runtime()
+        .block_on(hosted.greet_async(None))
+        .expect_err("a server that never finishes a frame is not a greeting");
+    let waited = began.elapsed();
+
+    assert!(
+        waited < dribbling / 2,
+        "the awaited exchange ran to the end of what the server was willing to dribble \
+         rather than to its own deadline: {waited:?} of a possible {dribbling:?}, against \
+         {refused}"
+    );
+}
+
+#[test]
+fn an_awaited_call_given_up_on_leaves_the_next_exchange_a_silence_of_its_own() {
+    // One silence is the patience; the call given up on sat through part of
+    // it; the next exchange is answered after more than what was left of it
+    // and less than the whole. Carried over, the next exchange is given up on
+    // for a silence it only sat through part of.
+    let patience = Duration::from_secs(2);
+    let given_up = Duration::from_millis(800);
+    let (fake, _watched) = Fake::new(
+        [
+            Step::Says(greeted(newest())),
+            Step::Says(listed(2, &["search"])),
+            Step::Holds(Duration::from_millis(2400)),
+            Step::Says(produced(4, "the second")),
+        ],
+        Ending::Exited,
+    );
+    let mut hosted = Hosted::over(fake, patience, &crate::testing::runtime())
+        .expect("a process with both pipes");
+
+    let answered = crate::testing::runtime().block_on(async {
+        let greeting = hosted.greet_async(None).await.expect("an agreeable server");
+        let offered = hosted
+            .catalogue_async(&greeting, None)
+            .await
+            .expect("a catalogue within bounds");
+        let tool = offered
+            .first()
+            .expect("the server offered one tool")
+            .clone();
+        let dropped =
+            tokio::time::timeout(given_up, hosted.call_async(&tool, &json!({}), None)).await;
+        assert!(dropped.is_err(), "the first call is given up on");
+        hosted.call_async(&tool, &json!({}), None).await
+    });
+
+    assert_eq!(
+        answered
+            .expect("the second exchange sits through a silence of its own")
+            .text(),
+        "the second"
+    );
 }

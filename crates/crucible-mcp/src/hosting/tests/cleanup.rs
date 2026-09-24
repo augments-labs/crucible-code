@@ -21,8 +21,8 @@ fn unconfirmed_cleanup_refuses_server_replacement() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
+    let snapshot = awaited(hosting.snapshot(&context)).unwrap();
     let entry = snapshot.find("mcp:docs/search").unwrap();
     sandbox.server(0).departs();
     let error = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new())
@@ -33,7 +33,7 @@ fn unconfirmed_cleanup_refuses_server_replacement() {
         calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new()),
         Err(ToolError::StaleGeneration { .. })
     ));
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
     assert_eq!(sandbox.started(), 1);
     assert_eq!(sandbox.server(0).stops(), 0);
 }
@@ -54,9 +54,9 @@ fn a_server_whose_writes_were_refused_says_so_and_can_be_started_again() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
 
-    let error = crucible_runtime::answered!(hosting.dispose(&context))
+    let error = awaited(hosting.dispose(&context))
         .expect_err("a refused publication is not a clean disposal");
 
     assert!(
@@ -64,10 +64,10 @@ fn a_server_whose_writes_were_refused_says_so_and_can_be_started_again() {
         "{error}"
     );
     assert_eq!(sandbox.server(0).stop_attempts.load(Ordering::Relaxed), 0);
-    crucible_runtime::answered!(hosting.prepare(&context))
+    awaited(hosting.prepare(&context))
         .expect("a server whose scope was reaped can be started again");
     assert_eq!(sandbox.started(), 2);
-    crucible_runtime::answered!(hosting.dispose(&context)).expect("the second one stopped");
+    awaited(hosting.dispose(&context)).expect("the second one stopped");
 }
 
 #[test]
@@ -85,8 +85,8 @@ fn unconfirmed_disposal_remains_failed_and_blocks_repreparation() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
+    awaited(hosting.prepare(&context)).unwrap();
+    assert!(awaited(hosting.dispose(&context)).is_err());
     assert_eq!(sandbox.server(0).stops(), 0);
     assert_eq!(
         sandbox.server(1).stops(),
@@ -94,17 +94,17 @@ fn unconfirmed_disposal_remains_failed_and_blocks_repreparation() {
         "every server must be attempted"
     );
     assert!(
-        crucible_runtime::answered!(hosting.snapshot(&context))
+        awaited(hosting.snapshot(&context))
             .unwrap()
             .entries()
             .is_empty()
     );
     assert!(
-        crucible_runtime::answered!(hosting.dispose(&context)).is_err(),
+        awaited(hosting.dispose(&context)).is_err(),
         "uncertainty is not completion"
     );
     assert_eq!(sandbox.server(0).stop_attempts.load(Ordering::Relaxed), 1);
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert_eq!(
         sandbox.started(),
         2,
@@ -127,15 +127,15 @@ fn unconfirmed_partial_preparation_cleanup_stays_owned() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    let error = crucible_runtime::answered!(hosting.prepare(&context)).unwrap_err();
+    let error = awaited(hosting.prepare(&context)).unwrap_err();
     assert!(error.to_string().contains("notes"));
     assert_eq!(sandbox.server(0).stop_attempts.load(Ordering::Relaxed), 1);
     assert!(
-        crucible_runtime::answered!(hosting.dispose(&context)).is_err(),
+        awaited(hosting.dispose(&context)).is_err(),
         "failed cleanup must remain visible"
     );
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert_eq!(sandbox.started(), 1);
     assert_eq!(sandbox.server(0).stop_attempts.load(Ordering::Relaxed), 1);
 }
@@ -154,8 +154,8 @@ fn rejected_catalogue_preserves_unconfirmed_replacement_cleanup() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
+    let snapshot = awaited(hosting.snapshot(&context)).unwrap();
     let entry = snapshot.find("mcp:docs/search").unwrap();
     sandbox.server(0).departs();
     let error = calls(entry.tool(), "mcp:docs/search", "{}", &Cancel::new()).unwrap_err();
@@ -170,9 +170,9 @@ fn rejected_catalogue_preserves_unconfirmed_replacement_cleanup() {
             .iter()
             .all(|frame| { frame.get("method").and_then(Value::as_str) != Some("tools/call") })
     );
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
-    assert!(crucible_runtime::answered!(hosting.dispose(&context)).is_err());
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.dispose(&context)).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert_eq!(sandbox.started(), 2);
     assert_eq!(sandbox.server(1).stop_attempts.load(Ordering::Relaxed), 1);
 }
@@ -194,8 +194,8 @@ fn a_server_whose_writes_were_refused_is_not_started_again_behind_that_call() {
         crate::testing::runtime(),
     );
     let context = lifecycle();
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
+    let snapshot = awaited(hosting.snapshot(&context)).unwrap();
     let entry = snapshot.find("mcp:docs/search").unwrap();
     sandbox.server(0).departs();
 
@@ -211,8 +211,7 @@ fn a_server_whose_writes_were_refused_is_not_started_again_behind_that_call() {
         1,
         "a server whose writes were refused was started again"
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).ok();
-    crucible_runtime::answered!(hosting.prepare(&context))
-        .expect("the next turn may start servers again");
+    awaited(hosting.dispose(&context)).ok();
+    awaited(hosting.prepare(&context)).expect("the next turn may start servers again");
     assert_eq!(sandbox.started(), 2);
 }

@@ -16,9 +16,10 @@ crucible-transport.workspace = true
 # What a confined process is, so a server can be hosted over one without this
 # crate knowing which backend confined it.
 crucible-sandbox.workspace = true
-# The cancellation a caller raises to stop waiting on a server mid-exchange,
-# the future a hosted toolset and its tools hand back, and the bridge starting a
-# server crosses while hosting is synchronous.
+# The cancellation a caller raises to stop waiting on a server mid-exchange or
+# on its sandbox while it starts, the future a hosted toolset and its tools hand
+# back, and the refusal a stop the transport dropped rather than wait on is
+# carried as.
 crucible-runtime.workspace = true
 # What a tool and a toolset are, so a server's catalogue can be published as a
 # generation the runner drives beside the built-in roster.
@@ -32,12 +33,13 @@ thiserror.workspace = true
 # `Handle`, the runtime a hosted server's streams are read and written on by
 # the transport's tasks, and `AsyncBufRead` and `AsyncWrite`, the streams a
 # conversation is awaited over. Named here only to be handed down and spoken
-# over: nothing in this crate spawns, builds or enters a runtime.
-tokio = { workspace = true, features = ["rt"] }
+# over: nothing in this crate spawns, builds or enters a runtime. `sync` is the
+# lock a hosted server's conversation is held under across an awaited
+# exchange, and a lifecycle's servers across their starting and stopping,
+# which a lock that blocks its thread cannot be held across.
+tokio = { workspace = true, features = ["rt", "sync"] }
 
-# `answered!`, which the tests ask a hosting's future once with.
 [dev-dependencies]
-crucible-runtime = { workspace = true, features = ["proof"] }
 # The runtime the tests hand a hosted server's streams to: its workers run the
 # transport's tasks while the test's own thread speaks to the server
 # synchronously or awaits a conversation on it, and it has the timer a

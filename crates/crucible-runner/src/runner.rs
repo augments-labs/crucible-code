@@ -938,12 +938,13 @@ impl Runner {
     /// line, and one that stopped its answer there is reported as the refusal,
     /// as any stop is.
     ///
-    /// A tool source's own step that would have had to wait and was dropped is
-    /// the source's failure, which [`TurnError::Toolset`] or
-    /// [`TurnError::ToolsetCleanup`] carries: it may come back as
-    /// [`ToolsetError::Unready`], or in the source's own words as
-    /// [`ToolsetError::Source`], and either way what that step began is
-    /// unconfirmed rather than undone. A cleanup step of the source's that
+    /// A tool source's own step that was dropped before it answered is the
+    /// source's failure, which [`TurnError::Toolset`] or
+    /// [`TurnError::ToolsetCleanup`] carries: as [`ToolsetError::Unready`]
+    /// where the source crossed a bridge that could not wait, or in the
+    /// source's own words as [`ToolsetError::Source`], which is how MCP
+    /// hosting reports a step it gave up on; either way what that step began
+    /// is unconfirmed rather than undone. A cleanup step of the source's that
     /// would have had to wait after another failure is reported as that
     /// failure, and named at most in its text.
     ///

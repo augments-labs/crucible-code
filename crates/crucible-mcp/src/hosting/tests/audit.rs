@@ -24,10 +24,9 @@ fn disposed_snapshots_do_not_consume_live_audit_capacity() {
     let mut snapshots = Vec::new();
     for _ in 0..=MAX_SANDBOX_AUDIT_LIFECYCLES {
         let context = lifecycle().with_sandbox_audits(registry.clone());
-        crucible_runtime::answered!(hosting.prepare(&context))
-            .expect("disposed lifecycle releases its audit slot");
-        snapshots.push(crucible_runtime::answered!(hosting.snapshot(&context)).unwrap());
-        crucible_runtime::answered!(hosting.dispose(&context)).unwrap();
+        awaited(hosting.prepare(&context)).expect("disposed lifecycle releases its audit slot");
+        snapshots.push(awaited(hosting.snapshot(&context)).unwrap());
+        awaited(hosting.dispose(&context)).unwrap();
         assert!(registry.take_records().unwrap().is_empty());
     }
     assert_eq!(sandbox.started(), MAX_SANDBOX_AUDIT_LIFECYCLES + 1);
@@ -107,14 +106,14 @@ fn hosted_audits_keep_attribution_through_restart_and_disposal() {
         vec![chosen("docs").restarting(1)],
         crate::testing::runtime(),
     );
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
     let initial = registry.take_records().unwrap();
     assert_eq!(
         initial.len(),
         1,
         "preparation fact must reach host registry"
     );
-    let snapshot = crucible_runtime::answered!(hosting.snapshot(&context)).unwrap();
+    let snapshot = awaited(hosting.snapshot(&context)).unwrap();
     let entry = snapshot.find("mcp:docs/search").unwrap();
     sandbox.inner.server(0).departs();
     assert!(
@@ -123,7 +122,7 @@ fn hosted_audits_keep_attribution_through_restart_and_disposal() {
             .text()
             .contains("replacement")
     );
-    crucible_runtime::answered!(hosting.dispose(&context)).unwrap();
+    awaited(hosting.dispose(&context)).unwrap();
     let rest = registry.take_records().unwrap();
     let facts: Vec<_> = initial.iter().chain(rest.iter()).collect();
     assert_eq!(facts.len(), 4);
@@ -163,8 +162,8 @@ fn hosted_audits_retain_preparation_failure_facts() {
         vec![chosen("docs")],
         crate::testing::runtime(),
     );
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
-    crucible_runtime::answered!(hosting.dispose(&context)).unwrap();
+    assert!(awaited(hosting.prepare(&context)).is_err());
+    awaited(hosting.dispose(&context)).unwrap();
     let records = registry.take_records().unwrap();
     assert_eq!(records.len(), 2);
     assert!(
@@ -200,11 +199,11 @@ fn hosted_audits_refuse_full_registry_before_backend_effects() {
         vec![chosen("docs")],
         crate::testing::runtime(),
     );
-    assert!(crucible_runtime::answered!(hosting.prepare(&context)).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert!(sandbox.seen.lock().unwrap().is_empty());
     drop(held);
-    crucible_runtime::answered!(hosting.prepare(&context)).unwrap();
-    crucible_runtime::answered!(hosting.dispose(&context)).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
+    awaited(hosting.dispose(&context)).unwrap();
     assert_eq!(sandbox.seen.lock().unwrap().len(), 1);
 }
 
@@ -218,7 +217,7 @@ fn hosted_audits_validate_identity_before_backend_effects() {
             vec![chosen(&"x".repeat(length))],
             crate::testing::runtime(),
         );
-        assert!(crucible_runtime::answered!(hosting.prepare(&lifecycle())).is_err());
+        assert!(awaited(hosting.prepare(&lifecycle())).is_err());
         assert!(
             sandbox.seen.lock().unwrap().is_empty(),
             "identity must be validated before preparation"
