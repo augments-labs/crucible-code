@@ -582,6 +582,19 @@ it, and another command may have published into the root since, so compare it
 with the root's current content before restoring anything from it. The next
 preparation recovers any transaction an earlier process abandoned.
 
+The state directory's shipped name,
+`/var/tmp/crucible-code-sandbox-<uid>-v1` where `<uid>` is the user's numeric
+id, is predictable, so another local user can create it first, whether a
+directory, a symlink or a plain file. crucible refuses to use what it finds
+there and reports that the sandbox backend is unavailable, naming which of
+those it is without the path or the other user's numeric id; removing it,
+which may need an administrator, is what lets the sandbox be used. The
+directory can instead already be this user's own but carry the wrong group or
+permissions, for example after running crucible under a different group;
+crucible refuses that too, but says to restore its group and mode instead of
+removing it, since the directory holds this user's own unrecovered
+transaction journals and quarantine evidence.
+
 Commands that can write run side by side, including a command left running in
 the background and a confined MCP server, and none of them holds up another
 while it runs. Publication is what has to happen alone. A host-owned lock, one
