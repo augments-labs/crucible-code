@@ -63,6 +63,11 @@ change in any release with no deprecation period.
   once the token, an ancestor of it or a deadline on either is requested. A
   request wakes the race as it is made, and a deadline is timed on the timer
   of the runtime the race is polled in.
+- **An attachment read that can be told to stop.** `Opened::taken_until` is
+  the same bounded read as `Opened::taken`, done 64 KiB at a time with a stop
+  asked before each chunk, and answers `AttachmentError::Stopped` without the
+  bytes once the stop says yes. Nothing calls it yet, so nothing a user runs
+  behaves differently.
 
 ### Changed
 
