@@ -1,8 +1,9 @@
 //! Where a tool's blocking work runs.
 //!
-//! A walk of a directory tree, and a search of the files it reaches, have no
-//! asynchronous form: done inside a tool's run, they hold whichever thread
-//! polls the run for as long as the tree takes. A call its caller lent a
+//! A walk of a directory tree, a search of the files it reaches, and opening,
+//! reading or replacing one file have no asynchronous form: done inside a
+//! tool's run, they hold whichever thread polls the run for as long as the
+//! disk takes. A call its caller lent a
 //! [`ToolWorker`](crucible_tools::ToolWorker) hands that work to the worker
 //! instead, where it takes one of the worker's bounded places and waits for
 //! one when none is free. A call lent none does the same work on the thread
@@ -14,13 +15,20 @@
 //! while the job runs; on the calling thread it is the call's own. A walk looks
 //! at it between its bounded steps — each file it reaches and, for `grep`, each
 //! read inside one — so a walk whose call has gone stops at its next step and
-//! gives its place back. `tool_search`'s work does not look at it: it is one
-//! short step over a list held in memory, which ends as soon as it is started.
+//! gives its place back. `read` looks at it between the pieces it reads a file
+//! in, and `edit` between its reads and before its rename; `write` looks
+//! before each directory it makes and before its rename, the steps whose
+//! effect outlives the process, since nothing else stops a job already
+//! started. `tool_search`'s work does not look at it: it is one short step over
+//! a list held in memory, which ends as soon as it is started.
 //!
 //! A job cannot capture the call's context, which it may outlive, so it owns
 //! everything it reads: for a walk, the workspace, the path it walks from and
-//! the approval it asks about each file; for `tool_search`, the list of tools
-//! held back and the set it reveals them into.
+//! the approval it asks about each file; for `read`, `write` and `edit`, the
+//! workspace and the approval itself, whose arguments the job parses, and for
+//! `write` the record of files already read; for
+//! `tool_search`, the list of tools held back and the set it reveals them
+//! into.
 
 use crucible_runtime::Cancel;
 use crucible_tools::{ToolContext, ToolError, Unrun};
@@ -31,8 +39,8 @@ use crucible_tools::{ToolContext, ToolError, Unrun};
 /// `None` where the call was cancelled while it waited for room on the
 /// worker, before the job started: nothing was done, and each caller answers
 /// as that tool answers a call stopped before its first step — `glob` and
-/// `grep` with their stopped answer and nothing in it, `tool_search` as
-/// cancelled.
+/// `grep` with their stopped answer and nothing in it, `tool_search`, `read`,
+/// `write` and `edit` as cancelled.
 ///
 /// # Errors
 ///

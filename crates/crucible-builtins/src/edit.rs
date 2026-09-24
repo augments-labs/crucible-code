@@ -189,121 +189,142 @@ impl Tool for Edit {
         approved: Approved,
         context: &'a ToolContext<'_>,
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        let workspace = self.workspace.clone();
+        let editing = crate::blocking::run(NAME, context, move |cancel| {
+            edited(&workspace, &approved, cancel)
+        });
         Box::pin(async move {
-            let args = Args::parse(NAME, approved.args())?;
-            let requested = args.text(PATH)?;
-            let listed = args.list(EDITS)?;
-            let wanted = changes(&args, listed.as_deref())?;
-
-            if let Some(at) = wanted
-                .iter()
-                .position(|change| change.find == change.replace)
-            {
-                return Ok(refused(
-                    at,
-                    wanted.len(),
-                    "find and replace are the same text, so there is nothing to change",
-                ));
-            }
-
-            let path = match self.workspace.existing(requested) {
-                Ok(path) => path,
-                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-            };
-
-            // Read through a descriptor-relative open. If the last component or a
-            // directory above it became a link after resolution, the open refuses
-            // it rather than bringing outside bytes into this transformation. The
-            // commit below is likewise relative to the proven parent and renames
-            // over a newly planted link rather than following it.
-            let mut file = match path.open_regular_to_change() {
-                Ok(file) => file,
-                Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
-            };
-
-            // Fixed-size reads put a cancellation point inside the scan and keep
-            // retained source bytes below the declared whole-file ceiling. A large
-            // sparse or minified input is therefore bounded both in memory and in
-            // how long a stopped turn keeps reading it.
-            let before = match source(&mut file, context.cancel()) {
-                Ok(Source::Text(before)) => before,
-                Ok(Source::TooLarge) => return Ok(too_large(requested)),
-                Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
-                Ok(Source::Binary) => {
-                    return Ok(ToolOutput::failed(format!(
-                        "{requested} is not a text file"
-                    )));
-                }
-                Err(source) => {
-                    return Err(ToolError::Io {
-                        tool: NAME.into(),
-                        problem: format!("could not read {requested}").into(),
-                        source,
-                    });
-                }
-            };
-
-            // Every change is made to the text in memory, and the file is written
-            // only once they all have been. A list that fails part-way through has
-            // touched nothing.
-            // Both versions are kept, because two readers are owed different
-            // things: the model is told how many replacements were made, and the
-            // person watching is shown which lines moved, which cannot be worked
-            // out from the result alone. Each is bounded by the ceiling above, and
-            // both are gone when this call returns.
-            let mut after = before.clone();
-            let mut replaced = 0_usize;
-            for (at, change) in wanted.iter().enumerate() {
-                if context.cancel().requested() {
-                    return Err(ToolError::Cancelled(NAME.into()));
-                }
-
-                let found = after.matches(change.find).count();
-                if let Some(problem) = trouble(found, change.all, requested) {
-                    return Ok(refused(at, wanted.len(), &problem));
-                }
-
-                let made = if change.all { found } else { 1 };
-                if grown(after.len(), made, change).is_none_or(|length| length > FILE_LIMIT) {
-                    return Ok(too_large(requested));
-                }
-
-                after = if change.all {
-                    after.replace(change.find, change.replace)
-                } else {
-                    after.replacen(change.find, change.replace, 1)
-                };
-                replaced = replaced.saturating_add(made);
-            }
-
-            let permissions = file
-                .metadata()
-                .map_err(|source| ToolError::Io {
-                    tool: NAME.into(),
-                    problem: format!("could not inspect {requested}").into(),
-                    source,
-                })?
-                .permissions();
-            if context.cancel().requested() {
-                return Err(ToolError::Cancelled(NAME.into()));
-            }
-            // The replacement is prepared beside the old file, flushed, and
-            // renamed only after it is whole. At no point can a reader observe the
-            // empty or partially-written interval that truncating in place creates;
-            // an identity change detected at the final pre-commit check is refused
-            // as well.
-            if let Err(problem) =
-                atomic::replace(&path, after.as_bytes(), Some(permissions), Some(&file))
-            {
-                return Ok(ToolOutput::failed(problem.to_string()));
-            }
-
-            Ok(
-                ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
-                    .showing(changed::between(&before, &after)),
-            )
+            // A call cancelled while it waited for room on the worker did
+            // nothing, and answers as one cancelled at its first look does.
+            editing
+                .await?
+                .unwrap_or_else(|| Err(ToolError::Cancelled(NAME.into())))
         })
     }
+}
+
+/// The whole of a call's work, which is file work from its first step to its
+/// last, and so is done where [`crate::blocking::run`] says: on the worker the
+/// call was lent, or in place.
+///
+/// `cancel` is looked at between the reads of the file, before each change is
+/// made in memory, and before the replacement is renamed into place, the one
+/// step here whose effect outlives the process.
+fn edited(
+    workspace: &Workspace,
+    approved: &Approved,
+    cancel: &Cancel,
+) -> Result<ToolOutput, ToolError> {
+    let args = Args::parse(NAME, approved.args())?;
+    let requested = args.text(PATH)?;
+    let listed = args.list(EDITS)?;
+    let wanted = changes(&args, listed.as_deref())?;
+
+    if let Some(at) = wanted
+        .iter()
+        .position(|change| change.find == change.replace)
+    {
+        return Ok(refused(
+            at,
+            wanted.len(),
+            "find and replace are the same text, so there is nothing to change",
+        ));
+    }
+
+    let path = match workspace.existing(requested) {
+        Ok(path) => path,
+        Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+    };
+
+    // Read through a descriptor-relative open. If the last component or a
+    // directory above it became a link after resolution, the open refuses
+    // it rather than bringing outside bytes into this transformation. The
+    // commit below is likewise relative to the proven parent and renames
+    // over a newly planted link rather than following it.
+    let mut file = match path.open_regular_to_change() {
+        Ok(file) => file,
+        Err(problem) => return Ok(ToolOutput::failed(problem.to_string())),
+    };
+
+    // Fixed-size reads put a cancellation point inside the scan and keep
+    // retained source bytes below the declared whole-file ceiling. A large
+    // sparse or minified input is therefore bounded both in memory and in
+    // how long a stopped turn keeps reading it.
+    let before = match source(&mut file, cancel) {
+        Ok(Source::Text(before)) => before,
+        Ok(Source::TooLarge) => return Ok(too_large(requested)),
+        Ok(Source::Cancelled) => return Err(ToolError::Cancelled(NAME.into())),
+        Ok(Source::Binary) => {
+            return Ok(ToolOutput::failed(format!(
+                "{requested} is not a text file"
+            )));
+        }
+        Err(source) => {
+            return Err(ToolError::Io {
+                tool: NAME.into(),
+                problem: format!("could not read {requested}").into(),
+                source,
+            });
+        }
+    };
+
+    // Every change is made to the text in memory, and the file is written
+    // only once they all have been. A list that fails part-way through has
+    // touched nothing.
+    // Both versions are kept, because two readers are owed different
+    // things: the model is told how many replacements were made, and the
+    // person watching is shown which lines moved, which cannot be worked
+    // out from the result alone. Each is bounded by the ceiling above, and
+    // both are gone when this call returns.
+    let mut after = before.clone();
+    let mut replaced = 0_usize;
+    for (at, change) in wanted.iter().enumerate() {
+        if cancel.requested() {
+            return Err(ToolError::Cancelled(NAME.into()));
+        }
+
+        let found = after.matches(change.find).count();
+        if let Some(problem) = trouble(found, change.all, requested) {
+            return Ok(refused(at, wanted.len(), &problem));
+        }
+
+        let made = if change.all { found } else { 1 };
+        if grown(after.len(), made, change).is_none_or(|length| length > FILE_LIMIT) {
+            return Ok(too_large(requested));
+        }
+
+        after = if change.all {
+            after.replace(change.find, change.replace)
+        } else {
+            after.replacen(change.find, change.replace, 1)
+        };
+        replaced = replaced.saturating_add(made);
+    }
+
+    let permissions = file
+        .metadata()
+        .map_err(|source| ToolError::Io {
+            tool: NAME.into(),
+            problem: format!("could not inspect {requested}").into(),
+            source,
+        })?
+        .permissions();
+    if cancel.requested() {
+        return Err(ToolError::Cancelled(NAME.into()));
+    }
+    // The replacement is prepared beside the old file, flushed, and
+    // renamed only after it is whole. At no point can a reader observe the
+    // empty or partially-written interval that truncating in place creates;
+    // an identity change detected at the final pre-commit check is refused
+    // as well.
+    if let Err(problem) = atomic::replace(&path, after.as_bytes(), Some(permissions), Some(&file)) {
+        return Ok(ToolOutput::failed(problem.to_string()));
+    }
+
+    Ok(
+        ToolOutput::ok(format!("changed {requested}, {replaced} replacements"))
+            .showing(changed::between(&before, &after)),
+    )
 }
 
 /// One replacement a call asks for.

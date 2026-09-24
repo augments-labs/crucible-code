@@ -203,6 +203,17 @@ change in any release with no deprecation period.
   `Bridge::McpHosting` is gone, and `crucible-mcp` gains `hello_async`,
   `tools_async` and `Hosted`'s `greet_async`, `catalogue_async` and
   `call_async`.
+- **`read`, `write` and `edit` can run on a lent tool worker, and `write` and
+  picture reads now stop when cancelled.** A call lent a `ToolWorker` through
+  `ToolContext::with_worker` opens, reads and replaces its file on the
+  worker's blocking threads, and a job that panics there is recorded as a
+  panicked call, as it is when it runs in place. Once cancelled, `write` stops
+  at its next check, before each directory it makes and before renaming its
+  replacement into place, leaving the file as it was though directories it
+  already made may remain; a picture `read` stops between chunks and answers
+  cancelled rather than opening the file again as text. A file counts as seen
+  only once the call that touched it has its answer, and no call is lent a
+  worker yet, so nothing else a user runs behaves differently.
 
 ### Fixed
 
