@@ -36,10 +36,10 @@ use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 
 // Every shipped owner of the runtime's blocking threads, each at its most, and
 // still at least one thread to spare: the tool worker's jobs, the requests of
-// the one web source a run builds, account renewals and login requests, each
-// counting work it gave up on that is still running, and one step at a time
-// for each command left running, whose owner asks its process everything
-// there. An owner added to the blocking threads is added here.
+// the one web source a run builds, account renewals and a login's requests and
+// store work, each counting work it gave up on that is still running, and one
+// step at a time for each command left running, whose owner asks its process
+// everything there. An owner added to the blocking threads is added here.
 const _: () = assert!(
     ToolWorker::CAPACITY + WEB_IN_FLIGHT + Renewals::BLOCKING + crucible_builtins::MOST < BLOCKING,
     "the tool worker, the web source, account requests and the commands left running together \

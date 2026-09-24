@@ -30,9 +30,10 @@
 //! have no asynchronous form, so each runs on the runtime's blocking
 //! threads, and so does looking up the host of an account request. All of
 //! that waits for one
-//! place the owner holds: a rotation takes it for the whole of its work and a
-//! login request for the whole of its exchange, so rotations run one at a
-//! time in this process and never beside a login request. At most
+//! place the owner holds: a rotation takes it for the whole of its work, a
+//! login request for the whole of its exchange and a login's store work until
+//! that work returns, so rotations run one at a time in this process and
+//! never beside a login's requests or its store work. At most
 //! [`Renewals::BLOCKING`] blocking threads are held for account work at once:
 //! one for the work holding the place, and one for a lookup it gave up on.
 //! The lock itself is a file held open, not a guard of a mutex:
@@ -44,10 +45,10 @@
 //! most 5 s for the lock; and [`Renewals::join_within`] gives rotations still
 //! running a bound of the caller's choosing before it aborts them.
 //!
-//! **Login borrows it too.** The steps of an account login still run on a
-//! thread of their own, and each request they send crosses into the
-//! application's runtime through the one waiting crossing this crate owns,
-//! until the login steps are awaited on that runtime themselves.
+//! **Login borrows it too.** An account login is a task of its own on the
+//! application's runtime, owned by its attempt, and it awaits its requests and
+//! its store work through this owner, which is what holds them to the one
+//! place.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -56,9 +57,9 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use crucible_core::{Cancel, CredentialScopeId, Outgoing};
+use crucible_core::{CredentialScopeId, Outgoing};
 use crucible_http::{BodyError, Http, Lookups, ProxyEnv, Tls, read_limited};
-use crucible_runtime::{BoxFuture, Bridge, Unwaited};
+use crucible_runtime::BoxFuture;
 use hyper::Method;
 use tokio::runtime::Handle;
 use tokio::sync::{Semaphore, watch};
@@ -101,7 +102,7 @@ pub(crate) struct Due {
 /// one rotation per account hold across every credential and login built with
 /// one owner. It is given its runtime separately, once the application has
 /// one ([`Renewals::runs_on`]); until then a renewal is refused with
-/// [`OAuthError::NoRuntime`] and a login request with [`OAuthError::Unwaited`].
+/// [`OAuthError::NoRuntime`] and a login with [`OAuthError::NotStarted`].
 #[derive(Clone)]
 pub struct Renewals(Arc<Inner>);
 
@@ -135,13 +136,15 @@ impl Renewals {
     /// The most of the runtime's blocking threads account work holds at once.
     ///
     /// Two. Every blocking job of this owner's — a rotation's lock and file
-    /// work, and the hostname lookup of the request a rotation or a login step
-    /// sends — runs while its rotation or login step holds the owner's one
-    /// place, and each holder runs its jobs one after another: one thread.
-    /// A lookup whose request was given up before the platform answered —
-    /// its deadline passed, its login was cancelled, its rotation was aborted
-    /// — cannot be stopped, and runs on until the platform answers after the
-    /// place has been let go: a second. Target and proxy hosts share one lookup
+    /// work, a login's store work, and the hostname lookup of the request a
+    /// rotation or a login sends — runs while its rotation, login request or
+    /// login store work holds the owner's one place, and each holder runs its
+    /// jobs one after another: one thread. A login's store work keeps the
+    /// place until it returns, even once its login has been dropped. A lookup
+    /// whose request was given up before the platform answered — its deadline
+    /// passed, its login was cancelled, its rotation was aborted — cannot be
+    /// stopped, and runs on until the platform answers after the place has
+    /// been let go: a second. Target and proxy hosts share one lookup
     /// place of the client's, which that lookup keeps until it returns, so
     /// there is never a third. That ceiling holds while the run lasts: between
     /// [`Renewals::join_within`] aborting the rotations still running and the
@@ -334,30 +337,55 @@ impl Renewals {
             .map_err(|_| OAuthError::Unreachable)?
     }
 
-    /// Runs one step of a login, which runs on a thread of its own, on this
-    /// owner's runtime until it answers or `cancel` is raised, holding the
-    /// owner's one place while it runs.
+    /// Sends one request of a login's, holding the owner's one place while it
+    /// runs.
+    ///
+    /// Dropping the returned future — the login's task aborted — drops the
+    /// request and lets the place go.
     ///
     /// # Errors
     ///
-    /// The step's own failure; [`OAuthError::Cancelled`] where `cancel` was
-    /// raised first; and [`OAuthError::Unwaited`] where there is no runtime
-    /// to wait on or the caller is already on one.
-    pub(crate) fn login_step<T>(
+    /// The request's own failure.
+    pub(crate) async fn login_request<T>(
         &self,
-        cancel: &Cancel,
-        step: impl Future<Output = Result<T, OAuthError>>,
+        request: impl Future<Output = Result<T, OAuthError>>,
     ) -> Result<T, OAuthError> {
-        let place = &self.0.place;
-        let placed = async move {
-            let _place = place.acquire().await.map_err(|_| OAuthError::Abandoned)?;
-            step.await
-        };
-        match Bridge::AccountLogin.wait(self.runtime(), cancel, placed) {
-            Ok(answer) => answer,
-            Err(Unwaited::Cancelled(_)) => Err(OAuthError::Cancelled),
-            Err(refused) => Err(OAuthError::Unwaited(refused)),
-        }
+        let _place = self
+            .0
+            .place
+            .acquire()
+            .await
+            .map_err(|_| OAuthError::WorkerStopped)?;
+        request.await
+    }
+
+    /// Runs a login's store work on one of the runtime's blocking threads,
+    /// holding the owner's one place until that work returns.
+    ///
+    /// Work on a blocking thread cannot be stopped, so the place goes with it
+    /// rather than with the future: a login dropped while its store work runs
+    /// leaves the place held until the work is done, and nothing else of this
+    /// owner's takes a blocking thread beside it.
+    ///
+    /// # Errors
+    ///
+    /// The work's own failure, and [`OAuthError::WorkerStopped`] where the
+    /// work ended without an answer.
+    pub(crate) async fn login_store<T: Send + 'static, E: Into<OAuthError> + Send + 'static>(
+        &self,
+        work: impl FnOnce() -> Result<T, E> + Send + 'static,
+    ) -> Result<T, OAuthError> {
+        let place = Arc::clone(&self.0.place)
+            .acquire_owned()
+            .await
+            .map_err(|_| OAuthError::WorkerStopped)?;
+        tokio::task::spawn_blocking(move || {
+            let _place = place;
+            work()
+        })
+        .await
+        .map_err(|_| OAuthError::WorkerStopped)?
+        .map_err(Into::into)
     }
 
     /// The client account requests are sent through, made the first time

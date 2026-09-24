@@ -242,22 +242,21 @@ fn a_rotation_and_a_login_request_at_once_hold_one_blocking_thread_between_them(
         }
     });
     thread::sleep(Duration::from_millis(200));
-    let logging_in = {
+    let logging_in = runtime.spawn({
         let renewals = renewals.clone();
-        thread::spawn(move || {
-            renewals.login_step(
-                &Cancel::new(),
-                renewals.post(
+        async move {
+            renewals
+                .login_request(renewals.post(
                     &format!("http://localhost:{port}/token"),
                     Outgoing::new(),
                     String::new(),
                     PATIENCE,
-                ),
-            )
-        })
-    };
+                ))
+                .await
+        }
+    });
 
-    let requested = logging_in.join().unwrap();
+    let requested = runtime.block_on(logging_in).unwrap();
     let rotated = runtime.block_on(rotating).unwrap();
     releasing.join().unwrap();
     let accepted = serving.join().unwrap();
@@ -271,5 +270,56 @@ fn a_rotation_and_a_login_request_at_once_hold_one_blocking_thread_between_them(
          beside refreshed: its host was looked up on a second blocking thread while the \
          rotation's lock work held one",
         refreshed_at.saturating_duration_since(accepted)
+    );
+}
+
+/// A login's store work is blocking work, which nothing can stop once it has
+/// begun, so it keeps the owner's one place until it returns, even once the
+/// login that asked for it has been dropped. Were the place let go with the
+/// login, the next account work would take a second blocking thread beside
+/// work still running on the first.
+///
+/// Seen by order: the store work runs for 300 ms, the login is aborted as it
+/// begins, and a login request is sent at once. The request must not have the
+/// place before the store work has returned.
+#[test]
+fn a_login_s_store_work_keeps_the_place_until_it_returns_after_its_login_is_dropped() {
+    const WORKING: Duration = Duration::from_millis(300);
+    let runtime = runtime();
+    let renewals = Renewals::new();
+    renewals.runs_on(runtime.handle().clone());
+    let (starting, started) = mpsc::channel();
+    let (finished, finished_at) = mpsc::channel();
+
+    let storing = runtime.spawn({
+        let renewals = renewals.clone();
+        async move {
+            renewals
+                .login_store(move || {
+                    let _ = starting.send(());
+                    thread::sleep(WORKING);
+                    let _ = finished.send(Instant::now());
+                    Ok::<_, crate::AuthError>(())
+                })
+                .await
+        }
+    });
+    started.recv_timeout(PATIENCE).unwrap();
+    storing.abort();
+    let placed_at = runtime.block_on({
+        let renewals = renewals.clone();
+        async move {
+            renewals
+                .login_request(async { Ok(Instant::now()) })
+                .await
+                .unwrap()
+        }
+    });
+    let finished_at = finished_at.recv_timeout(PATIENCE).unwrap();
+
+    assert!(
+        placed_at >= finished_at,
+        "a login request took the place {:?} before the dropped login's store work returned",
+        finished_at.saturating_duration_since(placed_at)
     );
 }

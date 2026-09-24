@@ -19,12 +19,15 @@ crucible-http.workspace = true
 hyper.workspace = true
 # The error the client's TLS setup can fail with, kept typed in `OAuthError`.
 rustls.workspace = true
-# `rt` to run each renewal as a task on the application's runtime and the
-# store's lock and file work on its blocking threads; `sync` for the channel a
-# renewal's waiters watch and the one place its blocking work takes; `time` for
-# each request's deadline. Nothing here builds a runtime: renewals run on the
-# one the application hands over.
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+# `rt` to run each renewal and each login as a task on the application's
+# runtime and the store's lock and file work on its blocking threads; `sync`
+# for the channel a renewal's waiters watch, the one place its blocking work
+# takes and the channel a login is handed pasted input on; `time` for each
+# request's deadline and a device login's pauses; `net` for the loopback
+# listener a browser login's callback lands on, and `io-util` to read that
+# callback's request and write its answer. Nothing here builds a runtime:
+# renewals and logins run on the one the application hands over.
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"] }
 # Decodes only the bounded JWT claim segment needed for ChatGPT account
 # selection. Token bytes stay inside the credential type.
 base64.workspace = true
@@ -46,9 +49,8 @@ crucible-privacy.workspace = true
 serde_json.workspace = true
 # `AuthError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
-# `BoxFuture`, the shape a renewal's request is handed to its owner in, and
-# the waiting crossing a login's steps take into the application's runtime
-# from the thread the login runs on.
+# `BoxFuture`, the shape a renewal's request is handed to its owner in and a
+# login's future is held in by the task that runs it.
 crucible-runtime.workspace = true
 
 [dev-dependencies]

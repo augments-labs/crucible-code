@@ -13,17 +13,14 @@
 //! installation's scope; the credential only awaits it.
 
 use std::fmt;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{
-    Authorization, Cancel, Credential, CredentialError, CredentialScopeId, Outgoing,
-};
+use crucible_core::{Authorization, Credential, CredentialError, CredentialScopeId, Outgoing};
 
 use super::{
-    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, Renewals, SubscriptionLogin,
-    Tokens, credential_scope, held, renewal::Due,
+    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, LoginUpdates, OAuthError, Renewals,
+    SubscriptionLogin, Tokens, credential_scope, held, renewal::Due,
 };
 use crate::{Store, StoredCredentials};
 
@@ -32,7 +29,6 @@ const VERIFY: &str = "https://www.kimi.com";
 const CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const LOGIN_LIFETIME: Duration = Duration::from_mins(15);
 const REQUEST_LIFETIME: Duration = Duration::from_secs(30);
-const CANCEL_POLL: Duration = Duration::from_millis(50);
 const MINIMUM_REFRESH: u64 = 5 * 60;
 const DEVICE_ID: &str = "device_id";
 const EXPIRES_IN: &str = "expires_in";
@@ -78,10 +74,15 @@ impl KimiOAuth {
             return Err(OAuthError::Method);
         }
         let flow = self.shared.flow.clone();
+        let runtime = flow
+            .renewals
+            .runtime()
+            .ok_or(OAuthError::NotStarted)?
+            .clone();
         self.shared
             .worker
-            .start("crucible-kimi-login", move |cancel, updates| {
-                if let Err(problem) = flow.login(&store, &cancel, &updates) {
+            .start(&runtime, move |updates| async move {
+                if let Err(problem) = flow.login(&store, &updates).await {
                     let _ = updates.send(Err(problem));
                 }
             })
@@ -226,7 +227,7 @@ fn needs_refresh(tokens: &Tokens, at: u64) -> bool {
 #[derive(Clone)]
 struct Flow {
     /// The owner of this installation's renewals, whose client every request
-    /// goes through and whose runtime a login step waits on.
+    /// goes through and whose runtime a login runs on.
     renewals: Renewals,
     /// How long one request may take, from waiting for a connection to the
     /// last byte of its answer.
@@ -285,39 +286,31 @@ impl Flow {
         )
     }
 
-    fn login(
-        &self,
-        store: &Store,
-        cancel: &Cancel,
-        updates: &mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-    ) -> Result<(), OAuthError> {
-        let identity = Identity::for_login(store)?;
+    async fn login(&self, store: &Store, updates: &LoginUpdates) -> Result<(), OAuthError> {
+        let identity = Identity::for_login(&self.renewals, store).await?;
         let started = Instant::now();
         loop {
-            if cancel.requested() {
-                return Err(OAuthError::Cancelled);
-            }
             if started.elapsed() >= self.login_lifetime {
                 return Err(OAuthError::Expired);
             }
             let device = self
                 .renewals
-                .login_step(cancel, self.request_device(&identity))?;
+                .login_request(self.request_device(&identity))
+                .await?;
             let issued = Instant::now();
-            updates
-                .send(Ok(LoginUpdate::Authorize {
-                    browser_uri: device.complete.clone(),
-                    shown_uri: device.verification.clone(),
-                    user_code: Some(device.user_code.clone()),
-                    manual: false,
-                }))
-                .map_err(|_| OAuthError::Cancelled)?;
+            updates.send(Ok(LoginUpdate::Authorize {
+                browser_uri: device.complete.clone(),
+                shown_uri: device.verification.clone(),
+                user_code: Some(device.user_code.clone()),
+                manual: false,
+            }))?;
             let time = LoginTime { started, issued };
-            if let Some(tokens) = self.poll(&device, &identity, time, cancel)? {
-                store.keep_subscription("moonshot", tokens)?;
-                return updates
-                    .send(Ok(LoginUpdate::Complete))
-                    .map_err(|_| OAuthError::Cancelled);
+            if let Some(tokens) = self.poll(&device, &identity, time).await? {
+                let store = store.clone();
+                self.renewals
+                    .login_store(move || store.keep_subscription("moonshot", tokens))
+                    .await?;
+                return updates.send(Ok(LoginUpdate::Complete));
             }
         }
     }
@@ -352,18 +345,14 @@ impl Flow {
         })
     }
 
-    fn poll(
+    async fn poll(
         &self,
         device: &Device,
         identity: &Identity,
         time: LoginTime,
-        cancel: &Cancel,
     ) -> Result<Option<Tokens>, OAuthError> {
         let mut interval = Duration::from_secs(device.interval).max(self.minimum_interval);
         loop {
-            if cancel.requested() {
-                return Err(OAuthError::Cancelled);
-            }
             let expired_by_server = device
                 .expires_in
                 .is_some_and(|lifetime| time.issued.elapsed() >= Duration::from_secs(lifetime));
@@ -381,7 +370,8 @@ impl Flow {
             ];
             let (status, response) = self
                 .renewals
-                .login_step(cancel, self.post(&self.token, &fields, identity))?;
+                .login_request(self.post(&self.token, &fields, identity))
+                .await?;
             let value = json(&response, "device token")?;
             if status == 200 {
                 return token_response(&value, identity, None).map(Some);
@@ -393,7 +383,7 @@ impl Flow {
                 Some("access_denied") => return Err(OAuthError::Denied),
                 _ => return Err(OAuthError::Refused { status }),
             }
-            pause(interval, cancel)?;
+            tokio::time::sleep(interval).await;
         }
     }
 
@@ -457,9 +447,12 @@ struct Identity {
 }
 
 impl Identity {
-    fn for_login(store: &Store) -> Result<Self, OAuthError> {
+    async fn for_login(renewals: &Renewals, store: &Store) -> Result<Self, OAuthError> {
         let candidate = random_id()?;
-        let device_id = store.identity("moonshot", &candidate)?;
+        let store = store.clone();
+        let device_id = renewals
+            .login_store(move || store.identity("moonshot", &candidate))
+            .await?;
         Self::new(device_id)
     }
 
@@ -571,17 +564,6 @@ fn seconds(value: &serde_json::Value, field: &str) -> Option<u64> {
 fn within(host: &str, uri: &str) -> bool {
     uri.strip_prefix(host)
         .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('?'))
-}
-
-fn pause(duration: Duration, cancel: &Cancel) -> Result<(), OAuthError> {
-    let until = Instant::now() + duration;
-    while Instant::now() < until {
-        if cancel.requested() {
-            return Err(OAuthError::Cancelled);
-        }
-        std::thread::sleep(CANCEL_POLL.min(until.saturating_duration_since(Instant::now())));
-    }
-    Ok(())
 }
 
 fn random_id() -> Result<String, OAuthError> {

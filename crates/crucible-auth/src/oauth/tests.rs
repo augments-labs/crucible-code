@@ -6,7 +6,9 @@ use super::*;
 use std::io::{Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::RecvTimeoutError;
 use std::task::{Context, Poll, Waker};
+use std::thread;
 
 use base64::Engine as _;
 use crucible_core::{Authorization, CredentialError, Outgoing};
@@ -162,22 +164,24 @@ fn tokens(access: &str, refresh: &str, account: &str, expires: u64) -> String {
     .to_string()
 }
 
-fn attempt() -> (
+/// An attempt on `runtime` whose login waits for ever, and the two ends its
+/// login was handed, held here instead so a test can play the login.
+fn attempt(
+    runtime: &tokio::runtime::Runtime,
+) -> (
     LoginAttempt,
-    mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-    mpsc::Receiver<Box<str>>,
+    LoginUpdates,
+    tokio::sync::mpsc::Receiver<Box<str>>,
 ) {
-    let (updates, received) = mpsc::sync_channel(3);
-    let (input, submitted) = mpsc::sync_channel(1);
-    (
-        LoginAttempt {
-            updates: received,
-            input,
-            cancel: Cancel::new(),
-        },
-        updates,
-        submitted,
-    )
+    let (hand, handed) = mpsc::channel();
+    let attempt = LoginSlot::new()
+        .start_with_input(runtime.handle(), move |updates, typed| {
+            hand.send((updates, typed)).unwrap();
+            std::future::pending()
+        })
+        .unwrap();
+    let (updates, typed) = handed.recv().unwrap();
+    (attempt, updates, typed)
 }
 
 #[test]
@@ -245,7 +249,8 @@ fn an_openai_account_scope_survives_store_reconstruction_without_token_identity(
 
 #[test]
 fn an_attempt_delivers_bounded_updates_without_busy_waiting() {
-    let (attempt, updates, _) = attempt();
+    let runtime = runtime();
+    let (attempt, updates, _typed) = attempt(&runtime);
     updates.send(Ok(LoginUpdate::Complete)).unwrap();
 
     assert_eq!(
@@ -257,10 +262,11 @@ fn an_attempt_delivers_bounded_updates_without_busy_waiting() {
 
 #[test]
 fn manual_input_is_trimmed_bounded_and_never_printed() {
-    let (attempt, _, submitted) = attempt();
+    let runtime = runtime();
+    let (attempt, _updates, mut submitted) = attempt(&runtime);
 
     attempt.submit("  authorization-canary  ").unwrap();
-    assert_eq!(&*submitted.recv().unwrap(), "authorization-canary");
+    assert_eq!(&*submitted.try_recv().unwrap(), "authorization-canary");
     assert!(matches!(
         attempt.submit("  "),
         Err(OAuthError::Invalid { .. })
@@ -272,14 +278,296 @@ fn manual_input_is_trimmed_bounded_and_never_printed() {
     assert!(!format!("{attempt:?}").contains("authorization-canary"));
 }
 
+/// The loopback port a browser login's launch address names.
+fn callback_port(launch: &str) -> u16 {
+    launch
+        .strip_prefix("http://localhost:")
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|port| port.parse::<u16>().ok())
+        .unwrap()
+}
+
+/// Dropping an attempt stops its login there and then. By the time the drop
+/// returns, within [`STOPPING`], the login's work is gone: its callback port
+/// refuses a connection, and its slot takes the next login rather than
+/// answering that one is still stopping.
 #[test]
-fn dropping_an_attempt_requests_cancellation() {
-    let (attempt, _, _) = attempt();
-    let cancel = attempt.cancel.clone();
+fn dropping_an_attempt_closes_its_callback_port_and_frees_its_slot_before_the_drop_returns() {
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:9", &renewing(&runtime)));
+    let scratch = Scratch::new("dropped-listener");
+    let store = Store::in_home(scratch.path());
+    let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
+    let port = match attempt.wait(PATIENCE).unwrap() {
+        Some(LoginUpdate::Authorize { shown_uri, .. }) => callback_port(&shown_uri),
+        other => panic!("expected browser authorization, got {other:?}"),
+    };
 
+    let begun = std::time::Instant::now();
     drop(attempt);
+    let took = begun.elapsed();
+    let refused = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err();
+    let next = oauth.start(OpenAiOAuth::BROWSER, store);
 
-    assert!(cancel.requested());
+    assert!(
+        took < STOPPING,
+        "dropping the attempt took {took:?}, past its bound of {STOPPING:?}"
+    );
+    assert!(
+        refused,
+        "the callback port {port} still took a connection once the attempt was dropped"
+    );
+    assert!(
+        next.is_ok(),
+        "the slot still held the dropped login: {:?}",
+        next.err()
+    );
+}
+
+/// A login dropped while one of its requests is in flight stops there too,
+/// rather than once the request answers or reaches its deadline.
+#[test]
+fn dropping_an_attempt_mid_request_frees_its_slot_before_the_drop_returns() {
+    let (base, requests, server) = holding_server("{}".to_owned(), PATIENCE);
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("dropped-request");
+    let store = Store::in_home(scratch.path());
+    let attempt = oauth.start(OpenAiOAuth::DEVICE, store.clone()).unwrap();
+    let asked = requests.recv_timeout(PATIENCE).unwrap();
+    assert_eq!(asked.target, "/api/accounts/deviceauth/usercode");
+
+    let begun = std::time::Instant::now();
+    drop(attempt);
+    let took = begun.elapsed();
+    let next = oauth.start(OpenAiOAuth::BROWSER, store);
+
+    assert!(
+        took < STOPPING,
+        "dropping the attempt took {took:?}, past its bound of {STOPPING:?}"
+    );
+    assert!(
+        next.is_ok(),
+        "the slot still held the login dropped mid-request: {:?}",
+        next.err()
+    );
+    drop(server);
+}
+
+/// Dropped on a thread inside the runtime, an attempt does not wait for its
+/// login to stop: waiting there could hold the very thread the abort needs,
+/// and here, on a runtime of one thread, it is that thread. The login is still
+/// aborted there and then. A callback already waiting on its port when it was
+/// dropped is never answered, and once the runtime has run, within
+/// [`STOPPING`], the port refuses a connection and the slot takes the next
+/// login.
+#[test]
+fn an_attempt_dropped_inside_the_runtime_serves_nothing_and_frees_its_port_and_slot_shortly_after()
+{
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:9", &renewing(&runtime)));
+    let scratch = Scratch::new("dropped-inside-runtime");
+    let store = Store::in_home(scratch.path());
+
+    let (took, answered, refused, next) = runtime.block_on(async {
+        let attempt = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
+        let port = loop {
+            match attempt.wait(Duration::ZERO).unwrap() {
+                Some(LoginUpdate::Authorize { shown_uri, .. }) => break callback_port(&shown_uri),
+                Some(other) => panic!("expected browser authorization, got {other:?}"),
+                None => tokio::time::sleep(Duration::from_millis(5)).await,
+            }
+        };
+        // Sent, and waiting on the port, before the attempt is dropped: the
+        // login has not run since, so only the abort stands between it and
+        // an answer.
+        let mut waiting = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        // Arm the read timeout while the connection is healthy: once the
+        // login's listener is gone some platforms refuse a timeout change.
+        waiting.set_read_timeout(Some(PATIENCE)).unwrap();
+        write!(
+            waiting,
+            "GET /auth/callback?code=late&state=wrong HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n"
+        )
+        .unwrap();
+
+        let begun = std::time::Instant::now();
+        drop(attempt);
+        let took = begun.elapsed();
+
+        let until = std::time::Instant::now() + STOPPING;
+        let mut next = oauth.start(OpenAiOAuth::BROWSER, store.clone());
+        while matches!(next, Err(OAuthError::Busy)) && std::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            next = oauth.start(OpenAiOAuth::BROWSER, store.clone());
+        }
+        let refused = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err();
+        let mut answered = Vec::new();
+        let _ = waiting.read_to_end(&mut answered);
+        (took, answered, refused, next.map(drop))
+    });
+
+    assert!(
+        took < STOPPING / 10,
+        "dropping the attempt on the runtime's own thread took {took:?}: it waited for an abort \
+         only that thread could carry out"
+    );
+    assert!(
+        answered.is_empty(),
+        "a callback waiting when the attempt was dropped was answered: {}",
+        String::from_utf8_lossy(&answered)
+    );
+    assert!(
+        refused,
+        "the callback port still took a connection once the runtime had run"
+    );
+    assert!(
+        next.is_ok(),
+        "the slot still held the dropped login {STOPPING:?} after the drop: {:?}",
+        next.err()
+    );
+}
+
+/// The same drop, on the runtime's own thread, while a request is in flight:
+/// nothing but the abort ends a login waiting on a token service that holds
+/// its answer, and within [`STOPPING`] of the drop the slot takes the next
+/// login.
+#[test]
+fn an_attempt_dropped_inside_the_runtime_mid_request_frees_its_slot_shortly_after() {
+    let (base, requests, server) = holding_server("{}".to_owned(), PATIENCE);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("dropped-inside-runtime-mid-request");
+    let store = Store::in_home(scratch.path());
+
+    let next = runtime.block_on(async {
+        let attempt = oauth.start(OpenAiOAuth::DEVICE, store.clone()).unwrap();
+        let until = std::time::Instant::now() + PATIENCE;
+        let asked = loop {
+            match requests.try_recv() {
+                Ok(asked) => break asked,
+                Err(_) if std::time::Instant::now() < until => {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                Err(problem) => panic!("the login sent no request: {problem}"),
+            }
+        };
+        assert_eq!(asked.target, "/api/accounts/deviceauth/usercode");
+
+        drop(attempt);
+
+        let until = std::time::Instant::now() + STOPPING;
+        let mut next = oauth.start(OpenAiOAuth::BROWSER, store.clone());
+        while matches!(next, Err(OAuthError::Busy)) && std::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            next = oauth.start(OpenAiOAuth::BROWSER, store.clone());
+        }
+        next.map(drop)
+    });
+
+    assert!(
+        next.is_ok(),
+        "the slot still held the login dropped mid-request {STOPPING:?} after the drop: {:?}",
+        next.err()
+    );
+    drop(server);
+}
+
+/// One slot runs one login: a second started while the first is still
+/// running is refused as busy, and the first keeps its callback.
+#[test]
+fn a_second_login_while_one_runs_answers_busy() {
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:9", &renewing(&runtime)));
+    let scratch = Scratch::new("second-login");
+    let store = Store::in_home(scratch.path());
+    let first = oauth.start(OpenAiOAuth::BROWSER, store.clone()).unwrap();
+    let port = match first.wait(PATIENCE).unwrap() {
+        Some(LoginUpdate::Authorize { shown_uri, .. }) => callback_port(&shown_uri),
+        other => panic!("expected browser authorization, got {other:?}"),
+    };
+
+    let second = oauth.start(OpenAiOAuth::DEVICE, store);
+
+    assert!(
+        matches!(second, Err(OAuthError::Busy)),
+        "a second login was not refused as busy: {:?}",
+        second.err()
+    );
+    let answered = callback(port, "/auth/callback?code=forged&state=wrong");
+    assert!(
+        answered.starts_with("HTTP/1.1 400"),
+        "the first login's callback stopped answering: {answered}"
+    );
+}
+
+/// A login whose attempt takes none of its updates cannot wait on a send: it
+/// fills the three the attempt has room for, is refused the fourth, and ends
+/// by itself, freeing its slot. The updates it did report are still there to
+/// be taken, then the end.
+#[test]
+fn a_login_whose_updates_are_not_taken_stops_rather_than_waits() {
+    let runtime = runtime();
+    let slot = LoginSlot::new();
+    let attempt = slot
+        .start(runtime.handle(), |updates| async move {
+            while updates
+                .send(Ok(LoginUpdate::Progress {
+                    message: "still here",
+                }))
+                .is_ok()
+            {}
+        })
+        .unwrap();
+
+    let stopped = attempt.stopped.recv_timeout(PATIENCE);
+
+    assert!(
+        matches!(stopped, Err(RecvTimeoutError::Disconnected)),
+        "a login with nobody taking its updates did not end: {stopped:?}"
+    );
+    assert!(
+        slot.start(runtime.handle(), |_| async {}).is_ok(),
+        "the slot still held a login that had stopped"
+    );
+    for _ in 0..3 {
+        assert_eq!(
+            attempt.wait(PATIENCE).unwrap(),
+            Some(LoginUpdate::Progress {
+                message: "still here",
+            })
+        );
+    }
+    assert!(matches!(
+        attempt.wait(PATIENCE),
+        Err(OAuthError::WorkerStopped)
+    ));
+}
+
+/// The other direction: a value typed while the login has not taken the last
+/// one is refused at once as busy, rather than the terminal waiting for room.
+#[test]
+fn input_the_login_has_not_taken_is_refused_as_busy_rather_than_waited_on() {
+    let runtime = runtime();
+    let (attempt, _updates, mut submitted) = attempt(&runtime);
+
+    attempt.submit("first").unwrap();
+    let begun = std::time::Instant::now();
+    let second = attempt.submit("second");
+    let took = begun.elapsed();
+
+    assert!(
+        matches!(second, Err(OAuthError::InputBusy)),
+        "a second value was not refused as busy: {second:?}"
+    );
+    assert!(took < STOPPING, "the refusal took {took:?}");
+    assert_eq!(&*submitted.try_recv().unwrap(), "first");
 }
 
 #[test]

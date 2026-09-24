@@ -165,21 +165,6 @@ pub enum Bridge {
     /// - Owner: `crucible-app`
     /// - Retired: when the application awaits a turn directly.
     AppTurn,
-    /// An account login's requests: the thread a login runs on waiting for
-    /// each request one of its steps sends — asking for a device code,
-    /// polling for its authorization, exchanging a code for tokens — on the
-    /// application's runtime. A renewal is not one of them: it is a task of
-    /// its own on that runtime, and nothing crosses to wait for it.
-    ///
-    /// - Crossing: waits.
-    /// - Bound: one wait for each request a login step sends.
-    /// - Wait bounded by: the login's own cancel, which the crossing heeds
-    ///   within its notice, and the request's own deadline of 30 s, from
-    ///   waiting for a connection to the last byte of the answer.
-    /// - Owner: `crucible-auth`
-    /// - Retired: when the login steps are awaited on the application's
-    ///   runtime.
-    AccountLogin,
     /// The runner's prompt-cache resources: a provider's lifecycle calls and
     /// the store their records are kept in. They are reached by a turn
     /// preparing its request, and by a compaction preparing its recap request
@@ -353,7 +338,6 @@ impl Bridge {
     const fn crossing(self) -> &'static str {
         match self {
             Self::AppTurn => "a turn or a compaction",
-            Self::AccountLogin => "an account login's request",
             Self::TurnCache => "a prompt-cache step",
             Self::TurnTools => "the turn's tools",
             Self::TurnSession => "writing to the session",
