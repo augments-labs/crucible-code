@@ -34,6 +34,11 @@ http.workspace = true
 httparse.workspace = true
 sha2.workspace = true
 
+# Each command's status is watched by a task on the runtime the service is
+# handed: `rt` spawns and aborts it, and `time` is the pause between its looks.
+# Nothing here builds a runtime.
+tokio = { workspace = true, features = ["rt", "time"] }
+
 # `kill` on a process group, which is how a command's whole pipeline is stopped
 # rather than the shell at the head of it. `std` signals the one child it
 # spawned; the negated group id reaches the rest, and there is no call in `std`
@@ -76,8 +81,9 @@ crucible-workspace.workspace = true
 # The runtime each test of an asynchronous pipe builds for itself: `rt` and
 # `time` for it and its deadlines, `net` for the reactor a Unix pipe is waited
 # on, and `sync` for the thread-owned pipes, which the tests exercise on every
-# platform.
-tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+# platform. `rt-multi-thread` is the runtime the tests watch commands on, whose
+# own threads run each command's status task while the test's thread waits.
+tokio = { workspace = true, features = ["net", "rt", "rt-multi-thread", "sync", "time"] }
 
 # A Linux test build keeps its sandbox state in a directory named for the
 # checkout it was compiled from, so two checkouts testing at once never lock,

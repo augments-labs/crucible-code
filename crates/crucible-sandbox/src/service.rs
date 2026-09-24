@@ -1569,9 +1569,11 @@ pub trait SandboxProcess: Send {
     ///
     /// # Errors
     ///
-    /// The backend could not confirm scope termination or reap the leader. A
-    /// step of the stop that would have had to wait and was dropped is one way
-    /// that happens, and leaves the same uncertainty.
+    /// The backend could not confirm scope termination or reap the leader, or
+    /// work it started for the command, such as the cancel of a broken limit,
+    /// had not ended within the stop's bound. A step of the stop that would
+    /// have had to wait and was dropped is one way that happens, and leaves the
+    /// same uncertainty.
     fn stop(&mut self) -> BoxFuture<'_, io::Result<()>>;
 
     /// Redacted inspection snapshot.

@@ -42,6 +42,36 @@ pub(crate) fn skipped_without_enforcement(service: &crate::LocalSandbox) -> bool
     }
 }
 
+/// The runtime this test binary watches its commands on, built the first
+/// time a test asks.
+///
+/// Multi-thread, so a command's status task runs on the runtime's own threads
+/// while the test's thread waits on the command. One for the whole binary,
+/// because a command outlives nothing that owns its runtime.
+pub(crate) fn runtime() -> std::io::Result<tokio::runtime::Handle> {
+    static RUNTIME: std::sync::OnceLock<std::io::Result<tokio::runtime::Runtime>> =
+        std::sync::OnceLock::new();
+    match RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+    }) {
+        Ok(runtime) => Ok(runtime.handle().clone()),
+        Err(problem) => Err(std::io::Error::new(problem.kind(), problem.to_string())),
+    }
+}
+
+/// A service whose commands are watched on [`runtime`]; one with no runtime,
+/// which starts no command, where that runtime could not be built.
+#[cfg(unix)]
+pub(crate) fn service() -> crate::LocalSandbox {
+    match runtime() {
+        Ok(runtime) => crate::LocalSandbox::new().watching_on(runtime),
+        Err(_) => crate::LocalSandbox::new(),
+    }
+}
+
 /// A workspace with a directory beside it that is deliberately outside.
 pub(crate) struct Sample {
     base: PathBuf,

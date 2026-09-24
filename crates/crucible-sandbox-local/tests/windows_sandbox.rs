@@ -32,6 +32,20 @@ use crucible_sandbox_local::LocalSandbox;
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
+/// The service these tests start commands with, watching each on a runtime of
+/// this test binary's own.
+fn service() -> LocalSandbox {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime to watch commands on")
+    });
+    LocalSandbox::new().watching_on(runtime.handle().clone())
+}
+
 const ACTION: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_ACTION";
 const ALLOWED: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_ALLOWED";
 const CONNECTED: &str = "CRUCIBLE_WINDOWS_SANDBOX_TEST_CONNECTED";
@@ -275,7 +289,7 @@ fn required_path(name: &str) -> PathBuf {
 }
 
 fn start(request: SandboxRequest, command: SandboxCommand) -> Box<dyn SandboxProcess> {
-    let service = LocalSandbox::new();
+    let service = service();
     let mut session =
         crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
     crucible_runtime::answered!(session.materialize()).expect("materialized sandbox");
@@ -405,9 +419,10 @@ fn windows_refuses_an_explicit_unreadable_root_before_preparation() {
         base.limits(),
     )
     .expect("unreadable policy");
-    let result = crucible_runtime::answered!(LocalSandbox::new().prepare(
-        Fixture::request_with_policy("windows-unreadable-refusal", policy)
-    ));
+    let result = crucible_runtime::answered!(service().prepare(Fixture::request_with_policy(
+        "windows-unreadable-refusal",
+        policy
+    )));
 
     assert!(matches!(
         result,

@@ -584,7 +584,7 @@
       },
       "case": "linux::guardrail_tests::a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead",
       "source": "crates/crucible-sandbox-local/src/linux/guardrail_tests.rs",
-      "body_sha256": "2310fc10fbd72ffbf8830710e8cd40b54d2c890c73387235d44cb1c368664230",
+      "body_sha256": "7cc46a749fbd603dc5b95e42b84d26c240403a00ff38da553693ea2852e56e14",
       "platforms": [
         "linux"
       ]

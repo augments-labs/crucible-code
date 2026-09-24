@@ -56,13 +56,15 @@ const STOP_POLL: Duration = Duration::from_millis(5);
 /// A kill-on-close job containing one command and all its descendants.
 pub(crate) struct Scope(HANDLE);
 
-/// Job termination authority borrowed by the bounded supervisor thread.
+/// Job termination authority borrowed by a command's status task.
 #[derive(Clone, Copy)]
 pub(crate) struct Terminator(HANDLE);
 
-// SAFETY: `LocalProcess` joins the only thread receiving this borrowed raw
-// handle before its owning `Scope` can be dropped. `TerminateJobObject` accepts
-// a job handle from any thread and does not take ownership of it.
+// SAFETY: the status task that receives this borrowed raw handle holds a share
+// of the value that owns its `Scope`, so the scope, and the job handle with it,
+// cannot be dropped while the task can still use this copy.
+// `TerminateJobObject` accepts a job handle from any thread and does not take
+// ownership of it.
 unsafe impl Send for Terminator {}
 
 // SAFETY: a job object is a kernel handle rather than anything owned by the
@@ -138,7 +140,7 @@ impl Scope {
         resume(child)
     }
 
-    /// Borrows the job handle for the lifetime of the joined supervisor.
+    /// Borrows the job handle for as long as the scope that owns it lives.
     #[expect(
         clippy::unnecessary_wraps,
         reason = "the Unix scope can fail to name its process group; both share one call shape"
@@ -237,8 +239,8 @@ fn job_time_limit(seconds: Option<u64>) -> io::Result<Option<i64>> {
 impl Terminator {
     /// Requests termination; the owning scope separately observes completion.
     pub(crate) fn stop(self) -> io::Result<()> {
-        // SAFETY: the owning `Scope` remains live until this supervisor call
-        // returns and the thread is joined.
+        // SAFETY: every holder of this copy also holds a share of the value
+        // that owns its `Scope`, so the job handle is live for this call.
         if unsafe { TerminateJobObject(self.0, 1) } == 0 {
             Err(io::Error::last_os_error())
         } else {

@@ -9,8 +9,10 @@
 //! **Built on first use.** [`RuntimeOwner::handle`] builds the runtime the
 //! first time it is called and hands back the same runtime's handle every time
 //! after. A path that never asks — `--help` and `--version`, which end while
-//! the arguments are parsed, the listings that print and stop, and a run
-//! nothing in which yet needs one — starts no thread for it.
+//! the arguments are parsed, and the listings that print and stop — starts no
+//! thread for it. Assembling a conversation asks, because its turns are
+//! waited for on it and every command its sandbox starts is watched there,
+//! including the kill of one that breaks its time or output limit.
 //!
 //! **Multi-thread, because a waiting caller does not drive the runtime.** A
 //! synchronous caller waits for a future by polling it on its own thread,

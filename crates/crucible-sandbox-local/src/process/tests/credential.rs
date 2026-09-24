@@ -1,7 +1,7 @@
 //! A proxy credential held back when crucible cut the command's output.
 //!
 //! Each stream masks the credential on its own, but stdout and stderr share one
-//! output budget and one supervisor. These tests drive both streams through the
+//! output budget and one status task. These tests drive both streams through the
 //! shared control, and a real command through a stop, to show that the stream
 //! holding the start of a credential learns that crucible cut it, even when the
 //! other stream or a deadline was the cause.
@@ -126,7 +126,7 @@ fn rest(output: &mut dyn SandboxOutput) -> io::Result<(Vec<u8>, usize)> {
 
 /// The security clear's counterexample. stdout has printed the start of the
 /// credential and is still quiet when stderr goes over the budget the two
-/// share; the supervisor then kills the command, and stdout reads its end
+/// share; the status task then kills the command, and stdout reads its end
 /// without ever seeing a discard of its own.
 #[test]
 fn a_credential_start_on_stdout_is_masked_when_stderr_breaks_the_shared_limit() {
@@ -149,7 +149,7 @@ fn a_credential_start_on_stdout_is_masked_when_stderr_breaks_the_shared_limit() 
     proxy.stop().unwrap();
 }
 
-/// The same cut by the deadline: the supervisor marks the command as having
+/// The same cut by the deadline: the status task marks the command as having
 /// run too long, then kills it.
 #[test]
 fn a_credential_start_is_masked_when_the_deadline_ends_the_command() {

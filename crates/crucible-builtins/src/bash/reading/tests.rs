@@ -10,7 +10,7 @@ use crate::sample::{Sample, allowed};
 fn started(sample: &Sample, left: &Background, command: &str) -> Bash {
     let tool = Bash::new(
         sample.workspace(),
-        std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new()),
+        std::sync::Arc::new(crate::sample::sandbox()),
     )
     .sandboxing(false)
     .leaving(left.clone());

@@ -18,6 +18,21 @@ use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId, ToolResult};
 use crucible_workspace::Workspace;
 use sha2::{Digest as _, Sha256};
 
+/// This machine's confinement, watching each command it starts on a runtime
+/// of this test binary's own, whose threads run a command's status task while
+/// a test waits on the command.
+pub(crate) fn sandbox() -> crucible_sandbox_local::LocalSandbox {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_time()
+            .build()
+            .expect("a runtime to watch commands on")
+    });
+    crucible_sandbox_local::LocalSandbox::new().watching_on(runtime.handle().clone())
+}
+
 /// A fresh run context for a direct tool test that watches nothing.
 pub(crate) fn context() -> ToolContext<'static> {
     cancelled_by(&Cancel::new())

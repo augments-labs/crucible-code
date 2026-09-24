@@ -29,6 +29,20 @@ use crucible_sandbox_local::LocalSandbox;
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
+/// The service these tests start commands with, watching each on a runtime of
+/// this test binary's own.
+fn service() -> LocalSandbox {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime to watch commands on")
+    });
+    LocalSandbox::new().watching_on(runtime.handle().clone())
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
@@ -72,7 +86,7 @@ impl Fixture {
             policy,
             SandboxManifest::empty(),
         );
-        let mut session = crucible_runtime::answered!(LocalSandbox::new().prepare(request))
+        let mut session = crucible_runtime::answered!(service().prepare(request))
             .expect("enforcing network preparation");
         crucible_runtime::answered!(session.materialize()).expect("materialization");
         crucible_runtime::answered!(session.start(command)).expect("network command")

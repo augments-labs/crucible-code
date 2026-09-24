@@ -21,7 +21,6 @@ use crucible_sandbox::{
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
 use super::tests::{command, finish, lifecycles, request};
-use crate::LocalSandbox;
 use crate::sample::{Sample, skipped_without_enforcement};
 
 /// This user's publication lock, held the way a publication in progress holds it.
@@ -94,7 +93,7 @@ fn ended_within(process: &mut dyn SandboxProcess, patience: Duration) -> ExitSta
 
 #[test]
 fn a_writer_left_running_does_not_keep_another_from_writing() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -130,7 +129,7 @@ fn a_writer_left_running_does_not_keep_another_from_writing() {
 
 #[test]
 fn a_writer_that_ends_while_another_publishes_waits_its_turn() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -180,7 +179,7 @@ fn a_writer_that_ends_while_another_publishes_waits_its_turn() {
 
 #[test]
 fn of_two_writers_into_one_root_the_one_that_ends_later_publishes_nothing() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -252,7 +251,7 @@ fn of_two_writers_into_one_root_the_one_that_ends_later_publishes_nothing() {
 
 #[test]
 fn a_writer_that_ended_while_another_publishes_reads_as_ended_until_it_publishes() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -295,7 +294,7 @@ fn a_writer_that_ended_while_another_publishes_reads_as_ended_until_it_publishes
 
 #[test]
 fn stopping_a_writer_that_ended_while_another_publishes_discards_it_cleanly() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -339,7 +338,7 @@ fn stopping_a_writer_that_ended_while_another_publishes_discards_it_cleanly() {
 
 #[test]
 fn a_writer_killed_while_another_publishes_ends_without_waiting_for_it() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -373,7 +372,7 @@ fn a_writer_killed_while_another_publishes_ends_without_waiting_for_it() {
 
 #[test]
 fn a_writer_stopped_while_it_ran_still_answers_how_it_ended() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -396,7 +395,7 @@ fn a_writer_stopped_while_it_ran_still_answers_how_it_ended() {
 
 #[test]
 fn a_writer_that_wrote_nothing_ends_cleanly_after_another_published_into_its_root() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -431,7 +430,7 @@ fn a_writer_that_wrote_nothing_ends_cleanly_after_another_published_into_its_roo
 
 #[test]
 fn a_writer_prepared_while_another_publishes_takes_its_baseline_after_that_publication() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -492,7 +491,7 @@ fn a_writer_prepared_while_another_publishes_takes_its_baseline_after_that_publi
 
 #[test]
 fn a_read_only_command_ends_while_another_publishes() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -559,7 +558,7 @@ fn fill_audit(audit: &crucible_sandbox::SandboxAudit, wanted: usize) {
 
 #[test]
 fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_waiting() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -593,7 +592,7 @@ fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_wai
 
 #[test]
 fn a_publication_that_cannot_record_its_fact_still_says_what_the_command_did() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -638,7 +637,7 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
     // other publication rolled back, or because what it wrote was written over
     // again — the baseline check sees nothing wrong, and the difference the scan
     // carries is published as this command's own work.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -750,7 +749,7 @@ fn a_command_with_nothing_to_publish_leaves_the_generations_alone() {
     // it has nothing to publish into. Anything it writes to the file it writes
     // with nothing held, and a copy taken before somebody else's publication
     // moved the counter would put that publication's witness back.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -845,7 +844,7 @@ fn a_writer_publishes_nothing_when_the_generations_cannot_be_read() {
     // A line this cannot read is not an absence. Read as one, it says no
     // publication has touched the root, which is the one answer that lets a
     // command through.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -886,7 +885,7 @@ fn a_root_is_remembered_by_where_it_is_rather_than_by_what_it_is_called() {
     // writable authority above it — but it is remembered under its own path,
     // which is not the one this looks for. What this looks for can only have
     // come from the mount.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -935,7 +934,7 @@ fn a_writer_through_a_mount_publishes_nothing_when_a_publication_touched_what_it
     // agree — the command and the publication would read different names, this
     // one would find its own unmoved, and what it wrote over that publication
     // would be published.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -998,7 +997,7 @@ fn a_writer_through_a_mount_publishes_over_one_whose_publications_all_happened_b
     // publication moves is the host's — so the second command through any mount
     // that has ever been published into would be refused for a publication that
     // happened before it existed.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1050,7 +1049,7 @@ fn a_writer_publishes_over_a_root_whose_publications_all_happened_before_it() {
     // The generation says when, not whether. A root this user has published into
     // before is ordinary; what matters is that nothing moved between the
     // baseline and the publication.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1087,7 +1086,7 @@ fn a_writer_publishes_nothing_when_a_publication_touched_a_root_it_knew_before()
     // The same as the fresh-root case, but where the root already carried a
     // generation: what refuses this command is that the generation moved, not
     // merely that one appeared.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1139,7 +1138,7 @@ fn a_writer_publishes_nothing_when_a_publication_touched_its_root_as_it_ran() {
     // its generation while the command ran, so what the command was scanned as
     // holding may be that publication's work rather than its own — however the
     // root looks now.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1188,7 +1187,7 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
     // comes back is the refusal itself rather than the cleanup's own failure.
     // That refusal reaches the model, and where this user's state directory is
     // belongs in the audit instead.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1240,7 +1239,7 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
 fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1305,7 +1304,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
     // read that directory, so a lease asked for from another thread while the
     // change stood was refused for a change that was not its own: two unrelated
     // tests of this crate failed that way now and then.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1361,7 +1360,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
         let ready = std::sync::Arc::clone(&ready);
         move || {
             ready.wait();
-            crucible_runtime::answered!(LocalSandbox::new().prepare(reader))
+            crucible_runtime::answered!(crate::sample::service().prepare(reader))
                 .map(drop)
                 .map_err(|problem| problem.to_string())
         }
@@ -1370,7 +1369,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
         let ready = std::sync::Arc::clone(&ready);
         move || {
             ready.wait();
-            crucible_runtime::answered!(LocalSandbox::new().prepare(writer))
+            crucible_runtime::answered!(crate::sample::service().prepare(writer))
                 .map(drop)
                 .map_err(|problem| problem.to_string())
         }
@@ -1412,7 +1411,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
 
 #[test]
 fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }

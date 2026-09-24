@@ -211,9 +211,8 @@ fn admitted(
         policy,
         SandboxManifest::empty(),
     );
-    let mut session =
-        crucible_runtime::answered!(crucible_sandbox_local::LocalSandbox::new().prepare(request))
-            .expect("a prepared session");
+    let mut session = crucible_runtime::answered!(crate::sample::sandbox().prepare(request))
+        .expect("a prepared session");
     crucible_runtime::answered!(session.materialize()).expect("an empty manifest");
     crucible_runtime::answered!(session.start(command)).expect("the child started")
 }
