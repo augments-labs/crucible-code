@@ -50,6 +50,14 @@ change in any release with no deprecation period.
   reported as cut; dropping a request or a body's reader closes its
   connection, and a client makes at most four connections at once. Nothing
   uses it yet, so nothing a user runs behaves differently.
+- **A bounded worker for a tool's blocking work.** `ToolWorker` runs at most 4
+  jobs at once on the application runtime's blocking threads, and a call
+  cancelled while it waits for room leaves without starting its job, while one
+  cancelled or dropped once its job runs asks the job to stop through a child
+  of its `Cancel` and gives the place back only when the job returns.
+  `ToolContext::with_worker` lends a call one and `Services::tool_worker`
+  builds the run's worker when first asked for. No call is lent one yet, so
+  nothing a user runs behaves differently.
 
 ### Changed
 

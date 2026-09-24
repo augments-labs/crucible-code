@@ -708,6 +708,7 @@ dependencies = [
  "crucible-workspace",
  "globset",
  "thiserror",
+ "tokio",
  "uuid",
 ]
 
