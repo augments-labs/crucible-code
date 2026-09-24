@@ -20,6 +20,24 @@ use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 /// Enabled requests require a verified native backend on Linux, macOS and
 /// Windows. Disabled requests still use this service for bounded execution,
 /// lifecycle tracking and audit. There is no unconfined fallback when enabled.
+///
+/// # Asynchronous pipes
+///
+/// A process this service starts reads its output with
+/// [`SandboxOutput::read`](crucible_sandbox::SandboxOutput::read) and writes
+/// the input [`SandboxProcess::take_async_stdin`] hands back without holding a
+/// thread while the pipe is not ready. On Unix that waiting is the reactor's
+/// of the Tokio runtime polling the first waiting read or write of a pipe:
+///
+/// - That runtime needs its I/O driver. Polled off any runtime, the read or
+///   write answers an error; polled on a runtime built without the driver,
+///   Tokio panics.
+/// - The pipe stays with that runtime from then on: a later waiting read or
+///   write of it waits on that runtime's reactor, whichever runtime polls it,
+///   so it is to be polled on that runtime while that runtime runs.
+///
+/// On Windows each pipe waited on gets a thread of its own instead, and needs
+/// no runtime; the process's stop joins its input's thread.
 #[derive(Debug, Clone, Default)]
 pub struct LocalSandbox {
     active: Arc<AtomicUsize>,

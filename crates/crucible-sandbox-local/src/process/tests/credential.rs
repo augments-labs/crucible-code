@@ -20,15 +20,11 @@ use crate::network::Mediator;
 /// end once the script runs out.
 struct Script(VecDeque<Option<Vec<u8>>>);
 
-impl io::Read for Script {
-    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-        Err(io::Error::other("a script is read through read_ready"))
-    }
-}
-
-impl PlatformOutput for Script {
-    fn prepare(&self) -> io::Result<()> {
-        Ok(())
+impl Stream for Script {
+    fn read<'a>(&'a mut self, _: &'a mut [u8]) -> BoxFuture<'a, io::Result<ReadState>> {
+        Box::pin(std::future::ready(Err(io::Error::other(
+            "a script is read through read_ready",
+        ))))
     }
 
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<ReadState> {
@@ -77,9 +73,9 @@ fn stream<const N: usize>(
     proxy: &Mediator,
     control: &Arc<Control>,
     script: [Option<Vec<u8>>; N],
-) -> io::Result<Box<dyn SandboxOutput>> {
-    let prepared = PreparedOutput::new(Script(script.into()), Arc::clone(control))?;
-    Ok(protect_output(Box::new(prepared), proxy.masked(), control))
+) -> Box<dyn SandboxOutput> {
+    let prepared = PreparedOutput::new(Box::new(Script(script.into())), Arc::clone(control));
+    protect_output(Box::new(prepared), proxy.masked(), control)
 }
 
 /// "id=" and the first 20 bytes of the password: the start of a credential
@@ -136,10 +132,10 @@ fn rest(output: &mut dyn SandboxOutput) -> io::Result<(Vec<u8>, usize)> {
 fn a_credential_start_on_stdout_is_masked_when_stderr_breaks_the_shared_limit() {
     let (mut proxy, password) = proxy().unwrap();
     let control = control(Some(32));
-    let mut stdout = stream(&proxy, &control, [Some(started(&password).unwrap()), None]).unwrap();
+    let mut stdout = stream(&proxy, &control, [Some(started(&password).unwrap()), None]);
     // `-` begins neither the hex password nor its base64 form, so the cut
     // stderr keeps its last byte as it is.
-    let mut stderr = stream(&proxy, &control, [Some(vec![b'-'; 100])]).unwrap();
+    let mut stderr = stream(&proxy, &control, [Some(vec![b'-'; 100])]);
 
     let mut buffer = [0; 256];
     assert_eq!(
@@ -159,7 +155,7 @@ fn a_credential_start_on_stdout_is_masked_when_stderr_breaks_the_shared_limit() 
 fn a_credential_start_is_masked_when_the_deadline_ends_the_command() {
     let (mut proxy, password) = proxy().unwrap();
     let control = control(None);
-    let mut stdout = stream(&proxy, &control, [Some(started(&password).unwrap()), None]).unwrap();
+    let mut stdout = stream(&proxy, &control, [Some(started(&password).unwrap()), None]);
 
     let mut buffer = [0; 256];
     assert_eq!(
@@ -178,7 +174,7 @@ fn a_credential_start_is_masked_when_the_deadline_ends_the_command() {
 fn a_credential_start_is_released_when_the_command_ends_its_own_output() {
     let (mut proxy, password) = proxy().unwrap();
     let control = control(Some(1024));
-    let mut stdout = stream(&proxy, &control, [Some(started(&password).unwrap()), None]).unwrap();
+    let mut stdout = stream(&proxy, &control, [Some(started(&password).unwrap()), None]);
 
     assert_eq!(
         rest(stdout.as_mut()).unwrap(),

@@ -635,6 +635,7 @@ dependencies = [
  "globset",
  "sha2",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -665,6 +666,7 @@ dependencies = [
  "httparse",
  "rustix",
  "sha2",
+ "tokio",
  "windows-sys 0.61.2",
 ]
 
@@ -717,6 +719,7 @@ dependencies = [
  "crucible-sandbox",
  "crucible-types",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

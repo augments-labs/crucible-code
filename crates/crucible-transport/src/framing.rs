@@ -15,9 +15,20 @@
 //! installed and crucible started with their privileges, and this is where its
 //! bytes arrive — so a ceiling that holds here is a ceiling on what it can make
 //! this process hold, whoever wrote it.
+//!
+//! Both halves read and write either kind of stream: a blocking one, through
+//! [`Frames::next_frame`] and [`Written::send`], or an asynchronous one,
+//! through [`Frames::next_frame_async`] and [`Written::send_async`], on
+//! whatever runtime the caller is already on. The two kinds share one assembly
+//! and one set of refusals, so what a program sends comes to the same frames
+//! and the same errors whichever kind of stream it arrives on. The blocking
+//! kind stays until the transport above it is asynchronous throughout.
 
 use std::io::{self, BufRead, Write};
+use std::ops::ControlFlow;
 use std::time::Duration;
+
+use tokio::io::{AsyncBufRead, AsyncBufReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 use crate::Said;
 
@@ -107,13 +118,23 @@ impl FrameError {
 pub struct Frames<R> {
     /// Where the bytes come from.
     from: R,
-    /// The frame being assembled, never its newline.
-    held: Vec<u8>,
-    /// Whether this stream has finished, cleanly or otherwise.
-    done: bool,
+    /// The frame being put together from them.
+    assembly: Assembly,
 }
 
-impl<R: BufRead> Frames<R> {
+impl<R> Frames<R> {
+    /// Reads frames from `from`.
+    #[must_use]
+    pub const fn new(from: R) -> Self {
+        Self {
+            from,
+            assembly: Assembly {
+                held: Vec::new(),
+                done: false,
+            },
+        }
+    }
+
     /// The stream underneath, for what only it can be asked.
     ///
     /// Framing is all this type does; how long the stream waits and what it
@@ -123,21 +144,35 @@ impl<R: BufRead> Frames<R> {
         &mut self.from
     }
 
-    /// Reads frames from `from`.
-    #[must_use]
-    pub const fn new(from: R) -> Self {
-        Self {
-            from,
-            held: Vec::new(),
-            done: false,
-        }
-    }
-
-    /// The next frame, or nothing once the stream has finished.
+    /// What one line comes to for whoever asked for a frame: an answer, or a
+    /// blank line to read past.
     ///
     /// A blank line is not a frame and is skipped: it says nothing, and the
     /// alternative is refusing a program for a byte that means nothing in
-    /// either direction.
+    /// either direction. A refusal finishes the stream, through
+    /// [`Assembly::finish`].
+    fn answer(
+        &mut self,
+        line: Result<Option<String>, FrameError>,
+    ) -> ControlFlow<Option<Result<String, FrameError>>> {
+        match line {
+            Ok(None) => ControlFlow::Break(None),
+            // A line with nothing on it, skipped rather than handed up as an
+            // empty document for the layer above to be confused by.
+            Ok(Some(frame)) if frame.is_empty() => ControlFlow::Continue(()),
+            Ok(Some(frame)) => ControlFlow::Break(Some(Ok(frame))),
+            Err(err) => {
+                self.assembly.finish();
+                ControlFlow::Break(Some(Err(err)))
+            }
+        }
+    }
+}
+
+impl<R: BufRead> Frames<R> {
+    /// The next frame, or nothing once the stream has finished.
+    ///
+    /// A blank line is not a frame and is skipped.
     ///
     /// # Errors
     ///
@@ -149,16 +184,9 @@ impl<R: BufRead> Frames<R> {
     /// it decides to send one.
     pub fn next_frame(&mut self) -> Option<Result<String, FrameError>> {
         loop {
-            match self.frame() {
-                Ok(None) => return None,
-                // A line with nothing on it, skipped rather than handed up as
-                // an empty document for the layer above to be confused by.
-                Ok(Some(frame)) if frame.is_empty() => {}
-                Ok(Some(frame)) => return Some(Ok(frame)),
-                Err(err) => {
-                    self.finish();
-                    return Some(Err(err));
-                }
+            let line = self.frame();
+            if let ControlFlow::Break(answer) = self.answer(line) {
+                return answer;
             }
         }
     }
@@ -168,7 +196,7 @@ impl<R: BufRead> Frames<R> {
     /// `Ok(None)` is the stream ending where a frame was not in progress, which
     /// is the only clean way for it to end.
     fn frame(&mut self) -> Result<Option<String>, FrameError> {
-        if self.done {
+        if self.assembly.done {
             return Ok(None);
         }
         loop {
@@ -177,36 +205,137 @@ impl<R: BufRead> Frames<R> {
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) => return Err(err.into()),
             };
-            if arrived.is_empty() {
-                self.done = true;
-                if self.held.is_empty() {
-                    return Ok(None);
+            match self.assembly.take(arrived)? {
+                Took::Ended => return Ok(None),
+                Took::Part(consumed) => self.from.consume(consumed),
+                Took::Whole(consumed, frame) => {
+                    self.from.consume(consumed);
+                    return frame.map(Some);
                 }
-                let seen = self.held.len();
-                self.held = Vec::new();
-                return Err(FrameError::Truncated { seen });
-            }
-
-            let ended = arrived.iter().position(|byte| *byte == b'\n');
-            // The newline is the boundary and never part of what it delimits,
-            // so the ceiling is counted over the frame's own bytes.
-            let carried = ended.unwrap_or(arrived.len());
-            let consumed = ended.map_or(arrived.len(), |at| at.saturating_add(1));
-            if carried > FRAME_BYTES.saturating_sub(self.held.len()) {
-                return Err(FrameError::TooLong {
-                    maximum: FRAME_BYTES,
-                });
-            }
-            self.held.extend(arrived.iter().take(carried).copied());
-            self.from.consume(consumed);
-
-            if ended.is_some() {
-                let bytes = std::mem::take(&mut self.held);
-                return String::from_utf8(bytes)
-                    .map(Some)
-                    .map_err(|_| FrameError::NotText);
             }
         }
+    }
+}
+
+impl<R: AsyncBufRead + Unpin> Frames<R> {
+    /// The next frame, or nothing once the stream has finished, from a stream
+    /// read asynchronously.
+    ///
+    /// The same frames and the same refusals as [`next_frame`](Self::next_frame)
+    /// over the same bytes: a blank line is skipped, and every refusal finishes
+    /// the stream.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameError`] where the pipe fails, a frame runs past
+    /// [`FRAME_BYTES`], the stream stops partway through one, or one arrives
+    /// that is not text.
+    ///
+    /// # Cancel safety
+    ///
+    /// Dropping this before it answers loses nothing, provided the stream's own
+    /// `fill_buf` loses nothing when dropped, as Tokio's buffered reader does
+    /// not. What had arrived of a frame stays with the reader, and the next
+    /// call carries on from it, so a caller may give up waiting for a frame
+    /// without giving up the stream.
+    pub async fn next_frame_async(&mut self) -> Option<Result<String, FrameError>> {
+        loop {
+            let line = self.frame_async().await;
+            if let ControlFlow::Break(answer) = self.answer(line) {
+                return answer;
+            }
+        }
+    }
+
+    /// One line, however many reads it takes to arrive, read asynchronously.
+    ///
+    /// The one wait is for bytes to arrive. Bytes are consumed from the stream
+    /// only together with their taking into the assembly, with no wait between
+    /// the two, which is what lets the wait be abandoned.
+    async fn frame_async(&mut self) -> Result<Option<String>, FrameError> {
+        if self.assembly.done {
+            return Ok(None);
+        }
+        loop {
+            let arrived = match self.from.fill_buf().await {
+                Ok(bytes) => bytes,
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err.into()),
+            };
+            match self.assembly.take(arrived)? {
+                Took::Ended => return Ok(None),
+                Took::Part(consumed) => self.from.consume(consumed),
+                Took::Whole(consumed, frame) => {
+                    self.from.consume(consumed);
+                    return frame.map(Some);
+                }
+            }
+        }
+    }
+}
+
+/// A frame being put together from whatever reads it takes to arrive.
+///
+/// Both kinds of reader hand every read's bytes to this and decide nothing
+/// about them themselves, which is what keeps a stream's outcome from depending
+/// on which kind of stream it arrived on.
+#[derive(Debug)]
+struct Assembly {
+    /// The frame being assembled, never its newline.
+    held: Vec<u8>,
+    /// Whether this stream has finished, cleanly or otherwise.
+    done: bool,
+}
+
+/// What one read's bytes came to.
+enum Took {
+    /// The stream ended where a frame was not in progress.
+    Ended,
+    /// This many bytes, all of them part of a frame not yet ended.
+    Part(usize),
+    /// This many bytes, the last of them the newline that ended a frame, and
+    /// that frame or why it is refused.
+    Whole(usize, Result<String, FrameError>),
+}
+
+impl Assembly {
+    /// Takes what `arrived` carries of the frame in progress.
+    ///
+    /// An empty read is the stream ending. A refusal that comes back as an
+    /// error is settled before anything is taken, so nothing of `arrived` is to
+    /// be consumed; one that comes back inside [`Took::Whole`] is a frame that
+    /// ended and is not text, whose bytes were read to their newline.
+    fn take(&mut self, arrived: &[u8]) -> Result<Took, FrameError> {
+        if arrived.is_empty() {
+            self.done = true;
+            if self.held.is_empty() {
+                return Ok(Took::Ended);
+            }
+            let seen = self.held.len();
+            self.held = Vec::new();
+            return Err(FrameError::Truncated { seen });
+        }
+
+        let ended = arrived.iter().position(|byte| *byte == b'\n');
+        // The newline is the boundary and never part of what it delimits,
+        // so the ceiling is counted over the frame's own bytes.
+        let carried = ended.unwrap_or(arrived.len());
+        let consumed = ended.map_or(arrived.len(), |at| at.saturating_add(1));
+        if carried > FRAME_BYTES.saturating_sub(self.held.len()) {
+            return Err(FrameError::TooLong {
+                maximum: FRAME_BYTES,
+            });
+        }
+        self.held.extend(arrived.iter().take(carried).copied());
+
+        if ended.is_none() {
+            return Ok(Took::Part(consumed));
+        }
+        let bytes = std::mem::take(&mut self.held);
+        Ok(Took::Whole(
+            consumed,
+            String::from_utf8(bytes).map_err(|_| FrameError::NotText),
+        ))
     }
 
     /// Ends the stream and lets go of whatever was being assembled.
@@ -227,9 +356,10 @@ impl<R: BufRead> Frames<R> {
 ///
 /// Nothing is buffered between calls. A program waiting on a request that is
 /// sitting in crucible's buffer is a hang with no error and nothing on screen,
-/// so a frame is on its way out by the time [`send`](Self::send) returns.
+/// so a frame is on its way out by the time [`send`](Self::send) or
+/// [`send_async`](Self::send_async) answers.
 ///
-/// [`send`](Self::send) is also the only way anything goes out. The stream is
+/// Those two are also the only way anything goes out. The stream is
 /// not lent back, because whatever can borrow it can write to it, and a byte
 /// written beside a frame is a line the far end reads as one nobody checked:
 ///
@@ -265,13 +395,31 @@ impl Written<Said> {
     }
 }
 
-impl<W: Write> Written<W> {
+impl<W> Written<W> {
     /// Sends frames to `to`.
     #[must_use]
     pub const fn new(to: W) -> Self {
         Self { to }
     }
 
+    /// Refuses a frame that may not go out, before a byte of it is written.
+    ///
+    /// A frame refused halfway would leave a fragment on the wire that the far
+    /// end joins to whatever crucible sends next.
+    fn admitted(frame: &str) -> Result<(), FrameError> {
+        if frame.len() > FRAME_BYTES {
+            return Err(FrameError::TooLong {
+                maximum: FRAME_BYTES,
+            });
+        }
+        if frame.as_bytes().contains(&b'\n') {
+            return Err(FrameError::Divided);
+        }
+        Ok(())
+    }
+}
+
+impl<W: Write> Written<W> {
     /// Sends one frame.
     ///
     /// # Errors
@@ -281,17 +429,35 @@ impl<W: Write> Written<W> {
     /// before a byte is written: a frame refused halfway would leave a fragment
     /// on the wire that the far end joins to whatever crucible sends next.
     pub fn send(&mut self, frame: &str) -> Result<(), FrameError> {
-        if frame.len() > FRAME_BYTES {
-            return Err(FrameError::TooLong {
-                maximum: FRAME_BYTES,
-            });
-        }
-        if frame.as_bytes().contains(&b'\n') {
-            return Err(FrameError::Divided);
-        }
+        Self::admitted(frame)?;
         self.to.write_all(frame.as_bytes())?;
         self.to.write_all(b"\n")?;
         self.to.flush()?;
+        Ok(())
+    }
+}
+
+impl<W: AsyncWrite + Unpin> Written<W> {
+    /// Sends one frame over a stream written asynchronously.
+    ///
+    /// The same refusals as [`send`](Self::send), settled the same way before
+    /// a byte is written, and the same bytes on the wire.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameError`] where the frame carries a newline, runs past
+    /// [`FRAME_BYTES`], or the pipe fails.
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped before it answers, it may have written part of the frame,
+    /// and whatever is sent after that arrives joined to the part: a caller
+    /// that gives up on a send has given up on the stream with it.
+    pub async fn send_async(&mut self, frame: &str) -> Result<(), FrameError> {
+        Self::admitted(frame)?;
+        self.to.write_all(frame.as_bytes()).await?;
+        self.to.write_all(b"\n").await?;
+        self.to.flush().await?;
         Ok(())
     }
 }

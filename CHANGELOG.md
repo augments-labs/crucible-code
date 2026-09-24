@@ -28,6 +28,21 @@ change in any release with no deprecation period.
   blocking threads, with a timer and no I/O driver, through
   `services::Services`, built only when first asked for and shut down within
   2 s once a run ends.
+- **A sandboxed command's pipes can be read and written asynchronously.**
+  `SandboxOutput` gains a waiting `read`, and `SandboxProcess` gains
+  `take_async_stdin`, which hands back a `SandboxInput`; both have defaults
+  built on the synchronous methods, so a backend written before them compiles
+  unchanged. The local backend waits on a pipe through the caller's Tokio
+  runtime on Unix and through a thread each pipe owns on Windows. Nothing uses
+  them yet, so nothing a user runs behaves differently.
+- **A hosted program's frames can be read and sent asynchronously, and its
+  finish awaited.** In `crucible-transport`, `Frames::next_frame_async` and
+  `Written::send_async` work over Tokio's readers and writers with the same
+  1 MiB ceiling and the same refusals as the blocking pair, and
+  `Finish::after_async` waits up to 10 s for a stop that yields to the runtime
+  before reporting it as unconfirmed cleanup, while a stop that does its work in
+  its first poll runs to completion. Nothing uses them yet, so nothing a user
+  runs behaves differently.
 
 ### Changed
 
