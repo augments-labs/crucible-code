@@ -536,10 +536,10 @@ impl Lock {
         let file = crucible_privacy::lock(lock)
             .map_err(|problem| AuthError::at(lock)(problem.into_io()))?;
 
-        // Bounded by the clock, not by a count of pauses: a pause is a lower
-        // bound on how long a thread sleeps, and a kernel that coalesces
-        // timers stretches each one, so counting them would count time that
-        // never passed the same on every platform.
+        // Bounded by the clock, not by a count of pauses: a pause only
+        // bounds how long a thread sleeps from below, and a kernel that
+        // coalesces timers stretches each one, so the wait is measured on
+        // the clock.
         let until = std::time::Instant::now().checked_add(WAIT);
         loop {
             match file.try_lock() {

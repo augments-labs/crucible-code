@@ -211,6 +211,12 @@ change in any release with no deprecation period.
   failed`. It now reports `sandbox launch refused:` followed by Bubblewrap's
   own words, on one line and cut at 512 bytes, so an option it does not know
   is named.
+- **A busy account store is reported after five seconds on macOS too.** A
+  wait for another crucible's lock on the store — shared by logins, keys and
+  renewals — was documented and reported after five seconds, but macOS
+  stretched it to about twenty because the wait counted a fixed number of
+  pauses rather than the clock. It now ends after five seconds on every
+  platform.
 
 ### Security
 
