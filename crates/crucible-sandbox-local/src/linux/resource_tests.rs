@@ -4,7 +4,7 @@
 //! These start a real command and ask the kernel, from inside the namespace,
 //! what it was actually given — the half an argument list cannot show.
 
-use std::time::{Duration, Instant};
+use std::os::unix::process::ExitStatusExt as _;
 
 use crucible_sandbox::{
     SandboxCapability, SandboxError, SandboxFeature, SandboxManifest, SandboxNetworkPolicy,
@@ -227,6 +227,9 @@ fn requested_cpu_limit_terminates_the_workload_scope() {
         },
     )
     .expect("policy");
+    // Nothing else here ends a command: no deadline, so the kill below is the
+    // CPU ceiling's and not a clock's.
+    assert_eq!(policy.limits().command_time, None);
     let request = SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -237,16 +240,23 @@ fn requested_cpu_limit_terminates_the_workload_scope() {
     let mut session =
         crucible_runtime::answered!(service.prepare(request)).expect("supported hard limit");
     crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
-    let started = Instant::now();
 
-    let (status, _, _) = finish(
-        crucible_runtime::answered!(session.start(command("while :; do :; done")))
+    let (status, output, _) = finish(
+        crucible_runtime::answered!(session.start(command("ulimit -t; while :; do :; done")))
             .expect("started limited command"),
     );
 
-    assert!(!status.success(), "CPU-bound workload escaped its ceiling");
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "CPU ceiling did not terminate the workload promptly"
+    // The ceiling is counted in CPU time, so how long it takes on the clock is
+    // this host's CPU share, not a property of the ceiling: a wall-clock bound
+    // here failed a correct build on a busy host and passed one handed twice
+    // the ceiling. What is read instead is the kernel's own answer, from inside
+    // the workload, that it runs under the one second asked for, and the kill
+    // the kernel sends when that second is spent — at the hard limit, which
+    // the broker sets equal to the soft one.
+    assert_eq!(String::from_utf8(output).expect("utf8").trim(), "1");
+    assert_eq!(
+        status.signal(),
+        Some(rustix::process::Signal::KILL.as_raw()),
+        "CPU-bound workload escaped its ceiling: {status}"
     );
 }
