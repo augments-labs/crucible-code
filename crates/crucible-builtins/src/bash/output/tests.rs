@@ -1,6 +1,15 @@
 //! What is kept of a command's output, and what is said about the rest.
 
-use super::{CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, cut};
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use crucible_sandbox::{SandboxOutput, SandboxRead};
+
+use super::{
+    CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, PUBLICATION, Pipe, TICK, cut, settle,
+};
 
 #[test]
 fn a_command_stopped_for_running_too_long_says_so_once() {
@@ -330,5 +339,56 @@ fn nothing_arriving_hands_nothing_over() {
     assert!(
         kept.hand_over().is_empty(),
         "the same bytes were handed twice"
+    );
+}
+
+/// A standard output with nothing to read until `over` says the command is,
+/// telling `parked` each time its reader is about to wait out a tick.
+struct Quiet {
+    over: Arc<AtomicBool>,
+    parked: std::sync::mpsc::Sender<()>,
+}
+
+impl SandboxOutput for Quiet {
+    fn read_ready(&mut self, _buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if self.over.load(Ordering::Relaxed) {
+            return Ok(SandboxRead::End);
+        }
+        let _ = self.parked.send(());
+        Ok(SandboxRead::Pending)
+    }
+}
+
+#[test]
+fn a_reader_waiting_out_its_tick_is_woken_once_the_command_is_over() {
+    // The readers poll their pipes a tick apart, and the wait reaches `settle`
+    // a moment before they wake: a reader found still reading and left to its
+    // tick costs every short command's answer the rest of that tick. Ten
+    // rounds rather than one, so that a scheduling stall on a loaded runner
+    // has to reach half of what the ticks would have cost before this fails.
+    const ROUNDS: u32 = 10;
+    let mut waited = Duration::ZERO;
+    for _ in 0..ROUNDS {
+        let over = Arc::new(AtomicBool::new(false));
+        let (parked, parking) = std::sync::mpsc::channel();
+        let quiet = Quiet {
+            over: Arc::clone(&over),
+            parked,
+        };
+        let out = Pipe::drain(Some(Box::new(quiet)), "stdout").expect("a reader for stdout");
+        let err = Pipe::drain(None, "stderr").expect("nothing to read for stderr");
+        parking
+            .recv_timeout(PUBLICATION)
+            .expect("the reader looked at the pipe once");
+        over.store(true, Ordering::Relaxed);
+
+        let started = Instant::now();
+        assert!(settle(&out, &err), "the reader never reached the end");
+        waited += started.elapsed();
+    }
+
+    assert!(
+        waited < TICK * ROUNDS / 2,
+        "the readers were left to their ticks: {waited:?} over {ROUNDS} rounds"
     );
 }
