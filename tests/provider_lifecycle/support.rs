@@ -15,10 +15,12 @@ use crucible_core::{
     JournalStore, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary, Tool,
     ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Workspace,
 };
-use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
+use crucible_provider::{Anthropic, Endpoint, Google, HttpTurns, OpenAi, PostResponse};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_runner::{EventEnvelope, Post, TurnError};
 use crucible_runtime::BoxFuture;
+use tokio::io::{AsyncRead, ReadBuf};
+
 use crucible_session::Session;
 use serde_json::{Value, json};
 
@@ -28,6 +30,8 @@ pub(crate) trait Awaited: std::future::Future + Sized {
     /// The future's answer, once it has one.
     fn awaited(self) -> Self::Output {
         tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
             .build()
             .expect("a test runtime")
             .block_on(self)
@@ -224,8 +228,26 @@ pub(crate) fn turn(run: &mut Runner, prompt: &str, sample: &Sample) -> StopReaso
     try_turn(run, prompt, sample).expect("valid fixture")
 }
 
+pub(crate) fn http_turns() -> HttpTurns {
+    let (http, stopped) = crucible_app::services::serving(|services| services.http().clone());
+    assert!(
+        stopped.is_ok(),
+        "the fixture HTTP service did not shut down"
+    );
+    http
+}
+
 pub(crate) fn provider(model: &str, endpoint: Endpoint, key: &str) -> Box<dyn Provider> {
-    through(model, endpoint, key, Box::new(Https::new()))
+    provider_with(model, endpoint, key, http_turns())
+}
+
+pub(crate) fn provider_with(
+    model: &str,
+    endpoint: Endpoint,
+    key: &str,
+    transport: HttpTurns,
+) -> Box<dyn Provider> {
+    through(model, endpoint, key, Box::new(transport))
 }
 
 fn through(
@@ -259,30 +281,37 @@ pub(crate) fn cancelling(model: &str, endpoint: Endpoint, body: String) -> Box<d
         bytes: std::io::Cursor<Vec<u8>>,
         cancel: Cancel,
     }
-    impl std::io::Read for Body {
-        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-            let count = self.bytes.read(out)?;
+    impl AsyncRead for Body {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            into: &mut ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let mut bytes = [0_u8; 8 * 1024];
+            let wanted = into.remaining().min(bytes.len());
+            let count = self
+                .bytes
+                .read(bytes.get_mut(..wanted).unwrap_or_default())?;
             if count == 0 {
                 self.cancel.request();
             }
-            Ok(count)
+            into.put_slice(bytes.get(..count).unwrap_or_default());
+            std::task::Poll::Ready(Ok(()))
         }
     }
     impl crucible_provider::Transport for AtEof {
-        fn post(
-            &self,
-            _: &str,
-            _: crucible_core::Outgoing,
+        fn post<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a mut crucible_core::Outgoing,
             _: String,
-            cancel: &Cancel,
-        ) -> Result<crucible_provider::Response, crucible_provider::TransportError> {
-            Ok(crucible_provider::Response {
-                status: 200,
-                body: Box::new(Body {
-                    bytes: std::io::Cursor::new(self.0.as_bytes().to_vec()),
-                    cancel: cancel.clone(),
-                }),
-            })
+            cancel: &'a Cancel,
+        ) -> BoxFuture<'a, Result<PostResponse, crucible_provider::TransportError>> {
+            let body = Body {
+                bytes: std::io::Cursor::new(self.0.as_bytes().to_vec()),
+                cancel: cancel.clone(),
+            };
+            Box::pin(async move { Ok(PostResponse::recorded(200, body)) })
         }
     }
     through(model, endpoint, KEY, Box::new(AtEof(body)))

@@ -483,8 +483,7 @@ impl Provider for OpenAi {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let outgoing = self.headers(cancel).await?;
-            let redactions = outgoing.redactions();
+            let mut outgoing = self.headers(cancel).await?;
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,
                 self.endpoint.as_str(),
@@ -497,11 +496,14 @@ impl Provider for OpenAi {
 
             let response = self
                 .transport
-                .post(self.endpoint.as_str(), outgoing, body, cancel)
-                .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
+                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
+                .await;
+            let redactions = outgoing.redactions();
+            let response =
+                response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
-            if response.status != 200 {
-                let error = refused(NAME, response.status, response.body, &redactions, cancel);
+            if response.status() != 200 {
+                let error = refused(NAME, response.status(), response, &redactions, cancel).await;
                 return Err(if request.model == ASTRA {
                     continuation::refusal(error)
                 } else {
@@ -510,7 +512,7 @@ impl Provider for OpenAi {
             }
 
             Ok(Box::new(Stream::with_wire(
-                response.body,
+                response.into_reader(),
                 cancel.clone(),
                 redactions,
                 wire::Responses::for_request(&request, scope)?,

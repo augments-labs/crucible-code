@@ -10,12 +10,18 @@
 
 pub(crate) mod http;
 
+use std::error::Error as _;
 use std::fmt;
-use std::io::Read;
+use std::io::{self, Read};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use crucible_credentials::Outgoing;
+use crucible_http::BodyError;
 use crucible_models::ProviderError;
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
+use hyper::body::{Body as _, Bytes, Incoming};
+use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 
 /// Why a request did not produce a response.
 ///
@@ -32,10 +38,6 @@ pub enum TransportError {
     #[error("request cancelled before a response arrived")]
     Cancelled,
 
-    /// The isolated request-setup worker stopped without reporting an outcome.
-    #[error("request setup stopped unexpectedly")]
-    SetupStopped,
-
     /// The platform resolver outlived its deadline and cannot be reaped.
     #[error("hostname resolution stalled; restart crucible before trying another provider request")]
     ResolveStalled,
@@ -51,10 +53,6 @@ impl TransportError {
     pub(crate) fn for_provider(self, provider: &'static str) -> ProviderError {
         match self {
             Self::Cancelled => ProviderError::Cancelled(provider),
-            Self::SetupStopped => ProviderError::Transport {
-                provider,
-                problem: "request setup stopped unexpectedly".into(),
-            },
             Self::ResolveStalled => ProviderError::Transport {
                 provider,
                 problem: "hostname resolution stalled; restart crucible before trying another provider request"
@@ -82,6 +80,206 @@ impl fmt::Debug for Response {
     }
 }
 
+/// What an asynchronous post produced.
+pub struct PostResponse {
+    status: u16,
+    body: PostBody,
+}
+
+/// The body behind a [`PostResponse`].
+///
+/// The network arm keeps hyper's incoming body intact so its bounded readers
+/// remain the readers used in production. The reader arm is for recorded
+/// transports and external test doubles; it is never selected by [`http::HttpTurns`].
+enum PostBody {
+    Network(Incoming),
+    Reader(Box<dyn AsyncRead + Send + Unpin>),
+}
+
+impl PostResponse {
+    /// A response whose body is read by the caller.
+    pub fn recorded(status: u16, body: impl AsyncRead + Send + Unpin + 'static) -> Self {
+        Self {
+            status,
+            body: PostBody::Reader(Box::new(body)),
+        }
+    }
+
+    /// A response carrying the body returned by the shared HTTP client.
+    pub(crate) fn network(status: u16, body: Incoming) -> Self {
+        Self {
+            status,
+            body: PostBody::Network(body),
+        }
+    }
+
+    /// The response status. Every status is an answer to the protocol reading it.
+    pub(crate) fn status(&self) -> u16 {
+        self.status
+    }
+
+    /// Takes the body for streaming.
+    pub(crate) fn into_reader(self) -> Box<dyn AsyncRead + Send + Unpin> {
+        match self.body {
+            PostBody::Network(body) => Box::new(Arriving::new(body)),
+            PostBody::Reader(body) => body,
+        }
+    }
+
+    /// Takes the body for a whole bounded read.
+    pub(crate) async fn read_limited(
+        self,
+        limit: usize,
+        within: std::time::Duration,
+    ) -> Result<Vec<u8>, PostBodyError> {
+        match self.body {
+            PostBody::Network(body) => crucible_http::read_limited(body, limit, within)
+                .await
+                .map_err(PostBodyError::Http),
+            PostBody::Reader(mut body) => read_reader(&mut body, limit, within).await,
+        }
+    }
+}
+
+impl fmt::Debug for PostResponse {
+    /// By hand, for the same reason as [`Response`].
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PostResponse")
+            .field("status", &self.status)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Why an asynchronous response body was not read whole.
+#[derive(Debug)]
+pub(crate) enum PostBodyError {
+    /// The shared HTTP body reader refused or failed.
+    Http(BodyError),
+    /// A recorded or external transport reader failed.
+    Read(io::Error),
+    /// A byte past the caller's limit arrived.
+    TooLarge,
+    /// The caller's whole-read deadline passed.
+    Deadline,
+}
+
+/// Reads a recorded or external body with the same whole-read contract as the
+/// shared HTTP body reader.
+async fn read_reader(
+    body: &mut (impl AsyncRead + Unpin + ?Sized),
+    limit: usize,
+    within: std::time::Duration,
+) -> Result<Vec<u8>, PostBodyError> {
+    let deadline = tokio::time::Instant::now().checked_add(within);
+    let mut kept = Vec::new();
+    let mut into = [0_u8; 8 * 1024];
+    loop {
+        let next = match deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline, body.read(&mut into))
+                .await
+                .map_err(|_| PostBodyError::Deadline)?,
+            None => body.read(&mut into).await,
+        };
+        let read = next.map_err(PostBodyError::Read)?;
+        if read == 0 {
+            return Ok(kept);
+        }
+        let bytes = into.get(..read).unwrap_or_default();
+        if bytes.len() > limit.saturating_sub(kept.len()) {
+            return Err(PostBodyError::TooLarge);
+        }
+        kept.extend_from_slice(bytes);
+    }
+}
+
+/// A hyper body as the asynchronous reader the provider formats expect.
+struct Arriving {
+    body: Incoming,
+    current: Bytes,
+    ended: bool,
+    quiet: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl Arriving {
+    fn new(body: Incoming) -> Self {
+        Self {
+            body,
+            current: Bytes::new(),
+            ended: false,
+            quiet: None,
+        }
+    }
+}
+
+impl AsyncRead for Arriving {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        into: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        loop {
+            if !this.current.is_empty() {
+                let amount = this.current.len().min(into.remaining());
+                let chunk = this.current.split_to(amount);
+                into.put_slice(&chunk);
+                return Poll::Ready(Ok(()));
+            }
+            if this.ended {
+                return Poll::Ready(Ok(()));
+            }
+
+            match Pin::new(&mut this.body).poll_frame(context) {
+                Poll::Ready(Some(Ok(frame))) => {
+                    this.quiet = None;
+                    if let Ok(bytes) = frame.into_data() {
+                        this.current = bytes;
+                    }
+                }
+                Poll::Ready(None) => {
+                    this.ended = true;
+                    this.quiet = None;
+                    return Poll::Ready(Ok(()));
+                }
+                Poll::Ready(Some(Err(problem))) => {
+                    this.quiet = None;
+                    return Poll::Ready(Err(body_error(problem)));
+                }
+                Poll::Pending => {
+                    let quiet = this
+                        .quiet
+                        .get_or_insert_with(|| Box::pin(tokio::time::sleep(crucible_http::QUIET)));
+                    if quiet.as_mut().poll(context).is_ready() {
+                        this.quiet = None;
+                        return Poll::Ready(Err(io::ErrorKind::Interrupted.into()));
+                    }
+                    return Poll::Pending;
+                }
+            }
+        }
+    }
+}
+
+/// Maps the body failure hyper reports to the reader error the stream expects.
+fn body_error(problem: hyper::Error) -> io::Error {
+    let mut short = problem.is_incomplete_message();
+    let mut source = problem.source();
+    while let Some(cause) = source {
+        if cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|error| error.kind() == io::ErrorKind::UnexpectedEof)
+        {
+            short = true;
+        }
+        source = cause.source();
+    }
+    if short {
+        io::Error::new(io::ErrorKind::UnexpectedEof, problem)
+    } else {
+        io::Error::other(problem)
+    }
+}
+
 /// Somewhere to send a request.
 pub trait Transport: Send + Sync + fmt::Debug {
     /// Posts `body` and returns the response as it begins to arrive.
@@ -90,22 +288,22 @@ pub trait Transport: Send + Sync + fmt::Debug {
     /// long as the model is talking, so reading it here would mean waiting for
     /// the whole answer before showing any of it.
     ///
-    /// Headers and body move into the transport because blocking setup may
-    /// finish after a cancelled caller returns. Moving them gives that setup
-    /// an owned lifetime without duplicating a transcript-sized body.
+    /// Headers and body belong to the asynchronous send while its future is
+    /// being polled. Dropping that future is how a caller stops waiting and
+    /// lets the shared client end the connection and any setup work with it.
     ///
     /// # Errors
     ///
     /// [`TransportError`] if the request could not be sent or was cancelled
     /// before its response headers arrived. A response with a status the caller
     /// dislikes is not an error.
-    fn post(
-        &self,
-        url: &str,
-        headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
         body: String,
-        cancel: &Cancel,
-    ) -> Result<Response, TransportError>;
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>>;
 }
 
 /// A transport that answers from a script instead of a network.
@@ -156,32 +354,34 @@ impl Replay {
 
 #[cfg(test)]
 impl Transport for Replay {
-    fn post(
-        &self,
-        url: &str,
-        headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
         body: String,
-        cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
-        if cancel.requested() {
-            return Err(TransportError::Cancelled);
-        }
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
+        Box::pin(async move {
+            if cancel.requested() {
+                return Err(TransportError::Cancelled);
+            }
 
-        if let Ok(mut sent) = self.sent.lock() {
-            sent.push(Sent {
-                url: url.to_owned(),
-                headers: headers
-                    .headers()
-                    .iter()
-                    .map(|(name, value)| (name.to_string(), value.to_string()))
-                    .collect(),
-                body,
-            });
-        }
+            if let Ok(mut sent) = self.sent.lock() {
+                sent.push(Sent {
+                    url: url.to_owned(),
+                    headers: headers
+                        .headers()
+                        .iter()
+                        .map(|(name, value)| (name.to_string(), value.to_string()))
+                        .collect(),
+                    body,
+                });
+            }
 
-        Ok(Response {
-            status: self.status,
-            body: Box::new(std::io::Cursor::new(self.body.clone().into_bytes())),
+            Ok(PostResponse::recorded(
+                self.status,
+                std::io::Cursor::new(self.body.clone().into_bytes()),
+            ))
         })
     }
 }
@@ -266,19 +466,57 @@ impl Read for Paused {
     }
 }
 
+/// A recorded reader exposed through the asynchronous body contract.
+///
+/// Test-only: shipped responses come from hyper, while recorded transports need
+/// the same parser without a socket.
+#[cfg(test)]
+pub(crate) struct SyncReader<T>(pub(crate) T);
+
+#[cfg(test)]
+impl<T> SyncReader<T> {
+    pub(crate) fn new(reader: T) -> Self {
+        Self(reader)
+    }
+}
+
+#[cfg(test)]
+impl<T> AsyncRead for SyncReader<T>
+where
+    T: Read + Unpin,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+        into: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if into.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let mut bytes = [0_u8; 8 * 1024];
+        match self.0.read(&mut bytes) {
+            Ok(read) => {
+                into.put_slice(bytes.get(..read).unwrap_or_default());
+                Poll::Ready(Ok(()))
+            }
+            Err(problem) => Poll::Ready(Err(problem)),
+        }
+    }
+}
+
 /// A shared transport is still a transport.
 ///
 /// Only tests need this: a provider takes ownership of the one it sends
 /// through, and a test wants a second handle to ask what went out.
 #[cfg(test)]
 impl<T: Transport> Transport for std::sync::Arc<T> {
-    fn post(
-        &self,
-        url: &str,
-        headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
         body: String,
-        cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
         (**self).post(url, headers, body, cancel)
     }
 }
@@ -287,8 +525,8 @@ impl<T: Transport> Transport for std::sync::Arc<T> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_replay_keeps_what_was_sent() {
+    #[tokio::test]
+    async fn a_replay_keeps_what_was_sent() {
         let replay = Replay::new(200, "body");
         let mut headers = Outgoing::new();
         headers.set_header("x-key", "value");
@@ -296,10 +534,11 @@ mod tests {
         replay
             .post(
                 "https://example.test/v1",
-                headers,
+                &mut headers,
                 "{}".to_owned(),
                 &Cancel::new(),
             )
+            .await
             .unwrap();
 
         let sent = replay.sent();
@@ -308,23 +547,27 @@ mod tests {
         assert_eq!(sent.headers.first().unwrap().0, "x-key");
     }
 
-    #[test]
-    fn a_replay_answers_with_the_recorded_response() {
+    #[tokio::test]
+    async fn a_replay_answers_with_the_recorded_response() {
         let replay = Replay::new(429, "slow down");
 
-        let mut response = replay
+        let response = replay
             .post(
                 "https://example.test/v1",
-                Outgoing::new(),
+                &mut Outgoing::new(),
                 "{}".to_owned(),
                 &Cancel::new(),
             )
+            .await
             .unwrap();
-        let mut read = String::new();
-        response.body.read_to_string(&mut read).unwrap();
+        let status = response.status();
+        let read = response
+            .read_limited(1024, std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
 
-        assert_eq!(response.status, 429);
-        assert_eq!(read, "slow down");
+        assert_eq!(429, status);
+        assert_eq!(String::from_utf8(read).unwrap(), "slow down");
     }
 
     #[test]

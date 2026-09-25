@@ -131,3 +131,20 @@ fn the_tool_worker_is_built_on_the_run_s_runtime_when_asked_for_and_is_one_worke
     );
     assert_eq!(stopped, Ok(()));
 }
+
+#[test]
+fn the_http_client_is_one_lazy_run_service() {
+    let (asked, stopped) = serving(|services| {
+        let built_before = services.http.get().is_some();
+        let first = services.http();
+        let second = services.http();
+        (built_before, std::ptr::eq(first, second))
+    });
+
+    assert_eq!(
+        asked,
+        (false, true),
+        "the HTTP client was built before it was asked for, or a second ask built another one"
+    );
+    assert_eq!(stopped, Ok(()));
+}

@@ -18,8 +18,9 @@ change in any release with no deprecation period.
   deadline, a minute each for sending a request's body and awaiting the
   response head, and a bounded response head.
   A proxy's credential is registered for redaction on the headers a request is
-  sent with, so `Http::send` takes them mutably. Nothing uses it yet, so
-  nothing a user runs behaves differently.
+  sent with, so `Http::send` takes them mutably. Provider turns, web posts and
+  account requests use it; the release check and web `get` still use the old
+  client.
 - **A crossing that waits, and one runtime the application owns.**
   `Bridge::wait` polls a future on the caller's thread against a runtime
   handle until it answers or the turn's `Cancel` is raised, noticed within
@@ -48,8 +49,9 @@ change in any release with no deprecation period.
   quiet, whole within a caller's limit and deadline, or as a refusal's first
   8 KiB within 10 s, each reading one byte past its limit so a cut body is
   reported as cut; dropping a request or a body's reader closes its
-  connection, and a client makes at most four connections at once. Nothing
-  uses it yet, so nothing a user runs behaves differently.
+  connection, and a client makes at most four connections at once. Provider
+  turns and web posts use these readers; the release check and web `get` still
+  use the old client.
 - **A bounded worker for a tool's blocking work.** `ToolWorker` runs at most 4
   jobs at once on the application runtime's blocking threads, and a call
   cancelled while it waits for room leaves without starting its job, while one
@@ -124,13 +126,12 @@ change in any release with no deprecation period.
   cancel 250 ms before reporting its cleanup as failed. `LocalSandbox` takes
   that runtime through `watching_on`, and one given none prepares but starts
   no command.
-- **Esc stops a web search or fetch at once.** Every shipped web source sends
-  its request from the application runtime's blocking threads, at most two
-  per source at a time, and the call ends as soon as it is cancelled, even
-  while the request is still connecting or reading; a request left behind is
-  told to stop and its answer discarded. A lone tool call still waiting when
-  its deadline passes is now answered as timed out there, rather than once
-  its run returns.
+- **Esc stops a web search or fetch at once.** Every shipped web source awaits
+  its request on the caller's runtime, and the call ends as soon as it is
+  cancelled, even while the request is still connecting or reading; dropping
+  the future closes the shared HTTP request instead of leaving a worker behind.
+  A lone tool call still waiting when its deadline passes is now answered as
+  timed out there, rather than once its run returns.
 - **A hosted program's pipes are read and written by tasks the conversation
   owns, and can be awaited.** `crucible-transport`'s `Pipes::taken`,
   `Heard::new`, `Said::new` and `Muttered::draining`, and the MCP and extension
@@ -257,6 +258,12 @@ change in any release with no deprecation period.
   runs. Its run is therefore awaited on a runtime with a timer and, for the
   local sandbox on Unix, an I/O driver, as the application's is; what a
   command is answered with, its bounds and its redaction are unchanged.
+
+- **Model turns and web posts share the application's HTTP client.** Provider
+  requests and `Search`/`Fetch` posts now await one bounded asynchronous
+  service, keeping their existing status, refusal, redaction, retry and
+  cancellation behavior; the release check and web `get` still use the old
+  client.
 
 ### Fixed
 
