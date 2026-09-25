@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::{Bridge, Cancel};
+use crucible_runtime::Cancel;
 use crucible_sandbox::{
     SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation,
 };
@@ -33,7 +33,7 @@ use crucible_tools::{ToolError, ToolOutput, Watch, Wrote};
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
-use super::background::{Background, Taking};
+use super::background::{Background, ProcessTask, Taking};
 
 use super::{NAME, TICK, io as tool_io, unpublished as tool_unpublished};
 use crate::bound::OUTPUT;
@@ -147,10 +147,11 @@ pub(super) async fn collect(
             && let Some(process) = running.given()
         {
             return Ok(Left::Running(Taking {
-                process,
-                out,
-                err,
+                process: Some(process),
+                out: Some(out),
+                err: Some(err),
                 since: started,
+                lease: None,
                 why,
             }));
         }
@@ -260,7 +261,7 @@ pub(super) async fn collect(
     // instead. Nothing reaches the end of a command's life without somebody
     // holding it.
     if expiry == Expiry::No {
-        running.finish_after_exit()?;
+        running.finish_after_exit().await?;
     }
 
     let ended = settle(&out, &err).await;
@@ -342,16 +343,15 @@ impl Waited {
     }
 
     /// Stops the scope and gives the shell a bounded interval to become
-    /// reapable, waiting that interval out on the runtime's clock.
+    /// reapable, with the whole operation owned by a blocking task.
     async fn stop(&mut self) -> Result<Option<ExitStatus>, ToolError> {
-        let Some(process) = self.process.as_deref_mut() else {
+        let Some(process) = self.process.take() else {
             return Ok(None);
         };
-
-        end(process).map_err(|source| tool_io("could not stop the command", source))?;
-        let status = reaped(self.taking()?, SETTLE)
-            .await
-            .map_err(|source| tool_io("could not inspect the stopped command", source))?;
+        let task = ProcessTask::start(process, |process| stop_and_reap_blocking(process, SETTLE));
+        let (returned, result) = task.wait().await;
+        self.process = returned;
+        let status = result.map_err(|source| tool_io("could not stop the command", source))?;
         let Some(status) = status else {
             return Err(tool_io(
                 "could not reap the stopped command",
@@ -365,13 +365,16 @@ impl Waited {
         Ok(Some(status))
     }
 
-    /// Stops descendants after `try_wait` has already reaped the shell.
-    fn finish_after_exit(&mut self) -> Result<(), ToolError> {
-        let Some(process) = self.process.as_deref_mut() else {
+    /// Stops descendants after `try_wait` has already reaped the shell, with
+    /// the potentially blocking stop owned away from the polling worker.
+    async fn finish_after_exit(&mut self) -> Result<(), ToolError> {
+        let Some(process) = self.process.take() else {
             return Ok(());
         };
-
-        end(process).map_err(|source| tool_io("could not stop command descendants", source))?;
+        let task = ProcessTask::start(process, stop_here);
+        let (returned, result) = task.wait().await;
+        self.process = returned;
+        result.map_err(|source| tool_io("could not stop command descendants", source))?;
         self.released = true;
         Ok(())
     }
@@ -383,22 +386,26 @@ impl Drop for Waited {
             return;
         }
 
-        // Destructors cannot report a second failure over the error already on
-        // its way out. They can still guarantee that cleanup itself is bounded.
-        let Some(process) = self.process.as_deref_mut() else {
-            return;
-        };
-
-        let _ = end(process);
-        let _ = reap(process, SETTLE);
+        // A destructor cannot wait for the process contract's stop, and an ask
+        // it made of its own would be refused the moment it had to. Hand the
+        // process to the builtins' owned release task instead: where a runtime
+        // is running the stop is asked on the runtime's blocking pool, a
+        // refusal is retried, and the thread doing this drop never waits for
+        // that stop. With no runtime running the release task is never made,
+        // the reservation is given back, and the handle is left to the
+        // operating system — the backend's own destructor runs on this thread
+        // instead, which is not a stop and records none.
+        if let Some(process) = self.process.take() {
+            super::background::release_process(process, None);
+        }
     }
 }
 
 /// Waits only until `allowed`; a failed termination can never become a hang.
 ///
-/// On the thread that asks, for the one caller that cannot await: the guard's
-/// own drop. The wait awaits [`reaped`] instead.
-fn reap(
+/// This is the synchronous bound used by the blocking cleanup task and kept as
+/// the focused test oracle for the process cleanup path.
+pub(super) fn reap(
     process: &mut (dyn SandboxProcess + 'static),
     allowed: Duration,
 ) -> io::Result<Option<ExitStatus>> {
@@ -414,45 +421,57 @@ fn reap(
     }
 }
 
-/// [`reap`], waiting between its looks on the clock of the runtime polling
-/// it rather than on the thread that polls it.
-async fn reaped(
+/// Runs a process stop and its bounded reap on a blocking task.
+fn stop_and_reap_blocking(
     process: &mut (dyn SandboxProcess + 'static),
-    allowed: Duration,
+    settling: Duration,
 ) -> io::Result<Option<ExitStatus>> {
-    let deadline = Instant::now() + allowed;
-    loop {
-        if let Some(status) = process.try_wait()? {
-            return Ok(Some(status));
-        }
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        tokio::time::sleep(TICK).await;
-    }
+    stop_here(process)?;
+    reap(process, settling)
+}
+
+/// Runs one process stop on a blocking task.
+///
+/// Asked from the thread the runtime's blocking pool handed out for process
+/// work, so a backend that blocks inside its own contract blocks that one
+/// thread rather than a runtime worker; see [`super::background`].
+pub(super) fn stop_here(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
+    crucible_runtime::Bridge::CommandStop
+        .cross(end(process))
+        .map_err(|unready| {
+            io::Error::other(format!(
+                "the stop was asked again rather than held: {unready}"
+            ))
+        })?
 }
 
 /// Ends a command's whole process group, whatever the platform calls one.
 ///
-/// For the callers that do not await it: the wait that owns a command stops
-/// it from inside a poll of its call, on whatever thread polls that, and the
-/// registry ends a command it refuses on the thread handing it over. A
-/// command the registry has taken is ended by the task that owns it, from one
-/// of the runtime's blocking threads, and one no owner reached by the
-/// registry's own end on the thread letting it go; see
-/// [`super::background`]. So the stop is crossed rather than awaited, and
-/// a stop that would have had to wait is refused as the failure it is. A stop
-/// that does not pend still runs its whole body inside that one poll, on
-/// whichever thread asked. The in-tree stops end the task watching the
+/// Asked from a thread that already holds the command, as the one-poll
+/// [`crucible_runtime::Bridge::CommandStop`] crossing: the wait that owns a
+/// command stops it from inside its call, the registry's release task stops a
+/// command it holds, and a command the registry has taken is stopped by the
+/// task that owns it, on the runtime that owns it; see [`super::background`].
+/// One poll is the whole bound — the process contract keeps its bounded stop
+/// work inside the contract, so the poll answers — and a stop that would have
+/// had to wait is refused rather than held, leaving it to the caller whether to
+/// ask again and from when. The in-tree stops end the task watching the
 /// command's status, end the command's group, reap it within the reap bound,
 /// join a limit's cancel within a bound of its own, stop its network proxy
 /// where it has one and clean up its stage, and a projected command's stop also
 /// joins an ending already writing it: that ending may roll back or publish
-/// before the stop returns. Only the reap and the cancel's join are bounded.
-pub(super) fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
-    Bridge::BashSandbox
-        .cross(process.stop())
-        .unwrap_or_else(|unready| Err(io::Error::other(unready)))
+/// before the stop returns. The only bounds within one are those two steps',
+/// the reap's and the cancel join's; the stop's own duration is bounded by
+/// nothing here, the crossing spending one poll on it and dropping the rest.
+///
+/// Reached from neither a destructor nor the thread that draws, neither of
+/// which can wait for a stop: those paths hand the process to the builtins'
+/// owned release task, which asks on a runtime's blocking pool. Where a runtime
+/// is running, a refused stop keeps that task retrying — further apart each
+/// time — and only a confirmed stop gives up the handle. With none running,
+/// [`super::background`] is what says what is given back instead.
+pub(super) async fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
+    process.stop().await
 }
 
 /// Everything the wait needs besides the command itself.

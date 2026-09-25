@@ -6,7 +6,9 @@
 //! is what makes keeping one bounded instead — a cap on how many, each one's
 //! output held to the same figure a foreground command's is, and every process
 //! group asked to end when this is let go of. Failed cleanup keeps its entry
-//! while the registry lives, so the panel can retry without losing ownership.
+//! while the registry lives, so the panel can retry without losing ownership;
+//! when the registry itself is let go, its backstop gives every cell to an
+//! owned release task rather than treating a dropped handle as a stop.
 //!
 //! **Bound to the run rather than to the session.** `/clear` starts a new session
 //! and this is untouched by it, because a running dev server is a fact about the
@@ -17,21 +19,28 @@
 //!
 //! **Owned on the runtime, never on the thread that draws.** Each command kept
 //! here is owned by a task of its own on the runtime [`Background::watching_on`]
-//! names. That task is the only code that asks the command's process anything
-//! once it is kept, besides an acceptance binding its receipt, which borrows the
-//! process for that one call: it looks at its status on every tick, ends what
-//! the command left running once it has exited, stops it when a key asks, and
-//! ends it when the registry is let go of. Every one of those steps is
-//! synchronous inside today's backends — a stop reaps and rolls back, a status
-//! can publish — so each runs on the runtime's blocking threads, one at a time
-//! for each command, and the task itself only waits between them. A process
-//! whose backend stops answering therefore holds one blocking thread, never a
-//! thread that polls the runtime's tasks or drives its timer, so a sandbox's
-//! limit kill and status go on. The thread that draws only reads what the
-//! tasks found, and asks for a stop without waiting for it: the stop's outcome
-//! is read on a later frame, the row gone or marked as refused. The registry's
-//! lock is never held across a call into a process. A registry that has been
-//! named no runtime takes no command.
+//! names. Three things ask the command's process anything once it is kept: that
+//! task, which looks at its status on every tick, ends what the command left
+//! running once it has exited, stops it when a key asks, and ends it when the
+//! registry is let go of; an acceptance, which borrows the process for the one
+//! call that binds its receipt; and the release task, which asks the one stop
+//! that nothing else is left to ask. The complete owner step runs on one
+//! blocking thread of the runtime's pool, so a status, publication wait, stop,
+//! reap, or reader join never occupies a runtime worker. A stop is asked there
+//! as [`crucible_runtime::Bridge::CommandStop`] — one poll, which is the whole
+//! bound, because the process contract keeps its bounded stop work inside the
+//! contract; a stop that would have had to wait is refused rather than held.
+//! Asking again is then the caller's own: a descendant stop, the end a
+//! registry being let go asks for, and the release task are asked again from
+//! their next attempt — the release task's own interval growing each time —
+//! while a stop asked for by a key or by an abandoned result waits for that ask
+//! to be made again, its entry standing refused in between. A process whose
+//! status look or whose stop stalls therefore holds one blocking thread, never
+//! the thread that draws or the runtime's timer driver. The thread that draws
+//! only reads what the tasks found, and asks for a stop without waiting for it:
+//! the stop's outcome is read on a later frame, the row gone or marked as
+//! refused. The registry's lock is never held across a call into a process. A
+//! registry that has been named no runtime takes no command.
 //!
 //! **Nothing here consults the cancel.** <kbd>Esc</kbd> stops the turn, and a
 //! command somebody deliberately let go of is not part of the turn that started
@@ -41,8 +50,12 @@
 //! no destructor. The enforcing Linux backend binds its broker and PID namespace
 //! to the host process so that loss still ends the workload; compatibility mode
 //! has no equivalent kernel boundary, and the shipped documentation says so
-//! rather than implying otherwise.
+//! rather than implying otherwise. A destructor reached where no runtime is
+//! running is the same case in miniature: a stop is a future, so the
+//! reservation is given back and the handle is left to the operating system
+//! rather than counted as a stop that happened.
 
+use std::future::Future;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError};
@@ -80,14 +93,23 @@ const PUBLICATION: Duration = Duration::from_millis(1500);
 /// How long a stop is given on the way out, once any publication has had its
 /// patience: several times what the in-tree stops take when their bounded
 /// steps run to their bounds.
-const STOPPING: Duration = Duration::from_secs(2);
+pub(super) const STOPPING: Duration = Duration::from_secs(2);
+
+/// How long one lifecycle handoff may keep a process borrowed before the
+/// caller refuses it and hands the process back to its owner. It is a bound on
+/// the builtins' wait, not a promise about a backend's future: a future that
+/// has already begun is still allowed to finish on its own cleanup task.
+#[cfg(not(test))]
+pub(super) const ACCEPTANCE: Duration = STOPPING;
+#[cfg(test)]
+pub(super) const ACCEPTANCE: Duration = Duration::from_millis(500);
 
 /// How long letting the registry go waits for its commands' owners to end
 /// them: the patience a command that has ended gets to publish, and then a
 /// stop's. An owner not done by then is inside a call into its process that
 /// has not come back, or was never given a thread to run on; the registry
-/// ends what it can reach itself, and a call that has not come back is left
-/// to the runtime's own bounded shutdown.
+/// hands every remaining cell to a bounded release task, and a call that has
+/// not come back is left to the runtime's own bounded shutdown.
 const LEAVING: Duration = PUBLICATION.saturating_add(STOPPING);
 
 /// How much of what one ended command printed travels in the note about it.
@@ -100,23 +122,131 @@ const SHARE: usize = crate::bound::OUTPUT / MOST;
 
 /// One command's process, shared by its entry and its owner.
 ///
-/// `None` while one of the two has taken it out to work on it: the owner on
-/// every look, and an acceptance while it binds its receipt. Whoever takes it
-/// calls into it with no lock held and puts it back, so neither the registry's
-/// lock nor this one is ever held across a call into a process.
+/// `None` while one of the three has taken it out to work on it: the owner on
+/// every look, an acceptance while it binds its receipt, or a cleanup task
+/// while it asks the process to stop. Whoever takes it calls into it with no
+/// lock held and puts it back, so neither the registry's lock nor this one is
+/// ever held across a call into a process.
 type Cell = Arc<Mutex<Option<Box<dyn SandboxProcess>>>>;
 
 /// Takes the process out of `cell`, where nobody else has it.
 fn taken(cell: &Cell) -> Option<Box<dyn SandboxProcess>> {
-    cell.lock().ok()?.take()
+    cell.lock().unwrap_or_else(PoisonError::into_inner).take()
 }
 
-/// Puts the process back into `cell`. Dropped instead where the cell's lock
-/// is poisoned, which ends it the way every sandbox this ships ends a process
-/// it drops.
+/// Puts the process back into `cell`.
+///
+/// A poisoned cell is still the only owner of this process, so its lock is
+/// recovered rather than treating the process as unowned. An occupied cell is
+/// not replaced: a second process would be a bug, and dropping that second
+/// handle is still safer than silently losing the one the entry already owns.
 fn returned(cell: &Cell, process: Box<dyn SandboxProcess>) {
-    if let Ok(mut held) = cell.lock() {
+    let mut held = cell.lock().unwrap_or_else(PoisonError::into_inner);
+    if held.is_none() {
         *held = Some(process);
+    } else {
+        drop(held);
+        drop(process);
+    }
+}
+
+/// A process borrowed from a [`Cell`] until its owner has a result for it.
+///
+/// The guard is the cancellation boundary for every operation made through a
+/// loan: a normal return, a failed future, a panic, or a dropped task all put
+/// the process back in the cell, and only [`Loan::confirm`] gives up that
+/// ownership after a successful stop. The one call on a command's process made
+/// without one is the call that begins an acceptance, which runs on the process
+/// [`Taking`] still holds on the way in: that is a second boundary, and its
+/// `Drop` hands the process to the same release task a cancelled loan leaves it
+/// to.
+struct Loan {
+    cell: Cell,
+    process: Option<Box<dyn SandboxProcess>>,
+}
+
+impl Loan {
+    fn take(cell: &Cell) -> Option<Self> {
+        taken(cell).map(|process| Self {
+            cell: Arc::clone(cell),
+            process: Some(process),
+        })
+    }
+
+    fn as_mut(&mut self) -> Option<&mut (dyn SandboxProcess + 'static)> {
+        self.process.as_deref_mut()
+    }
+
+    fn confirm(mut self) {
+        drop(self.process.take());
+    }
+}
+
+impl Drop for Loan {
+    fn drop(&mut self) {
+        if let Some(process) = self.process.take() {
+            returned(&self.cell, process);
+        }
+    }
+}
+
+/// One bounded process operation owned by a blocking task.
+///
+/// The loan makes the operation's result separable from process ownership: a
+/// successful caller receives the process back, while a failed join, panic, or
+/// dropped task leaves it in the cell for the cleanup owner to retry.
+pub(super) struct ProcessTask<T> {
+    cell: Cell,
+    join: Option<JoinHandle<io::Result<T>>>,
+    completed: bool,
+}
+
+impl<T> ProcessTask<T> {
+    pub(super) fn start<F>(process: Box<dyn SandboxProcess>, operation: F) -> Self
+    where
+        F: FnOnce(&mut (dyn SandboxProcess + 'static)) -> io::Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let cell: Cell = Arc::new(Mutex::new(Some(process)));
+        let task_cell = Arc::clone(&cell);
+        let join = tokio::task::spawn_blocking(move || {
+            let Some(mut loan) = Loan::take(&task_cell) else {
+                return Err(io::Error::other("the process task found no process"));
+            };
+            let result = match loan.as_mut() {
+                Some(process) => operation(process),
+                None => Err(io::Error::other("the process task lost its process")),
+            };
+            drop(loan);
+            result
+        });
+        Self {
+            cell,
+            join: Some(join),
+            completed: false,
+        }
+    }
+
+    pub(super) async fn wait(mut self) -> (Option<Box<dyn SandboxProcess>>, io::Result<T>) {
+        let Some(join) = self.join.take() else {
+            return (None, Err(io::Error::other("the process task had no join")));
+        };
+        let result = match join.await {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::other("the process task came apart")),
+        };
+        self.completed = true;
+        (taken(&self.cell), result)
+    }
+}
+
+impl<T> Drop for ProcessTask<T> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let cell = Arc::clone(&self.cell);
+        schedule_cell_release(Handle::try_current().ok(), cell, None);
     }
 }
 
@@ -311,19 +441,23 @@ impl Drop for Registry {
             owner.abort();
         }
 
-        // And what no owner reached is ended here: a command whose owner was
-        // never given a thread to run on, or was aborted between its steps,
-        // is still in its cell. Taken out under the lock and ended outside
-        // it, on this thread, each stop bounded as the backend bounds it.
-        let unreached: Vec<Box<dyn SandboxProcess>> = {
+        // And what no owner reached is given an owned release task here: a
+        // command whose owner was never given a thread to run on, or was
+        // aborted between its steps, is still in its cell. The task retries a
+        // refused stop and keeps the process owned; the dropping thread never
+        // waits for a backend's destructor.
+        let (runtime, cells) = {
             let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-            held.left
+            let cells: Vec<Cell> = held
+                .left
                 .iter()
-                .filter_map(|left| taken(&left.process))
-                .collect()
+                .filter(|left| left.done.is_none())
+                .map(|left| Arc::clone(&left.process))
+                .collect();
+            (held.runtime.clone(), cells)
         };
-        for mut process in unreached {
-            let _ = super::output::end(process.as_mut());
+        for cell in cells {
+            schedule_cell_release(runtime.clone(), cell, None);
         }
     }
 }
@@ -341,10 +475,10 @@ pub struct Background {
 }
 
 /// Registry metadata that travels with one owned process insertion.
+#[derive(Clone, Copy)]
 pub(super) struct Keep<'a> {
     pub(super) called: &'a str,
     pub(super) said: &'a str,
-    pub(super) lease: Option<Lease>,
     pub(super) accepting: bool,
 }
 
@@ -431,75 +565,94 @@ impl Background {
     /// been named to own it on, or where registry ownership is unavailable.
     /// `taking` came in by value, so the caller has already let go of the
     /// child in every one of those, and `keep` is the last code that could act
-    /// on it. On every branch but the last it ends the child itself before
-    /// answering, once the registry's lock is let go, because a command nobody
-    /// can see or stop is the one outcome this module exists to prevent. On
-    /// the lock-failure branch nothing calls `end`; the child ends only because
-    /// dropping `taking` does, true of every sandbox this ships, though the
-    /// contract behind it promises no such thing.
+    /// on it. A refused handover schedules the same bounded release task as a
+    /// dropped destructor; it does not turn a failed release into a dropped
+    /// handle.
     pub(super) fn keep(&self, mut taking: Taking, plan: Keep<'_>) -> Option<Kept> {
         let Keep {
             called,
             said,
-            mut lease,
             accepting,
         } = plan;
-        let mut standing = self.standing.lock().ok()?;
-        let admitted = match (standing.runtime.clone(), lease.as_mut()) {
-            (None, _) => None,
-            (Some(runtime), Some(lease)) => (Arc::ptr_eq(&self.standing, &lease.standing)
-                && lease.consume_locked(&mut standing))
-            .then_some((runtime, lease.number)),
-            (Some(_), None) if standing.left.len().saturating_add(standing.reserved) >= MOST => {
+        let mut lease = taking.lease.take();
+        let admitted = match self.standing.lock() {
+            Ok(mut standing) => {
+                let admission = match (standing.runtime.clone(), lease.as_mut()) {
+                    (None, _) => None,
+                    (Some(runtime), Some(lease)) => (Arc::ptr_eq(&self.standing, &lease.standing)
+                        && lease.consume_locked(&mut standing))
+                    .then_some((runtime, lease.number)),
+                    (Some(_), None)
+                        if standing.left.len().saturating_add(standing.reserved) >= MOST =>
+                    {
+                        None
+                    }
+                    (Some(runtime), None) => {
+                        standing.counted = standing.counted.saturating_add(1);
+                        Some((runtime, standing.counted))
+                    }
+                };
+                match admission {
+                    Some((runtime, number)) => {
+                        let Some(out) = taking.out.take() else {
+                            taking.lease = lease;
+                            return None;
+                        };
+                        let Some(err) = taking.err.take() else {
+                            taking.lease = lease;
+                            return None;
+                        };
+                        let Some(process) = taking.process.take() else {
+                            taking.lease = lease;
+                            return None;
+                        };
+                        let process: Cell = Arc::new(Mutex::new(Some(process)));
+                        let asks = Arc::new(Asks::default());
+                        let owner = runtime.spawn(
+                            Owner {
+                                number,
+                                held: Arc::clone(&self.standing.held),
+                                process: Arc::clone(&process),
+                                asks: Arc::clone(&asks),
+                                reaping: Reaping::default(),
+                                leaving: None,
+                                released: false,
+                            }
+                            .run(),
+                        );
+                        standing.left.push(Left {
+                            called: called.into(),
+                            said: said.into(),
+                            number,
+                            process,
+                            asks,
+                            owner: Some(owner),
+                            out,
+                            err,
+                            since: taking.since,
+                            accepting,
+                            refused: false,
+                            done: None,
+                        });
+                        Ok(Kept {
+                            standing: Arc::clone(&self.standing),
+                            number,
+                            accepting,
+                        })
+                    }
+                    None => Err(taking),
+                }
+            }
+            Err(_) => Err(taking),
+        };
+        match admitted {
+            Ok(kept) => Some(kept),
+            Err(mut taking) => {
+                taking.lease = lease;
+                drop(taking);
                 None
             }
-            (Some(runtime), None) => {
-                standing.counted = standing.counted.saturating_add(1);
-                Some((runtime, standing.counted))
-            }
-        };
-        let Some((runtime, number)) = admitted else {
-            // Ended here rather than reported and forgotten. The caller has
-            // already let go of it, so this is the last code that could, and a
-            // command nobody can see or stop is the outcome the cap exists for.
-            drop(standing);
-            let _ = super::output::end(taking.process.as_mut());
-            return None;
-        };
-
-        let process: Cell = Arc::new(Mutex::new(Some(taking.process)));
-        let asks = Arc::new(Asks::default());
-        let owner = runtime.spawn(
-            Owner {
-                number,
-                held: Arc::clone(&self.standing.held),
-                process: Arc::clone(&process),
-                asks: Arc::clone(&asks),
-                reaping: Reaping::default(),
-                leaving: None,
-            }
-            .run(),
-        );
-        standing.left.push(Left {
-            called: called.into(),
-            said: said.into(),
-            number,
-            process,
-            asks,
-            owner: Some(owner),
-            out: taking.out,
-            err: taking.err,
-            since: taking.since,
-            accepting,
-            refused: false,
-            done: None,
-        });
-
-        Some(Kept {
-            standing: Arc::clone(&self.standing),
-            number,
-            accepting,
-        })
+        }
     }
 
     /// How many commands are still running.
@@ -728,14 +881,21 @@ struct Reaping {
     publishing: Option<Instant>,
 }
 
+/// Whether an owner has more work after one blocking step.
+enum Next {
+    /// Another step after the next tick.
+    Tick,
+    /// The command is over, or no longer this owner's.
+    Done,
+}
+
 /// The task that owns one command from the moment it is kept.
 ///
 /// The only code that asks the command's process anything from then on,
-/// besides an acceptance binding its receipt. Each of its steps is one
-/// synchronous look, run on the runtime's blocking threads and awaited, so a
-/// status that takes a publication's turn to resolve, or a stop that reaps
-/// and rolls back, holds up this command's step and neither a thread that
-/// polls the runtime's tasks nor the thread that draws.
+/// besides an acceptance binding its receipt. Each complete owner step runs on
+/// one bounded blocking task, so a status, publication, stop, or reap never
+/// occupies a runtime worker. The process loan is returned to the cell unless
+/// the step has a confirmed stop.
 struct Owner {
     number: usize,
     /// What is behind the registry, and never the registry itself: see
@@ -745,26 +905,14 @@ struct Owner {
     asks: Arc<Asks>,
     reaping: Reaping,
     /// When it began ending the command because the registry was let go of.
-    /// `None` until it has.
     leaving: Option<Instant>,
-}
-
-/// Whether an owner has more to do.
-enum Next {
-    /// Another step after the next tick.
-    Tick,
-    /// The command is over, or no longer this owner's.
-    Done,
+    /// A confirmed stop has already given up the process handle.
+    released: bool,
 }
 
 impl Owner {
-    /// Takes one step on the blocking threads per tick until the command is
-    /// over, or until the registry is let go of and it has been ended.
-    ///
-    /// The owner travels into each step and back out of it, so nothing of it
-    /// is shared with the step. A step the runtime would not run, because it
-    /// is shutting down, ends the owner there: what it did not reach is left
-    /// in its cell, where the registry's own end finds it.
+    /// Takes one step per tick until the command is over, or until the
+    /// registry is let go of and it has been ended.
     async fn run(mut self) {
         loop {
             let stepped = tokio::task::spawn_blocking(move || {
@@ -773,6 +921,8 @@ impl Owner {
             })
             .await;
             let Ok((owner, next)) = stepped else {
+                // The owner is dropped inside the failed task. Its drop guard
+                // retains the cell and marks the entry for a cleanup retry.
                 return;
             };
             self = owner;
@@ -783,16 +933,14 @@ impl Owner {
         }
     }
 
-    /// One synchronous step, on a blocking thread.
+    /// One synchronous owner step, run on the blocking pool.
     fn step(&mut self) -> Next {
-        if self.leaving.is_some() {
-            return self.leave();
-        }
         match self.look() {
             Step::Again => Next::Tick,
             Step::Stopped => {
                 // Dropped here rather than under the lock; dropping it tells
                 // its readers to stop.
+                self.released = true;
                 drop(self.removed());
                 Next::Done
             }
@@ -824,68 +972,71 @@ impl Owner {
 
     /// One look: an abandoned result's end, or a stop asked for, first, then,
     /// once its result is accepted, how it is doing. The process is taken out
-    /// for the look and put back unless the look is its last.
+    /// for the look and put back unless the look has a confirmed stop.
     ///
-    /// While its result is still being accepted, and nothing has asked for it
-    /// to end, the process is left in its cell: that is where the acceptance
-    /// borrows it from, and an acceptance that found it gone would fail and
-    /// end the command.
+    /// An empty cell is not a stop. It can mean that an acceptance or a
+    /// cleanup task still owns the process; the ask remains set and the next
+    /// look gets another chance after that owner returns it.
     fn look(&mut self) -> Step {
         let (accepting, drained) = match self.seen() {
             Seen::Here { accepting, drained } => (accepting, drained),
-            Seen::Leaving => return Step::Leaving,
-            Seen::Gone => return Step::Gone,
+            Seen::Leaving => {
+                return Step::Leaving;
+            }
+            Seen::Gone => {
+                return Step::Gone;
+            }
         };
-        let asked =
-            self.asks.abandoned.load(Ordering::Acquire) || self.asks.stop.load(Ordering::Acquire);
-        if accepting && !asked {
+        let abandoned = self.asks.abandoned.load(Ordering::Acquire);
+        let stopping = self.asks.stop.load(Ordering::Acquire);
+        if accepting && !abandoned && !stopping {
             return Step::Again;
         }
-        // Lent to an acceptance binding its receipt; looked at next tick.
-        let Some(mut process) = taken(&self.process) else {
+        let Some(mut loan) = Loan::take(&self.process) else {
             return Step::Again;
         };
-        let step = if self.asks.abandoned.swap(false, Ordering::AcqRel) {
-            // A stop that fails leaves it with the registry like any other.
-            if super::output::end(process.as_mut()).is_ok() {
-                Step::Stopped
-            } else {
-                Step::Again
-            }
-        } else if self.asks.stop.swap(false, Ordering::AcqRel) {
-            self.stopping(process.as_mut())
+        let step = if abandoned {
+            self.asks.abandoned.store(false, Ordering::Release);
+            self.stopping(&mut loan, true)
+        } else if stopping {
+            self.asks.stop.store(false, Ordering::Release);
+            self.stopping(&mut loan, false)
         } else if accepting {
             Step::Again
         } else {
-            self.reaping(process.as_mut(), drained)
+            self.reaping(&mut loan, drained)
         };
-        match step {
-            Step::Again | Step::Leaving => returned(&self.process, process),
-            Step::Stopped | Step::Ended(..) | Step::Gone => drop(process),
+        if matches!(step, Step::Stopped | Step::Ended(..) | Step::Gone) {
+            loan.confirm();
         }
         step
     }
 
-    /// Stops the command, as a key asked.
-    ///
-    /// One that has ended is waiting to be reported, or waiting its turn to
-    /// publish what it wrote. Stopping it could cut short that publication, so
-    /// it is left to the ending. A stop that fails is marked on its entry, for
-    /// the panel to say so.
-    fn stopping(&mut self, process: &mut (dyn SandboxProcess + 'static)) -> Step {
-        if process.ended() {
+    /// Stops a command after an abandoned result or an explicit stop ask.
+    fn stopping(&self, loan: &mut Loan, abandoned: bool) -> Step {
+        let Some(process) = loan.as_mut() else {
             return Step::Again;
+        };
+        if !abandoned {
+            let Ok(ended) = guarded(|| process.ended()) else {
+                self.refuse();
+                return Step::Again;
+            };
+            if ended {
+                return Step::Again;
+            }
         }
-        if super::output::end(process).is_ok() {
-            return Step::Stopped;
+        if let Ok(()) = stop_lent(loan) {
+            Step::Stopped
+        } else {
+            self.refuse();
+            Step::Again
         }
-        self.with_entry(|left| left.refused = true);
-        Step::Again
     }
 
     /// Whether the command has ended on its own, and what it left running has
     /// been ended.
-    fn reaping(&mut self, process: &mut (dyn SandboxProcess + 'static), drained: bool) -> Step {
+    fn reaping(&mut self, loan: &mut Loan, drained: bool) -> Step {
         // Asked of `try_wait` fresh on every look until `stopped` is `Some`;
         // from there the pair is read back rather than asked again, because
         // ending a command's descendants can itself resolve a status
@@ -894,13 +1045,31 @@ impl Owner {
         let (code, unpublished) = if let Some(settled) = self.reaping.settled.clone() {
             settled
         } else {
-            match process.try_wait() {
+            let Some(process) = loan.as_mut() else {
+                return Step::Again;
+            };
+            let Ok(status) = guarded(|| process.try_wait()) else {
+                self.refuse();
+                return Step::Again;
+            };
+            let ended = match &status {
+                Ok(Some(_)) => false,
+                Ok(None) | Err(_) => {
+                    if let Ok(ended) = guarded(|| process.ended()) {
+                        ended
+                    } else {
+                        self.refuse();
+                        return Step::Again;
+                    }
+                }
+            };
+            match status {
                 Ok(Some(status)) => (status.code(), None),
-                // From a command that has ended, an error is how its ending went
-                // wrong: what it wrote was refused, most often. It is reported like
-                // any other ending, with why, rather than kept as though it still
-                // ran.
-                Err(problem) if process.ended() => (
+                // From a command that has ended, an error is how its ending
+                // went wrong: what it wrote was refused, most often. It is
+                // reported like any other ending, with why, rather than kept
+                // as though it still ran.
+                Err(problem) if ended => (
                     None,
                     Some(super::output::excerpt(&problem.to_string(), SHARE)),
                 ),
@@ -909,7 +1078,7 @@ impl Owner {
                 // discards them — but not for the whole run: what it waits for
                 // can be held by another crucible of this user, and a command
                 // nothing ever reports holds one of the few slots there are.
-                Ok(None) if process.ended() => {
+                Ok(None) if ended => {
                     let since = *self.reaping.publishing.get_or_insert_with(Instant::now);
                     if since.elapsed() < PUBLICATION {
                         return Step::Again;
@@ -919,10 +1088,10 @@ impl Owner {
                         Some("its publication did not finish in time".to_owned()),
                     )
                 }
-                // Still running, or a wait that could not be made. A command whose
-                // status cannot be read is kept rather than reported: it is still
-                // holding resources, and a stop and the registry's end are both
-                // still able to end it.
+                // Still running, or a wait that could not be made. A command
+                // whose status cannot be read is kept rather than reported: it
+                // is still holding resources, and a stop and the registry's end
+                // are both still able to end it.
                 Ok(None) | Err(_) => return Step::Again,
             }
         };
@@ -943,7 +1112,8 @@ impl Owner {
         let stopped = if let Some(when) = self.reaping.stopped {
             when
         } else {
-            if super::output::end(process).is_err() {
+            if stop_lent(loan).is_err() {
+                self.refuse();
                 return Step::Again;
             }
             let now = Instant::now();
@@ -954,9 +1124,9 @@ impl Owner {
 
         // Ending descendants above can itself be what lets a held-open pipe
         // reach its end, and its reader still needs a moment to notice and
-        // post it. The same grace the first wait gave is given again from
-        // here, read afresh, so that moment is actually given rather than
-        // judged by a check made before the reader had it.
+        // post it. The same grace the first wait gave is given again from here,
+        // read afresh, so that moment is actually given rather than judged by a
+        // check made before the reader had it.
         let drained = match self.seen() {
             Seen::Here { drained, .. } => drained,
             Seen::Leaving => return Step::Leaving,
@@ -1023,36 +1193,147 @@ impl Owner {
             .map(with)
     }
 
-    /// One step of ending the command because the registry has been let go
-    /// of.
+    /// Records that cleanup could not be confirmed. The entry and its process
+    /// stay owned so another stop can retry them.
+    fn refuse(&self) {
+        self.with_entry(|left| left.refused = true);
+    }
+
+    /// Ends the command because the registry has been let go of.
     ///
-    /// One that has ended is waiting its turn to publish what it wrote, and is
-    /// let finish that first, a tick at a time, because ending it would
+    /// One that has ended is waiting its turn to publish what it wrote, and
+    /// is let finish that first, a tick at a time, because ending it would
     /// discard it. What it waits for is another command's publication, which
     /// ends — but the wait is bounded, because that publication may belong to
     /// another crucible of this user and crucible itself is on its way out.
     /// One whose descendants were already stopped has nothing left to end.
     fn leave(&mut self) -> Next {
         let since = *self.leaving.get_or_insert_with(Instant::now);
-        let Some(mut process) = taken(&self.process) else {
-            return Next::Done;
+        let Some(mut loan) = Loan::take(&self.process) else {
+            // The process is still borrowed by an acceptance or another
+            // cleanup task. Leaving is a request, not proof that the scope is
+            // gone; keep the owner alive to try again.
+            return Next::Tick;
         };
         if self.reaping.stopped.is_some() {
+            loan.confirm();
             return Next::Done;
         }
-        if process.ended()
-            && matches!(process.try_wait(), Ok(None))
-            && since.elapsed() < PUBLICATION
-        {
-            returned(&self.process, process);
+        let Some(process) = loan.as_mut() else {
+            return Next::Tick;
+        };
+        let publishing = match guarded(|| process.ended()) {
+            Ok(true) => match guarded(|| process.try_wait()) {
+                Ok(Ok(None)) => true,
+                Ok(_) => false,
+                Err(()) => {
+                    self.refuse();
+                    return Next::Tick;
+                }
+            },
+            Ok(false) => false,
+            Err(()) => {
+                self.refuse();
+                return Next::Tick;
+            }
+        };
+        if publishing && since.elapsed() < PUBLICATION {
             return Next::Tick;
         }
-        let _ = super::output::end(process.as_mut());
-        Next::Done
+        if let Ok(()) = stop_lent(&mut loan) {
+            self.released = true;
+            loan.confirm();
+            Next::Done
+        } else {
+            self.refuse();
+            Next::Tick
+        }
     }
 }
 
-/// A command installed under its stable application-owned identity.
+impl Drop for Owner {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        let (runtime, cell) = {
+            let Ok(mut held) = self.held.lock() else {
+                return;
+            };
+            if held.leaving {
+                return;
+            }
+            let cell = {
+                let Some(left) = held.left.iter_mut().find(|left| left.number == self.number)
+                else {
+                    return;
+                };
+                if left.done.is_some() {
+                    return;
+                }
+                left.refused = true;
+                Arc::clone(&left.process)
+            };
+            (held.runtime.clone(), cell)
+        };
+        if let Some(runtime) = runtime {
+            schedule_cell_release(Some(runtime), cell, None);
+        }
+    }
+}
+
+/// Runs a potentially blocking process call on the owner step's blocking
+/// thread, with a bound. A panic is a failed cleanup attempt, never proof
+/// that the process is gone.
+fn guarded<T>(call: impl FnOnce() -> T) -> Result<T, ()> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)).map_err(|_| ())
+}
+
+/// Bounds a lifecycle future on the runtime that owns the call.
+///
+/// On a runtime the wait is timed. With no runtime there is no clock to time it
+/// against, so the call is asked once and refused unless it answers on that
+/// poll — the rule [`Bridge::cross`] is, which the runner's own result seam does
+/// not follow: that one awaits its acceptance, so an executor that has to wait
+/// to close its transition is waited for. A future that would have waited is
+/// dropped there and the caller is handed the refusal with the process, which
+/// is the whole point of the bound: a process is never left borrowed for a wait
+/// nothing can end.
+pub(super) async fn bounded<F: Future>(future: F, allowed: Duration) -> Result<F::Output, ()> {
+    if Handle::try_current().is_err() {
+        return Bridge::CommandAcceptance.cross(future).map_err(|_| ());
+    }
+    tokio::time::timeout(allowed, future).await.map_err(|_| ())
+}
+
+/// Asks for one stop, on the thread that already owns this command's process
+/// work, and answers what one poll of it says.
+///
+/// The stop is a future and the thread is one the runtime's blocking pool
+/// handed out, so the ask belongs here rather than on a runtime worker: a
+/// backend that blocks inside its own contract blocks this one thread, and a
+/// timer on the runtime still fires. One poll is the whole bound — the process
+/// contract keeps its bounded stop work inside the contract, so the poll
+/// answers — and a stop that would have had to wait is refused rather than
+/// waited for, so the caller is told only that. Asking again is the caller's
+/// own decision: a descendant stop, a registry's own end, and the release task
+/// are asked again from their next attempt, and a stop asked for by a key or by
+/// an abandoned result waits for that ask to be made again, which is what the
+/// ask flag being consumed before this call means. The process stays lent
+/// either way: only a confirmed stop, which the caller gives up, ends the
+/// ownership.
+fn stop_lent(loan: &mut Loan) -> io::Result<()> {
+    let Some(process) = loan.as_mut() else {
+        return Err(io::Error::other("the process was already released"));
+    };
+    Bridge::CommandStop
+        .cross(super::output::end(process))
+        .map_err(|unready| {
+            io::Error::other(format!(
+                "the stop was asked again rather than held: {unready}"
+            ))
+        })?
+}
 pub(super) struct Kept {
     standing: Arc<Registry>,
     number: usize,
@@ -1092,9 +1373,9 @@ impl Drop for Kept {
     }
 }
 
-/// Stops a command dropped before runner finalization binds its receipt. A
-/// binding that fails or would have had to wait disarms it instead, leaving the
-/// command with the registry like any other background command.
+/// Binds one admitted result to its process. The process is borrowed only for
+/// this bounded lifecycle call; cancellation returns it through [`Loan`], and
+/// an unanswered call is refused rather than held forever.
 struct Acceptance {
     standing: Arc<Registry>,
     number: usize,
@@ -1128,25 +1409,34 @@ impl CallResultAcceptance for Acceptance {
                     .map(|left| Arc::clone(&left.process))
                     .ok_or_else(unavailable)?
             };
-            // Borrowed from its owner for the one call, with the registry
-            // unlocked: binding waits, synchronously, and on Linux the in-tree
-            // backend writes a durable record there and stops the process
-            // when that record fails. Crossed rather than awaited until the
-            // runner awaits a background result's acceptance.
-            let mut process = taken(&cell).ok_or_else(unavailable)?;
-            let completed = Bridge::BashSandbox
-                .cross(process.complete_background_acceptance(receipt))
-                .unwrap_or_else(|unready| {
-                    Err(SandboxError::Lifecycle(std::io::Error::other(unready)))
-                });
-            returned(&cell, process);
+            let Some(mut loan) = Loan::take(&cell) else {
+                return Err(unavailable());
+            };
+            let completed = match loan.as_mut() {
+                Some(process) => {
+                    match bounded(process.complete_background_acceptance(receipt), ACCEPTANCE).await
+                    {
+                        Ok(completed) => completed,
+                        Err(()) => Err(SandboxError::Lifecycle(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "background result acceptance did not finish within its bound",
+                        ))),
+                    }
+                }
+                None => Err(unavailable()),
+            };
+            drop(loan);
             if let Ok(mut standing) = self.standing.lock()
                 && let Some(left) = standing
                     .left
                     .iter_mut()
                     .find(|left| left.number == self.number)
             {
-                left.accepting = false;
+                if completed.is_ok() {
+                    left.accepting = false;
+                } else {
+                    standing.abandon(self.number);
+                }
             }
             self.armed = false;
             completed
@@ -1201,6 +1491,97 @@ impl Drop for Lease {
     }
 }
 
+/// Takes over cleanup for a process that has not yet been admitted to a live
+/// registry entry. The task retries a failed stop and keeps any reservation
+/// until a stop is confirmed; the dropping thread never waits for it.
+pub(super) fn release_process(process: Box<dyn SandboxProcess>, lease: Option<Lease>) {
+    let cell: Cell = Arc::new(Mutex::new(Some(process)));
+    schedule_cell_release(Handle::try_current().ok(), cell, lease);
+}
+
+/// Schedules the bounded release owner for one cell. A cell can be empty while
+/// an acceptance or an earlier blocking step still owns its process, so the
+/// task waits for the cell rather than treating that gap as a stop.
+///
+/// For a command the registry kept, the stop it asks is given the one blocking
+/// thread [`MOST`] already reserves for that command's owner step, the owner
+/// this task takes over from, so it is that same reservation seen from a later
+/// step and not a second one against the runtime's counted blocking threads. A
+/// foreground command is not that case: it was never kept, so this shares no
+/// reservation, and it outlives the tool call that made it, which leaves it
+/// bounded by neither that step nor the turn's tool runs. Nothing here caps how
+/// many such tasks are live; that retry demand is outside the runtime's
+/// counted owners, and what it costs is that a stop is asked later — each ask
+/// is awaited, so a saturated pool queues it holding no thread, and no stop is
+/// lost, confirmed without its cleanup, or counted as capacity released.
+///
+/// A stop this process's backend keeps refusing is asked again with the whole
+/// patience a stop is given on the way out, [`STOPPING`], between each pair of
+/// asks, and never sooner: the first refusal costs a tick and each one after it
+/// doubles that wait, so a backend that cannot stop costs a blocking thread once
+/// every [`STOPPING`] at worst rather than once a tick. A cell nobody is holding
+/// yet is not a refusal and is still waited for at the tick, because that gap is
+/// another owner handing the process back and not a backend declining.
+fn schedule_cell_release(runtime: Option<Handle>, cell: Cell, lease: Option<Lease>) {
+    let Some(runtime) = runtime else {
+        // A process reaches this path from a destructor or from a caller still
+        // constructing its runtime. A stop is a future, and with no runtime
+        // there is nothing to answer one, so the reservation is given back and
+        // the handle is left with the operating system. That is the one thing
+        // this cannot do twice: it is not a stop, nothing records one, and the
+        // process contract is what a stop would have asked for.
+        drop(cell);
+        drop(lease);
+        return;
+    };
+    runtime.spawn(async move {
+        let lease = lease;
+        let mut patience = super::TICK;
+        loop {
+            let Some(loan) = Loan::take(&cell) else {
+                tokio::time::sleep(super::TICK).await;
+                continue;
+            };
+            // This stop is asked on the blocking pool, taking the place the
+            // doc above names: a kept command's own owner reservation, or, for
+            // a foreground one, no reservation at all.
+            let (returned, stopped) = stop_loan(loan).await;
+            if let Some(loan) = returned {
+                if stopped.is_ok() {
+                    loan.confirm();
+                    drop(lease);
+                    return;
+                }
+                drop(loan);
+            }
+            tokio::time::sleep(patience).await;
+            patience = patience.saturating_mul(2).min(STOPPING);
+        }
+    });
+}
+
+/// Runs one stop on the blocking pool while keeping the loan alive if the
+/// blocking task is cancelled or comes apart.
+async fn stop_loan(loan: Loan) -> (Option<Loan>, io::Result<()>) {
+    match tokio::task::spawn_blocking(move || {
+        let mut loan = loan;
+        let result = if loan.as_mut().is_some() {
+            stop_lent(&mut loan)
+        } else {
+            Err(io::Error::other("the process loan was already released"))
+        };
+        (loan, result)
+    })
+    .await
+    {
+        Ok((loan, result)) => (Some(loan), result),
+        Err(_) => (
+            None,
+            Err(io::Error::other("the process cleanup task came apart")),
+        ),
+    }
+}
+
 /// A running command, on its way into the registry.
 ///
 /// Named rather than passed as five arguments, because the ceiling on how many a
@@ -1208,14 +1589,26 @@ impl Drop for Lease {
 /// because they belong together: they are one command's lifetime, and how it
 /// came to have one.
 pub(super) struct Taking {
-    pub(super) process: Box<dyn SandboxProcess>,
-    pub(super) out: Pipe,
-    pub(super) err: Pipe,
+    pub(super) process: Option<Box<dyn SandboxProcess>>,
+    pub(super) out: Option<Pipe>,
+    pub(super) err: Option<Pipe>,
     pub(super) since: Instant,
+    /// The reservation travels with the process until the registry takes both
+    /// or a cleanup task confirms their release.
+    pub(super) lease: Option<Lease>,
     /// Which of the two ways in let go of it, which is the one thing about a
     /// command left running that the model reads differently depending on the
     /// answer.
     pub(super) why: super::output::Why,
+}
+
+impl Drop for Taking {
+    fn drop(&mut self) {
+        let Some(process) = self.process.take() else {
+            return;
+        };
+        release_process(process, self.lease.take());
+    }
 }
 
 impl Taking {
@@ -1231,7 +1624,14 @@ impl Taking {
     /// [`crucible_tools::ToolOutput::with_capture_elision`] the same way a
     /// finished command's own answer does.
     pub(super) fn printed(&self) -> super::output::Captured {
-        let said = super::output::gathered(&self.out, &self.err, super::output::CAPTURE_TEXT);
+        let (Some(out), Some(err)) = (&self.out, &self.err) else {
+            return super::output::Captured {
+                text: String::from("(no output yet)"),
+                original: 0,
+                omitted: 0,
+            };
+        };
+        let said = super::output::gathered(out, err, super::output::CAPTURE_TEXT);
 
         if said.text.trim().is_empty() {
             return super::output::Captured {

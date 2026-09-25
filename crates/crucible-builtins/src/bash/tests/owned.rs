@@ -11,14 +11,14 @@
 
 use std::ffi::OsString;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::{BoxFuture, Cancel};
+use crucible_runtime::Cancel;
 use crucible_sandbox::{
-    SandboxCommand, SandboxEnvironment, SandboxInspection, SandboxManifest, SandboxOutput,
-    SandboxPolicy, SandboxProcess, SandboxRequest, SandboxService, SandboxUsage, SandboxViolation,
+    SandboxCommand, SandboxEnvironment, SandboxManifest, SandboxPolicy, SandboxProcess,
+    SandboxRequest, SandboxService,
 };
 use crucible_tools::{ToolContext, Unwatched};
 use crucible_types::{Ancestry, SandboxId, ToolId};
@@ -74,9 +74,8 @@ fn handed_back(beside: &Beside) {
 }
 
 /// A command admitted the way the tool admits one, through this machine's
-/// confinement with confinement switched off, and handed back inside
-/// [`Recorded`].
-fn admitted(sample: &Sample, line: &str, stopped: &Arc<AtomicBool>) -> Box<dyn SandboxProcess> {
+/// confinement with confinement switched off.
+fn admitted(sample: &Sample, line: &str) -> Box<dyn SandboxProcess> {
     let policy = SandboxPolicy::standard(&sample.workspace())
         .expect("a standard policy for the fixture workspace")
         .with_enabled(false);
@@ -97,60 +96,7 @@ fn admitted(sample: &Sample, line: &str, stopped: &Arc<AtomicBool>) -> Box<dyn S
     let mut session = crucible_runtime::answered!(crate::sample::sandbox().prepare(request))
         .expect("a prepared session");
     crucible_runtime::answered!(session.materialize()).expect("an empty manifest");
-    let process = crucible_runtime::answered!(session.start(command)).expect("the child started");
-    Box::new(Recorded {
-        inner: process,
-        stopped: Arc::clone(stopped),
-    })
-}
-
-/// A command whose stop is recorded before it is passed on.
-///
-/// Its backend ends it again when it is dropped, whoever held it, so that a
-/// command outlives nothing is not by itself proof that the wait ended it:
-/// the record is what says the wait did, before letting go of it.
-struct Recorded {
-    inner: Box<dyn SandboxProcess>,
-    stopped: Arc<AtomicBool>,
-}
-
-impl SandboxProcess for Recorded {
-    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
-        self.inner.take_stdin()
-    }
-
-    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.inner.take_stdout()
-    }
-
-    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.inner.take_stderr()
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
-        self.inner.try_wait()
-    }
-
-    fn ended(&mut self) -> bool {
-        self.inner.ended()
-    }
-
-    fn stop(&mut self) -> BoxFuture<'_, std::io::Result<()>> {
-        self.stopped.store(true, Ordering::Release);
-        self.inner.stop()
-    }
-
-    fn inspection(&self) -> &SandboxInspection {
-        self.inner.inspection()
-    }
-
-    fn usage(&self) -> SandboxUsage {
-        self.inner.usage()
-    }
-
-    fn violation(&self) -> Option<SandboxViolation> {
-        self.inner.violation()
-    }
+    crucible_runtime::answered!(session.start(command)).expect("the child started")
 }
 
 #[test]
@@ -160,19 +106,28 @@ fn a_call_dropped_while_its_command_runs_ends_it_and_leaves_nothing_behind() {
     // dropped there when whoever awaits it stops waiting: a lone call's own
     // deadline does exactly that. The one thread of this runtime is the proof
     // of the first: a wait that kept it until the command ended would let no
-    // timer fire before the sleep below was over. Dropped, the wait ends the
-    // command — asked of the command itself, and seen in a descendant that
-    // never gets to write its marker — and gives up on its readers, and
-    // nothing it started is left on the runtime.
+    // timer fire before the sleep below was over. Dropped, the wait hands the
+    // process to the builtins' owned release task and gives up on its readers.
+    // The fork marker below proves the command reached the descendant fork
+    // before the absence check; only then is the absence of the descendant's
+    // marker evidence about cleanup.
     let sample = Sample::new("bash-owned-dropped");
-    let stopped = Arc::new(AtomicBool::new(false));
+    let forked = sample.root().join("forked");
+    let _ = std::fs::remove_file(&forked);
     let process = admitted(
         &sample,
-        "printf begun; (sleep 1; touch outlived) & sleep 5",
-        &stopped,
+        "printf begun; (sleep 1; touch outlived) & printf f > forked; sleep 5",
     );
     let runtime = alone();
     let cancel = Cancel::new();
+    let fork_wait = Instant::now();
+    while !forked.exists() {
+        assert!(
+            fork_wait.elapsed() < Duration::from_secs(5),
+            "the command never reached the line that forks a descendant"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
 
     let started = Instant::now();
     let answered = runtime.block_on(async {
@@ -198,10 +153,6 @@ fn a_call_dropped_while_its_command_runs_ends_it_and_leaves_nothing_behind() {
     assert!(
         started.elapsed() < Duration::from_secs(3),
         "the wait was not dropped until the command ended"
-    );
-    assert!(
-        stopped.load(Ordering::Acquire),
-        "the dropped wait let go of its command without ending it"
     );
     quiesced(&runtime, "the call was dropped");
     thread::sleep(Duration::from_secs(2));
