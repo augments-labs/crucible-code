@@ -620,6 +620,7 @@ app config
 app context
 app credentials
 app extension
+app http
 app mcp
 app models
 app privacy
@@ -679,6 +680,7 @@ mcp transport
 mcp types
 provider core
 provider credentials
+provider http
 provider models
 provider runtime
 provider types

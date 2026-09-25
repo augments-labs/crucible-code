@@ -206,29 +206,26 @@ impl Provider for Moonshot {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let outgoing = self.headers(cancel).await?;
-            let redactions = outgoing.redactions();
+            let mut outgoing = self.headers(cancel).await?;
             let body = body::serialize(&request);
 
             let response = self
                 .transport
-                .post(self.endpoint.as_str(), outgoing, body, cancel)
-                .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
+                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
+                .await;
+            let redactions = outgoing.redactions();
+            let response =
+                response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
-            if response.status != 200 {
-                return Err(refused(
-                    NAME,
-                    response.status,
-                    response.body,
-                    &redactions,
-                    cancel,
-                ));
+            if response.status() != 200 {
+                return Err(refused(NAME, response.status(), response, &redactions, cancel).await);
             }
 
-            Ok(
-                Box::new(Stream::new(response.body, cancel.clone(), redactions))
-                    as Box<dyn DeltaStream>,
-            )
+            Ok(Box::new(Stream::new(
+                response.into_reader(),
+                cancel.clone(),
+                redactions,
+            )) as Box<dyn DeltaStream>)
         })
     }
 }

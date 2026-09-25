@@ -19,14 +19,17 @@
 //! keeps only the terminal response; the result is no more visible in halves
 //! than either vendor's unstreamed answer.
 //!
-//! The request itself is sent from a blocking thread of the runtime a search
-//! or a fetch is polled in, never from the thread polling it, and the call
-//! waits for it there racing the call's cancel, so a call the user stopped
-//! ends as the stop is asked for rather than when the request next looks —
-//! see [`sent`].
+//! The request itself is awaited on the runtime where the search or fetch is
+//! polled. Cancellation races that future, so dropping it closes the shared
+//! HTTP request instead of leaving a setup or body worker behind.
 
-use std::io::{self, Read};
+use std::future::Future;
+use std::io;
+#[cfg(test)]
+use std::io::Read;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError};
@@ -34,12 +37,11 @@ use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_runtime::{BoxFuture, Cancel};
 use serde_json::Value;
 use tokio::runtime::Handle;
-use tokio::sync::Semaphore;
 
 use crate::endpoint::Endpoint;
 use crate::json::Json;
 use crate::sse::{Events, Framed};
-use crate::transport::{Response, Transport, TransportError};
+use crate::transport::{PostBodyError, PostResponse, Transport, TransportError};
 
 mod google;
 pub use google::GoogleWeb;
@@ -87,12 +89,54 @@ const FETCH_CONTENT: u32 = 24_000;
 const MAX_WAIT: Duration = Duration::from_mins(2);
 
 /// Reads a whole answer, bounded in bytes and in time.
-fn read(
+async fn read(
     named: &'static str,
-    body: Box<dyn Read + Send>,
+    response: PostResponse,
     cancel: &Cancel,
 ) -> Result<String, SourceError> {
-    filled(named, body, MAX_WAIT, cancel)
+    let read = cancel
+        .race(Box::pin(response.read_limited(MOST, MAX_WAIT)))
+        .await;
+    if cancel.requested() {
+        return Err(SourceError::Cancelled(named));
+    }
+    let bytes = read.ok_or_else(|| unsent(named))?;
+    let bytes = match bytes {
+        Ok(bytes) => bytes,
+        Err(problem) => return Err(body_problem(named, problem)),
+    };
+
+    String::from_utf8(bytes).map_err(|problem| SourceError::Transport {
+        named,
+        problem: problem.to_string().into(),
+    })
+}
+
+/// Maps every shared-body failure to the source's established outcome.
+fn body_problem(named: &'static str, problem: PostBodyError) -> SourceError {
+    match problem {
+        PostBodyError::TooLarge | PostBodyError::Http(crucible_http::BodyError::TooLarge) => {
+            SourceError::Protocol {
+                named,
+                problem: "the web response exceeded its byte limit; no partial result was used"
+                    .into(),
+            }
+        }
+        PostBodyError::Deadline | PostBodyError::Http(crucible_http::BodyError::Deadline) => {
+            SourceError::Transport {
+                named,
+                problem: timed_out().to_string().into(),
+            }
+        }
+        PostBodyError::Read(problem) => SourceError::Transport {
+            named,
+            problem: problem.to_string().into(),
+        },
+        PostBodyError::Http(problem) => SourceError::Transport {
+            named,
+            problem: problem.to_string().into(),
+        },
+    }
 }
 
 /// The same, with a wait a test can hand over as none.
@@ -103,6 +147,7 @@ fn read(
 /// against attempting another read, never against one already under way, so
 /// what that read reports — a clean end or a failure — is used as it stands
 /// whatever the clock reads by then.
+#[cfg(test)]
 fn filled(
     named: &'static str,
     body: Box<dyn Read + Send>,
@@ -186,93 +231,58 @@ fn port_stripped(authority: &str) -> Option<&str> {
     }
 }
 
-/// How many of one web source's requests may be under way at once, each on a
-/// blocking thread of the runtime its caller polls it in, a request a call
-/// stopped waiting for counting until it has returned.
+/// Awaits one side request on the caller's runtime, racing its cancel.
 ///
-/// The tools run one call at a time, so this is room for the next call beside
-/// one request the last call gave up on and that is still winding down. A
-/// request that never winds down keeps its place, and once every place is
-/// held that way a call waits for one, as long as it is not cancelled. The
-/// most blocking threads one source holds is therefore this, which is what an
-/// owner of the runtime counts against its blocking-thread limit.
-pub const IN_FLIGHT: usize = 2;
-
-/// Room for one source's requests.
-fn room() -> Arc<Semaphore> {
-    Arc::new(Semaphore::new(IN_FLIGHT))
-}
-
-/// Sends one side request from a blocking thread of the runtime this is polled
-/// in, and waits for it there until it answers or `cancel` is raised.
-///
-/// The transport blocks, so a request sent from the thread polling a search
-/// would hold that thread for as long as the vendor takes, and the call could
-/// stop no sooner than the request next looked at its cancel. Here the request
-/// runs on a blocking thread, and the call races its answer against `cancel`
-/// with [`Cancel::race`]: a call the user stopped ends as the stop is asked
-/// for, with [`SourceError::Cancelled`], whether or not the request has
-/// noticed yet.
-///
-/// The request is handed a child of `cancel`, raised as the call stops
-/// waiting for it however it stops, and holds one of its source's
-/// [`IN_FLIGHT`] places until it returns. A blocking thread cannot be stopped
-/// from outside, so a request the call gave up on runs until its next look at
-/// that token, and what it answers then is dropped as its place is given back.
-/// A request that came apart comes apart in the call, as it did when it ran
-/// there.
-async fn sent<T, R>(
-    (named, transport, endpoint): (&'static str, &Arc<dyn Transport>, &Endpoint),
-    room: &Arc<Semaphore>,
-    cancel: &Cancel,
-    request: R,
-) -> Result<T, SourceError>
+/// The child token is raised when this call stops waiting, so a request future
+/// that is still inside credential setup or a transport body is told to stop as
+/// well as being dropped. Nothing is moved to a blocking worker here.
+async fn sent<T, R, F>(named: &'static str, cancel: &Cancel, request: R) -> Result<T, SourceError>
 where
-    T: Send + 'static,
-    R: FnOnce(Sending<'_>, &Cancel) -> Result<T, SourceError> + Send + 'static,
+    R: FnOnce(Cancel) -> F,
+    F: Future<Output = Result<T, SourceError>>,
 {
-    let Ok(runtime) = Handle::try_current() else {
+    if Handle::try_current().is_err() {
         return Err(unsent(named));
-    };
-    let place = match cancel.race(Arc::clone(room).acquire_owned()).await {
-        None => return Err(SourceError::Cancelled(named)),
-        Some(place) => place.map_err(|_| unsent(named))?,
-    };
+    }
+    let child = cancel.child();
+    let request = ChildRequest::new(child.clone(), request(child));
+    let answered = cancel.race(request).await;
     if cancel.requested() {
         return Err(SourceError::Cancelled(named));
     }
+    answered.ok_or_else(|| unsent(named))?
+}
 
-    let stop = StopOnDrop(cancel.child());
-    let told = stop.0.clone();
-    let (transport, endpoint) = (Arc::clone(transport), endpoint.clone());
-    let running = runtime.spawn_blocking(move || {
-        // Given back as the request returns or unwinds: the place is the
-        // request's, not the call's.
-        let _place = place;
-        let sending = Sending {
-            named,
-            transport: transport.as_ref(),
-            endpoint: endpoint.as_str(),
-        };
-        request(sending, &told)
-    });
-    match cancel.race(running).await {
-        None => Err(SourceError::Cancelled(named)),
-        Some(Ok(answered)) => answered,
-        Some(Err(ended)) => match ended.try_into_panic() {
-            Ok(panicked) => std::panic::resume_unwind(panicked),
-            Err(_) => Err(unsent(named)),
-        },
+/// Owns a child token and the request it guards.
+///
+/// Its explicit `Drop` runs before the boxed work is dropped, so a request
+/// that is abandoned learns that it is abandoned before its own drop guard
+/// reports what it saw.
+struct ChildRequest<F> {
+    child: Cancel,
+    work: Pin<Box<F>>,
+}
+
+impl<F> ChildRequest<F> {
+    fn new(child: Cancel, work: F) -> Self {
+        Self {
+            child,
+            work: Box::pin(work),
+        }
     }
 }
 
-/// Raises the request's token when the call stops waiting for it, however it
-/// stops.
-struct StopOnDrop(Cancel);
+impl<F: Future> Future for ChildRequest<F> {
+    type Output = F::Output;
 
-impl Drop for StopOnDrop {
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.get_mut().work.as_mut().poll(context)
+    }
+}
+
+impl<F> Drop for ChildRequest<F> {
     fn drop(&mut self) {
-        self.0.request();
+        self.child.request();
     }
 }
 
@@ -292,7 +302,6 @@ pub struct AnthropicWeb {
     transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     model: Box<str>,
-    room: Arc<Semaphore>,
 }
 
 /// What this source is called, in errors and in what a rule is written about.
@@ -326,7 +335,6 @@ impl AnthropicWeb {
             transport: Arc::from(transport),
             endpoint,
             model: model.into(),
-            room: room(),
         }
     }
 
@@ -383,12 +391,19 @@ impl AnthropicWeb {
         });
 
         let body = json.finish();
-        let answered = sent(
-            (ANTHROPIC, &self.transport, &self.endpoint),
-            &self.room,
-            cancel,
-            move |sending, cancel| posted(sending, outgoing, body, cancel),
-        )
+        let answered = sent(ANTHROPIC, cancel, |cancel| async move {
+            Box::pin(posted(
+                Sending {
+                    named: ANTHROPIC,
+                    transport: self.transport.as_ref(),
+                    endpoint: self.endpoint.as_str(),
+                },
+                outgoing,
+                body,
+                &cancel,
+            ))
+            .await
+        })
         .await
         .map_err(|error| self.failure(error))?;
         if self.model.as_ref() == crate::anthropic::FABLE_51
@@ -475,9 +490,9 @@ fn undelivered(
 /// Shared because the difference between two vendors here is the body and the
 /// headers, and a second copy of the status-and-redaction handling is a second
 /// place for a key to escape.
-fn posted(
+async fn posted(
     sending: Sending<'_>,
-    outgoing: Outgoing,
+    mut outgoing: Outgoing,
     body: String,
     cancel: &Cancel,
 ) -> Result<Value, SourceError> {
@@ -487,18 +502,16 @@ fn posted(
         endpoint,
     } = sending;
 
+    let response = transport.post(endpoint, &mut outgoing, body, cancel).await;
     let redactions = outgoing.redactions();
+    let response = response.map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
+    let status = response.status();
+    let answered = Box::pin(read(named, response, cancel)).await?;
 
-    let response = transport
-        .post(endpoint, outgoing, body, cancel)
-        .map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
-
-    let answered = read(named, response.body, cancel)?;
-
-    if response.status != 200 {
+    if status != 200 {
         return Err(SourceError::Refused {
             named,
-            status: response.status,
+            status,
             message: redactions.redact(&answered).into(),
         });
     }
@@ -513,9 +526,9 @@ fn posted(
 ///
 /// The sibling of [`posted`] for a service whose answer is a page rather than a
 /// document: reading it as JSON would fail on the one shape it always has.
-fn posted_text(
+async fn posted_text(
     sending: Sending<'_>,
-    outgoing: Outgoing,
+    mut outgoing: Outgoing,
     body: String,
     cancel: &Cancel,
 ) -> Result<String, SourceError> {
@@ -525,18 +538,16 @@ fn posted_text(
         endpoint,
     } = sending;
 
+    let response = transport.post(endpoint, &mut outgoing, body, cancel).await;
     let redactions = outgoing.redactions();
+    let response = response.map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
+    let status = response.status();
+    let answered = Box::pin(read(named, response, cancel)).await?;
 
-    let response = transport
-        .post(endpoint, outgoing, body, cancel)
-        .map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
-
-    let answered = read(named, response.body, cancel)?;
-
-    if response.status != 200 {
+    if status != 200 {
         return Err(SourceError::Refused {
             named,
-            status: response.status,
+            status,
             message: redactions.redact(&answered).into(),
         });
     }
@@ -795,7 +806,6 @@ pub struct OpenAiWeb {
     transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     model: Box<str>,
-    room: Arc<Semaphore>,
 }
 
 impl OpenAiWeb {
@@ -812,7 +822,6 @@ impl OpenAiWeb {
             transport: Arc::from(transport),
             endpoint,
             model: model.into(),
-            room: room(),
         }
     }
 
@@ -840,10 +849,21 @@ impl OpenAiWeb {
     async fn ask(&self, body: String, cancel: &Cancel) -> Result<Value, SourceError> {
         let outgoing = self.headers(cancel).await?;
         sent(
-            (OPENAI, &self.transport, &self.endpoint),
-            &self.room,
+            OPENAI,
             cancel,
-            move |sending, cancel| posted_openai(sending, outgoing, body, cancel),
+            |cancel| async move {
+                Box::pin(posted_openai(
+                    Sending {
+                        named: OPENAI,
+                        transport: self.transport.as_ref(),
+                        endpoint: self.endpoint.as_str(),
+                    },
+                    outgoing,
+                    body,
+                    &cancel,
+                ))
+                .await
+            },
         )
         .await
         .map_err(|error| {
@@ -893,9 +913,9 @@ fn openai_input(body: &mut crate::json::Object<'_>, text: &str) {
 /// `response.completed` event carries the same whole response object the
 /// unstreamed API would have returned, so this frames the existing bounded body
 /// and hands that object to the existing result readers.
-fn posted_openai(
+async fn posted_openai(
     sending: Sending<'_>,
-    outgoing: Outgoing,
+    mut outgoing: Outgoing,
     body: String,
     cancel: &Cancel,
 ) -> Result<Value, SourceError> {
@@ -904,13 +924,13 @@ fn posted_openai(
         transport,
         endpoint,
     } = sending;
+    let response = transport.post(endpoint, &mut outgoing, body, cancel).await;
     let redactions = outgoing.redactions();
-    let Response { status, body } = transport
-        .post(endpoint, outgoing, body, cancel)
-        .map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
+    let response = response.map_err(|problem| undelivered(named, &problem, &redactions, cancel))?;
+    let status = response.status();
 
     if status != 200 {
-        let answered = read(named, body, cancel)?;
+        let answered = Box::pin(read(named, response, cancel)).await?;
         return Err(SourceError::Refused {
             named,
             status,
@@ -918,7 +938,7 @@ fn posted_openai(
         });
     }
 
-    openai_response(body, cancel, &redactions)
+    Box::pin(openai_response(response, cancel, &redactions)).await
 }
 
 /// Reads a whole bounded side response, then frames it exactly as a turn.
@@ -927,18 +947,18 @@ fn posted_openai(
 /// EOF. The whole-body reader detects overflow and a broken or cancelled tail;
 /// framing then rejects contradictions after completion instead of using a
 /// prefix that only appeared successful.
-fn openai_response(
-    body: Box<dyn Read + Send>,
+async fn openai_response(
+    response: PostResponse,
     cancel: &Cancel,
     redactions: &Redactions,
 ) -> Result<Value, SourceError> {
     let since = Instant::now();
-    let body = read(OPENAI, body, cancel)?;
+    let body = Box::pin(read(OPENAI, response, cancel)).await?;
     let mut events = Events::new(io::Cursor::new(body));
     let mut finished = Vec::new();
     let mut completed = None;
 
-    while let Some(next) = events.next() {
+    while let Some(next) = events.next().await {
         if cancel.requested() {
             return Err(SourceError::Cancelled(OPENAI));
         }
@@ -1238,7 +1258,6 @@ pub struct MoonshotWeb {
     transport: Arc<dyn Transport>,
     searching: Endpoint,
     fetching: Endpoint,
-    room: Arc<Semaphore>,
 }
 
 impl MoonshotWeb {
@@ -1256,7 +1275,6 @@ impl MoonshotWeb {
             transport: Arc::from(transport),
             searching: Self::SEARCH,
             fetching: Self::FETCH,
-            room: room(),
         }
     }
 
@@ -1314,12 +1332,19 @@ impl Search for MoonshotWeb {
 
             let outgoing = self.headers("application/json", cancel).await?;
             let body = json.finish();
-            let answered = sent(
-                (MOONSHOT, &self.transport, &self.searching),
-                &self.room,
-                cancel,
-                move |sending, cancel| posted(sending, outgoing, body, cancel),
-            )
+            let answered = sent(MOONSHOT, cancel, |cancel| async move {
+                Box::pin(posted(
+                    Sending {
+                        named: MOONSHOT,
+                        transport: self.transport.as_ref(),
+                        endpoint: self.searching.as_str(),
+                    },
+                    outgoing,
+                    body,
+                    &cancel,
+                ))
+                .await
+            })
             .await?;
 
             let found = answered
@@ -1382,12 +1407,19 @@ impl Fetch for MoonshotWeb {
             // otherwise would make every fetch look like a redirect.
             let outgoing = self.headers("text/markdown", cancel).await?;
             let body = json.finish();
-            let text = sent(
-                (MOONSHOT, &self.transport, &self.fetching),
-                &self.room,
-                cancel,
-                move |sending, cancel| posted_text(sending, outgoing, body, cancel),
-            )
+            let text = sent(MOONSHOT, cancel, |cancel| async move {
+                Box::pin(posted_text(
+                    Sending {
+                        named: MOONSHOT,
+                        transport: self.transport.as_ref(),
+                        endpoint: self.fetching.as_str(),
+                    },
+                    outgoing,
+                    body,
+                    &cancel,
+                ))
+                .await
+            })
             .await?;
 
             Ok(Page {

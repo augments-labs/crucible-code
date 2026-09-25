@@ -26,7 +26,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_runtime::{Bridge, Cancel};
-use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation};
+use crucible_sandbox::{
+    SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation,
+};
 use crucible_tools::{ToolError, ToolOutput, Watch, Wrote};
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
@@ -177,8 +179,9 @@ pub(super) async fn collect(
         // Neither the cancel nor the deadline ends a command that has already
         // ended, until its own ceiling passes. One whose writes wait their turn
         // behind another command's publication is not running any more, and
-        // stopping it would discard what it wrote after it finished — so it is
-        // waited for, and told apart from a command that really did run too long.
+        // stopping it would cut short an ending that may still publish — so it
+        // is waited for, and told apart from a command that really did run too
+        // long.
         if cancel.requested() || Instant::now() >= deadline {
             let ended = running.taking()?.ended();
             let since = *publishing.get_or_insert_with(Instant::now);
@@ -189,11 +192,17 @@ pub(super) async fn collect(
             };
             if !(ended && since.elapsed() < ceiling) {
                 if cancel.requested() {
-                    let _ = running.stop().await?;
+                    let status = running.stop().await?;
+                    let published = running.taking()?.publication_outcome()
+                        == Some(SandboxLifecycle::Published);
+                    if ended && published {
+                        expiry = Expiry::Published;
+                        break status;
+                    }
                     // A cancelled call is answered to the model as one that was
-                    // not run. True of a command still running; false of one
-                    // that finished and had its writes discarded by the stop
-                    // above, which is told instead what it lost.
+                    // not run. True of a command still running; an ending that
+                    // completed during the stop is answered with its committed
+                    // publication below rather than called discarded.
                     return Err(if ended {
                         tool_unpublished(io::Error::new(
                             io::ErrorKind::TimedOut,
@@ -204,12 +213,15 @@ pub(super) async fn collect(
                     });
                 }
                 let status = running.stop().await?;
-                // Stopping it discarded whatever it had not published, which is
-                // the part of "ran too long" that is not true of it.
-                expiry = if ended {
-                    Expiry::Unpublished
-                } else {
-                    Expiry::RanTooLong
+                let published =
+                    running.taking()?.publication_outcome() == Some(SandboxLifecycle::Published);
+                // The stop joins an ending already writing. Ask that ending's
+                // terminal publication outcome rather than deciding from the
+                // pre-stop `ended` bit.
+                expiry = match (ended, published) {
+                    (true, false) => Expiry::Unpublished,
+                    (false, _) => Expiry::RanTooLong,
+                    (true, true) => Expiry::No,
                 };
                 break status;
             }
@@ -435,8 +447,8 @@ async fn reaped(
 /// command's status, end the command's group, reap it within the reap bound,
 /// join a limit's cancel within a bound of its own, stop its network proxy
 /// where it has one and clean up its stage, and a projected command's stop also
-/// rolls back what it wrote and had not published. Only the reap and the
-/// cancel's join are bounded.
+/// joins an ending already writing it: that ending may roll back or publish
+/// before the stop returns. Only the reap and the cancel's join are bounded.
 pub(super) fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
     Bridge::BashSandbox
         .cross(process.stop())
@@ -533,8 +545,11 @@ enum Expiry {
     No,
     /// It was still running when its time ran out.
     RanTooLong,
-    /// It had ended, and the stop discarded what it had not published.
+    /// It had ended, and the joined stop did not confirm a successful
+    /// publication; its writes may have been rolled back or quarantined.
     Unpublished,
+    /// It had ended, and the stop joined a publication that committed.
+    Published,
 }
 
 impl Finished {
@@ -556,6 +571,12 @@ impl Finished {
         // and carries the other fact inside it, because a prefix still has to
         // say that it is one.
         if self.expiry != Expiry::No {
+            if self.expiry == Expiry::Published {
+                return ToolOutput::failed(format!(
+                    "{body}\n\n[stopped: the turn was cancelled after its writes were published]"
+                ))
+                .with_capture_elision(self.original, self.omitted);
+            }
             let held = if self.arriving {
                 ", and something it left running still holds the output open"
             } else {

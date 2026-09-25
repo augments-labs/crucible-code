@@ -20,7 +20,7 @@
 //! disposal, so a step that has to wait for its answer is waited for rather
 //! than refused. It starts no runtime: whoever awaits it polls it, on that
 //! caller's own thread, and the one thing it spawns is its calls' runs, onto
-//! the runtime it is polled in, at most `TOOL_RUNS` at once and each awaited
+//! the runtime it is polled in, at most [`TOOL_RUNS`] at once and each awaited
 //! before the pass goes on — so a turn is polled inside a runtime, as the
 //! application's wait for one is. It hands its [`Cancel`] to every step it
 //! awaits and looks at it between them, so a stop ends it as it always has,
@@ -53,8 +53,8 @@ use crucible_core::{
     PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
     PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
     Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer, StopReason, Summary, ToolCall,
-    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, Toolset, ToolsetContext,
-    Transcript, TurnId, UsageCost,
+    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, ToolWorker, Toolset,
+    ToolsetContext, Transcript, TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
@@ -86,6 +86,7 @@ use load::{Counting, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
+pub use work::TOOL_RUNS;
 use work::{Went, Work};
 
 /// How many compactions one turn may run without getting anywhere.
@@ -184,6 +185,9 @@ pub struct Runner {
     policy: RunPolicy,
     prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
     sandbox_audits: SandboxAuditRegistry,
+    /// The worker every call is lent for its blocking work, where the wiring
+    /// gave one.
+    worker: Option<ToolWorker>,
 }
 
 /// What `agent` would be advertised out of `tools`, between turns.
@@ -286,6 +290,7 @@ impl Runner {
             policy: RunPolicy::default(),
             prompt_cache_store: None,
             sandbox_audits: SandboxAuditRegistry::new(),
+            worker: None,
         };
         runner.state.load.requesting(
             runner.agent.instructions(),
@@ -316,6 +321,17 @@ impl Runner {
     #[must_use]
     pub const fn under(mut self, policy: RunPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Lends every call this runner runs `worker` for its blocking work.
+    ///
+    /// One worker for every call of every turn, so what all of them hand it
+    /// is held to its one bound. A runner lent none leaves a tool to do that
+    /// work wherever its run is polled.
+    #[must_use]
+    pub fn lending(mut self, worker: ToolWorker) -> Self {
+        self.worker = Some(worker);
         self
     }
 

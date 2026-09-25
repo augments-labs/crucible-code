@@ -180,19 +180,6 @@ pub enum Bridge {
     /// - Owner: `crucible-app`
     /// - Retired: when the application awaits this work directly.
     AppTurn,
-    /// The turn's tools where the turn does not await them yet: running a
-    /// call in a parallel wave, on the wave's own thread for it; accepting a
-    /// background result; and listing and refreshing the toolset at the top
-    /// of each pass. A call that runs alone, and preparing and disposing of
-    /// the toolset, are awaited.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each call run in a parallel wave, each result
-    ///   accepted, and each listing or refreshing of the toolset.
-    /// - Owner: `crucible-runner`
-    /// - Retired: when the turn awaits a parallel wave's runs, a background
-    ///   result's acceptance and the toolset's listing and refreshing.
-    TurnTools,
     /// The bash tool's confined process: beginning a background result's
     /// acceptance, completing it, and stopping the process.
     ///
@@ -321,7 +308,6 @@ impl Bridge {
     const fn crossing(self) -> &'static str {
         match self {
             Self::AppTurn => "a turn or a compaction",
-            Self::TurnTools => "the turn's tools",
             Self::BashSandbox => "the bash tool's sandbox",
             Self::LocalBackend => "the local sandbox backend",
             Self::SandboxReport => "asking the sandbox what it can enforce",
@@ -654,7 +640,7 @@ mod tests {
         let runtime = runtime();
         let begun = std::time::Instant::now();
 
-        let waited = Bridge::TurnTools.wait(
+        let waited = Bridge::AppTurn.wait(
             Some(runtime.handle()),
             &Cancel::new(),
             WakesEachTime { left: WAKES },
@@ -701,13 +687,13 @@ mod tests {
             raising.request();
         });
 
-        let waited = Bridge::TurnTools.wait(Some(runtime.handle()), &cancel, async move {
+        let waited = Bridge::AppTurn.wait(Some(runtime.handle()), &cancel, async move {
             let _held = held;
             std::future::pending::<()>().await;
         });
         raiser.join().unwrap();
 
-        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::TurnTools)));
+        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::AppTurn)));
         assert!(
             dropped.load(Ordering::Acquire),
             "the cancelled future was still alive after the crossing returned"
@@ -726,11 +712,11 @@ mod tests {
         let polled = Arc::new(AtomicBool::new(false));
         let seen = Arc::clone(&polled);
 
-        let waited = Bridge::TurnTools.wait(Some(runtime.handle()), &cancel, async move {
+        let waited = Bridge::AppTurn.wait(Some(runtime.handle()), &cancel, async move {
             seen.store(true, Ordering::Release);
         });
 
-        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::TurnTools)));
+        assert_eq!(waited, Err(Unwaited::Cancelled(Bridge::AppTurn)));
         assert!(
             !polled.load(Ordering::Acquire),
             "a turn already cancelled had its step started anyway"

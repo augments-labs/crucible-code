@@ -26,7 +26,7 @@ use crucible_credentials::{ApiKey, Credential, Header, HeaderKey};
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
-    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
+    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, HttpTurns, Moonshot, MoonshotWeb, OpenAi,
     OpenAiWeb, Unavailable,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
@@ -220,6 +220,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
             stored: startup.stored,
             subscriptions: startup.subscriptions,
         },
+        startup.services.http(),
     )?;
 
     // Beside the provider, and for its reason: naming a server nobody wrote
@@ -247,6 +248,10 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // from here on: a credential this run resolved renews on it, and a login
     // `/login` starts sends its requests through it.
     startup.services.renewals().runs_on(runtime.clone());
+    // And the one worker every tool call is lent for its blocking work, on
+    // that same runtime, so the work of every call in the run shares its
+    // bound.
+    let worker = startup.services.tool_worker()?.clone();
 
     let (session, earlier) = match &startup.resuming {
         Resuming::Newest => {
@@ -308,7 +313,8 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
             )
         }
         .permitting(permission)
-        .under(run_policy);
+        .under(run_policy)
+        .lending(worker);
         match earlier {
             Some(transcript) => {
                 planned(startup.plan, &transcript);
@@ -474,6 +480,8 @@ pub struct Wiring<'a> {
     pub variable: &'a str,
     /// Where a setting says requests should go, where one does.
     pub sending: Option<Endpoint>,
+    /// The shared HTTP service the provider and web factories use.
+    pub http: &'a HttpTurns,
     /// The credential sources, as one boundary.
     pub auth: ProviderAuth<'a>,
 }
@@ -536,21 +544,27 @@ pub fn provider(
     serving: Option<Served>,
     unasked: &'static str,
     auth: ProviderAuth<'_>,
+    http: &HttpTurns,
 ) -> Result<Box<dyn Provider>, AppError> {
     let Some(serving) = serving else {
         return Ok(Box::new(Unavailable::new(unasked)));
     };
 
-    (serving.build)(wiring(serving, auth)?)
+    (serving.build)(wiring(serving, auth, http)?)
 }
 
 /// The wiring one record's factories are handed, resolved from the settings.
-fn wiring(serving: Served, auth: ProviderAuth<'_>) -> Result<Wiring<'_>, AppError> {
+fn wiring<'a>(
+    serving: Served,
+    auth: ProviderAuth<'a>,
+    http: &'a HttpTurns,
+) -> Result<Wiring<'a>, AppError> {
     let named = serving.name;
     Ok(Wiring {
         named,
         variable: auth.settings.api_key_env(named).unwrap_or(serving.key),
         sending: sending_to(auth.settings, named)?,
+        http,
         auth,
     })
 }
@@ -573,7 +587,7 @@ pub fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
             wiring.auth.from,
             wiring.auth.stored.get(wiring.named),
         )?,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -603,7 +617,7 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Moonshot::at(
         endpoint,
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -622,7 +636,7 @@ pub fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
             wiring.auth.from,
             wiring.auth.stored.get(wiring.named),
         )?,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -645,7 +659,7 @@ pub fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(OpenAi::at(
         endpoint,
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -773,7 +787,7 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
         stored: startup.stored,
         subscriptions: startup.subscriptions,
     };
-    let Ok(wiring) = wiring(serving, auth) else {
+    let Ok(wiring) = wiring(serving, auth, startup.services.http()) else {
         return Reaching::nothing();
     };
 
@@ -794,7 +808,7 @@ pub fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     Reaching::both(Arc::new(AnthropicWeb::new(
         wiring.sending.unwrap_or(Anthropic::VENDOR),
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
         model,
     )))
 }
@@ -812,7 +826,7 @@ pub fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let web = Arc::new(GoogleWeb::new(
         wiring.sending.unwrap_or(Google::VENDOR),
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
         model,
     ));
     Reaching {
@@ -853,7 +867,7 @@ pub fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     Reaching::both(Arc::new(OpenAiWeb::new(
         endpoint,
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
         model,
     )))
 }
@@ -886,7 +900,7 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
 
     Reaching::both(Arc::new(MoonshotWeb::new(
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 

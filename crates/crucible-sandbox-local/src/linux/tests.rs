@@ -513,7 +513,11 @@ fn unsupported_terminal_metadata_refuses_the_complete_private_delta() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    crucible_runtime::answered!(process.stop()).expect("a refused writer's cleanup is confirmed");
+    let stopped = crucible_runtime::answered!(process.stop());
+    assert!(
+        stopped.is_err(),
+        "a refused ending was reported as a successful stop"
+    );
     assert!(
         !lifecycles(&audit).contains(&SandboxLifecycle::Quarantined),
         "{:?}",
@@ -572,7 +576,11 @@ fn an_external_baseline_conflict_publishes_none_of_the_private_delta() {
         );
         thread::sleep(Duration::from_millis(10));
     }
-    crucible_runtime::answered!(process.stop()).expect("a refused writer's cleanup is confirmed");
+    let stopped = crucible_runtime::answered!(process.stop());
+    assert!(
+        stopped.is_err(),
+        "a refused ending was reported as a successful stop"
+    );
     assert_eq!(
         std::fs::read_to_string(sample.root().join("shared.txt")).expect("external content"),
         "external\n"

@@ -146,19 +146,17 @@ impl Provider for Google {
                     provider: NAME,
                     source,
                 })?;
-            let redactions = outgoing.redactions();
             let response = self
                 .transport
-                .post(self.endpoint.as_str(), outgoing, body, cancel)
-                .map_err(|error| error.for_provider(NAME).redacted(&redactions))?;
-            if response.status != 200 {
-                let error = crate::refusal::refused(
-                    NAME,
-                    response.status,
-                    response.body,
-                    &redactions,
-                    cancel,
-                );
+                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
+                .await;
+            let redactions = outgoing.redactions();
+            let response =
+                response.map_err(|error| error.for_provider(NAME).redacted(&redactions))?;
+            if response.status() != 200 {
+                let error =
+                    crate::refusal::refused(NAME, response.status(), response, &redactions, cancel)
+                        .await;
                 // A rejected stateless request can echo its signed history. Keep
                 // bounded reading, cancellation and typed window recovery, but do
                 // not expose Google's arbitrary refusal prose as a diagnostic.
@@ -177,7 +175,7 @@ impl Provider for Google {
                 });
             }
             Ok(Box::new(crate::stream::Response::with_wire(
-                response.body,
+                response.into_reader(),
                 cancel.clone(),
                 redactions,
                 wire,

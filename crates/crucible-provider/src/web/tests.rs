@@ -1,13 +1,14 @@
 //! What a side request sends, and what it reads back out of a real answer.
 
-use std::sync::Arc;
+use std::io::Read;
+use std::sync::{Arc, Mutex};
 
 use crucible_core::{Fetch, Host, Search};
 use crucible_credentials::{ApiKey, Header, HeaderKey};
 use serde_json::json;
 
 use super::*;
-use crate::transport::{Replay, Response, TransportError};
+use crate::transport::{Replay, TransportError};
 
 /// Awaits `future` on a current-thread runtime of the test's own, made for the
 /// one future and gone with it, the way a turn awaits a tool's run on the
@@ -19,6 +20,7 @@ use crate::transport::{Replay, Response, TransportError};
 /// leaves it.
 pub(super) fn awaited<F: std::future::IntoFuture>(future: F) -> F::Output {
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
         .build()
         .expect("a test runtime");
     let answer = runtime.block_on(future.into_future());
@@ -361,6 +363,48 @@ fn a_cancelled_search_sends_nothing() {
         .expect_err("a cancelled call not to be sent");
 
     assert!(matches!(problem, SourceError::Cancelled(_)), "{problem}");
+}
+
+#[derive(Debug)]
+struct OnCaller(Arc<Mutex<Option<std::thread::ThreadId>>>);
+
+impl Transport for OnCaller {
+    fn post<'a>(
+        &'a self,
+        _url: &'a str,
+        _headers: &'a mut Outgoing,
+        _body: String,
+        _cancel: &'a Cancel,
+    ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
+        let seen = Arc::clone(&self.0);
+        Box::pin(async move {
+            *seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(std::thread::current().id());
+            Ok(crate::PostResponse::recorded(
+                200,
+                std::io::Cursor::new(answer().into_bytes()),
+            ))
+        })
+    }
+}
+
+#[test]
+fn a_web_post_is_polled_on_the_callers_thread_not_a_blocking_worker() {
+    let seen = Arc::new(Mutex::new(None));
+    let caller = std::thread::current().id();
+
+    let result = anthropic_over(OnCaller(Arc::clone(&seen))).answered_search("x", &Cancel::new());
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(
+        *seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        Some(caller),
+        "the web post was moved off the caller's runtime"
+    );
 }
 
 #[test]
@@ -768,20 +812,22 @@ struct CancellingStream {
 }
 
 impl Transport for CancellingStream {
-    fn post(
-        &self,
-        _url: &str,
-        _headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        _url: &'a str,
+        _headers: &'a mut Outgoing,
         _body: String,
-        _cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
+        _cancel: &'a Cancel,
+    ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
         let cancel = self.cancel.clone();
-        Ok(Response {
-            status: 200,
-            body: Box::new(
-                crate::transport::Paused::saying([crate::transport::Said::Nothing])
-                    .meanwhile(move || cancel.request()),
-            ),
+        Box::pin(async move {
+            Ok(crate::PostResponse::recorded(
+                200,
+                crate::transport::SyncReader::new(
+                    crate::transport::Paused::saying([crate::transport::Said::Nothing])
+                        .meanwhile(move || cancel.request()),
+                ),
+            ))
         })
     }
 }
@@ -1228,16 +1274,18 @@ fn an_openai_fetch_refuses_an_address_that_names_no_host() {
 struct Endless;
 
 impl Transport for Endless {
-    fn post(
-        &self,
-        _url: &str,
-        _headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        _url: &'a str,
+        _headers: &'a mut Outgoing,
         _body: String,
-        _cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
-        Ok(Response {
-            status: 200,
-            body: Box::new(Producing),
+        _cancel: &'a Cancel,
+    ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
+        Box::pin(async move {
+            Ok(crate::PostResponse::recorded(
+                200,
+                crate::transport::SyncReader::new(Producing),
+            ))
         })
     }
 }
@@ -1254,13 +1302,13 @@ impl Read for Producing {
 
 #[test]
 fn cancelling_while_a_body_is_read_stays_a_cancel() {
-    // The cancel that request setup honoured stays reachable while the answer
+    // The cancel that reached the transport stays reachable while the answer
     // is read: a body still arriving after the user left the turn would
     // otherwise be read to its bound before anybody looked up.
     let cancel = Cancel::new();
     cancel.request();
 
-    let problem = posted(
+    let problem = awaited(posted(
         Sending {
             named: "test",
             transport: &Endless,
@@ -1269,7 +1317,7 @@ fn cancelling_while_a_body_is_read_stays_a_cancel() {
         Outgoing::new(),
         String::new(),
         &cancel,
-    )
+    ))
     .expect_err("a cancelled read to say so");
 
     assert!(matches!(problem, SourceError::Cancelled(_)), "{problem}");
@@ -1450,42 +1498,45 @@ fn a_real_read_failure_landing_as_the_wait_runs_out_keeps_its_own_message() {
 }
 
 /// A transport that never reaches the service because the user left the turn
-/// while the request was still being set up — resolving, connecting, waiting
-/// for headers. It is the one failure the transport spells as a cancel rather
-/// than as a network problem, and a source that reads it as a network problem
-/// answers a call nobody is waiting on any more with a vendor-named transport
-/// failure, and leaves the turn loop to end it.
+/// before its response arrived — while the request was resolving, connecting,
+/// or waiting for headers. It is the one failure the transport spells as a
+/// cancel rather than as a network problem, and a source that reads it as a
+/// network problem answers a call nobody is waiting on any more with a
+/// vendor-named transport failure, and leaves the turn loop to end it.
 #[derive(Debug)]
-struct CancelledDuringSetup;
+struct CancelledBeforeResponse;
 
-impl Transport for CancelledDuringSetup {
-    fn post(
-        &self,
-        _url: &str,
-        _headers: Outgoing,
+impl Transport for CancelledBeforeResponse {
+    fn post<'a>(
+        &'a self,
+        _url: &'a str,
+        _headers: &'a mut Outgoing,
         _body: String,
-        _cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
-        Err(TransportError::Cancelled)
+        _cancel: &'a Cancel,
+    ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
+        Box::pin(async { Err(TransportError::Cancelled) })
     }
 }
 
-/// The same moment seen from the other side: the cancel is raised while setup
-/// is under way and setup then fails of its own accord, so what comes back
-/// names a broken connection and the cancel is only visible on the control.
+/// The same moment seen from the other side: the cancel is raised while the
+/// request is in flight and the request then fails of its own accord, so what
+/// comes back names a broken connection and the cancel is only visible on the
+/// control.
 #[derive(Debug)]
 struct BrokenAfterCancelling;
 
 impl Transport for BrokenAfterCancelling {
-    fn post(
-        &self,
-        _url: &str,
-        _headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        _url: &'a str,
+        _headers: &'a mut Outgoing,
         _body: String,
-        cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
-        cancel.request();
-        Err(TransportError::Unreachable("connection reset".into()))
+        cancel: &'a Cancel,
+    ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
+        Box::pin(async move {
+            cancel.request();
+            Err(TransportError::Unreachable("connection reset".into()))
+        })
     }
 }
 
@@ -1519,7 +1570,7 @@ fn kimi_over(transport: impl Transport + 'static) -> MoonshotWeb {
 
 #[test]
 fn an_anthropic_search_cancelled_before_its_answer_arrives_ends_the_call() {
-    let problem = anthropic_over(CancelledDuringSetup)
+    let problem = anthropic_over(CancelledBeforeResponse)
         .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
@@ -1531,7 +1582,7 @@ fn an_anthropic_search_cancelled_before_its_answer_arrives_ends_the_call() {
 
 #[test]
 fn an_anthropic_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
-    let problem = anthropic_over(CancelledDuringSetup)
+    let problem = anthropic_over(CancelledBeforeResponse)
         .answered_fetch("https://example.com/page", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
@@ -1543,7 +1594,7 @@ fn an_anthropic_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
 
 #[test]
 fn an_openai_search_cancelled_before_its_answer_arrives_ends_the_call() {
-    let problem = openai_over("gpt-5.6", CancelledDuringSetup)
+    let problem = openai_over("gpt-5.6", CancelledBeforeResponse)
         .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
@@ -1558,7 +1609,7 @@ fn a_model_that_remaps_every_openai_failure_still_ends_a_cancelled_call() {
     // This one rewrites each failure this source reports, to keep private
     // response details out of a diagnostic. A cancel rewritten there is a
     // cancel lost, so it goes through the remap untouched.
-    let problem = openai_over("gpt-6-astra", CancelledDuringSetup)
+    let problem = openai_over("gpt-6-astra", CancelledBeforeResponse)
         .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
@@ -1573,7 +1624,7 @@ fn an_openai_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
     // Fetch reaches the same posting helper as this source's search does.
     // Its own test is what keeps a later split of the two from quietly
     // leaving one of them failing a call the user stopped.
-    let problem = openai_over("gpt-5.6", CancelledDuringSetup)
+    let problem = openai_over("gpt-5.6", CancelledBeforeResponse)
         .answered_fetch("https://example.com/page", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
@@ -1585,7 +1636,7 @@ fn an_openai_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
 
 #[test]
 fn a_kimi_search_cancelled_before_its_answer_arrives_ends_the_call() {
-    let problem = kimi_over(CancelledDuringSetup)
+    let problem = kimi_over(CancelledBeforeResponse)
         .answered_search("x", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
@@ -1597,7 +1648,7 @@ fn a_kimi_search_cancelled_before_its_answer_arrives_ends_the_call() {
 
 #[test]
 fn a_kimi_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
-    let problem = kimi_over(CancelledDuringSetup)
+    let problem = kimi_over(CancelledBeforeResponse)
         .answered_fetch("https://serde.rs/", &Cancel::new())
         .expect_err("a cancelled setup to end the call");
 
@@ -1608,7 +1659,7 @@ fn a_kimi_fetch_cancelled_before_its_answer_arrives_ends_the_call() {
 }
 
 #[test]
-fn a_setup_that_broke_after_the_user_cancelled_is_still_a_cancel() {
+fn a_request_that_broke_after_the_user_cancelled_is_still_a_cancel() {
     // Nothing promises the transport notices the cancel first. What the user
     // did is on the control, so the control is what decides.
     let problem = anthropic_over(BrokenAfterCancelling)
@@ -1627,28 +1678,46 @@ fn a_setup_that_broke_after_the_user_cancelled_is_still_a_cancel() {
 #[derive(Debug)]
 struct Stall {
     begun: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
-    go: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
     told: std::sync::Mutex<std::sync::mpsc::Sender<bool>>,
 }
 
 impl Transport for Stall {
-    fn post(
-        &self,
-        _url: &str,
-        _headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        _url: &'a str,
+        _headers: &'a mut Outgoing,
         _body: String,
-        cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
-        if let Ok(begun) = self.begun.lock() {
-            begun.send(()).ok();
+        cancel: &'a Cancel,
+    ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
+        let begun = self.begun.lock().ok().map(|sender| sender.send(()));
+        let told = self
+            .told
+            .lock()
+            .ok()
+            .map(|sender| std::sync::Mutex::new(sender.clone()));
+        Box::pin(async move {
+            let _ = begun;
+            let _told = ToldOnDrop {
+                cancel: cancel.clone(),
+                told,
+            };
+            std::future::pending::<Result<crate::PostResponse, TransportError>>().await
+        })
+    }
+}
+
+struct ToldOnDrop {
+    cancel: Cancel,
+    told: Option<std::sync::Mutex<std::sync::mpsc::Sender<bool>>>,
+}
+
+impl Drop for ToldOnDrop {
+    fn drop(&mut self) {
+        if let Some(told) = self.told.as_ref()
+            && let Ok(told) = told.lock()
+        {
+            let _ = told.send(self.cancel.requested());
         }
-        if let Ok(go) = self.go.lock() {
-            go.recv().ok();
-        }
-        if let Ok(told) = self.told.lock() {
-            told.send(cancel.requested()).ok();
-        }
-        Err(TransportError::Cancelled)
     }
 }
 
@@ -1714,11 +1783,9 @@ fn a_call_cancelled_while_its_request_stalls_returns_promptly_and_leaves_no_work
 
     for (named, call) in STALLED_CALLS {
         let (begun, beginning) = mpsc::channel();
-        let (go, stalled) = mpsc::channel();
         let (told, heard) = mpsc::channel();
         let stall = Arc::new(Stall {
             begun: std::sync::Mutex::new(begun),
-            go: std::sync::Mutex::new(stalled),
             told: std::sync::Mutex::new(told),
         });
         let cancel = Cancel::new();
@@ -1734,9 +1801,6 @@ fn a_call_cancelled_while_its_request_stalls_returns_promptly_and_leaves_no_work
             .unwrap_or_else(|_| panic!("{named}: the request never began"));
         cancel.request();
         let answer = answer.recv_timeout(PROMPTLY);
-        // Let the request go whatever came back, so a failure below leaves no
-        // thread stalled behind it.
-        go.send(()).ok();
 
         let answer = answer.unwrap_or_else(|_| {
             panic!(
@@ -1772,87 +1836,14 @@ fn a_call_cancelled_while_its_request_stalls_returns_promptly_and_leaves_no_work
 }
 
 #[test]
-fn a_source_keeps_no_more_requests_under_way_than_it_has_places_for() {
-    use std::sync::mpsc;
-
-    let (begun, beginning) = mpsc::channel();
-    let (go, stalled) = mpsc::channel();
-    let (told, _heard) = mpsc::channel();
-    let source = Arc::new(anthropic_over(Stall {
-        begun: std::sync::Mutex::new(begun),
-        go: std::sync::Mutex::new(stalled),
-        told: std::sync::Mutex::new(told),
-    }));
-
-    // A search on a thread of its own, under `cancel`, answering on the
-    // channel handed back.
-    let searching = |cancel: &Cancel| {
-        let (answered, answer) = mpsc::channel();
-        let (source, cancel) = (Arc::clone(&source), cancel.clone());
-        std::thread::spawn(move || answered.send(source.answered_search("x", &cancel)).ok());
-        answer
-    };
-
-    // Every place taken by a request its call gave up on, still stalled.
-    for _ in 0..IN_FLIGHT {
-        let cancel = Cancel::new();
-        let answer = searching(&cancel);
-        beginning
-            .recv_timeout(PROMPTLY)
-            .expect("the request to begin");
-        cancel.request();
-        assert!(matches!(
-            answer.recv_timeout(PROMPTLY),
-            Ok(Err(SourceError::Cancelled("anthropic")))
-        ));
-    }
-
-    // One more call waits for a place instead of beginning a request, and
-    // stops waiting when it is cancelled.
-    let cancel = Cancel::new();
-    let answer = searching(&cancel);
-    assert!(
-        beginning
-            .recv_timeout(std::time::Duration::from_millis(200))
-            .is_err(),
-        "a request began while every place the source has was held"
-    );
-    cancel.request();
-    assert!(
-        matches!(
-            answer.recv_timeout(PROMPTLY),
-            Ok(Err(SourceError::Cancelled("anthropic")))
-        ),
-        "a call waiting for a place did not end when it was cancelled"
-    );
-
-    // A stalled request let go gives its place back, and the next call's
-    // request begins.
-    go.send(()).unwrap();
-    let cancel = Cancel::new();
-    let answer = searching(&cancel);
-    assert!(
-        beginning.recv_timeout(PROMPTLY).is_ok(),
-        "a place a request gave back was not taken by the next call"
-    );
-    cancel.request();
-    assert!(answer.recv_timeout(PROMPTLY).is_ok());
-    for _ in 0..IN_FLIGHT {
-        go.send(()).ok();
-    }
-}
-
-#[test]
 fn a_call_dropped_while_its_request_stalls_tells_the_request_to_stop() {
     use std::sync::mpsc;
     use std::task::{Context, Waker};
 
     let (begun, beginning) = mpsc::channel();
-    let (go, stalled) = mpsc::channel();
     let (told, heard) = mpsc::channel();
     let source = anthropic_over(Stall {
         begun: std::sync::Mutex::new(begun),
-        go: std::sync::Mutex::new(stalled),
         told: std::sync::Mutex::new(told),
     });
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1875,7 +1866,6 @@ fn a_call_dropped_while_its_request_stalls_tells_the_request_to_stop() {
             .recv_timeout(PROMPTLY)
             .expect("the request to begin");
     }
-    go.send(()).unwrap();
 
     assert_eq!(
         heard.recv_timeout(PROMPTLY),

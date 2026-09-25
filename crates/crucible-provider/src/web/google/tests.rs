@@ -66,19 +66,22 @@ fn source_body(status: u16, body: String) -> (GoogleWeb, Arc<Replay>) {
 }
 
 #[test]
-fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
+fn google_web_cancellation_before_response_is_not_a_failed_tool_result() {
     #[derive(Debug)]
     struct DuringSetup;
     impl Transport for DuringSetup {
-        fn post(
-            &self,
-            _: &str,
-            _: Outgoing,
+        fn post<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a mut Outgoing,
             _: String,
-            cancel: &Cancel,
-        ) -> Result<crate::Response, crate::TransportError> {
-            cancel.request();
-            Err(crate::TransportError::Cancelled)
+            cancel: &'a Cancel,
+        ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, crate::TransportError>>
+        {
+            Box::pin(async move {
+                cancel.request();
+                Err(crate::TransportError::Cancelled)
+            })
         }
     }
     let source = GoogleWeb::new(
@@ -200,8 +203,8 @@ impl Read for WholeThenLateEnd {
     }
 }
 
-#[test]
-fn a_fetched_page_read_whole_is_delivered_when_its_close_arrives_late() {
+#[tokio::test]
+async fn a_fetched_page_read_whole_is_delivered_when_its_close_arrives_late() {
     // Proves the fix through the same pipeline `GoogleWeb::ask` builds —
     // `Limited` wrapped by the Interactions SSE wire that parses its
     // events — rather than against `Limited` alone: the bug replaced a page
@@ -225,7 +228,7 @@ fn a_fetched_page_read_whole_is_delivered_when_its_close_arrives_late() {
     )
     .unwrap();
     let mut stream = crate::stream::Response::with_wire(
-        Box::new(limited),
+        Box::new(crate::transport::SyncReader::new(limited)),
         Cancel::new(),
         crucible_credentials::Redactions::default(),
         wire,
@@ -233,7 +236,7 @@ fn a_fetched_page_read_whole_is_delivered_when_its_close_arrives_late() {
 
     let mut text = String::new();
     let mut stop = None;
-    while let Some(delta) = stream.next_delta() {
+    while let Some(delta) = stream.next_delta().await {
         match delta.expect("a page read whole must not fail when its close arrives late") {
             Delta::Text(part) => text.push_str(&part),
             Delta::Stopped(reason) => stop = Some(reason),
@@ -375,26 +378,25 @@ fn google_fetch_invalid_urls_and_prior_cancellation_never_post() {
 
 #[test]
 fn google_fetch_cancellation_during_a_quiet_read_discards_even_completed_text() {
-    use crate::transport::{Paused, Response, Said, TransportError};
+    use crate::transport::{Paused, Said, SyncReader, TransportError};
     #[derive(Debug)]
     struct Cancelling;
     impl Transport for Cancelling {
-        fn post(
-            &self,
-            _: &str,
-            _: Outgoing,
+        fn post<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a mut Outgoing,
             _: String,
-            cancel: &Cancel,
-        ) -> Result<Response, TransportError> {
+            cancel: &'a Cancel,
+        ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
             let cancel = cancel.clone();
-            let body = Paused::saying([
-                Said::Bytes(answer(&fetched("https://example.com/page")).into_bytes()),
-                Said::Nothing,
-            ])
-            .meanwhile(move || cancel.request());
-            Ok(Response {
-                status: 200,
-                body: Box::new(body),
+            Box::pin(async move {
+                let body = Paused::saying([
+                    Said::Bytes(answer(&fetched("https://example.com/page")).into_bytes()),
+                    Said::Nothing,
+                ])
+                .meanwhile(move || cancel.request());
+                Ok(crate::PostResponse::recorded(200, SyncReader::new(body)))
             })
         }
     }

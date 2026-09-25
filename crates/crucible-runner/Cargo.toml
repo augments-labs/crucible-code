@@ -50,8 +50,10 @@ crucible-runtime = { workspace = true, features = ["proof"] }
 # The current-thread runtime a test drives a turn to its end on, now that a
 # turn is asynchronous, and the timer a tool's deadline is timed on while its
 # run waits (`time`). The fakes that wait wake themselves, so no test needs a
-# socket or a worker thread.
-tokio = { workspace = true, features = ["rt", "time"] }
+# socket. A wave whose runs block until each other arrive needs a worker for
+# each run it holds at once, which only a multi-thread runtime has
+# (`rt-multi-thread`).
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

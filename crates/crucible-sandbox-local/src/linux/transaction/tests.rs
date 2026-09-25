@@ -1315,3 +1315,51 @@ fn registry_admission_reason_classifies_the_state_directory_problem_without_the_
         "sandbox lifecycle registry admission is unavailable"
     );
 }
+
+/// Under test, the records of the journal in `stage`, read without the lock
+/// its owner holds while it lives.
+pub(in crate::linux) fn journaled(stage: &Path) -> io::Result<Vec<Record>> {
+    let descriptor = rustix::fs::open(
+        stage.join("transaction.wal"),
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    Ok(recover_wal_file(File::from(descriptor))?.machine.records)
+}
+
+/// Under test, how recovery settles a command whose owner died with `records`
+/// journaled, `Initialized` first, in a stage of its own under `base`: the
+/// terminal its journal ends on, and whether a reconcile then removed the
+/// stage.
+pub(in crate::linux) fn after_a_crash(
+    base: &Path,
+    records: &[Record],
+) -> io::Result<(Option<Record>, bool)> {
+    let Some((Record::Initialized(mode), rest)) = records.split_first() else {
+        return Err(invalid("a journal begins with its initialization"));
+    };
+    let sandbox = SandboxId::new();
+    let stage = base.join(stage_name(sandbox));
+    create_state_directory(&stage)?;
+    let dead = OwnerIdentity {
+        pid: u32::MAX,
+        start: 1,
+        boot: boot_identity()?,
+    };
+    let mut transaction =
+        Transaction::start_owned(&stage, sandbox, Invocation::new(*mode, None)?, dead)?;
+    for record in rest {
+        transaction.append(*record)?;
+    }
+    drop(transaction);
+    let mut recovered = recover_wal(&stage.join("transaction.wal"))?;
+    if !recovered.machine.is_terminal() {
+        // Settled or refused, the journal says which: a refusal still
+        // journals the quarantine it leaves.
+        let _ = recover_stale_transaction(&stage, &mut recovered);
+    }
+    let terminal = recovered.machine.terminal();
+    drop(recovered);
+    let _ = reconcile_stale_transactions(base);
+    Ok((terminal, !stage.exists()))
+}

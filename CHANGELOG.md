@@ -18,8 +18,9 @@ change in any release with no deprecation period.
   deadline, a minute each for sending a request's body and awaiting the
   response head, and a bounded response head.
   A proxy's credential is registered for redaction on the headers a request is
-  sent with, so `Http::send` takes them mutably. Nothing uses it yet, so
-  nothing a user runs behaves differently.
+  sent with, so `Http::send` takes them mutably. Provider turns, web posts and
+  account requests use it; the release check and web `get` still use the old
+  client.
 - **A crossing that waits, and one runtime the application owns.**
   `Bridge::wait` polls a future on the caller's thread against a runtime
   handle until it answers or the turn's `Cancel` is raised, noticed within
@@ -48,16 +49,16 @@ change in any release with no deprecation period.
   quiet, whole within a caller's limit and deadline, or as a refusal's first
   8 KiB within 10 s, each reading one byte past its limit so a cut body is
   reported as cut; dropping a request or a body's reader closes its
-  connection, and a client makes at most four connections at once. Nothing
-  uses it yet, so nothing a user runs behaves differently.
+  connection, and a client makes at most four connections at once. Provider
+  turns and web posts use these readers; the release check and web `get` still
+  use the old client.
 - **A bounded worker for a tool's blocking work.** `ToolWorker` runs at most 4
   jobs at once on the application runtime's blocking threads, and a call
   cancelled while it waits for room leaves without starting its job, while one
   cancelled or dropped once its job runs asks the job to stop through a child
   of its `Cancel` and gives the place back only when the job returns.
   `ToolContext::with_worker` lends a call one and `Services::tool_worker`
-  builds the run's worker when first asked for. No call is lent one yet, so
-  nothing a user runs behaves differently.
+  builds the run's worker when first asked for.
 - **A future can stop waiting the moment its cancel is raised.**
   `Cancel::race` awaits a future and hands back `None` instead, dropping it,
   once the token, an ancestor of it or a deadline on either is requested. A
@@ -129,13 +130,12 @@ change in any release with no deprecation period.
   cancel 250 ms before reporting its cleanup as failed. `LocalSandbox` takes
   that runtime through `watching_on`, and one given none prepares but starts
   no command.
-- **Esc stops a web search or fetch at once.** Every shipped web source sends
-  its request from the application runtime's blocking threads, at most two
-  per source at a time, and the call ends as soon as it is cancelled, even
-  while the request is still connecting or reading; a request left behind is
-  told to stop and its answer discarded. A lone tool call still waiting when
-  its deadline passes is now answered as timed out there, rather than once
-  its run returns.
+- **Esc stops a web search or fetch at once.** Every shipped web source awaits
+  its request on the caller's runtime, and the call ends as soon as it is
+  cancelled, even while the request is still connecting or reading; dropping
+  the future closes the shared HTTP request instead of leaving a worker behind.
+  A lone tool call still waiting when its deadline passes is now answered as
+  timed out there, rather than once its run returns.
 - **A hosted program's pipes are read and written by tasks the conversation
   owns, and can be awaited.** `crucible-transport`'s `Pipes::taken`,
   `Heard::new`, `Said::new` and `Muttered::draining`, and the MCP and extension
@@ -196,8 +196,7 @@ change in any release with no deprecation period.
   none searches on the thread polling it, as before, with the same answer, and
   a search that comes apart is contained as a panic either way. The benchmark
   probes build their own runtime and lend the calls they time a worker, so
-  `Bridge::Probes` is gone. No call is lent a worker yet, so nothing a user
-  runs behaves differently.
+  `Bridge::Probes` is gone.
 - **MCP servers are started, greeted and called asynchronously.** A call to an
   MCP tool no longer holds a thread while its server thinks, and a sandbox step
   of a server's start that waits is given up on at its `handshakeSeconds`, or
@@ -217,8 +216,7 @@ change in any release with no deprecation period.
   replacement into place, leaving the file as it was though directories it
   already made may remain; a picture `read` stops between chunks and answers
   cancelled rather than opening the file again as text. A file counts as seen
-  only once the call that touched it has its answer, and no call is lent a
-  worker yet, so nothing else a user runs behaves differently.
+  only once the call that touched it has its answer.
 - **The synchronous transport is gone, and stopping a hosted server no longer
   blocks.** `Finish::after`, the blocking wait for a confined process, is
   deleted in favor of the awaited `Finish::after_async`; `Pipes::taken` and
@@ -255,6 +253,16 @@ change in any release with no deprecation period.
   channel, while `OAuthError::Worker`, `OAuthError::Unwaited` and
   `Bridge::AccountLogin` are gone and `OAuthError::NotStarted` refuses a login
   begun with no runtime.
+- **A turn's tool calls run as tasks on the application's runtime, and each
+  is waited for.** `Runner::turn` spawns every call's run onto the runtime it
+  is polled in, so it panics at its first tool call when polled outside one,
+  runs at most `crucible_runner::TOOL_RUNS` of a wave at once, and awaits each
+  run, a background result's acceptance and the toolset's listing and
+  refreshing, so `Bridge::TurnTools` is gone; a call's deadline is now
+  cooperative, never dropping a run, and a call is answered with what its run
+  answered even after a stop. `Runner::lending` lends every call a
+  `ToolWorker`, which `crucible-core` now re-exports, and `startup::assemble`
+  lends the run's own.
 - **A bash call's output is read by tasks the call awaits.** `Bash` reads a
   command's output through the sandbox's waiting reads, in tasks on the Tokio
   runtime polling the call, and waits between its looks at the command on that
@@ -262,6 +270,18 @@ change in any release with no deprecation period.
   runs. Its run is therefore awaited on a runtime with a timer and, for the
   local sandbox on Unix, an I/O driver, as the application's is; what a
   command is answered with, its bounds and its redaction are unchanged.
+- **On Linux, a sandboxed command's status no longer waits for what it wrote
+  to be published.** Journaling a command's ending and publishing or
+  discarding what it wrote run on a thread of their own, at most 16 at once for
+  one `LocalSandbox`, while the status answers `None` with `ended` answering
+  `true`; a stop that lands while that is under way waits for it and keeps
+  what it published.
+
+- **Model turns and web posts share the application's HTTP client.** Provider
+  requests and `Search`/`Fetch` posts now await one bounded asynchronous
+  service, keeping their existing status, refusal, redaction, retry and
+  cancellation behavior; the release check and web `get` still use the old
+  client.
 
 ### Fixed
 

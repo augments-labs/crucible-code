@@ -9,7 +9,7 @@ use crucible_types::{StopReason, ToolId};
 
 use super::*;
 use crate::fake::inclusive_usage;
-use crate::transport::{Paused, Said};
+use crate::transport::{Paused, Said, SyncReader};
 
 /// One delta, and then the model stops talking.
 const HALF: &str =
@@ -328,7 +328,7 @@ fn a_cancel_raised_while_nothing_is_arriving_stops_the_stream() {
     ])
     .meanwhile(move || raise.request());
     let mut stream = Stream::new(
-        Box::new(silent),
+        Box::new(SyncReader::new(silent)),
         cancel,
         crucible_credentials::Redactions::default(),
     );
@@ -353,7 +353,7 @@ fn a_response_that_pauses_while_the_model_thinks_is_not_a_failed_turn() {
     // becomes a failed turn. Nothing here fails, and this body pauses between
     // every five bytes of itself.
     let mut stream = Stream::new(
-        Box::new(Paused::dawdling(ANSWER, 5)),
+        Box::new(SyncReader::new(Paused::dawdling(ANSWER, 5))),
         Cancel::new(),
         crucible_credentials::Redactions::default(),
     );

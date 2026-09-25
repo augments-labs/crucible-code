@@ -105,7 +105,7 @@ pub use crucible_tools::{
     Target, Tool, ToolAdmission, ToolContext, ToolDescriptor, ToolDescriptorError, ToolEntry,
     ToolError, ToolExecutionMode, ToolGeneration, ToolHooks, ToolOutcome, ToolOutput,
     ToolProvenance, ToolReceipt, ToolResourceKey, ToolSnapshot, ToolSourceKind, ToolSourceReceipt,
-    Toolset, ToolsetContext, ToolsetError, Unwatched, Verdict, Watch, Wrote, narrowest,
+    ToolWorker, Toolset, ToolsetContext, ToolsetError, Unwatched, Verdict, Watch, Wrote, narrowest,
 };
 pub use crucible_transport::{
     FRAME_BYTES, Finish, FrameError, Frames, Heard, Muttered, Said, Written,

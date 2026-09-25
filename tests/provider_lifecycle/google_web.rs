@@ -8,7 +8,7 @@ use super::*;
 use crucible_builtins::{WebFetch, WebSearch};
 use crucible_context::ContextInputs;
 use crucible_core::{AgentId, ApiKey, ContinuationPart, Effort, Header, HeaderKey};
-use crucible_provider::{Endpoint, GoogleWeb, Https};
+use crucible_provider::{Endpoint, GoogleWeb};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
@@ -25,13 +25,14 @@ fn web_runner(
     session: Session,
     key: &str,
 ) -> Runner {
+    let http = super::http_turns();
     let source = Arc::new(GoogleWeb::new(
         vendor.endpoint.clone(),
         Box::new(HeaderKey::new(
             ApiKey::new(key),
             Header::bare("x-goog-api-key"),
         )),
-        Box::new(Https::new()),
+        Box::new(http.clone()),
         model,
     ));
     let mut tools = Tools::new();
@@ -42,7 +43,7 @@ fn web_runner(
         .add_builtin(WebFetch::new(source))
         .expect("valid fixture");
     Runner::new(
-        provider(model, vendor.endpoint.clone(), key),
+        super::provider_with(model, vendor.endpoint.clone(), key, http),
         tools,
         Agent::new(
             AgentId::new("web-fixture"),
