@@ -84,6 +84,7 @@ mod aiming;
 mod attachments;
 mod attribution;
 mod beside;
+mod cache_operations;
 mod compaction;
 mod context;
 mod continuation;
@@ -1101,6 +1102,43 @@ fn require_fails_before_send_when_the_adapter_cannot_lower_the_selected_control(
 }
 
 #[test]
+fn an_interrupted_persistent_create_is_waited_for_and_recorded_as_ambiguous() {
+    let script = Script::new(vec![saying("done")]).interrupting_create();
+    let store = SharedStore::default();
+    let records = Arc::clone(&store.0);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny).storing(store);
+    scripted
+        .runner
+        .redefine(|agent| agent.telling("stable fixture instructions"));
+    scripted.runner.policy.prompt_cache = scripted
+        .runner
+        .policy
+        .prompt_cache
+        .with_persistent_resources(PromptCachePersistentMode::Create);
+
+    let problem = scripted.turn("go").unwrap_err();
+
+    assert!(
+        matches!(
+            problem,
+            TurnError::PromptCacheResource(PromptCacheResourceError::Cancelled)
+        ),
+        "the interrupted create's own answer must be waited for: {problem:?}"
+    );
+    assert!(scripted.sent.lock().unwrap().is_empty());
+    let held = records.lock().unwrap();
+    let [record] = held.as_slice() else {
+        panic!("the interrupted create must retain its resource record");
+    };
+    assert_eq!(record.state(), PromptCacheResourceState::Ambiguous);
+    assert_eq!(
+        record.pending(),
+        Some(PromptCacheResourceOperation::Create),
+        "the unknown outcome must say which operation needs reconciliation"
+    );
+}
+
+#[test]
 fn persistent_resources_are_ready_before_wire_reference_and_explicit_cleanup_deletes_them() {
     let script = Script::new(vec![saying("done")]).persistent();
     let store = SharedStore::default();
@@ -1164,6 +1202,7 @@ fn persistent_resources_are_ready_before_wire_reference_and_explicit_cleanup_del
     let cleaned = scripted
         .runner
         .clean_prompt_cache(&Cancel::new())
+        .awaited()
         .expect("bounded cleanup");
     assert_eq!(cleaned.deleted, 1);
     assert!(records.lock().unwrap().is_empty());
@@ -1216,6 +1255,7 @@ fn retirement_deletes_only_the_current_exclusive_owner_scope() {
     let retired = scripted
         .runner
         .retire_prompt_cache(&Cancel::new())
+        .awaited()
         .expect("bounded retirement");
 
     assert_eq!(retired.inspected, 1);
@@ -1270,6 +1310,7 @@ fn cleanup_without_the_current_provider_lifecycle_fails_without_relabelling_reco
     let problem = scripted
         .runner
         .clean_prompt_cache(&Cancel::new())
+        .awaited()
         .unwrap_err();
 
     assert!(matches!(problem, PromptCacheResourceError::Unsupported));
@@ -1301,7 +1342,11 @@ fn cleanup_is_provider_scoped_and_marks_a_conclusive_survivor_orphaned() {
         ),
     ]);
 
-    let cleaned = scripted.runner.clean_prompt_cache(&Cancel::new()).unwrap();
+    let cleaned = scripted
+        .runner
+        .clean_prompt_cache(&Cancel::new())
+        .awaited()
+        .unwrap();
 
     assert_eq!(cleaned.inspected, 1);
     assert_eq!(cleaned.orphaned, 1);
@@ -1334,7 +1379,7 @@ fn ambiguous_delete_is_retained_for_reconciliation_and_pre_cancel_changes_nothin
     cancelled.request();
 
     assert!(matches!(
-        scripted.runner.clean_prompt_cache(&cancelled),
+        scripted.runner.clean_prompt_cache(&cancelled).awaited(),
         Err(PromptCacheResourceError::Cancelled)
     ));
     let held = records.lock().unwrap();
@@ -1344,7 +1389,11 @@ fn ambiguous_delete_is_retained_for_reconciliation_and_pre_cancel_changes_nothin
     assert_eq!(record.state(), PromptCacheResourceState::Ready);
     drop(held);
 
-    let cleaned = scripted.runner.clean_prompt_cache(&Cancel::new()).unwrap();
+    let cleaned = scripted
+        .runner
+        .clean_prompt_cache(&Cancel::new())
+        .awaited()
+        .unwrap();
     assert_eq!(cleaned.ambiguous, 1);
     assert_eq!(
         cleaned
@@ -1378,7 +1427,11 @@ fn ambiguous_delete_is_retained_for_reconciliation_and_pre_cancel_changes_nothin
         Verdict::Deny,
     )
     .storing(resumed_store);
-    let reconciled = resumed.runner.clean_prompt_cache(&Cancel::new()).unwrap();
+    let reconciled = resumed
+        .runner
+        .clean_prompt_cache(&Cancel::new())
+        .awaited()
+        .unwrap();
 
     assert_eq!(reconciled.deleted, 1);
     assert_eq!(

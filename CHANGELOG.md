@@ -116,6 +116,11 @@ change in any release with no deprecation period.
   `Conversation::on`, which `startup::assemble` now starts, and refusing with
   the new `TurnError::Unwaited` without one;
   `TurnError::ToolsetCleanupUnready` is gone.
+- **Prompt-cache resources now wait for their stores and provider.** A turn,
+  recap, `/cache` inspection or cleanup, and a model, provider, or credential
+  switch await each prompt-cache step on the application runtime; an operation
+  whose outcome remains uncertain is still recorded as ambiguous, and
+  `TurnCache` is gone.
 - **Applying a credential and running a web search or fetch now return a
   future.** `Credential::authorize`, `Search::search` and `Fetch::fetch`
   return a boxed `Send` future instead of an immediate result, so an adapter
@@ -280,6 +285,14 @@ change in any release with no deprecation period.
   one `LocalSandbox`, while the status answers `None` with `ended` answering
   `true`; a stop that lands while that is under way waits for it and keeps
   what it published.
+- **The sandbox network mediator stops within a bound, and the local
+  backend's synchronous crossings are retired.** The proxy listener's thread
+  is joined for at most five seconds; one still running is detached and the
+  stop is reported as failed cleanup, never a silent success. `Conformance::audit`
+  is now `async` and awaits each probe and preparation on the caller's task,
+  and stops made while dropping a process or cleaning a failed start call the
+  new synchronous `SandboxProcess::stop_sync` directly; the `LocalBackend`
+  bridge is gone.
 
 - **Model turns and web posts share the application's HTTP client.** Provider
   requests and `Search`/`Fetch` posts now await one bounded asynchronous

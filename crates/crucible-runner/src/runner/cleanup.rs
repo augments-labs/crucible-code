@@ -5,9 +5,10 @@
 //! credential requires before it can go ahead; either way it walks the whole
 //! store once and stops, where a turn asks and answers and comes back.
 //!
-//! What every pass here holds to is that a resource is only forgotten locally
-//! once the provider has said it is gone. A deletion the provider could not
-//! confirm leaves the record behind marked for what it is — ambiguous, or
+//! Each pass is asynchronous and awaits every local-store and provider step
+//! directly. What every pass holds to is that a resource is only forgotten
+//! locally once the provider has said it is gone. A deletion the provider
+//! could not confirm leaves the record behind marked for what it is — ambiguous, or
 //! orphaned — because a handle to something that may still exist remotely is
 //! worth more than a tidy store.
 
@@ -16,7 +17,7 @@ use crucible_core::{
     PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheScopeDigest,
 };
 
-use crate::prompt_cache::{self, Failed};
+use crate::prompt_cache;
 
 use super::{PROMPT_CACHE_RESOURCE_DEADLINE, Runner, unix_now};
 
@@ -73,20 +74,19 @@ impl Runner {
     /// record and those after it as they were. Individual provider cleanup
     /// failures are represented in the returned counts and retained states.
     ///
-    /// A step on the local store that would have had to wait is
-    /// [`PromptCacheResourceError::Local`] carrying the refusal, and whether it
-    /// acted is not known. The pass stops there, as it does on any local
-    /// failure, and what it already did stands. A provider step that would
-    /// have had to wait is not returned: it is counted as ambiguous, and its
-    /// record kept for a later pass to reconcile, as a cancelled one is.
-    pub fn clean_prompt_cache(
+    /// Every store and provider step is awaited. A local failure stops the
+    /// pass, as it does on any metadata error, and what it already did
+    /// stands. A provider cancellation, deadline or explicitly ambiguous
+    /// answer is counted as ambiguous, and its record kept for a later pass to
+    /// reconcile.
+    pub async fn clean_prompt_cache(
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
         let scope = ResourceCleanupScope::Provider(prompt_cache::provider_scope(
             self.provider.prompt_cache_route(),
         ));
-        self.clean_prompt_cache_in(scope, cancel)
+        self.clean_prompt_cache_in(scope, cancel).await
     }
 
     /// Retires exclusive persistent resources owned by this active run/session.
@@ -98,31 +98,30 @@ impl Runner {
     /// # Errors
     ///
     /// [`PromptCacheResourceError`] when local metadata cannot be read or
-    /// durably updated, [`PromptCacheResourceError::Local`] carrying the refusal
-    /// among them where a step on the local store would have had to wait,
-    /// [`PromptCacheResourceError::Unsupported`] when a record is in scope and
-    /// the provider has no lifecycle to delete one through, and
+    /// durably updated, [`PromptCacheResourceError::Unsupported`] when a record
+    /// is in scope and the provider has no lifecycle to delete one through, and
     /// [`PromptCacheResourceError::Cancelled`] when the pass comes to a record
     /// in scope and finds `cancel` requested, which leaves that record and
-    /// those after it as they were. A provider step that would have had to
-    /// wait is counted, not returned, exactly as [`Runner::clean_prompt_cache`]
-    /// says.
-    pub fn retire_prompt_cache(
+    /// those after it as they were. Every store and provider step is awaited;
+    /// a provider cancellation, deadline or explicitly ambiguous answer is
+    /// counted as ambiguous exactly as [`Runner::clean_prompt_cache`] says.
+    pub async fn retire_prompt_cache(
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
         let Some(owner) = self.state.prompt_cache_owner_scope else {
             return Ok(PromptCacheCleanup::default());
         };
-        let result =
-            self.clean_prompt_cache_in(ResourceCleanupScope::ExclusiveOwner(owner), cancel);
+        let result = self
+            .clean_prompt_cache_in(ResourceCleanupScope::ExclusiveOwner(owner), cancel)
+            .await;
         if result.is_ok() {
             self.state.prompt_cache_owner_scope = None;
         }
         result
     }
 
-    fn clean_prompt_cache_in(
+    async fn clean_prompt_cache_in(
         &mut self,
         scope: ResourceCleanupScope,
         cancel: &Cancel,
@@ -130,10 +129,9 @@ impl Runner {
         let Some(store) = self.prompt_cache_store.as_deref_mut() else {
             return Ok(PromptCacheCleanup::default());
         };
-        let records = prompt_cache::local(
-            "list",
-            store.inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES),
-        )?;
+        let records = store
+            .inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES)
+            .await?;
         let Some(lifecycle) = self.provider.prompt_cache_resources() else {
             return if records.iter().any(|record| scope.includes(record)) {
                 Err(PromptCacheResourceError::Unsupported)
@@ -163,7 +161,7 @@ impl Runner {
                 let deadline = PromptCacheResourceDeadline::new(
                     std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
                 );
-                match prompt_cache::asked(lifecycle.reconcile(&record, deadline, cancel)) {
+                match lifecycle.reconcile(&record, deadline, cancel).await {
                     Ok(remote) => {
                         let _ = prompt_cache::apply_remote(
                             &mut record,
@@ -173,7 +171,7 @@ impl Runner {
                         );
                         cleanup_change(&mut result, &record, operation);
                         if record.state() == PromptCacheResourceState::Deleted {
-                            prompt_cache::local("remove", store.remove(record.id()))?;
+                            store.remove(record.id()).await?;
                             result.deleted += 1;
                             continue;
                         }
@@ -186,27 +184,24 @@ impl Runner {
                             record.set_state(PromptCacheResourceState::Orphaned, now);
                             cleanup_change(&mut result, &record, operation);
                         }
-                        prompt_cache::local("write", store.put(&record))?;
+                        store.put(&record).await?;
                     }
                     Err(
-                        Failed::Unready(_)
-                        | Failed::Resource(
-                            PromptCacheResourceError::Ambiguous(_)
-                            | PromptCacheResourceError::Cancelled
-                            | PromptCacheResourceError::Deadline,
-                        ),
+                        PromptCacheResourceError::Ambiguous(_)
+                        | PromptCacheResourceError::Cancelled
+                        | PromptCacheResourceError::Deadline,
                     ) => {
                         if let Some(operation) = operation {
                             record.ambiguous(operation, now);
                         }
-                        prompt_cache::local("write", store.put(&record))?;
+                        store.put(&record).await?;
                         cleanup_change(&mut result, &record, operation);
                         result.ambiguous += 1;
                         continue;
                     }
-                    Err(Failed::Resource(_)) => {
+                    Err(_) => {
                         record.set_state(PromptCacheResourceState::Orphaned, now);
-                        prompt_cache::local("write", store.put(&record))?;
+                        store.put(&record).await?;
                         cleanup_change(&mut result, &record, operation);
                         result.orphaned += 1;
                         continue;
@@ -215,12 +210,12 @@ impl Runner {
             }
 
             if record.state() == PromptCacheResourceState::Deleted {
-                prompt_cache::local("remove", store.remove(record.id()))?;
+                store.remove(record.id()).await?;
                 result.deleted += 1;
                 continue;
             }
             record.set_state(PromptCacheResourceState::Deleting, now);
-            prompt_cache::local("write", store.put(&record))?;
+            store.put(&record).await?;
             cleanup_change(
                 &mut result,
                 &record,
@@ -229,7 +224,7 @@ impl Runner {
             let deadline = PromptCacheResourceDeadline::new(
                 std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
             );
-            match prompt_cache::asked(lifecycle.delete(&record, deadline, cancel)) {
+            match lifecycle.delete(&record, deadline, cancel).await {
                 Ok(remote) if remote.state == PromptCacheResourceState::Deleted => {
                     record.set_state(PromptCacheResourceState::Deleted, now);
                     cleanup_change(
@@ -237,7 +232,7 @@ impl Runner {
                         &record,
                         Some(PromptCacheResourceOperation::Delete),
                     );
-                    prompt_cache::local("remove", store.remove(record.id()))?;
+                    store.remove(record.id()).await?;
                     result.deleted += 1;
                 }
                 Ok(_remote) => {
@@ -246,7 +241,7 @@ impl Runner {
                     // handle privately for later recovery, but report the
                     // durable state honestly as orphaned.
                     record.set_state(PromptCacheResourceState::Orphaned, now);
-                    prompt_cache::local("write", store.put(&record))?;
+                    store.put(&record).await?;
                     cleanup_change(
                         &mut result,
                         &record,
@@ -255,15 +250,12 @@ impl Runner {
                     result.orphaned += 1;
                 }
                 Err(
-                    Failed::Unready(_)
-                    | Failed::Resource(
-                        PromptCacheResourceError::Ambiguous(_)
-                        | PromptCacheResourceError::Cancelled
-                        | PromptCacheResourceError::Deadline,
-                    ),
+                    PromptCacheResourceError::Ambiguous(_)
+                    | PromptCacheResourceError::Cancelled
+                    | PromptCacheResourceError::Deadline,
                 ) => {
                     record.ambiguous(PromptCacheResourceOperation::Delete, now);
-                    prompt_cache::local("write", store.put(&record))?;
+                    store.put(&record).await?;
                     cleanup_change(
                         &mut result,
                         &record,
@@ -271,9 +263,9 @@ impl Runner {
                     );
                     result.ambiguous += 1;
                 }
-                Err(Failed::Resource(_)) => {
+                Err(_) => {
                     record.set_state(PromptCacheResourceState::Orphaned, now);
-                    prompt_cache::local("write", store.put(&record))?;
+                    store.put(&record).await?;
                     cleanup_change(
                         &mut result,
                         &record,

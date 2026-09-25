@@ -407,6 +407,7 @@ fn two_runs_keeping_cache_resources_in_one_place_own_and_retire_only_their_own()
     let retired = one
         .runner
         .retire_prompt_cache(&Cancel::new())
+        .awaited()
         .expect("bounded retirement");
     assert_eq!(retired.deleted, 1);
     assert_eq!(
@@ -417,6 +418,7 @@ fn two_runs_keeping_cache_resources_in_one_place_own_and_retire_only_their_own()
     let retired = two
         .runner
         .retire_prompt_cache(&Cancel::new())
+        .awaited()
         .expect("bounded retirement");
     assert_eq!(
         retired.deleted, 1,

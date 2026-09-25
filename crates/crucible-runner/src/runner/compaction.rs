@@ -11,11 +11,13 @@
 //! answer the question the user is still waiting on with a stop. A turn ends
 //! here only when somebody stopped it or when room could not be made. Room is
 //! not made where the recap failed or came back incomplete, where a
-//! prompt-cache step of the recap request would have had to wait, or where two
-//! goes in a row freed nothing. The turn ends on what it was: the stop, the
-//! failure, the incomplete recap, the refusal, named for the crossing it was
-//! met at, or a window left without room. The compaction's own session lines
-//! are awaited, each before the step it records is taken or once it is.
+//! prompt-cache step failed, or where two goes in a row freed nothing. Every
+//! prompt-cache store and resource-lifecycle step is awaited, and a changing
+//! operation whose answer remains uncertain is recorded as ambiguous for
+//! reconciliation. The turn ends on what it was: the stop, the failure, the
+//! incomplete recap, or a window left without room. The compaction's own
+//! session lines are awaited, each before the step it records is taken or once
+//! it is.
 //!
 //! **The log is the record.** Compaction rewrites what the model is sent; what
 //! happened is what the session log holds, and it keeps every message this
@@ -125,13 +127,11 @@ impl Runner {
     /// changing vendor still owe the session are written, as
     /// [`Runner::record_clearings`] writes them.
     ///
-    /// Opening the recap's stream and reading it are awaited. A prompt-cache
-    /// step of the recap request that would have had to wait is
-    /// [`TurnError::Unready`] and replaces nothing either, even when the
-    /// compaction is being stopped: a refusal outranks a stop. What the
-    /// dropped step began is unconfirmed, and a changing cache step is
-    /// recorded as ambiguous, to be reconciled, as a cancelled one is. The
-    /// recap request is taken back out of the transcript.
+    /// Opening the recap's stream and reading it are awaited, as are every
+    /// prompt-cache store and resource-lifecycle step. A cache failure replaces
+    /// nothing, even when the compaction is being stopped, and a changing cache
+    /// step is recorded as ambiguous for reconciliation as a cancelled one is.
+    /// The recap request is taken back out of the transcript.
     ///
     /// The compaction's own session lines are awaited: the line recording what
     /// pruning cleared, and the line reporting what pruning alone freed, after
@@ -521,20 +521,23 @@ impl Runner {
             self.provider.prompt_cache_resources(),
             self.prompt_cache_store.as_deref_mut(),
         ) {
-            (Some(lifecycle), Some(store)) => prompt_cache::prepare_with_resource_facts(
-                &request,
-                capabilities,
-                &scope,
-                prompt_cache::ResourceInputs {
-                    store,
-                    lifecycle,
-                    cancel,
-                    now: super::unix_now(),
-                    deadline: std::time::Instant::now() + super::PROMPT_CACHE_RESOURCE_DEADLINE,
-                },
-                &mut resource_facts,
-            ),
-            _ => prompt_cache::prepare(&request, capabilities, &scope),
+            (Some(lifecycle), Some(store)) => {
+                prompt_cache::prepare_with_resource_facts(
+                    &request,
+                    capabilities,
+                    &scope,
+                    prompt_cache::ResourceInputs {
+                        store,
+                        lifecycle,
+                        cancel,
+                        now: super::unix_now(),
+                        deadline: std::time::Instant::now() + super::PROMPT_CACHE_RESOURCE_DEADLINE,
+                    },
+                    &mut resource_facts,
+                )
+                .await
+            }
+            _ => prompt_cache::prepare(&request, capabilities, &scope).await,
         };
         for fact in resource_facts {
             self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact));

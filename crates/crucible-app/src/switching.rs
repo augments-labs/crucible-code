@@ -344,8 +344,7 @@ impl Conversation {
     /// Retires the persistent cache resources only this conversation's
     /// identity owns, ahead of that identity changing.
     fn retire(&mut self) -> Result<Retained, PromptCacheResourceError> {
-        self.runner
-            .retire_prompt_cache(&Cancel::new())
+        self.retire_prompt_cache(&Cancel::new())
             .map(|result| Retained {
                 ambiguous: result.ambiguous,
                 orphaned: result.orphaned,
