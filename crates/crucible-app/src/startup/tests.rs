@@ -1306,4 +1306,5 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
     );
 }
 
+mod conformance;
 mod lending;
