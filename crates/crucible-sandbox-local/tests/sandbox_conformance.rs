@@ -62,7 +62,14 @@ impl Drop for Owned {
 fn the_published_suite_runs_from_outside_and_answers_the_whole_table() {
     let at = Owned::new("conformance");
     let service = LocalSandbox::new();
-    let audited = match Conformance::audit(&service, &at.0) {
+    // The suite is awaited on a runtime of this test binary's own rather
+    // than joined to the application's: an adapter outside this tree drives
+    // it the same way, on whichever runtime watches its commands.
+    let harness = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a test runtime");
+    let audited = match harness.block_on(Conformance::audit(&service, &at.0)) {
         Ok(audited) => audited,
         // No backend is not a backend that lies, and the suite is right to
         // refuse rather than report a table of faults over nothing. Where the

@@ -290,11 +290,17 @@ rather than keeps to itself:
 ```rust
 use crucible_sandbox_local::conformance::{Conformance, SandboxClaim};
 
-let audited = Conformance::audit(&backend, workspace_root)?;
+let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()?;
+let audited = runtime.block_on(Conformance::audit(&backend, workspace_root))?;
 assert!(audited.faults().next().is_none());
 assert!(audited.holds(SandboxClaim::Isolation));
 println!("{}", audited.report());
 ```
+
+The audit is `async` and never bounds the wait itself, so the harness drives
+it on its own runtime and bounds an unanswering backend there.
 
 For every feature a policy can name, the suite writes the smallest policy that
 requires exactly that feature and offers it to the backend, in the mode that

@@ -1365,6 +1365,14 @@ impl SandboxProcess for LocalProcess {
         Box::pin(async move { self.stop() })
     }
 
+    /// The same stop the future above drives, for the owners that have no
+    /// future to drive. What bounds it is what bounds that body: the scope's
+    /// own reap bound, the cancel's join bound, and the network proxy's stop
+    /// bound, each reported as failed cleanup where it gives out.
+    fn stop_sync(&mut self) -> io::Result<()> {
+        LocalProcess::stop(self)
+    }
+
     fn inspection(&self) -> &SandboxInspection {
         &self.inspection
     }

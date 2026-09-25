@@ -190,17 +190,6 @@ pub enum Bridge {
     /// - Retired: when the bash tool runs asynchronously and so does the
     ///   registry that takes its background commands over.
     BashSandbox,
-    /// The local backend's own synchronous paths through the contract: the
-    /// Linux backend stopping the process it wraps when a launch is refused,
-    /// rolled back, quarantined or stopped, and the conformance audit probing a
-    /// backend and preparing the sessions it is asked to refuse or accept.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each stop, each probe and each preparation.
-    /// - Owner: `crucible-sandbox-local`
-    /// - Retired: when the local backend is supervised asynchronously and its
-    ///   conformance audit runs asynchronously.
-    LocalBackend,
     /// What `--sandbox` prints and what `/sandbox enable` checks: probing the
     /// local backend and preparing a session only to read it.
     ///
@@ -309,7 +298,6 @@ impl Bridge {
         match self {
             Self::AppTurn => "a turn or a compaction",
             Self::BashSandbox => "the bash tool's sandbox",
-            Self::LocalBackend => "the local sandbox backend",
             Self::SandboxReport => "asking the sandbox what it can enforce",
             Self::SandboxPanel => "asking the sandbox whether it is available",
         }
