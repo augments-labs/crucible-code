@@ -122,7 +122,9 @@ impl JournalStore for ResultJournal {
     }
 }
 
+mod answers;
 mod sandbox_audit;
+mod waves;
 
 #[test]
 fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
@@ -401,6 +403,7 @@ fn deferred_results_commit_the_exact_guarded_runner_output() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
     .pass(&[call("deferred-call", "deferred")], 0, usize::MAX)
@@ -440,6 +443,7 @@ fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
     .pass(&[call("deferred-call", "deferred")], 0, 40)
@@ -476,6 +480,7 @@ fn a_failed_durable_result_write_reclaims_the_background_scope() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
     .pass(&[call("deferred-call", "deferred")], 0, usize::MAX)
@@ -559,19 +564,29 @@ fn invoke_many(
     let snapshot = tools.snapshot().unwrap();
     let cancel = Cancel::new();
     let journal = Recording::nowhere();
-    let (results, went, _) = Work {
-        tools: &snapshot,
-        permission,
-        ask,
-        events: Reporter::new(ancestry, &keeping),
-        cancel: &cancel,
-        ancestry,
-        journal: &*journal,
-        audits: &SandboxAuditRegistry::new(),
-        concurrency,
-    }
-    .pass(calls, 0, maximum)
-    .awaited();
+    // A worker for each run a batch holds at once, so runs that block until
+    // each other arrive can all be running; the pass itself is polled on the
+    // test's own thread, as the application polls a turn on its own.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(TOOL_RUNS)
+        .enable_time()
+        .build()
+        .unwrap();
+    let (results, went, _) = runtime.block_on(
+        Work {
+            tools: &snapshot,
+            permission,
+            ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            journal: &*journal,
+            audits: &SandboxAuditRegistry::new(),
+            worker: None,
+            concurrency,
+        }
+        .pass(calls, 0, maximum),
+    );
     drop(keeping);
     (results, went, seen.try_iter().collect())
 }
@@ -701,6 +716,7 @@ fn an_approved_effect_journals_one_stable_prepared_started_and_finished_invocati
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
     .pass(&[call("keyed-call", "keyed")], 0, usize::MAX)
@@ -869,17 +885,9 @@ fn a_descriptor_timeout_finalizes_once_without_stopping_the_run() {
     )));
 }
 
-/// Never answers, and says when its run is dropped.
+/// Waits until its call is asked to stop, then answers that it stopped, and
+/// says that it did.
 struct Waits(Arc<std::sync::atomic::AtomicBool>);
-
-/// Raises its flag as it is dropped.
-struct Raised(Arc<std::sync::atomic::AtomicBool>);
-
-impl Drop for Raised {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Release);
-    }
-}
 
 impl Tool for Waits {
     fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
@@ -899,21 +907,24 @@ impl Tool for Waits {
     fn run<'a>(
         &'a self,
         _approved: Approved,
-        _context: &'a ToolContext<'_>,
+        context: &'a ToolContext<'_>,
     ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
-        let dropped = Raised(Arc::clone(&self.0));
         Box::pin(async move {
-            let _dropped = dropped;
-            std::future::pending().await
+            let _ = context.cancel().race(std::future::pending::<()>()).await;
+            self.0.store(true, Ordering::Release);
+            Err(ToolError::Cancelled("waits".into()))
         })
     }
 }
 
 #[test]
-fn a_lone_run_still_waiting_at_its_deadline_is_dropped_there_and_timed_out() {
-    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let seen = Arc::clone(&dropped);
-    let (answered, answer) = channel();
+fn a_lone_run_still_waiting_at_its_deadline_is_asked_to_stop_there_and_timed_out() {
+    // The deadline raises the call's cancel rather than dropping its run: the
+    // run is waited for until it answers, and the call is answered as timed
+    // out, so nothing the run was doing is cut off unreported.
+    let answered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = Arc::clone(&answered);
+    let (told, answer) = channel();
 
     // The pass runs on a thread of its own, so one that goes on waiting past
     // the deadline fails this test instead of hanging it.
@@ -947,20 +958,18 @@ fn a_lone_run_still_waiting_at_its_deadline_is_dropped_there_and_timed_out() {
         let text = results
             .first()
             .map(|result| result.output.text().to_owned());
-        answered
-            .send((text, matches!(went, Went::On), timed_out))
-            .ok();
+        told.send((text, matches!(went, Went::On), timed_out)).ok();
     });
 
     let (text, went_on, timed_out) = answer
         .recv_timeout(Duration::from_secs(2))
-        .expect("a lone run still waiting at its 50 ms deadline was still awaited 2 s later");
+        .expect("a lone run asked to stop at its 50 ms deadline had not answered 2 s later");
     assert_eq!(text.as_deref(), Some("tool timed out"));
     assert!(went_on, "a timed-out call stopped the run around it");
     assert!(timed_out, "the call was not finished as timed out");
     assert!(
-        dropped.load(Ordering::Acquire),
-        "the run was still alive after its call was answered"
+        answered.load(Ordering::Acquire),
+        "the call was answered without its run having answered"
     );
 }
 
@@ -1307,6 +1316,7 @@ impl Proof {
             ancestry: Ancestry::new(),
             journal: &*journal,
             audits: &SandboxAuditRegistry::new(),
+            worker: None,
             concurrency: 1,
         }
         .pass(calls, held, maximum)

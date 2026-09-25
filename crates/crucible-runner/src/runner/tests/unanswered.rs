@@ -1,23 +1,19 @@
-//! A turn over a service that never answers one step.
+//! A turn over steps that do not answer at once.
 //!
-//! A turn awaits the provider, the session, a call that runs alone and the
-//! toolset's preparation and disposal, and crosses to the rest through a
-//! bridge that asks once. A step crossed to that would have waited is dropped
-//! before it answers, and whatever it began is unconfirmed. The stand-ins here
-//! each leave exactly one such step unanswered, so a refusal can only have
-//! come from that step. A provider that has not answered is awaited instead,
-//! and what ends the turn then is what the provider answers once the turn is
-//! stopped. The recap a compaction asks for is a request like any other.
+//! A turn awaits the provider, the session, every call's run, a background
+//! result's acceptance and the toolset's preparation, listing, refreshing
+//! and disposal, and crosses to the prompt cache through a bridge that asks
+//! once. The stand-ins here each leave exactly one such step unanswered at
+//! first, so what ends the turn is what that step answers once the turn is
+//! stopped. A provider that has not answered is awaited instead, and what
+//! ends the turn then is what the provider answers once the turn is stopped.
+//! The recap a compaction asks for is a request like any other.
 //!
-//! Two things decide what the refusal is reported as. A refusal that ends the
-//! turn or a compaction is reported as the refusal, named for the crossing it
-//! could not wait at, even while the turn or the compaction is being stopped,
-//! never as a clean stop. And a tool's own run never ends the turn on a
-//! refusal: the call is answered with a failed result that says what the run
-//! began is unconfirmed, and where the turn is being stopped the pass then
-//! ends on the stop at that call; where reporting the call's sandbox facts
-//! fails after the run, that failure is the call's result instead, and the
-//! pass does not end on the stop at that call.
+//! Two things decide what the ending is reported as. Awaiting across the stop
+//! still ends the turn stopped: the model is not asked again. And each call
+//! is answered with what its run answered, even where the stop came first —
+//! a run that waited across the stop and then answered is committed as what
+//! it answered.
 
 use super::waiting::UntilStopped;
 use super::*;
@@ -273,8 +269,9 @@ fn a_recap_stopped_before_it_said_anything_ends_the_compaction_stopped() {
     stalled_recap(Stalls::Response, PromptCacheRequestDisposition::Accepted);
 }
 
-/// A tool that raises the turn's stop as it runs, then answers, never does,
-/// or answers only once it sees the stop it raised.
+/// A tool that raises the turn's stop as it runs answers at once, answers
+/// only after it has waited and seen the stop, or raises the stop without
+/// answering.
 ///
 /// It raises the run's own stop rather than the one its context hands it: a
 /// tool's run is handed a child of the run's, and a child's stop does not
@@ -289,10 +286,10 @@ pub(super) struct Stopping {
 pub(super) enum Answers {
     /// At once.
     AtOnce,
-    /// Never.
-    Never,
     /// Once it has waited and seen the stop.
     OnceStopped,
+    /// After raising the stop, before it can answer.
+    PanicAfterStop,
 }
 
 impl DescribeTool for Stopping {
@@ -331,16 +328,16 @@ impl Tool for Stopping {
                     self.stop.request();
                     Ok(ToolOutput::ok("stopped"))
                 }
-                Answers::Never => {
-                    self.stop.request();
-                    std::future::pending().await
-                }
                 Answers::OnceStopped => {
                     UntilStopped {
                         cancel: self.stop.clone(),
                         answer: Some(Ok(ToolOutput::ok("stopped"))),
                     }
                     .await
+                }
+                Answers::PanicAfterStop => {
+                    self.stop.request();
+                    panic!("the run came apart after the stop")
                 }
             }
         })
@@ -387,12 +384,11 @@ pub(super) fn shape(messages: &[Message]) -> Vec<String> {
 }
 
 #[test]
-fn a_run_in_a_parallel_wave_refused_while_stopping_is_answered_as_unconfirmed() {
-    // The calls of a parallel wave each ask their run once on a thread of
-    // their own. A run there began and was dropped before it answered. "Not
-    // run" would be false, and whatever the run began would go unmentioned.
-    // The stop still ends the turn after that pass: the model is not asked
-    // again.
+fn a_run_in_a_parallel_wave_that_waits_across_the_stop_ends_the_pass_stopped() {
+    // The calls of a parallel wave are awaited as a call that runs alone is:
+    // each run waits, sees the stop and answers, and each call is answered
+    // with what its run answered, since that is what it did. The stop ends
+    // the turn after that pass: the model is not asked again.
     let stop = Cancel::new();
     let provenance = ToolProvenance::new(
         ToolSourceKind::User,
@@ -410,7 +406,7 @@ fn a_run_in_a_parallel_wave_refused_while_stopping_is_answered_as_unconfirmed() 
             descriptor,
             Arc::new(Stopping {
                 stop: stop.clone(),
-                answers: Answers::Never,
+                answers: Answers::OnceStopped,
             }),
         )
         .unwrap();
@@ -443,11 +439,7 @@ fn a_run_in_a_parallel_wave_refused_while_stopping_is_answered_as_unconfirmed() 
         1,
         "the model was asked again after the stop"
     );
-    assert_eq!(
-        only_result(&scripted).output.text(),
-        "stop: its run would have had to wait, so the run was dropped before it answered; \
-         whatever the run began is unconfirmed"
-    );
+    assert_eq!(only_result(&scripted).output.text(), "stopped");
     let outcomes: Vec<ToolOutcome> = scripted
         .events()
         .into_iter()
@@ -459,13 +451,14 @@ fn a_run_in_a_parallel_wave_refused_while_stopping_is_answered_as_unconfirmed() 
             _ => None,
         })
         .collect();
-    assert_eq!(outcomes, [ToolOutcome::Failed, ToolOutcome::Failed]);
+    assert_eq!(outcomes, [ToolOutcome::Succeeded, ToolOutcome::Succeeded]);
 }
 
 #[test]
 fn a_run_that_waits_across_the_stop_ends_the_pass_stopped() {
     // A call that runs alone is awaited: its run waits, sees the stop, and
-    // answers, and the call is answered as the stop cut it short.
+    // answers, and the call is answered with what its run answered; the stop
+    // still ends the turn.
     let mut scripted = stopped_by(
         Answers::OnceStopped,
         vec![calling("a", "stop", "{}")],
@@ -480,8 +473,25 @@ fn a_run_that_waits_across_the_stop_ends_the_pass_stopped() {
         1,
         "the model was asked again after the stop"
     );
-    assert_eq!(
-        only_result(&scripted).output.text(),
-        "not run: the turn ended first"
+    assert_eq!(only_result(&scripted).output.text(), "stopped");
+}
+
+#[test]
+fn a_run_that_raises_the_stop_and_then_comes_apart_ends_the_pass_stopped() {
+    // A panic after the stop still leaves the stop as the reason the pass ends;
+    // the contained answer does not make the loop ask the model again.
+    let mut scripted = stopped_by(
+        Answers::PanicAfterStop,
+        vec![calling("a", "stop", "{}"), saying("asked again")],
+        Recording::nowhere(),
     );
+
+    let turned = scripted.turn("go");
+
+    assert_eq!(
+        scripted.sent.lock().unwrap().len(),
+        1,
+        "the model was asked again after the stop"
+    );
+    assert_eq!(turned.unwrap(), StopReason::Cancelled);
 }

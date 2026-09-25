@@ -156,3 +156,21 @@ fn a_socket_in_work_on_the_runtime_makes_progress() {
     );
     assert_eq!(owner.shutdown(), Ok(()));
 }
+
+/// A turn's tool runs may each hold a worker inside synchronous work for as
+/// long as a call lasts, and a confined process's deadline and output-limit
+/// kills run in its status task on these same workers. Holding the runs below
+/// the worker count less one leaves two workers free however many calls are
+/// running, so a kill finds one even while something else is polled on the
+/// other.
+#[test]
+fn a_turn_s_tool_runs_always_leave_a_worker_free_for_a_status_task() {
+    let runs = crucible_runner::TOOL_RUNS;
+    let workers = super::WORKERS;
+
+    assert!(
+        runs >= 1 && runs < workers.saturating_sub(1),
+        "{runs} tool runs at once on {workers} workers leave fewer than two workers free for a \
+         status task's kill and the rest of what the runtime runs"
+    );
+}

@@ -24,7 +24,6 @@ use crucible_core::{
     Ask, Compacting, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
     ToolCall, ToolsetContext,
 };
-use crucible_runtime::Bridge;
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -231,14 +230,11 @@ impl<'a> AgentLoop<'a> {
     /// source's own step.
     ///
     /// Every step the turn crosses to that would have had to wait ends it on
-    /// the refusal, even where a stop was asked for, except a call's run in a
-    /// parallel wave and a background result's acceptance, which never end it
-    /// on a refusal: [`Runner::turn`] says what becomes of each. The turn's
-    /// cache steps and its toolset's listing and refreshing all end it so. A
-    /// compaction's steps end it as [`Runner::compact`] says. The line
-    /// recording the last answer, the part of an answer a full window cut
-    /// short, and the results of a pass are each awaited before the ending
-    /// they lead to is reached.
+    /// the refusal, even where a stop was asked for: the turn's cache steps
+    /// end it so. A compaction's steps end it as [`Runner::compact`] says.
+    /// The line recording the last answer, the part of an answer a full
+    /// window cut short, and the results of a pass are each awaited before
+    /// the ending they lead to is reached.
     pub(super) async fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
         let run = self.run;
         let events = run.reporting();
@@ -262,10 +258,7 @@ impl<'a> AgentLoop<'a> {
             } else {
                 self.runner.toolset.refresh(self.toolsets)
             };
-            let tools = Bridge::TurnTools
-                .cross(tools)
-                .map_err(TurnError::from)
-                .and_then(|tools| tools.map_err(TurnError::from));
+            let tools = tools.await.map_err(TurnError::from);
             let tools =
                 super::combine_sandbox_audit(tools, self.runner.flush_sandbox_audits(events))?;
             // Narrowed to what this agent declares, against the exact
@@ -478,6 +471,7 @@ impl<'a> AgentLoop<'a> {
                 ancestry: run.ancestry(),
                 journal: &*self.runner.store,
                 audits: &self.runner.sandbox_audits,
+                worker: self.runner.worker.as_ref(),
                 concurrency: run.policy().tools.maximum_concurrency(),
             }
             .pass(&calls, bounds.tool_output, tool_output_maximum)

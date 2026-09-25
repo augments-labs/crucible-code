@@ -6,24 +6,10 @@
 
 use crucible_core::{
     Ancestry, JournalStore, RunItem, SandboxAudit, SandboxAuditRecord, SandboxAuditRegistry,
-    ToolContext, ToolError, ToolId,
+    ToolError, ToolId,
 };
 
 use crate::{Event, Reporter};
-pub(super) fn report_sandbox_facts(
-    context: &ToolContext<'_>,
-    events: Reporter<'_>,
-    journal: &dyn JournalStore,
-) -> Result<(), ToolError> {
-    report_sandbox_audit(
-        &context.sandbox_audit(),
-        context.ancestry(),
-        context.call(),
-        events,
-        journal,
-    )
-}
-
 pub(super) fn report_sandbox_audit(
     audit: &SandboxAudit,
     ancestry: Ancestry,

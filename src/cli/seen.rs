@@ -340,17 +340,22 @@ impl Inbox {
 #[cfg(test)]
 mod tests;
 
-/// Where a turn lends whoever is asking the questions it puts.
+/// The ends a turn lent, as one ask reaches them.
 ///
-/// Cloning shares the sending end, which is exactly what letting two
-/// concurrent asks in the same turn both reach the drawing thread needs: the
-/// end that would carry an answer back is never here (see the module
-/// documentation) — each ask makes its own, so there is nothing in `Ends`
-/// that a second ask could take from a first one still outstanding, or hand
-/// back wrong.
-#[derive(Debug, Clone)]
-struct Ends {
-    to: SyncSender<Seen>,
+/// It holds the place the ends are lent into, never a copy of them, and
+/// writes nothing back there: each question it puts reads the sending end
+/// lent there, sends, and lets go of it before waiting for the answer. So an
+/// ask still waiting when its turn ends holds nothing of that turn — the loop
+/// that draws sees the turn's channel close as it always does. A question is
+/// put down whatever ends are lent when it is sent: none once they were taken
+/// back, and those of the next turn once that turn lends its own — which a
+/// question never meets, because every run a turn starts is awaited within
+/// that turn. The end that would carry an answer back is never here (see the
+/// module documentation): each question makes its own, so an answer only
+/// ever settles the question it was made for, and a second ask in the same
+/// turn cannot take anything from a first one still outstanding.
+struct Lent<'a> {
+    ends: &'a Mutex<Option<SyncSender<Seen>>>,
 }
 
 /// Where a tool's questions go.
@@ -368,7 +373,7 @@ struct Ends {
 /// worse than stopping. Here nothing runs either way.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Putting {
-    ends: Arc<Mutex<Option<Ends>>>,
+    ends: Arc<Mutex<Option<SyncSender<Seen>>>>,
 }
 
 impl Putting {
@@ -380,7 +385,7 @@ impl Putting {
     /// Lends the ends of this turn's channel.
     pub(crate) fn open(&self, to: SyncSender<Seen>) {
         if let Ok(mut held) = self.ends.lock() {
-            *held = Some(Ends { to });
+            *held = Some(to);
         }
     }
 
@@ -401,25 +406,26 @@ impl Put for Putting {
     /// answers `Pending` the moment it is asked and wakes once the drawing
     /// thread has sent one — never a wait inside the poll that produces it.
     ///
-    /// `Ends` is cloned out of the lock rather than held across the wait: a
-    /// [`std::sync::MutexGuard`] cannot be held across an `.await` and stay
-    /// `Send`. Cloning it is what lets a second question in the same turn
-    /// find the same `to` a first one is still waiting beside — cloning a
-    /// [`std::sync::mpsc::SyncSender`] costs nothing that matters and takes
-    /// nothing from the first ask, because the answer no longer lives here to
-    /// be taken.
+    /// What waits for the answer is [`Lent`], which holds none of the turn's
+    /// ends across the wait and never puts any back, so a put its turn
+    /// outlived cannot keep that turn's channel open, or leave a stale end
+    /// where the next turn's are lent.
     fn put<'a>(&'a self, questions: &'a [Question]) -> BoxFuture<'a, Option<Vec<Answered>>> {
         Box::pin(async move {
-            let mut ends = self.ends.lock().ok()?.clone()?;
-            client::questions(Capabilities::every(), &mut ends, questions).await
+            if self.ends.lock().ok()?.is_none() {
+                return None;
+            }
+            let mut lent = Lent { ends: &self.ends };
+            client::questions(Capabilities::every(), &mut lent, questions).await
         })
     }
 }
 
-impl Front for Ends {
+impl Front for Lent<'_> {
     /// Puts `questions` down a fresh one-shot made for this ask alone, and
     /// awaits the far end of it — see the module documentation for why the
-    /// channel is not a field of `Ends` or [`Putting`].
+    /// channel is not a field of `Lent` or [`Putting`]. The turn's sending end
+    /// is read as the question is sent and let go of before the wait.
     fn put<'a>(
         &'a mut self,
         pending: &'a Pending,
@@ -431,12 +437,13 @@ impl Front for Ends {
             };
 
             let (reply, hear) = oneshot::channel();
-            self.to
-                .send(Seen::Asked {
-                    questions: questions.to_vec(),
-                    reply,
-                })
-                .ok()?;
+            let to = self.ends.lock().ok()?.clone()?;
+            to.send(Seen::Asked {
+                questions: questions.to_vec(),
+                reply,
+            })
+            .ok()?;
+            drop(to);
 
             let id = pending.id();
             let answers = hear

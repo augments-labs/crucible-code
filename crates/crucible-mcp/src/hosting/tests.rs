@@ -14,9 +14,9 @@ use crucible_sandbox::{
     SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
     SandboxCapabilities, SandboxCleanup, SandboxCommand, SandboxEnvironment, SandboxError,
     SandboxFactKind, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxInspection, SandboxLaunch, SandboxManifest, SandboxNetworkPolicy, SandboxOutput,
-    SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
-    SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
+    SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxManifest, SandboxNetworkPolicy,
+    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
+    SandboxResourceLimits, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
 };
 use crucible_tools::{
     Approved, Ask, Mode, Permission, Remember, Rules, Sensitivity, Settled, Summary, Target, Tool,
@@ -183,6 +183,10 @@ struct Watched {
     /// A process that does not finish when its input closes, and what stopping
     /// it does.
     unfinished: Option<Stop>,
+    /// The ending published while a stop was joining it.
+    published: AtomicBool,
+    /// A stop that failed after an ending completed.
+    stop_fails: AtomicBool,
 }
 
 impl Watched {
@@ -334,7 +338,9 @@ impl SandboxProcess for Fake {
     fn ended(&mut self) -> bool {
         match self.watched.unfinished {
             // It went when its input closed, and its ending never completes.
-            Some(Stop::UnansweredAfterEnding) => self.watched.closed.load(Ordering::Relaxed),
+            Some(Stop::UnansweredAfterEnding | Stop::PublishedAfterEnding) => {
+                self.watched.closed.load(Ordering::Relaxed)
+            }
             Some(Stop::Unanswered | Stop::Fails) => false,
             // A process whose status cannot be read has not been seen to end.
             None => {
@@ -350,6 +356,14 @@ impl SandboxProcess for Fake {
             match self.watched.unfinished {
                 Some(Stop::Unanswered | Stop::UnansweredAfterEnding) => {
                     std::future::pending::<()>().await;
+                }
+                Some(Stop::PublishedAfterEnding) => {
+                    if self.watched.closed.load(Ordering::Relaxed) {
+                        self.watched.published.store(true, Ordering::Release);
+                    }
+                    if self.watched.stop_fails.load(Ordering::Relaxed) {
+                        return Err(io::Error::other("the scope could not be reaped"));
+                    }
                 }
                 Some(Stop::Fails) => {
                     // Words that say what went wrong and not that cleanup is
@@ -376,6 +390,13 @@ impl SandboxProcess for Fake {
 
     fn violation(&self) -> Option<SandboxViolation> {
         None
+    }
+
+    fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+        self.watched
+            .published
+            .load(Ordering::Acquire)
+            .then_some(SandboxLifecycle::Published)
     }
 }
 
@@ -486,6 +507,8 @@ enum Stop {
     /// It went, its ending never completes, and a stop never answers: the wait
     /// for what it wrote runs to its ceiling before the stop is tried.
     UnansweredAfterEnding,
+    /// It went, and the stop joins a publication that completes there.
+    PublishedAfterEnding,
     /// It keeps running, and a stop fails, in words that say only what went
     /// wrong.
     Fails,
@@ -560,6 +583,7 @@ impl SandboxService for Pretend {
                 Some(Answers::Unfinished(_, stop)) => Some(*stop),
                 _ => None,
             };
+            let publication_stop_failed = matches!(unfinished, Some(Stop::PublishedAfterEnding));
             let (frames, slow, cleanup_refused) = match script {
                 Some(Answers::Hangs) => return std::future::pending().await,
                 None | Some(Answers::Refuses) => {
@@ -580,6 +604,7 @@ impl SandboxService for Pretend {
             let watched = Arc::new(Watched {
                 cleanup_refused: AtomicBool::new(cleanup_refused),
                 ending_refused: AtomicBool::new(ending_refused),
+                stop_fails: AtomicBool::new(publication_stop_failed),
                 missing_input,
                 missing_output,
                 unfinished,

@@ -448,3 +448,36 @@ fn a_dropped_put_leaves_no_waiter_and_the_next_put_is_unaffected() {
         "the stale answer meant for the dropped ask settled the next one"
     );
 }
+
+/// A tool's put binds the ends its turn lent, and holds none of them while it
+/// waits: a run that is still waiting for its answer when the turn is over
+/// must not keep the turn's channel open, because the loop that draws learns
+/// the turn is over by that channel closing. A put waiting there with a copy
+/// of the turn's sender would leave that loop waiting for ever, and would
+/// hold a turn's end past the turn it was lent for.
+#[test]
+fn a_put_still_waiting_when_its_turn_ends_leaves_the_turn_s_channel_to_close() {
+    let (to, seen) = sync_channel(CAPACITY);
+    let putting = Putting::new();
+    putting.open(to);
+
+    let asked = one_question();
+    let mut future = std::pin::pin!(putting.put(&asked));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(matches!(future.as_mut().poll(&mut cx), Poll::Pending));
+    let Seen::Asked { reply: _held, .. } = seen.recv().unwrap() else {
+        panic!("the ask was not put");
+    };
+
+    // The turn ends: the relay's drop takes the ends back.
+    putting.close();
+
+    assert!(
+        matches!(
+            seen.recv_timeout(Duration::from_millis(100)),
+            Err(RecvTimeoutError::Disconnected)
+        ),
+        "a put still waiting for its answer held the turn's channel open after the turn ended"
+    );
+    assert!(matches!(future.as_mut().poll(&mut cx), Poll::Pending));
+}

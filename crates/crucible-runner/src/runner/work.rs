@@ -6,33 +6,74 @@
 //! user cancelled, or said no — still writes a result for each remaining call
 //! saying why there is nothing in it.
 //!
-//! A call that runs alone — every call, unless a run asked for a wider
-//! scheduler ceiling — has its run awaited, so a tool that has to wait for its
-//! answer is waited for. The calls of a parallel wave run on scoped threads of
-//! their own, one each, and each of those asks its call's run once through a
-//! bridge: a run there that would have had to wait is answered as unconfirmed,
-//! as every run was before the turn could await one.
+//! Every call's run is spawned onto the runtime the turn is polled in, into a
+//! bounded [`Group`], and awaited. The calls of a wave run beside one another,
+//! at most [`TOOL_RUNS`] at once, and a call that runs alone is a wave of one.
+//! Whatever order the runs answer in, the calls are answered in the order the
+//! model asked for them. A run is never dropped part way through. A stop
+//! raises the cancel its context holds; a call's deadline makes that cancel
+//! read as raised from then on, which a run learns at its next look at it or
+//! through a race on it, so a tool's deadline is cooperative. Either way the
+//! call waits for the run's own answer — a run that ignores its cancel is
+//! waited for until it answers — and is answered with what the run answered:
+//! a run that did its work before it saw the stop is reported as having done
+//! it, and one that heeded the stop as cut short. A stop still ends the pass
+//! after the calls it reached, and no call of a wave is started once it is
+//! raised.
+//!
+//! What a run prints while it runs comes back to the turn to be reported,
+//! because only the turn holds where progress goes; [`Mailbox`] is how.
 
-use std::future::Future;
+use std::collections::VecDeque;
+use std::future::{Future, poll_fn};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::thread;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::task::{Context, Poll, Waker};
+use std::thread::{self, ThreadId};
 use std::time::Instant;
 
 use crucible_core::{
-    Ancestry, Approved, Ask, Cancel, InvocationRecord, JournalStore, PendingCallResult, Permission,
-    RunItem, SandboxAudit, SandboxAuditRegistry, Settled, StopReason, TOOL_RESULT_BYTES, ToolCall,
-    ToolContext, ToolEntry, ToolError, ToolExecutionMode, ToolId, ToolOutcome, ToolOutput,
-    ToolOutputRetention, ToolReceipt, ToolResult, ToolSnapshot, ToolSourceReceipt, Watch, Wrote,
+    Ancestry, Approved, Ask, CallResultStoreError, Cancel, InvocationId, InvocationRecord,
+    JournalStore, PendingCallResult, Permission, RunItem, SandboxAudit, SandboxAuditRegistry,
+    Settled, StopReason, TOOL_RESULT_BYTES, ToolCall, ToolContext, ToolEntry, ToolError,
+    ToolExecutionMode, ToolId, ToolOutcome, ToolOutput, ToolOutputRetention, ToolReceipt,
+    ToolResult, ToolSnapshot, ToolSourceReceipt, ToolWorker, Watch, Wrote,
 };
-use crucible_runtime::{Bridge, Unready};
+use crucible_runtime::Group;
 
 use crate::{Event, Reporter};
 mod audit;
 
+use audit::report_sandbox_audit;
 pub(super) use audit::report_sandbox_registry;
-use audit::{report_sandbox_audit, report_sandbox_facts};
+
+/// How many of a turn's calls run at once, however wide a wave the run's
+/// scheduler ceiling allows.
+///
+/// Each run is spawned onto the application's runtime, and a tool whose work
+/// is still synchronous holds the worker it runs on for as long as its call
+/// lasts. The runtime's workers are what its other owners run on too — among
+/// them the status task of a confined process, which is where that process's
+/// deadline and output-limit kills run — so this stays below the runtime's
+/// worker count less one. However many calls are held, two workers stay free:
+/// a status task's kill finds one even while something else is being polled
+/// on the other, so a held worker never delays a kill. The application checks
+/// this against its own worker count.
+///
+/// The bound is one turn's. The application takes one turn at a time on its
+/// runtime, so it is the runtime's bound there too; two turns taken at once
+/// on one runtime could hold twice as many workers.
+pub const TOOL_RUNS: usize = 2;
+
+/// How many pieces of what a batch's runs printed may wait for the turn to
+/// report them.
+///
+/// A piece is whatever a tool hands over at once. A run that finds this many
+/// waiting waits for the turn to take them, as it waited at the terminal's own
+/// channel when it reported directly, so a run printing faster than the reader
+/// can be shown is slowed rather than held in memory here.
+const WRITTEN: usize = 16;
 
 /// What a call is answered with when the turn ended before it could run.
 const NOT_RUN: &str = "not run: the turn ended first";
@@ -82,7 +123,11 @@ pub(crate) struct Work<'a> {
     pub(crate) journal: &'a dyn JournalStore,
     /// Bounded owner of collectors retained by detached sandbox processes.
     pub(crate) audits: &'a SandboxAuditRegistry,
-    /// The most opt-in calls that may execute at once.
+    /// The worker every call is lent for its blocking work, where the run
+    /// was given one.
+    pub(crate) worker: Option<&'a ToolWorker>,
+    /// The widest wave of opt-in calls the run allows; at most [`TOOL_RUNS`]
+    /// of them run at once.
     pub(crate) concurrency: usize,
 }
 
@@ -113,7 +158,8 @@ impl Work<'_> {
                     &mut produced,
                     &mut went,
                     &mut results,
-                );
+                )
+                .await;
                 at += 1;
                 continue;
             }
@@ -181,14 +227,14 @@ impl Work<'_> {
             };
 
             for (offset, invocation) in invocations.into_iter().enumerate() {
+                if invocation.stops {
+                    went = Went::Stopped(StopReason::Cancelled);
+                }
                 match invocation.outcome {
                     ToolOutcome::Refused => {
                         went = Went::Refused(invocation.call.name.clone());
                     }
                     ToolOutcome::Cancelled => {
-                        went = Went::Stopped(StopReason::Cancelled);
-                    }
-                    ToolOutcome::Failed if invocation.stops => {
                         went = Went::Stopped(StopReason::Cancelled);
                     }
                     ToolOutcome::Succeeded
@@ -209,7 +255,8 @@ impl Work<'_> {
                     &mut produced,
                     &mut went,
                     &mut results,
-                );
+                )
+                .await;
             }
             at = end;
         }
@@ -368,8 +415,10 @@ impl Work<'_> {
 
     /// Executes every approved call in one conflict-free scheduler wave.
     ///
-    /// A wave with one approved call awaits its run. A wave of several runs
-    /// each on a scoped thread of its own, which asks the run once.
+    /// The approved calls run in batches of at most [`TOOL_RUNS`], each
+    /// batch's runs spawned into a group of their own and every one of them
+    /// awaited before the next batch begins. What comes back is in the wave's
+    /// own order, whatever order the runs answered in.
     async fn execute_wave(&self, decisions: Vec<Decision>) -> Vec<Invocation> {
         let host = ExecutionHost {
             ancestry: self.ancestry,
@@ -377,54 +426,38 @@ impl Work<'_> {
             events: self.events,
             journal: self.journal,
             audits: self.audits,
+            worker: self.worker,
         };
-        let ready = decisions
-            .iter()
-            .filter(|decision| matches!(decision, Decision::Ready(_)))
-            .count();
-        if ready <= 1 {
-            let mut invocations = Vec::with_capacity(decisions.len());
-            for decision in decisions {
-                invocations.push(match decision {
-                    Decision::Ready(prepared) => execute_alone(prepared, host).await,
-                    Decision::Done(invocation)
-                    | Decision::Refused(invocation)
-                    | Decision::Stopped(invocation)
-                    | Decision::NotRun(invocation) => invocation,
-                });
+        let mut answered = Vec::with_capacity(decisions.len());
+        let mut ready = Vec::new();
+        for (index, decision) in decisions.into_iter().enumerate() {
+            match decision {
+                Decision::Ready(prepared) => ready.push((index, prepared)),
+                Decision::Done(invocation)
+                | Decision::Refused(invocation)
+                | Decision::Stopped(invocation)
+                | Decision::NotRun(invocation) => answered.push((index, invocation)),
             }
-            return invocations;
         }
 
-        let mut completed = Vec::with_capacity(decisions.len());
-        thread::scope(|scope| {
-            let mut running = Vec::with_capacity(ready);
-            for (index, decision) in decisions.into_iter().enumerate() {
-                match decision {
-                    Decision::Ready(prepared) => {
-                        let fallback = PanicFallback::from(&prepared);
-                        running.push((
-                            index,
-                            fallback,
-                            scope.spawn(move || execute_contained(prepared, host)),
-                        ));
-                    }
-                    Decision::Done(invocation)
-                    | Decision::Refused(invocation)
-                    | Decision::Stopped(invocation)
-                    | Decision::NotRun(invocation) => completed.push((index, invocation)),
-                }
+        let mut ready = ready.into_iter();
+        loop {
+            // A stop raised while an earlier batch ran starts nothing more:
+            // every call not yet started is answered as the stop cut it short.
+            if self.cancel.requested() {
+                answered.extend(ready.map(|(index, prepared)| (index, prepared.cut_short())));
+                break;
             }
-            for (index, fallback, worker) in running {
-                let invocation = match worker.join() {
-                    Ok(invocation) => invocation,
-                    Err(_) => fallback.panicked(),
-                };
-                completed.push((index, invocation));
+            let batch: Vec<(usize, Prepared)> = ready.by_ref().take(TOOL_RUNS).collect();
+            if batch.is_empty() {
+                break;
             }
-        });
-        completed.sort_by_key(|(index, _)| *index);
-        completed
+            answered.extend(run_batch(batch, host).await);
+        }
+        // Committed by call index: the order the model asked in, never the
+        // order the runs happened to answer in.
+        answered.sort_by_key(|(index, _)| *index);
+        answered
             .into_iter()
             .map(|(_, invocation)| invocation)
             .collect()
@@ -502,7 +535,7 @@ impl Work<'_> {
     // budget/state and both ordered sinks. Wrapping references in a carrier
     // would shorten the signature without reducing the operation's inputs.
     #[allow(clippy::too_many_arguments)]
-    fn finish(
+    async fn finish(
         &self,
         mut invocation: Invocation,
         index: usize,
@@ -545,13 +578,12 @@ impl Work<'_> {
                 output: invocation.output.clone().into_recorded(),
             };
             if let Ok(receipt) = self.journal.put_call_result(pending.key(), &result) {
-                // The result is already durable and replayable. A failed
-                // executor acknowledgement quarantines/stops its owned scope,
-                // but cannot replace that sole accepted result. One that would
-                // have had to wait is dropped by the crossing before it
-                // answered, which the acceptance contract says hands the scope
-                // back to the registry that owns its cleanup.
-                let _ = Bridge::TurnTools.cross(pending.accept(receipt));
+                // The result is already durable and replayable. The
+                // acceptance is awaited, so an executor that has to wait to
+                // close its transition is waited for; one that fails
+                // quarantines or stops its owned scope, but cannot replace
+                // that sole accepted result.
+                let _ = pending.accept(receipt).await;
             } else {
                 // Dropping the unaccepted executor half hands its
                 // application-owned process scope back to the registry that
@@ -627,6 +659,18 @@ struct Prepared {
 }
 
 impl Prepared {
+    /// The call, answered as the stop cut it short before its run was
+    /// started.
+    fn cut_short(self) -> Invocation {
+        Invocation::new(
+            self.call,
+            ToolOutput::failed(NOT_RUN),
+            ToolOutcome::Cancelled,
+            self.evidence,
+        )
+        .recovering(self.record)
+    }
+
     fn not_run(self) -> Invocation {
         Invocation::new(
             self.call,
@@ -664,10 +708,8 @@ struct Invocation {
     recovery: Option<InvocationRecord>,
     pending_result: Option<PendingCallResult>,
     /// Whether the pass ends on a stop at this call although its outcome says
-    /// something else. Set only where a run that would have had to wait, met
-    /// while the turn was being stopped, is answered as the refusal it was;
-    /// where reporting the call's sandbox facts failed after the run, that
-    /// failure is the answer instead, and this stays false.
+    /// something else: its run answered after the turn was stopped, and is
+    /// answered with what it answered rather than as cut short.
     stops: bool,
 }
 
@@ -718,81 +760,403 @@ struct ExecutionHost<'a> {
     events: Reporter<'a>,
     journal: &'a dyn JournalStore,
     audits: &'a SandboxAuditRegistry,
+    worker: Option<&'a ToolWorker>,
 }
 
-/// Runs one call of a parallel wave on the scoped thread it was given, asking
-/// its run once, and contains a panic.
-fn execute_contained(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation {
-    let fallback = PanicFallback::from(&prepared);
-    let audit = match host
-        .audits
-        .collector(host.ancestry, fallback.call.id.clone())
-    {
-        Ok(audit) => audit,
-        Err(problem) => return fallback.audit_failed(problem),
-    };
-    if let Ok(invocation) = catch_unwind(AssertUnwindSafe(|| {
-        let (started, approved) = Started::from(prepared, host);
-        let watching = started.watching(host);
-        let context = match started.context(host, &watching, audit.clone()) {
-            Ok(context) => context,
-            Err(problem) => return started.unattributed(&problem),
+/// Runs one batch of approved calls, no more than [`TOOL_RUNS`] of them, each
+/// spawned into one group, and answers every one once all their runs have
+/// answered and the group holds none of them.
+///
+/// Each call is recorded as started and given its sandbox collector here, on
+/// the turn, and is settled here once its run has answered; only the run
+/// itself goes to the group. A run that comes apart, in whichever poll, is
+/// answered as a contained panic once what its sandbox collected has been
+/// reported, as one that runs alone always was.
+///
+/// The group is made on the turn's own cancel, so a stop reaches every run,
+/// and nothing here drops a run that has begun: a stop raises the run's
+/// cancel, a deadline makes it read as raised, and this waits for the run's
+/// own answer. What bounds that wait is how soon the run heeds its cancel —
+/// for work it handed a worker, the job's next look at its token — and a run
+/// that never does is waited for until it answers. Settling a call, its
+/// output hook included, is contained as its run is.
+///
+/// # Panics
+///
+/// Where the turn is polled outside a runtime, which is what spawning into a
+/// [`Group`] does there. The application waits for a turn inside its own.
+async fn run_batch(
+    batch: Vec<(usize, Prepared)>,
+    host: ExecutionHost<'_>,
+) -> Vec<(usize, Invocation)> {
+    let mut group = Group::new(TOOL_RUNS, host.cancel);
+    let mailbox = Mailbox::new();
+    let mut answered = Vec::with_capacity(batch.len());
+    let mut running = Vec::with_capacity(batch.len());
+    for (index, prepared) in batch {
+        let fallback = PanicFallback::from(&prepared, host.cancel.clone());
+        let audit = match host
+            .audits
+            .collector(host.ancestry, fallback.call.id.clone())
+        {
+            Ok(audit) => audit,
+            Err(problem) => {
+                answered.push((index, fallback.audit_failed(problem)));
+                continue;
+            }
         };
-        let ran = Bridge::TurnTools.cross(started.entry.tool().run(approved, &context));
-        started.settled(ran, &context, host)
-    })) {
-        invocation
-    } else {
-        fallback.contained(&audit, host)
+        let (started, approved) = Started::from(prepared, host);
+        let slot = mailbox.expect();
+        let run = Run {
+            call: started.call.id.clone(),
+            entry: started.entry.clone(),
+            approved,
+            ancestry: host.ancestry,
+            parent: group.cancel().clone(),
+            stop: host.cancel.clone(),
+            deadline: started.deadline,
+            invocation: started.record.id(),
+            audit: audit.clone(),
+            worker: host.worker.cloned(),
+        };
+        if let Err(full) = group.spawn(run.answering(mailbox.clone(), slot)) {
+            let problem = ToolError::Io {
+                tool: started.call.name.clone(),
+                problem: "the turn could not start its run".into(),
+                source: std::io::Error::other(full),
+            };
+            mailbox.answer(slot, Came::Returned(Returned::Unran(problem)));
+        }
+        running.push(Running {
+            index,
+            slot,
+            fallback,
+            audit,
+            started,
+        });
+    }
+
+    let mut came = mailbox.collected(&mut group, host.events).await;
+    for Running {
+        index,
+        slot,
+        fallback,
+        audit,
+        started,
+    } in running
+    {
+        let invocation = match came.get_mut(slot).and_then(Option::take) {
+            // Settling runs the call's own output hook and reports what its
+            // sandbox collected, and either may come apart: that is answered
+            // as a contained panic too, rather than unwinding out of the pass.
+            Some(Came::Returned(returned)) => {
+                match catch_unwind(AssertUnwindSafe(|| started.settled(returned, &audit, host))) {
+                    Ok(invocation) => invocation,
+                    Err(_) => fallback.panicked(),
+                }
+            }
+            Some(Came::Apart) | None => fallback.contained(&audit, host),
+        };
+        answered.push((index, invocation));
+    }
+    answered
+}
+
+/// A call of a batch whose run is out, and what answering it needs.
+struct Running {
+    /// Where the call stands in its wave.
+    index: usize,
+    /// Where its run's answer arrives in the batch's [`Mailbox`].
+    slot: usize,
+    fallback: PanicFallback,
+    audit: SandboxAudit,
+    started: Started,
+}
+
+/// Everything one call's run owns once it is spawned: nothing it holds is
+/// borrowed from the turn, so the task can be the group's.
+struct Run {
+    call: ToolId,
+    entry: ToolEntry,
+    approved: Approved,
+    ancestry: Ancestry,
+    /// The group's cancel, which the call's own is made a child of.
+    parent: Cancel,
+    /// The turn's own cancel, read once the run has answered.
+    stop: Cancel,
+    deadline: Option<Instant>,
+    invocation: InvocationId,
+    audit: SandboxAudit,
+    worker: Option<ToolWorker>,
+}
+
+impl Run {
+    /// The task a call's run is spawned as: the run, with a panic in any poll
+    /// of it contained, and its answer handed back to the turn.
+    async fn answering(self, mailbox: Mailbox, slot: usize) {
+        let answering = Answering {
+            mailbox: mailbox.clone(),
+            slot,
+            answered: false,
+        };
+        let came = match Contained(Box::pin(self.ran(mailbox))).await {
+            Some(returned) => Came::Returned(returned),
+            None => Came::Apart,
+        };
+        answering.answer(came);
+    }
+
+    /// Builds the call's context and awaits its run until the run answers.
+    ///
+    /// Nothing races it. A stop raises the context's cancel and the call's
+    /// deadline passing makes it read as raised, and the run is still waited
+    /// for until it answers: dropping it part way would leave whatever it had
+    /// started unconfirmed, and any work it had handed a worker running with
+    /// nobody told.
+    async fn ran(self, mailbox: Mailbox) -> Returned {
+        let Self {
+            call,
+            entry,
+            approved,
+            ancestry,
+            parent,
+            stop,
+            deadline,
+            invocation,
+            audit,
+            worker,
+        } = self;
+        let watched = Watched {
+            mailbox,
+            call: call.clone(),
+        };
+        let context = ToolContext::new(ancestry, call, &parent, deadline, &watched)
+            .with_invocation(invocation);
+        let context = match &worker {
+            Some(worker) => context.with_worker(worker),
+            None => context,
+        };
+        let context = match context.with_sandbox_audit(audit) {
+            Ok(context) => context,
+            Err(problem) => {
+                return Returned::Unran(ToolError::Io {
+                    tool: "sandbox audit".into(),
+                    problem: "could not attach fixed lifecycle attribution".into(),
+                    source: std::io::Error::other(problem),
+                });
+            }
+        };
+        let ran = entry.tool().run(approved, &context).await;
+        Returned::Ran {
+            ran,
+            stopped: stop.requested(),
+            timed_out: context.timed_out(),
+            pending: context.take_call_result(),
+        }
     }
 }
 
-/// Runs a call that runs alone, awaiting its run until it answers or its
-/// deadline passes, and contains a panic in any poll of it.
+/// What a call's run came to, as far as it can be known where it ran.
+enum Returned {
+    /// The run never began: its context could not be built, or the group
+    /// would not take it.
+    Unran(ToolError),
+    /// The run answered.
+    Ran {
+        /// What it answered.
+        ran: Result<ToolOutput, ToolError>,
+        /// Whether the turn had been stopped by the time it did.
+        stopped: bool,
+        /// Whether the call's own deadline had passed by then.
+        timed_out: bool,
+        /// The executor half of a result it deferred, taken out of its
+        /// context.
+        pending: Result<Option<PendingCallResult>, CallResultStoreError>,
+    },
+}
+
+/// What arrives in a run's slot of the [`Mailbox`].
+enum Came {
+    /// What the run came to.
+    Returned(Returned),
+    /// The run came apart, or its task was dropped before it answered.
+    Apart,
+}
+
+/// Hands a run's answer back, and says it came apart if its task is dropped
+/// first — unwinding, or taken away — so the turn waiting for it is never
+/// left waiting for an answer that cannot come.
+struct Answering {
+    mailbox: Mailbox,
+    slot: usize,
+    answered: bool,
+}
+
+impl Answering {
+    fn answer(mut self, came: Came) {
+        self.answered = true;
+        self.mailbox.answer(self.slot, came);
+    }
+}
+
+impl Drop for Answering {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.mailbox.answer(self.slot, Came::Apart);
+        }
+    }
+}
+
+/// Where one batch's runs say what they printed and what they came to, for
+/// the turn to report.
 ///
-/// A run still waiting when its deadline passes is dropped there, and the call
-/// is answered as timed out: the deadline is kept by the turn rather than left
-/// to whether the run heeds its context. It is timed on the timer of the
-/// runtime the turn is polled in. A run that is working inside a poll rather
-/// than waiting cannot be dropped until it returns from it.
-async fn execute_alone(prepared: Prepared, host: ExecutionHost<'_>) -> Invocation {
-    let fallback = PanicFallback::from(&prepared);
-    let audit = match host
-        .audits
-        .collector(host.ancestry, fallback.call.id.clone())
-    {
-        Ok(audit) => audit,
-        Err(problem) => return fallback.audit_failed(problem),
-    };
-    let executing = Contained(Box::pin(async {
-        let (started, approved) = Started::from(prepared, host);
-        let watching = started.watching(host);
-        let context = match started.context(host, &watching, audit.clone()) {
-            Ok(context) => context,
-            Err(problem) => return started.unattributed(&problem),
-        };
-        // A token only the clock raises, at this call's deadline. Once it has,
-        // `settled` finds the context timed out and answers the call so, and
-        // what stands in for the dropped run's answer is never read.
-        let deadline = Cancel::new().child_until(started.deadline);
-        let ran = deadline
-            .race(started.entry.tool().run(approved, &context))
-            .await
-            .unwrap_or_else(|| Err(ToolError::Cancelled(started.call.name.clone())));
-        started.settled(Ok(ran), &context, host)
-    }));
-    match executing.await {
-        Some(invocation) => invocation,
-        None => fallback.contained(&audit, host),
+/// Only the turn holds where progress goes, and a run spawned into a group
+/// can borrow nothing of the turn's, so what a run prints comes here and the
+/// turn reports it — in the order it arrived, and before it answers the call
+/// that printed it. At most [`WRITTEN`] pieces wait: a run that finds that
+/// many waits for the turn to take them, and stops waiting once nobody is
+/// left to take them. The one exception is a run polled on the very thread
+/// that polls the turn, which a current-thread runtime does: the turn cannot
+/// take anything until that run gives the thread back, so there a piece is
+/// kept past the bound rather than waited on for ever. The application's
+/// runtime polls runs on workers of their own, never on the turn's thread.
+#[derive(Clone)]
+struct Mailbox(Arc<Shared>);
+
+struct Shared {
+    held: Mutex<Held>,
+    /// Signalled whenever the turn takes what was waiting, or leaves.
+    room: Condvar,
+}
+
+struct Held {
+    written: VecDeque<(ToolId, Wrote)>,
+    /// One slot per run, filled once as it answers.
+    answers: Vec<Option<Came>>,
+    /// Wakes the turn waiting on this batch.
+    waker: Option<Waker>,
+    /// The thread polling the turn.
+    turn: ThreadId,
+    /// The turn stopped waiting, and nobody will take what arrives.
+    closed: bool,
+}
+
+impl Mailbox {
+    fn new() -> Self {
+        Self(Arc::new(Shared {
+            held: Mutex::new(Held {
+                written: VecDeque::new(),
+                answers: Vec::new(),
+                waker: None,
+                turn: thread::current().id(),
+                closed: false,
+            }),
+            room: Condvar::new(),
+        }))
+    }
+
+    fn held(&self) -> MutexGuard<'_, Held> {
+        self.0.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A slot for one more run's answer.
+    fn expect(&self) -> usize {
+        let mut held = self.held();
+        held.answers.push(None);
+        held.answers.len() - 1
+    }
+
+    /// Fills `slot`, the first time only, and wakes the turn.
+    fn answer(&self, slot: usize, came: Came) {
+        let mut held = self.held();
+        if let Some(empty @ None) = held.answers.get_mut(slot) {
+            *empty = Some(came);
+        }
+        if let Some(waker) = &held.waker {
+            waker.wake_by_ref();
+        }
+    }
+
+    /// Leaves a piece a run printed for the turn to report.
+    fn wrote(&self, call: &ToolId, text: Wrote) {
+        let mut held = self.held();
+        while held.written.len() >= WRITTEN && !held.closed && held.turn != thread::current().id() {
+            held = self
+                .0
+                .room
+                .wait(held)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        if held.closed {
+            return;
+        }
+        held.written.push_back((call.clone(), text));
+        if let Some(waker) = &held.waker {
+            waker.wake_by_ref();
+        }
+    }
+
+    /// Reports what the runs print as it arrives, until every run has
+    /// answered and `group` holds none of them, and hands back their answers
+    /// by slot.
+    ///
+    /// A run answers as the last thing its task does, and the task returns
+    /// straight after; the few polls between the last answer and the group
+    /// finding every task returned are spent asking again at once, so the
+    /// batch never ends with a task of it still held.
+    async fn collected<T: Send + 'static>(
+        &self,
+        group: &mut Group<T>,
+        events: Reporter<'_>,
+    ) -> Vec<Option<Came>> {
+        let leaving = Leaving(self);
+        poll_fn(|context| {
+            let (written, answered) = {
+                let mut held = self.held();
+                held.turn = thread::current().id();
+                match &mut held.waker {
+                    Some(waker) => waker.clone_from(context.waker()),
+                    None => held.waker = Some(context.waker().clone()),
+                }
+                let written = std::mem::take(&mut held.written);
+                self.0.room.notify_all();
+                (written, held.answers.iter().all(Option::is_some))
+            };
+            for (call, text) in written {
+                events.post(Event::Wrote { call, text });
+            }
+            if !answered {
+                return Poll::Pending;
+            }
+            if !group.is_empty() {
+                context.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            Poll::Ready(())
+        })
+        .await;
+        drop(leaving);
+        std::mem::take(&mut self.held().answers)
+    }
+}
+
+/// Tells the runs of a batch that the turn has stopped waiting, however it
+/// stops, so none of them waits for room nobody will make.
+struct Leaving<'a>(&'a Mailbox);
+
+impl Drop for Leaving<'_> {
+    fn drop(&mut self) {
+        self.0.held().closed = true;
+        self.0.0.room.notify_all();
     }
 }
 
 /// A future whose panic, in whichever poll it comes, is caught and answered
-/// as `None` rather than unwinding into the turn.
+/// as `None` rather than unwinding out of the task it runs in.
 ///
 /// Polled with the waker of whoever polls it. It is awaited once, so nothing
 /// asks it again once it has answered or come apart.
-struct Contained<'a, T>(Pin<Box<dyn Future<Output = T> + 'a>>);
+struct Contained<'a, T>(Pin<Box<dyn Future<Output = T> + Send + 'a>>);
 
 impl<T> Future for Contained<'_, T> {
     type Output = Option<T>;
@@ -848,49 +1212,35 @@ impl Started {
         )
     }
 
-    /// Where this call's output goes while it runs.
-    fn watching<'a>(&self, host: ExecutionHost<'a>) -> Watching<'a> {
-        Watching {
-            call: self.call.id.clone(),
-            events: host.events,
-        }
-    }
-
-    /// The context this call's run is handed.
-    fn context<'a>(
-        &self,
-        host: ExecutionHost<'a>,
-        watching: &'a Watching<'a>,
-        audit: SandboxAudit,
-    ) -> Result<ToolContext<'a>, ToolError> {
-        ToolContext::new(
-            host.ancestry,
-            self.call.id.clone(),
-            host.cancel,
-            self.deadline,
-            watching,
-        )
-        .with_invocation(self.record.id())
-        .with_sandbox_audit(audit)
-        .map_err(|problem| ToolError::Io {
-            tool: "sandbox audit".into(),
-            problem: "could not attach fixed lifecycle attribution".into(),
-            source: std::io::Error::other(problem),
-        })
-    }
-
-    /// The call, failed on `problem` before it ran.
-    fn unattributed(self, problem: &ToolError) -> Invocation {
-        Invocation::failed(self.call, problem, ToolOutcome::Failed, self.evidence)
-            .recovering(self.record)
-    }
-
-    /// The call, answered with what its run came to: `ran` is the run's
-    /// answer, or the refusal of a run that would have had to wait.
+    /// The call, answered with what its run came to, once what its sandbox
+    /// collected has been reported, and marked to end the pass where the turn
+    /// had been stopped by the time the run answered.
+    ///
+    /// The run's own answer decides what the call is answered with. A run
+    /// that answered with an output did what it answered, whatever the turn
+    /// was doing by then — a write already in place, a command that already
+    /// exited — and is reported so; the stop still ends the pass through the
+    /// mark. A run that answered it was cancelled is answered as the stop cut
+    /// it short, and one that failed with its own failure; where the call's
+    /// deadline had passed and the turn was not stopped, either is answered
+    /// as timed out, since the deadline is what raised the run's cancel.
     fn settled(
         self,
-        ran: Result<Result<ToolOutput, ToolError>, Unready>,
-        context: &ToolContext<'_>,
+        returned: Returned,
+        audit: &SandboxAudit,
+        host: ExecutionHost<'_>,
+    ) -> Invocation {
+        let stopped = matches!(returned, Returned::Ran { stopped: true, .. });
+        let mut invocation = self.answered(returned, audit, host);
+        invocation.stops = stopped;
+        invocation
+    }
+
+    /// [`Started::settled`], before the stop's mark.
+    fn answered(
+        self,
+        returned: Returned,
+        audit: &SandboxAudit,
         host: ExecutionHost<'_>,
     ) -> Invocation {
         let Self {
@@ -900,50 +1250,23 @@ impl Started {
             record,
             ..
         } = self;
-        if let Err(problem) = report_sandbox_facts(context, host.events, host.journal) {
+        let (ran, stopped, timed_out, pending) = match returned {
+            Returned::Unran(problem) => {
+                return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
+                    .recovering(record);
+            }
+            Returned::Ran {
+                ran,
+                stopped,
+                timed_out,
+                pending,
+            } => (ran, stopped, timed_out, pending),
+        };
+        if let Err(problem) =
+            report_sandbox_audit(audit, host.ancestry, &call.id, host.events, host.journal)
+        {
             return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
                 .recovering(record);
-        }
-
-        // The call's result reports the refusal, not the stop: the run began
-        // and was dropped before it answered, so "not run" would be false, and
-        // would leave what the run began unmentioned. Where a stop was asked
-        // for, the pass still ends on it, as it does for a call the stop cut
-        // short.
-        let ran = match ran {
-            Ok(ran) => ran,
-            Err(unready) => {
-                let problem = ToolError::Io {
-                    tool: call.name.clone(),
-                    problem: "its run would have had to wait, so the run was dropped before it \
-                              answered; whatever the run began is unconfirmed"
-                        .into(),
-                    source: std::io::Error::other(unready),
-                };
-                let mut failed = Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
-                    .recovering(record);
-                failed.stops = host.cancel.requested();
-                return failed;
-            }
-        };
-
-        if host.cancel.requested() {
-            return Invocation::new(
-                call,
-                ToolOutput::failed(NOT_RUN),
-                ToolOutcome::Cancelled,
-                evidence,
-            )
-            .recovering(record);
-        }
-        if context.timed_out() {
-            return Invocation::new(
-                call,
-                ToolOutput::failed("tool timed out"),
-                ToolOutcome::TimedOut,
-                evidence,
-            )
-            .recovering(record);
         }
 
         let output = match ran {
@@ -957,6 +1280,15 @@ impl Started {
                 },
                 None => output,
             },
+            Err(_) if timed_out && !stopped => {
+                return Invocation::new(
+                    call,
+                    ToolOutput::failed("tool timed out"),
+                    ToolOutcome::TimedOut,
+                    evidence,
+                )
+                .recovering(record);
+            }
             Err(ToolError::Cancelled(_)) => {
                 return Invocation::new(
                     call,
@@ -971,7 +1303,7 @@ impl Started {
                     .recovering(record);
             }
         };
-        let pending = match context.take_call_result() {
+        let pending = match pending {
             Ok(pending) => pending,
             Err(problem) => {
                 let problem = ToolError::Io {
@@ -998,14 +1330,16 @@ struct PanicFallback {
     call: ToolCall,
     evidence: InvocationEvidence,
     record: InvocationRecord,
+    stop: Cancel,
 }
 
-impl From<&Prepared> for PanicFallback {
-    fn from(prepared: &Prepared) -> Self {
+impl PanicFallback {
+    fn from(prepared: &Prepared, stop: Cancel) -> Self {
         Self {
             call: prepared.call.clone(),
             evidence: prepared.evidence.clone(),
             record: prepared.record.clone(),
+            stop,
         }
     }
 }
@@ -1025,13 +1359,15 @@ impl PanicFallback {
     }
 
     fn panicked(self) -> Invocation {
-        Invocation::new(
+        let mut invocation = Invocation::new(
             self.call,
             ToolOutput::failed("tool panicked; the failure was contained"),
             ToolOutcome::Panicked,
             self.evidence,
         )
-        .recovering(self.record)
+        .recovering(self.record);
+        invocation.stops = self.stop.requested();
+        invocation
     }
 
     fn audit_failed(self, problem: crucible_core::SandboxAuditError) -> Invocation {
@@ -1056,26 +1392,24 @@ fn result_limit(entry: &ToolEntry) -> usize {
 /// Where one call's output goes while its tool is still running.
 ///
 /// The whole of the bridge between a tool, which knows what it has printed and
-/// not which call it is, and the channel, which needs both. It is made per call
+/// not which call it is, and the turn, which needs both. It is made per call
 /// rather than per pass so that the identifier cannot be the wrong one: there is
 /// no moment at which this value exists beside a different call.
 ///
-/// Nothing is held. A piece of output is turned into an event and posted, and
-/// what the drawing thread does with it is the drawing thread's business — which
-/// is what keeps a command printing a gigabyte from growing anything here.
-struct Watching<'a> {
+/// A piece of output goes to the batch's [`Mailbox`], and the turn turns it
+/// into an event and posts it; what the drawing thread does with it is the
+/// drawing thread's business. The mailbox holds only a bounded few, which is
+/// what keeps a command printing a gigabyte from growing anything here.
+struct Watched {
+    /// Where it goes.
+    mailbox: Mailbox,
     /// The call whose output this is.
     call: ToolId,
-    /// Where it goes.
-    events: Reporter<'a>,
 }
 
-impl Watch for Watching<'_> {
+impl Watch for Watched {
     fn wrote(&self, text: Wrote) {
-        self.events.post(Event::Wrote {
-            call: self.call.clone(),
-            text,
-        });
+        self.mailbox.wrote(&self.call, text);
     }
 }
 

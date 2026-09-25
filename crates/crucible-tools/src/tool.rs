@@ -380,8 +380,8 @@ impl Watch for Unwatched {
 /// until it can: nothing is left running that nobody owns. The runner relies
 /// on this wherever it does not accept one: when the call ends without a
 /// result it stores (it failed, was cancelled, timed out, was refused by a
-/// hook, or panicked), when storing the result failed or the turn's output
-/// limit replaced it, and when accepting would have had to wait.
+/// hook, or panicked), and when storing the result failed or the turn's
+/// output limit replaced it.
 pub trait CallResultAcceptance: Send {
     /// Binds the durable result receipt into the executor's lifecycle record.
     ///
