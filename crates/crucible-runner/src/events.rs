@@ -105,14 +105,14 @@ pub enum TurnError {
     /// A step the loop took, or a step a compaction between turns took, would
     /// have had to wait.
     ///
-    /// The loop awaits the provider, the session, every call's run, a
-    /// background result's acceptance and the toolset's preparation, listing,
-    /// refreshing and disposal, and reaches the rest — the prompt cache —
-    /// through a bridge that asks once, because those steps are not awaited
-    /// yet; a compaction between turns reaches the prompt cache the same way.
-    /// This is one of them refusing rather than blocking, naming which it
-    /// was. The step was dropped unanswered, so its effect is unconfirmed
-    /// rather than undone.
+    /// The loop awaits the provider, the session, every call's run, every
+    /// prompt-cache step, a background result's acceptance and the toolset's
+    /// preparation, listing, refreshing and disposal, so no step on the
+    /// turn's own path refuses this way anymore. What still refuses is a step
+    /// reached through one of the bridges that still asks once —
+    /// `BashSandbox`, `LocalBackend`, `SandboxReport` or `SandboxPanel` —
+    /// refusing rather than blocking, naming which it was. The step was
+    /// dropped unanswered, so its effect is unconfirmed rather than undone.
     #[error(transparent)]
     Unready(#[from] crucible_runtime::Unready),
 
