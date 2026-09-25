@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use super::{CEILING, FETCH_CEILING, Sending, host_of, room, sent, undelivered};
+use super::{CEILING, FETCH_CEILING, Sending, host_of, sent, undelivered};
 use crate::google::wire::Interactions;
 use crate::{Endpoint, Transport};
 use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SourceError};
@@ -13,9 +13,9 @@ use crucible_credentials::{Credential, Outgoing};
 use crucible_models::Delta;
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{ContinuationScope, ProviderContinuation, StopReason};
-use tokio::sync::Semaphore;
 
 mod fetch;
+#[cfg(test)]
 mod read;
 mod search;
 
@@ -27,7 +27,6 @@ pub struct GoogleWeb {
     credential: Box<dyn Credential>,
     transport: Arc<dyn Transport>,
     model: Box<str>,
-    room: Arc<Semaphore>,
 }
 
 impl std::fmt::Debug for GoogleWeb {
@@ -55,7 +54,6 @@ impl GoogleWeb {
             credential,
             transport: Arc::from(transport),
             model: model.into(),
-            room: room(),
         }
     }
 
@@ -90,49 +88,61 @@ impl GoogleWeb {
             });
         });
         let body = json.finish();
-        sent(
-            (NAME, &self.transport, &self.endpoint),
-            &self.room,
-            cancel,
-            move |sending, cancel| answered(sending, outgoing, body, wire, cancel),
-        )
+        sent(NAME, cancel, |cancel| async move {
+            Box::pin(answered(
+                Sending {
+                    named: NAME,
+                    transport: self.transport.as_ref(),
+                    endpoint: self.endpoint.as_str(),
+                },
+                outgoing,
+                body,
+                wire,
+                &cancel,
+            ))
+            .await
+        })
         .await
     }
 }
 
-/// Posts one side request and reads its whole streamed answer, on the thread
-/// [`sent`] runs it on.
-fn answered(
+/// Posts one side request and reads its whole streamed answer.
+async fn answered(
     sending: Sending<'_>,
-    outgoing: Outgoing,
+    mut outgoing: Outgoing,
     body: String,
     wire: Interactions,
     cancel: &Cancel,
 ) -> Result<(String, ProviderContinuation), SourceError> {
-    let redactions = outgoing.redactions();
     let response = sending
         .transport
-        .post(sending.endpoint, outgoing, body, cancel)
-        .map_err(|error| undelivered(NAME, &error, &redactions, cancel))?;
+        .post(sending.endpoint, &mut outgoing, body, cancel)
+        .await;
+    let redactions = outgoing.redactions();
+    let response = response.map_err(|error| undelivered(NAME, &error, &redactions, cancel))?;
     if cancel.requested() {
         return Err(SourceError::Cancelled(NAME));
     }
-    if response.status != 200 {
+    if response.status() != 200 {
         // Refusal text can include private model state. The HTTP status is
         // sufficient for this non-retrying side request.
         return Err(SourceError::Refused {
             named: NAME,
-            status: response.status,
+            status: response.status(),
             message: "Google refused the web request".into(),
         });
     }
-    let body = read::Limited::new(response.body, cancel.clone(), super::MOST, super::MAX_WAIT);
-    let mut stream =
-        crate::stream::Response::with_wire(Box::new(body), cancel.clone(), redactions, wire);
+    let body = Box::pin(super::read(NAME, response, cancel)).await?;
+    let mut stream = crate::stream::Response::with_wire(
+        Box::new(std::io::Cursor::new(body)),
+        cancel.clone(),
+        redactions,
+        wire,
+    );
     let mut text = String::new();
     let mut state = None;
     let mut stop = None;
-    while let Some(delta) = stream.next_delta() {
+    while let Some(delta) = stream.next_delta().await {
         if cancel.requested() {
             return Err(SourceError::Cancelled(NAME));
         }

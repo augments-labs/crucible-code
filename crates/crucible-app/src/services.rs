@@ -1,7 +1,8 @@
 //! What the application owns for the length of a run and lends to what it
 //! assembles: today the runtime, the worker tools hand their blocking work
-//! to and the owner of account renewals, and whatever later needs to be owned
-//! once per run the same way.
+//! to, the shared HTTP service provider turns and web posts use, and the owner
+//! of account renewals, plus whatever later needs to be owned once per run the
+//! same way.
 //!
 //! One value, [`Services`], made once by [`serving`] and lent to everything the
 //! run builds. [`crate::startup::Startup`] carries it, so a factory reaches
@@ -25,24 +26,27 @@
 //! because everything else here may have work on it.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use crucible_auth::{Renewals, Unjoined};
-use crucible_provider::WEB_IN_FLIGHT;
+use crucible_http::{Http, Lookups, Poison, ProxyEnv, Tls};
+use crucible_provider::HttpTurns;
 use crucible_tools::ToolWorker;
 
 use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 
 // Every shipped owner of the runtime's blocking threads, each at its most, and
-// still at least one thread to spare: the tool worker's jobs, the requests of
-// the one web source a run builds, account renewals and a login's requests and
-// store work, each counting work it gave up on that is still running, and one
-// step at a time for each command left running, whose owner asks its process
+// still at least one thread to spare: the tool worker's jobs, the shared HTTP
+// client's two one-place lookup owners, account renewals and a login's requests
+// and store work, each counting work it gave up on that is still running, and
+// one step at a time for each command left running, whose owner asks its process
 // everything there. An owner added to the blocking threads is added here.
+const HTTP_LOOKUPS: usize = 2;
 const _: () = assert!(
-    ToolWorker::CAPACITY + WEB_IN_FLIGHT + Renewals::BLOCKING + crucible_builtins::MOST < BLOCKING,
-    "the tool worker, the web source, account requests and the commands left running together \
+    ToolWorker::CAPACITY + HTTP_LOOKUPS + Renewals::BLOCKING + crucible_builtins::MOST < BLOCKING,
+    "the tool worker, shared HTTP lookups, account requests and the commands left running together \
      would take every blocking thread the runtime has"
 );
 
@@ -60,6 +64,7 @@ pub const RENEWING: Duration = Duration::from_secs(5);
 pub struct Services {
     runtime: RuntimeOwner,
     tool_worker: OnceLock<ToolWorker>,
+    http: OnceLock<HttpTurns>,
     renewals: Renewals,
 }
 
@@ -69,6 +74,7 @@ impl Services {
         Self {
             runtime: RuntimeOwner::new(),
             tool_worker: OnceLock::new(),
+            http: OnceLock::new(),
             renewals: Renewals::new(),
         }
     }
@@ -96,6 +102,25 @@ impl Services {
         Ok(self.tool_worker.get_or_init(|| ToolWorker::new(handle)))
     }
 
+    /// The one asynchronous HTTP service provider turns and web posts use.
+    ///
+    /// It is built the first time a factory needs it, with one poisoned lookup
+    /// place for targets and one plain place for proxy hosts. A TLS setup that
+    /// cannot be built leaves the same transport refusal in place rather than
+    /// starting a second client or sending plaintext.
+    #[must_use]
+    pub fn http(&self) -> &HttpTurns {
+        self.http.get_or_init(|| {
+            let Ok(tls) = Tls::new() else {
+                return HttpTurns::unavailable();
+            };
+            let poison = Poison::default();
+            let targets = Lookups::poisoned(NonZeroUsize::MIN, &poison);
+            let proxies = Lookups::plain(NonZeroUsize::MIN);
+            HttpTurns::new(Http::new(&tls, targets, proxies, ProxyEnv::capture()))
+        })
+    }
+
     /// The one owner of account renewals for the run, which every
     /// subscription login is built with.
     ///
@@ -110,8 +135,16 @@ impl Services {
     /// Shuts down everything here: renewals still in flight are given
     /// [`RENEWING`] to finish, and the runtime is shut down last.
     fn shutdown(self) -> Result<(), Unfinished> {
-        let renewals = self.renewals.join_within(RENEWING).err();
-        let runtime = self.runtime.shutdown().err();
+        let Services {
+            runtime,
+            tool_worker,
+            http,
+            renewals,
+        } = self;
+        let renewals = renewals.join_within(RENEWING).err();
+        drop(http);
+        drop(tool_worker);
+        let runtime = runtime.shutdown().err();
         match (renewals, runtime) {
             (None, None) => Ok(()),
             (renewals, runtime) => Err(Unfinished { renewals, runtime }),

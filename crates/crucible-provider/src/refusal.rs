@@ -23,12 +23,17 @@
 //! [`authorize`]: crucible_credentials::Credential::authorize
 
 use std::borrow::Cow;
-use std::io::{self, Read};
+use std::io;
+#[cfg(test)]
+use std::io::Read;
 use std::time::{Duration, Instant};
 
 use crucible_credentials::Redactions;
 use crucible_models::ProviderError;
 use crucible_runtime::Cancel;
+use tokio::io::{AsyncRead, AsyncReadExt};
+
+use crate::transport::PostResponse;
 
 /// What is said where a failure names no reason at all.
 ///
@@ -105,9 +110,9 @@ const STOPPED: &str = " [cut: crucible stopped reading here]";
 /// expired as an interruption — the kind the `Read` contract says to retry — so
 /// a gateway that answers 429 and then stalls without closing is a reader that
 /// neither ends nor errors, and `read_to_end` retries it for ever. That leaves
-/// the turn wedged here. The same cancel passed through request setup remains
-/// reachable while the refusal is read, so a user need not wait for this
-/// deadline when they have already left the turn.
+/// the turn wedged here. The caller's cancel remains reachable while the
+/// refusal is read, so a user need not wait for this deadline when they have
+/// already left the turn.
 ///
 /// The whole read rather than the gaps in it, which is the stronger of the two
 /// bounds: a peer trickling one byte per gap satisfies every gap and still holds
@@ -123,22 +128,22 @@ const STOPPED: &str = " [cut: crucible stopped reading here]";
 /// shipped policy allows two further attempts — and a turn makes a request of
 /// its own for every tool pass. A gateway that answers 429, hands over the whole
 /// bound and then holds the connection open costs this wait on each of them, on
-/// the thread the turn is running on. The cancel is looked at before and after
+/// the caller's runtime. The cancel is looked at before and after
 /// every read, so Esc ends all of it at once; what a turn may spend altogether
 /// is bounded at the turn, and is not this constant's to shorten.
 ///
-/// [`read_to_end`]: Read::read_to_end
+/// [`read_to_end`]: std::io::Read::read_to_end
 const MAX_WAIT: Duration = Duration::from_secs(10);
 
 /// A refusal, with the sentence the provider sent.
-pub(crate) fn refused(
+pub(crate) async fn refused(
     provider: &'static str,
     status: u16,
-    body: Box<dyn Read + Send>,
+    body: PostResponse,
     redactions: &Redactions,
     cancel: &Cancel,
 ) -> ProviderError {
-    said(
+    said_async(
         Refusal {
             provider,
             status,
@@ -148,6 +153,7 @@ pub(crate) fn refused(
         body,
         MAX_WAIT,
     )
+    .await
 }
 
 /// The request facts needed while its refused body is read.
@@ -159,11 +165,8 @@ struct Refusal<'a> {
     cancel: &'a Cancel,
 }
 
-/// The same, with a wait a test can hand over as none.
-///
-/// The wait rather than the deadline it makes, so nothing here adds to an
-/// `Instant` — that addition panics where it overflows, and a bound against
-/// hanging is a poor place to put a new way to fail.
+/// The synchronous reader seam retained for recorded transport tests.
+#[cfg(test)]
 fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> ProviderError {
     let mut said = Vec::new();
     let read = fill(
@@ -172,6 +175,19 @@ fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> Pro
         wait,
         refusal.cancel,
     );
+    resolved(refusal, said, read)
+}
+
+/// Reads a live post body on the caller's runtime.
+async fn said_async(refusal: Refusal<'_>, body: PostResponse, wait: Duration) -> ProviderError {
+    let mut said = Vec::new();
+    let mut body = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
+    let read = fill_async(&mut body, &mut said, wait, refusal.cancel).await;
+    resolved(refusal, said, read)
+}
+
+/// Interprets the bounded read identically for live and recorded bodies.
+fn resolved(refusal: Refusal<'_>, mut said: Vec<u8>, read: Result<(), ReadError>) -> ProviderError {
     let most = usize::try_from(MAX_REFUSAL).unwrap_or(usize::MAX);
     let longer = said.len() > most;
 
@@ -374,6 +390,7 @@ enum ReadError {
 /// wait's own job is only to stop a *further* attempt — a stall or a
 /// trickle that has yet to say anything more — from holding the turn; it
 /// has nothing to take back from an attempt that already answered.
+#[cfg(test)]
 fn fill(
     body: &mut dyn Read,
     said: &mut Vec<u8>,
@@ -398,6 +415,39 @@ fn fill(
         // `ProviderError::Cancelled` and never shows a byte of this body —
         // the bytes below are worth keeping only where the wait, not a
         // cancel, is what ends the reading.
+        if cancel.requested() {
+            return Err(ReadError::Cancelled);
+        }
+
+        match read {
+            Ok(0) => return Ok(()),
+            Ok(read) => said.extend_from_slice(into.get(..read).unwrap_or_default()),
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => {}
+            Err(problem) => return Err(problem.into()),
+        }
+    }
+}
+
+/// The asynchronous counterpart of `fill`, with the same whole-read and
+/// cancellation rules.
+async fn fill_async(
+    body: &mut (impl AsyncRead + Unpin + ?Sized),
+    said: &mut Vec<u8>,
+    wait: Duration,
+    cancel: &Cancel,
+) -> Result<(), ReadError> {
+    let since = Instant::now();
+    let mut into = [0_u8; 1024];
+
+    loop {
+        if cancel.requested() {
+            return Err(ReadError::Cancelled);
+        }
+        if since.elapsed() >= wait {
+            return Err(timed_out().into());
+        }
+
+        let read = body.read(&mut into).await;
         if cancel.requested() {
             return Err(ReadError::Cancelled);
         }
@@ -443,6 +493,25 @@ mod tests {
     use super::*;
     use crate::transport::{Paused, Said};
 
+    fn refused_from_read(
+        provider: &'static str,
+        status: u16,
+        body: Box<dyn Read + Send>,
+        redactions: &Redactions,
+        cancel: &Cancel,
+    ) -> ProviderError {
+        said(
+            Refusal {
+                provider,
+                status,
+                redactions,
+                cancel,
+            },
+            body,
+            MAX_WAIT,
+        )
+    }
+
     fn reading(body: &str) -> Box<dyn Read + Send> {
         Box::new(std::io::Cursor::new(body.to_owned().into_bytes()))
     }
@@ -454,7 +523,7 @@ mod tests {
     }
 
     fn plain_refused(status: u16, body: Box<dyn Read + Send>) -> ProviderError {
-        refused("test", status, body, &Redactions::default(), &Cancel::new())
+        refused_from_read("test", status, body, &Redactions::default(), &Cancel::new())
     }
 
     fn plain_said(status: u16, body: Box<dyn Read + Send>, wait: Duration) -> ProviderError {
@@ -716,7 +785,7 @@ mod tests {
         // see it. It is the last thing on the line a user is shown.
         let body = format!("{}{CANARY}tail", "x".repeat(8 * 1024 - 10));
 
-        let shown = refused(
+        let shown = refused_from_read(
             "test",
             502,
             reading(&body),
@@ -851,7 +920,7 @@ mod tests {
         let filler = (8 * 1024_usize).saturating_sub(wide).saturating_sub(1);
         let body = format!("{}{WIDE_CANARY}tail", "x".repeat(filler));
 
-        let shown = refused(
+        let shown = refused_from_read(
             "test",
             502,
             reading(&body),
@@ -914,7 +983,7 @@ mod tests {
         // The byte that makes it a cut, and the only one never kept.
         body.push(b'!');
 
-        let shown = refused(
+        let shown = refused_from_read(
             "test",
             502,
             reading_raw(body),
@@ -938,7 +1007,7 @@ mod tests {
         let cancel = Cancel::new();
         cancel.request();
 
-        let problem = refused(
+        let problem = refused_from_read(
             "test",
             429,
             Box::new(Stalled),

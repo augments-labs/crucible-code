@@ -35,6 +35,8 @@ crucible-models.workspace = true
 # The owner-only boundary the user configuration is held behind before it is
 # read.
 crucible-privacy.workspace = true
+# The shared asynchronous HTTP service the provider and web factories inject.
+crucible-http.workspace = true
 # Every provider this build serves: the one place a name becomes a type.
 crucible-provider.workspace = true
 # The bounded registry the providers are held in.
