@@ -7,12 +7,11 @@
 
 use std::time::SystemTime;
 
+use crate::cli::style::Style;
 use crucible_core::Workspace;
 use crucible_session::Recorded;
 use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold};
-
-use crate::cli::release::Newer;
-use crate::cli::style::Style;
+use crucible_update::Newer;
 
 use super::when;
 

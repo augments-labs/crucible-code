@@ -148,3 +148,20 @@ fn the_http_client_is_one_lazy_run_service() {
     );
     assert_eq!(stopped, Ok(()));
 }
+
+#[test]
+fn the_release_owner_is_one_lazy_run_service() {
+    let (asked, stopped) = serving(|services| {
+        let built_before = services.release.get().is_some();
+        let first = services.release();
+        let second = services.release();
+        (built_before, std::ptr::eq(first, second))
+    });
+
+    assert_eq!(
+        asked,
+        (false, true),
+        "the release owner was built before it was asked for, or a second ask built another one"
+    );
+    assert_eq!(stopped, Ok(()));
+}

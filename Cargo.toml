@@ -68,6 +68,7 @@ crucible-tools = { path = "crates/crucible-tools" }
 crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
+crucible-update = { path = "crates/crucible-update" }
 crucible-workspace = { path = "crates/crucible-workspace" }
 
 # The executor work in flight is owned by. `std` has threads but no way to own a
@@ -467,6 +468,9 @@ crucible-context.workspace = true
 crucible-core.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
+# Release discovery and the cached release check, composed by the application
+# and read by the command line's opening path.
+crucible-update.workspace = true
 crucible-runner.workspace = true
 # The future an asynchronous contract hands back, which the command line and
 # its probes implement, and the bridge the `/sandbox` panel crosses to ask the

@@ -102,7 +102,10 @@ fn researching(failed: bool) -> String {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .unwrap();

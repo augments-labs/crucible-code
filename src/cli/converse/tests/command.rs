@@ -22,7 +22,7 @@ use crucible_runner::Tools;
 use crucible_session::Session;
 use crucible_tui::{Prompt, Recording, Renderer};
 
-use crate::cli::converse::{Answers, Held, Terms, command, converse};
+use crate::cli::converse::{Answers, First, Held, Terms, command, converse};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 
@@ -75,8 +75,17 @@ fn reaching(
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(conversation, &mut renderer, terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -149,8 +158,17 @@ fn asking(provider: &'static str, model: &str, typed: &str) -> String {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
     renderer.terminal().written().to_string()
 }
 
@@ -223,7 +241,10 @@ fn a_model_taken_mid_session_is_what_the_next_turn_is_told_it_is() {
         conversation,
         &mut renderer,
         &keeping(&sample),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -256,8 +277,17 @@ fn a_model_named_on_the_line_is_written_down_under_a_provider_and_beside_it() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/model claude-haiku-4-5\n".to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("anthropic/claude-haiku-4-5"), "{written}");
@@ -284,8 +314,17 @@ fn a_rung_named_on_the_line_is_asked_for_and_written_down() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/effort max\n".to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("max effort"), "{written}");
@@ -451,8 +490,17 @@ fn logout_names_an_active_environment_credential_and_how_to_remove_it() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/logout\n".to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the session to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to finish");
 
     let written = renderer.terminal().written();
     assert!(written.contains("OPENAI_API_KEY"), "{written}");
@@ -483,8 +531,17 @@ fn logging_out(tree: &str, provider: &str, typed: &str) -> (String, StoredCreden
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     (
         renderer.terminal().written().to_string(),
@@ -522,8 +579,17 @@ fn removing_the_active_stored_credential_exposes_an_environment_fallback() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/logout openai\n".to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the session to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to finish");
 
     let written = renderer.terminal().written();
     assert!(
@@ -551,8 +617,17 @@ fn removing_the_only_active_credential_disables_the_current_session() {
     // all rather than the one for a provider with no model.
     let mut input = Cursor::new(b"/logout openai\nhello\n".to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the session to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to finish");
 
     let written = renderer.terminal().written();
     assert!(

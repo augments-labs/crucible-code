@@ -1,10 +1,11 @@
 //! The HTTP clients provider requests are sent through.
 //!
-//! [`Https`] is the process-wide blocking client retained for the release
-//! check's `get` until that path moves. [`HttpTurns`] is the shared
-//! asynchronous service used by model turns and web posts. It is constructed by
-//! the application, lends cancellation and an overall request deadline to every
-//! post, and drops the shared client's future when either ends.
+//! [`Https`] is the process-wide blocking client of the legacy `get` surface,
+//! which is retained with no remaining caller for the unit that retires the
+//! old client. [`HttpTurns`] is the shared asynchronous service used by model
+//! turns and web posts. It is constructed by the application, lends
+//! cancellation and an overall request deadline to every post, and drops the
+//! shared client's future when either ends.
 
 use std::error::Error as _;
 use std::future::Future;
@@ -32,13 +33,14 @@ const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
 /// its 2 min 15 s connection-and-head bound.
 const REQUEST: Duration = Duration::from_mins(3);
 
-/// An HTTPS transport retained for the release check's `get`.
+/// An HTTPS transport of the legacy `get` surface, retained with no remaining
+/// caller for the unit that retires the old client.
 #[derive(Debug)]
 pub struct Https {
     shared: Arc<Shared>,
 }
 
-/// Process-lifetime state for the legacy `get` client.
+/// Process-lifetime state for the legacy `get` client, retained with it.
 #[derive(Debug)]
 struct Shared {
     agent: ureq::Agent,
