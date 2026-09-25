@@ -1154,8 +1154,9 @@ impl Lease {
     /// Not waited for here, because the one asking polls: a process that has
     /// ended is asked again on the next look, and nothing that asks from the
     /// thread that draws is kept waiting on somebody else's publication. A copy
-    /// of the descriptor that a forked child has not yet let go of looks held
-    /// the same way, and is gone by a later look.
+    /// of the descriptor that a forked child has not yet let go of can make the
+    /// publication lock look held; it is still unavailable, and is gone by a
+    /// later look.
     pub(super) fn try_acquire_in(state: &Path) -> io::Result<Option<Self>> {
         #[cfg(test)]
         let _reading = TestStateChange::read();
@@ -1300,10 +1301,32 @@ static TEST_STATE_USE: std::sync::LazyLock<(std::sync::Mutex<StateUse>, std::syn
     std::sync::LazyLock::new(Default::default);
 
 #[cfg(test)]
+thread_local! {
+    /// The thread whose change a reading on this one reads through, where it
+    /// is not this thread's own.
+    static READING_FOR: std::cell::Cell<Option<std::thread::ThreadId>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Under test, makes this thread's readings of this user's state directory
+/// those of `thread`: a command's ending, written on a thread of its own, reads
+/// through a change held by the thread that handed it over, as it did when it
+/// was written on that thread.
+#[cfg(test)]
+pub(super) fn read_for(thread: std::thread::ThreadId) {
+    READING_FOR.with(|reading| reading.set(Some(thread)));
+}
+
+#[cfg(test)]
 impl TestStateChange {
     /// A reading, once no other thread holds the change.
+    ///
+    /// Taken for the thread this one reads for, where it reads for another;
+    /// see [`read_for`].
     pub(super) fn read() -> Self {
-        let current = std::thread::current().id();
+        let current = READING_FOR
+            .with(std::cell::Cell::get)
+            .unwrap_or_else(|| std::thread::current().id());
         let (state, settled) = &*TEST_STATE_USE;
         let mut state = state
             .lock()
@@ -1933,4 +1956,4 @@ fn invalid(problem: &'static str) -> io::Error {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -173,6 +173,16 @@ fn a_stop_that_never_answers_after_the_ceiling_is_said_to_be_unconfirmed_once() 
 }
 
 #[test]
+fn a_publication_completed_during_a_stop_is_not_reported_as_unpublished() {
+    let (message, server) = unfinished_after_a_bad_catalogue(Stop::PublishedAfterEnding);
+    assert!(
+        !message.contains("its publication did not finish"),
+        "{message}"
+    );
+    assert!(server.published.load(Ordering::Acquire));
+}
+
+#[test]
 fn a_stop_that_failed_still_leaves_cleanup_said_to_be_unconfirmed() {
     let (message, server) = unfinished_after_a_bad_catalogue(Stop::Fails);
     // A failed stop's words say only what went wrong, so the message says that
