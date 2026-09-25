@@ -11,13 +11,17 @@
 //! without waiting stay synchronous, and so do a status look and handing a
 //! launch to another owner. A status look never waits on the command or on
 //! another command's publication. The first [`SandboxProcess::try_wait`]
-//! after the command ends completes that ending on the calling thread: it
-//! reaps the command, unless an earlier look has, and on a backend that
-//! publishes, publishes or discards what the command wrote, unless another
-//! command is publishing, which leaves that publication to a later
-//! `try_wait`. [`SandboxProcess::ended`] need not complete it: it may reap and
-//! publish nothing, leaving what the command wrote to `try_wait`. The default
-//! `ended` asks `try_wait`, and so completes the ending as that does.
+//! after the command ends begins that ending: it reaps the command, unless an
+//! earlier look has, and on a backend that publishes, publishing or discarding
+//! what the command wrote begins there too. A backend may finish that on the
+//! calling thread, or on work of its own that the look does not wait for,
+//! answering `None` until a later look finds it finished; the in-tree Linux
+//! backend does the latter. A worker waiting for a publication slot, a
+//! publication lock held by another command or descriptor, or a discard still
+//! being recorded also leaves the ending to a later `try_wait`.
+//! [`SandboxProcess::ended`] need not begin it: it may observe the command or
+//! its handed-off ending, leaving what the command wrote to `try_wait`. The
+//! default `ended` asks `try_wait`, and so begins the ending as that does.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -30,7 +34,7 @@ use crucible_storage::{CallResultKey, CallResultReceipt};
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use sha2::{Digest as _, Sha256};
 
-use super::audit::SandboxAudit;
+use super::audit::{SandboxAudit, SandboxLifecycle};
 use super::capability::{
     MAX_SANDBOX_BACKEND_WORD_BYTES, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability,
     SandboxFeature,
@@ -1561,8 +1565,9 @@ pub trait SandboxProcess: Send {
     ///
     /// `None` while the command runs. On a backend that publishes what a command
     /// wrote, also `None` while a command that has ended is still having what
-    /// it wrote reported back, or waits its turn behind another command's
-    /// publication; [`Self::ended`] tells the two apart.
+    /// it wrote reported back, published or discarded, waits for a publication
+    /// worker slot, or waits behind an unavailable publication lock;
+    /// [`Self::ended`] tells those states from a command still running.
     ///
     /// # Errors
     ///
@@ -1574,18 +1579,33 @@ pub trait SandboxProcess: Send {
     /// Whether the command has ended, whatever becomes of what it wrote.
     ///
     /// [`Self::try_wait`] goes on answering `None` for a command that has ended
-    /// while what it wrote is still being reported back or waits for another
-    /// command's publication, because its ending is complete only once its own
-    /// publication is. This is how a caller holding a deadline or a grace tells
-    /// that wait from a command still running: stopping a command discards what
-    /// it wrote, so one that finished in time is waited for rather than
-    /// stopped. An error from `try_wait` once this has answered `true` is how
-    /// that ending went wrong, not a status that could not be read.
+    /// while its ending is being written, discarded, waiting for a worker slot,
+    /// or waiting for an unavailable publication lock. This is how a caller
+    /// holding a deadline or a grace tells that wait from a command still
+    /// running: stopping a command before its ending begins discards what has
+    /// not been published, while a stop that joins an ending already writing
+    /// lets that ending complete. An error from `try_wait` once this has
+    /// answered `true` is how that ending went wrong, not a status that could
+    /// not be read.
     ///
     /// A status that cannot be read reads as not ended, so a caller stops the
     /// command as it would have without asking.
     fn ended(&mut self) -> bool {
         matches!(self.try_wait(), Ok(Some(_)))
+    }
+
+    /// What became of this command's private effects when its ending reached a
+    /// terminal state.
+    ///
+    /// `Some(SandboxLifecycle::Published)` means the effects were durably
+    /// published; `Some(SandboxLifecycle::RolledBack)` means they were rolled
+    /// back. `Some(SandboxLifecycle::Quarantined)` means no safe decision is
+    /// known; it does not prove whether the effects were published. `None`
+    /// means the ending is still in flight or this backend has no publication
+    /// to report. A caller must ask this after a stop, rather than infer the
+    /// outcome from an earlier `ended` observation.
+    fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+        None
     }
 
     /// Stops the complete owned process scope and reaps the command leader.
@@ -1595,7 +1615,10 @@ pub trait SandboxProcess: Send {
     /// Operating-system cleanup of descendant process objects may finish later.
     /// A backend publishing private effects must also establish that those
     /// effects cannot change before publication. A command stopped before its
-    /// ending is complete publishes nothing.
+    /// ending is complete publishes nothing, except where the backend's own
+    /// work is already writing that ending when the stop lands: the stop waits
+    /// for it, and a publication it made stands, since one cut short would be
+    /// half made.
     ///
     /// # Errors
     ///
@@ -1621,7 +1644,8 @@ pub trait SandboxProcess: Send {
     /// # Errors
     ///
     /// Foreground processes, a mismatched result identity, and duplicate
-    /// transitions are refused.
+    /// transitions are refused. So, on a backend that publishes, is a command
+    /// whose ending a look has already begun: its result is that ending.
     fn begin_background_acceptance(
         &mut self,
         _key: CallResultKey,

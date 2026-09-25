@@ -47,6 +47,8 @@ use crucible_workspace::Workspace;
 mod client;
 #[path = "headless/crossing.rs"]
 mod crossing;
+#[path = "headless/searching.rs"]
+mod searching;
 
 /// Whatever stopped a test before its assertion.
 type Failed = Box<dyn std::error::Error>;

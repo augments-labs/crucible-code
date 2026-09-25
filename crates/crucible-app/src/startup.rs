@@ -248,6 +248,10 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // from here on: a credential this run resolved renews on it, and a login
     // `/login` starts sends its requests through it.
     startup.services.renewals().runs_on(runtime.clone());
+    // And the one worker every tool call is lent for its blocking work, on
+    // that same runtime, so the work of every call in the run shares its
+    // bound.
+    let worker = startup.services.tool_worker()?.clone();
 
     let (session, earlier) = match &startup.resuming {
         Resuming::Newest => {
@@ -309,7 +313,8 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
             )
         }
         .permitting(permission)
-        .under(run_policy);
+        .under(run_policy)
+        .lending(worker);
         match earlier {
             Some(transcript) => {
                 planned(startup.plan, &transcript);

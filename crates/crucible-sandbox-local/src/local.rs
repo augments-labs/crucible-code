@@ -46,10 +46,19 @@ use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 /// looked at and kept. The task needs that runtime's clock and nothing else.
 /// A service given no runtime probes and prepares as any other does, and
 /// refuses to start a command.
+///
+/// # Where a command's ending is written
+///
+/// On Linux, what a command's ending journals, and the publication or discard
+/// of what it wrote, run on a dedicated per-command thread launched through the
+/// service's bound, at most sixteen at once, rather than on whoever asks how
+/// the command ended.
 #[derive(Debug, Clone, Default)]
 pub struct LocalSandbox {
     active: Arc<AtomicUsize>,
     runtime: Option<tokio::runtime::Handle>,
+    #[cfg(target_os = "linux")]
+    publications: super::linux::BoundedPublication,
 }
 
 impl LocalSandbox {
@@ -68,6 +77,12 @@ impl LocalSandbox {
     pub fn watching_on(mut self, runtime: tokio::runtime::Handle) -> Self {
         self.runtime = Some(runtime);
         self
+    }
+
+    /// Under test, where this service writes its commands' endings.
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn publications(&self) -> &super::linux::BoundedPublication {
+        &self.publications
     }
 }
 
@@ -109,7 +124,7 @@ impl SandboxService for LocalSandbox {
                 SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
             )?;
             let prepared = if request.policy().enabled() {
-                enforcing(request, Arc::clone(&self.active), self.runtime.clone())
+                enforcing(request, self)
             } else {
                 compatibility(
                     request,
@@ -140,12 +155,13 @@ impl SandboxService for LocalSandbox {
 
 fn enforcing(
     request: SandboxRequest,
-    active: Arc<AtomicUsize>,
-    runtime: Option<tokio::runtime::Handle>,
+    service: &LocalSandbox,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
+    let active = Arc::clone(&service.active);
+    let runtime = service.runtime.clone();
     #[cfg(target_os = "linux")]
     {
-        super::linux::prepare(request, active, runtime)
+        super::linux::prepare(request, active, runtime, service.publications.clone())
     }
     #[cfg(target_os = "macos")]
     {

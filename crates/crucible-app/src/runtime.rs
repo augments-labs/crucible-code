@@ -65,9 +65,13 @@ use tokio::runtime::{Builder, Handle, Runtime};
 /// A turn is not one of them: it is polled on the thread that takes it. What
 /// runs here is work the application owns on the turn's behalf and between
 /// turns — a process's status, a hosted program's streams, a credential's
-/// renewal — each of which spends most of its life waiting. Four keeps a task
-/// that holds a worker inside synchronous work from stopping the rest, and
-/// costs four idle threads.
+/// renewal — each of which spends most of its life waiting, and the runs of a
+/// turn's tool calls, which may hold a worker inside synchronous work for as
+/// long as a call lasts. Those are at most `crucible_runner::TOOL_RUNS` at
+/// once, held below this less one, so two workers stay free and a process's
+/// status task, where its deadline and output-limit kills run, finds one
+/// even while something else is polled on the other. Four keeps a task that
+/// holds a worker from stopping the rest, and costs four idle threads.
 pub const WORKERS: usize = 4;
 
 /// The most threads the runtime starts for blocking work handed to it.
