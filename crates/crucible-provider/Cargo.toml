@@ -18,23 +18,30 @@ base64.workspace = true
 # Every other name is taken from the crate that owns it.
 crucible-core.workspace = true
 crucible-credentials.workspace = true
+# The shared asynchronous client and its bounded response-body readers used by
+# model turns and web posts.
+crucible-http.workspace = true
 crucible-models.workspace = true
 crucible-runtime.workspace = true
 crucible-types.workspace = true
+# The HTTP method and typed response-head error inspection used at the
+# provider transport boundary.
+hyper = { workspace = true, features = ["server"] }
 serde_json.workspace = true
 thiserror.workspace = true
-# A web source sends its blocking request from the blocking threads of the
-# runtime its caller polls it in (`rt`), and bounds how many of its requests
-# hold one at once (`sync`). Nothing here builds a runtime.
-tokio = { workspace = true, features = ["rt", "sync"] }
+# `rt` names the caller's runtime, `io-util` frames response bodies, and `time`
+# bounds recorded whole-body reads. Nothing here builds a runtime.
+tokio = { workspace = true, features = ["io-util", "rt", "time"] }
 ureq.workspace = true
 
 # `answered!`, which the tests ask a provider's future once with.
 [dev-dependencies]
 crucible-runtime = { workspace = true, features = ["proof"] }
 # A runtime of the test's own to await a web source's answer on, as the turn
-# awaits one on the application's.
-tokio = { workspace = true, features = ["rt"] }
+# awaits one on the application's. The peer-closure probe joins its loopback
+# server while a cancelled client task must still be polled, so its test
+# runtime keeps a worker for that task.
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [lints]
 workspace = true

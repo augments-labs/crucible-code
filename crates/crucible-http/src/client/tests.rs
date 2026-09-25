@@ -611,6 +611,29 @@ async fn first_lookup<T>(
     }
 }
 
+/// A cloned client keeps the connector's poisoned target owner, so every
+/// provider clone made from the application's service obeys the same verdict.
+#[tokio::test]
+async fn a_client_clone_obeys_the_same_poisoned_target_lookup() {
+    let poison = raised();
+    let target = Lookups::poisoned(NonZeroUsize::MIN, &poison);
+    let proxy_host = PlainLookups::with(NonZeroUsize::MIN, Arc::new(Never));
+    let client = Http::new(
+        &Tls::new().unwrap(),
+        target,
+        proxy_host,
+        ProxyEnv::read(|_| None),
+    );
+    let clone = client.clone();
+
+    let error = get(&clone, "http://api.test/").await.unwrap_err();
+
+    assert!(
+        matches!(error.connect(), Some(ConnectError::ResolveStalled)),
+        "{error:?}"
+    );
+}
+
 /// A proxy's host is looked up with a plain owner, under the connect deadline
 /// alone: a raised poison does not stop it, a stall in it raises none, and
 /// the connection is given up at 15 s like any other.

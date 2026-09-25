@@ -1,5 +1,7 @@
 //! An HTTP client built for crucible's outgoing requests to share, and the
-//! policy a request sent through it is sent under. Nothing uses it yet.
+//! policy a request sent through it is sent under. Provider turns, web posts
+//! and account requests use it; the release check and web `get` remain on the
+//! legacy client.
 //!
 //! [`Http`] is a pooled HTTP/1.1 client. What it will and will not do is fixed
 //! here rather than by each caller, because each of these is a promise about

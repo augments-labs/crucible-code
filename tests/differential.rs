@@ -41,8 +41,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_builtins::{
-    AskUser, Bash, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch, WebFetch,
-    WebSearch, Write,
+    AskUser, Bash, BashOutput, Edit, Glob, Grep, Held, Ledger, Plan, Read, TodoWrite, ToolSearch,
+    WebFetch, WebSearch, Write,
 };
 use crucible_config::{HOME, Home, Settings};
 use crucible_core::{
@@ -59,7 +59,9 @@ use crucible_core::{
     ToolProvenance, ToolResult, ToolSchema, Transcript, Workspace,
 };
 use crucible_extension::Extensions;
-use crucible_provider::{Anthropic, Google, Moonshot, OpenAi, Response, Transport, TransportError};
+use crucible_provider::{
+    Anthropic, Google, Moonshot, OpenAi, PostResponse, Transport, TransportError,
+};
 use crucible_runtime::BoxFuture;
 use crucible_session::Session;
 
@@ -370,12 +372,13 @@ fn every_built_in_tool_advertises_what_it_did() {
         about: "one held tool, so the search has something to offer".into(),
     }];
 
-    let tools: [Box<dyn DescribeTool>; 11] = [
+    let tools: [Box<dyn DescribeTool>; 12] = [
         Box::new(AskUser::new(Arc::new(Silent))),
         Box::new(Bash::new(
             workspace.clone(),
             Arc::new(crucible_sandbox_local::LocalSandbox::new()),
         )),
+        Box::new(BashOutput::new(crucible_builtins::Background::new())),
         Box::new(Edit::new(workspace.clone())),
         Box::new(Glob::new(workspace.clone())),
         Box::new(Grep::new(workspace.clone())),
@@ -802,13 +805,13 @@ impl Recorder {
 }
 
 impl Transport for Recorder {
-    fn post(
-        &self,
-        url: &str,
-        headers: Outgoing,
+    fn post<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
         body: String,
-        _cancel: &Cancel,
-    ) -> Result<Response, TransportError> {
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
         if let Ok(mut kept) = self.0.lock() {
             kept.push(Posted {
                 url: url.to_owned(),
@@ -821,10 +824,10 @@ impl Transport for Recorder {
             });
         }
 
-        Ok(Response {
-            status: 200,
-            body: Box::new(std::io::empty()),
-        })
+        Box::pin(std::future::ready(Ok(PostResponse::recorded(
+            200,
+            tokio::io::empty(),
+        ))))
     }
 }
 

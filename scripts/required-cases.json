@@ -826,7 +826,7 @@
       },
       "case": "every_built_in_tool_advertises_what_it_did",
       "source": "tests/differential.rs",
-      "body_sha256": "b5ad8a2a25382c22ed226fdff89ef62df4581732bf69c65400224126396a1876",
+      "body_sha256": "9b78f949048722a6f9f5759cf8963cf4b80ac98236ca40ffebb4fb8454c190ff",
       "platforms": [
         "linux",
         "macos",

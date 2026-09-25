@@ -73,6 +73,7 @@ fn built(
 ) -> Result<Box<dyn Provider>, AppError> {
     let stored = StoredCredentials::default();
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let http = HttpTurns::unavailable();
     provider(
         serving,
         NOTHING_TO_ASK,
@@ -82,7 +83,29 @@ fn built(
             stored: &stored,
             subscriptions: &subscriptions,
         },
+        &http,
     )
+}
+
+#[test]
+fn wiring_keeps_the_services_http_reference() {
+    let stored = StoredCredentials::default();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let settings = Settings::default();
+    let from = |_: &str| None;
+    let http = HttpTurns::unavailable();
+    let auth = ProviderAuth {
+        settings: &settings,
+        from: &from,
+        stored: &stored,
+        subscriptions: &subscriptions,
+    };
+
+    let provider = wiring(serving("anthropic"), auth, &http).unwrap();
+    let web = wiring(serving("openai"), auth, &http).unwrap();
+
+    assert!(std::ptr::eq(provider.http, &raw const http));
+    assert!(std::ptr::eq(web.http, &raw const http));
 }
 
 /// Polls `authorizing` once and panics if it was not ready: every credential
@@ -356,6 +379,7 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
         sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
+    let http = HttpTurns::unavailable();
     let problem = provider(
         Some(serving("openai")),
         NO_MODEL_CHOSEN,
@@ -365,6 +389,7 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
             stored: &keys,
             subscriptions: &subscriptions,
         },
+        &http,
     )
     .expect_err("a subscription sent to an API-key gateway");
 
@@ -769,7 +794,11 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
         stored: &stored,
         subscriptions: &subscriptions,
     };
-    let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
+    let http = HttpTurns::unavailable();
+    let reaching = google_web(
+        wiring(serving("google"), auth, &http).unwrap(),
+        "gemini-3.8-flash",
+    );
     assert!(reaching.searching.is_none());
     assert!(reaching.fetching.is_none());
 
@@ -781,7 +810,10 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
         stored: &stored,
         subscriptions: &subscriptions,
     };
-    let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
+    let reaching = google_web(
+        wiring(serving("google"), auth, &http).unwrap(),
+        "gemini-3.8-flash",
+    );
     assert_eq!(
         reaching.searching.unwrap().reaches(),
         crucible_tools::Host::Named {
@@ -801,7 +833,8 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
                 from: &from,
                 stored: &stored,
                 subscriptions: &subscriptions
-            }
+            },
+            &http,
         )
         .is_err()
     );
@@ -1273,4 +1306,5 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
     );
 }
 
+mod conformance;
 mod lending;
