@@ -74,6 +74,7 @@ fn sandbox_facts_are_evented_and_journaled_before_the_tool_finishes() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
     .pass(&[call("audited-call", "audited")], 0, usize::MAX)
@@ -175,6 +176,7 @@ fn a_panicking_tool_cannot_erase_its_sandbox_facts() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
     .pass(
@@ -301,6 +303,7 @@ fn a_run_that_panics_on_a_later_poll_is_contained_as_one_that_panics_at_once() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
     .pass(
@@ -343,10 +346,11 @@ fn a_run_that_panics_on_a_later_poll_is_contained_as_one_that_panics_at_once() {
 
 #[test]
 fn a_panicking_tool_in_a_parallel_wave_cannot_erase_its_sandbox_facts() {
-    // The calls of a parallel wave each run on a scoped thread of their own,
-    // where a panic is contained apart from the one a call running alone
-    // meets. Each call is still answered as contained, and each still has
-    // the fact its sandbox recorded before it came apart reported once.
+    // The calls of a parallel wave run as tasks of one batch's group, side by
+    // side, and a panic in one is contained around its own run as a lone
+    // call's is, without stopping the other. Each call is still answered as
+    // contained, and each still has the fact its sandbox recorded before it
+    // came apart reported once.
     let descriptor = ToolDescriptor::new(
         "panicking-audited",
         "{}",
@@ -379,6 +383,7 @@ fn a_panicking_tool_in_a_parallel_wave_cannot_erase_its_sandbox_facts() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 2,
     }
     .pass(
@@ -529,6 +534,7 @@ fn detached_sandbox_facts_keep_the_original_call_until_the_next_runner_boundary(
         ancestry,
         journal: &journal,
         audits: &audits,
+        worker: None,
         concurrency: 1,
     }
     .pass(

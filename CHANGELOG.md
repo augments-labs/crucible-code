@@ -56,8 +56,7 @@ change in any release with no deprecation period.
   cancelled or dropped once its job runs asks the job to stop through a child
   of its `Cancel` and gives the place back only when the job returns.
   `ToolContext::with_worker` lends a call one and `Services::tool_worker`
-  builds the run's worker when first asked for. No call is lent one yet, so
-  nothing a user runs behaves differently.
+  builds the run's worker when first asked for.
 - **A future can stop waiting the moment its cancel is raised.**
   `Cancel::race` awaits a future and hands back `None` instead, dropping it,
   once the token, an ancestor of it or a deadline on either is requested. A
@@ -191,8 +190,7 @@ change in any release with no deprecation period.
   none searches on the thread polling it, as before, with the same answer, and
   a search that comes apart is contained as a panic either way. The benchmark
   probes build their own runtime and lend the calls they time a worker, so
-  `Bridge::Probes` is gone. No call is lent a worker yet, so nothing a user
-  runs behaves differently.
+  `Bridge::Probes` is gone.
 - **MCP servers are started, greeted and called asynchronously.** A call to an
   MCP tool no longer holds a thread while its server thinks, and a sandbox step
   of a server's start that waits is given up on at its `handshakeSeconds`, or
@@ -212,8 +210,7 @@ change in any release with no deprecation period.
   replacement into place, leaving the file as it was though directories it
   already made may remain; a picture `read` stops between chunks and answers
   cancelled rather than opening the file again as text. A file counts as seen
-  only once the call that touched it has its answer, and no call is lent a
-  worker yet, so nothing else a user runs behaves differently.
+  only once the call that touched it has its answer.
 - **The synchronous transport is gone, and stopping a hosted server no longer
   blocks.** `Finish::after`, the blocking wait for a confined process, is
   deleted in favor of the awaited `Finish::after_async`; `Pipes::taken` and
@@ -250,6 +247,16 @@ change in any release with no deprecation period.
   channel, while `OAuthError::Worker`, `OAuthError::Unwaited` and
   `Bridge::AccountLogin` are gone and `OAuthError::NotStarted` refuses a login
   begun with no runtime.
+- **A turn's tool calls run as tasks on the application's runtime, and each
+  is waited for.** `Runner::turn` spawns every call's run onto the runtime it
+  is polled in, so it panics at its first tool call when polled outside one,
+  runs at most `crucible_runner::TOOL_RUNS` of a wave at once, and awaits each
+  run, a background result's acceptance and the toolset's listing and
+  refreshing, so `Bridge::TurnTools` is gone; a call's deadline is now
+  cooperative, never dropping a run, and a call is answered with what its run
+  answered even after a stop. `Runner::lending` lends every call a
+  `ToolWorker`, which `crucible-core` now re-exports, and `startup::assemble`
+  lends the run's own.
 - **A bash call's output is read by tasks the call awaits.** `Bash` reads a
   command's output through the sandbox's waiting reads, in tasks on the Tokio
   runtime polling the call, and waits between its looks at the command on that

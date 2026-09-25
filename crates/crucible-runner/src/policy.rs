@@ -53,7 +53,9 @@ use std::time::Duration;
 
 use crucible_core::PromptCachePolicy;
 
-/// The hard upper bound on tool workers one run may admit at once.
+/// The hard upper bound on the scheduler ceiling one run may ask for. However
+/// wide a wave that allows, at most [`crate::TOOL_RUNS`] of its calls run at
+/// once.
 pub const MAXIMUM_TOOL_CONCURRENCY: usize = 64;
 
 /// The bounded scheduler allowance for one run.
@@ -79,7 +81,10 @@ impl ToolScheduling {
             })
     }
 
-    /// The most tool calls this run may execute at once.
+    /// The widest wave of tool calls this run may schedule together.
+    ///
+    /// However wide the wave, at most [`crate::TOOL_RUNS`] of its calls run
+    /// at once.
     #[must_use]
     pub const fn maximum_concurrency(self) -> usize {
         self.maximum_concurrency.get()
