@@ -77,16 +77,17 @@ pub const WORKERS: usize = 4;
 /// The most threads the runtime starts for blocking work handed to it.
 ///
 /// Blocking work is disk and platform calls, the shared HTTP client's two
-/// hostname-lookup places, account renewals' lock, file and lookup work, and
-/// the calls into a command left running, which have no asynchronous form,
-/// each bounded by its owner. What every owner may hold at once is checked
-/// against this in [`crate::services`]: the tool worker's four jobs, the
-/// shared client's two lookup places and account work's two threads, each
-/// counting work it gave up on that is still running, and one step at a time
-/// for each of the four commands that may be left running, whose owner makes
-/// every call into its process here; and one thread to spare, so an owner at
-/// its most never makes another's job queue.
-pub const BLOCKING: usize = 13;
+/// hostname-lookup places, account renewals' lock, file and lookup work, the
+/// release check's one cache write, and the calls into a command left running,
+/// which have no asynchronous form, each bounded by its owner. What every owner
+/// may hold at once is checked against this in [`crate::services`]: the tool
+/// worker's four jobs, the shared client's two lookup places and account work's
+/// two threads, each counting work it gave up on that is still running, plus
+/// the release check's one cache write and one step at a time for each of the
+/// four commands that may be left running, whose owner makes every call into
+/// its process here; and one thread to spare, so an owner at its most never
+/// makes another's job queue.
+pub const BLOCKING: usize = 14;
 
 /// How long the runtime's threads are given to stop once it is shut down.
 ///

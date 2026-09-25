@@ -23,7 +23,6 @@ mod ending;
 mod fake;
 mod gathering;
 mod kept;
-mod release;
 #[cfg(test)]
 mod sample;
 mod seen;
@@ -677,13 +676,15 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     let sessions = crucible_session::recent(home.sessions(), &workspace, Welcome::WANTED);
 
     // Off the disk, so no socket is opened on the path the first frame is
-    // measured on. Asking again happens after the frame is drawn, on a thread
-    // nobody waits for, and what it finds is what the next run says. Nothing
-    // said is asking: a release check is the sort of thing somebody turns off,
-    // and one that has to be turned *on* is one nobody has.
+    // measured on. Nothing said is asking: a release check is the sort of thing
+    // somebody turns off, and one that has to be turned *on* is one nobody has.
     let asking = settings.updates().unwrap_or_default().wanted();
     let update = asking
-        .then(|| release::newer(home.path(), env!("CARGO_PKG_VERSION")))
+        .then(|| {
+            services
+                .release()
+                .cached(home.path(), env!("CARGO_PKG_VERSION"))
+        })
         .flatten();
 
     let opening = draw::opening(
@@ -699,9 +700,26 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         },
     )?;
 
-    if asking {
-        release::refresh(home.path());
-    }
+    // What asking again costs is put off until the frame is on the screen: a
+    // question asked before it opens a socket, and leaves a proxy's copy of the
+    // request, ahead of the opening the reader is waiting for.
+    //
+    // Built here and armed there, because this is the last point at which the
+    // services can be reached: they move into the run below, and what the
+    // conversation is handed is the closure rather than the owner. The owner it
+    // holds is the same one the shutdown joins the check through, because a
+    // clone shares the one task slot, the one client and the one cancellation.
+    let arming: Option<Box<dyn FnOnce()>> = if asking {
+        let runtime = services.runtime().handle().map_err(AppError::from)?;
+        let release = services.release().clone();
+        let home = home.path().to_owned();
+        Some(Box::new(move || {
+            release.runs_on(runtime);
+            release.refresh(&home);
+        }))
+    } else {
+        None
+    };
 
     // The generation the launch above read its provider out of, taken once so
     // the arm that was resolved and the model record its limits come from are
@@ -736,7 +754,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         conversation,
         &mut renderer,
         &terms,
-        &opening,
+        converse::First {
+            card: &opening,
+            arming,
+        },
         &mut io::stdin().lock(),
     );
 

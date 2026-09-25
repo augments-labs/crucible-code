@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::Write as _;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::time::Duration;
 
 #[cfg(unix)]
 use crate::{append, sync_parent, tighten};
@@ -20,6 +22,43 @@ impl Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// How long a read of planted state is given to answer before the test says
+/// what it was still waiting for.
+///
+/// Not a deadline anything is measured against: opening a name and asking for
+/// its mode is three syscalls, and the channel hands the answer over the moment
+/// it arrives. How far inside the window that happens is not something this
+/// suite knows. The harness reports elapsed time to a hundredth of a second, so
+/// a passing run is recorded as `0.00s` and what the evidence bounds is the run
+/// under that reported resolution, not a millisecond. It is the point at which
+/// an open that has stopped answering gives up and names itself, which is the
+/// whole reason it is here. Thirty seconds rather than two, because a shared
+/// runner hands a thread out when it feels like it, and a short window buys a
+/// suite that failed on a busy machine and passed on a quiet one.
+#[cfg(unix)]
+const PATIENCE: Duration = Duration::from_secs(30);
+
+/// Runs `read` where this test can leave it behind, and fails by name if it has
+/// not answered within [`PATIENCE`].
+///
+/// An open waiting for a writer nobody is going to open never comes back, so
+/// the thread running it stays where it is; abandoning it is what turns the
+/// wait into a reported failure instead of a suite that never finishes. The
+/// process ends it with the test binary, and it holds no descriptor, so nothing
+/// it is waiting on is kept open by it.
+#[cfg(unix)]
+fn answered<T: Send + 'static>(what: &str, read: impl FnOnce() -> T + Send + 'static) -> T {
+    let (said, inbox) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = said.send(read());
+    });
+
+    match inbox.recv_timeout(PATIENCE) {
+        Ok(answered) => answered,
+        Err(timed_out) => panic!("{what}: {timed_out} within {PATIENCE:?}"),
     }
 }
 
@@ -71,6 +110,41 @@ fn existing_open_permissions_are_tightened() {
     assert_eq!(
         fs::metadata(file).unwrap().permissions().mode() & 0o777,
         0o600
+    );
+}
+
+/// A pipe standing where a private file is tightened waits for a writer that is
+/// not coming, and tightening private state is on the startup path, so one
+/// planted there by a process able to write in this directory would hold the
+/// run before it drew anything. It is refused instead: the name is opened
+/// without waiting for a peer, and the ordinary-file proof is what then refuses
+/// what opened.
+///
+/// Waited for under [`PATIENCE`] rather than joined. A blocked open is a
+/// syscall that nothing outside it can interrupt, so the bound is the only
+/// thing that ends one, and a bound held outside this test would leave the
+/// suite waiting instead of reporting.
+#[cfg(unix)]
+#[test]
+fn a_pipe_where_private_state_is_tightened_is_refused_without_waiting_for_a_writer() {
+    let scratch = Scratch::new("tighten-pipe");
+    fs::create_dir_all(&scratch.0).unwrap();
+    let at = scratch.0.join("pipe");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&at)
+        .status()
+        .expect("mkfifo is available on Unix");
+    assert!(made.success());
+
+    let tightened = answered(
+        "tightening a pipe standing where private state is kept",
+        move || tighten(&at),
+    );
+
+    assert_eq!(
+        tightened.unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput,
+        "a pipe standing where private state is kept was tightened"
     );
 }
 

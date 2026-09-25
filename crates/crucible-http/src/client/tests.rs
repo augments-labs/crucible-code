@@ -4,6 +4,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -31,6 +32,7 @@ use crate::connect::{Conn, ConnectError, Connector, MAX_SETUPS, Setups, Tls};
 use crate::dns::tests::{Answer, Stall, raised, settle, stalled, stalled_plain, until_inside};
 use crate::dns::{Lookup, Lookups, PlainLookups, Poison};
 use crate::proxy::ProxyEnv;
+use crate::read_limited;
 use crate::tasks::Tasks;
 
 /// A self-signed certificate for 127.0.0.1, and its key. It protects nothing:
@@ -67,6 +69,136 @@ fn proxy_env(name: &'static str, value: String) -> ProxyEnv {
 async fn get(http: &Http, url: &str) -> Result<Response<Incoming>, HttpError> {
     http.send(Method::GET, url, &mut Outgoing::new(), String::new())
         .await
+}
+
+/// A source that answers one request and records the head it was asked with.
+async fn asking_once(said: &Heard) -> String {
+    let (listener, url) = listen("http").await;
+    let heard = Arc::clone(said);
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        answer(tcp, move |request| {
+            heard
+                .lock()
+                .unwrap()
+                .push(format!("{:?} {:?}", request.method(), request.headers()));
+            Response::new(String::from("{}"))
+        })
+        .await;
+    });
+
+    url
+}
+
+/// The route documented as taking no caller header accepts no name and value
+/// here that a caller holding one could send. The library still adds its own
+/// default `User-Agent`.
+#[tokio::test]
+async fn an_uncredentialed_get_carries_no_caller_header() {
+    let said = Heard::default();
+    let url = asking_once(&said).await;
+
+    let response = http(&Tls::new().unwrap()).get(&url).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let asked = said.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    for forbidden in [
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "x-api-key",
+    ] {
+        assert!(
+            !asked.first().is_some_and(|head| head.contains(forbidden)),
+            "{forbidden} went out of the uncredentialed route: {asked:?}"
+        );
+    }
+}
+
+/// The fixed release route sends its two non-secret headers and accepts no
+/// caller header of its own.
+#[tokio::test]
+async fn a_release_get_sends_its_fixed_headers() {
+    let said = Heard::default();
+    let url = asking_once(&said).await;
+
+    let response = http(&Tls::new().unwrap()).get_release(&url).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        read_limited(response.into_body(), 2, Duration::from_secs(1))
+            .await
+            .unwrap(),
+        b"{}"
+    );
+    let asked = said.lock().unwrap().clone();
+    assert!(
+        asked.first().is_some_and(|head| {
+            head.contains("application/vnd.github+json")
+                && head.contains(&format!("crucible-code/{}", env!("CARGO_PKG_VERSION")))
+        }),
+        "{asked:?}"
+    );
+}
+
+#[tokio::test]
+async fn separate_clients_keep_separate_pools() {
+    let (listener, url) = listen("http").await;
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let server_accepted = Arc::clone(&accepted);
+    let server = tokio::spawn(async move {
+        let (first, _) = listener.accept().await.unwrap();
+        server_accepted.fetch_add(1, Ordering::AcqRel);
+        let first = tokio::spawn(answer(first, |_| Response::new(String::new())));
+
+        if let Ok(Ok((second, _))) =
+            tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+        {
+            server_accepted.fetch_add(1, Ordering::AcqRel);
+            tokio::spawn(answer(second, |_| Response::new(String::new())));
+        }
+        first.abort();
+    });
+
+    let tls = Tls::new().unwrap();
+    let first = http(&tls);
+    let second = http(&tls);
+    for client in [&first, &second] {
+        let response = client.get(&url).await.unwrap();
+        let _ = read_limited(response.into_body(), 1, Duration::from_secs(1))
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(accepted.load(Ordering::Acquire), 2);
+    server.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn idle_connections_are_reaped_by_the_pool_timer() {
+    let (listener, url) = listen("http").await;
+    let peer = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        answer(tcp, |_| Response::new(String::new())).await;
+    });
+    let http = http(&Tls::new().unwrap());
+    let response = get(&http, &url).await.unwrap();
+    let _ = read_limited(response.into_body(), 1, Duration::from_secs(1))
+        .await
+        .unwrap();
+
+    settle().await;
+    tokio::time::advance(Duration::from_millis(15_001)).await;
+    settle().await;
+
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), peer)
+            .await
+            .is_ok(),
+        "the idle connection outlived the pool timer"
+    );
 }
 
 async fn listen(scheme: &str) -> (TcpListener, String) {

@@ -196,7 +196,10 @@ fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -212,6 +215,46 @@ fn saying(text: &str) -> Vec<Delta> {
         Delta::Text(text.into()),
         Delta::Stopped(StopReason::Yielded),
     ]
+}
+
+/// The opening is the first thing on the screen, so what the run arms behind
+/// it is armed behind a frame the reader has.
+///
+/// The check for a newer release is the caller here: it is the one piece of the
+/// startup path that opens a socket, and a run that asked before the opening was
+/// committed put that socket, and a proxy's copy of the request, ahead of the
+/// frame the first-frame budget measures. The recording is shared, so what the
+/// closure reads is what the terminal had been given by that moment rather than
+/// what it ends up with.
+#[test]
+fn what_the_run_arms_is_armed_only_after_the_opening_is_on_the_screen() {
+    let written = Arc::new(Mutex::new(String::new()));
+    let at_arming = Arc::new(Mutex::new(String::new()));
+    let mut renderer = Renderer::new(Watched(Arc::clone(&written)));
+    let mut input = Cursor::new(Vec::new());
+    let reading = Arc::clone(&written);
+    let noting = Arc::clone(&at_arming);
+
+    converse(
+        silent(),
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: Some(Box::new(move || {
+                let mut said = noting.lock().expect("the reading to be taken");
+                *said = reading.lock().expect("the recording to be read").clone();
+            })),
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
+
+    let at_arming = at_arming.lock().expect("the reading to be read").clone();
+    assert!(
+        at_arming.contains(concat!("v", env!("CARGO_PKG_VERSION"))),
+        "the run armed what it had to behind the opening with none of it drawn: {at_arming:?}"
+    );
 }
 
 #[test]
@@ -339,8 +382,17 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"/theme colourblind-dark\nhello\n".to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let worn = |style: Style| {
         style
@@ -386,7 +438,10 @@ fn a_window_the_user_resized_wraps_the_turns_that_follow_it() {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -723,7 +778,10 @@ fn a_turn_a_guardrail_refused_says_so_instead_of_returning_a_silent_prompt() {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -784,7 +842,10 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -846,7 +907,10 @@ fn a_terminal_that_fails_mid_turn_leaves_the_turn_recorded_all_the_same() {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect_err("the terminal to fail");
@@ -897,7 +961,10 @@ fn a_turn_that_failed_is_on_the_disk_whoever_else_still_holds_the_session() {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect_err("the terminal to fail");
@@ -937,8 +1004,17 @@ fn a_turn_told_to_end_from_outside_is_stopped_written_down_and_handed_back_as_th
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect_err("the turn to be ended");
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect_err("the turn to be ended");
 
     assert!(matches!(problem, Fatal::Ended(_)), "{problem:?}");
     assert!(terms.cancel.requested(), "the turn was never asked to stop");
@@ -983,8 +1059,17 @@ fn a_terminal_failure_cancels_a_provider_that_would_otherwise_stay_live() {
     });
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    let problem = converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect_err("the terminal to fail");
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect_err("the terminal to fail");
 
     assert!(matches!(problem, Fatal::Terminal(_)), "{problem:?}");
     assert!(cancellation.requested(), "the provider was never cancelled");
@@ -1011,7 +1096,10 @@ fn a_piped_run_ends_the_row_its_prompt_was_left_on() {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -1037,7 +1125,10 @@ fn the_prompt_line_names_the_mode_in_force() {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -1067,8 +1158,17 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
             ..plain()
         };
 
-        converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-            .expect("the loop to finish");
+        converse(
+            conversation,
+            &mut renderer,
+            &terms,
+            First {
+                card: &opening(),
+                arming: None,
+            },
+            &mut input,
+        )
+        .expect("the loop to finish");
 
         let written = renderer.terminal().written();
         assert!(written.contains(said), "{glyphs:?}: {written}");
@@ -1098,7 +1198,10 @@ fn the_box_and_the_mode_stand_under_a_turn_that_is_still_being_written() {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -1185,8 +1288,17 @@ fn answering(terms: &Terms, rounds: Vec<Vec<Delta>>, offered: Tools, typed: &str
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(conversation, &mut renderer, terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     renderer.terminal().written().to_string()
 }
@@ -1250,8 +1362,17 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"go\n".to_vec());
 
-    converse(conversation, &mut renderer, &terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
     assert!(written.contains("carried on"), "{written}");
@@ -1288,7 +1409,10 @@ fn deciding(mode: Mode, offered: Tools, rounds: Vec<Vec<Delta>>, typed: &str) ->
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect("the loop to finish");
@@ -1411,6 +1535,36 @@ fn the_mode_a_command_named_is_the_mode_the_next_turn_is_decided_under() {
 // is holding it. None of that can be driven from a real terminal on a real
 // disk, so each of these is one thing going wrong, on purpose, at a moment a
 // test chose.
+
+/// A recording terminal whose bytes are shared with whatever is watching while
+/// they are written.
+///
+/// The loop owns the renderer for its whole run, so a test cannot look at what
+/// was drawn from inside one. This hands the same recording to both, which is
+/// how a test reads the screen at a moment the loop chooses.
+struct Watched(Arc<Mutex<String>>);
+
+impl Terminal for Watched {
+    fn size(&self) -> Result<Size, TerminalError> {
+        Ok(Size {
+            columns: 80,
+            rows: 24,
+        })
+    }
+
+    fn write(&mut self, text: &str) -> Result<(), TerminalError> {
+        self.0.lock().expect("the shared recording").push_str(text);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn is_terminal(&self) -> bool {
+        true
+    }
+}
 
 /// How wide [`Narrowing`] leaves the window once it has been read once.
 pub(super) const NARROW: usize = 10;
@@ -1663,7 +1817,10 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .expect_err("a run that answered nothing to fail");
