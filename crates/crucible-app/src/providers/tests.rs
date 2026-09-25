@@ -1,5 +1,6 @@
 //! Which provider a run lands on, and what each one is known to offer.
 
+use crucible_provider::HttpTurns;
 use crucible_types::{Modality, PricingDate, PromptCacheRetentionClass, PromptCacheSupport};
 
 use super::*;
@@ -554,7 +555,8 @@ fn google_never_uses_a_stored_product_subscription_as_api_authority() {
     );
     let from = holding(&[]);
     let auth = authenticating(&defaults, &from, &stored, &subscriptions);
-    assert!(startup::provider(Some(serving("google")), NOTHING_TO_ASK, auth).is_err());
+    let http = HttpTurns::unavailable();
+    assert!(startup::provider(Some(serving("google")), NOTHING_TO_ASK, auth, &http).is_err());
 }
 
 #[test]
@@ -782,11 +784,13 @@ fn a_provider_built_from_its_record_is_the_one_the_vendor_module_makes() {
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     let settings = Settings::default();
     let from = holding(&["ANTHROPIC_API_KEY"]);
+    let http = HttpTurns::unavailable();
 
     let built = startup::provider(
         Some(serving("anthropic")),
         NOTHING_TO_ASK,
         authenticating(&settings, &from, &stored, &subscriptions),
+        &http,
     )
     .expect("a key is exported for it");
 
@@ -796,7 +800,7 @@ fn a_provider_built_from_its_record_is_the_one_the_vendor_module_makes() {
             crucible_credentials::ApiKey::from_lookup("ANTHROPIC_API_KEY", &from).expect("the key"),
             crucible_credentials::Header::bare("x-api-key"),
         )),
-        Box::new(crucible_provider::Https::new()),
+        Box::new(HttpTurns::unavailable()),
     );
 
     assert_eq!(built.name(), direct.name());
@@ -898,11 +902,13 @@ fn built(serving: Served, settings: &Settings) -> Box<dyn Provider> {
     let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     let key = [serving.key];
     let from = holding(&key);
+    let http = HttpTurns::unavailable();
 
     startup::provider(
         Some(serving),
         NOTHING_TO_ASK,
         authenticating(settings, &from, &stored, &subscriptions),
+        &http,
     )
     .expect("a key is exported for it")
 }
@@ -1109,6 +1115,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         settings.clone(),
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|name| (name == "CRUCIBLE_FIXTURE_ONLY_KEY").then(|| "not-a-key".into())),
+        HttpTurns::unavailable(),
     );
     let found = handed(serving("openai"), &stored).expect("the handed variable holds a key");
     assert_eq!(
@@ -1120,6 +1127,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         settings,
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
+        HttpTurns::unavailable(),
     );
     for one in every() {
         assert!(

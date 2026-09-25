@@ -628,6 +628,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
             settings.clone(),
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
+            services.http().clone(),
         ),
 
         // The two `/resume` reads a directory of logs with. Both are settled

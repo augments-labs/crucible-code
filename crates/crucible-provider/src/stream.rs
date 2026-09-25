@@ -35,12 +35,12 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::io::{BufReader, Read};
 
 use crucible_credentials::Redactions;
 use crucible_models::{Delta, DeltaStream, ProviderError};
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::StopReason;
+use tokio::io::{AsyncRead, BufReader};
 
 use crate::sse::{Events, Framed, SseEvent};
 
@@ -75,7 +75,7 @@ pub(crate) trait Wire: Default + Send {
 
 /// A response being read.
 pub(crate) struct Response<W: Wire> {
-    events: Events<BufReader<Box<dyn Read + Send>>>,
+    events: Events<BufReader<Box<dyn AsyncRead + Send + Unpin>>>,
     cancel: Cancel,
     /// Exact credentials the gateway saw, available only as a filter.
     redactions: Redactions,
@@ -91,13 +91,17 @@ pub(crate) struct Response<W: Wire> {
 
 impl<W: Wire> Response<W> {
     /// Reads `body` until it ends or `cancel` is raised.
-    pub(crate) fn new(body: Box<dyn Read + Send>, cancel: Cancel, redactions: Redactions) -> Self {
+    pub(crate) fn new(
+        body: Box<dyn AsyncRead + Send + Unpin>,
+        cancel: Cancel,
+        redactions: Redactions,
+    ) -> Self {
         Self::with_wire(body, cancel, redactions, W::default())
     }
 
     /// Reads one response with request-bound parser semantics.
     pub(crate) fn with_wire(
-        body: Box<dyn Read + Send>,
+        body: Box<dyn AsyncRead + Send + Unpin>,
         cancel: Cancel,
         redactions: Redactions,
         wire: W,
@@ -146,7 +150,7 @@ impl<W: Wire> Response<W> {
     ///
     /// What [`DeltaStream::next`] answers with, and what a caller in this
     /// crate that reads a whole response for itself asks directly.
-    pub(crate) fn next_delta(&mut self) -> Option<Result<Delta, ProviderError>> {
+    pub(crate) async fn next_delta(&mut self) -> Option<Result<Delta, ProviderError>> {
         loop {
             if let Some(delta) = self.pending.pop_front() {
                 return Some(Ok(delta));
@@ -163,7 +167,7 @@ impl<W: Wire> Response<W> {
                 return Some(Ok(Delta::Stopped(StopReason::Cancelled)));
             }
 
-            let event = match self.events.next() {
+            let event = match self.events.next().await {
                 None => return self.ended(),
                 Some(Err(problem)) => {
                     return Some(self.fail(ProviderError::Transport {
@@ -205,6 +209,6 @@ impl<W: Wire> fmt::Debug for Response<W> {
 
 impl<W: Wire> DeltaStream for Response<W> {
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
-        Box::pin(async move { self.next_delta() })
+        Box::pin(self.next_delta())
     }
 }

@@ -19,7 +19,7 @@ pub(super) mod tests {
 
     use super::*;
     use crate::fake::output_usage;
-    use crate::transport::{Paused, Said};
+    use crate::transport::{Paused, Said, SyncReader};
 
     /// One delta, and then the model stops talking.
     const HALF: &str = "event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n";
@@ -207,7 +207,7 @@ pub(super) mod tests {
         ])
         .meanwhile(move || raise.request());
         let mut stream = Stream::new(
-            Box::new(silent),
+            Box::new(SyncReader::new(silent)),
             cancel,
             crucible_credentials::Redactions::default(),
         );
@@ -232,7 +232,7 @@ pub(super) mod tests {
         // answer becomes a failed turn. Nothing here fails, and this body
         // pauses between every five bytes of itself.
         let mut stream = Stream::new(
-            Box::new(Paused::dawdling(ANSWER, 5)),
+            Box::new(SyncReader::new(Paused::dawdling(ANSWER, 5))),
             Cancel::new(),
             crucible_credentials::Redactions::default(),
         );
