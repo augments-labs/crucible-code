@@ -9,16 +9,18 @@
 //! Four endings rather than a success and a failure. Going quietly and being
 //! stopped are both ordinary — one program exits on a closed pipe and another
 //! waits to be told twice — and neither is anybody's problem afterwards. The
-//! other two are somebody's problem: an ending that went wrong, so that nothing
-//! the program wrote was published, and not being able to stop it at all, where
-//! the sandbox could not confirm scope termination and leader exit.
+//! other two are somebody's problem: an ending that went wrong, so that no
+//! successful publication can be claimed, and not being able to stop it at all,
+//! where the sandbox could not confirm scope termination and leader exit.
 //!
 //! A program that has ended is not stopped for the wait that follows. What it
 //! wrote can wait its turn behind another command's publication for longer than
-//! any grace, and stopping it then would discard what it did exactly as asked.
-//! That wait has an end, because what it waits for can be held by a crucible
-//! outside this process: past it the program is stopped, and the ending says
-//! that nothing it wrote was published rather than reading as a clean stop.
+//! any grace, and stopping it then would cut short an ending that may still
+//! publish. That wait has an end, because what it waits for can be held by a
+//! crucible outside this process: past it the program is stopped; an ending
+//! that completes during that stop is reported as [`Finish::Exited`], while an
+//! ending that does not complete is reported as an unpublished or unconfirmed
+//! result.
 //!
 //! The wait is [`Finish::after_async`]'s: on the caller's runtime, so a stop
 //! that yields is waited for too, up to a bound, past which it is given up on
@@ -29,7 +31,7 @@ use std::process::ExitStatus;
 use std::time::Duration;
 
 use crucible_runtime::Unready;
-use crucible_sandbox::SandboxProcess;
+use crucible_sandbox::{SandboxLifecycle, SandboxProcess};
 
 /// How long the wait for a process to finish sleeps between looks.
 const WATCH: Duration = Duration::from_millis(5);
@@ -68,15 +70,17 @@ pub(crate) const STOPPING: Duration = Duration::from_millis(50);
 /// How a confined process finished.
 #[derive(Debug)]
 pub enum Finish {
-    /// It ended on its own within the grace it was given, and its ending
-    /// completed.
+    /// It ended within the grace it was given, or its already-writing ending
+    /// completed during a stop, and that ending produced a status.
     Exited(ExitStatus),
 
     /// It did not, so its owned scope was stopped and its leader was reaped.
     Stopped,
 
-    /// It ended, but its ending could not be completed, so nothing it wrote was
-    /// published: most often because a root it wrote into changed while it ran.
+    /// It ended, but its ending did not complete with a confirmed successful
+    /// publication: most often because a root it wrote into changed while it
+    /// ran. A quarantined ending can make that outcome uncertain rather than
+    /// proving that nothing was published.
     Unpublished(io::Error),
 
     /// It did not, and stopping it failed, or was waited on and did not
@@ -104,8 +108,8 @@ enum Look {
     /// Stop it; and whether the wait ended at the publication ceiling rather
     /// than because the process would not go.
     Stop {
-        /// What it wrote is discarded either way, but only one of the two is
-        /// worth telling the caller about.
+        /// Whether the ending had already begun when the stop was requested.
+        /// The joined stop may discard it or let its publication complete.
         unpublished: bool,
     },
 }
@@ -156,7 +160,7 @@ impl Finish {
                     Unanswered::new(STOPPING),
                 ))
             });
-        Self::stopped(stop, unpublished)
+        Self::stopped(process, stop, unpublished)
     }
 
     /// One look at `process`, `elapsed` into a wait of `grace`.
@@ -195,10 +199,22 @@ impl Finish {
     }
 
     /// How a process that was stopped finished, from what its stop answered.
-    fn stopped(stop: io::Result<()>, unpublished: bool) -> Self {
+    fn stopped(process: &mut dyn SandboxProcess, stop: io::Result<()>, unpublished: bool) -> Self {
+        let publication = process.publication_outcome();
         match stop {
-            // It had ended, and the stop discarded what it wrote. Reported as
-            // a clean stop, that reads as though nothing was lost.
+            // The ending was already being written when the stop arrived, and
+            // its publication stood. Report the status that publication left
+            // behind rather than the stale pre-stop outcome.
+            Ok(()) if unpublished && publication == Some(SandboxLifecycle::Published) => {
+                match process.try_wait() {
+                    Ok(Some(status)) => Self::Exited(status),
+                    Ok(None) => Self::Stopped,
+                    Err(source) => Self::Unreaped(source),
+                }
+            }
+            // It had ended, and the joined stop did not leave a confirmed
+            // publication. Reported as a clean stop, that reads as though no
+            // ending outcome was known.
             Ok(()) if unpublished => Self::Unpublished(unfinished()),
             Ok(()) => Self::Stopped,
             // Both facts: a caller told only that cleanup is unconfirmed reads
@@ -206,13 +222,15 @@ impl Finish {
             // that, where what happened is that it ended and lost its writes.
             // The stop stays the error's source, recoverable as itself; the
             // lost publication is said in the message.
-            Err(stop) if unpublished => Self::Unreaped(io::Error::new(
-                stop.kind(),
-                Unconfirmed {
-                    publication: unfinished(),
-                    stop,
-                },
-            )),
+            Err(stop) if unpublished && publication != Some(SandboxLifecycle::Published) => {
+                Self::Unreaped(io::Error::new(
+                    stop.kind(),
+                    Unconfirmed {
+                        publication: unfinished(),
+                        stop,
+                    },
+                ))
+            }
             Err(source) => Self::Unreaped(source),
         }
     }
@@ -231,7 +249,7 @@ impl Finish {
 /// it, so the message says it before them.
 #[derive(Debug, thiserror::Error)]
 struct Unconfirmed {
-    /// What it lost: nothing it wrote was published.
+    /// What it lost: no successful publication was confirmed.
     publication: io::Error,
     /// Why its end is not known.
     #[source]

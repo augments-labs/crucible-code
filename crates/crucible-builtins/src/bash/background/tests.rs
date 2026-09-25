@@ -9,8 +9,8 @@ use crucible_runtime::Cancel;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
-    SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    SandboxInspection, SandboxLifecycle, SandboxManifest, SandboxNetworkPolicy, SandboxOutput,
+    SandboxPolicy, SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
 use crucible_tools::Unwatched;
 
@@ -28,8 +28,8 @@ struct Observed {
     ended: AtomicBool,
     /// Its ending went wrong, and a look at it says how.
     failed: AtomicBool,
-    /// Whether it was asked to stop before its ending was complete, which
-    /// discards what it wrote.
+    /// Whether it was asked to stop before its ending was complete; the
+    /// fixture may discard those writes or publish them on the stop path.
     stopped_early: AtomicBool,
     /// How many times it was asked how it ended.
     looks: AtomicUsize,
@@ -40,6 +40,10 @@ struct Observed {
     stops_held: AtomicBool,
     /// How many looks or stops have begun waiting on either.
     stalled: AtomicUsize,
+    /// The ending published while a stop was joining it.
+    published: AtomicBool,
+    /// Whether this fixture's stop should publish the already-ended ending.
+    publish_on_stop: AtomicBool,
 }
 
 impl Observed {
@@ -105,6 +109,12 @@ impl SandboxProcess for Process {
                 self.observed.stopped_early.store(true, Ordering::Relaxed);
             }
             if self.observed.cleanup_allowed.load(Ordering::Relaxed) {
+                // A stop that joins an already-ended publication lets it stand.
+                if self.observed.publish_on_stop.load(Ordering::Relaxed)
+                    && self.observed.ended.load(Ordering::Relaxed)
+                {
+                    self.observed.published.store(true, Ordering::Release);
+                }
                 // A stop that confirms the scope ended has reaped the leader, so a
                 // look after it answers, the way the real one does.
                 self.observed.exited.store(true, Ordering::Relaxed);
@@ -125,6 +135,13 @@ impl SandboxProcess for Process {
 
     fn violation(&self) -> Option<SandboxViolation> {
         None
+    }
+
+    fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+        self.observed
+            .published
+            .load(Ordering::Acquire)
+            .then_some(SandboxLifecycle::Published)
     }
 }
 
@@ -412,13 +429,72 @@ fn a_command_that_ended_in_time_is_not_stopped_while_its_ending_completes() {
 }
 
 #[test]
+fn a_publication_completed_during_a_stop_is_not_reported_as_unpublished() {
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    observed.publish_on_stop.store(true, Ordering::Relaxed);
+
+    let answered = crate::bash::tests::awaited(output::collect(
+        Box::new(process(&observed)),
+        &output::Waiting {
+            allowed: Duration::ZERO,
+            cancel: &Cancel::new(),
+            watch: &Unwatched,
+            leaving: None,
+        },
+    ));
+
+    let output::Left::Answered(report) = answered.expect("a stopped command answers") else {
+        panic!("the command was not reported");
+    };
+    assert!(observed.published.load(Ordering::Acquire));
+    assert!(
+        !report.text().contains("nothing it wrote was published"),
+        "{}",
+        report.text()
+    );
+}
+
+#[test]
+fn a_cancelled_publication_completed_during_stop_is_reported_published() {
+    let observed = Arc::new(Observed::default());
+    observed.ended.store(true, Ordering::Relaxed);
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    observed.publish_on_stop.store(true, Ordering::Relaxed);
+    let cancel = Cancel::new();
+    cancel.request();
+
+    let answered = crate::bash::tests::awaited(output::collect(
+        Box::new(process(&observed)),
+        &output::Waiting {
+            allowed: Duration::from_secs(10),
+            cancel: &cancel,
+            watch: &Unwatched,
+            leaving: None,
+        },
+    ));
+
+    let output::Left::Answered(report) = answered.expect("a cancelled command answers") else {
+        panic!("the command was not reported");
+    };
+    assert!(observed.published.load(Ordering::Acquire));
+    assert!(
+        report.text().contains("writes were published"),
+        "{}",
+        report.text()
+    );
+    assert!(!report.text().contains("nothing it wrote was published"));
+}
+
+#[test]
 fn a_cancelled_turn_keeps_a_command_that_had_already_ended() {
     // The cancel stops what is still running. A command that has ended is not,
-    // and stopping it while its ending waits its turn would discard what it
-    // wrote after it had done its work. Its ending completes inside the cancel's
-    // own patience, which is shorter than the deadline's because somebody is
-    // waiting for the turn to end; how long that patience is belongs to
-    // `a_cancel_waits_less_for_a_publication_than_a_deadline_does`.
+    // and stopping it while its ending waits its turn could cut short a
+    // publication that has not completed. Its ending completes inside the
+    // cancel's own patience, which is shorter than the deadline's because
+    // somebody is waiting for the turn to end; how long that patience is belongs
+    // to `a_cancel_waits_less_for_a_publication_than_a_deadline_does`.
     let observed = Arc::new(Observed::default());
     observed.ended.store(true, Ordering::Relaxed);
     observed.cleanup_allowed.store(true, Ordering::Relaxed);
@@ -450,8 +526,8 @@ fn a_cancelled_turn_keeps_a_command_that_had_already_ended() {
 #[test]
 fn stopping_a_command_that_has_ended_leaves_it_to_be_reported() {
     // The panel draws from a list a beat old, and a command whose ending waits
-    // its turn still stands on it. Stopping that one would discard what it
-    // wrote, and it is about to be reported anyway.
+    // its turn still stands on it. Stopping that one could cut short an ending
+    // that is about to report a completed publication.
     let runtime = runtime();
     let left = registry(&runtime);
     let observed = Arc::new(Observed::default());
@@ -465,7 +541,7 @@ fn stopping_a_command_that_has_ended_leaves_it_to_be_reported() {
 
     assert!(
         !observed.stopped_early.load(Ordering::Relaxed),
-        "stopping it discarded what it wrote"
+        "stopping it cut short the ending that was about to report"
     );
     assert_eq!(left.count(), 1, "it went without being reported");
     observed.exited.store(true, Ordering::Relaxed);
@@ -589,9 +665,9 @@ fn a_kept_command_that_cannot_publish_is_reported_once_its_patience_has_passed()
 fn a_publication_that_never_finishes_keeps_its_reason_after_end_stops_it() {
     // The fake's own `stop`, like the real backend's, resolves the process as
     // exited on success. What reap decided on the beat that called `end` —
-    // that nothing it wrote was published — must still be what is reported,
-    // not a status a later beat reads back off the very leader `end` itself
-    // just resolved.
+    // that no successful publication was confirmed — must still be what is
+    // reported, not a status a later beat reads back off the very leader `end`
+    // itself just resolved.
     let runtime = runtime();
     let left = registry(&runtime);
     let observed = Arc::new(Observed::default());

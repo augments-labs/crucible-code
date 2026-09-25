@@ -10,8 +10,8 @@ use crucible_runtime::{BoxFuture, Unready};
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
-    SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
-    SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    SandboxLifecycle, SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
+    SandboxProcess, SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
@@ -43,6 +43,10 @@ struct Ending {
     /// bound on a stop that does not answer, which a caller that can wait sits
     /// through.
     slow: AtomicBool,
+    /// The ending published while a stop was joining it.
+    published: AtomicBool,
+    /// Whether this fixture's stop should publish the already-ended ending.
+    publish_on_stop: AtomicBool,
 }
 
 struct Process {
@@ -90,6 +94,12 @@ impl SandboxProcess for Process {
                 // unconfirmed, as a backend's failure need not say it.
                 return Err(io::Error::other("the scope could not be reaped"));
             }
+            if self.ending.publish_on_stop.load(Ordering::Relaxed)
+                && self.ending.ended.load(Ordering::Relaxed)
+            {
+                self.ending.published.store(true, Ordering::Release);
+                self.ending.exited.store(true, Ordering::Release);
+            }
             Ok(())
         })
     }
@@ -104,6 +114,13 @@ impl SandboxProcess for Process {
 
     fn violation(&self) -> Option<SandboxViolation> {
         None
+    }
+
+    fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+        self.ending
+            .published
+            .load(Ordering::Acquire)
+            .then_some(SandboxLifecycle::Published)
     }
 }
 
@@ -255,6 +272,22 @@ async fn a_stop_that_takes_a_while_is_waited_for_asynchronously_rather_than_drop
     let finish = Finish::after_async(&mut process, Duration::ZERO).await;
 
     assert!(matches!(finish, Finish::Stopped), "{finish:?}");
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_publication_completed_during_a_stop_is_reported_as_exited() {
+    let ending = Arc::new(Ending {
+        ended: AtomicBool::new(true),
+        publish_on_stop: AtomicBool::new(true),
+        ..Ending::default()
+    });
+    let mut process = process(&ending);
+
+    let finish = Finish::after_async(&mut process, Duration::ZERO).await;
+
+    assert!(matches!(finish, Finish::Exited(_)), "{finish:?}");
+    assert!(ending.published.load(Ordering::Acquire));
     assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
 }
 

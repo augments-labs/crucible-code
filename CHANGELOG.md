@@ -264,6 +264,12 @@ change in any release with no deprecation period.
   runs. Its run is therefore awaited on a runtime with a timer and, for the
   local sandbox on Unix, an I/O driver, as the application's is; what a
   command is answered with, its bounds and its redaction are unchanged.
+- **On Linux, a sandboxed command's status no longer waits for what it wrote
+  to be published.** Journaling a command's ending and publishing or
+  discarding what it wrote run on a thread of their own, at most 16 at once for
+  one `LocalSandbox`, while the status answers `None` with `ended` answering
+  `true`; a stop that lands while that is under way waits for it and keeps
+  what it published.
 
 ### Fixed
 
