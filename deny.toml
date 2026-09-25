@@ -111,9 +111,9 @@ allow-wildcard-paths = true
 # the exact version so a new duplicate of the same crate still fails.
 skip = [
     # `plist` reads a syntax theme a reader supplied and still wants base64 0.22;
-    # everything crucible writes itself, and `ureq`, are on 0.23. The older copy
-    # is reachable only through `syntect`'s theme loading, and it goes away when
-    # `plist` moves — not before, and not by anything this repository can do.
+    # everything crucible writes itself is on 0.23. The older copy is reachable
+    # only through `syntect`'s theme loading, and it goes away when `plist`
+    # moves — not before, and not by anything this repository can do.
     { crate = "base64:0.22.1", reason = "syntect's theme reader pins the older line" },
 
     # `ring` — the cryptography under rustls — is on getrandom 0.2, and rustls

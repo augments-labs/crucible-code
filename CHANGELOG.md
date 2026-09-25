@@ -8,6 +8,17 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Removed
+
+- **The old blocking HTTP client is gone.** Every outgoing request now goes
+  through `crucible-http`, so a turn, a web search or fetch and the release
+  check share one TLS configuration and one hostname-lookup owner. Turns and
+  web share a single connection pool; the release check keeps its own pool so a
+  background check cannot hold a connection the run is using, and it makes its
+  trust and proxy decisions from the same configuration rather than its own.
+  The `Https` type and its `Response` return are removed with it, along with the
+  third-party crate and its pin.
+
 ### Added
 
 - **An HTTP client for outgoing requests to share, as its own crate.**
@@ -19,9 +30,8 @@ change in any release with no deprecation period.
   response head, and a bounded response head.
   A proxy's credential is registered for redaction on the headers a request is
   sent with, so `Http::send` takes them mutably. Provider turns, web posts,
-  account requests and release discovery use it; the legacy `get` surface is
-  retained with no remaining caller, for the unit that retires the old
-  client.
+  account requests and release discovery all use it, over one pool for turns
+  and web.
 - **Release discovery is owned work with a cached startup answer.**
   `crucible-update` reads the existing `release` cache without opening a socket
   and moves the post-frame discovery request onto the application's runtime. It
@@ -57,9 +67,7 @@ change in any release with no deprecation period.
   8 KiB within 10 s, each reading one byte past its limit so a cut body is
   reported as cut; dropping a request or a body's reader closes its
   connection, and a client makes at most four connections at once. Provider
-  turns, web posts and release discovery use these readers; the legacy `get`
-  surface is retained with no remaining caller, for the unit that retires the
-  old client.
+  turns, web posts and release discovery use these readers.
 - **A bounded worker for a tool's blocking work.** `ToolWorker` runs at most 4
   jobs at once on the application runtime's blocking threads, and a call
   cancelled while it waits for room leaves without starting its job, while one
@@ -297,8 +305,7 @@ change in any release with no deprecation period.
 - **Model turns and web posts share the application's HTTP client.** Provider
   requests and `Search`/`Fetch` posts now await one bounded asynchronous
   service, keeping their existing status, refusal, redaction, retry and
-  cancellation behavior; the legacy `get` surface is retained with no
-  remaining caller, for the unit that retires the old client.
+  cancellation behavior.
 
 ### Fixed
 
