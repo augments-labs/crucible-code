@@ -108,6 +108,11 @@ change in any release with no deprecation period.
   `Conversation::on`, which `startup::assemble` now starts, and refusing with
   the new `TurnError::Unwaited` without one;
   `TurnError::ToolsetCleanupUnready` is gone.
+- **Prompt-cache resources now wait for their stores and provider.** A turn,
+  recap, `/cache` inspection or cleanup, and a model, provider, or credential
+  switch await each prompt-cache step on the application runtime; an operation
+  whose outcome remains uncertain is still recorded as ambiguous, and
+  `TurnCache` is gone.
 - **Applying a credential and running a web search or fetch now return a
   future.** `Credential::authorize`, `Search::search` and `Fetch::fetch`
   return a boxed `Send` future instead of an immediate result, so an adapter

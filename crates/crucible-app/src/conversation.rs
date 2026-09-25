@@ -29,6 +29,13 @@
 //! handed over by [`Conversation::on`]; a conversation never handed one
 //! refuses every turn and compaction with [`TurnError::Unwaited`].
 //!
+//! **So are explicit prompt-cache operations.** Cache inspection, cleanup and
+//! retirement arrive asynchronously from the runner but remain synchronous
+//! front-end commands. The conversation waits for each on the application
+//! runtime through that same application boundary. A conversation with no
+//! runtime, or one asked from a runtime thread, reports the local cache
+//! operation as failed without beginning it.
+//!
 //! **So is what picking a session up or changing vendor owes the session.**
 //! Each clears from the transcript what the vendor being asked may not be
 //! sent, and the runner owes the session the lines saying so. The
@@ -46,7 +53,7 @@ use std::sync::Arc;
 
 use crucible_context::Room;
 use crucible_runner::{PromptCacheCleanup, RunContext, Runner, TurnError, Turned};
-use crucible_runtime::{Bridge, Cancel};
+use crucible_runtime::{Bridge, Cancel, Unwaited};
 use crucible_session::{FilePromptCacheResourceStore, Session, SessionError};
 use crucible_tools::{Ask, Mode};
 use crucible_types::{
@@ -66,8 +73,8 @@ pub struct Conversation {
     /// session log, and the registry names it for `/model`, the settings file
     /// and the credential store, which is the name every switch is decided by.
     pub(crate) serving: Option<&'static str>,
-    /// The runtime a turn and a compaction are waited for on, or `None`
-    /// where none was handed over, which refuses them.
+    /// The runtime application-owned asynchronous work is waited for on, or
+    /// `None` where none was handed over, which refuses it.
     runtime: Option<Handle>,
     /// The sessions told they are missing lines the runner still owes them,
     /// held until those lines are written and the report is withdrawn.
@@ -99,8 +106,8 @@ impl Conversation {
         }
     }
 
-    /// The same conversation, waiting for its turns and compactions on
-    /// `runtime`, the application's own, once it has waited there for what
+    /// The same conversation, waiting for application-owned asynchronous work
+    /// on `runtime`, the application's own, once it has waited there for what
     /// picking its session up owes the session.
     #[must_use]
     pub fn on(self, runtime: Handle) -> Self {
@@ -167,12 +174,10 @@ impl Conversation {
     /// failure leaves. A failed request for the recap replaces nothing, so the
     /// transcript is as it was but for any pruning before it.
     ///
-    /// A step of the recap request that would have had to wait comes back as
-    /// [`TurnError::Unready`], even when the compaction is being stopped: a
-    /// refusal outranks a stop. It replaces nothing, as a failed request does;
-    /// what the step began is unconfirmed, and its prompt-cache attempt, or
-    /// the cache step refused, is recorded as [`Runner::compact`] says. The
-    /// compaction's session lines are awaited.
+    /// Every prompt-cache step of the recap request is awaited. A cache failure
+    /// replaces nothing, as a failed request does, and a changing operation
+    /// whose answer remains uncertain is recorded as ambiguous for
+    /// reconciliation. The compaction's session lines are awaited.
     ///
     /// [`TurnError::Unwaited`] where the compaction could not be waited for at
     /// all: this conversation was handed no runtime, or the caller is on a
@@ -183,7 +188,8 @@ impl Conversation {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        let compacted = waited(self.runtime.as_ref(), self.runner.compact(why, run, spent));
+        let compacted = waited(self.runtime.as_ref(), self.runner.compact(why, run, spent))
+            .unwrap_or_else(|refused| Err(refused.into()));
         self.made_good();
         compacted
     }
@@ -194,12 +200,19 @@ impl Conversation {
     /// # Errors
     ///
     /// [`PromptCacheResourceError`] where the private store could not be read,
-    /// [`PromptCacheResourceError::Local`] carrying the refusal among them
-    /// where reading it would have had to wait and was dropped.
+    /// [`PromptCacheResourceError::Local`] among them where this conversation
+    /// could not wait for the listing on its application runtime.
     pub fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        self.runner.prompt_cache_resources()
+        if !self.runner.prompt_cache_resources_configured() {
+            return Ok(Vec::new());
+        }
+        cache_waited(
+            self.runtime.as_ref(),
+            "list",
+            self.runner.prompt_cache_resources(),
+        )
     }
 
     /// Deletes the persistent prompt-cache resources held with the provider
@@ -208,20 +221,44 @@ impl Conversation {
     /// # Errors
     ///
     /// [`PromptCacheResourceError`] where the private store could not be read
-    /// or durably updated, [`PromptCacheResourceError::Local`] carrying the
-    /// refusal among them where a step on it would have had to wait, which may
-    /// or may not have acted, [`PromptCacheResourceError::Unsupported`] when a
-    /// record is held with the provider being asked and the provider has no
-    /// lifecycle to delete one through, and
-    /// [`PromptCacheResourceError::Cancelled`] when the pass comes to such a
-    /// record and finds `cancel` requested, which leaves that record and those
-    /// after it as they were. A provider step that would have had to wait is
-    /// counted rather than returned, as [`Runner::clean_prompt_cache`] says.
+    /// or durably updated, [`PromptCacheResourceError::Local`] among them
+    /// where this conversation could not begin the pass on its application
+    /// runtime, [`PromptCacheResourceError::Unsupported`] when a record is held
+    /// with the provider being asked and the provider has no lifecycle to
+    /// delete one through, and [`PromptCacheResourceError::Cancelled`] when the
+    /// pass comes to such a record and finds `cancel` requested, which leaves
+    /// that record and those after it as they were. Every store and provider
+    /// step is awaited; a provider cancellation, deadline or explicitly
+    /// ambiguous answer is counted as ambiguous, as
+    /// [`Runner::clean_prompt_cache`] says.
     pub fn clean_prompt_cache(
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        self.runner.clean_prompt_cache(cancel)
+        if !self.runner.prompt_cache_resources_configured() {
+            return Ok(PromptCacheCleanup::default());
+        }
+        cache_waited(
+            self.runtime.as_ref(),
+            "clean",
+            self.runner.clean_prompt_cache(cancel),
+        )
+    }
+
+    /// Retires the persistent prompt-cache resources this conversation owns
+    /// before its provider identity changes.
+    pub(crate) fn retire_prompt_cache(
+        &mut self,
+        cancel: &Cancel,
+    ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
+        if !self.runner.prompt_cache_retirement_pending() {
+            return Ok(PromptCacheCleanup::default());
+        }
+        cache_waited(
+            self.runtime.as_ref(),
+            "retire",
+            self.runner.retire_prompt_cache(cancel),
+        )
     }
 
     /// Takes one turn: `prompt` and what is attached to it, answered by the
@@ -255,7 +292,8 @@ impl Conversation {
         let turned = waited(
             self.runtime.as_ref(),
             self.runner.turn(prompt, attached, ask, run),
-        );
+        )
+        .unwrap_or_else(|refused| Err(refused.into()));
         self.made_good();
         turned
     }
@@ -372,17 +410,38 @@ const UNWAITED_CLEARINGS: &str = "lines clearing results a vendor may not be sen
                                   waited for, and reach this log only if a later wait, turn or \
                                   compaction of the conversation writes them";
 
-/// Waits on the calling thread for `work`, a turn, a compaction or the lines
-/// a pick-up or a change of vendor owes the session, on `runtime`.
+/// Waits on the calling thread for one prompt-cache operation on `runtime`.
 ///
-/// Under a cancel nothing raises, so the crossing never drops the work part
-/// way: a stop reaches the work through the cancel on its own run, and the
-/// work ends itself, as the module says.
-fn waited<T>(
+/// The front end still carries cache inspection, cleanup and retirement as
+/// synchronous commands. The work itself is asynchronous, so it is awaited on
+/// the application runtime through the same application boundary as a turn.
+/// A conversation without a runtime, or one asked from a runtime thread, keeps
+/// the cache error surface and reports the failed local operation.
+fn cache_waited<T>(
     runtime: Option<&Handle>,
-    work: impl Future<Output = Result<T, TurnError>>,
-) -> Result<T, TurnError> {
-    Bridge::AppTurn
-        .wait(runtime, &Cancel::new(), work)
-        .unwrap_or_else(|refused| Err(refused.into()))
+    operation: &'static str,
+    work: impl Future<Output = Result<T, PromptCacheResourceError>>,
+) -> Result<T, PromptCacheResourceError> {
+    match waited(runtime, work) {
+        Ok(result) => result,
+        Err(refused) => Err(PromptCacheResourceError::Local {
+            operation,
+            source: std::io::Error::other(refused),
+        }),
+    }
+}
+
+/// Waits on the calling thread for `work` on `runtime`.
+///
+/// A turn, a compaction, the lines a pick-up or vendor change owes the
+/// session, and explicit prompt-cache inspection, cleanup or retirement all
+/// cross the same application boundary. Under a cancel nothing raises, so the
+/// crossing never drops the work part way: a stop reaches a turn through the
+/// cancel on its own run, and cache work carries the cancel its caller asked
+/// for.
+fn waited<T, E>(
+    runtime: Option<&Handle>,
+    work: impl Future<Output = Result<T, E>>,
+) -> Result<Result<T, E>, Unwaited> {
+    Bridge::AppTurn.wait(runtime, &Cancel::new(), work)
 }

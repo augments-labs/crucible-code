@@ -15,18 +15,21 @@
 //! what decides whether the session continues.
 //!
 //! A turn is asynchronous. It awaits the provider's stream and each read of
-//! it, every call's run, the toolset's preparation, listing, refreshing and
-//! disposal, and a background result's acceptance, so a step that has to
-//! wait for its answer is waited for rather than refused. It starts no
-//! runtime: whoever awaits it polls it, on that caller's own thread, and the
-//! one thing it spawns is its calls' runs, onto the runtime it is polled in,
-//! at most [`TOOL_RUNS`] at once and each awaited before the pass goes on —
-//! so a turn is polled inside a runtime, as the application's wait for one
-//! is. It hands its [`Cancel`] to every step it awaits and looks at it between
-//! them, so a stop ends it as it always has, and how soon an awaited step
-//! heeds that stop is the step's own contract. The one step still reached
-//! through a bridge that asks once — a prompt-cache step — is refused where it
-//! would have had to wait.
+//! it, every prompt-cache step, every call's run, a background result's
+//! acceptance and the toolset's preparation, listing, refreshing and
+//! disposal, so a step that has to wait for its answer is waited for rather
+//! than refused. It starts no runtime: whoever awaits it polls it, on that
+//! caller's own thread, and the one thing it spawns is its calls' runs, onto
+//! the runtime it is polled in, at most [`TOOL_RUNS`] at once and each awaited
+//! before the pass goes on — so a turn is polled inside a runtime, as the
+//! application's wait for one is. It hands its [`Cancel`] to every step it
+//! awaits and looks at it between them, so a stop ends it as it always has,
+//! and how soon an awaited step heeds that stop is the step's own contract.
+//! No step on the turn's path is still reached through a bridge that asks
+//! once: the bridges that remain — `BashSandbox`, `LocalBackend`,
+//! `SandboxReport` and `SandboxPanel` — are crossed outside the turn, and a
+//! step that would have had to wait there is refused where it is crossed,
+//! naming its bridge.
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,
@@ -370,21 +373,32 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// [`PromptCacheResourceError`] when the private store cannot be read,
-    /// [`PromptCacheResourceError::Local`] carrying the refusal among them
-    /// where reading it would have had to wait and was dropped.
-    pub fn prompt_cache_resources(
+    /// [`PromptCacheResourceError`] when the private store cannot be read.
+    pub async fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        self.prompt_cache_store.as_deref_mut().map_or_else(
-            || Ok(Vec::new()),
-            |store| {
-                crate::prompt_cache::local(
-                    "list",
-                    store.inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES),
-                )
-            },
-        )
+        match self.prompt_cache_store.as_deref_mut() {
+            Some(store) => {
+                store
+                    .inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Whether this run has a private prompt-cache resource store to inspect,
+    /// clean, or retire.
+    #[must_use]
+    pub const fn prompt_cache_resources_configured(&self) -> bool {
+        self.prompt_cache_store.is_some()
+    }
+
+    /// Whether this run owns persistent prompt-cache resources that a change of
+    /// model, provider, or credential must retire first.
+    #[must_use]
+    pub const fn prompt_cache_retirement_pending(&self) -> bool {
+        self.state.prompt_cache_owner_scope.is_some()
     }
 
     /// Picks up a transcript that already happened — what `--continue`
@@ -921,26 +935,24 @@ impl Runner {
     /// did not like what it found, both go back to the model as results it can
     /// work around.
     ///
-    /// [`TurnError::Unready`] where a step the turn crossed to rather than
-    /// awaited would have had to wait and was dropped: a prompt-cache step.
-    /// What the dropped step began is unconfirmed rather than undone.
-    /// A changing cache step is recorded as ambiguous, to be reconciled, and
-    /// a request for the model's answer being prepared has that answer
-    /// recorded as far as it got, as a failed one does. A step of a
-    /// compaction the turn made leaves what [`Runner::compact`] says it does.
+    /// The turn itself never ends on [`TurnError::Unready`]: the provider's
+    /// stream and each read of it, every prompt-cache step, every call's run,
+    /// a background result's acceptance and the toolset's preparation,
+    /// listing, refreshing and disposal are all awaited, so a step that would
+    /// have had to wait is waited for rather than refused. A refusal still
+    /// names its bridge — one of the crossings that remain outside the turn —
+    /// and what the dropped step began is unconfirmed rather than undone.
     /// The turn's session writes are awaited, and a line the log could not
     /// keep is the session's to report rather than the turn's to end on.
     /// Before anything of the turn is recorded or sent, the lines picking a
     /// session up or changing vendor still owe the session are written, as
     /// [`Runner::record_clearings`] writes them.
     ///
-    /// Every step the turn crosses to that would have had to wait ends the
-    /// turn on the refusal, even while the turn is being stopped, rather than
-    /// as a clean stop. The turn's cache steps end it so, and a compaction
-    /// the turn makes ends on a refusal as [`Runner::compact`] says, taking
-    /// the turn with it. Every call's run, a background result's acceptance,
-    /// the provider's stream and the toolset's preparation, listing,
-    /// refreshing and disposal are awaited, and are never refused this way.
+    /// Every step the turn takes is awaited, so none ends the turn on a
+    /// refusal. A stop ends it as it always has, through the cancel each
+    /// awaited step was handed and that the turn looks at between them. A
+    /// step of a compaction the turn made leaves what [`Runner::compact`]
+    /// says it does.
     ///
     /// A tool source's own step that was dropped before it answered is the
     /// source's failure, which [`TurnError::Toolset`] or
@@ -1539,20 +1551,23 @@ impl Runner {
                 self.provider.prompt_cache_resources(),
                 self.prompt_cache_store.as_deref_mut(),
             ) {
-                (Some(lifecycle), Some(store)) => prompt_cache::prepare_with_resource_facts(
-                    &request,
-                    capabilities,
-                    &scope,
-                    prompt_cache::ResourceInputs {
-                        store,
-                        lifecycle,
-                        cancel: listening.run.cancel(),
-                        now: unix_now(),
-                        deadline: std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
-                    },
-                    &mut resource_facts,
-                ),
-                _ => prompt_cache::prepare(&request, capabilities, &scope),
+                (Some(lifecycle), Some(store)) => {
+                    prompt_cache::prepare_with_resource_facts(
+                        &request,
+                        capabilities,
+                        &scope,
+                        prompt_cache::ResourceInputs {
+                            store,
+                            lifecycle,
+                            cancel: listening.run.cancel(),
+                            now: unix_now(),
+                            deadline: std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
+                        },
+                        &mut resource_facts,
+                    )
+                    .await
+                }
+                _ => prompt_cache::prepare(&request, capabilities, &scope).await,
             };
             for fact in resource_facts {
                 self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact));
