@@ -626,18 +626,17 @@ pub enum PromptCacheResourceError {
     /// The bounded store has reached its record ceiling.
     #[error("prompt-cache resource metadata store is full")]
     StoreFull,
-    /// A private filesystem operation failed, or a step on the local store
-    /// that would have had to wait was dropped before it answered.
+    /// A private filesystem operation failed, or the application could not wait
+    /// for the local metadata operation to answer.
     ///
-    /// A dropped step leaves whatever it began unconfirmed. The refusal it was
-    /// dropped with, the runtime's `Unready`, is then the error `source` holds:
-    /// `get_ref` on it finds the refusal, and its own `source` does not.
+    /// The operating-system failure, or the runtime's `Unwaited`, is the error
+    /// `source` holds: `get_ref` on it finds that cause, and its own `source`
+    /// does not.
     #[error("could not {operation} prompt-cache resource metadata: {source}")]
     Local {
         /// Stable operation name, without a path or resource handle.
         operation: &'static str,
-        /// Operating-system failure, or the refusal of a step that would have
-        /// had to wait.
+        /// Operating-system failure, or the application's runtime refusal.
         #[source]
         source: io::Error,
     },

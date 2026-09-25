@@ -144,14 +144,23 @@ pub(crate) struct Script {
 #[derive(Debug, Clone, Copy)]
 enum ResourceDelete {
     Deleted,
+    Delayed,
     StillReady,
     Ambiguous,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum CreateBehavior {
+    #[default]
+    Ready,
+    Interrupted,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 struct CacheFixture {
     priced: bool,
     persistent: bool,
+    create: CreateBehavior,
     encoding_failure: bool,
 }
 
@@ -311,9 +320,23 @@ impl Script {
         self
     }
 
+    /// Exposes a create interrupted after the store has recorded it.
+    pub(crate) fn interrupting_create(mut self) -> Self {
+        self.cache.persistent = true;
+        self.cache.create = CreateBehavior::Interrupted;
+        self
+    }
+
     /// Exposes a reviewed mechanism whose selected control cannot be lowered.
     pub(crate) fn failing_cache_encoding(mut self) -> Self {
         self.cache.encoding_failure = true;
+        self
+    }
+
+    /// Exposes a lifecycle whose deletion yields once before deleting.
+    pub(crate) fn delayed_delete(mut self) -> Self {
+        self.cache.persistent = true;
+        self.resource_delete = ResourceDelete::Delayed;
         self
     }
 
@@ -602,6 +625,21 @@ impl PromptCacheResourceLifecycle for Script {
             if cancel.requested() {
                 return Err(PromptCacheResourceError::Cancelled);
             }
+            if matches!(self.cache.create, CreateBehavior::Interrupted) {
+                let mut first = true;
+                std::future::poll_fn(|wake| {
+                    if first {
+                        first = false;
+                        cancel.request();
+                        wake.waker().wake_by_ref();
+                        std::task::Poll::Pending
+                    } else {
+                        std::task::Poll::Ready(())
+                    }
+                })
+                .await;
+                return Err(PromptCacheResourceError::Cancelled);
+            }
             if request.deadline.expired() {
                 return Err(PromptCacheResourceError::Deadline);
             }
@@ -658,12 +696,27 @@ impl PromptCacheResourceLifecycle for Script {
             if cancel.requested() {
                 return Err(PromptCacheResourceError::Cancelled);
             }
+            if matches!(self.resource_delete, ResourceDelete::Delayed) {
+                let mut first = true;
+                std::future::poll_fn(|wake| {
+                    if first {
+                        first = false;
+                        wake.waker().wake_by_ref();
+                        std::task::Poll::Pending
+                    } else {
+                        std::task::Poll::Ready(())
+                    }
+                })
+                .await;
+            }
             match self.resource_delete {
-                ResourceDelete::Deleted => Ok(PromptCacheResourceRemote {
-                    handle: None,
-                    state: PromptCacheResourceState::Deleted,
-                    expires_at: None,
-                }),
+                ResourceDelete::Deleted | ResourceDelete::Delayed => {
+                    Ok(PromptCacheResourceRemote {
+                        handle: None,
+                        state: PromptCacheResourceState::Deleted,
+                        expires_at: None,
+                    })
+                }
                 ResourceDelete::StillReady => Ok(PromptCacheResourceRemote {
                     handle: record.handle().cloned(),
                     state: PromptCacheResourceState::Ready,
