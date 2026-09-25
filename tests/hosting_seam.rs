@@ -29,7 +29,7 @@ use crucible_core::{
     SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
     SandboxResourceLimits, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
     Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolDescriptor, ToolError, ToolId,
-    ToolOutput, ToolProvenance, Toolset, ToolsetContext,
+    ToolOutput, ToolProvenance, Toolset, ToolsetContext, unconfined_inspection,
 };
 use crucible_mcp::{Chosen, Hosting};
 use crucible_runner::Tools;
@@ -99,7 +99,7 @@ fn inspection() -> SandboxInspection {
         None,
     )
     .expect("a backend identity");
-    SandboxInspection::unconfined_for_request(
+    unconfined_inspection(
         backend,
         SandboxCapabilities::none(),
         &request,

@@ -3,15 +3,14 @@
 //! A mediator checks the requested host before DNS and the resolved address
 //! before connecting. Native backends separately prevent direct-network bypass.
 
+use crucible_storage::MAX_SANDBOX_NETWORK_RULES;
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 use super::policy::{SandboxNetworkEndpoint, SandboxNetworkProvenance, SandboxPolicyError};
-
-/// Maximum entries in each domain or Unix-socket list.
-pub const MAX_SANDBOX_NETWORK_RULES: usize = 64;
 
 /// One canonical hostname, literal IP address, `*.domain` pattern, or `*`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]

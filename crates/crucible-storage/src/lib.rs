@@ -9,7 +9,16 @@
 //!
 //! This crate owns the first half only. Everything here validates and bounds
 //! itself from values in `crucible-types`, so an external store implementation
-//! compiles against the contract without linking the runtime that fills it:
+//! compiles against the contract without linking the runtime that fills it —
+//! including the redacted sandbox records a journal and a checkpoint keep,
+//! which is why nothing in this crate names `crucible-sandbox` and a store can
+//! read a session back without a sandbox in the build. Which half a record
+//! belongs to is a ruling rather than a preference of this crate:
+//!
+//! > the records a journal or checkpoint stores move down into
+//! > `crucible-storage` as storage-owned redacted records, which
+//! > `crucible-sandbox` — already allowed to depend on storage — converts its
+//! > values into
 //!
 //! ```
 //! use std::future::{self, Future};
@@ -134,21 +143,41 @@ use std::pin::Pin;
 pub mod cache;
 pub mod interruption;
 pub mod journal;
+pub mod sandbox;
 pub mod session;
 
 pub use cache::PromptCacheResourceStore;
 pub use interruption::{
-    ActionId, ActionResolution, ApprovalDecision, CheckpointId, IdempotencyKey, InterruptionError,
-    InvocationId, InvocationRecord, InvocationState, JournalEntryId, MAX_CHECKPOINT_INVOCATIONS,
-    MAX_CHECKPOINT_SANDBOXES, MAX_CHECKPOINT_WORD_BYTES, MAX_HUMAN_INPUT_BYTES,
-    MAX_PENDING_ACTIONS, PendingAction, PendingActions, PendingApproval, PendingExternalTool,
-    PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest, ResumeScope, ResumedAction,
-    ToolEffect,
+    ActionId, ActionResolution, ApprovalDecision, CheckpointId, ExecutionCheckpoint,
+    IdempotencyKey, InterruptionError, InvocationId, InvocationRecord, InvocationState,
+    JournalEntryId, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES,
+    MAX_CHECKPOINT_WORD_BYTES, MAX_HUMAN_INPUT_BYTES, MAX_PENDING_ACTIONS, PendingAction,
+    PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput, RecoveryAction,
+    ResolutionChange, ResumeDigest, ResumeEvidence, ResumeScope, ResumedAction, ToolEffect,
+    ValidatedResume,
 };
 pub use journal::{
     CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
     CustomProjector, JournalError, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
+    MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
+    RunHistory, RunItem,
 };
+pub use sandbox::{
+    MAX_SANDBOX_BACKEND_ID_BYTES, MAX_SANDBOX_BACKEND_WORD_BYTES,
+    MAX_SANDBOX_CONFINING_CPU_SECONDS, MAX_SANDBOX_NETWORK_RULES, SandboxBackendId,
+    SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities, SandboxCapability,
+    SandboxCapabilityError, SandboxCheckpoint, SandboxCheckpointError, SandboxCleanup,
+    SandboxCommandStage, SandboxFact, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
+    SandboxFeature, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxGuardrailDecision,
+    SandboxInspection, SandboxLifecycle, SandboxNetworkInspection, SandboxPlanInspection,
+    SandboxResourceLimits, SandboxRootInspection, SandboxUsage, SandboxViolation,
+};
+// A Windows Job Object has no per-process handle-count ceiling, so the POSIX
+// descriptor limit this constant states has no meaning there and the constant
+// itself is compiled out. The gate is the one its definition carries, so the
+// name and the value it promises cannot disagree about where it exists.
+#[cfg(not(target_os = "windows"))]
+pub use sandbox::MAX_SANDBOX_CONFINING_OPEN_FILES;
 pub use session::{SessionOwner, SessionStore};
 
 /// What a store's waiting methods hand back.

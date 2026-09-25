@@ -763,7 +763,10 @@ fn decode_cache(value: &Value) -> Result<CacheCheckpoint, CheckpointError> {
         nullable_number(value, "expires_at")?,
         boolean(value, "reconcile")?,
     )
-    .map_err(Into::into)
+    // The value that carries no record lives in `crucible-types` and cannot
+    // name this crate's error, so the refusal it names is the same
+    // `InvalidField` the checkpoint has always reported.
+    .map_err(|error| CheckpointError::Invalid(InterruptionError::InvalidField(error.field())))
 }
 
 fn effect(effect: ToolEffect) -> &'static str {

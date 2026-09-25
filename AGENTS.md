@@ -12,7 +12,7 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-types/` | Shared validated values every crate exchanges |
 | `crates/crucible-registry/` | Bounded, source-aware registries |
 | `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
-| `crates/crucible-storage/` | Session, history, checkpoint and cache contracts |
+| `crates/crucible-storage/` | Session, history, checkpoint and cache contracts, and the redacted sandbox records they keep |
 | `crates/crucible-workspace/` | The directories crucible reaches, and path proofs |
 | `crates/crucible-attachments/` | What may be attached, and the one read it comes through |
 | `crates/crucible-runtime/` | The controls a turn is steered and stopped by, and how work is owned |

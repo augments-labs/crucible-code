@@ -2,10 +2,13 @@
 
 use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
 
 use crucible_workspace::Workspace;
 use sha2::{Digest, Sha256};
+
+use crucible_storage::{
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxResourceLimits,
+};
 
 use super::domains::SandboxDomainPolicy;
 use super::guardrail::SandboxCommandPolicy;
@@ -25,85 +28,25 @@ pub const MAX_SANDBOX_UNREADABLE_PATTERNS: usize = 64;
 /// Maximum wildcard/literal components after one pattern's fixed scan root.
 pub const MAX_SANDBOX_PATTERN_COMPONENTS: usize = 64;
 
-/// Access granted to one exact filesystem subtree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxFilesystemAccess {
-    /// The path must not be visible.
-    Unreadable,
-    /// Readable, but no mutation is allowed.
-    ReadOnly,
-    /// Readable and writable.
-    ReadWrite,
-    /// Readable but immutable even beneath a writable ancestor.
-    ///
-    /// Filesystem-equivalent spellings name the same protected object. A
-    /// backend must keep every such spelling protected even when a
-    /// case-preserving filesystem lets the spelling of its directory entry
-    /// change without replacing the object.
-    Protected,
-}
-
-impl SandboxFilesystemAccess {
-    const fn authority(self) -> u8 {
-        match self {
-            Self::Unreadable => 0,
-            Self::ReadOnly | Self::Protected => 1,
-            Self::ReadWrite => 2,
-        }
-    }
-
-    /// Stable redacted inspection spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Unreadable => "unreadable",
-            Self::ReadOnly => "read_only",
-            Self::ReadWrite => "read_write",
-            Self::Protected => "protected",
-        }
+/// How much authority one access level is, for the narrowing rules.
+///
+/// Stable, and its own function rather than a method, because the level is a
+/// judgement about two reaches rather than a fact about one.
+fn authority(access: SandboxFilesystemAccess) -> u8 {
+    match access {
+        SandboxFilesystemAccess::Unreadable => 0,
+        SandboxFilesystemAccess::ReadOnly | SandboxFilesystemAccess::Protected => 1,
+        SandboxFilesystemAccess::ReadWrite => 2,
     }
 }
 
-/// Why a filesystem rule is present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxFilesystemProvenance {
-    /// A root explicitly granted to the workspace.
-    Workspace,
-    /// A minimum host-owned runtime path.
-    Runtime,
-    /// A protected Crucible or repository metadata carve-out.
-    ProtectedMetadata,
-    /// A caller-requested narrowing.
-    Descendant,
-    /// An explicit manifest mount request.
-    Manifest,
-    /// A filesystem grant or restriction in the user's configuration.
-    UserConfiguration,
-    /// A restriction in the checked-in project configuration.
-    ProjectConfiguration,
-    /// A restriction in the project-local configuration.
-    ProjectLocalConfiguration,
-}
-
-impl SandboxFilesystemProvenance {
-    const fn permits(self, candidate: Self) -> bool {
-        self as u8 == candidate as u8 || matches!(candidate, Self::Descendant)
-    }
-
-    /// Stable redacted inspection spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Workspace => "workspace",
-            Self::Runtime => "runtime",
-            Self::ProtectedMetadata => "protected_metadata",
-            Self::Descendant => "descendant",
-            Self::Manifest => "manifest",
-            Self::UserConfiguration => "user_configuration",
-            Self::ProjectConfiguration => "project_configuration",
-            Self::ProjectLocalConfiguration => "project_local_configuration",
-        }
-    }
+/// Whether a reach at `provenance` may be granted `candidate` authority.
+fn permits(
+    provenance: SandboxFilesystemProvenance,
+    candidate: SandboxFilesystemProvenance,
+) -> bool {
+    provenance as u8 == candidate as u8
+        || matches!(candidate, SandboxFilesystemProvenance::Descendant)
 }
 
 /// One absolute, bounded filesystem rule.
@@ -463,154 +406,48 @@ impl SandboxNetworkPolicy {
     }
 }
 
-/// Processor seconds one confined process may burn before it is killed.
-///
-/// An hour of it. Counted per process rather than per command, so a build
-/// spreading work over many compilers gets an hour each; what it catches is one
-/// process that has stopped making progress and not noticed.
-#[cfg(any(not(target_os = "macos"), test))]
-const CPU_SECONDS: u64 = 60 * 60;
-
-/// Files one confined process may hold open at once.
-///
-/// Four times the soft limit a Linux shell usually starts with, so nothing that
-/// works outside the sandbox stops working inside it, and far below the point
-/// where a descriptor leak reaches the rest of the machine.
-#[cfg(not(target_os = "windows"))]
-const OPEN_FILES: u64 = 4096;
-
-/// Optional resource ceilings for one command/session.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SandboxResourceLimits {
-    /// CPU seconds.
-    pub cpu_seconds: Option<u64>,
-    /// Memory bytes.
-    pub memory_bytes: Option<u64>,
-    /// Ephemeral-storage bytes.
-    pub disk_bytes: Option<u64>,
-    /// Processes/PIDs.
-    pub processes: Option<u64>,
-    /// Open files.
-    pub open_files: Option<u64>,
-    /// Outbound bytes.
-    pub outbound_bytes: Option<u64>,
-    /// Captured output bytes.
-    pub output_bytes: Option<u64>,
-    /// Concurrent commands within this service.
-    pub concurrent_commands: Option<u64>,
-    /// Command wall time.
-    pub command_time: Option<Duration>,
-    /// Session wall time.
-    pub session_time: Option<Duration>,
-    /// Backend cost in caller-defined micros.
-    pub cost_micros: Option<u64>,
+// The ceilings a policy narrows are a stored value now, so these three
+// judgements — what a disabled backend may still promise, what a child may
+// not widen, and what a usable set of ceilings is — live here beside the
+// policy they are about rather than inside the value they read.
+const fn unconfined(mut limits: SandboxResourceLimits) -> SandboxResourceLimits {
+    limits.cpu_seconds = None;
+    limits.memory_bytes = None;
+    limits.open_files = None;
+    limits
 }
-
-impl SandboxResourceLimits {
-    /// The ceilings a confining backend puts on a command it starts.
-    ///
-    /// Generous on purpose. These are not a budget anybody is meant to work
-    /// within — a build is allowed to be slow and to open a great many files.
-    /// They are the point past which a command has stopped being a command and
-    /// become a runaway, and past which the machine crucible is running on is
-    /// the thing at risk.
-    ///
-    /// Only the ceilings a confining backend actually applies are here, because
-    /// a limit that nothing enforces is worse than none: it reads, to the next
-    /// person, like the question was settled. What is deliberately absent:
-    ///
-    /// - Memory. The knob a confining backend has is the address space a
-    ///   process may map, which is not the memory it uses. Runtimes that
-    ///   reserve enormously and touch little — Go, a JVM, anything built under
-    ///   a sanitiser — would be refused by a ceiling low enough to catch
-    ///   anything real.
-    /// - Processes. Not because nothing bounds them: the broker caps the scope
-    ///   it is PID 1 of whether or not a policy says so. Stating a number here
-    ///   would instead refuse every command on a kernel older than 5.14, where
-    ///   the count is the person's whole machine rather than this namespace,
-    ///   and a busy desktop would be turned away for reasons nothing here could
-    ///   explain.
-    /// - Disk, outbound bytes and cost. Nothing in this tree enforces them yet,
-    ///   and [`crate::SandboxRequest::negotiate`] refuses a policy asking
-    ///   for a ceiling the backend cannot apply.
-    ///
-    /// Wall time, captured output and concurrency are the caller's: they belong
-    /// to one command rather than to the confinement, and [`SandboxPolicy`]
-    /// carries whatever that caller narrows to.
-    #[must_use]
-    pub const fn confining() -> Self {
-        Self {
-            #[cfg(not(target_os = "macos"))]
-            cpu_seconds: Some(CPU_SECONDS),
-            // Darwin delivers SIGXCPU but does not make the hard value an
-            // uncatchable ceiling. A handler can continue past it, so macOS
-            // must not state or advertise this as enforced.
-            #[cfg(target_os = "macos")]
-            cpu_seconds: None,
-            // Windows Job Objects have no per-process handle-count ceiling.
-            // Claiming the Unix descriptor limit there would make the native
-            // backend either lie or reject every standard policy.
-            #[cfg(not(target_os = "windows"))]
-            open_files: Some(OPEN_FILES),
-            #[cfg(target_os = "windows")]
-            open_files: None,
-            memory_bytes: None,
-            disk_bytes: None,
-            processes: None,
-            outbound_bytes: None,
-            output_bytes: None,
-            concurrent_commands: None,
-            command_time: None,
-            session_time: None,
-            cost_micros: None,
-        }
-    }
-
-    /// Removes ceilings applied only by a confining backend.
-    ///
-    /// Disabled confinement leaves command time, output and concurrency bounds
-    /// active. Kernel limits cannot remain promised on ordinary execution.
-    const fn unconfined(mut self) -> Self {
-        self.cpu_seconds = None;
-        self.memory_bytes = None;
-        self.open_files = None;
-        self
-    }
-
-    fn is_no_wider_than(self, parent: Self) -> bool {
-        no_larger(self.cpu_seconds, parent.cpu_seconds)
-            && no_larger(self.memory_bytes, parent.memory_bytes)
-            && no_larger(self.disk_bytes, parent.disk_bytes)
-            && no_larger(self.processes, parent.processes)
-            && no_larger(self.open_files, parent.open_files)
-            && no_larger(self.outbound_bytes, parent.outbound_bytes)
-            && no_larger(self.output_bytes, parent.output_bytes)
-            && no_larger(self.concurrent_commands, parent.concurrent_commands)
-            && no_larger(self.command_time, parent.command_time)
-            && no_larger(self.session_time, parent.session_time)
-            && no_larger(self.cost_micros, parent.cost_micros)
-    }
-
-    fn valid(self) -> bool {
-        [
-            self.cpu_seconds,
-            self.memory_bytes,
-            self.disk_bytes,
-            self.processes,
-            self.open_files,
-            self.outbound_bytes,
-            self.output_bytes,
-            self.concurrent_commands,
-            self.cost_micros,
-        ]
-        .into_iter()
-        .flatten()
-        .all(|value| value > 0)
-            && [self.command_time, self.session_time]
-                .into_iter()
-                .flatten()
-                .all(|value| !value.is_zero())
-    }
+fn is_no_wider_than(limits: SandboxResourceLimits, parent: SandboxResourceLimits) -> bool {
+    no_larger(limits.cpu_seconds, parent.cpu_seconds)
+        && no_larger(limits.memory_bytes, parent.memory_bytes)
+        && no_larger(limits.disk_bytes, parent.disk_bytes)
+        && no_larger(limits.processes, parent.processes)
+        && no_larger(limits.open_files, parent.open_files)
+        && no_larger(limits.outbound_bytes, parent.outbound_bytes)
+        && no_larger(limits.output_bytes, parent.output_bytes)
+        && no_larger(limits.concurrent_commands, parent.concurrent_commands)
+        && no_larger(limits.command_time, parent.command_time)
+        && no_larger(limits.session_time, parent.session_time)
+        && no_larger(limits.cost_micros, parent.cost_micros)
+}
+fn valid(limits: SandboxResourceLimits) -> bool {
+    [
+        limits.cpu_seconds,
+        limits.memory_bytes,
+        limits.disk_bytes,
+        limits.processes,
+        limits.open_files,
+        limits.outbound_bytes,
+        limits.output_bytes,
+        limits.concurrent_commands,
+        limits.cost_micros,
+    ]
+    .into_iter()
+    .flatten()
+    .all(|value| value > 0)
+        && [limits.command_time, limits.session_time]
+            .into_iter()
+            .flatten()
+            .all(|value| !value.is_zero())
 }
 
 fn no_larger<T: PartialOrd>(candidate: Option<T>, parent: Option<T>) -> bool {
@@ -713,7 +550,7 @@ impl SandboxPolicy {
                         ancestor.access,
                         SandboxFilesystemAccess::Protected | SandboxFilesystemAccess::Unreadable
                     )
-                    && rule.access.authority() > ancestor.access.authority()
+                    && authority(rule.access) > authority(ancestor.access)
             })
         }) {
             return Err(SandboxPolicyError::FilesystemWidening);
@@ -724,7 +561,7 @@ impl SandboxPolicy {
         if !readable_by(&filesystem, &working_directory) {
             return Err(SandboxPolicyError::WorkingDirectoryOutsidePolicy);
         }
-        if !limits.valid() {
+        if !valid(limits) {
             return Err(SandboxPolicyError::InvalidResourceLimit);
         }
 
@@ -758,7 +595,7 @@ impl SandboxPolicy {
             || parent.filesystem.iter().any(|parent_rule| {
                 effective_rule(&candidate.filesystem, &parent_rule.path).is_some_and(|candidate| {
                     !filesystem_access_allowed(parent_rule.access, candidate.access)
-                        || !parent_rule.provenance.permits(candidate.provenance)
+                        || !permits(parent_rule.provenance, candidate.provenance)
                 })
             })
         {
@@ -767,7 +604,7 @@ impl SandboxPolicy {
         if !candidate.network.is_no_wider_than(&parent.network) {
             return Err(SandboxPolicyError::NetworkWidening);
         }
-        if !candidate.limits.is_no_wider_than(parent.limits) {
+        if !is_no_wider_than(candidate.limits, parent.limits) {
             return Err(SandboxPolicyError::ResourceWidening);
         }
         candidate.commands = SandboxCommandPolicy::intersect(&parent.commands, &candidate.commands)
@@ -784,7 +621,7 @@ impl SandboxPolicy {
                 .find(|inherited| inherited.pattern == pattern.pattern)
                 .map_or(
                     pattern.provenance != SandboxFilesystemProvenance::Descendant,
-                    |inherited| !inherited.provenance.permits(pattern.provenance),
+                    |inherited| !permits(inherited.provenance, pattern.provenance),
                 )
         }) {
             return Err(SandboxPolicyError::FilesystemWidening);
@@ -820,10 +657,10 @@ impl SandboxPolicy {
         mut self,
         limits: SandboxResourceLimits,
     ) -> Result<Self, SandboxPolicyError> {
-        if !limits.valid() {
+        if !valid(limits) {
             return Err(SandboxPolicyError::InvalidResourceLimit);
         }
-        if !limits.is_no_wider_than(self.limits) {
+        if !is_no_wider_than(limits, self.limits) {
             return Err(SandboxPolicyError::ResourceWidening);
         }
         self.limits = limits;
@@ -881,7 +718,7 @@ impl SandboxPolicy {
     pub const fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         if !enabled {
-            self.limits = self.limits.unconfined();
+            self.limits = unconfined(self.limits);
         }
         self
     }
@@ -959,7 +796,7 @@ impl SandboxPolicy {
     pub fn permits_path(&self, path: &Path, access: SandboxFilesystemAccess) -> bool {
         validate_absolute_path(path).is_ok()
             && effective_rule(&self.filesystem, path).is_some_and(|granted| {
-                access.authority() <= granted.access.authority()
+                authority(access) <= authority(granted.access)
                     && !(access == SandboxFilesystemAccess::ReadOnly
                         && granted.access == SandboxFilesystemAccess::Protected)
             })
@@ -967,7 +804,7 @@ impl SandboxPolicy {
                 .filesystem
                 .iter()
                 .filter(|rule| rule.path.starts_with(path))
-                .all(|rule| access.authority() <= rule.access.authority())
+                .all(|rule| authority(access) <= authority(rule.access))
     }
 
     /// Domain-separated policy identity for bounded inspection/checkpoints.
@@ -1073,7 +910,7 @@ fn filesystem_rule_allowed(
 ) -> bool {
     effective_rule(parent, &candidate.path).is_some_and(|granted| {
         filesystem_access_allowed(granted.access, candidate.access)
-            && granted.provenance.permits(candidate.provenance)
+            && permits(granted.provenance, candidate.provenance)
     })
 }
 
@@ -1081,7 +918,7 @@ fn filesystem_access_allowed(
     parent: SandboxFilesystemAccess,
     candidate: SandboxFilesystemAccess,
 ) -> bool {
-    candidate.authority() <= parent.authority()
+    authority(candidate) <= authority(parent)
         && !(candidate == SandboxFilesystemAccess::ReadOnly
             && parent == SandboxFilesystemAccess::Protected)
 }
@@ -1145,6 +982,10 @@ pub enum SandboxPolicyError {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    use std::time::Duration;
+
+    use crucible_storage::{MAX_SANDBOX_CONFINING_CPU_SECONDS, MAX_SANDBOX_CONFINING_OPEN_FILES};
+
     use super::*;
 
     fn rule(path: &str, access: SandboxFilesystemAccess) -> SandboxFilesystemRule {
@@ -1184,10 +1025,10 @@ mod tests {
             .limits();
 
         #[cfg(not(target_os = "macos"))]
-        assert_eq!(limits.cpu_seconds, Some(CPU_SECONDS));
+        assert_eq!(limits.cpu_seconds, Some(MAX_SANDBOX_CONFINING_CPU_SECONDS));
         #[cfg(target_os = "macos")]
         assert_eq!(limits.cpu_seconds, None);
-        assert_eq!(limits.open_files, Some(OPEN_FILES));
+        assert_eq!(limits.open_files, Some(MAX_SANDBOX_CONFINING_OPEN_FILES));
 
         // Stated only where a backend applies them. A ceiling nothing enforces
         // reads as a settled question and bounds nothing; see
@@ -1236,7 +1077,10 @@ mod tests {
             },
         );
         #[cfg(not(target_os = "macos"))]
-        assert_eq!(confining.limits().cpu_seconds, Some(CPU_SECONDS));
+        assert_eq!(
+            confining.limits().cpu_seconds,
+            Some(MAX_SANDBOX_CONFINING_CPU_SECONDS)
+        );
         #[cfg(target_os = "macos")]
         assert_eq!(confining.limits().cpu_seconds, None);
         assert_eq!(confining.limits().memory_bytes, Some(1 << 30));
@@ -1277,12 +1121,18 @@ mod tests {
         let narrowed = confining
             .with_limits(SandboxResourceLimits {
                 command_time: Some(Duration::from_secs(30)),
-                cpu_seconds: Some(CPU_SECONDS / 2),
+                cpu_seconds: Some(MAX_SANDBOX_CONFINING_CPU_SECONDS / 2),
                 ..SandboxResourceLimits::confining()
             })
             .expect("narrowing what the policy already states");
-        assert_eq!(narrowed.limits().cpu_seconds, Some(CPU_SECONDS / 2));
-        assert_eq!(narrowed.limits().open_files, Some(OPEN_FILES));
+        assert_eq!(
+            narrowed.limits().cpu_seconds,
+            Some(MAX_SANDBOX_CONFINING_CPU_SECONDS / 2)
+        );
+        assert_eq!(
+            narrowed.limits().open_files,
+            Some(MAX_SANDBOX_CONFINING_OPEN_FILES)
+        );
     }
 
     #[test]
@@ -1570,8 +1420,8 @@ mod tests {
             command_time: Some(Duration::from_secs(5)),
             ..SandboxResourceLimits::default()
         };
-        assert!(narrow.is_no_wider_than(parent));
-        assert!(!SandboxResourceLimits::default().is_no_wider_than(parent));
+        assert!(is_no_wider_than(narrow, parent));
+        assert!(!is_no_wider_than(SandboxResourceLimits::default(), parent));
     }
 
     #[test]

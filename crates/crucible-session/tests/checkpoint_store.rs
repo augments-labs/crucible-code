@@ -14,7 +14,7 @@ use crucible_core::{
     ResumeEvidence, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
     SandboxCapabilities, SandboxCapability, SandboxCheckpoint, SandboxCleanup, SandboxFeature,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
-    SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits,
+    SandboxManifest, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, inspection,
 };
 use crucible_session::{CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore};
 use crucible_types::ResultProvenance;
@@ -76,7 +76,7 @@ fn sandbox_checkpoint() -> SandboxCheckpoint {
         claims.with(feature, SandboxCapability::Enforced)
     });
     SandboxCheckpoint::from_inspection(
-        &SandboxInspection::new(
+        &inspection(
             SandboxId::new(),
             SandboxBackendIdentity::new(
                 SandboxBackendId::new("checkpoint-backend").expect("checkpoint backend id"),

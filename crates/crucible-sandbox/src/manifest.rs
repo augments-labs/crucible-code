@@ -4,7 +4,9 @@ use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::policy::{MAX_SANDBOX_PATH_BYTES, SandboxFilesystemAccess, SandboxFilesystemProvenance};
+use crucible_storage::{SandboxFilesystemAccess, SandboxFilesystemProvenance};
+
+use super::policy::MAX_SANDBOX_PATH_BYTES;
 
 /// Maximum entries materialized for one sandbox.
 pub const MAX_SANDBOX_MANIFEST_ENTRIES: usize = 256;

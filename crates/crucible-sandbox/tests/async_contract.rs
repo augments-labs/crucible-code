@@ -19,7 +19,7 @@ use crucible_sandbox::{
     SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection, SandboxLaunch,
     SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
     SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession, SandboxUsage,
-    SandboxViolation,
+    SandboxViolation, inspection,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
@@ -81,7 +81,7 @@ impl SandboxService for Unconfined {
         request: SandboxRequest,
     ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
         Box::pin(async move {
-            let inspection = SandboxInspection::new(
+            let inspection = inspection(
                 request.id(),
                 self.identity.clone(),
                 SandboxCapabilities::none(),

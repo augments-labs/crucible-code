@@ -509,7 +509,6 @@ dependencies = [
  "crucible-transport",
  "crucible-types",
  "crucible-workspace",
- "serde_json",
 ]
 
 [[package]]

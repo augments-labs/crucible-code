@@ -1,13 +1,24 @@
-//! Durable interruption, resolution and invocation recovery records.
+//! Durable interruption, resolution, invocation recovery and execution
+//! checkpoints.
 //!
 //! Conversation history says what a provider may read. This module says what
-//! an unfinished execution needs in order to resume safely. The two records
-//! deliberately share identifiers and ancestry, not storage or projection.
+//! an unfinished execution needs in order to resume safely, and keeps the
+//! checkpoint that carries it. The two records deliberately share identifiers
+//! and ancestry, not storage or projection.
 //!
 //! What an unfinished call durably holds is the recorded result, never the
 //! live wrapper: a checkpoint that could hand back an approval-bound value
 //! would let a resume replay authority the user granted to a call that is
 //! already gone.
+//!
+//! A checkpoint binds three things: the resume authority fingerprints, the
+//! prompt-cache identity a resumed turn must still match, and the redacted
+//! sandbox lifecycles it must still find. The first and the third are records
+//! this crate keeps, because a store holds them without running anything; the
+//! middle one is a value in `crucible-types`, because it holds no record and
+//! every crate that keeps a checkpoint already names that crate. None of the
+//! three needs the runtime that produced it, which is what lets a checkpoint
+//! store compile on its own.
 
 use std::fmt;
 use std::str::FromStr;
@@ -15,9 +26,12 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use crucible_types::{
-    Ancestry, RecordedToolOutput, TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES,
-    TOOL_RESULT_BYTES, ToolCall, ToolId, ToolOutcome, ToolResult,
+    Ancestry, CacheCheckpoint, PromptCacheFingerprint, PromptCacheScopeDigest, RecordedToolOutput,
+    TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESULT_BYTES, ToolCall, ToolId,
+    ToolOutcome, ToolResult, is_checkpoint_word,
 };
+
+use crate::sandbox::SandboxCheckpoint;
 
 /// Most pending actions retained in one execution checkpoint.
 pub const MAX_PENDING_ACTIONS: usize = 128;
@@ -26,7 +40,12 @@ pub const MAX_CHECKPOINT_INVOCATIONS: usize = 512;
 /// Most sandbox identities retained in one execution checkpoint.
 pub const MAX_CHECKPOINT_SANDBOXES: usize = 128;
 /// Most bytes retained in a checkpoint metadata word or idempotency key.
-pub const MAX_CHECKPOINT_WORD_BYTES: usize = 256;
+///
+/// The figure is owned by `crucible-types`, beside the rule
+/// [`is_checkpoint_word`] applies, and is named here for the records this module
+/// keeps. A word a cache checkpoint admits is a word this one admits, because
+/// the same build writes both and reads both back.
+pub use crucible_types::MAX_CHECKPOINT_WORD_BYTES;
 /// Most bytes retained in a human question or answer.
 pub const MAX_HUMAN_INPUT_BYTES: usize = 4_096;
 
@@ -83,17 +102,18 @@ impl InterruptionError {
     /// Accepts one bounded, control-free word retained in a checkpoint.
     ///
     /// The checkpoint owner lives above this crate while the records it holds
-    /// live here, so the rule is stated once by the error that reports it.
+    /// live here, so the refusal is reported in this crate's error — but the
+    /// rule is not restated here. It is owned once by `crucible-types`, which
+    /// every crate that retains one of these words already names, so a word the
+    /// cache checkpoint admits is a word this admits, and a rule tightened in
+    /// one place tightens in all of them at once.
     ///
     /// # Errors
     ///
     /// [`InterruptionError::InvalidField`] for an empty, oversized, or
     /// control-bearing word.
     pub fn check_word(field: &'static str, value: &str) -> Result<(), Self> {
-        if value.is_empty()
-            || value.len() > MAX_CHECKPOINT_WORD_BYTES
-            || value.chars().any(char::is_control)
-        {
+        if !is_checkpoint_word(value) {
             return Err(Self::InvalidField(field));
         }
         Ok(())
@@ -1187,4 +1207,393 @@ fn bounded_human(field: &'static str, value: Box<str>) -> Result<Box<str>, Inter
         return Err(InterruptionError::InvalidField(field));
     }
     Ok(value)
+}
+
+/// Version evidence supplied by the live runtime at resume.
+#[derive(Debug, Clone)]
+pub struct ResumeEvidence {
+    scope: ResumeScope,
+    policy_version: Box<str>,
+    capability_version: Box<str>,
+    pricing_version: Option<Box<str>>,
+    cache_scope: Option<PromptCacheScopeDigest>,
+    cache_prefix: Option<PromptCacheFingerprint>,
+    sandboxes: Vec<SandboxCheckpoint>,
+}
+
+impl ResumeEvidence {
+    /// Builds exact live evidence. Invalid labels remain a mismatch rather than
+    /// becoming a partially trusted resume.
+    #[must_use]
+    pub fn new(
+        scope: ResumeScope,
+        policy_version: impl Into<Box<str>>,
+        capability_version: impl Into<Box<str>>,
+        pricing_version: Option<impl Into<Box<str>>>,
+    ) -> Self {
+        Self {
+            scope,
+            policy_version: policy_version.into(),
+            capability_version: capability_version.into(),
+            pricing_version: pricing_version.map(Into::into),
+            cache_scope: None,
+            cache_prefix: None,
+            sandboxes: Vec::new(),
+        }
+    }
+
+    /// Supplies a freshly derived cache scope and stable-prefix fingerprint.
+    /// Matching them validates resume identity; it never claims provider cache
+    /// activity, which remains known only from a provider usage report.
+    #[must_use]
+    pub const fn with_cache_identity(
+        mut self,
+        scope: PromptCacheScopeDigest,
+        prefix: PromptCacheFingerprint,
+    ) -> Self {
+        self.cache_scope = Some(scope);
+        self.cache_prefix = Some(prefix);
+        self
+    }
+
+    /// Supplies a freshly probed effective sandbox/backend identity.
+    ///
+    /// Evidence may include multiple independently selected sandboxes; every
+    /// checkpointed lifecycle must find one exact, non-weaker match.
+    ///
+    /// # Errors
+    ///
+    /// The fixed evidence collection is already full.
+    pub fn with_sandbox(mut self, sandbox: SandboxCheckpoint) -> Result<Self, InterruptionError> {
+        if self.sandboxes.len() >= MAX_CHECKPOINT_SANDBOXES {
+            return Err(InterruptionError::TooMany {
+                kind: "sandbox evidence",
+                maximum: MAX_CHECKPOINT_SANDBOXES,
+            });
+        }
+        self.sandboxes.push(sandbox);
+        Ok(self)
+    }
+}
+
+/// One distinct in-flight execution checkpoint.
+#[derive(Debug, Clone)]
+pub struct ExecutionCheckpoint {
+    id: CheckpointId,
+    ancestry: Ancestry,
+    scope: ResumeScope,
+    cache: Option<CacheCheckpoint>,
+    created_at: u64,
+    expires_at: u64,
+    pending: PendingActions,
+    invocations: Vec<InvocationRecord>,
+    sandboxes: Vec<SandboxCheckpoint>,
+}
+
+impl ExecutionCheckpoint {
+    /// Creates an empty execution checkpoint, separate from conversation and
+    /// extension records.
+    ///
+    /// # Errors
+    ///
+    /// Expiry must be later than creation.
+    // Identity, ancestry, authority, cache state, and both lifetime endpoints
+    // are independent persisted fields; grouping them would add no invariant.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: CheckpointId,
+        ancestry: Ancestry,
+        scope: ResumeScope,
+        cache: Option<CacheCheckpoint>,
+        created_at: u64,
+        expires_at: u64,
+    ) -> Result<Self, InterruptionError> {
+        if expires_at <= created_at {
+            return Err(InterruptionError::InvalidExpiry);
+        }
+        Ok(Self {
+            id,
+            ancestry,
+            scope,
+            cache,
+            created_at,
+            expires_at,
+            pending: PendingActions::new(),
+            invocations: Vec::new(),
+            sandboxes: Vec::new(),
+        })
+    }
+
+    /// Stable checkpoint identity.
+    #[must_use]
+    pub const fn id(&self) -> CheckpointId {
+        self.id
+    }
+
+    /// Execution tree attribution.
+    #[must_use]
+    pub const fn ancestry(&self) -> Ancestry {
+        self.ancestry
+    }
+
+    /// Resume authority fingerprints.
+    #[must_use]
+    pub const fn scope(&self) -> ResumeScope {
+        self.scope
+    }
+
+    /// Minimal cache revalidation state.
+    #[must_use]
+    pub const fn cache(&self) -> Option<&CacheCheckpoint> {
+        self.cache.as_ref()
+    }
+
+    /// Creation time in Unix seconds.
+    #[must_use]
+    pub const fn created_at(&self) -> u64 {
+        self.created_at
+    }
+
+    /// Checkpoint expiry in Unix seconds.
+    #[must_use]
+    pub const fn expires_at(&self) -> u64 {
+        self.expires_at
+    }
+
+    /// Pending-action state.
+    #[must_use]
+    pub const fn pending(&self) -> &PendingActions {
+        &self.pending
+    }
+
+    /// Mutable pending-action state for resolution.
+    #[must_use]
+    pub const fn pending_mut(&mut self) -> &mut PendingActions {
+        &mut self.pending
+    }
+
+    /// Invocation recovery records.
+    #[must_use]
+    pub fn invocations(&self) -> &[InvocationRecord] {
+        &self.invocations
+    }
+
+    /// Minimal redacted sandbox identities requiring resume revalidation.
+    #[must_use]
+    pub fn sandboxes(&self) -> &[SandboxCheckpoint] {
+        &self.sandboxes
+    }
+
+    /// Adds one bounded sandbox checkpoint identity.
+    ///
+    /// # Errors
+    ///
+    /// Duplicate lifecycle identities and a full checkpoint are refused.
+    pub fn add_sandbox(&mut self, sandbox: SandboxCheckpoint) -> Result<(), InterruptionError> {
+        if self.sandboxes.len() >= MAX_CHECKPOINT_SANDBOXES {
+            return Err(InterruptionError::TooMany {
+                kind: "sandbox",
+                maximum: MAX_CHECKPOINT_SANDBOXES,
+            });
+        }
+        if self.sandboxes.iter().any(|held| held.id() == sandbox.id()) {
+            return Err(InterruptionError::InvalidId);
+        }
+        self.sandboxes.push(sandbox);
+        Ok(())
+    }
+
+    /// Adds one bounded invocation record.
+    ///
+    /// # Errors
+    ///
+    /// Duplicate identities and a full checkpoint are refused.
+    pub fn add_invocation(
+        &mut self,
+        invocation: InvocationRecord,
+    ) -> Result<(), InterruptionError> {
+        invocation.validate()?;
+        if self.invocations.len() >= MAX_CHECKPOINT_INVOCATIONS {
+            return Err(InterruptionError::TooMany {
+                kind: "invocation",
+                maximum: MAX_CHECKPOINT_INVOCATIONS,
+            });
+        }
+        if self
+            .invocations
+            .iter()
+            .any(|held| held.id() == invocation.id())
+        {
+            return Err(InterruptionError::InvalidId);
+        }
+        if self
+            .invocations
+            .iter()
+            .any(|held| held.call().id == invocation.call().id)
+        {
+            return Err(InterruptionError::DuplicateCall(
+                invocation.call().id.clone(),
+            ));
+        }
+        self.invocations.push(invocation);
+        Ok(())
+    }
+
+    /// Replaces pending state after a protected checkpoint is decoded.
+    pub fn set_pending(&mut self, pending: PendingActions) {
+        self.pending = pending;
+    }
+
+    /// Validates the live endpoint, model, credential, authority, semantic
+    /// versions, and expiry. A matching fingerprint is never returned as a
+    /// cache-hit claim.
+    ///
+    /// # Errors
+    ///
+    /// Any mismatch or expiry fails closed.
+    pub fn validate_resume(
+        &self,
+        evidence: &ResumeEvidence,
+        now: u64,
+    ) -> Result<ValidatedResume, InterruptionError> {
+        if now >= self.expires_at
+            || self
+                .cache
+                .as_ref()
+                .and_then(CacheCheckpoint::expires_at)
+                .is_some_and(|expiry| now >= expiry)
+            || self
+                .pending
+                .entries()
+                .any(|(action, resolution, completed)| {
+                    !completed
+                        && now >= action.expires_at()
+                        && matches!(
+                            resolution,
+                            None | Some(ActionResolution::Approval(ApprovalDecision::Approved))
+                        )
+                })
+        {
+            return Err(InterruptionError::Expired);
+        }
+        if evidence.scope != self.scope {
+            return Err(InterruptionError::ResumeMismatch);
+        }
+        if self.sandboxes.iter().any(|saved| {
+            !evidence
+                .sandboxes
+                .iter()
+                .any(|live| saved.is_compatible_with(live))
+        }) {
+            return Err(InterruptionError::ResumeMismatch);
+        }
+        let recovery = match &self.cache {
+            Some(cache)
+                if cache.policy_version() == &*evidence.policy_version
+                    && cache.capability_version() == &*evidence.capability_version
+                    && cache.pricing_version() == evidence.pricing_version.as_deref()
+                    && evidence.cache_scope == Some(cache.scope())
+                    && evidence.cache_prefix == Some(cache.prefix()) =>
+            {
+                if cache.requires_reconciliation() || cache.resource().is_some() {
+                    RecoveryAction::Reconcile
+                } else {
+                    // Even an exact prefix/scope match is only permission to
+                    // build another provider request and observe its report.
+                    RecoveryAction::Retry
+                }
+            }
+            Some(_) => return Err(InterruptionError::ResumeMismatch),
+            None => RecoveryAction::Retry,
+        };
+        Ok(ValidatedResume { recovery })
+    }
+}
+
+/// Successful scope/version validation with no speculative cache outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidatedResume {
+    recovery: RecoveryAction,
+}
+
+impl ValidatedResume {
+    /// Required next action.
+    #[must_use]
+    pub const fn recovery(self) -> RecoveryAction {
+        self.recovery
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crucible_types::CacheCheckpointError;
+
+    use crate::journal::JournalError;
+
+    use super::*;
+
+    fn cache_with_policy_version(
+        policy_version: &str,
+    ) -> Result<CacheCheckpoint, CacheCheckpointError> {
+        CacheCheckpoint::new(
+            policy_version,
+            "capability-v1",
+            None::<Box<str>>,
+            PromptCacheScopeDigest::new([1; 32]),
+            PromptCacheFingerprint::new([2; 32]),
+            None,
+            None,
+            None,
+            false,
+        )
+    }
+
+    #[test]
+    fn every_entry_point_that_bounds_a_retained_word_bounds_it_by_the_same_rule() {
+        // A build writes a cache checkpoint, an execution checkpoint and a
+        // journal cache fact, then reads all three back, and each entry point
+        // reports a refusal in its own error type. The verdict is the only
+        // thing they share, so this is what says they share it: if one grew a
+        // check the others lack, a build would write a record it then refused
+        // to read back. Agreement is therefore asserted before the rule's own
+        // verdict, so a divergence between the three is reported as the
+        // divergence it is rather than as a changed rule. Every probe is a word
+        // one of those paths has to classify — at the ceiling, one over it, a
+        // multi-byte one counted in bytes, a control character, and words that
+        // only a gratuitous tightening would refuse.
+        for (probe, retained) in [
+            ("policy-v1", true),
+            (" policy", true),
+            ("policy ", true),
+            ("é".repeat(MAX_CHECKPOINT_WORD_BYTES / 2).as_str(), true),
+            ("x".repeat(MAX_CHECKPOINT_WORD_BYTES).as_str(), true),
+            ("", false),
+            ("x".repeat(MAX_CHECKPOINT_WORD_BYTES + 1).as_str(), false),
+            (
+                "é".repeat(MAX_CHECKPOINT_WORD_BYTES / 2 + 1).as_str(),
+                false,
+            ),
+            ("with\nnewline", false),
+            ("with\ttab", false),
+            ("with\u{7f}delete", false),
+        ] {
+            let checkpoint = InterruptionError::check_word("policy", probe).is_ok();
+            assert_eq!(
+                JournalError::check_word("policy", probe).is_ok(),
+                checkpoint,
+                "the journal and the execution checkpoint disagreed on {probe:?}",
+            );
+            assert_eq!(
+                cache_with_policy_version(probe).is_ok(),
+                checkpoint,
+                "the cache checkpoint and the execution checkpoint disagreed on {probe:?}",
+            );
+            assert_eq!(
+                checkpoint,
+                retained,
+                "all three entry points classified {probe:?} as {}",
+                if retained { "retained" } else { "refused" },
+            );
+        }
+    }
 }
