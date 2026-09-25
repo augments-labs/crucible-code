@@ -193,16 +193,6 @@ pub enum Bridge {
     /// - Retired: when the turn loop, a compaction, the runner's cache
     ///   inspection and its cleanup pass are asynchronous.
     TurnCache,
-    /// The bash tool's confined process: beginning a background result's
-    /// acceptance, completing it, and stopping the process.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each acceptance begun, each acceptance completed
-    ///   and each stop.
-    /// - Owner: `crucible-builtins`
-    /// - Retired: when the bash tool runs asynchronously and so does the
-    ///   registry that takes its background commands over.
-    BashSandbox,
     /// The local backend's own synchronous paths through the contract: the
     /// Linux backend stopping the process it wraps when a launch is refused,
     /// rolled back, quarantined or stopped, and the conformance audit probing a
@@ -229,6 +219,47 @@ pub enum Bridge {
     /// - Owner: `crucible-code`
     /// - Retired: when the application runs on one runtime.
     SandboxPanel,
+    /// A kept command's stop, asked from the one blocking step its owner holds:
+    /// a foreground guard ending the command it was left holding, and a kept
+    /// command's owner ending one that was stopped, abandoned, left running, or
+    /// whose cleanup it refused.
+    ///
+    /// The stop is a future, and the step that asks for it is a thread the
+    /// runtime's blocking pool handed out for process work, so the ask happens
+    /// there rather than on a runtime worker. The process contract keeps its
+    /// bounded stop work inside the contract, so the one poll answers; a stop
+    /// that would have had to wait is refused, and the step that asked is told
+    /// only that. What happens next is the caller's own: a stop the caller
+    /// already meant to ask again on its next attempt is asked again — a
+    /// descendant's, a registry's own end's, and a release task's, whose own
+    /// interval grows between asks — while a stop asked for by a key or by an
+    /// abandoned result waits for that ask to be made again.
+    ///
+    /// - Crossing: polls once.
+    /// - Bound: one poll for each stop asked for, one at a time for each
+    ///   command, on the thread that step already holds.
+    /// - Owner: `crucible-builtins`
+    /// - Retired: when a kept command's stop is awaited on the runtime that
+    ///   owns the command rather than asked from a blocking step.
+    CommandStop,
+    /// A kept command's result acceptance lifecycle: the call that begins it
+    /// and the call that completes it, each asked for while the caller still
+    /// holds the process.
+    ///
+    /// Asked from a caller that may or may not be on a runtime, so it is
+    /// answered on the frame that asks or refused: a lifecycle future nobody
+    /// can time is a call that is not made, and the process is handed straight
+    /// back rather than left borrowed for it. On a runtime the wait is timed
+    /// instead, which is the bound this crossing states where there is a clock.
+    ///
+    /// - Crossing: polls once.
+    /// - Bound: one poll for each lifecycle call where no runtime is running;
+    ///   elsewhere the acceptance bound the builtins pass to their own
+    ///   `bounded`, which is `background::ACCEPTANCE` there.
+    /// - Owner: `crucible-builtins`
+    /// - Retired: when every acceptance lifecycle call is made where a runtime
+    ///   is running.
+    CommandAcceptance,
 }
 
 impl Bridge {
@@ -322,10 +353,11 @@ impl Bridge {
         match self {
             Self::AppTurn => "a turn or a compaction",
             Self::TurnCache => "a prompt-cache step",
-            Self::BashSandbox => "the bash tool's sandbox",
             Self::LocalBackend => "the local sandbox backend",
             Self::SandboxReport => "asking the sandbox what it can enforce",
             Self::SandboxPanel => "asking the sandbox whether it is available",
+            Self::CommandStop => "a kept command's stop",
+            Self::CommandAcceptance => "a kept command's result acceptance",
         }
     }
 }

@@ -225,6 +225,26 @@ fn admitted(
 
 #[cfg(unix)]
 #[test]
+fn dropping_a_waited_command_hands_off_before_its_stop_finishes() {
+    let sample = crate::sample::Sample::new("bash-waited-drop");
+    let process = admitted(&sample, "sleep 5", &[]);
+    let runtime = crate::bash::tests::alone();
+    let began = std::time::Instant::now();
+
+    runtime.block_on(async {
+        drop(super::Waited::new(process));
+    });
+
+    assert!(
+        began.elapsed() < std::time::Duration::from_millis(500),
+        "the dropping thread waited for process cleanup: {:?}",
+        began.elapsed()
+    );
+    crate::bash::tests::quiesced(&runtime, "the dropped wait handed off its process");
+}
+
+#[cfg(unix)]
+#[test]
 fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
     let sample = crate::sample::Sample::new("bash-reap-live");
     let mut process = admitted(&sample, "sleep 5", &[]);
