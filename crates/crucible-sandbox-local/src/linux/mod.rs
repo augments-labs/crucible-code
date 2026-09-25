@@ -28,7 +28,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use crucible_runtime::{BoxFuture, Bridge};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
@@ -621,15 +621,15 @@ impl LinuxLaunch {
 
     fn refuse_and_cleanup(&mut self, process: &mut dyn SandboxProcess) {
         // Whether the scope was reaped is read from the inspection below, which
-        // a stop that failed or would have had to wait leaves short of complete.
-        let _ = Bridge::LocalBackend.cross(process.stop());
+        // a stop that failed leaves short of complete.
+        let _ = process.stop_sync();
         let scope_reaped = process.inspection().cleanup() == SandboxCleanup::Complete;
         let _ = self.record_refusal(scope_reaped);
         self.finish_cleanup(scope_reaped);
     }
 
     fn rollback_and_cleanup(&mut self, process: &mut dyn SandboxProcess) {
-        let _ = Bridge::LocalBackend.cross(process.stop());
+        let _ = process.stop_sync();
         let scope_reaped = process.inspection().cleanup() == SandboxCleanup::Complete;
         let rolled_back = self
             .projection
@@ -660,6 +660,10 @@ impl LinuxLaunch {
         );
     }
 
+    /// Stops the command's mediator within its bound, disposing the private
+    /// socket pathname either way. A mediator that did not stop in time
+    /// answers failed cleanup rather than a silent success, and the launch
+    /// retains its projection evidence for quarantine review.
     fn stop_network(&mut self) -> bool {
         let cleaned = self
             .network

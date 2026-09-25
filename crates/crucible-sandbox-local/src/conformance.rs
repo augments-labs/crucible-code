@@ -25,15 +25,15 @@
 //! executor or another operating system's adapter can depend on this crate,
 //! run [`Conformance::audit`] over a directory it owns, and get the same
 //! verdicts against the same table, provided each probe and preparation
-//! answers the first time it is asked: [the audit](Conformance::audit) does
-//! not wait, and one that would have had to fails it.
+//! answers: [the audit](Conformance::audit) awaits each step on the caller's
+//! task, and one that never answers never completes the audit. The harness
+//! bounds that wait on its own runtime rather than joining the application's,
+//! so a backend that answered nothing can hold no family by never refusing.
 
 use std::fmt::Write as _;
-use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use crucible_runtime::Bridge;
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxDomainPattern,
     SandboxDomainPolicy, SandboxError, SandboxFeature, SandboxFilesystemAccess,
@@ -244,15 +244,12 @@ impl Conformance {
     /// The probe's own failure is returned as it stands. There is no backend to
     /// report on, and an empty matrix would read as one that holds nothing.
     ///
-    /// The audit asks each step once and does not wait: a probe or a
-    /// preparation that would have had to is a [`SandboxError::Lifecycle`]
-    /// carrying the [`Unready`](crucible_runtime::Unready) it was refused
-    /// with. The audit ends there, and no verdict is recorded for an offer
-    /// that was never answered.
-    pub fn audit(service: &dyn SandboxService, at: &Path) -> Result<Self, SandboxError> {
-        let (backend, capabilities) = Bridge::LocalBackend
-            .cross(service.probe())
-            .unwrap_or_else(|unready| Err(SandboxError::Lifecycle(io::Error::other(unready))))?;
+    /// The audit awaits each step on the caller's task: a probe or a
+    /// preparation that never answers never completes the audit, and no
+    /// verdict is recorded for an offer that was never answered. The harness
+    /// drives the audit on its own runtime and bounds that wait there.
+    pub async fn audit(service: &dyn SandboxService, at: &Path) -> Result<Self, SandboxError> {
+        let (backend, capabilities) = service.probe().await?;
         // Each offer selects the backend that was just probed. An enabled
         // offer reaches the enforcing backend; a disabled offer reaches
         // compatibility. Mixing them would test another backend's claims.
@@ -260,7 +257,7 @@ impl Conformance {
         // One offer covers the whole isolation family, because no policy field
         // names a PID namespace on its own; requiring confinement is the only
         // way to ask for any of them, and it asks for all of them at once.
-        let confinement = offered(service, at, SandboxFeature::Filesystem, enabled)?;
+        let confinement = offered(service, at, SandboxFeature::Filesystem, enabled).await;
 
         let mut findings = Vec::with_capacity(SandboxFeature::COUNT);
         for feature in SandboxFeature::ALL {
@@ -270,7 +267,7 @@ impl Conformance {
             let answered = if claim == SandboxClaim::Isolation {
                 confinement.as_ref()
             } else {
-                alone = offered(service, at, feature, enabled)?;
+                alone = offered(service, at, feature, enabled).await;
                 alone.as_ref()
             };
             // A confining offer carries the whole isolation family whatever
@@ -439,23 +436,16 @@ fn judge(
 /// from constants — a bug in this module, which surfaces as an untested claim
 /// rather than as a verdict nothing earned.
 ///
-/// # Errors
-///
-/// A preparation that would have had to wait, as a
-/// [`SandboxError::Lifecycle`] carrying the
-/// [`Unready`](crucible_runtime::Unready) it was refused with. It is kept
-/// apart from the backend's answer because it is not one: judged as an answer
-/// it would read as unreached, and a backend that answered nothing would hold
-/// every family.
-fn offered(
+/// The offer is awaited like the probe is. An offer that never answers never
+/// completes the audit; judged as an answer it would read as unreached, and
+/// a backend that answered nothing would hold every family.
+async fn offered(
     service: &dyn SandboxService,
     at: &Path,
     feature: SandboxFeature,
     enabled: bool,
-) -> Result<Option<Result<(), SandboxError>>, SandboxError> {
-    let Some((policy, manifest)) = asking(at, feature, enabled) else {
-        return Ok(None);
-    };
+) -> Option<Result<(), SandboxError>> {
+    let (policy, manifest) = asking(at, feature, enabled)?;
     let request = SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -463,10 +453,7 @@ fn offered(
         policy,
         manifest,
     );
-    let prepared = Bridge::LocalBackend
-        .cross(service.prepare(request))
-        .map_err(|unready| SandboxError::Lifecycle(io::Error::other(unready)))?;
-    Ok(Some(prepared.map(drop)))
+    Some(service.prepare(request).await.map(drop))
 }
 
 /// The smallest policy and manifest that require `feature` of a backend.

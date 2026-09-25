@@ -4,6 +4,8 @@ mod authority;
 pub(super) mod bounded;
 mod protocol;
 mod publish;
+#[cfg(test)]
+mod stop_tests;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -16,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::{Arc, Mutex};
 
-use crucible_runtime::{BoxFuture, Bridge};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxAudit, SandboxError, SandboxFactKind, SandboxFilesystemAccess, SandboxInspection,
     SandboxInvocationMode, SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRequest,
@@ -948,9 +950,9 @@ fn cleanup_failed_wrap(
     audit: &SandboxAudit,
     sandbox: SandboxId,
 ) {
-    // Whether the scope was reaped is read from the inspection below, which a
-    // stop that failed or would have had to wait leaves short of complete.
-    let _ = Bridge::LocalBackend.cross(process.stop());
+    // Whether the scope was reaped is read from the inspection below, which
+    // a stop that failed leaves short of complete.
+    let _ = process.stop_sync();
     let scope_reaped = process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete;
     let rolled_back = projection
         .as_deref_mut()
@@ -1172,11 +1174,7 @@ impl ProjectedProcess {
             }
         });
         self.reported = None;
-        let process_cleanup = with_process(&self.process, |process| {
-            Bridge::LocalBackend
-                .cross(process.stop())
-                .unwrap_or_else(|unready| Err(io::Error::other(unready)))
-        });
+        let process_cleanup = with_process(&self.process, |process| process.stop_sync());
         let scope_reaped = with_process(&self.process, |process| {
             process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete
         });
@@ -1285,9 +1283,7 @@ impl ProjectedProcess {
             ))
         })?;
         if let Err(source) = projection.record(transaction::Record::CallAccepted(receipt.bytes())) {
-            let _ = with_process(&self.process, |process| {
-                Bridge::LocalBackend.cross(process.stop())
-            });
+            let _ = with_process(&self.process, |process| process.stop_sync());
             projection.retain_evidence();
             let _ = self.lifecycle(SandboxLifecycle::Quarantined);
             self.terminal = true;
@@ -1383,6 +1379,13 @@ impl SandboxProcess for ProjectedProcess {
 
     fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
         Box::pin(async move { self.stop() })
+    }
+
+    /// The same stop the future above drives, for the owners that have no
+    /// future to drive, bounded the way that body is and reported as failed
+    /// cleanup where it gives out.
+    fn stop_sync(&mut self) -> io::Result<()> {
+        ProjectedProcess::stop(self)
     }
 
     fn inspection(&self) -> &SandboxInspection {
