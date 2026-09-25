@@ -1629,6 +1629,29 @@ pub trait SandboxProcess: Send {
     /// same uncertainty.
     fn stop(&mut self) -> BoxFuture<'_, io::Result<()>>;
 
+    /// Stops the same scope as [`Self::stop`], synchronously on the calling
+    /// thread, for the owners that have no future to drive: dropping a process
+    /// or cleaning one whose start failed.
+    ///
+    /// What bounds it is what bounds the stop itself, which does its work
+    /// without waiting on anything but the threads and descriptors it owns. A
+    /// caller that cannot afford to block its thread does not call this; it
+    /// awaits [`Self::stop`] instead.
+    ///
+    /// The default refuses, so a backend whose stop cannot run on the calling
+    /// thread fails closed: callers read the refusal the way they read any
+    /// other stop failure, as cleanup they could not confirm.
+    ///
+    /// # Errors
+    ///
+    /// The default always answers that the scope has no synchronous stop.
+    /// An override answers what the stop it runs answers.
+    fn stop_sync(&mut self) -> io::Result<()> {
+        Err(io::Error::other(
+            "sandbox process scope has no synchronous stop",
+        ))
+    }
+
     /// Redacted inspection snapshot.
     fn inspection(&self) -> &SandboxInspection;
 
