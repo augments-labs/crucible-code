@@ -46,24 +46,42 @@ use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 // lookup owners shared by the poisoned HTTP targets and the plain HTTP/release
 // lookups, account renewals and a login's requests and store work, each counting
 // work it gave up on that is still running, the release check's one cache write,
-// and one step at a time for each command left running, whose owner asks
-// its process everything there. An owner added to the blocking threads is added
-// here.
+// one step at a time for each command left running, whose owner asks its process
+// everything there, and the stop and reap of each foreground command being
+// stopped, as many as a turn may have tool runs at once. An owner added to the
+// blocking threads is added here.
 //
-// The release check's one cache write is a counted owner. On 2026-09-25 the
-// user widened `BLOCKING` by one to make room for it; no other owner's bound
-// changed.
+// That is the reach of the assertion below, and two of those owners are there
+// because the owner decided on 2026-09-25 to widen `BLOCKING` by one for each
+// rather than let a newly counted owner take the thread in spare. No other
+// owner's bound changed by either decision.
+//
+// A kept command's release task is inside that reach: it asks the very process
+// the `crucible_builtins::MOST` step was already reserved for, and that
+// command's owner is gone before the release task runs, so the stop holds that
+// step's one place rather than taking a second one. A foreground command's
+// release task is not inside it. That command was never kept, so it shares no
+// reservation, and its release task outlives the tool call that made it, which
+// is what leaves it bounded by neither that step nor the turn's tool runs;
+// nothing caps how many such tasks are live at once. Retry demand of that kind
+// sits outside this count, bounded in rate by the release task's backoff, and
+// what it costs is that a stop is asked later: each ask is awaited, so a
+// saturated pool holds no thread while it waits, and no stop is lost, confirmed
+// without its cleanup, or counted as capacity released.
 const HTTP_LOOKUPS: usize = 2;
 const RELEASE_WRITE: usize = 1;
+const FOREGROUND_STOPS: usize = 2;
 const _: () = assert!(
     ToolWorker::CAPACITY
         + HTTP_LOOKUPS
         + Renewals::BLOCKING
         + crucible_builtins::MOST
         + RELEASE_WRITE
+        + FOREGROUND_STOPS
         < BLOCKING,
-    "the tool worker, shared HTTP lookups, account requests, the release cache write and the commands left running together \
-     would take every blocking thread the runtime has"
+    "the tool worker, shared HTTP lookups, account requests, the release cache write, the \
+     commands left running and the foreground stops together would take every \
+     blocking thread the runtime has"
 );
 
 /// How long a renewal still in flight when the run is over is given to

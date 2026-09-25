@@ -1,8 +1,11 @@
 //! Failed cleanup retains the registry's only process owner and capacity.
 
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::process::ExitStatus;
 use std::sync::atomic::AtomicUsize;
+use std::task::{Context, Poll};
 use std::thread;
 
 use crucible_runtime::Cancel;
@@ -44,6 +47,21 @@ struct Observed {
     published: AtomicBool,
     /// Whether this fixture's stop should publish the already-ended ending.
     publish_on_stop: AtomicBool,
+    /// How many background acceptances this fixture has completed.
+    completions: AtomicUsize,
+    /// The receipt the last completed acceptance bound.
+    completed: Mutex<Option<CallResultReceipt>>,
+    /// While set, the next completion waits once before it answers.
+    complete_pending: AtomicBool,
+    /// While set, that wait stays asleep rather than waking itself.
+    complete_held: AtomicBool,
+    /// While set, completion records its receipt before its wait, modelling a
+    /// backend that has durably accepted the result before its future stalls.
+    complete_records_before_wait: AtomicBool,
+    /// While set, completion never answers.
+    complete_never: AtomicBool,
+    /// While set, the next status look panics.
+    look_panics: AtomicBool,
 }
 
 impl Observed {
@@ -88,6 +106,10 @@ impl SandboxProcess for Process {
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.observed.stall(&self.observed.looks_held);
         self.observed.looks.fetch_add(1, Ordering::Relaxed);
+        assert!(
+            !self.observed.look_panics.swap(false, Ordering::AcqRel),
+            "synthetic status panic"
+        );
         if self.observed.failed.load(Ordering::Relaxed) {
             return Err(io::Error::other(
                 "writable root changed after the command started",
@@ -142,6 +164,42 @@ impl SandboxProcess for Process {
             .published
             .load(Ordering::Acquire)
             .then_some(SandboxLifecycle::Published)
+    }
+
+    fn complete_background_acceptance(
+        &mut self,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move {
+            if self.observed.complete_never.load(Ordering::Acquire) {
+                return std::future::pending().await;
+            }
+            let record = self
+                .observed
+                .complete_records_before_wait
+                .swap(false, Ordering::AcqRel);
+            if record {
+                self.record_completion(receipt);
+            }
+            if self.observed.complete_pending.swap(false, Ordering::AcqRel) {
+                if self.observed.complete_held.load(Ordering::Acquire) {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                } else {
+                    WaitsOnce::default().await;
+                }
+            }
+            if !record {
+                self.record_completion(receipt);
+            }
+            Ok(())
+        })
+    }
+}
+
+impl Process {
+    fn record_completion(&self, receipt: CallResultReceipt) {
+        self.observed.completions.fetch_add(1, Ordering::AcqRel);
+        *self.observed.completed.lock().unwrap() = Some(receipt);
     }
 }
 
@@ -227,7 +285,6 @@ fn keeping(left: &Background, process: Process, accepting: bool) -> Kept {
         Keep {
             called: "synthetic command",
             said: "cleanup ownership",
-            lease: None,
             accepting,
         },
     )
@@ -1145,24 +1202,31 @@ fn within(patience: Duration, until: impl Fn() -> bool) -> bool {
 }
 
 #[test]
-fn the_runtime_goes_on_while_every_command_left_running_stalls() {
-    // Fewer workers than there may be commands left running, and room for
-    // each command's owner on the blocking threads with one to spare: an
-    // owner that asked its process anything on a worker would hold it, and
-    // with it every timer the runtime drives — a sandbox's limit kill among
-    // them.
+fn the_runtime_goes_on_while_every_command_left_running_is_stopping() {
+    // One runtime worker is enough to expose the mistake: an owner that waits
+    // for a process stop directly would hold the only worker, while a stop
+    // owned by the blocking pool leaves the timer driver free. Every command is
+    // asked to stop and its stop is held, rather than merely stalling a status
+    // look while no cleanup is in progress.
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(1)
         .max_blocking_threads(MOST + 1)
         .enable_time()
         .build()
         .expect("a runtime to own commands on");
     let left = registry(&runtime);
     let observed: Vec<Arc<Observed>> = (0..MOST).map(|_| Arc::new(Observed::default())).collect();
-    for one in &observed {
-        drop(keep(&left, one, false));
-        one.looks_held.store(true, Ordering::Release);
-    }
+    let numbers: Vec<usize> = observed
+        .iter()
+        .enumerate()
+        .map(|(at, one)| {
+            let number = keep(&left, one, false).number();
+            one.stops_held.store(true, Ordering::Release);
+            left.stop(number).expect("the stop was asked for");
+            assert_eq!(number, at + 1);
+            number
+        })
+        .collect();
     let every = within(Duration::from_secs(5), || {
         observed
             .iter()
@@ -1182,17 +1246,20 @@ fn the_runtime_goes_on_while_every_command_left_running_stalls() {
     drop(left);
     runtime.shutdown_timeout(Duration::from_secs(5));
 
-    timely.expect("a timer on the runtime waited on commands whose processes stalled");
+    timely.expect("a timer on the runtime waited on commands whose stops were running");
     assert!(
         every,
-        "not every command's owner was asking its process at once"
+        "not every command's owner was asking its process to stop at once"
     );
+    assert_eq!(numbers.len(), MOST);
 }
 
 #[test]
-fn a_command_whose_owner_never_ran_is_ended_when_the_registry_goes() {
+fn a_command_whose_owner_never_ran_is_stopped_when_the_registry_goes() {
     // A runtime nothing drives: the owner is spawned and never polled, as one
-    // queued behind workers that never come free.
+    // queued behind workers that never come free. The registry's backstop must
+    // ask the process to stop; object drop alone would not prove that the
+    // process contract was given its cleanup result.
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
@@ -1203,11 +1270,98 @@ fn a_command_whose_owner_never_ran_is_ended_when_the_registry_goes() {
     drop(keep(&left, &observed, false));
 
     drop(left);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while observed.stops.load(Ordering::Relaxed) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the registry backstop's stop never happened"
+        );
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(1)).await });
+    }
 
-    assert_eq!(
-        observed.stops.load(Ordering::Relaxed),
-        1,
-        "a command whose owner never ran outlived the registry"
+    assert!(
+        observed.dropped.load(Ordering::Relaxed),
+        "a command whose owner never ran was not released with the registry"
+    );
+    drop(runtime);
+}
+
+#[test]
+fn the_registry_backstop_retains_a_refused_cleanup_until_it_succeeds() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("a runtime for the registry backstop");
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    drop(keep(&left, &observed, false));
+
+    drop(left);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while observed.stops.load(Ordering::Relaxed) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the registry backstop never reached cleanup"
+        );
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(1)).await });
+    }
+    assert!(!observed.dropped.load(Ordering::Relaxed));
+
+    observed.cleanup_allowed.store(true, Ordering::Release);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !observed.dropped.load(Ordering::Relaxed) {
+        assert!(
+            Instant::now() < deadline,
+            "the registry backstop did not retry its refused cleanup"
+        );
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(1)).await });
+    }
+    assert!(observed.stops.load(Ordering::Relaxed) >= 2);
+}
+
+#[test]
+fn a_stop_that_keeps_refusing_is_asked_at_a_bounded_rate() {
+    // A backend whose stop never succeeds. The release task keeps trying it,
+    // because nothing else can end the process, and every try is one blocking
+    // thread handed out. Retrying at the registry's tick rate is a pool cycle
+    // fifty times a second for a stop that has already said no that many
+    // times, so the interval has to grow and stop growing.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("a runtime for the registry backstop");
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    drop(keep(&left, &observed, false));
+
+    drop(left);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while observed.stops.load(Ordering::Relaxed) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the registry backstop never reached cleanup"
+        );
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(1)).await });
+    }
+    let first = observed.stops.load(Ordering::Relaxed);
+
+    // One second of the tick would be fifty asks. The backoff asks a handful,
+    // and only the first few of them are close together.
+    let window = Duration::from_secs(1);
+    let deadline = Instant::now() + window;
+    while Instant::now() < deadline {
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(1)).await });
+    }
+    let asked = observed.stops.load(Ordering::Relaxed) - first;
+
+    assert!(
+        !observed.dropped.load(Ordering::Relaxed),
+        "a stop that kept being refused released the process anyway"
+    );
+    assert!(
+        asked <= 10,
+        "a stop that kept refusing was asked {asked} times in {window:?}: \
+         the retry is still at the tick rate"
     );
     drop(runtime);
 }
@@ -1305,4 +1459,205 @@ fn asked(left: &Background, number: usize) -> bool {
             .iter()
             .any(|entry| entry.number == number && entry.asks.stop.load(Ordering::Acquire))
     })
+}
+
+/// Woken when first asked, answered when asked again: the smallest wait.
+#[derive(Default)]
+struct WaitsOnce(bool);
+
+impl Future for WaitsOnce {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
+}
+
+#[test]
+fn a_pending_background_acceptance_is_awaited_rather_than_refused() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    observed.complete_pending.store(true, Ordering::Relaxed);
+    let kept = keep(&left, &observed, true);
+    let receipt = CallResultReceipt::from_digest([0x5a; 32]);
+
+    crate::bash::tests::awaited(kept.acceptance().expect("pending receipt").accept(receipt))
+        .expect("a background acceptance that waits is awaited");
+
+    assert_eq!(
+        observed.completions.load(Ordering::Acquire),
+        1,
+        "the admitted call was not recorded exactly once"
+    );
+    assert_eq!(*observed.completed.lock().unwrap(), Some(receipt));
+
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
+}
+
+#[test]
+fn a_ready_acceptance_answers_without_waiting() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let kept = keep(&left, &observed, true);
+    let receipt = CallResultReceipt::from_digest([0x5a; 32]);
+
+    let _entered = runtime.handle().enter();
+    crucible_runtime::answered!(kept.acceptance().expect("pending receipt").accept(receipt))
+        .expect("a ready acceptance answers when first asked");
+
+    assert_eq!(
+        observed.completions.load(Ordering::Acquire),
+        1,
+        "the admitted call was not recorded exactly once"
+    );
+    assert_eq!(*observed.completed.lock().unwrap(), Some(receipt));
+
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
+}
+
+#[test]
+fn a_cancelled_pending_acceptance_keeps_cleanup_authority_until_stop_is_confirmed() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.complete_pending.store(true, Ordering::Relaxed);
+    observed.complete_held.store(true, Ordering::Release);
+    observed
+        .complete_records_before_wait
+        .store(true, Ordering::Release);
+    observed.cleanup_allowed.store(false, Ordering::Release);
+    for _ in 1..MOST {
+        drop(keep(&left, &Arc::new(Observed::default()), false));
+    }
+    let kept = keep(&left, &observed, true);
+    let number = kept.number();
+    let receipt = CallResultReceipt::from_digest([0x5a; 32]);
+
+    let dropped = runtime.block_on(async move {
+        tokio::time::timeout(
+            Duration::ZERO,
+            kept.acceptance().expect("pending receipt").accept(receipt),
+        )
+        .await
+    });
+    assert!(
+        dropped.is_err(),
+        "the acceptance answered before it was dropped"
+    );
+
+    waiting_until("the cancelled acceptance's refused stop", || {
+        observed.stops.load(Ordering::Relaxed) >= 1
+    });
+    assert_eq!(left.count(), MOST, "cancelled cleanup released the entry");
+    assert!(left.running().iter().any(|entry| entry.number == number));
+    assert!(!observed.dropped.load(Ordering::Relaxed));
+    assert_eq!(
+        observed.completions.load(Ordering::Acquire),
+        1,
+        "the receipt was not recorded exactly once before cancellation"
+    );
+
+    observed.cleanup_allowed.store(true, Ordering::Release);
+    left.stop(number).expect("the stop was asked for again");
+    waiting_until("the confirmed stop releasing the entry", || {
+        left.count() == MOST - 1
+    });
+    assert!(observed.dropped.load(Ordering::Relaxed));
+    assert_eq!(observed.completions.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn a_status_panic_keeps_the_entry_and_process_owned_for_retry() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.look_panics.store(true, Ordering::Release);
+    for _ in 1..MOST {
+        drop(keep(&left, &Arc::new(Observed::default()), false));
+    }
+    let number = keep(&left, &observed, false).number();
+
+    waiting_until("the panicked status being retained for retry", || {
+        refused(&left, number)
+    });
+    assert_eq!(
+        left.count(),
+        MOST,
+        "a failed status join released the entry"
+    );
+    assert!(left.running().iter().any(|entry| entry.number == number));
+    assert!(!observed.dropped.load(Ordering::Relaxed));
+    assert!(
+        left.reserve().is_none(),
+        "a failed status join released capacity"
+    );
+
+    observed.cleanup_allowed.store(true, Ordering::Release);
+    left.stop(number).expect("the stop was asked for");
+    waiting_until("the confirmed retry removing the entry", || {
+        left.count() == MOST - 1
+    });
+    assert!(observed.dropped.load(Ordering::Relaxed));
+}
+
+#[test]
+fn a_pending_acceptance_is_refused_with_its_process_still_owned() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.complete_never.store(true, Ordering::Release);
+    for _ in 1..MOST {
+        drop(keep(&left, &Arc::new(Observed::default()), false));
+    }
+    let kept = keep(&left, &observed, true);
+    let number = kept.number();
+    let receipt = CallResultReceipt::from_digest([0x5a; 32]);
+
+    let refused = runtime.block_on(async move {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            kept.acceptance().expect("pending receipt").accept(receipt),
+        )
+        .await
+    });
+    let refused = refused.expect("a lifecycle future that never answers was not refused");
+    assert!(
+        refused.is_err(),
+        "a pending acceptance unexpectedly succeeded"
+    );
+
+    waiting_until("the refused acceptance's cleanup attempt", || {
+        observed.stops.load(Ordering::Relaxed) >= 1
+    });
+    assert_eq!(
+        left.count(),
+        MOST,
+        "the refused acceptance released the entry"
+    );
+    assert!(left.running().iter().any(|entry| entry.number == number));
+    assert!(!observed.dropped.load(Ordering::Relaxed));
+    assert!(
+        left.reserve().is_none(),
+        "the refused acceptance released capacity"
+    );
+    assert_eq!(observed.completions.load(Ordering::Acquire), 0);
+
+    observed.complete_never.store(false, Ordering::Release);
+    observed.cleanup_allowed.store(true, Ordering::Release);
+    left.stop(number).expect("the stop was asked for");
+    waiting_until("the confirmed stop releasing the refused entry", || {
+        left.count() == MOST - 1
+    });
+    assert!(observed.dropped.load(Ordering::Relaxed));
 }

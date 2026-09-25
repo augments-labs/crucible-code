@@ -176,29 +176,75 @@ async fn separate_clients_keep_separate_pools() {
     server.abort();
 }
 
+/// An idle connection is closed by the pool's own timer, fifteen seconds after
+/// it was last used.
+///
+/// A paused clock is not moved only by this test: the runtime moves it to the
+/// next deadline whenever it has nothing to do, and this test has two deadlines
+/// it does not want moved. The request has a minute of its own, and a peer that
+/// has accepted but not yet answered is parked with nothing to wake it, so on a
+/// loaded runner the runtime could end that minute under the peer and the test
+/// would blame the pool: this failed that way, with `Stalled(Answer)`, on one
+/// macOS runner. The reading below is the other: the reaping has to be read at
+/// the instant this test's own jump put the clock at, not at whatever instant a
+/// jump of the runtime's choosing would land on, or a pool that let the
+/// connection live twice as long would pass. So the clock is held still for the
+/// whole test, the exchange is over — and so the connection is idle — before the
+/// clock is moved at all, and both waits are on the wall clock.
 #[tokio::test(start_paused = true)]
 async fn idle_connections_are_reaped_by_the_pool_timer() {
+    // A blocking task is what holds the clock: while one is running the runtime
+    // parks for real instead of advancing a paused clock to the next deadline.
+    // It ends when the sender is dropped, however the test ends, so it cannot be
+    // left holding the runtime's shutdown.
+    let (_release, waiting) = std::sync::mpsc::channel::<()>();
+    tokio::task::spawn_blocking(move || {
+        let _ = waiting.recv();
+    });
     let (listener, url) = listen("http").await;
     let peer = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.unwrap();
         answer(tcp, |_| Response::new(String::new())).await;
     });
     let http = http(&Tls::new().unwrap());
-    let response = get(&http, &url).await.unwrap();
-    let _ = read_limited(response.into_body(), 1, Duration::from_secs(1))
-        .await
-        .unwrap();
+    let exchange = tokio::spawn({
+        let http = http.clone();
+        async move {
+            let response = get(&http, &url).await.unwrap();
+            let _ = read_limited(response.into_body(), 1, Duration::from_secs(1))
+                .await
+                .unwrap();
+        }
+    });
+    until_finished(&exchange).await;
+    assert!(
+        exchange.is_finished(),
+        "the request did not finish with the clock held still"
+    );
+    exchange.await.unwrap();
 
     settle().await;
     tokio::time::advance(Duration::from_millis(15_001)).await;
     settle().await;
+    until_finished(&peer).await;
 
     assert!(
-        tokio::time::timeout(Duration::from_secs(1), peer)
-            .await
-            .is_ok(),
+        peer.is_finished(),
         "the idle connection outlived the pool timer"
     );
+    peer.await.unwrap();
+}
+
+/// Waits, on the wall clock, for `task` to end however it ends, up to five
+/// seconds; the caller says whether it did. A bound taken from a paused clock
+/// is one the runtime would jump to, so it says nothing about whether `task`
+/// could have ended.
+async fn until_finished(task: &tokio::task::JoinHandle<()>) {
+    let started = std::time::Instant::now();
+    while !task.is_finished() && started.elapsed() < Duration::from_secs(5) {
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 async fn listen(scheme: &str) -> (TcpListener, String) {
