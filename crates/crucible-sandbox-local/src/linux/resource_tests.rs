@@ -133,7 +133,12 @@ fn a_stated_process_ceiling_stops_the_command_forking_past_it() {
 
     let output = String::from_utf8(output).expect("utf8");
     let errors = String::from_utf8(errors).expect("utf8");
-    assert_eq!(stated_process_ceiling(&output), Some((16, 16)), "{output}");
+    // The parsed value, not the whole `/proc/self/limits` text: a panic
+    // message keeps only its first 128 characters, which on a kernel that
+    // spells several unlimited limits before the process line cuts the very
+    // line this test reads, and the failure then reports no ceiling where one
+    // was stated. The line itself is checked in the two tests above.
+    assert_eq!(stated_process_ceiling(&output), Some((16, 16)));
     // The ceiling is what the kernel hands back and also what it enforces: the
     // loop asks for 200 children and never reaches the end of its own script.
     assert!(!output.contains("unbounded"), "{output}");
