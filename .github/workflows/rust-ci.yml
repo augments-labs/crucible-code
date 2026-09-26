@@ -84,3 +84,58 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
       - uses: ./.github/actions/check-clean-worktree
+
+  rollback-drill:
+    name: Rollback drill (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS Intel
+            os: macos-15-intel
+          - name: macOS Apple silicon
+            os: macos-26
+          - name: Windows x86_64
+            os: windows-latest
+          - name: Windows ARM64
+            os: windows-11-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # The tag the drill rolls back to, fetched without credentials. The drill
+      # itself never fetches; it builds whatever tag is already local.
+      - name: Fetch the previous release tag
+        shell: bash
+        run: git fetch --depth=1 origin tag v0.42.0
+      # Built in a worktree of this checkout so the candidate tree is untouched.
+      # No sandbox setup: the drill runs the binaries headless with redirected
+      # input and compares replay, pending-action recovery and read-only
+      # commands — it starts no sandboxed command.
+      - name: Build the previous release binary
+        shell: bash
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/prior-src" v0.42.0
+          (cd "$RUNNER_TEMP/prior-src" && cargo build --locked --bin crucible)
+      - name: Build the candidate binary
+        shell: bash
+        run: cargo build --locked --bin crucible
+      - name: Run the rollback drill
+        shell: bash
+        run: |
+          prior="$RUNNER_TEMP/prior-src/target/debug/crucible"
+          [[ -x $prior ]] || prior="$prior.exe"
+          scripts/sh/rollback-drill.sh --prior-binary "$prior"
+      - name: Run the rollback drill self-test
+        shell: bash
+        run: scripts/sh/rollback-drill-selftest.sh
+      - name: Remove the previous release worktree
+        if: ${{ always() }}
+        shell: bash
+        run: git worktree remove --force "$RUNNER_TEMP/prior-src"
+      - uses: ./.github/actions/check-clean-worktree
