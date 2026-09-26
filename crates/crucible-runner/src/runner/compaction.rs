@@ -259,7 +259,8 @@ impl Runner {
                 run.ancestry(),
                 replacing,
                 &standing_as,
-            )));
+            )))
+            .await;
         self.state.transcript.compacted(replacing, standing_as);
 
         self.state.load.replaced();
@@ -540,7 +541,8 @@ impl Runner {
             _ => prompt_cache::prepare(&request, capabilities, &scope).await,
         };
         for fact in resource_facts {
-            self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact));
+            self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact))
+                .await;
         }
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -562,9 +564,11 @@ impl Runner {
             cost: UsageCost::UNKNOWN,
         });
         let planned = cache.planned();
-        self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
+        self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)))
+            .await;
         if let Some(resource) = prepared.resource.as_ref() {
-            self.report_recap_resource(run, cache.attempt, resource);
+            self.report_recap_resource(run, cache.attempt, resource)
+                .await;
         }
         let mut encoding = self.provider.prompt_cache_encoding(&Request {
             prompt_cache: Some(&cache),
@@ -581,14 +585,16 @@ impl Runner {
                     encoding,
                     disposition: PromptCacheRequestDisposition::NotSent,
                 }),
-            );
+            )
+            .await;
             let Some(fallback) = prepared.fallback_request(reason) else {
                 self.state.transcript.pop();
                 return Err(PromptCachePreparationError::Encoding(reason).into());
             };
             cache = fallback;
             let planned = cache.planned();
-            self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
+            self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)))
+                .await;
             encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -620,7 +626,8 @@ impl Runner {
                 encoding,
                 disposition,
             }),
-        );
+        )
+        .await;
         let cache = super::CacheObservation {
             attempt: cache.attempt,
             reporting: cache.capabilities.usage(),
@@ -662,7 +669,7 @@ impl Runner {
     /// a fallback request that does not name it is encoded under the same
     /// attempt, and where there is no fallback, or it cannot be encoded
     /// either, nothing is sent.
-    fn report_recap_resource(
+    async fn report_recap_resource(
         &self,
         run: &RunContext<'_>,
         attempt: crucible_core::ProviderAttemptId,
@@ -678,7 +685,8 @@ impl Runner {
                 expires_at: resource.expires_at(),
                 owner: resource.binding().owner(),
             }),
-        );
+        )
+        .await;
     }
 
     /// Reads one standalone recap response while preserving attempt accounting.
@@ -779,7 +787,8 @@ impl Runner {
                             usage,
                             cost,
                         })),
-                    );
+                    )
+                    .await;
                 }
                 Delta::ToolStarted { .. }
                 | Delta::ToolArgs(_)

@@ -854,19 +854,20 @@ impl Runner {
         self.agent = Arc::new(self.agent.aimed(harder));
     }
 
-    fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
-        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store)
+    async fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
+        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store).await
     }
 
     /// Writes one normalized cache fact to the durable framework journal and
     /// emits the same typed fact to the live event stream.
-    fn report_prompt_cache(&self, run: &RunContext<'_>, fact: PromptCacheFact) {
-        self.report_prompt_cache_to(&run.reporting(), fact);
+    async fn report_prompt_cache(&self, run: &RunContext<'_>, fact: PromptCacheFact) {
+        self.report_prompt_cache_to(&run.reporting(), fact).await;
     }
 
-    fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
+    async fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
         self.store
-            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()));
+            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()))
+            .await;
         events.post(Event::PromptCache { fact });
     }
 
@@ -1261,7 +1262,8 @@ impl Runner {
             .prepare(&toolsets)
             .await
             .map_err(TurnError::from);
-        let prepared = combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()));
+        let prepared =
+            combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()).await);
         let ran = match prepared {
             Ok(()) => {
                 // The turn's own running totals. A bound only where somebody asked for
@@ -1298,7 +1300,7 @@ impl Runner {
                 cleanup,
             }),
         };
-        combine_sandbox_audit(finished, self.flush_sandbox_audits(run.reporting()))
+        combine_sandbox_audit(finished, self.flush_sandbox_audits(run.reporting()).await)
     }
 
     /// Makes room, and says what the turn may do next.
@@ -1461,6 +1463,14 @@ impl Runner {
     /// Separate from [`Self::listen`] because what a failed response leaves in
     /// the transcript depends on whether it is going to be asked again, and that
     /// question is asked once rather than at each place the reading can fail.
+    //
+    // The prompt-cache facts this records are journal writes, and a journal
+    // write is awaited since the port became asynchronous: each one costs the
+    // line rustfmt gives its own `.await`, which is what carries this one line
+    // past the ceiling. The allow covers this function and nothing else, and
+    // the awaits are what carry it: a pass that stopped awaiting the journal
+    // has no reason for it.
+    #[allow(clippy::too_many_lines)]
     async fn hearing(
         &mut self,
         answer: &mut Answer,
@@ -1570,7 +1580,8 @@ impl Runner {
                 _ => prompt_cache::prepare(&request, capabilities, &scope).await,
             };
             for fact in resource_facts {
-                self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact));
+                self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact))
+                    .await;
             }
             let prepared = prepared?;
             let mut cache = prepared.request();
@@ -1588,7 +1599,8 @@ impl Runner {
             self.report_prompt_cache(
                 listening.run,
                 PromptCacheFact::Planned(Box::new(cache.planned())),
-            );
+            )
+            .await;
             let mut encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -1609,14 +1621,16 @@ impl Runner {
                         encoding,
                         disposition: PromptCacheRequestDisposition::NotSent,
                     }),
-                );
+                )
+                .await;
                 cache = prepared
                     .fallback_request(reason)
                     .ok_or(PromptCachePreparationError::Encoding(reason))?;
                 self.report_prompt_cache(
                     listening.run,
                     PromptCacheFact::Planned(Box::new(cache.planned())),
-                );
+                )
+                .await;
                 encoding = self.provider.prompt_cache_encoding(&Request {
                     prompt_cache: Some(&cache),
                     ..request
@@ -1657,7 +1671,8 @@ impl Runner {
                     encoding,
                     disposition,
                 }),
-            );
+            )
+            .await;
             (
                 streamed?,
                 CacheObservation {
@@ -1818,7 +1833,8 @@ impl Runner {
                             usage,
                             cost,
                         })),
-                    );
+                    )
+                    .await;
                     events.post(Event::Carried {
                         left: counting.left(),
                     });

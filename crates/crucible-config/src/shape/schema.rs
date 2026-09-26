@@ -31,7 +31,7 @@ const DIALECT: &str = "http://json-schema.org/draft-07/schema#";
 ///
 /// `www` rather than `json`: both hostnames resolve, and the registry requires
 /// the `$id` of a schema it hosts to be `https://www.schemastore.org/<file>`.
-const ID: &str = "https://www.schemastore.org/crucible-code-schema.json";
+pub(crate) const ID: &str = "https://www.schemastore.org/crucible-code-schema.json";
 
 /// The keys of the standard's own that a document may carry at any level.
 ///

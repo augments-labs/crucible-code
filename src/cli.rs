@@ -203,6 +203,21 @@ enum Command {
         #[command(subcommand)]
         action: SandboxMaintenance,
     },
+    /// Parse and validate the effective configuration, and stop.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// Parse and validate the effective configuration, and stop.
+    Check {
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -324,6 +339,9 @@ pub(crate) fn start() -> ExitCode {
 
     let done = match (&cli.command, cli.extensions, cli.sandbox) {
         (Some(Command::Sandbox { action }), _, _) => maintain_sandbox(action),
+        (Some(Command::Config { action }), _, _) => match action {
+            ConfigAction::Check { json } => checked(*json),
+        },
         (None, true, _) => listed(),
         (None, _, true) => confined(),
         (None, _, _) => run(&cli),
@@ -360,6 +378,34 @@ fn maintain_sandbox(_action: &SandboxMaintenance) -> Result<(), Fatal> {
         io::ErrorKind::Unsupported,
         "the native Windows sandbox is available only on Windows",
     )))
+}
+
+/// Writes whether the effective configuration holds, and stops.
+///
+/// Answered here rather than inside [`run`] so that it is answered before
+/// anything is built: the command exists so somebody can ask whether their
+/// files parse before a session is started on them, and a check that had
+/// opened a credential, started a session or launched a provider, an
+/// extension or a server on the way would be a poor thing to reach for when
+/// one of those is the suspect. The three files are read the way a startup
+/// would read them and resolved the way it would resolve them; nothing else
+/// is opened, written, launched or dialled.
+///
+/// A write that fails is dropped for the reason [`listed`] drops one. Where
+/// the files do not hold, the first refusal leaves as the process's failure;
+/// a command line that does not parse never reaches here, and the parser
+/// answers those with its own usage exit.
+fn checked(json: bool) -> Result<(), Fatal> {
+    let here = std::env::current_dir().map_err(Fatal::Here)?;
+    let workspace = Workspace::open(here)?;
+    let home = Home::find(&|name| std::env::var_os(name))?;
+    let report = crucible_config::check(&home, workspace.root());
+
+    let said = if json { report.json() } else { report.human() };
+    let _ = io::stdout().write_all(said.as_bytes());
+
+    report.into_result()?;
+    Ok(())
 }
 
 /// Writes what is installed to standard output, and stops.

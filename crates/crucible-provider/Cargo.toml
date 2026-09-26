@@ -32,7 +32,6 @@ thiserror.workspace = true
 # `rt` names the caller's runtime, `io-util` frames response bodies, and `time`
 # bounds recorded whole-body reads. Nothing here builds a runtime.
 tokio = { workspace = true, features = ["io-util", "rt", "time"] }
-ureq.workspace = true
 
 # `answered!`, which the tests ask a provider's future once with.
 [dev-dependencies]

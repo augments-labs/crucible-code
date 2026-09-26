@@ -1,17 +1,17 @@
-//! The HTTP clients provider requests are sent through.
+//! The HTTP client provider requests are sent through.
 //!
-//! [`Https`] is the process-wide blocking client of the legacy `get` surface,
-//! which is retained with no remaining caller for the unit that retires the
-//! old client. [`HttpTurns`] is the shared asynchronous service used by model
-//! turns and web posts. It is constructed by the application, lends
-//! cancellation and an overall request deadline to every post, and drops the
-//! shared client's future when either ends.
+//! [`HttpTurns`] is the shared asynchronous service used by model turns and by
+//! the web sources' `Search` and `Fetch` requests, which are the same post over
+//! the same client. It is constructed by the application, lends cancellation
+//! and an overall request deadline to every post, and drops the shared client's
+//! future when either ends. It is the only client this crate reaches for: a
+//! request whose URL a caller named is checked here, before the shared client
+//! is handed it.
 
 use std::error::Error as _;
 use std::future::Future;
 #[cfg(test)]
 use std::io;
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crucible_credentials::Outgoing;
@@ -19,11 +19,8 @@ use crucible_http::{ConnectError, Http, HttpError};
 use crucible_runtime::{BoxFuture, Cancel};
 use hyper::Method;
 
-use super::{PostResponse, Response, Transport, TransportError};
+use super::{PostResponse, Transport, TransportError};
 use crate::Endpoint;
-
-/// How long to wait for a connection made by the legacy `get` client.
-const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
 
 /// The longest any one post takes from entering the shared client to its
 /// response head, including the wait for one of the client's four setup slots.
@@ -32,90 +29,6 @@ const TIMEOUT_CONNECT: Duration = Duration::from_secs(15);
 /// whole bound around the shared client's otherwise unbounded slot wait and
 /// its 2 min 15 s connection-and-head bound.
 const REQUEST: Duration = Duration::from_mins(3);
-
-/// An HTTPS transport of the legacy `get` surface, retained with no remaining
-/// caller for the unit that retires the old client.
-#[derive(Debug)]
-pub struct Https {
-    shared: Arc<Shared>,
-}
-
-/// Process-lifetime state for the legacy `get` client, retained with it.
-#[derive(Debug)]
-struct Shared {
-    agent: ureq::Agent,
-}
-
-static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
-
-impl Shared {
-    fn new() -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_connect(Some(TIMEOUT_CONNECT))
-            .timeout_send_request(Some(Duration::from_mins(1)))
-            .timeout_send_body(Some(Duration::from_mins(1)))
-            .timeout_recv_response(Some(Duration::from_mins(1)))
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .build();
-
-        Self {
-            agent: ureq::Agent::new_with_config(config),
-        }
-    }
-}
-
-impl Https {
-    /// A transport over the process's retained blocking agent.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            shared: Arc::clone(SHARED.get_or_init(|| Arc::new(Shared::new()))),
-        }
-    }
-
-    /// Fetches `url`, for the caller asking a question of a server rather than
-    /// of a model.
-    ///
-    /// `lifetime` covers resolution through the last response-body byte.
-    ///
-    /// # Errors
-    ///
-    /// [`TransportError`] if the request could not be sent. A response with a
-    /// status the caller dislikes is not an error.
-    pub fn get(
-        &self,
-        url: &str,
-        headers: &[(&str, &str)],
-        lifetime: Duration,
-    ) -> Result<Response, TransportError> {
-        let mut request = self
-            .shared
-            .agent
-            .get(url)
-            .config()
-            .timeout_global(Some(lifetime))
-            .timeout_resolve(Some(lifetime))
-            .build();
-        for (name, value) in headers {
-            request = request.header(*name, *value);
-        }
-
-        match request.call() {
-            Ok(response) => Ok(Response {
-                status: response.status().as_u16(),
-                body: Box::new(response.into_body().into_reader()),
-            }),
-            Err(problem) => Err(legacy_problem(&problem)),
-        }
-    }
-}
-
-impl Default for Https {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Provider posts over one application-owned shared HTTP client.
 #[derive(Clone, Debug)]
@@ -244,30 +157,13 @@ fn head_refused(problem: &HttpError) -> bool {
     false
 }
 
-/// Maps a legacy `get` failure without retaining its configured URL.
-fn legacy_problem(problem: &ureq::Error) -> TransportError {
-    let said = match problem {
-        ureq::Error::Timeout(ureq::Timeout::Resolve) => {
-            return TransportError::ResolveStalled;
-        }
-        ureq::Error::Timeout(_) => "request timed out",
-        ureq::Error::HostNotFound => "host was not found",
-        ureq::Error::ConnectionFailed => "connection failed",
-        ureq::Error::Tls(_) | ureq::Error::Rustls(_) => "TLS setup failed",
-        ureq::Error::Io(_) => "connection I/O failed",
-        ureq::Error::Protocol(_) => "HTTP protocol failed",
-        ureq::Error::BadUri(_) => "request URL was invalid",
-        _ => "HTTP request failed",
-    };
-    TransportError::Unreachable(said.into())
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::num::NonZeroUsize;
-    use std::sync::mpsc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, mpsc};
     use std::thread;
     use std::time::Instant as StdInstant;
 
@@ -359,6 +255,64 @@ mod tests {
         let _ = asked.read_exact(&mut vec![0_u8; body]);
     }
 
+    /// A loopback source that answers `answer` on every connection it is sent,
+    /// counting how many connections it was sent, so a test can read the pool
+    /// rather than infer it.
+    ///
+    /// One connection is answered as many times as it is asked, and is held open
+    /// between them: a source that closed after each answer would give a client
+    /// nothing to reuse, and every request would then open a connection whatever
+    /// the pool said. Each request head is read a byte at a time for the same
+    /// reason — a buffered reader would hold back the bytes of the request after
+    /// this one, which this thread has no way to hand on.
+    fn pooling(answer: &'static str, connections: Arc<AtomicUsize>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for arrived in listener.incoming() {
+                let Ok(mut stream) = arrived else { break };
+                connections.fetch_add(1, Ordering::SeqCst);
+                while asked(&mut stream) && stream.write_all(answer.as_bytes()).is_ok() {
+                    let _ = stream.flush();
+                }
+            }
+        });
+        format!("http://{address}/v1/messages")
+    }
+
+    /// Reads one request head and the body it names, saying whether the peer
+    /// sent one at all.
+    fn asked(stream: &mut TcpStream) -> bool {
+        let mut head = Vec::new();
+        let mut byte = [0_u8; 1];
+        while stream.read(&mut byte).unwrap_or(0) == 1 {
+            head.push(byte[0]);
+            if head.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        if !head.ends_with(b"\r\n\r\n") {
+            return false;
+        }
+
+        let said = String::from_utf8_lossy(&head).to_ascii_lowercase();
+        let body = said
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|length| length.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let mut rest = vec![0_u8; body];
+        stream.read_exact(&mut rest).is_ok()
+    }
+
+    /// Reads one post's body whole, so its connection goes back to the pool.
+    async fn spent(response: PostResponse) {
+        let mut body = response.into_reader();
+        let mut said = Vec::new();
+        let read = body.read_to_end(&mut said).await;
+        assert_eq!(read.unwrap_or(0), 0, "the answer carried a body: {said:?}");
+    }
+
     #[tokio::test]
     async fn a_refusal_arrives_as_a_status_with_the_body_that_says_why() {
         let expected = r#"{"error":{"message":"model: claude-nope not found"}}"#;
@@ -374,39 +328,56 @@ mod tests {
         assert_eq!(said, expected.as_bytes());
     }
 
-    #[test]
-    fn a_get_lifetime_includes_a_body_that_started_but_never_finished() {
-        let lifetime = Duration::from_millis(100);
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                heard(&stream);
-                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\nhalf");
-                let _ = stream.flush();
-                thread::sleep(Duration::from_millis(400));
-                let _ = stream.write_all(b"done");
-            }
-        });
-        let since = StdInstant::now();
-        let mut response = Https::new()
-            .get(&format!("http://{address}/latest"), &[], lifetime)
-            .expect("the response head arrived");
-        let mut body = String::new();
+    /// The pool is the client's, and every transport the application builds for
+    /// a turn or a web request is the same client. One connection serves both,
+    /// which is what "share one pool" means and what a second client would cost.
+    #[tokio::test]
+    async fn a_turn_and_a_web_request_are_served_over_one_pool() {
+        let connections = Arc::new(AtomicUsize::new(0));
+        let url = pooling(
+            "HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n",
+            Arc::clone(&connections),
+        );
+        let turns = shared();
+        let web = turns.clone();
 
-        let problem = response
-            .body
-            .read_to_string(&mut body)
-            .expect_err("the body exceeded the request lifetime");
-        let elapsed = since.elapsed();
-        server.join().unwrap();
+        spent(
+            post(&turns, &url, &[("x-api-key", "turn")], "{}")
+                .await
+                .unwrap(),
+        )
+        .await;
+        spent(
+            post(&web, &url, &[("x-api-key", "web")], "{}")
+                .await
+                .unwrap(),
+        )
+        .await;
 
-        assert!(elapsed >= lifetime, "the read gave up early: {elapsed:?}");
-        assert_eq!(body, "half");
-        assert!(problem.to_string().contains("timeout"), "{problem}");
-        assert!(
-            elapsed < Duration::from_secs(5),
-            "the read hung: {elapsed:?}"
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            1,
+            "a turn and a web request did not share the one pool"
+        );
+    }
+
+    /// Two clients are two pools, and that is the reading the one above rests
+    /// on: a count of one connection only means something if two can be counted.
+    #[tokio::test]
+    async fn two_clients_open_one_connection_each() {
+        let connections = Arc::new(AtomicUsize::new(0));
+        let url = pooling(
+            "HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n",
+            Arc::clone(&connections),
+        );
+
+        spent(post(&shared(), &url, &[], "{}").await.unwrap()).await;
+        spent(post(&shared(), &url, &[], "{}").await.unwrap()).await;
+
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            2,
+            "the count could not tell two pools from one"
         );
     }
 
@@ -492,13 +463,6 @@ mod tests {
     fn a_transport_is_debug_without_naming_a_request() {
         let shown = format!("{:?}", shared());
         assert!(shown.starts_with("HttpTurns"), "unexpected debug: {shown}");
-    }
-
-    #[test]
-    fn every_transport_reuses_the_process_connection_pool() {
-        let first = Https::new();
-        let replacement = Https::new();
-        assert!(Arc::ptr_eq(&first.shared, &replacement.shared));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

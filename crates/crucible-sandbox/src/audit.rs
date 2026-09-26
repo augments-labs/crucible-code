@@ -285,9 +285,41 @@ pub enum SandboxAuditError {
 
 #[cfg(test)]
 mod tests {
-    use crucible_storage::{SandboxCleanup, SandboxLifecycle};
+    use crucible_storage::{RunItem, SandboxCleanup, SandboxLifecycle};
 
     use super::*;
+
+    #[test]
+    fn the_longest_call_a_sandbox_audit_accepts_still_reaches_the_journal() {
+        // The case spans both crates and this is the side that has to sit here:
+        // the audit half is this crate's, and a `crucible-storage` test target
+        // cannot name the audit registry, so the assertion that the fact it
+        // retained is one a journal will take is made here, beside the half
+        // that produced it.
+        let call = ToolId::new("x".repeat(crucible_types::TOOL_CALL_ID_BYTES));
+        let collector = SandboxAuditRegistry::new()
+            .collector(Ancestry::new(), call)
+            .expect("the audit ceiling admits this identity");
+        collector
+            .record(
+                SandboxId::new(),
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
+            )
+            .expect("a fact under an admitted identity");
+        let records = collector.records().expect("the recorded fact");
+        let [record] = records.as_ref() else {
+            panic!("exactly one fact")
+        };
+
+        assert!(
+            RunItem::sandbox(
+                record.ancestry(),
+                record.call().clone(),
+                record.fact().clone()
+            )
+            .is_ok()
+        );
+    }
 
     #[test]
     fn invalid_call_identity_is_refused_before_registry_or_fact_retention() {

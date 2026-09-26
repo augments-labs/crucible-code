@@ -12,9 +12,12 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use crucible_storage::{PromptCacheResourceStore, SessionOwner, SessionStore};
+use crucible_storage::{
+    CheckpointId, CheckpointStore, ExecutionCheckpoint, JournalStore, PromptCacheResourceStore,
+    ResumeDigest, ResumeScope, RunItem, SessionOwner, SessionStore,
+};
 use crucible_types::{
-    Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
+    Ancestry, Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
     PromptCacheFingerprint, PromptCacheIsolation, PromptCachePolicyDigest,
     PromptCacheResourceBinding, PromptCacheResourceError, PromptCacheResourceId,
     PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheScopeDigest, SessionId, ToolId,
@@ -46,6 +49,14 @@ struct Told {
     writes: Mutex<Vec<String>>,
 }
 
+/// What one recorded message says, in the fewest words that tell it apart.
+fn said_words(message: &Message) -> String {
+    match message {
+        Message::User { text, .. } | Message::Agent { text, .. } => text.to_string(),
+        Message::Context(_) | Message::ToolResults(_) => "nothing".to_owned(),
+    }
+}
+
 #[allow(clippy::expect_used)] // A poisoned log is a test that already failed.
 impl Told {
     fn write(&self, what: String) -> Written<'_, ()> {
@@ -75,11 +86,7 @@ impl SessionStore for Told {
     }
 
     fn append_message<'a>(&'a self, message: &'a Message) -> Written<'a, ()> {
-        let said = match message {
-            Message::User { text, .. } | Message::Agent { text, .. } => format!("said {text}"),
-            Message::Context(_) | Message::ToolResults(_) => "said nothing".to_owned(),
-        };
-        self.write(said)
+        self.write(format!("said {}", said_words(message)))
     }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
@@ -121,6 +128,84 @@ impl SessionStore for Told {
     fn calibrated(&self) -> Option<Calibration> {
         None
     }
+}
+
+impl JournalStore for Told {
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> Written<'a, ()> {
+        let said = match item.model_message() {
+            Some(message) => format!("said {}", said_words(message)),
+            None => "journaled a framework record".to_owned(),
+        };
+        self.write(said)
+    }
+
+    fn settle_call_results(&self) -> Written<'_, ()> {
+        self.write("settled the results".to_owned())
+    }
+}
+
+/// One checkpoint kept, under the identity it was saved with.
+struct Kept {
+    checkpoint: Option<ExecutionCheckpoint>,
+}
+
+/// What a store written outside this crate refuses with.
+#[derive(Debug)]
+struct Refused(&'static str);
+
+impl fmt::Display for Refused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+impl CheckpointStore for Kept {
+    type Error = Refused;
+
+    fn save<'a>(
+        &'a mut self,
+        checkpoint: &'a ExecutionCheckpoint,
+    ) -> Written<'a, Result<(), Self::Error>> {
+        Box::pin(async move {
+            self.checkpoint = Some(checkpoint.clone());
+            Ok(())
+        })
+    }
+
+    fn load(
+        &self,
+        id: CheckpointId,
+    ) -> Written<'_, Result<Option<ExecutionCheckpoint>, Self::Error>> {
+        Box::pin(async move { Ok(self.checkpoint.clone().filter(|kept| kept.id() == id)) })
+    }
+
+    fn remove(&mut self, id: CheckpointId) -> Written<'_, Result<(), Self::Error>> {
+        Box::pin(async move {
+            if self.checkpoint.as_ref().is_some_and(|kept| kept.id() == id) {
+                self.checkpoint = None;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// The authority a resume is taken under, in the four digests it is made of.
+fn resume_scope(fill: u8) -> ResumeScope {
+    ResumeScope::new(
+        ResumeDigest::new([fill; 32]),
+        ResumeDigest::new([fill.wrapping_add(1); 32]),
+        ResumeDigest::new([fill.wrapping_add(2); 32]),
+        ResumeDigest::new([fill.wrapping_add(3); 32]),
+    )
+}
+
+/// One checkpoint, bounded and holding nothing else.
+#[allow(clippy::expect_used)] // Every word this fixture is built from is valid.
+fn checkpoint(id: CheckpointId) -> ExecutionCheckpoint {
+    ExecutionCheckpoint::new(id, Ancestry::new(), resume_scope(1), None, 1_000, 5_000)
+        .expect("a bounded checkpoint")
 }
 
 /// Resource records kept in memory, up to a fixed count.
@@ -241,6 +326,77 @@ fn a_write_borrowing_its_message_is_asked_on_another_thread() {
     });
 
     assert_eq!(told.writes(), ["said hello"]);
+}
+
+#[test]
+fn an_external_journal_store_keeps_the_order_it_was_told_in() {
+    let told = Arc::new(Told::default());
+    let store: Arc<dyn JournalStore> = Arc::clone(&told) as Arc<dyn JournalStore>;
+    let said = Message::said("hello");
+    let journaled = RunItem::message(Ancestry::new(), said.clone()).expect("a bounded item");
+
+    at_once(store.append_message(&said));
+    at_once(store.append_run_item(&journaled));
+    at_once(store.settle_call_results());
+
+    // The message, then the record that is about it, then the settle. A settle
+    // before the results it settles would claim a durability nothing has
+    // written yet, and a journal line before the conversation line it is about
+    // would leave a log cut between the two resuming without the message: a
+    // resume reads the conversation, and the journal is not read back.
+    assert_eq!(
+        told.writes(),
+        ["said hello", "said hello", "settled the results",]
+    );
+}
+
+#[test]
+fn an_external_checkpoint_store_holds_one_checkpoint_through_a_trait_object() {
+    let mut store: Box<dyn CheckpointStore<Error = Refused>> = Box::new(Kept { checkpoint: None });
+    let id = CheckpointId::new();
+    let kept = checkpoint(id);
+    let elsewhere = checkpoint(CheckpointId::new());
+
+    at_once(store.save(&kept)).expect("the checkpoint is kept");
+    assert_eq!(
+        at_once(store.load(id))
+            .expect("the store reads")
+            .map(|held| held.id()),
+        Some(id)
+    );
+    // A store holds the one it was given, and answers `None` for any other
+    // identity rather than the checkpoint that happens to be there.
+    assert!(
+        at_once(store.load(elsewhere.id()))
+            .expect("the store reads")
+            .is_none()
+    );
+
+    at_once(store.remove(id)).expect("the checkpoint is gone");
+    assert!(at_once(store.load(id)).expect("the store reads").is_none());
+}
+
+#[test]
+fn a_checkpoint_write_borrowing_its_record_is_asked_on_another_thread() {
+    let mut store: Box<dyn CheckpointStore<Error = Refused>> = Box::new(Kept { checkpoint: None });
+    let id = CheckpointId::new();
+    let kept = checkpoint(id);
+    let writing = store.save(&kept);
+
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || at_once(writing))
+            .join()
+            .expect("the write ends")
+    })
+    .expect("the checkpoint is kept");
+
+    assert_eq!(
+        at_once(store.load(id))
+            .expect("the store reads")
+            .map(|held| held.id()),
+        Some(id)
+    );
 }
 
 #[test]
