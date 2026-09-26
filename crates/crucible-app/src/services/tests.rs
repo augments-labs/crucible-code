@@ -165,3 +165,39 @@ fn the_release_owner_is_one_lazy_run_service() {
     );
     assert_eq!(stopped, Ok(()));
 }
+
+/// The release owner can lend a client, and the check's own pool is still closed
+/// when it does.
+///
+/// Both halves are observable, and neither is the whole of the claim. Lending is
+/// the owner's own accessor answering rather than the run failing over to
+/// plaintext, and the check's pool is the `client` its `Debug` reports — one
+/// configuration, two pools, with the release client not built by the act of
+/// lending. The run's client being *that owner's* is the wiring
+/// `Services::http` performs when it asks `self.release().client` for a client
+/// over the owner's TLS and plain-lookup decisions, and a test cannot see it
+/// from here: nothing observable distinguishes a client the owner built from one
+/// the run built, so this test does not claim to check it.
+#[test]
+fn the_release_owner_lends_a_client_and_keeps_its_own_pool_unbuilt() {
+    let (asked, stopped) = serving(|services| {
+        let owner = services.release();
+        let plain = crucible_http::Lookups::plain(std::num::NonZeroUsize::MIN);
+        let lent = owner.client(plain.clone().into());
+        let check_has_its_own = format!("{owner:?}");
+
+        (
+            lent.is_some(),
+            services.http.get().is_some(),
+            check_has_its_own.contains("client: false"),
+        )
+    });
+
+    assert_eq!(
+        asked,
+        (true, false, true),
+        "the release owner refused to lend a client, the run's client was built before anything \
+         asked for it, or the check had built its own pool before its first use"
+    );
+    assert_eq!(stopped, Ok(()));
+}
