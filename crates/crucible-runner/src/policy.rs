@@ -15,14 +15,20 @@
 //! actually gets, so a caller cannot get the answer wrong by writing the
 //! comparison itself.
 //!
-//! Every figure here is a ceiling on one run, not a share of a pool. A
-//! descendant narrowing its spend to a thousand tokens is not taking a
-//! thousand out of its parent's remaining budget; it is saying that this run
-//! stops at a thousand. Two descendants under one parent may each spend the
-//! parent's whole ceiling, and what stops the tree as a whole from outspending
-//! the root is the root's own ceiling being read on the root's own run — a
-//! cumulative budget across a run tree is a different figure, held somewhere
-//! that can see every run, and nothing here is it.
+//! Every figure here except the spend bound is a ceiling on one run, not a
+//! share of a pool. A descendant narrowing its byte ceilings is saying that
+//! this run stops at those peaks, not taking bytes out of its parent's
+//! budget: two descendants under one parent may each reach the parent's
+//! whole byte ceiling, and what stops the tree as a whole from outspending
+//! the root in peak memory is the root's own ceiling being read on the
+//! root's own run. The retry, compaction and tool scheduling figures are the
+//! same: each bounds behaviour one run inherits capped. The spend bound is
+//! the pooled exception — what a descendant is granted leaves the run that
+//! started it, so a descendant granted sixty of a hundred leaves forty
+//! behind, and two descendants started in turn split the one pool they were
+//! started under. The reservation lives in `RunContext::child`, which
+//! depletes the holder after `RunPolicy::narrowed` caps the grant at what
+//! the holder holds.
 //!
 //! # Authority
 //!
