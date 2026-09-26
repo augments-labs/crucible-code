@@ -9,14 +9,14 @@
 #[cfg(test)]
 mod tests;
 
+use std::fmt::Write as _;
 use std::path::Path;
-
-use serde_json::Value;
 
 use crate::env;
 use crate::error::{Accepted, At, ConfigError};
 use crate::settings;
 use crate::shape::Shape;
+use serde_json::Value;
 
 use super::Origin;
 
@@ -567,5 +567,338 @@ fn join(path: &str, key: &str) -> String {
         key.to_owned()
     } else {
         format!("{path}.{key}")
+    }
+}
+
+/// The most bytes one failure's sentence may carry into the report.
+///
+/// A refusal is written to be read with the file open, so it is short: the
+/// file, the key and what is accepted there. Four kilobytes is far beyond any
+/// sentence this crate writes — the longest names a file twice — while keeping
+/// the whole report small enough to print and to carry as one JSON document.
+pub const MAX_FAILURE_BYTES: usize = 4096;
+
+/// What the check found in one of the three files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileCheck {
+    /// The file, as the user would name it.
+    file: String,
+    /// Which layer it is: `user`, `project` or `project-local`.
+    layer: &'static str,
+    /// Whether it was there, and whether it parsed.
+    state: FileState,
+}
+
+/// Whether one file was there, and whether it parsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileState {
+    /// No file at this layer's path, which is not an error.
+    Absent,
+    /// A document crucible understood.
+    Valid,
+    /// A file crucible could not read or would not accept.
+    Invalid,
+}
+
+/// One thing that made the configuration invalid.
+///
+/// At most one per file, plus at most one for the layers disagreeing with each
+/// other, so a report never carries more than four. Each sentence is cut to
+/// [`MAX_FAILURE_BYTES`] on a character boundary rather than refused whole: a
+/// path near the front of it is what acts, and what fell off the end is marked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckFailure {
+    /// The file it came from, as the user would name it.
+    file: String,
+    /// The sentence, cut where it ran over the ceiling.
+    message: String,
+    /// Whether there was more sentence than this.
+    truncated: bool,
+}
+
+/// What the three files together say: the `config check` report.
+///
+/// Read-only by construction: it is built from the files as they were read,
+/// holds no handle that could write one back, and names no provider,
+/// extension or server beyond what the files wrote. Proving that is the
+/// denied-hooks tests beside this one.
+#[derive(Debug)]
+pub struct CheckReport {
+    /// One entry per layer, furthest first.
+    files: Vec<FileCheck>,
+    /// At most four sentences, each naming its file.
+    failures: Vec<CheckFailure>,
+    /// The first refusal met, for the exit the command leaves by.
+    error: Option<ConfigError>,
+}
+
+impl FileCheck {
+    /// The file, as the user would name it.
+    #[must_use]
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    /// Which layer it is.
+    #[must_use]
+    pub const fn layer(&self) -> &'static str {
+        self.layer
+    }
+
+    /// Whether it was there, and whether it parsed.
+    #[must_use]
+    pub const fn state(&self) -> FileState {
+        self.state
+    }
+}
+
+impl CheckFailure {
+    /// The file it came from, as the user would name it.
+    #[must_use]
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    /// The sentence, cut where it ran over the ceiling.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Whether there was more sentence than this.
+    #[must_use]
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+impl CheckReport {
+    /// One entry per layer, furthest first.
+    #[must_use]
+    pub fn files(&self) -> &[FileCheck] {
+        &self.files
+    }
+
+    /// The sentences that made it invalid, each naming its file.
+    #[must_use]
+    pub fn failures(&self) -> &[CheckFailure] {
+        &self.failures
+    }
+
+    /// Whether every file that is there parsed, and the layers agree.
+    #[must_use]
+    pub fn valid(&self) -> bool {
+        self.failures.is_empty()
+    }
+
+    /// The schema the files were read against, by the identifier an editor
+    /// resolves. The parser and the schema are generated from the one shape,
+    /// so reading against one is reading against the other; the agreement
+    /// tests beside this one hold them to it.
+    #[must_use]
+    pub const fn schema_id(&self) -> &'static str {
+        crate::shape::schema::ID
+    }
+
+    /// The report as a person reads it: one line saying whether the
+    /// configuration holds, one per file saying what was found there, one per
+    /// failure in its owner's words, and the schema identity. Ends in a
+    /// newline, like every other listing crucible prints.
+    ///
+    /// Names and redacted sentences: no secret or credential value is carried
+    /// here, which is what keeps a token in `env` out of it. The
+    /// secret-sentinel test beside this one plants one and looks for it.
+    /// Non-secret values do arrive in failure sentences — a path, a rule's
+    /// text, a rejected choice — quoted by the refusal, by design.
+    #[must_use]
+    pub fn human(&self) -> String {
+        let mut said = String::from(if self.valid() {
+            "configuration valid\n"
+        } else {
+            "configuration invalid\n"
+        });
+        for file in &self.files {
+            let state = match file.state {
+                FileState::Absent => "absent",
+                FileState::Valid => "valid",
+                FileState::Invalid => "invalid",
+            };
+            let _ = writeln!(said, "  {} config {}: {state}", file.layer, file.file);
+        }
+        for failure in &self.failures {
+            let _ = writeln!(said, "  {}", failure.message);
+        }
+        let _ = writeln!(said, "  schema: {}", self.schema_id());
+        said
+    }
+
+    /// The report as one JSON document: `format_version`, the `config-check`
+    /// kind, the `valid`/`invalid` status, the schema identity, one entry per
+    /// file with its provenance, the bounded failures, and whether any
+    /// sentence was cut. Keys are alphabetical, which is what makes the order
+    /// stable. Ends in a newline, so it can share a stdout nothing else
+    /// writes to while it is printed.
+    ///
+    /// The same redaction as [`human`](Self::human): names and redacted
+    /// sentences, with no secret or credential values; the non-secret values
+    /// a failure sentence quotes arrive here too.
+    #[must_use]
+    pub fn json(&self) -> String {
+        let files: Vec<serde_json::Value> = self
+            .files
+            .iter()
+            .map(|file| {
+                serde_json::json!({
+                    "file": file.file,
+                    "layer": file.layer,
+                    "state": match file.state {
+                        FileState::Absent => "absent",
+                        FileState::Valid => "valid",
+                        FileState::Invalid => "invalid",
+                    },
+                })
+            })
+            .collect();
+        let failures: Vec<serde_json::Value> = self
+            .failures
+            .iter()
+            .map(|failure| {
+                serde_json::json!({
+                    "file": failure.file,
+                    "message": failure.message,
+                    "truncated": failure.truncated,
+                })
+            })
+            .collect();
+        let mut text = serde_json::json!({
+            "failures": failures,
+            "files": files,
+            "format_version": 1,
+            "kind": "config-check",
+            "schema": {"id": self.schema_id()},
+            "status": if self.valid() { "valid" } else { "invalid" },
+            "truncated": self.failures.iter().any(|failure| failure.truncated),
+        })
+        .to_string();
+        text.push('\n');
+        text
+    }
+
+    /// The first refusal met, for the exit the command leaves by.
+    ///
+    /// # Errors
+    ///
+    /// The refusal itself, where the files did not hold.
+    pub fn into_result(self) -> Result<(), ConfigError> {
+        match self.error {
+            Some(problem) => Err(problem),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Reads the three files and validates the effective configuration.
+///
+/// Each file is parsed the way a startup would parse it, and the layers that
+/// parsed are resolved the way a startup would resolve them, so a report of
+/// valid is a startup that would not stop on its files. Nothing is written,
+/// launched or dialled on the way: the files are opened for reading, the home
+/// directory is found from the environment without touching the disk, and what
+/// comes back is sentences.
+#[must_use]
+pub fn check(home: &crate::home::Home, workspace: &Path) -> CheckReport {
+    let mut files = Vec::with_capacity(3);
+    let mut failures = Vec::with_capacity(4);
+    let mut documents = Vec::new();
+    let mut error: Option<ConfigError> = None;
+
+    for (path, origin) in crate::settings::layers::files(home, workspace) {
+        let named = path.display().to_string();
+        match crate::settings::layers::read_one(&path, origin) {
+            Ok(None) => files.push(FileCheck {
+                file: named,
+                layer: layer(origin),
+                state: FileState::Absent,
+            }),
+            Ok(Some(document)) => {
+                documents.push(document);
+                files.push(FileCheck {
+                    file: named,
+                    layer: layer(origin),
+                    state: FileState::Valid,
+                });
+            }
+            Err(problem) => {
+                push_failure(&mut failures, &named, &problem);
+                if error.is_none() {
+                    error = Some(problem);
+                }
+                files.push(FileCheck {
+                    file: named,
+                    layer: layer(origin),
+                    state: FileState::Invalid,
+                });
+            }
+        }
+    }
+
+    // After the files rather than instead of them: each one that parsed is
+    // already reported, and what this adds is the one refusal no single file
+    // owns — two layers whose policies contradict each other.
+    if let Err(problem) = crate::Settings::resolve_checked(documents) {
+        let named = file_of(&problem, workspace);
+        push_failure(&mut failures, &named, &problem);
+        if error.is_none() {
+            error = Some(problem);
+        }
+    }
+
+    CheckReport {
+        files,
+        failures,
+        error,
+    }
+}
+
+/// Which layer `origin` is, in the words the report uses.
+const fn layer(origin: Origin) -> &'static str {
+    match origin {
+        Origin::User => "user",
+        Origin::Project => "project",
+        Origin::ProjectLocal => "project-local",
+    }
+}
+
+/// Keeps one sentence, cut on a character boundary where it runs over the
+/// ceiling, and says that it was.
+fn push_failure(failures: &mut Vec<CheckFailure>, file: &str, problem: &ConfigError) {
+    let said = problem.to_string();
+    let (message, truncated) = if said.len() <= MAX_FAILURE_BYTES {
+        (said, false)
+    } else {
+        let mut end = MAX_FAILURE_BYTES;
+        while !said.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        (said[..end].to_owned(), true)
+    };
+    failures.push(CheckFailure {
+        file: file.into(),
+        message,
+        truncated,
+    });
+}
+
+/// Which file a refusal about the layers together belongs to.
+///
+/// A cross-layer refusal still names one file in its own sentence; that is
+/// the file it is filed under. Anything else names the workspace the layers
+/// were read from, which is the scope the refusal is about.
+fn file_of(problem: &ConfigError, workspace: &Path) -> String {
+    match problem {
+        ConfigError::PromptCaching { file, .. } | ConfigError::Sandbox { file, .. } => {
+            file.to_string()
+        }
+        _ => workspace.display().to_string(),
     }
 }

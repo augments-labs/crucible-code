@@ -19,7 +19,7 @@ use crate::shape::{DOCUMENT, Shape};
 
 mod compaction;
 mod input;
-mod layers;
+pub(crate) mod layers;
 pub(crate) mod mcp;
 mod output;
 mod permissions;

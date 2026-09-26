@@ -371,3 +371,34 @@ fn resume_round_trip() {
         format!("no session {} in this workspace", stranger.as_str())
     );
 }
+
+#[test]
+fn config_check_is_a_read_only_early_action_with_an_optional_json_report() {
+    // `crucible config check [--json]`: one spelling, human by default.
+    let human = Cli::try_parse_from(["crucible", "config", "check"]).expect("the human report");
+    assert!(matches!(
+        human.command,
+        Some(Command::Config {
+            action: ConfigAction::Check { json: false }
+        })
+    ));
+
+    let machine =
+        Cli::try_parse_from(["crucible", "config", "check", "--json"]).expect("the JSON report");
+    assert!(matches!(
+        machine.command,
+        Some(Command::Config {
+            action: ConfigAction::Check { json: true }
+        })
+    ));
+
+    // Anything else under `config` is usage, answered by the parser before
+    // anything is opened: a bare `config` with no verb, and a verb nobody
+    // shipped.
+    for invalid in [
+        vec!["crucible", "config"],
+        vec!["crucible", "config", "bogus"],
+    ] {
+        assert!(Cli::try_parse_from(invalid).is_err());
+    }
+}
