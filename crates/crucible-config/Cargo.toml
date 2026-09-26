@@ -23,5 +23,12 @@ serde_json.workspace = true
 # `ConfigError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
 
+# `std` opens a settings layer and takes the flag that keeps the open from
+# waiting on a writer as a raw integer, naming no value for it, and that value
+# is in a different bit on every platform — so this names the one constant `std`
+# does not. The open is `std`'s, so nothing here is asked to open anything.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [lints]
 workspace = true

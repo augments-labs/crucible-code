@@ -315,6 +315,15 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A pipe left where a configuration file is read no longer holds the first
+  frame.** The three settings layers are read before anything is drawn, and each
+  name was opened in a way that waits for a writer, so anything able to write in
+  the home or project directory could leave a pipe at one of them and stop
+  crucible with no bound. Each layer is now opened without waiting, and what
+  comes back is refused, with the file named in the error, unless it is an
+  ordinary file. A settings file reached through a symbolic link is still read:
+  a run refuses one at the home path only because it opens that file as private
+  state first, which `--extensions` and `--sandbox` do not do.
 - **What a command left running printed no longer reads as complete when
   reading it failed.** When a read of its output failed part-way, the note
   telling the model the command had ended carried what had arrived as though it
