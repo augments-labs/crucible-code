@@ -3,15 +3,18 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
-use crucible_core::{
-    Ancestry, ArgumentTransform, CallResultAcceptance, CallResultKey, CallResultReceipt,
-    CallResultStoreError, Disposition, IdempotencyKey, InputGuard, InvocationState, JournalStore,
-    Mode, OutputGuard, RecoveryAction, Remember, Rules, SandboxCleanup, SandboxFactKind, SandboxId,
-    SandboxLifecycle, Sensitivity, SessionId, SessionOwner, SessionStore, Summary, Target, Tool,
-    ToolArgs, ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId, ToolProvenance,
-    ToolResourceKey, ToolSourceKind, Verdict,
-};
 use crucible_runtime::BoxFuture;
+use crucible_sandbox::{SandboxCleanup, SandboxFactKind, SandboxLifecycle};
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, IdempotencyKey, InvocationState,
+    JournalStore, RecoveryAction, SessionOwner, SessionStore, ToolEffect,
+};
+use crucible_tools::{
+    ArgumentTransform, CallResultAcceptance, Disposition, InputGuard, Mode, OutputGuard, Remember,
+    Rules, Sensitivity, Summary, Target, Tool, ToolDescriptor, ToolExecutionMode, ToolHooks,
+    ToolProvenance, ToolResourceKey, ToolSourceKind, Verdict,
+};
+use crucible_types::{Ancestry, SandboxId, SessionId, ToolArgs, ToolId};
 
 use crucible_types::{
     Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
@@ -94,8 +97,10 @@ struct KeepingJournal(Mutex<Vec<RunItem>>);
 journal_only!(KeepingJournal);
 
 impl JournalStore for KeepingJournal {
-    fn append_run_item(&self, item: &RunItem) {
-        self.0.lock().unwrap().push(item.clone());
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(item.clone());
+        })
     }
 }
 
@@ -108,17 +113,21 @@ struct ResultJournal {
 journal_only!(ResultJournal);
 
 impl JournalStore for ResultJournal {
-    fn append_run_item(&self, item: &RunItem) {
-        self.items.lock().unwrap().push(item.clone());
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.items.lock().unwrap().push(item.clone());
+        })
     }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        self.results.lock().unwrap().push((key, result.clone()));
-        Ok(CallResultReceipt::from_digest([0x44; 32]))
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            self.results.lock().unwrap().push((key, result.clone()));
+            Ok(CallResultReceipt::from_digest([0x44; 32]))
+        })
     }
 }
 
@@ -289,7 +298,7 @@ impl CallResultAcceptance for AcceptedResult {
     fn accept<'a>(
         self: Box<Self>,
         receipt: CallResultReceipt,
-    ) -> BoxFuture<'a, Result<(), crucible_core::SandboxError>>
+    ) -> BoxFuture<'a, Result<(), crucible_sandbox::SandboxError>>
     where
         Self: 'a,
     {
@@ -349,14 +358,16 @@ struct FailingResultJournal;
 journal_only!(FailingResultJournal);
 
 impl JournalStore for FailingResultJournal {
-    fn append_run_item(&self, _item: &RunItem) {}
+    fn append_run_item<'a>(&'a self, _item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         _key: CallResultKey,
-        _result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        Err(CallResultStoreError::Storage)
+        _result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async { Err(CallResultStoreError::Storage) })
     }
 }
 

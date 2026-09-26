@@ -62,14 +62,14 @@ pub(crate) fn recap_history() -> crucible_types::Transcript {
     transcript
 }
 
-use crucible_core::{
-    Ask, Command, Permission, Remember, Sensitivity, Settled, ToolOutput, Verdict,
-};
 use crucible_models::{
     Delta, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent, PromptCacheIdentity,
     PromptCacheKey, PromptCacheMechanismCapability, PromptCachePlan, PromptCacheProjection,
     PromptCacheProvenance, PromptCacheRequest, PromptCacheResourceReference, PromptCacheSelection,
     Request, StatefulTransportCapability,
+};
+use crucible_tools::{
+    Ask, Command, Permission, Remember, Sensitivity, Settled, ToolOutput, Verdict,
 };
 use crucible_types::{
     Attachment, InputTokenUsage, Modality, PromptCacheFingerprint, PromptCacheMechanism,

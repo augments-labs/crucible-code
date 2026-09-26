@@ -20,9 +20,10 @@
 //! where the loop lives now, not a second opinion about how a turn should go.
 
 use crucible_agents::{GuardrailError, Rejection};
-use crucible_core::{
-    Ask, Compacting, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
-    ToolCall, ToolsetContext,
+use crucible_models::ProviderError;
+use crucible_tools::{Ask, ToolsetContext};
+use crucible_types::{
+    Compacting, Message, ProviderContinuation, RunId, Spend, StopReason, ToolCall,
 };
 
 use crate::context::RunContext;
@@ -245,7 +246,7 @@ impl<'a> AgentLoop<'a> {
         let mut fruitless = 0;
 
         loop {
-            self.runner.flush_sandbox_audits(events)?;
+            self.runner.flush_sandbox_audits(events).await?;
 
             self.interjected(counting).await?;
 
@@ -259,8 +260,10 @@ impl<'a> AgentLoop<'a> {
                 self.runner.toolset.refresh(self.toolsets)
             };
             let tools = tools.await.map_err(TurnError::from);
-            let tools =
-                super::combine_sandbox_audit(tools, self.runner.flush_sandbox_audits(events))?;
+            let tools = super::combine_sandbox_audit(
+                tools,
+                self.runner.flush_sandbox_audits(events).await,
+            )?;
             // Narrowed to what this agent declares, against the exact
             // generation the pass admitted rather than a later one. The
             // request advertises this and a call is admitted through this, so
@@ -431,7 +434,7 @@ impl<'a> AgentLoop<'a> {
                 let entry = tools.find(&call.name);
                 events.post(Event::ToolRequested {
                     summary: entry.map_or_else(
-                        || crucible_core::Summary::new(""),
+                        || crucible_tools::Summary::new(""),
                         |entry| entry.tool().summary(&call.args),
                     ),
                     backgroundable: entry

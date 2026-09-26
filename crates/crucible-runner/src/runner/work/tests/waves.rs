@@ -40,7 +40,7 @@ impl CallResultAcceptance for AcceptedAfterWaiting {
     fn accept<'a>(
         self: Box<Self>,
         receipt: CallResultReceipt,
-    ) -> BoxFuture<'a, Result<(), crucible_core::SandboxError>>
+    ) -> BoxFuture<'a, Result<(), crucible_sandbox::SandboxError>>
     where
         Self: 'a,
     {
@@ -151,7 +151,7 @@ fn worker_runtime() -> tokio::runtime::Runtime {
 /// is in, and only then says it ended. A job whose call was dropped goes on
 /// doing that with nobody waiting.
 pub(super) struct Effecting {
-    pub(super) worker: crucible_core::ToolWorker,
+    pub(super) worker: crucible_tools::ToolWorker,
     /// Raised by the job once it has started, as a reader pressing the key
     /// while it runs would.
     pub(super) stops: Option<Cancel>,
@@ -235,7 +235,7 @@ fn a_worker_job_is_awaited_through_the_turn_s_cancel_and_never_dropped_mid_run()
     let ended = Arc::new(AtomicUsize::new(0));
     let tools = effecting_tools(
         Effecting {
-            worker: crucible_core::ToolWorker::new(runtime.handle().clone()),
+            worker: crucible_tools::ToolWorker::new(runtime.handle().clone()),
             stops: Some(cancel.clone()),
             started: Arc::clone(&started),
             ended: Arc::clone(&ended),
@@ -292,7 +292,7 @@ fn a_worker_job_still_running_at_its_deadline_is_asked_to_stop_awaited_and_repor
     let ended = Arc::new(AtomicUsize::new(0));
     let tools = effecting_tools(
         Effecting {
-            worker: crucible_core::ToolWorker::new(runtime.handle().clone()),
+            worker: crucible_tools::ToolWorker::new(runtime.handle().clone()),
             stops: None,
             started: Arc::clone(&started),
             ended: Arc::clone(&ended),
@@ -445,7 +445,7 @@ fn a_wave_commits_in_call_order_whatever_order_its_runs_answer_in() {
 /// worker `seen` — a copy the test kept of the one it lent — looked while
 /// that job held its place.
 struct Borrows {
-    seen: crucible_core::ToolWorker,
+    seen: crucible_tools::ToolWorker,
 }
 
 impl Tool for Borrows {
@@ -492,7 +492,7 @@ fn a_call_runs_its_blocking_work_on_the_worker_the_run_lent() {
     // kept shares the lent worker's bound, so it shows that place taken only
     // if the job ran on the very worker that was lent.
     let runtime = worker_runtime();
-    let worker = crucible_core::ToolWorker::new(runtime.handle().clone());
+    let worker = crucible_tools::ToolWorker::new(runtime.handle().clone());
     let descriptor = ToolDescriptor::new(
         "borrows",
         "{}",

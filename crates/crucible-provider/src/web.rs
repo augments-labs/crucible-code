@@ -32,9 +32,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError};
 use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_runtime::{BoxFuture, Cancel};
+use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError};
 use serde_json::Value;
 use tokio::runtime::Handle;
 

@@ -14,10 +14,11 @@ use std::io::{self, BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::{self, FromStr as _};
 
-use crucible_core::{
+use crucible_types::{
     Calibration, ContextSnapshot, Message, RecordedToolOutput, SessionId, ToolId, ToolResult,
-    Transcript, Workspace,
+    Transcript,
 };
+use crucible_workspace::Workspace;
 
 use crucible_types::ResultProvenance;
 
@@ -26,7 +27,7 @@ use super::{SUFFIX, SessionError, results, wire};
 /// A persisted record cannot legitimately exceed the maximum retained item
 /// escaped at JSON's worst case, plus the bounded private metadata envelope.
 pub(super) const RECORD_BYTES: usize =
-    6 * crucible_core::MAX_RUN_ITEM_RETAINED_BYTES + crucible_core::CONTINUATION_BYTES;
+    6 * crucible_storage::MAX_RUN_ITEM_RETAINED_BYTES + crucible_types::CONTINUATION_BYTES;
 
 pub(super) fn read_record(
     reader: &mut impl io::BufRead,
@@ -668,7 +669,7 @@ fn without_last(mut transcript: Transcript) -> Transcript {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{Message, ToolId};
+    use crucible_types::{Message, ToolId};
 
     use super::{Pruned, replay};
     use crate::sample::Sample;
@@ -676,7 +677,7 @@ mod tests {
 
     /// What the call in these cases answered with, before anything cleared it.
     ///
-    /// Longer than [`crucible_core::RecordedToolOutput::MIN_PRUNE_BYTES`] on purpose:
+    /// Longer than [`crucible_types::RecordedToolOutput::MIN_PRUNE_BYTES`] on purpose:
     /// under that a
     /// result is left alone, because the placeholder would cost more than the
     /// text it replaced. A shorter string here would make a case about pruning
@@ -706,7 +707,7 @@ mod tests {
     }
 
     /// The one result in `messages`.
-    fn only(messages: &[Message]) -> &crucible_core::ToolResult {
+    fn only(messages: &[Message]) -> &crucible_types::ToolResult {
         messages
             .iter()
             .find_map(|message| match message {

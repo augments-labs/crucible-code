@@ -16,7 +16,8 @@ use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 
-use crucible_core::{Message, RecordedToolOutput, SessionId, ToolResult, Workspace};
+use crucible_types::{Message, RecordedToolOutput, SessionId, ToolResult};
+use crucible_workspace::Workspace;
 
 use super::wire;
 

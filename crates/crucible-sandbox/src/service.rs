@@ -1296,3 +1296,8 @@ impl SandboxError {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests;
+// The one comparison in this module whose fixtures are absolute on every
+// target, and which reads two lists the module owns between them, so it is
+// gated on `test` alone: a Windows build holds both lists too.
+#[cfg(test)]
+mod agreement;

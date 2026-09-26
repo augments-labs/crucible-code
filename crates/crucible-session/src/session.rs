@@ -36,12 +36,16 @@ use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use crucible_core::{
-    Attachment, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, ContextError,
-    ContextPatch, ContextSnapshot, JournalStore, Message, RecordedToolOutput, RunItem, SessionId,
-    SessionOwner, SessionStore, ToolResult, Transcript, Workspace,
-};
 use crucible_runtime::BoxFuture;
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, JournalStore, RunItem, SessionOwner,
+    SessionStore,
+};
+use crucible_types::{
+    Attachment, Calibration, ContextError, ContextPatch, ContextSnapshot, Message,
+    RecordedToolOutput, SessionId, ToolResult, Transcript,
+};
+use crucible_workspace::Workspace;
 use tokio::sync::{Notify, oneshot};
 
 mod beside;
@@ -631,7 +635,7 @@ impl Session {
     /// Records the exact completed compaction notice for chronological replay.
     /// `pruned` identifies a pruning record belonging to this same operation,
     /// so display replay can join it with a recap without merging older events.
-    pub fn display_compacted(&self, compacted: crucible_core::Compacted, pruned: bool) {
+    pub fn display_compacted(&self, compacted: crucible_types::Compacted, pruned: bool) {
         let Some(to) = &self.to else { return };
         drop(to.send(LogRequest::Line(
             display::compacted(compacted, pruned).into(),
@@ -656,7 +660,7 @@ impl Session {
     /// record — and a session continued later reads this line and clears them
     /// from the transcript again, so what the model is sent matches across the
     /// continue. Written the way the compaction line is, for the same reason.
-    pub fn pruned(&self, freed: usize, results: &[crucible_core::ToolId]) {
+    pub fn pruned(&self, freed: usize, results: &[crucible_types::ToolId]) {
         let Some(to) = &self.to else { return };
         drop(to.send(LogRequest::Line(wire::pruned(freed, results).into())));
     }
@@ -670,7 +674,7 @@ impl Session {
     /// one may not be missed. A pruning that a later build read differently
     /// costs a little context; a restriction that a later build read
     /// differently sends one vendor's results to another.
-    pub fn restricted(&self, freed: usize, results: &[crucible_core::ToolId], notice: &str) {
+    pub fn restricted(&self, freed: usize, results: &[crucible_types::ToolId], notice: &str) {
         let Some(to) = &self.to else { return };
         drop(to.send(LogRequest::Line(restricted_line(freed, results, notice))));
     }
@@ -944,7 +948,7 @@ fn message_line(message: &Message) -> Box<str> {
 /// would call the file damaged, and a reader that skipped it would put the
 /// results back and send them on. The guard makes the refusal say which of
 /// those it is. One request so no other append can split the pair.
-fn restricted_line(freed: usize, results: &[crucible_core::ToolId], notice: &str) -> Box<str> {
+fn restricted_line(freed: usize, results: &[crucible_types::ToolId], notice: &str) -> Box<str> {
     format!(
         "{{\"requires_format\":{}}}\n{}",
         wire::FORMAT,
@@ -1099,7 +1103,7 @@ impl SessionStore for Session {
 
     fn display_compacted(
         &self,
-        compacted: crucible_core::Compacted,
+        compacted: crucible_types::Compacted,
         pruned: bool,
     ) -> BoxFuture<'_, ()> {
         Box::pin(self.written(move || display::compacted(compacted, pruned).into()))
@@ -1108,7 +1112,7 @@ impl SessionStore for Session {
     fn pruned<'a>(
         &'a self,
         freed: usize,
-        results: &'a [crucible_core::ToolId],
+        results: &'a [crucible_types::ToolId],
     ) -> BoxFuture<'a, ()> {
         Box::pin(self.written(move || wire::pruned(freed, results).into()))
     }
@@ -1116,7 +1120,7 @@ impl SessionStore for Session {
     fn restricted<'a>(
         &'a self,
         freed: usize,
-        results: &'a [crucible_core::ToolId],
+        results: &'a [crucible_types::ToolId],
         notice: &'a str,
     ) -> BoxFuture<'a, ()> {
         Box::pin(self.written(move || restricted_line(freed, results, notice)))
@@ -1132,43 +1136,60 @@ impl SessionStore for Session {
 }
 
 impl JournalStore for Session {
-    fn append_run_item(&self, item: &RunItem) {
-        self.append_journal(item);
+    // Each of these three answers the first time it is asked, and that is the
+    // whole of what the port asks of this store: a journal line is queued to
+    // the writer thread and the call goes on, a durable result is in the log
+    // before the future is answered, and a settle reads the sidecars beside it.
+    // The work is in the futures rather than before the call, so what a caller
+    // sees is what it always saw — a line queued in the order it was offered,
+    // a receipt the log already holds.
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.append_journal(item) })
     }
 
-    fn put_call_result(
-        &self,
+    /// Answers the same receipt for the same content and refuses different
+    /// content under a key already taken.
+    ///
+    /// A store with nowhere to keep anything says so instead: a receipt from a
+    /// store that kept nothing is what would let a background acceptance claim
+    /// durability nobody has.
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        if self.id.is_none() || !self.path.is_file() {
-            return Err(CallResultStoreError::Unavailable);
-        }
-        let _held = self
-            .result_lock
-            .lock()
-            .map_err(|_| CallResultStoreError::Storage)?;
-        self.sync_pending_result_source()?;
-        results::put(&self.path, key, result)
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            if self.id.is_none() || !self.path.is_file() {
+                return Err(CallResultStoreError::Unavailable);
+            }
+            let _held = self
+                .result_lock
+                .lock()
+                .map_err(|_| CallResultStoreError::Storage)?;
+            self.sync_pending_result_source()?;
+            results::put(&self.path, key, result)
+        })
     }
 
-    fn settle_call_results(&self) {
-        if self.id.is_none() || !self.path.is_file() {
-            return;
-        }
-        let Ok(_held) = self.result_lock.lock() else {
-            return;
-        };
-        let Ok(stored) = results::load(&self.path) else {
-            return;
-        };
-        if stored.is_empty() {
-            return;
-        }
-        if self.sync_pending_result_source().is_err() {
-            return;
-        }
-        let _ = results::settle(stored);
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if self.id.is_none() || !self.path.is_file() {
+                return;
+            }
+            let Ok(_held) = self.result_lock.lock() else {
+                return;
+            };
+            let Ok(stored) = results::load(&self.path) else {
+                return;
+            };
+            if stored.is_empty() {
+                return;
+            }
+            if self.sync_pending_result_source().is_err() {
+                return;
+            }
+            let _ = results::settle(stored);
+        })
     }
 }
 

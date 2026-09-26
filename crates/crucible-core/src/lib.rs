@@ -1,4 +1,5 @@
-//! Domain types and the traits every other crucible crate implements.
+//! The shared vocabulary every crucible crate exchanges, re-exported from the
+//! crate that owns each name so a consumer keeps one import.
 //!
 //! Providers and the runner depend on this crate rather than on one
 //! another; cargo enforces that, so the arrangement cannot rot. The renderer
@@ -29,9 +30,6 @@
 //!
 //! Authentication is a separate axis from the wire protocol: a `Provider`
 //! receives an already-resolved `Credential` and never learns what kind it is.
-
-mod interruption;
-mod journal;
 
 pub use crucible_attachments::{AttachmentError, CEILING, KINDS, Kind, kind};
 pub use crucible_context::{
@@ -89,15 +87,15 @@ pub use crucible_sandbox::{
 pub use crucible_storage::PromptCacheResourceStore;
 pub use crucible_storage::{
     ActionId, ActionResolution, ApprovalDecision, CallResultKey, CallResultReceipt,
-    CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
-    ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
-    InvocationState, JournalEntryId, JournalError, MAX_CHECKPOINT_INVOCATIONS,
-    MAX_CHECKPOINT_SANDBOXES, MAX_CHECKPOINT_WORD_BYTES, MAX_CUSTOM_DATA_BYTES,
-    MAX_HUMAN_INPUT_BYTES, MAX_JOURNAL_WORD_BYTES, MAX_PENDING_ACTIONS, MAX_RUN_HISTORY_BYTES,
-    MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, PendingAction, PendingActions,
-    PendingApproval, PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange,
-    ResumeDigest, ResumeEvidence, ResumeScope, ResumedAction, RunHistory, RunItem, SessionOwner,
-    SessionStore, ToolEffect, ValidatedResume,
+    CallResultStoreError, CheckpointId, CheckpointStore, CompactionRecord, CustomEntry,
+    CustomProjector, ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId,
+    InvocationRecord, InvocationState, JournalEntryId, JournalError, JournalStore,
+    MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES, MAX_CHECKPOINT_WORD_BYTES,
+    MAX_CUSTOM_DATA_BYTES, MAX_HUMAN_INPUT_BYTES, MAX_JOURNAL_WORD_BYTES, MAX_PENDING_ACTIONS,
+    MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
+    PendingAction, PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput,
+    RecoveryAction, ResolutionChange, ResumeDigest, ResumeEvidence, ResumeScope, ResumedAction,
+    RunHistory, RunItem, SessionOwner, SessionStore, ToolEffect, ValidatedResume,
 };
 pub use crucible_tools::{
     Account, Approved, ArgumentTransform, Ask, CallResultAcceptance, Command, DescribeTool,
@@ -150,9 +148,8 @@ pub use crucible_types::{
 };
 pub use crucible_types::{Compacted, Compacting, RECAP, Tone, ToneError, later};
 pub use crucible_workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};
-// The ports stay here, where the runner holds them, and synchronous; the values
-// they carry moved to the crates that own them and are re-exported above. The
-// cache checkpoint is a value in the root crate because it holds no record.
+// The ports moved with the values they carry, so a store implementation is
+// written against the crate that owns both and this one names no seam of its
+// own. The cache checkpoint is a value in the root crate because it holds no
+// record.
 pub use crucible_types::{CacheCheckpoint, CacheCheckpointError, MAX_CACHE_CHECKPOINT_WORD_BYTES};
-pub use interruption::CheckpointStore;
-pub use journal::JournalStore;

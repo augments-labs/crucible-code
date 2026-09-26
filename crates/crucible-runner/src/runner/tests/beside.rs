@@ -8,7 +8,8 @@
 //! leak would be a line somebody wrote rather than a field somebody shared.
 
 use crucible_agents::Availability;
-use crucible_core::{CredentialScopeId, Remember, ToolCall};
+use crucible_tools::Remember;
+use crucible_types::{CredentialScopeId, ToolCall};
 
 use super::guardrails::{Gate, agent, answering, offered};
 use super::*;

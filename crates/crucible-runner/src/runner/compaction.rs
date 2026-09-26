@@ -37,13 +37,16 @@ use crucible_context::compaction::{
     RECAP_REQUEST, TrackedFiles, append_files, carried, is_structured,
 };
 use crucible_context::{ContextSection, PermissionsSection, Room};
-use crucible_core::{
-    CompactionRecord, Delta, Message, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request,
-    RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
+use crucible_models::{
+    Delta, PromptCacheAttempt, PromptCachePreparationError, ProviderError, Request,
 };
+use crucible_storage::{CompactionRecord, RunItem};
 use crucible_types::{Compacted, Compacting, RECAP};
+use crucible_types::{
+    Message, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
+    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheUsageFact,
+    RecordedToolOutput, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
+};
 
 use crate::context::RunContext;
 use crate::prompt_cache::{self, ScopeInputs};
@@ -259,7 +262,8 @@ impl Runner {
                 run.ancestry(),
                 replacing,
                 &standing_as,
-            )));
+            )))
+            .await;
         self.state.transcript.compacted(replacing, standing_as);
 
         self.state.load.replaced();
@@ -380,7 +384,7 @@ impl Runner {
     /// compactions; the recaps already written are the record, and this reads
     /// them back rather than hold a second copy that could drift from it.
     ///
-    /// [`Tool::remember`]: crucible_core::Tool::remember
+    /// [`Tool::remember`]: crucible_tools::Tool::remember
     fn tracked(&self, replacing: usize) -> TrackedFiles {
         let mut files = TrackedFiles::default();
 
@@ -480,7 +484,7 @@ impl Runner {
         let user = self.store.owner();
         let session = self.store.session_id();
         let request = Request {
-            purpose: crucible_core::RequestPurpose::Recap,
+            purpose: crucible_models::RequestPurpose::Recap,
             model: &self.agent.model().name,
             transcript: &self.state.transcript,
             tools: &[],
@@ -504,11 +508,11 @@ impl Runner {
             max_tokens: room,
             effort: self.agent.model().effort,
             run: run.run(),
-            session: session.as_ref().map(crucible_core::SessionId::as_str),
+            session: session.as_ref().map(crucible_types::SessionId::as_str),
             workspace,
             user: user
                 .as_ref()
-                .map_or(&[], crucible_core::SessionOwner::as_bytes),
+                .map_or(&[], crucible_storage::SessionOwner::as_bytes),
             trust: b"local-workspace-authority-v1",
             authority: authority.as_bytes(),
             // The standalone recap deliberately sends no system prompt or
@@ -540,7 +544,8 @@ impl Runner {
             _ => prompt_cache::prepare(&request, capabilities, &scope).await,
         };
         for fact in resource_facts {
-            self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact));
+            self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact))
+                .await;
         }
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -562,9 +567,11 @@ impl Runner {
             cost: UsageCost::UNKNOWN,
         });
         let planned = cache.planned();
-        self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
+        self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)))
+            .await;
         if let Some(resource) = prepared.resource.as_ref() {
-            self.report_recap_resource(run, cache.attempt, resource);
+            self.report_recap_resource(run, cache.attempt, resource)
+                .await;
         }
         let mut encoding = self.provider.prompt_cache_encoding(&Request {
             prompt_cache: Some(&cache),
@@ -581,14 +588,16 @@ impl Runner {
                     encoding,
                     disposition: PromptCacheRequestDisposition::NotSent,
                 }),
-            );
+            )
+            .await;
             let Some(fallback) = prepared.fallback_request(reason) else {
                 self.state.transcript.pop();
                 return Err(PromptCachePreparationError::Encoding(reason).into());
             };
             cache = fallback;
             let planned = cache.planned();
-            self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
+            self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)))
+                .await;
             encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -620,7 +629,8 @@ impl Runner {
                 encoding,
                 disposition,
             }),
-        );
+        )
+        .await;
         let cache = super::CacheObservation {
             attempt: cache.attempt,
             reporting: cache.capabilities.usage(),
@@ -662,15 +672,15 @@ impl Runner {
     /// a fallback request that does not name it is encoded under the same
     /// attempt, and where there is no fallback, or it cannot be encoded
     /// either, nothing is sent.
-    fn report_recap_resource(
+    async fn report_recap_resource(
         &self,
         run: &RunContext<'_>,
-        attempt: crucible_core::ProviderAttemptId,
-        resource: &crucible_core::PromptCacheResourceRecord,
+        attempt: crucible_types::ProviderAttemptId,
+        resource: &crucible_types::PromptCacheResourceRecord,
     ) {
         self.report_prompt_cache(
             run,
-            PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
+            PromptCacheFact::ResourceChanged(crucible_types::PromptCacheResourceFact {
                 attempt: Some(attempt),
                 resource: resource.id().clone(),
                 operation: resource.pending(),
@@ -678,13 +688,14 @@ impl Runner {
                 expires_at: resource.expires_at(),
                 owner: resource.binding().owner(),
             }),
-        );
+        )
+        .await;
     }
 
     /// Reads one standalone recap response while preserving attempt accounting.
     async fn read_recap(
         &mut self,
-        asked: Result<Box<dyn crucible_core::DeltaStream>, ProviderError>,
+        asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
         reading: RecapReading<'_>,
     ) -> Result<Recap, TurnError> {
         let RecapReading {
@@ -744,7 +755,7 @@ impl Runner {
                         self.provider.name(),
                     )?;
                     if let Some(tokens) = usage.output {
-                        *spent = before.and(crucible_core::Spend::new(tokens));
+                        *spent = before.and(crucible_types::Spend::new(tokens));
                         events.post(crate::Event::Spent { spend: *spent });
                     }
                     let cost = self
@@ -779,7 +790,8 @@ impl Runner {
                             usage,
                             cost,
                         })),
-                    );
+                    )
+                    .await;
                 }
                 Delta::ToolStarted { .. }
                 | Delta::ToolArgs(_)

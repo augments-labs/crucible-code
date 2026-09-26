@@ -4,7 +4,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::str::FromStr as _;
 
-use crucible_core::{Message, RecordedToolOutput, SessionId, ToolCall, ToolId, ToolResult};
+use crucible_types::{Message, RecordedToolOutput, SessionId, ToolCall, ToolId, ToolResult};
 
 use super::*;
 use crate::sample::Sample;
@@ -84,7 +84,7 @@ fn the_calls_a_turn_made_and_what_came_back_are_kept_with_it() {
             calls: vec![ToolCall {
                 id: ToolId::new("c-1"),
                 name: "read".into(),
-                args: crucible_core::ToolArgs::new(r#"{"path":"crucible.json"}"#),
+                args: crucible_types::ToolArgs::new(r#"{"path":"crucible.json"}"#),
             }],
             stop: None,
         }),

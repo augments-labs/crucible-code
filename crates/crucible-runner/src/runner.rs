@@ -45,16 +45,24 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{
-    Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta, DeltaStream,
-    Effort, JournalStore, Looking, Message, Modalities, Mode, Permission, PermissionsSection,
-    PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
-    PromptCachePreparationError, PromptCacheRequestDisposition, PromptCacheRequestFact,
+use crucible_context::{ContextSection, PermissionsSection, Room};
+use crucible_models::{
+    Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError, Provider,
+    ProviderError, Request,
+};
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_sandbox::SandboxAuditRegistry;
+use crucible_storage::{JournalStore, RunItem};
+use crucible_tools::{
+    Ask, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolGeneration, ToolSnapshot,
+    ToolWorker, Toolset, ToolsetContext,
+};
+use crucible_types::{
+    Attachment, Compacting, Message, Modalities, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheRequestFact,
     PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
-    PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
-    Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer, StopReason, Summary, ToolCall,
-    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, ToolWorker, Toolset,
-    ToolsetContext, Transcript, TurnId, UsageCost,
+    PromptCacheUsageFact, PromptCacheUsageReporting, ProviderUsage, Spend, StopReason, ToolCall,
+    ToolSchema, Transcript, TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
@@ -131,11 +139,11 @@ struct TurnBounds {
 /// Immutable cache-reporting dimensions bound to one provider attempt.
 #[derive(Clone, Copy)]
 struct CacheObservation {
-    attempt: crucible_core::ProviderAttemptId,
+    attempt: crucible_types::ProviderAttemptId,
     reporting: PromptCacheUsageReporting,
     model_revision: Option<&'static str>,
     retention: PromptCacheRetentionClass,
-    pricing_date: crucible_core::PricingDate,
+    pricing_date: crucible_types::PricingDate,
 }
 
 /// The state one provider request reads and updates together.
@@ -183,7 +191,7 @@ pub struct Runner {
     /// writes to it without ever learning what it writes to.
     store: Arc<dyn JournalStore>,
     policy: RunPolicy,
-    prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
+    prompt_cache_store: Option<Box<dyn crucible_storage::PromptCacheResourceStore>>,
     sandbox_audits: SandboxAuditRegistry,
     /// The worker every call is lent for its blocking work, where the wiring
     /// gave one.
@@ -344,7 +352,7 @@ impl Runner {
     #[must_use]
     pub fn with_prompt_cache_store(
         mut self,
-        store: impl crucible_core::PromptCacheResourceStore + 'static,
+        store: impl crucible_storage::PromptCacheResourceStore + 'static,
     ) -> Self {
         self.prompt_cache_store = Some(Box::new(store));
         self
@@ -358,13 +366,13 @@ impl Runner {
 
     /// Effective cache policy applied to the next provider attempt.
     #[must_use]
-    pub const fn prompt_cache_policy(&self) -> crucible_core::PromptCachePolicy {
+    pub const fn prompt_cache_policy(&self) -> crucible_types::PromptCachePolicy {
         self.policy.prompt_cache
     }
 
     /// Exact declared cache capability for the current provider/model route.
     #[must_use]
-    pub fn prompt_cache_capabilities(&self) -> crucible_core::PromptCacheCapabilities {
+    pub fn prompt_cache_capabilities(&self) -> crucible_models::PromptCacheCapabilities {
         self.provider
             .prompt_cache_capabilities(&self.agent.model().name)
     }
@@ -380,7 +388,7 @@ impl Runner {
         match self.prompt_cache_store.as_deref_mut() {
             Some(store) => {
                 store
-                    .inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES)
+                    .inspect(crucible_types::MAX_PROMPT_CACHE_RESOURCES)
                     .await
             }
             None => Ok(Vec::new()),
@@ -854,19 +862,20 @@ impl Runner {
         self.agent = Arc::new(self.agent.aimed(harder));
     }
 
-    fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
-        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store)
+    async fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
+        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store).await
     }
 
     /// Writes one normalized cache fact to the durable framework journal and
     /// emits the same typed fact to the live event stream.
-    fn report_prompt_cache(&self, run: &RunContext<'_>, fact: PromptCacheFact) {
-        self.report_prompt_cache_to(&run.reporting(), fact);
+    async fn report_prompt_cache(&self, run: &RunContext<'_>, fact: PromptCacheFact) {
+        self.report_prompt_cache_to(&run.reporting(), fact).await;
     }
 
-    fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
+    async fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
         self.store
-            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()));
+            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()))
+            .await;
         events.post(Event::PromptCache { fact });
     }
 
@@ -875,14 +884,14 @@ impl Runner {
     /// The only way in from outside: [`RunContext`] is minted in this crate,
     /// so the run a caller is handed is a root, and descending from it is this
     /// crate's. What that closes is the *context* — it does not close event
-    /// attribution, because [`Ancestry`] and [`Reporter`] are public in
-    /// `crucible-core` and three calls there will stamp an event with a run
-    /// nothing started. Nothing shipped does: the one [`Post`] is the binary's
-    /// relay, and the only [`Reporter`] outside tests comes from
-    /// [`RunContext::reporting`]. So this is a run the caller cannot forge by
-    /// accident, not one the types forbid forging.
+    /// attribution, because [`Ancestry`] and [`Reporter`] are both public, the
+    /// first in `crucible-types` and the second here, and three calls to them
+    /// will stamp an event with a run nothing started. Nothing shipped does:
+    /// the one [`Post`] is the binary's relay, and the only [`Reporter`]
+    /// outside tests comes from [`RunContext::reporting`]. So this is a run the
+    /// caller cannot forge by accident, not one the types forbid forging.
     ///
-    /// [`Ancestry`]: crucible_core::Ancestry
+    /// [`Ancestry`]: crucible_types::Ancestry
     ///
     /// A context carries no session either, so "against this session" is what
     /// the caller does and not something checked here: one context per unit of
@@ -972,8 +981,8 @@ impl Runner {
     /// a turn inside its own runtime; a caller of its own polls the turn
     /// inside one, with a timer where a call has a deadline.
     ///
-    /// [`ToolsetError::Unready`]: crucible_core::ToolsetError::Unready
-    /// [`ToolsetError::Source`]: crucible_core::ToolsetError::Source
+    /// [`ToolsetError::Unready`]: crucible_tools::ToolsetError::Unready
+    /// [`ToolsetError::Source`]: crucible_tools::ToolsetError::Source
     pub async fn turn(
         &mut self,
         prompt: &str,
@@ -1261,7 +1270,8 @@ impl Runner {
             .prepare(&toolsets)
             .await
             .map_err(TurnError::from);
-        let prepared = combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()));
+        let prepared =
+            combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()).await);
         let ran = match prepared {
             Ok(()) => {
                 // The turn's own running totals. A bound only where somebody asked for
@@ -1298,7 +1308,7 @@ impl Runner {
                 cleanup,
             }),
         };
-        combine_sandbox_audit(finished, self.flush_sandbox_audits(run.reporting()))
+        combine_sandbox_audit(finished, self.flush_sandbox_audits(run.reporting()).await)
     }
 
     /// Makes room, and says what the turn may do next.
@@ -1385,7 +1395,7 @@ impl Runner {
     /// they arrive, so re-asking after one would put an answer on screen twice
     /// and leave the transcript holding the half that was taken back.
     ///
-    /// [`ProviderError::transient`]: crucible_core::ProviderError::transient
+    /// [`ProviderError::transient`]: crucible_models::ProviderError::transient
     async fn listen(
         &mut self,
         bounds: &TurnBounds,
@@ -1461,6 +1471,14 @@ impl Runner {
     /// Separate from [`Self::listen`] because what a failed response leaves in
     /// the transcript depends on whether it is going to be asked again, and that
     /// question is asked once rather than at each place the reading can fail.
+    //
+    // The prompt-cache facts this records are journal writes, and a journal
+    // write is awaited since the port became asynchronous: each one costs the
+    // line rustfmt gives its own `.await`, which is what carries this one line
+    // past the ceiling. The allow covers this function and nothing else, and
+    // the awaits are what carry it: a pass that stopped awaiting the journal
+    // has no reason for it.
+    #[allow(clippy::too_many_lines)]
     async fn hearing(
         &mut self,
         answer: &mut Answer,
@@ -1506,7 +1524,7 @@ impl Runner {
             // provider request borrows transcript/spec data. A helper borrowing
             // the whole runner would falsely make those owners overlap.
             let request = Request {
-                purpose: crucible_core::RequestPurpose::Turn,
+                purpose: crucible_models::RequestPurpose::Turn,
                 model: &self.agent.model().name,
                 transcript: &self.state.transcript,
                 tools: listening.advertised,
@@ -1535,11 +1553,11 @@ impl Runner {
                 max_tokens: self.agent.model().max_tokens,
                 effort: self.agent.model().effort,
                 run: listening.run.run(),
-                session: session.as_ref().map(crucible_core::SessionId::as_str),
+                session: session.as_ref().map(crucible_types::SessionId::as_str),
                 workspace,
                 user: user
                     .as_ref()
-                    .map_or(&[], crucible_core::SessionOwner::as_bytes),
+                    .map_or(&[], crucible_storage::SessionOwner::as_bytes),
                 trust: b"local-workspace-authority-v1",
                 authority: authority.as_bytes(),
                 instructions: self.agent.instructions().unwrap_or_default().as_bytes(),
@@ -1570,7 +1588,8 @@ impl Runner {
                 _ => prompt_cache::prepare(&request, capabilities, &scope).await,
             };
             for fact in resource_facts {
-                self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact));
+                self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact))
+                    .await;
             }
             let prepared = prepared?;
             let mut cache = prepared.request();
@@ -1588,7 +1607,8 @@ impl Runner {
             self.report_prompt_cache(
                 listening.run,
                 PromptCacheFact::Planned(Box::new(cache.planned())),
-            );
+            )
+            .await;
             let mut encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -1609,14 +1629,16 @@ impl Runner {
                         encoding,
                         disposition: PromptCacheRequestDisposition::NotSent,
                     }),
-                );
+                )
+                .await;
                 cache = prepared
                     .fallback_request(reason)
                     .ok_or(PromptCachePreparationError::Encoding(reason))?;
                 self.report_prompt_cache(
                     listening.run,
                     PromptCacheFact::Planned(Box::new(cache.planned())),
-                );
+                )
+                .await;
                 encoding = self.provider.prompt_cache_encoding(&Request {
                     prompt_cache: Some(&cache),
                     ..request
@@ -1657,7 +1679,8 @@ impl Runner {
                     encoding,
                     disposition,
                 }),
-            );
+            )
+            .await;
             (
                 streamed?,
                 CacheObservation {
@@ -1777,7 +1800,7 @@ impl Runner {
                         });
                     }
                     if let Some(tokens) = usage.input.total {
-                        let carried = crucible_core::Carried::new(tokens);
+                        let carried = crucible_types::Carried::new(tokens);
                         counting.load.carried(carried);
                         if counting
                             .window
@@ -1818,7 +1841,8 @@ impl Runner {
                             usage,
                             cost,
                         })),
-                    );
+                    )
+                    .await;
                     events.post(Event::Carried {
                         left: counting.left(),
                     });
@@ -1924,8 +1948,8 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-fn pricing_today() -> crucible_core::PricingDate {
-    crucible_core::PricingDate::from_unix_seconds(unix_now())
+fn pricing_today() -> crucible_types::PricingDate {
+    crucible_types::PricingDate::from_unix_seconds(unix_now())
 }
 
 /// Joins cumulative/partial usage fields belonging to one provider attempt.

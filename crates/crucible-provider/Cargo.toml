@@ -13,10 +13,9 @@ authors.workspace = true
 # An attached file reaches all three of these protocols as base64 text, so the
 # codec is what the crate needs rather than a picture format.
 base64.workspace = true
-# The web adapters here answer the web tools' source contract, which this crate
-# reaches through core's re-export until those adapters sit beside the tools.
-# Every other name is taken from the crate that owns it.
-crucible-core.workspace = true
+# The web tools' source contract, which the web adapters here answer: the source
+# names a web tool reads under, and the verdict a fetch is held to.
+crucible-tools.workspace = true
 crucible-credentials.workspace = true
 # The shared asynchronous client and its bounded response-body readers used by
 # model turns and web posts.
@@ -32,7 +31,6 @@ thiserror.workspace = true
 # `rt` names the caller's runtime, `io-util` frames response bodies, and `time`
 # bounds recorded whole-body reads. Nothing here builds a runtime.
 tokio = { workspace = true, features = ["io-util", "rt", "time"] }
-ureq.workspace = true
 
 # `answered!`, which the tests ask a provider's future once with.
 [dev-dependencies]

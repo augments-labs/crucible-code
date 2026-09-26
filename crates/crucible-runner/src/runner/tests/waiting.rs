@@ -12,10 +12,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crucible_core::{
-    Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Compacted, ContextError,
-    ContextPatch, ContextSnapshot, PromptCacheCapabilities, PromptCacheRoute, SessionId,
-    SessionOwner, ToolDescriptor, ToolExecutionMode, ToolProvenance, ToolSourceKind,
+use crucible_models::{PromptCacheCapabilities, PromptCacheRoute};
+use crucible_storage::{CallResultKey, CallResultReceipt, CallResultStoreError, SessionOwner};
+use crucible_tools::{ToolDescriptor, ToolExecutionMode, ToolProvenance, ToolSourceKind};
+use crucible_types::{
+    Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, SessionId,
 };
 
 use super::aiming::left_behind;
@@ -190,20 +191,24 @@ impl SessionStore for Slow {
 }
 
 impl JournalStore for Slow {
-    fn append_run_item(&self, item: &RunItem) {
-        self.recording.append_run_item(item);
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.recording.append_run_item(item).await;
+        })
     }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
         self.recording.put_call_result(key, result)
     }
 
-    fn settle_call_results(&self) {
-        self.recording.settle_call_results();
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.recording.settle_call_results().await;
+        })
     }
 }
 
@@ -724,28 +729,28 @@ impl Toolset for Listing {
     fn prepare<'a>(
         &'a self,
         context: &'a ToolsetContext,
-    ) -> BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+    ) -> BoxFuture<'a, Result<(), crucible_tools::ToolsetError>> {
         Toolset::prepare(&self.0, context)
     }
 
     fn snapshot<'a>(
         &'a self,
         context: &'a ToolsetContext,
-    ) -> BoxFuture<'a, Result<ToolSnapshot, crucible_core::ToolsetError>> {
+    ) -> BoxFuture<'a, Result<ToolSnapshot, crucible_tools::ToolsetError>> {
         Box::pin(Later::new(Toolset::snapshot(&self.0, context)))
     }
 
     fn refresh<'a>(
         &'a self,
         context: &'a ToolsetContext,
-    ) -> BoxFuture<'a, Result<ToolSnapshot, crucible_core::ToolsetError>> {
+    ) -> BoxFuture<'a, Result<ToolSnapshot, crucible_tools::ToolsetError>> {
         Box::pin(Later::new(Toolset::refresh(&self.0, context)))
     }
 
     fn dispose<'a>(
         &'a self,
         context: &'a ToolsetContext,
-    ) -> BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+    ) -> BoxFuture<'a, Result<(), crucible_tools::ToolsetError>> {
         Toolset::dispose(&self.0, context)
     }
 }
@@ -828,7 +833,7 @@ fn every_call_of_a_turn_is_lent_the_runner_s_worker() {
         offered,
         Verdict::Allow,
     );
-    scripted.runner.worker = Some(crucible_core::ToolWorker::new(runtime.handle().clone()));
+    scripted.runner.worker = Some(crucible_tools::ToolWorker::new(runtime.handle().clone()));
 
     let turned = scripted.turn("go");
 

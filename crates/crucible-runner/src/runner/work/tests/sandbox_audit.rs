@@ -416,7 +416,7 @@ fn a_panicking_tool_in_a_parallel_wave_cannot_erase_its_sandbox_facts() {
         .filter_map(|event| match event {
             Event::ToolFinished { call, receipt, .. } => Some((
                 call.as_str(),
-                receipt.as_ref().map(crucible_core::ToolReceipt::outcome),
+                receipt.as_ref().map(crucible_tools::ToolReceipt::outcome),
             )),
             _ => None,
         })
@@ -551,6 +551,7 @@ fn detached_sandbox_facts_keep_the_original_call_until_the_next_runner_boundary(
         .recv_timeout(Duration::from_secs(2))
         .expect("detached fact was recorded");
     report_sandbox_registry(&audits, Reporter::new(Ancestry::new(), &keeping), &journal)
+        .awaited()
         .expect("next runner boundary");
 
     let events = seen.try_iter().collect::<Vec<_>>();

@@ -17,11 +17,11 @@
 
 use super::waiting::UntilStopped;
 use super::*;
-use crucible_core::{
-    PromptCacheCapabilities, PromptCacheRoute, ToolDescriptor, ToolExecutionMode, ToolOutcome,
-    ToolProvenance, ToolSourceKind,
-};
+use crucible_models::{PromptCacheCapabilities, PromptCacheRoute};
 use crucible_runtime::BoxFuture;
+use crucible_tools::{
+    ToolDescriptor, ToolExecutionMode, ToolOutcome, ToolProvenance, ToolSourceKind,
+};
 
 /// The part of a request a [`Stalling`] provider answers only once stopped.
 #[derive(Debug, Clone, Copy)]

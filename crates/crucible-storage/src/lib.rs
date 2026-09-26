@@ -148,9 +148,9 @@ pub mod session;
 
 pub use cache::PromptCacheResourceStore;
 pub use interruption::{
-    ActionId, ActionResolution, ApprovalDecision, CheckpointId, ExecutionCheckpoint,
-    IdempotencyKey, InterruptionError, InvocationId, InvocationRecord, InvocationState,
-    JournalEntryId, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES,
+    ActionId, ActionResolution, ApprovalDecision, CheckpointId, CheckpointStore,
+    ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
+    InvocationState, JournalEntryId, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES,
     MAX_CHECKPOINT_WORD_BYTES, MAX_HUMAN_INPUT_BYTES, MAX_PENDING_ACTIONS, PendingAction,
     PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput, RecoveryAction,
     ResolutionChange, ResumeDigest, ResumeEvidence, ResumeScope, ResumedAction, ToolEffect,
@@ -158,7 +158,7 @@ pub use interruption::{
 };
 pub use journal::{
     CallResultKey, CallResultReceipt, CallResultStoreError, CompactionRecord, CustomEntry,
-    CustomProjector, JournalError, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
+    CustomProjector, JournalError, JournalStore, MAX_CUSTOM_DATA_BYTES, MAX_JOURNAL_WORD_BYTES,
     MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
     RunHistory, RunItem,
 };
