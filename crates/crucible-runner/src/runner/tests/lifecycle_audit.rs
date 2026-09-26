@@ -1,7 +1,9 @@
 //! Toolset lifecycle audit delivery on successful and failed turn exits.
 
-use crucible_core::{SandboxFactKind, SandboxId, SandboxLifecycle, ToolsetContext, ToolsetError};
 use crucible_runtime::BoxFuture;
+use crucible_sandbox::{SandboxFactKind, SandboxLifecycle};
+use crucible_tools::{ToolsetContext, ToolsetError};
+use crucible_types::SandboxId;
 
 use super::*;
 

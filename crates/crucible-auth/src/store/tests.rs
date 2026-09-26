@@ -47,8 +47,8 @@ impl Drop for Scratch {
 /// The key a store holds for `provider`, as text, for a test that has to
 /// compare one — nothing outside this module can read a key back out.
 fn held(store: &Store, provider: &str) -> Option<String> {
-    let mut request = crucible_core::Outgoing::new();
-    let header = crucible_core::Header::bare("x-api-key");
+    let mut request = crucible_credentials::Outgoing::new();
+    let header = crucible_credentials::Header::bare("x-api-key");
     store.read().get(provider)?.apply(&mut request, &header);
 
     request

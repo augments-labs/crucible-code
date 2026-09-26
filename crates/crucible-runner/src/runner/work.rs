@@ -33,14 +33,20 @@ use std::task::{Context, Poll, Waker};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
-use crucible_core::{
-    Ancestry, Approved, Ask, CallResultStoreError, Cancel, InvocationId, InvocationRecord,
-    JournalStore, PendingCallResult, Permission, RunItem, SandboxAudit, SandboxAuditRegistry,
-    Settled, StopReason, TOOL_RESULT_BYTES, ToolCall, ToolContext, ToolEntry, ToolError,
-    ToolExecutionMode, ToolId, ToolOutcome, ToolOutput, ToolOutputRetention, ToolReceipt,
-    ToolResult, ToolSnapshot, ToolSourceReceipt, ToolWorker, Watch, Wrote,
-};
+use crucible_runtime::Cancel;
 use crucible_runtime::Group;
+use crucible_sandbox::{SandboxAudit, SandboxAuditRegistry};
+use crucible_storage::{
+    CallResultStoreError, InvocationId, InvocationRecord, JournalStore, RunItem,
+};
+use crucible_tools::{
+    Approved, Ask, PendingCallResult, Permission, Settled, ToolContext, ToolEntry, ToolError,
+    ToolExecutionMode, ToolOutcome, ToolOutput, ToolReceipt, ToolSnapshot, ToolSourceReceipt,
+    ToolWorker, Watch, Wrote,
+};
+use crucible_types::{
+    Ancestry, StopReason, TOOL_RESULT_BYTES, ToolCall, ToolId, ToolOutputRetention, ToolResult,
+};
 
 use crate::{Event, Reporter};
 mod audit;
@@ -1377,7 +1383,7 @@ impl PanicFallback {
         invocation
     }
 
-    fn audit_failed(self, problem: crucible_core::SandboxAuditError) -> Invocation {
+    fn audit_failed(self, problem: crucible_sandbox::SandboxAuditError) -> Invocation {
         let error = ToolError::Io {
             tool: "sandbox audit".into(),
             problem: "could not register the bounded sandbox lifecycle".into(),

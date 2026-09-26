@@ -10,7 +10,8 @@
 //! Nothing here opens a file. This crate says what a document may hold; the
 //! wiring above it reads and writes.
 
-use crucible_core::{Effort, Minted};
+use crucible_models::Effort;
+use crucible_tools::Minted;
 use serde_json::Value;
 
 use crate::error::ConfigError;

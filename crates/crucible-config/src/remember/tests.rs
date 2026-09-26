@@ -1,9 +1,7 @@
 //! Splicing a durable rule into a user-owned configuration document.
 
-use crucible_core::{
-    Ask, Command, Mode, Remember, Sensitivity, Settled, ToolArgs, ToolCall, ToolId, Verdict,
-    narrowest,
-};
+use crucible_tools::{Ask, Command, Mode, Remember, Sensitivity, Settled, Verdict, narrowest};
+use crucible_types::{ToolArgs, ToolCall, ToolId};
 
 use crate::document::{Document, Origin};
 use crate::settings::Settings;

@@ -16,7 +16,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{Authorization, Credential, CredentialError, CredentialScopeId, Outgoing};
+use crucible_credentials::{Authorization, Credential, CredentialError, Outgoing};
+use crucible_types::CredentialScopeId;
 
 use super::{
     LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, LoginUpdates, OAuthError, Renewals,

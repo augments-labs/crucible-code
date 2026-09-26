@@ -6,7 +6,7 @@
 //! to every editor that resolves the schema. So each one is put through the
 //! same read a real document gets, from the same entry point.
 
-use crucible_core::Effort;
+use crucible_models::Effort;
 use serde_json::{Map, Value, json};
 
 use crate::document::{Document, Origin};

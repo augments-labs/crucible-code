@@ -3,7 +3,7 @@ use super::*;
 use crate::sample::Sample;
 
 /// What a workspace holds after `said` has been asked in it, oldest first.
-fn walked(sample: &Sample, workspace: &crucible_core::Workspace) -> Vec<String> {
+fn walked(sample: &Sample, workspace: &crucible_workspace::Workspace) -> Vec<String> {
     prompts(&sample.logs(), workspace).expect("a readable temporary directory")
 }
 

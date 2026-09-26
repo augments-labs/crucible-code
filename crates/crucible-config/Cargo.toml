@@ -10,11 +10,21 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# `Verdict` and the newtypes a resolved setting turns into, so the wiring above
-# receives domain types rather than strings it has to interpret again.
-crucible-core.workspace = true
-# How one layer's prompt-cache policy is held under the layer it inherits.
+# The rungs a provider's effort setting becomes, and how one layer's
+# prompt-cache policy is held under the layer it inherits.
 crucible-models.workspace = true
+# The sandbox policy a resolved setting turns into, and the ceilings its
+# filesystem and network rules are held under.
+crucible-sandbox.workspace = true
+# `Verdict` and the newtypes a resolved setting turns into — the rules a
+# permission setting is written as, and the tool names they are settled against
+# — so the wiring above receives domain types rather than strings it has to
+# interpret again.
+crucible-tools.workspace = true
+# `Tone` and the prompt-cache vocabulary a resolved setting is turned into.
+crucible-types.workspace = true
+# `Workspace`, which a path a setting names is proved against.
+crucible-workspace.workspace = true
 # The document is JSON. Read without `derive`, the same way every other boundary
 # in this workspace reads one: the shape is walked against `shape::DOCUMENT`, so
 # a mirror struct per block would be a second declaration of the same keys and

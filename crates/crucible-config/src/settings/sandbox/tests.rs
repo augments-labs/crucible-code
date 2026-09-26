@@ -10,8 +10,8 @@ use crate::{ConfigError, Settings};
 /// `compiled` owns the question of whether the path a test binary carries is
 /// still on disk, so a binary older than the checkout running it says so here
 /// rather than reporting a directory the reader has never seen.
-fn workspace() -> crucible_core::Workspace {
-    crucible_core::Workspace::open(crate::compiled::manifest_directory())
+fn workspace() -> crucible_workspace::Workspace {
+    crucible_workspace::Workspace::open(crate::compiled::manifest_directory())
         .expect("the crate directory proved to be there")
 }
 
@@ -214,7 +214,7 @@ fn project_files_cannot_grant_writable_paths_even_when_confinement_is_disabled()
 
 #[test]
 fn filesystem_policy_preserves_restrictions_and_their_sources() {
-    use crucible_core::{
+    use crucible_sandbox::{
         SandboxFilesystemAccess as Access, SandboxFilesystemProvenance as Provenance,
     };
     let workspace = workspace();
@@ -275,7 +275,7 @@ fn domain_configuration_narrows_user_grants_and_retains_denies() {
     let settings = Settings::resolve_checked(vec![project, user.clone()]).unwrap();
     let workspace = workspace();
     let effective = settings.sandbox().enforcing_policy(&workspace).unwrap();
-    let crucible_core::SandboxNetworkPolicy::Domains(network) = effective.network() else {
+    let crucible_sandbox::SandboxNetworkPolicy::Domains(network) = effective.network() else {
         panic!("domain policy expected")
     };
     assert!(network.permits_host("build.example.com"));

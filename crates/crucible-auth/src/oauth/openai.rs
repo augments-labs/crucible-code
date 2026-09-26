@@ -19,7 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use crucible_core::{Authorization, Credential, CredentialError, CredentialScopeId, Outgoing};
+use crucible_credentials::{Authorization, Credential, CredentialError, Outgoing};
+use crucible_types::CredentialScopeId;
 use sha2::{Digest as _, Sha256};
 use tokio::sync::mpsc::Receiver;
 
