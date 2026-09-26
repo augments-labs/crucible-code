@@ -2,7 +2,9 @@
 //!
 //! A fact crosses the runner boundary only after its fixed call and ancestry
 //! attribution is checked, then reaches the event stream and durable journal
-//! as the same typed value.
+//! as the same typed value. The journal record is queued before the event is
+//! posted, so a reader watching the stream sees the fact only once the record
+//! naming it is already on its way to the log.
 
 use crucible_core::{
     Ancestry, JournalStore, RunItem, SandboxAudit, SandboxAuditRecord, SandboxAuditRegistry,
@@ -10,7 +12,7 @@ use crucible_core::{
 };
 
 use crate::{Event, Reporter};
-pub(super) fn report_sandbox_audit(
+pub(super) async fn report_sandbox_audit(
     audit: &SandboxAudit,
     ancestry: Ancestry,
     call: &ToolId,
@@ -30,12 +32,12 @@ pub(super) fn report_sandbox_audit(
                 source: std::io::Error::other("sandbox audit attribution mismatch"),
             });
         }
-        report_sandbox_record(&record, events, journal)?;
+        report_sandbox_record(&record, events, journal).await?;
     }
     Ok(())
 }
 
-pub(in crate::runner) fn report_sandbox_registry(
+pub(in crate::runner) async fn report_sandbox_registry(
     audits: &SandboxAuditRegistry,
     events: Reporter<'_>,
     journal: &dyn JournalStore,
@@ -46,12 +48,12 @@ pub(in crate::runner) fn report_sandbox_registry(
         source: std::io::Error::other(problem),
     })?;
     for record in records {
-        report_sandbox_record(&record, events, journal)?;
+        report_sandbox_record(&record, events, journal).await?;
     }
     Ok(())
 }
 
-fn report_sandbox_record(
+async fn report_sandbox_record(
     record: &SandboxAuditRecord,
     events: Reporter<'_>,
     journal: &dyn JournalStore,
@@ -66,7 +68,7 @@ fn report_sandbox_record(
             source: std::io::Error::other(problem),
         }
     })?;
-    journal.append_run_item(&item);
+    journal.append_run_item(&item).await;
     events
         .attributed_to(ancestry)
         .post(Event::Sandbox { call, fact });

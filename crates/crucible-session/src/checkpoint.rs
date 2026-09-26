@@ -22,6 +22,7 @@ use crucible_core::{
     SandboxFeature, SandboxId, SandboxNetworkInspection, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
     ToolEffect, ToolId, ToolOutcome,
 };
+use crucible_runtime::BoxFuture;
 use serde_json::{Value, json};
 
 /// Current execution-checkpoint document format.
@@ -82,7 +83,31 @@ impl FileCheckpointStore {
 impl CheckpointStore for FileCheckpointStore {
     type Error = CheckpointError;
 
-    fn save(&mut self, checkpoint: &ExecutionCheckpoint) -> Result<(), Self::Error> {
+    fn save<'a>(
+        &'a mut self,
+        checkpoint: &'a ExecutionCheckpoint,
+    ) -> BoxFuture<'a, Result<(), Self::Error>> {
+        Box::pin(async move { self.replaced(checkpoint) })
+    }
+
+    fn load(
+        &self,
+        id: CheckpointId,
+    ) -> BoxFuture<'_, Result<Option<ExecutionCheckpoint>, Self::Error>> {
+        Box::pin(async move { self.read(id) })
+    }
+
+    fn remove(&mut self, id: CheckpointId) -> BoxFuture<'_, Result<(), Self::Error>> {
+        Box::pin(async move { self.removed(id) })
+    }
+}
+
+// The work each method above answers with, kept beside the trait impl so the
+// three bodies are the ones they were: the port changed what a write hands
+// back, and nothing about what a write does.
+impl FileCheckpointStore {
+    /// Encodes, writes, syncs and renames one replacement into place.
+    fn replaced(&mut self, checkpoint: &ExecutionCheckpoint) -> Result<(), CheckpointError> {
         self.private_directory()?;
         let bytes = encode(checkpoint)?;
         if bytes.len() > MAX_CHECKPOINT_BYTES {
@@ -102,7 +127,8 @@ impl CheckpointStore for FileCheckpointStore {
         Ok(())
     }
 
-    fn load(&self, id: CheckpointId) -> Result<Option<ExecutionCheckpoint>, Self::Error> {
+    /// The typed checkpoint under `id`, or `None` where there is none.
+    fn read(&self, id: CheckpointId) -> Result<Option<ExecutionCheckpoint>, CheckpointError> {
         let path = self.path(id);
         match fs::metadata(&self.directory) {
             Ok(_) => self.private_directory()?,
@@ -132,7 +158,9 @@ impl CheckpointStore for FileCheckpointStore {
         Ok(Some(checkpoint))
     }
 
-    fn remove(&mut self, id: CheckpointId) -> Result<(), Self::Error> {
+    /// Removes the finished checkpoint under `id`, or answers where there is
+    /// none, which is what repeating a removal has to do.
+    fn removed(&self, id: CheckpointId) -> Result<(), CheckpointError> {
         match fs::metadata(&self.directory) {
             Ok(_) => self.private_directory()?,
             Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(()),

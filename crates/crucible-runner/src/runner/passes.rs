@@ -245,7 +245,7 @@ impl<'a> AgentLoop<'a> {
         let mut fruitless = 0;
 
         loop {
-            self.runner.flush_sandbox_audits(events)?;
+            self.runner.flush_sandbox_audits(events).await?;
 
             self.interjected(counting).await?;
 
@@ -259,8 +259,10 @@ impl<'a> AgentLoop<'a> {
                 self.runner.toolset.refresh(self.toolsets)
             };
             let tools = tools.await.map_err(TurnError::from);
-            let tools =
-                super::combine_sandbox_audit(tools, self.runner.flush_sandbox_audits(events))?;
+            let tools = super::combine_sandbox_audit(
+                tools,
+                self.runner.flush_sandbox_audits(events).await,
+            )?;
             // Narrowed to what this agent declares, against the exact
             // generation the pass admitted rather than a later one. The
             // request advertises this and a call is admitted through this, so

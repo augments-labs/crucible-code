@@ -1132,43 +1132,60 @@ impl SessionStore for Session {
 }
 
 impl JournalStore for Session {
-    fn append_run_item(&self, item: &RunItem) {
-        self.append_journal(item);
+    // Each of these three answers the first time it is asked, and that is the
+    // whole of what the port asks of this store: a journal line is queued to
+    // the writer thread and the call goes on, a durable result is in the log
+    // before the future is answered, and a settle reads the sidecars beside it.
+    // The work is in the futures rather than before the call, so what a caller
+    // sees is what it always saw — a line queued in the order it was offered,
+    // a receipt the log already holds.
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.append_journal(item) })
     }
 
-    fn put_call_result(
-        &self,
+    /// Answers the same receipt for the same content and refuses different
+    /// content under a key already taken.
+    ///
+    /// A store with nowhere to keep anything says so instead: a receipt from a
+    /// store that kept nothing is what would let a background acceptance claim
+    /// durability nobody has.
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        if self.id.is_none() || !self.path.is_file() {
-            return Err(CallResultStoreError::Unavailable);
-        }
-        let _held = self
-            .result_lock
-            .lock()
-            .map_err(|_| CallResultStoreError::Storage)?;
-        self.sync_pending_result_source()?;
-        results::put(&self.path, key, result)
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            if self.id.is_none() || !self.path.is_file() {
+                return Err(CallResultStoreError::Unavailable);
+            }
+            let _held = self
+                .result_lock
+                .lock()
+                .map_err(|_| CallResultStoreError::Storage)?;
+            self.sync_pending_result_source()?;
+            results::put(&self.path, key, result)
+        })
     }
 
-    fn settle_call_results(&self) {
-        if self.id.is_none() || !self.path.is_file() {
-            return;
-        }
-        let Ok(_held) = self.result_lock.lock() else {
-            return;
-        };
-        let Ok(stored) = results::load(&self.path) else {
-            return;
-        };
-        if stored.is_empty() {
-            return;
-        }
-        if self.sync_pending_result_source().is_err() {
-            return;
-        }
-        let _ = results::settle(stored);
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if self.id.is_none() || !self.path.is_file() {
+                return;
+            }
+            let Ok(_held) = self.result_lock.lock() else {
+                return;
+            };
+            let Ok(stored) = results::load(&self.path) else {
+                return;
+            };
+            if stored.is_empty() {
+                return;
+            }
+            if self.sync_pending_result_source().is_err() {
+                return;
+            }
+            let _ = results::settle(stored);
+        })
     }
 }
 

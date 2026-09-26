@@ -379,10 +379,12 @@ impl Work<'_> {
                         approved_entry.descriptor().effect(),
                         approved_entry.tool().idempotency_key(&transformed.args),
                     );
-                    self.journal.append_run_item(&RunItem::Invocation {
-                        record: record.clone(),
-                        preview: None,
-                    });
+                    self.journal
+                        .append_run_item(&RunItem::Invocation {
+                            record: record.clone(),
+                            preview: None,
+                        })
+                        .await;
                     Decision::Ready(Prepared {
                         call: transformed,
                         entry: approved_entry.clone(),
@@ -577,7 +579,7 @@ impl Work<'_> {
                 id: invocation.call.id.clone(),
                 output: invocation.output.clone().into_recorded(),
             };
-            if let Ok(receipt) = self.journal.put_call_result(pending.key(), &result) {
+            if let Ok(receipt) = self.journal.put_call_result(pending.key(), &result).await {
                 // The result is already durable and replayable. The
                 // acceptance is awaited, so an executor that has to wait to
                 // close its transition is waited for; one that fails
@@ -611,10 +613,12 @@ impl Work<'_> {
                 invocation.outcome,
                 invocation.output.clone().into_recorded(),
             );
-            self.journal.append_run_item(&RunItem::Invocation {
-                record: recovery,
-                preview,
-            });
+            self.journal
+                .append_run_item(&RunItem::Invocation {
+                    record: recovery,
+                    preview,
+                })
+                .await;
         }
 
         let receipt = ToolReceipt::new(
@@ -805,7 +809,7 @@ async fn run_batch(
                 continue;
             }
         };
-        let (started, approved) = Started::from(prepared, host);
+        let (started, approved) = Started::from(prepared, host).await;
         let slot = mailbox.expect();
         let run = Run {
             call: started.call.id.clone(),
@@ -850,12 +854,12 @@ async fn run_batch(
             // sandbox collected, and either may come apart: that is answered
             // as a contained panic too, rather than unwinding out of the pass.
             Some(Came::Returned(returned)) => {
-                match catch_unwind(AssertUnwindSafe(|| started.settled(returned, &audit, host))) {
-                    Ok(invocation) => invocation,
-                    Err(_) => fallback.panicked(),
+                match Contained(Box::pin(started.settled(returned, &audit, host))).await {
+                    Some(invocation) => invocation,
+                    None => fallback.panicked(),
                 }
             }
-            Some(Came::Apart) | None => fallback.contained(&audit, host),
+            Some(Came::Apart) | None => fallback.contained(&audit, host).await,
         };
         answered.push((index, invocation));
     }
@@ -1183,7 +1187,7 @@ struct Started {
 impl Started {
     /// Records the call as started, and hands back the approval to run it
     /// under.
-    fn from(prepared: Prepared, host: ExecutionHost<'_>) -> (Self, Approved) {
+    async fn from(prepared: Prepared, host: ExecutionHost<'_>) -> (Self, Approved) {
         let Prepared {
             call,
             entry,
@@ -1192,10 +1196,12 @@ impl Started {
             mut record,
         } = prepared;
         let _ = record.start();
-        host.journal.append_run_item(&RunItem::Invocation {
-            record: record.clone(),
-            preview: None,
-        });
+        host.journal
+            .append_run_item(&RunItem::Invocation {
+                record: record.clone(),
+                preview: None,
+            })
+            .await;
         let deadline = entry
             .descriptor()
             .timeout()
@@ -1224,20 +1230,20 @@ impl Started {
     /// it short, and one that failed with its own failure; where the call's
     /// deadline had passed and the turn was not stopped, either is answered
     /// as timed out, since the deadline is what raised the run's cancel.
-    fn settled(
+    async fn settled(
         self,
         returned: Returned,
         audit: &SandboxAudit,
         host: ExecutionHost<'_>,
     ) -> Invocation {
         let stopped = matches!(returned, Returned::Ran { stopped: true, .. });
-        let mut invocation = self.answered(returned, audit, host);
+        let mut invocation = self.answered(returned, audit, host).await;
         invocation.stops = stopped;
         invocation
     }
 
     /// [`Started::settled`], before the stop's mark.
-    fn answered(
+    async fn answered(
         self,
         returned: Returned,
         audit: &SandboxAudit,
@@ -1263,7 +1269,7 @@ impl Started {
             } => (ran, stopped, timed_out, pending),
         };
         if let Err(problem) =
-            report_sandbox_audit(audit, host.ancestry, &call.id, host.events, host.journal)
+            report_sandbox_audit(audit, host.ancestry, &call.id, host.events, host.journal).await
         {
             return Invocation::failed(call, &problem, ToolOutcome::Failed, evidence)
                 .recovering(record);
@@ -1347,14 +1353,15 @@ impl PanicFallback {
 impl PanicFallback {
     /// The call, answered as a contained panic once whatever its sandbox
     /// audit collected has been reported.
-    fn contained(self, audit: &SandboxAudit, host: ExecutionHost<'_>) -> Invocation {
+    async fn contained(self, audit: &SandboxAudit, host: ExecutionHost<'_>) -> Invocation {
         let _ = report_sandbox_audit(
             audit,
             host.ancestry,
             &self.call.id,
             host.events,
             host.journal,
-        );
+        )
+        .await;
         self.panicked()
     }
 

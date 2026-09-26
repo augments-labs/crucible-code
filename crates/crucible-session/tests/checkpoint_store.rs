@@ -123,9 +123,8 @@ fn pending_actions_and_finished_invocations_round_trip_in_their_own_versioned_fi
         .unwrap();
     checkpoint.add_invocation(invocation).unwrap();
 
-    store.save(&checkpoint).expect("checkpoint is durable");
-    let loaded = store
-        .load(id)
+    crucible_runtime::answered!(store.save(&checkpoint)).expect("checkpoint is durable");
+    let loaded = crucible_runtime::answered!(store.load(id))
         .expect("checkpoint reads")
         .expect("it exists");
 
@@ -198,9 +197,8 @@ fn a_finished_invocation_keeps_who_answered_its_result() {
         .unwrap();
     checkpoint.add_invocation(invocation).unwrap();
 
-    store.save(&checkpoint).expect("checkpoint is durable");
-    let loaded = store
-        .load(id)
+    crucible_runtime::answered!(store.save(&checkpoint)).expect("checkpoint is durable");
+    let loaded = crucible_runtime::answered!(store.load(id))
         .expect("checkpoint reads")
         .expect("it exists");
 
@@ -226,14 +224,16 @@ fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
     let mut checkpoint =
         ExecutionCheckpoint::new(id, Ancestry::new(), scope(), None, 1_000, 9_000).unwrap();
     checkpoint.add_sandbox(saved.clone()).unwrap();
-    store.save(&checkpoint).unwrap();
+    crucible_runtime::answered!(store.save(&checkpoint)).unwrap();
 
     let path = directory.join(format!("{id}.checkpoint"));
     let document: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let sandbox = document.pointer("/sandboxes/0").expect("saved sandbox");
     assert_eq!(sandbox.get("enabled"), Some(&serde_json::json!(true)));
     assert!(sandbox.get("mode").is_none());
-    let loaded = store.load(id).unwrap().unwrap();
+    let loaded = crucible_runtime::answered!(store.load(id))
+        .unwrap()
+        .unwrap();
     assert_eq!(loaded.sandboxes(), std::slice::from_ref(&saved));
     let matching = ResumeEvidence::new(scope(), "policy", "capability", None::<Box<str>>)
         .with_sandbox(saved.clone())
@@ -272,7 +272,7 @@ fn obsolete_checkpoint_formats_are_rejected_without_compatibility_aliases() {
     let id = CheckpointId::new();
     let ancestry = Ancestry::new();
     let checkpoint = ExecutionCheckpoint::new(id, ancestry, scope(), None, 1_000, 9_000).unwrap();
-    store.save(&checkpoint).unwrap();
+    crucible_runtime::answered!(store.save(&checkpoint)).unwrap();
 
     let path = directory.join(format!("{id}.checkpoint"));
     let mut document: serde_json::Value =
@@ -280,7 +280,10 @@ fn obsolete_checkpoint_formats_are_rejected_without_compatibility_aliases() {
     for obsolete in [1, 2] {
         *document.get_mut("format").expect("format") = serde_json::json!(obsolete);
         fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
-        assert!(matches!(store.load(id), Err(CheckpointError::Unreadable)));
+        assert!(matches!(
+            crucible_runtime::answered!(store.load(id)),
+            Err(CheckpointError::Unreadable)
+        ));
     }
 
     fs::remove_dir_all(directory).unwrap();
@@ -293,10 +296,14 @@ fn removal_is_idempotent_and_does_not_create_a_conversation_log() {
     let id = CheckpointId::new();
     let checkpoint = ExecutionCheckpoint::new(id, Ancestry::new(), scope(), None, 1, 10).unwrap();
 
-    store.save(&checkpoint).unwrap();
-    store.remove(id).unwrap();
-    store.remove(id).unwrap();
-    assert!(store.load(id).unwrap().is_none());
+    crucible_runtime::answered!(store.save(&checkpoint)).unwrap();
+    crucible_runtime::answered!(store.remove(id)).unwrap();
+    crucible_runtime::answered!(store.remove(id)).unwrap();
+    assert!(
+        crucible_runtime::answered!(store.load(id))
+            .unwrap()
+            .is_none()
+    );
     assert!(fs::read_dir(&directory).unwrap().all(|entry| {
         entry
             .unwrap()
@@ -335,11 +342,13 @@ fn every_pending_outcome_survives_stop_and_resume_with_one_provider_result() {
     ] {
         checkpoint.pending_mut().insert(action).unwrap();
     }
-    store.save(&checkpoint).unwrap();
+    crucible_runtime::answered!(store.save(&checkpoint)).unwrap();
 
     // A fresh process applies external decisions and checkpoints them before
     // any provider transcript is projected.
-    let mut resumed = store.load(checkpoint_id).unwrap().unwrap();
+    let mut resumed = crucible_runtime::answered!(store.load(checkpoint_id))
+        .unwrap()
+        .unwrap();
     resumed.pending_mut().approve(approved_action).unwrap();
     resumed.pending_mut().reject(rejected_action).unwrap();
     resumed.pending_mut().cancel(cancelled_action).unwrap();
@@ -347,9 +356,11 @@ fn every_pending_outcome_survives_stop_and_resume_with_one_provider_result() {
         .pending_mut()
         .resolve_external(external_action, RecordedToolOutput::ok("external result"))
         .unwrap();
-    store.save(&resumed).unwrap();
+    crucible_runtime::answered!(store.save(&resumed)).unwrap();
 
-    let mut resumed = store.load(checkpoint_id).unwrap().unwrap();
+    let mut resumed = crucible_runtime::answered!(store.load(checkpoint_id))
+        .unwrap()
+        .unwrap();
     let approved = resumed.pending_mut().resume(approved_action).unwrap();
     let mut invocation = approved
         .approved_invocation(ToolEffect::NonIdempotent, None)
@@ -378,9 +389,11 @@ fn every_pending_outcome_survives_stop_and_resume_with_one_provider_result() {
                 .expect("a tool-bearing resolution"),
         );
     }
-    store.save(&resumed).unwrap();
+    crucible_runtime::answered!(store.save(&resumed)).unwrap();
 
-    let completed = store.load(checkpoint_id).unwrap().unwrap();
+    let completed = crucible_runtime::answered!(store.load(checkpoint_id))
+        .unwrap()
+        .unwrap();
     assert_eq!(completed.invocations().len(), 1);
     assert_eq!(
         completed
@@ -464,9 +477,11 @@ fn all_three_crash_windows_round_trip_to_their_explicit_recovery_policy() {
     checkpoint.add_invocation(prepared).unwrap();
     checkpoint.add_invocation(ambiguous).unwrap();
     checkpoint.add_invocation(completed).unwrap();
-    store.save(&checkpoint).unwrap();
+    crucible_runtime::answered!(store.save(&checkpoint)).unwrap();
 
-    let loaded = store.load(checkpoint_id).unwrap().unwrap();
+    let loaded = crucible_runtime::answered!(store.load(checkpoint_id))
+        .unwrap()
+        .unwrap();
     assert_eq!(
         loaded
             .invocations()
@@ -508,7 +523,7 @@ fn an_oversized_encoded_checkpoint_is_refused_before_a_file_is_replaced() {
     }
 
     assert!(matches!(
-        store.save(&checkpoint),
+        crucible_runtime::answered!(store.save(&checkpoint)),
         Err(CheckpointError::TooLarge)
     ));
     assert!(fs::read_dir(&directory).unwrap().all(|entry| {
@@ -553,8 +568,14 @@ fn domain_network_counts_round_trip_and_oversized_records_are_refused() {
     let mut checkpoint =
         ExecutionCheckpoint::new(id, Ancestry::new(), scope(), None, 1_000, 9_000).unwrap();
     checkpoint.add_sandbox(saved.clone()).unwrap();
-    store.save(&checkpoint).unwrap();
-    assert_eq!(store.load(id).unwrap().unwrap().sandboxes(), &[saved]);
+    crucible_runtime::answered!(store.save(&checkpoint)).unwrap();
+    assert_eq!(
+        crucible_runtime::answered!(store.load(id))
+            .unwrap()
+            .unwrap()
+            .sandboxes(),
+        &[saved]
+    );
     let path = directory.join(format!("{id}.checkpoint"));
     let document: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     for field in ["allowed", "denied", "unix_sockets"] {
@@ -563,7 +584,10 @@ fn domain_network_counts_round_trip_and_oversized_records_are_refused() {
             .pointer_mut(&format!("/sandboxes/0/network/{field}"))
             .unwrap() = serde_json::json!(crucible_core::MAX_SANDBOX_NETWORK_RULES + 1);
         fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
-        assert!(store.load(id).is_err(), "oversized {field} accepted");
+        assert!(
+            crucible_runtime::answered!(store.load(id)).is_err(),
+            "oversized {field} accepted"
+        );
     }
     fs::remove_dir_all(directory).unwrap();
 }

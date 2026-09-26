@@ -217,8 +217,8 @@ fn durable_call_results_are_idempotent_and_content_bound() {
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
 
-    let first = session.put_call_result(key, &result).unwrap();
-    let repeated = session.put_call_result(key, &result).unwrap();
+    let first = crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
+    let repeated = crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     assert_eq!(first, repeated);
 
     let conflict = ToolResult {
@@ -226,7 +226,7 @@ fn durable_call_results_are_idempotent_and_content_bound() {
         output: RecordedToolOutput::failed("different"),
     };
     assert_eq!(
-        session.put_call_result(key, &conflict),
+        crucible_runtime::answered!(session.put_call_result(key, &conflict)),
         Err(CallResultStoreError::Conflict)
     );
 
@@ -254,7 +254,7 @@ fn a_session_told_of_a_missing_line_still_accepts_a_background_result() {
     session.missing("lines owed to this log were not waited for");
 
     assert!(
-        session.put_call_result(key, &result).is_ok(),
+        crucible_runtime::answered!(session.put_call_result(key, &result)).is_ok(),
         "a background result was refused because other lines were missing"
     );
     assert!(
@@ -279,10 +279,10 @@ fn ordinary_tool_results_settle_accepted_sidecars_after_the_log_barrier() {
         id: ToolId::new("call-1"),
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
-    session.put_call_result(key, &result).unwrap();
+    crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     session.append(&Message::ToolResults(vec![result.clone()]));
 
-    session.settle_call_results();
+    crucible_runtime::answered!(session.settle_call_results());
 
     assert!(
         !path.with_extension("results").exists(),
@@ -308,7 +308,7 @@ fn resume_commits_an_accepted_result_before_removing_its_sidecar() {
         id: ToolId::new("call-1"),
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
-    session.put_call_result(key, &result).unwrap();
+    crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     drop(session);
 
     let (resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
@@ -358,7 +358,7 @@ fn recovery_settles_every_call_when_only_one_result_reached_acceptance() {
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &result.id);
-    session.put_call_result(key, &result).unwrap();
+    crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     drop(session);
 
     let (_resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
@@ -382,7 +382,7 @@ fn a_non_recording_session_cannot_accept_a_durable_result() {
     };
 
     assert_eq!(
-        session.put_call_result(key, &result),
+        crucible_runtime::answered!(session.put_call_result(key, &result)),
         Err(CallResultStoreError::Unavailable)
     );
 }
