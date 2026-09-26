@@ -1,5 +1,5 @@
 //! Durable interruption, resolution, invocation recovery and execution
-//! checkpoints.
+//! checkpoints, and the contract a checkpoint is kept through.
 //!
 //! Conversation history says what a provider may read. This module says what
 //! an unfinished execution needs in order to resume safely, and keeps the
@@ -18,7 +18,14 @@
 //! middle one is a value in `crucible-types`, because it holds no record and
 //! every crate that keeps a checkpoint already names that crate. None of the
 //! three needs the runtime that produced it, which is what lets a checkpoint
-//! store compile on its own.
+//! store compile on its own — and why [`CheckpointStore`], the contract one is
+//! written against, is here beside the checkpoint rather than above it.
+//!
+//! Every method hands back a boxed `Send` future holding the store for as long
+//! as it runs, because a checkpoint is replaced whole and a second write must
+//! not begin beside the first. An implementation whose writes do not wait
+//! answers the first time it is asked, which is what a store that renames into
+//! place from a private directory already does.
 
 use std::fmt;
 use std::str::FromStr;
@@ -31,6 +38,7 @@ use crucible_types::{
     ToolOutcome, ToolResult, is_checkpoint_word,
 };
 
+use crate::BoxFuture;
 use crate::sandbox::SandboxCheckpoint;
 
 /// Most pending actions retained in one execution checkpoint.
@@ -1522,6 +1530,55 @@ impl ValidatedResume {
     pub const fn recovery(self) -> RecoveryAction {
         self.recovery
     }
+}
+
+/// Persistence contract for execution checkpoints.
+///
+/// One write at a time, which is what the `&mut self` on `save` and `remove`
+/// says: a checkpoint is replaced whole after each resolution or state
+/// transition, so two writes beside one another would be two whole documents
+/// competing for one identity. `load` takes `&self`, so reads are as
+/// concurrent as the caller makes them and only the writes are serialized. A
+/// store that keeps them in a remote service is serialized the same way; only
+/// the store knows how.
+///
+/// Every write answers the first time it is asked. A caller awaits the write
+/// and goes on, so a store that answered `Pending` would suspend the turn
+/// between a checkpoint it had been told was durable and the work that assumed
+/// it; a store that has to wait for a remote service waits inside the write.
+pub trait CheckpointStore {
+    /// Store-owned error preserving its concrete boundary.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Durably replaces the checkpoint under its stable identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns the implementation's error when validation or durable storage
+    /// fails.
+    fn save<'a>(
+        &'a mut self,
+        checkpoint: &'a ExecutionCheckpoint,
+    ) -> BoxFuture<'a, Result<(), Self::Error>>;
+
+    /// Loads one typed checkpoint, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns the implementation's error when protected storage cannot be
+    /// read or decoded safely.
+    fn load(
+        &self,
+        id: CheckpointId,
+    ) -> BoxFuture<'_, Result<Option<ExecutionCheckpoint>, Self::Error>>;
+
+    /// Removes one finished checkpoint. Repeating removal is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns the implementation's error when the protected file cannot be
+    /// validated or removed.
+    fn remove(&mut self, id: CheckpointId) -> BoxFuture<'_, Result<(), Self::Error>>;
 }
 
 #[cfg(test)]

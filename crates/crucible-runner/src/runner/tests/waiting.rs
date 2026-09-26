@@ -190,20 +190,24 @@ impl SessionStore for Slow {
 }
 
 impl JournalStore for Slow {
-    fn append_run_item(&self, item: &RunItem) {
-        self.recording.append_run_item(item);
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.recording.append_run_item(item).await;
+        })
     }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
         self.recording.put_call_result(key, result)
     }
 
-    fn settle_call_results(&self) {
-        self.recording.settle_call_results();
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.recording.settle_call_results().await;
+        })
     }
 }
 

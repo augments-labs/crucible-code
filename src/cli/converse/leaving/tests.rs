@@ -126,8 +126,7 @@ fn started(
             id: call.id.clone(),
             output: output.into_recorded(),
         };
-        let receipt = JOURNAL
-            .put_call_result(pending.key(), &result)
+        let receipt = crucible_runtime::answered!(JOURNAL.put_call_result(pending.key(), &result))
             .expect("the test journal stores the result");
         crucible_runtime::answered!(pending.accept(receipt))
             .expect("the detached command accepts its receipt");
@@ -318,20 +317,24 @@ impl SessionStore for Journal {
 }
 
 impl JournalStore for Journal {
-    fn append_run_item(&self, _item: &RunItem) {}
+    fn append_run_item<'a>(&'a self, _item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        let mut digest = Sha256::new();
-        digest.update(b"crucible:leaving-test-call-result:v1\0");
-        digest.update(key.bytes());
-        digest.update(result.id.as_str().as_bytes());
-        digest.update(result.output.text().as_bytes());
-        digest.update([u8::from(result.output.is_failed())]);
-        Ok(CallResultReceipt::from_digest(digest.finalize().into()))
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            let mut digest = Sha256::new();
+            digest.update(b"crucible:leaving-test-call-result:v1\0");
+            digest.update(key.bytes());
+            digest.update(result.id.as_str().as_bytes());
+            digest.update(result.output.text().as_bytes());
+            digest.update([u8::from(result.output.is_failed())]);
+            Ok(CallResultReceipt::from_digest(digest.finalize().into()))
+        })
     }
 }
 

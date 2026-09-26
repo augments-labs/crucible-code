@@ -1,6 +1,6 @@
 [package]
 name = "crucible-core"
-description = "Domain types and the traits every other crucible crate implements."
+description = "Shared vocabulary every crucible crate exchanges, re-exported from the crate that owns each name so a consumer keeps one import."
 publish.workspace = true
 version.workspace = true
 edition.workspace = true

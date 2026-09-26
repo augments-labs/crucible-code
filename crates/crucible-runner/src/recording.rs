@@ -331,8 +331,10 @@ impl SessionStore for Recording {
 }
 
 impl JournalStore for Recording {
-    fn append_run_item(&self, item: &RunItem) {
-        self.record(Kept::Journaled(item.clone()));
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.record(Kept::Journaled(item.clone()));
+        })
     }
 
     /// Answers the same receipt for the same content and refuses different
@@ -341,31 +343,35 @@ impl JournalStore for Recording {
     /// A store with nowhere to keep anything says so instead: a receipt from a
     /// store that kept nothing is what would let a background acceptance claim
     /// durability nobody has.
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        if self.id.is_none() {
-            return Err(CallResultStoreError::Unavailable);
-        }
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            if self.id.is_none() {
+                return Err(CallResultStoreError::Unavailable);
+            }
 
-        let receipt = receipt(key, result);
-        let mut held = self.results.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((_, _, already)) = held.iter().find(|(taken, _, _)| *taken == key) {
-            return if *already == receipt {
-                Ok(receipt)
-            } else {
-                Err(CallResultStoreError::Conflict)
-            };
-        }
+            let receipt = receipt(key, result);
+            let mut held = self.results.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some((_, _, already)) = held.iter().find(|(taken, _, _)| *taken == key) {
+                return if *already == receipt {
+                    Ok(receipt)
+                } else {
+                    Err(CallResultStoreError::Conflict)
+                };
+            }
 
-        held.push((key, result.clone(), receipt));
-        Ok(receipt)
+            held.push((key, result.clone(), receipt));
+            Ok(receipt)
+        })
     }
 
-    fn settle_call_results(&self) {
-        self.record(Kept::Settled);
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.record(Kept::Settled);
+        })
     }
 }
 

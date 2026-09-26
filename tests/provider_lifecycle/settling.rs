@@ -74,6 +74,7 @@ impl SessionStore for Watched {
                     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &call.id);
                     self.session
                         .put_call_result(key, &accepted)
+                        .await
                         .expect("a recorded session accepts a result");
                 }
             }
@@ -132,31 +133,33 @@ impl SessionStore for Watched {
 }
 
 impl JournalStore for Watched {
-    fn append_run_item(&self, item: &RunItem) {
-        self.session.append_run_item(item);
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.session.append_run_item(item).await })
     }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
         self.session.put_call_result(key, result)
     }
 
-    fn settle_call_results(&self) {
-        let waiting = self.beside().exists();
-        self.session.settle_call_results();
-        // Read as bytes on disk and through no door of the session's, so
-        // nothing here can flush a line the settle did not wait for.
-        let written = fs::read_to_string(self.session.path())
-            .expect("the log being written")
-            .lines()
-            .any(|line| line.contains("\"results\":[{"));
-        self.settles.lock().expect("valid fixture").push(Settle {
-            waiting,
-            written,
-            cleared: !self.beside().exists(),
-        });
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let waiting = self.beside().exists();
+            self.session.settle_call_results().await;
+            // Read as bytes on disk and through no door of the session's, so
+            // nothing here can flush a line the settle did not wait for.
+            let written = fs::read_to_string(self.session.path())
+                .expect("the log being written")
+                .lines()
+                .any(|line| line.contains("\"results\":[{"));
+            self.settles.lock().expect("valid fixture").push(Settle {
+                waiting,
+                written,
+                cleared: !self.beside().exists(),
+            });
+        })
     }
 }

@@ -382,8 +382,29 @@ impl Watch for Unwatched {
 /// result it stores (it failed, was cancelled, timed out, was refused by a
 /// hook, or panicked), and when storing the result failed or the turn's
 /// output limit replaced it.
+///
+/// That is also why no first-poll requirement belongs here, though the journal
+/// port carries one. A waiting acceptance has to stay droppable, because the
+/// turn that would wait for it is the thing being torn down; asking it to
+/// answer the first time it is asked would trade a documented handback for a
+/// process scope left running that nobody owns. The cost is the window
+/// [`accept`](Self::accept) names, and it is paid for at the source instead:
+/// an implementation that can wait bounds the wait, as the built-in background
+/// acceptance does, so the window closes on a timer rather than waiting for
+/// the turn to be dropped.
 pub trait CallResultAcceptance: Send {
     /// Binds the durable result receipt into the executor's lifecycle record.
+    ///
+    /// The runner awaits this between the two writes that make a tool call
+    /// final: the durable result, and the invocation record that says the call
+    /// finished. An acceptance that answers `Pending` there and is dropped
+    /// leaves the first of the two written and the second not, so a later
+    /// replay finds a call whose result is durable and whose outcome was never
+    /// journaled. The session reading recovers the call's answer from the
+    /// durable result and settles it; the journal's own record of the call is
+    /// left un-finished. That seam is a different port from the one whose
+    /// first-poll requirement the runner relies on, so satisfying that
+    /// requirement narrows this window and does not close it.
     ///
     /// # Errors
     ///
