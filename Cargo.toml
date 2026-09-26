@@ -303,7 +303,7 @@ libc = "=0.2.189"
 # call that afterwards ends the process the way the signal would have. Unix
 # only. Already in the tree under `crossterm` at this version with more turned
 # on than this, so nothing new is compiled.
-signal-hook = { version = "=0.3.18", default-features = false }
+signal-hook = { version = "=0.4.4", default-features = false }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be
 # written as a DACL instead: one entry, for the account crucible is running as,
