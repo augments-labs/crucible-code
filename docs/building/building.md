@@ -99,3 +99,16 @@ runs Rust tests on Intel and Apple silicon macOS plus Windows, and supplies
 dependency and performance jobs of its own;
 [workflow ownership](../../.github/workflows/README.md) has the map. You can
 also [build for another platform yourself](cross-compiling.md).
+
+## The rollback drill
+
+`scripts/sh/rollback-drill.sh` proves the previous release can still read what
+this tree writes. It builds v0.42.0 from the local tag in a scratch worktree —
+it never fetches — and runs that binary headless over a copy of session
+fixtures the candidate binary has read and recovered: a conversation must
+replay byte-identical, a session ending in an unanswered tool call must recover
+to the same bytes on both sides, and `--sandbox` and `--extensions` must agree.
+Everything happens under scratch directories with no model selected, so no
+provider is called and no real session is read. `scripts/sh/rollback-drill-selftest.sh`
+runs the drill clean and against a corrupted fixture, which must fail. CI runs
+both on Linux, both macOS and both Windows cells with a 30-minute timeout.
