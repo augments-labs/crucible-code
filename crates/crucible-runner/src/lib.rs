@@ -5,11 +5,14 @@
 //! or the user cancels.
 //!
 //! It depends on `crucible-agents` for the definition a turn is taken under,
-//! on `crucible-core` for every domain type, and on `crucible-attachments` for
-//! the one bounded ingress an attachment's bytes come through. Every other
-//! collaborator arrives as a trait object chosen during wiring — including the
-//! store a turn is recorded to — so the loop never names Anthropic, `OpenAI`,
-//! `grep`, a renderer, or a session file.
+//! on the crates that own what a turn exchanges — `crucible-types` for the
+//! transcript and the identities in it, `crucible-models` for the contract a
+//! provider answers to, `crucible-tools` for what a tool is and what may run
+//! one, `crucible-storage` for the journal a turn is resumed from — and on
+//! `crucible-attachments` for the one bounded ingress an attachment's bytes
+//! come through. Every other collaborator arrives as a trait object chosen
+//! during wiring — including the store a turn is recorded to — so the loop
+//! never names Anthropic, `OpenAI`, `grep`, a renderer, or a session file.
 //!
 //! Two things leave this crate, and they leave by different routes. *Progress*
 //! — words arriving, a tool starting, a tool finishing — goes out as events,

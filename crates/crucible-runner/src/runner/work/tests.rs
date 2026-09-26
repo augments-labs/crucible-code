@@ -3,15 +3,18 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
-use crucible_core::{
-    Ancestry, ArgumentTransform, CallResultAcceptance, CallResultKey, CallResultReceipt,
-    CallResultStoreError, Disposition, IdempotencyKey, InputGuard, InvocationState, JournalStore,
-    Mode, OutputGuard, RecoveryAction, Remember, Rules, SandboxCleanup, SandboxFactKind, SandboxId,
-    SandboxLifecycle, Sensitivity, SessionId, SessionOwner, SessionStore, Summary, Target, Tool,
-    ToolArgs, ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId, ToolProvenance,
-    ToolResourceKey, ToolSourceKind, Verdict,
-};
 use crucible_runtime::BoxFuture;
+use crucible_sandbox::{SandboxCleanup, SandboxFactKind, SandboxLifecycle};
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, IdempotencyKey, InvocationState,
+    JournalStore, RecoveryAction, SessionOwner, SessionStore, ToolEffect,
+};
+use crucible_tools::{
+    ArgumentTransform, CallResultAcceptance, Disposition, InputGuard, Mode, OutputGuard, Remember,
+    Rules, Sensitivity, Summary, Target, Tool, ToolDescriptor, ToolExecutionMode, ToolHooks,
+    ToolProvenance, ToolResourceKey, ToolSourceKind, Verdict,
+};
+use crucible_types::{Ancestry, SandboxId, SessionId, ToolArgs, ToolId};
 
 use crucible_types::{
     Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
@@ -295,7 +298,7 @@ impl CallResultAcceptance for AcceptedResult {
     fn accept<'a>(
         self: Box<Self>,
         receipt: CallResultReceipt,
-    ) -> BoxFuture<'a, Result<(), crucible_core::SandboxError>>
+    ) -> BoxFuture<'a, Result<(), crucible_sandbox::SandboxError>>
     where
         Self: 'a,
     {

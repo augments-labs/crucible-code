@@ -2,22 +2,29 @@
 
 use std::fs;
 
-use crucible_core::InvocationState;
-use crucible_core::{
-    Ancestry, CheckpointId, CheckpointStore, ExecutionCheckpoint, InvocationRecord, Message,
-    PendingAction, PendingApproval, PendingExternalTool, RecordedToolOutput, RecoveryAction,
-    ResumeDigest, ResumeScope, RunHistory, RunItem, StopReason, TOOL_ARGUMENT_BYTES, ToolArgs,
-    ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
-};
 #[cfg(unix)]
-use crucible_core::{
-    ResumeEvidence, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
-    SandboxCapabilities, SandboxCapability, SandboxCheckpoint, SandboxCleanup, SandboxFeature,
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId,
-    SandboxManifest, SandboxNetworkPolicy, SandboxPolicy, SandboxResourceLimits, inspection,
+use crucible_sandbox::{
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCapability, SandboxCheckpoint, SandboxCleanup, SandboxFeature, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest, SandboxNetworkPolicy,
+    SandboxPolicy, SandboxResourceLimits, inspection,
 };
 use crucible_session::{CHECKPOINT_FORMAT, CheckpointError, FileCheckpointStore};
+use crucible_storage::InvocationState;
+#[cfg(unix)]
+use crucible_storage::ResumeEvidence;
+use crucible_storage::{
+    CheckpointId, CheckpointStore, ExecutionCheckpoint, InvocationRecord, PendingAction,
+    PendingApproval, PendingExternalTool, RecoveryAction, ResumeDigest, ResumeScope, RunHistory,
+    RunItem, ToolEffect,
+};
+use crucible_tools::{TOOL_ARGUMENT_BYTES, ToolOutcome};
 use crucible_types::ResultProvenance;
+#[cfg(unix)]
+use crucible_types::SandboxId;
+use crucible_types::{
+    Ancestry, Message, RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
+};
 
 fn directory(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
@@ -138,7 +145,7 @@ fn pending_actions_and_finished_invocations_round_trip_in_their_own_versioned_fi
             .first()
             .expect("one invocation")
             .recovery(),
-        crucible_core::RecoveryAction::UseRecordedResult
+        crucible_storage::RecoveryAction::UseRecordedResult
     );
 
     let path = fs::read_dir(&directory)
@@ -259,7 +266,7 @@ fn sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend() {
         .unwrap();
     assert!(matches!(
         loaded.validate_resume(&weaker, 2_000),
-        Err(crucible_core::InterruptionError::ResumeMismatch)
+        Err(crucible_storage::InterruptionError::ResumeMismatch)
     ));
 
     fs::remove_dir_all(directory).unwrap();
@@ -540,7 +547,7 @@ fn an_oversized_encoded_checkpoint_is_refused_before_a_file_is_replaced() {
 #[cfg(unix)]
 #[test]
 fn domain_network_counts_round_trip_and_oversized_records_are_refused() {
-    use crucible_core::SandboxNetworkInspection;
+    use crucible_sandbox::SandboxNetworkInspection;
     let base = sandbox_checkpoint();
     let network = SandboxNetworkInspection::Domains {
         allowed: 3,
@@ -582,7 +589,7 @@ fn domain_network_counts_round_trip_and_oversized_records_are_refused() {
         let mut invalid = document.clone();
         *invalid
             .pointer_mut(&format!("/sandboxes/0/network/{field}"))
-            .unwrap() = serde_json::json!(crucible_core::MAX_SANDBOX_NETWORK_RULES + 1);
+            .unwrap() = serde_json::json!(crucible_sandbox::MAX_SANDBOX_NETWORK_RULES + 1);
         fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
         assert!(
             crucible_runtime::answered!(store.load(id)).is_err(),

@@ -3,11 +3,11 @@
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Ask, Fetch, Host, Mode, Permission, Remember, Rules, Search, Sensitivity, Settled, Verdict,
-};
 use crucible_credentials::{ApiKey, Header, HeaderKey};
 use crucible_runtime::{BoxFuture, answered};
+use crucible_tools::{
+    Ask, Fetch, Host, Mode, Permission, Remember, Rules, Search, Sensitivity, Settled, Verdict,
+};
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 use serde_json::json;
 

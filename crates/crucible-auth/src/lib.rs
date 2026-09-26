@@ -11,7 +11,7 @@
 //!
 //! Two rules shape every line of it. **A secret this program wrote down is this
 //! program's fault if it leaks**, so the value inside the file is never returned
-//! as a string — it comes back as [`crucible_core::ApiKey`], which can be
+//! as a string — it comes back as [`crucible_credentials::ApiKey`], which can be
 //! applied to a request and not read. And **a store that cannot be read never
 //! costs somebody a session**: absent, truncated, or written by a version that
 //! does not exist yet all resolve to *no stored credential is available*, said

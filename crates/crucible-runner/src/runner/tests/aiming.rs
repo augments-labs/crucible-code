@@ -688,13 +688,13 @@ fn the_vendor_a_session_names_is_the_one_it_would_write_to_now() {
 /// Every other provider here is called the same thing, and one assertion needs
 /// two that can be told apart.
 struct Elsewhere {
-    credential_scope: crucible_core::CredentialScopeId,
+    credential_scope: crucible_types::CredentialScopeId,
 }
 
 impl Elsewhere {
     fn new() -> Self {
         Self {
-            credential_scope: crucible_core::CredentialScopeId::new(),
+            credential_scope: crucible_types::CredentialScopeId::new(),
         }
     }
 }
@@ -716,12 +716,12 @@ impl Provider for Elsewhere {
         Modalities::empty().insert(Modality::Text)
     }
 
-    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_core::PromptCacheCapabilities {
-        crucible_core::PromptCacheCapabilities::unknown("elsewhere-fixture-v1")
+    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_models::PromptCacheCapabilities {
+        crucible_models::PromptCacheCapabilities::unknown("elsewhere-fixture-v1")
     }
 
-    fn prompt_cache_route(&self) -> crucible_core::PromptCacheRoute<'_> {
-        crucible_core::PromptCacheRoute {
+    fn prompt_cache_route(&self) -> crucible_models::PromptCacheRoute<'_> {
+        crucible_models::PromptCacheRoute {
             protocol: ELSEWHERE,
             endpoint: ELSEWHERE,
             custom_endpoint: true,
@@ -732,8 +732,8 @@ impl Provider for Elsewhere {
         }
     }
 
-    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
-        crucible_core::PromptCacheEncoding::NoControlIntended
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
+        crucible_types::PromptCacheEncoding::NoControlIntended
     }
 
     fn stream<'a>(

@@ -688,7 +688,7 @@
       },
       "case": "sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "13b25194af6ee2c37efe6ab0f157d971af7f32833c8593d7b65c5cca1860398f",
+      "body_sha256": "03ab440c80c489091d11d7023bd9299d78fe0642226f30d5189c87110320e038",
       "platforms": [
         "linux",
         "macos",

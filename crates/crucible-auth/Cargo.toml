@@ -36,10 +36,13 @@ base64.workspace = true
 getrandom.workspace = true
 # Computes the RFC 7636 S256 challenge for callback-based account logins.
 sha2.workspace = true
-# `ApiKey`, which is what a stored key becomes on the way out. The secret is
-# handed back as the type that can only be applied to a request, never as the
-# string it was written down as.
-crucible-core.workspace = true
+# `ApiKey`, which is what a stored key becomes on the way out, and the header a
+# request is authorized with. The secret is handed back as the type that can
+# only be applied to a request, never as the string it was written down as.
+crucible-credentials.workspace = true
+# `CredentialScopeId`, which is what a credential is scoped to and what a
+# renewal must not move.
+crucible-types.workspace = true
 # Owner-only creation and tightening for the auth directory, store, partial
 # and lock, shared with session files so Windows has one DACL implementation.
 crucible-privacy.workspace = true

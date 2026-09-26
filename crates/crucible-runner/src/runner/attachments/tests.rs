@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use crucible_core::{
-    Approved, Attachment, Content, Message, Modalities, Modality, Permission, Sensitivity, Settled,
-    Target, ToolArgs, ToolCall, ToolId, ToolOutput, ToolResult, Transcript, Verdict, Workspace,
+use crucible_models::Content;
+use crucible_tools::{Approved, Permission, Sensitivity, Settled, Target, ToolOutput, Verdict};
+use crucible_types::{
+    Attachment, Message, Modalities, Modality, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
 };
+use crucible_workspace::Workspace;
 use sha2::{Digest as _, Sha256};
 
 use super::{CEILING, resolve};

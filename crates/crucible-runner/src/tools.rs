@@ -8,12 +8,15 @@
 
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Collision, DescribeTool, Provenance, Registered, Registry, RegistryGeneration,
-    RegistrySnapshot, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance,
-    ToolSchema, ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
+use crucible_registry::{
+    Collision, Provenance, Registered, Registry, RegistryGeneration, RegistrySnapshot,
 };
 use crucible_runtime::BoxFuture;
+use crucible_tools::{
+    DescribeTool, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance,
+    ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
+};
+use crucible_types::ToolSchema;
 
 /// Every tool the model may call.
 ///
@@ -355,10 +358,12 @@ impl Toolset for Tools {
 mod tests {
     use std::sync::Arc;
 
-    use crucible_core::{
-        Ancestry, Cancel, Permission, Settled, ToolArgs, ToolCall, ToolContext, ToolDescriptor,
-        ToolId, ToolProvenance, ToolSourceKind, Toolset, ToolsetContext, Unwatched, Verdict,
+    use crucible_runtime::Cancel;
+    use crucible_tools::{
+        Permission, Settled, ToolContext, ToolDescriptor, ToolProvenance, ToolSourceKind, Toolset,
+        ToolsetContext, Unwatched, Verdict,
     };
+    use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId};
 
     use super::*;
     use crate::fake::{Fixed, Says, changing};

@@ -416,7 +416,7 @@ fn a_panicking_tool_in_a_parallel_wave_cannot_erase_its_sandbox_facts() {
         .filter_map(|event| match event {
             Event::ToolFinished { call, receipt, .. } => Some((
                 call.as_str(),
-                receipt.as_ref().map(crucible_core::ToolReceipt::outcome),
+                receipt.as_ref().map(crucible_tools::ToolReceipt::outcome),
             )),
             _ => None,
         })

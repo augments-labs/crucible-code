@@ -10,7 +10,9 @@
 
 use std::fmt;
 
-use crucible_core::{Effort, PromptCachePolicy, Rules};
+use crucible_models::Effort;
+use crucible_tools::Rules;
+use crucible_types::PromptCachePolicy;
 use serde_json::{Map, Value};
 
 use crate::document::Document;
@@ -161,7 +163,7 @@ impl Settings {
     /// How hard to think, for every turn sent to this provider.
     ///
     /// A rung rather than the word it was written as, because the word is only
-    /// ever one of five and the type that holds them is [`crucible_core`]'s.
+    /// ever one of five and the type that holds them is [`Effort`]'s.
     /// Nothing under `settings/` owns this one: there is no meaning here beyond
     /// the rung, and the shape is what refuses anything that is not one.
     ///

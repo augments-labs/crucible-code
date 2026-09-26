@@ -563,8 +563,8 @@ mod tests {
         super::serialize(request, None).expect("valid legacy request")
     }
 
-    use crucible_core::ToolOutput;
     use crucible_models::{Attached, Content, Effort};
+    use crucible_tools::ToolOutput;
     use crucible_types::{
         Change, Changed, Diff, Fragment, Line, Modality, RecordedToolOutput, ToolArgs, ToolCall,
         ToolId, Transcript,

@@ -8,10 +8,10 @@ use std::sync::Arc;
 use super::{CEILING, FETCH_CEILING, Sending, host_of, sent, undelivered};
 use crate::google::wire::Interactions;
 use crate::{Endpoint, Transport};
-use crucible_core::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 use crucible_credentials::{Credential, Outgoing};
 use crucible_models::Delta;
 use crucible_runtime::{BoxFuture, Cancel};
+use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 use crucible_types::{ContinuationScope, ProviderContinuation, StopReason};
 
 mod fetch;

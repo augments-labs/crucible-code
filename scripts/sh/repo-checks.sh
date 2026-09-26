@@ -593,6 +593,16 @@ fi
 # headers a credential was applied to and hands its connector's work back as a
 # runtime future, and it names nothing else in the workspace. `auth` sends
 # every account login and renewal request through it.
+#
+# `config`, `auth`, `provider`, `runner` and `session` name the crate that owns
+# each type they use, so none of the five reaches the facade: what a turn
+# exchanges belongs to `types`, `models`, `tools`, `storage` and the rest, and a
+# name taken from `core` was a second import path for a crate that already had
+# one. `provider` names `tools` for the source contract its web adapters answer;
+# `runner` names `tools`, `storage` and `sandbox` for what a tool is, what a turn
+# is resumed from and what a confined process was allowed to do; `session` names
+# `sandbox` for the records a resume reads a live backend out of. `code` is the
+# one crate left on the facade, and that edge goes when `core` does.
 allowed='code app
 code attachments
 code auth
@@ -642,12 +652,16 @@ agents types
 attachments types
 attachments workspace
 client-api types
-auth core
+auth credentials
 auth http
 auth privacy
 auth runtime
-config core
+auth types
 config models
+config sandbox
+config tools
+config types
+config workspace
 context models
 context tools
 context types
@@ -680,24 +694,30 @@ mcp sandbox
 mcp tools
 mcp transport
 mcp types
-provider core
 provider credentials
 provider http
 provider models
 provider runtime
+provider tools
 provider types
 runner agents
 runner attachments
 runner context
-runner core
 runner models
+runner registry
 runner runtime
+runner sandbox
+runner storage
+runner tools
 runner types
-session core
+runner workspace
 session privacy
 session runtime
+session sandbox
 session storage
+session tools
 session types
+session workspace
 sandbox runtime
 sandbox storage
 sandbox types

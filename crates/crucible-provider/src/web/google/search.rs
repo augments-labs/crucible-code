@@ -3,7 +3,7 @@
 //! Enforces that every grounded answer carries associated search suggestions
 //! and verified source citations, with clean failure boundaries.
 
-use crucible_core::{SearchResponse, SearchResult, SourceError};
+use crucible_tools::{SearchResponse, SearchResult, SourceError};
 use crucible_types::{ContinuationPart, ProviderContinuation};
 use serde_json::Value;
 

@@ -45,16 +45,24 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{
-    Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta, DeltaStream,
-    Effort, JournalStore, Looking, Message, Modalities, Mode, Permission, PermissionsSection,
-    PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
-    PromptCachePreparationError, PromptCacheRequestDisposition, PromptCacheRequestFact,
+use crucible_context::{ContextSection, PermissionsSection, Room};
+use crucible_models::{
+    Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError, Provider,
+    ProviderError, Request,
+};
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_sandbox::SandboxAuditRegistry;
+use crucible_storage::{JournalStore, RunItem};
+use crucible_tools::{
+    Ask, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolGeneration, ToolSnapshot,
+    ToolWorker, Toolset, ToolsetContext,
+};
+use crucible_types::{
+    Attachment, Compacting, Message, Modalities, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheRequestFact,
     PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
-    PromptCacheUsageFact, PromptCacheUsageReporting, Provider, ProviderError, ProviderUsage,
-    Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer, StopReason, Summary, ToolCall,
-    ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot, ToolWorker, Toolset,
-    ToolsetContext, Transcript, TurnId, UsageCost,
+    PromptCacheUsageFact, PromptCacheUsageReporting, ProviderUsage, Spend, StopReason, ToolCall,
+    ToolSchema, Transcript, TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
@@ -131,11 +139,11 @@ struct TurnBounds {
 /// Immutable cache-reporting dimensions bound to one provider attempt.
 #[derive(Clone, Copy)]
 struct CacheObservation {
-    attempt: crucible_core::ProviderAttemptId,
+    attempt: crucible_types::ProviderAttemptId,
     reporting: PromptCacheUsageReporting,
     model_revision: Option<&'static str>,
     retention: PromptCacheRetentionClass,
-    pricing_date: crucible_core::PricingDate,
+    pricing_date: crucible_types::PricingDate,
 }
 
 /// The state one provider request reads and updates together.
@@ -183,7 +191,7 @@ pub struct Runner {
     /// writes to it without ever learning what it writes to.
     store: Arc<dyn JournalStore>,
     policy: RunPolicy,
-    prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
+    prompt_cache_store: Option<Box<dyn crucible_storage::PromptCacheResourceStore>>,
     sandbox_audits: SandboxAuditRegistry,
     /// The worker every call is lent for its blocking work, where the wiring
     /// gave one.
@@ -344,7 +352,7 @@ impl Runner {
     #[must_use]
     pub fn with_prompt_cache_store(
         mut self,
-        store: impl crucible_core::PromptCacheResourceStore + 'static,
+        store: impl crucible_storage::PromptCacheResourceStore + 'static,
     ) -> Self {
         self.prompt_cache_store = Some(Box::new(store));
         self
@@ -358,13 +366,13 @@ impl Runner {
 
     /// Effective cache policy applied to the next provider attempt.
     #[must_use]
-    pub const fn prompt_cache_policy(&self) -> crucible_core::PromptCachePolicy {
+    pub const fn prompt_cache_policy(&self) -> crucible_types::PromptCachePolicy {
         self.policy.prompt_cache
     }
 
     /// Exact declared cache capability for the current provider/model route.
     #[must_use]
-    pub fn prompt_cache_capabilities(&self) -> crucible_core::PromptCacheCapabilities {
+    pub fn prompt_cache_capabilities(&self) -> crucible_models::PromptCacheCapabilities {
         self.provider
             .prompt_cache_capabilities(&self.agent.model().name)
     }
@@ -380,7 +388,7 @@ impl Runner {
         match self.prompt_cache_store.as_deref_mut() {
             Some(store) => {
                 store
-                    .inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES)
+                    .inspect(crucible_types::MAX_PROMPT_CACHE_RESOURCES)
                     .await
             }
             None => Ok(Vec::new()),
@@ -876,14 +884,14 @@ impl Runner {
     /// The only way in from outside: [`RunContext`] is minted in this crate,
     /// so the run a caller is handed is a root, and descending from it is this
     /// crate's. What that closes is the *context* — it does not close event
-    /// attribution, because [`Ancestry`] and [`Reporter`] are public in
-    /// `crucible-core` and three calls there will stamp an event with a run
-    /// nothing started. Nothing shipped does: the one [`Post`] is the binary's
-    /// relay, and the only [`Reporter`] outside tests comes from
-    /// [`RunContext::reporting`]. So this is a run the caller cannot forge by
-    /// accident, not one the types forbid forging.
+    /// attribution, because [`Ancestry`] and [`Reporter`] are both public, the
+    /// first in `crucible-types` and the second here, and three calls to them
+    /// will stamp an event with a run nothing started. Nothing shipped does:
+    /// the one [`Post`] is the binary's relay, and the only [`Reporter`]
+    /// outside tests comes from [`RunContext::reporting`]. So this is a run the
+    /// caller cannot forge by accident, not one the types forbid forging.
     ///
-    /// [`Ancestry`]: crucible_core::Ancestry
+    /// [`Ancestry`]: crucible_types::Ancestry
     ///
     /// A context carries no session either, so "against this session" is what
     /// the caller does and not something checked here: one context per unit of
@@ -973,8 +981,8 @@ impl Runner {
     /// a turn inside its own runtime; a caller of its own polls the turn
     /// inside one, with a timer where a call has a deadline.
     ///
-    /// [`ToolsetError::Unready`]: crucible_core::ToolsetError::Unready
-    /// [`ToolsetError::Source`]: crucible_core::ToolsetError::Source
+    /// [`ToolsetError::Unready`]: crucible_tools::ToolsetError::Unready
+    /// [`ToolsetError::Source`]: crucible_tools::ToolsetError::Source
     pub async fn turn(
         &mut self,
         prompt: &str,
@@ -1387,7 +1395,7 @@ impl Runner {
     /// they arrive, so re-asking after one would put an answer on screen twice
     /// and leave the transcript holding the half that was taken back.
     ///
-    /// [`ProviderError::transient`]: crucible_core::ProviderError::transient
+    /// [`ProviderError::transient`]: crucible_models::ProviderError::transient
     async fn listen(
         &mut self,
         bounds: &TurnBounds,
@@ -1516,7 +1524,7 @@ impl Runner {
             // provider request borrows transcript/spec data. A helper borrowing
             // the whole runner would falsely make those owners overlap.
             let request = Request {
-                purpose: crucible_core::RequestPurpose::Turn,
+                purpose: crucible_models::RequestPurpose::Turn,
                 model: &self.agent.model().name,
                 transcript: &self.state.transcript,
                 tools: listening.advertised,
@@ -1545,11 +1553,11 @@ impl Runner {
                 max_tokens: self.agent.model().max_tokens,
                 effort: self.agent.model().effort,
                 run: listening.run.run(),
-                session: session.as_ref().map(crucible_core::SessionId::as_str),
+                session: session.as_ref().map(crucible_types::SessionId::as_str),
                 workspace,
                 user: user
                     .as_ref()
-                    .map_or(&[], crucible_core::SessionOwner::as_bytes),
+                    .map_or(&[], crucible_storage::SessionOwner::as_bytes),
                 trust: b"local-workspace-authority-v1",
                 authority: authority.as_bytes(),
                 instructions: self.agent.instructions().unwrap_or_default().as_bytes(),
@@ -1792,7 +1800,7 @@ impl Runner {
                         });
                     }
                     if let Some(tokens) = usage.input.total {
-                        let carried = crucible_core::Carried::new(tokens);
+                        let carried = crucible_types::Carried::new(tokens);
                         counting.load.carried(carried);
                         if counting
                             .window
@@ -1940,8 +1948,8 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-fn pricing_today() -> crucible_core::PricingDate {
-    crucible_core::PricingDate::from_unix_seconds(unix_now())
+fn pricing_today() -> crucible_types::PricingDate {
+    crucible_types::PricingDate::from_unix_seconds(unix_now())
 }
 
 /// Joins cumulative/partial usage fields belonging to one provider attempt.

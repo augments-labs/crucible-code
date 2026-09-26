@@ -16,12 +16,15 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sha2::{Digest as _, Sha256};
 
-use crucible_core::{
-    Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Compacted, ContextError,
-    ContextPatch, ContextSnapshot, JournalStore, Message, RunItem, SessionId, SessionOwner,
-    SessionStore, ToolId, ToolResult, Transcript,
-};
 use crucible_runtime::BoxFuture;
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, JournalStore, RunItem, SessionOwner,
+    SessionStore,
+};
+use crucible_types::{
+    Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message, SessionId,
+    ToolId, ToolResult, Transcript,
+};
 
 /// Domain separator for the receipt this store answers with.
 const RECEIPT_DOMAIN: &[u8] = b"crucible:in-memory-call-result:v1\0";

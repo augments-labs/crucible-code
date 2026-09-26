@@ -13,15 +13,17 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use crucible_core::{
-    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Continuation,
-    ContinuationData, ContinuationPart, ContinuationScope, Fragment, InvocationState,
-    MAX_RUN_ITEM_BYTES, Message, Modality, PendingAction, PricingUnit, PromptCacheEligibility,
-    PromptCacheEncoding, PromptCacheFact, PromptCacheIneligibleReason, PromptCacheOutcome,
-    PromptCacheRequestDisposition, PromptCacheSupport, ProviderContinuation, RecordedToolOutput,
-    RunItem, SessionId, Spend, StopReason, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
-};
+use crucible_storage::{InvocationState, MAX_RUN_ITEM_BYTES, PendingAction, RunItem, ToolEffect};
+use crucible_tools::ToolOutcome;
 use crucible_types::ResultProvenance;
+use crucible_types::{
+    Attachment, Calibration, Carried, Changed, ContextError, ContextPatch, Continuation,
+    ContinuationData, ContinuationPart, ContinuationScope, Fragment, Message, Modality,
+    PricingUnit, PromptCacheEligibility, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheIneligibleReason, PromptCacheOutcome, PromptCacheRequestDisposition,
+    PromptCacheSupport, ProviderContinuation, RecordedToolOutput, SessionId, Spend, StopReason,
+    ToolCall, ToolId, ToolResult,
+};
 use serde_json::{Value, json};
 
 /// What wrote the file.
@@ -183,8 +185,8 @@ pub(crate) fn journal(item: &RunItem) -> Option<String> {
     (line.len() <= MAX_RUN_ITEM_BYTES).then_some(line)
 }
 
-fn sandbox_fact(call: &ToolId, fact: &crucible_core::SandboxFact, ancestry: &Value) -> Value {
-    use crucible_core::SandboxFactKind;
+fn sandbox_fact(call: &ToolId, fact: &crucible_sandbox::SandboxFact, ancestry: &Value) -> Value {
+    use crucible_sandbox::SandboxFactKind;
 
     let detail = match fact.kind() {
         SandboxFactKind::Lifecycle(lifecycle) => json!({
@@ -248,7 +250,7 @@ fn sandbox_fact(call: &ToolId, fact: &crucible_core::SandboxFact, ancestry: &Val
     })
 }
 
-fn sandbox_plan(plan: &crucible_core::SandboxPlanInspection) -> Value {
+fn sandbox_plan(plan: &crucible_sandbox::SandboxPlanInspection) -> Value {
     let network = plan.network();
     let limits = plan.limits();
     json!({
@@ -295,7 +297,7 @@ pub(super) fn restored_output(
     output.replayed(attachments)
 }
 
-fn ancestry(ancestry: crucible_core::Ancestry) -> Value {
+fn ancestry(ancestry: crucible_types::Ancestry) -> Value {
     json!({
         "run": ancestry.run().to_string(),
         "parent": ancestry.parent().map(|id| id.to_string()),
@@ -387,7 +389,7 @@ fn cache_fact(fact: &PromptCacheFact, ancestry: &Value) -> Value {
             "event": "resource",
             "attempt": fact.attempt.map(|id| id.to_string()),
             "resource": fact.resource.as_str(),
-            "operation": fact.operation.map(crucible_core::PromptCacheResourceOperation::as_str),
+            "operation": fact.operation.map(crucible_types::PromptCacheResourceOperation::as_str),
             "state": fact.state.as_str(),
             "expires_at": fact.expires_at,
             "isolation": fact.owner.isolation().as_str(),
@@ -396,8 +398,8 @@ fn cache_fact(fact: &PromptCacheFact, ancestry: &Value) -> Value {
     }
 }
 
-fn cost(cost: &crucible_core::UsageCost) -> Value {
-    fn amount(value: Option<crucible_core::CostAmount>) -> Value {
+fn cost(cost: &crucible_types::UsageCost) -> Value {
+    fn amount(value: Option<crucible_types::CostAmount>) -> Value {
         value.map_or(Value::Null, |amount| {
             json!({
                 "femtocurrency": amount.femtocurrency().to_string(),
@@ -420,7 +422,7 @@ fn cost(cost: &crucible_core::UsageCost) -> Value {
             "{:04}-{:02}-{:02}", date.year(), date.month(), date.day()
         )),
         "source_url": cost.source_url,
-        "currency": cost.currency.map(crucible_core::PricingCurrency::as_str),
+        "currency": cost.currency.map(crucible_types::PricingCurrency::as_str),
         "unit": cost.unit.map(pricing_unit),
     })
 }
@@ -840,7 +842,7 @@ fn continued(state: &ProviderContinuation) -> Value {
 
 fn continuing(value: &Value) -> Option<Continuation> {
     let parts = value.get("parts")?.as_array()?;
-    if parts.len() > crucible_core::CONTINUATION_PARTS {
+    if parts.len() > crucible_types::CONTINUATION_PARTS {
         return None;
     }
     let mut state = Continuation::new(
@@ -1042,7 +1044,7 @@ fn call(value: &Value) -> Option<ToolCall> {
     Some(ToolCall {
         id: ToolId::new(value.get("id")?.as_str()?),
         name: value.get("name")?.as_str()?.into(),
-        args: crucible_core::ToolArgs::new(value.get("args")?.as_str()?),
+        args: crucible_types::ToolArgs::new(value.get("args")?.as_str()?),
     })
 }
 
@@ -1154,13 +1156,16 @@ fn answered_by(value: &Value) -> Option<ResultProvenance> {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::ContextPatch;
-    use crucible_core::{
-        Ancestry, Approved, Ask, Attachment, Change, Diff, InputTokenUsage, InvocationRecord, Line,
-        Modality, Permission, PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy,
-        PromptCachePolicyVersion, PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId,
-        ProviderUsage, Remember, Sensitivity, Settled, Target, ToolArgs, ToolOutput, UsageCost,
-        Verdict,
+    use crucible_storage::InvocationRecord;
+    use crucible_tools::{
+        Approved, Ask, Permission, Remember, Sensitivity, Settled, Target, ToolOutput, Verdict,
+    };
+    use crucible_types::ContextPatch;
+    use crucible_types::{
+        Ancestry, Attachment, Change, Diff, InputTokenUsage, Line, Modality,
+        PromptCacheFingerprint, PromptCachePlanned, PromptCachePolicy, PromptCachePolicyVersion,
+        PromptCacheScopeDigest, PromptCacheUsageFact, ProviderAttemptId, ProviderUsage, ToolArgs,
+        UsageCost,
     };
 
     use super::*;
@@ -1528,14 +1533,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sandbox_journal_keeps_typed_identity_and_plan_without_raw_reach() {
-        use crucible_core::{
+        use crucible_sandbox::{
             SandboxAudit, SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
             SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxDomainPattern,
             SandboxDomainPolicy, SandboxFactKind, SandboxFeature, SandboxFilesystemAccess,
-            SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
+            SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest,
             SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxResourceLimits,
             inspection,
         };
+        use crucible_types::SandboxId;
 
         let ancestry = Ancestry::new();
         let call = ToolId::new("sandbox-call");
@@ -1638,24 +1644,25 @@ mod tests {
     /// UUID was drawn fresh would prove nothing about the bytes.
     #[cfg(unix)]
     fn sandbox_fixture() -> (
-        crucible_core::Ancestry,
+        crucible_types::Ancestry,
         ToolId,
-        crucible_core::SandboxId,
-        Box<crucible_core::SandboxInspection>,
+        crucible_types::SandboxId,
+        Box<crucible_sandbox::SandboxInspection>,
     ) {
-        use crucible_core::{
+        use crucible_sandbox::{
             SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance,
             SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxDomainPattern,
             SandboxDomainPolicy, SandboxFeature, SandboxFilesystemAccess,
-            SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxId, SandboxManifest,
+            SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest,
             SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxResourceLimits,
             inspection,
         };
+        use crucible_types::SandboxId;
 
-        let run = crucible_core::RunId::parse("01900000-0000-7000-8000-0000000000b1")
+        let run = crucible_types::RunId::parse("01900000-0000-7000-8000-0000000000b1")
             .expect("a fixed run identity");
         let ancestry =
-            crucible_core::Ancestry::restore(run, None, run, 0).expect("a root ancestry");
+            crucible_types::Ancestry::restore(run, None, run, 0).expect("a root ancestry");
         let sandbox = SandboxId::parse("01900000-0000-7000-8000-0000000000aa")
             .expect("a fixed sandbox identity");
         let policy = SandboxPolicy::new(
@@ -1731,7 +1738,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn every_sandbox_fact_kind_encodes_to_the_bytes_it_encoded_before_the_record_moved() {
-        use crucible_core::{
+        use crucible_sandbox::{
             SandboxAudit, SandboxCleanup, SandboxCommandStage, SandboxFactKind, SandboxFailureKind,
             SandboxFailurePhase, SandboxGuardrailDecision, SandboxLifecycle, SandboxUsage,
             SandboxViolation,

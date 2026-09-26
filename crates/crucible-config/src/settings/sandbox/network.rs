@@ -3,7 +3,7 @@
 //! User configuration introduces authority. Project allowlists and socket lists
 //! replace inherited lists only after proving they are subsets; denies accumulate.
 
-use crucible_core::{
+use crucible_sandbox::{
     MAX_SANDBOX_NETWORK_RULES, SandboxDomainPattern, SandboxDomainPolicy, SandboxNetworkPolicy,
     SandboxNetworkProvenance,
 };

@@ -1,6 +1,6 @@
 //! Prompt-cache policy resolved across authority-bearing configuration layers.
 
-use crucible_core::{
+use crucible_types::{
     PromptCacheIsolation, PromptCacheMechanism, PromptCacheMechanisms, PromptCacheMode,
     PromptCacheNamespace, PromptCachePersistentMode, PromptCachePolicy, PromptCachePolicySource,
     PromptCacheRetention, PromptCacheRetentionClass,
@@ -273,7 +273,7 @@ impl super::Settings {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::{
+    use crucible_types::{
         PromptCacheIsolation, PromptCacheMechanism, PromptCacheMechanisms, PromptCacheMode,
         PromptCacheNamespace, PromptCachePersistentMode, PromptCachePolicy, PromptCacheRetention,
     };
