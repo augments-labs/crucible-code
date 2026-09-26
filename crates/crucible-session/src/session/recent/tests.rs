@@ -344,7 +344,7 @@ fn the_title_is_the_saved_override_or_the_first_prompt() {
     planted(&sample, &nth(1), &["the words that were typed"]);
     planted(&sample, &nth(2), &["about to be renamed"]);
     super::index::ensure(&sample.logs()).expect("the sessions indexed");
-    let renamed: crucible_core::SessionId = nth(2).parse().expect("a session identifier");
+    let renamed: crucible_types::SessionId = nth(2).parse().expect("a session identifier");
     super::super::retitle(&sample.logs(), &renamed, "the debugging one").expect("the title kept");
 
     let offered = offered(&sample, 4);
@@ -363,7 +363,7 @@ fn a_session_says_how_many_messages_the_index_counted() {
     let sample = Sample::new("recent-messages");
     planted(&sample, &nth(1), &["count me"]);
     super::index::ensure(&sample.logs()).expect("the session indexed");
-    let counted: crucible_core::SessionId = nth(1).parse().expect("a session identifier");
+    let counted: crucible_types::SessionId = nth(1).parse().expect("a session identifier");
     super::index::tally(&sample.logs(), &counted, 7).expect("the count kept");
 
     let offered = offered(&sample, 4);

@@ -12,9 +12,11 @@
 //! orphaned — because a handle to something that may still exist remotely is
 //! worth more than a tidy store.
 
-use crucible_core::{
-    Cancel, PromptCacheResourceDeadline, PromptCacheResourceError, PromptCacheResourceOperation,
-    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheScopeDigest,
+use crucible_models::PromptCacheResourceDeadline;
+use crucible_runtime::Cancel;
+use crucible_types::{
+    PromptCacheResourceError, PromptCacheResourceOperation, PromptCacheResourceRecord,
+    PromptCacheResourceState, PromptCacheScopeDigest,
 };
 
 use crate::prompt_cache;
@@ -32,7 +34,7 @@ pub struct PromptCacheCleanup {
     pub ambiguous: usize,
     /// Records retained because remote deletion could not be confirmed.
     pub orphaned: usize,
-    changes: Vec<crucible_core::PromptCacheResourceFact>,
+    changes: Vec<crucible_types::PromptCacheResourceFact>,
 }
 
 #[derive(Clone, Copy)]
@@ -55,7 +57,7 @@ impl ResourceCleanupScope {
 impl PromptCacheCleanup {
     /// Bounded immutable lifecycle changes from this explicit cleanup pass.
     #[must_use]
-    pub fn changes(&self) -> &[crucible_core::PromptCacheResourceFact] {
+    pub fn changes(&self) -> &[crucible_types::PromptCacheResourceFact] {
         &self.changes
     }
 }
@@ -130,7 +132,7 @@ impl Runner {
             return Ok(PromptCacheCleanup::default());
         };
         let records = store
-            .inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES)
+            .inspect(crucible_types::MAX_PROMPT_CACHE_RESOURCES)
             .await?;
         let Some(lifecycle) = self.provider.prompt_cache_resources() else {
             return if records.iter().any(|record| scope.includes(record)) {
@@ -286,7 +288,7 @@ fn cleanup_change(
 ) {
     cleanup
         .changes
-        .push(crucible_core::PromptCacheResourceFact {
+        .push(crucible_types::PromptCacheResourceFact {
             attempt: None,
             resource: record.id().clone(),
             operation,

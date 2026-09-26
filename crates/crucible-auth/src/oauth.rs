@@ -24,8 +24,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use crucible_core::{Credential, CredentialScopeId};
+use crucible_credentials::Credential;
 use crucible_runtime::BoxFuture;
+use crucible_types::CredentialScopeId;
 use sha2::{Digest as _, Sha256};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::error::TrySendError;
@@ -313,7 +314,7 @@ impl fmt::Debug for LoginUpdates {
 ///     LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, Store, StoredCredentials,
 ///     SubscriptionLogin,
 /// };
-/// use crucible_core::{Credential, Header, HeaderKey};
+/// use crucible_credentials::{Credential, Header, HeaderKey};
 /// use tokio::runtime::Handle;
 ///
 /// #[derive(Debug)]

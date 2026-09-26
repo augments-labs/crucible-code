@@ -3,12 +3,14 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    AgentId, Ancestry, Approved, Aside, Cancel, DescribeTool, Sensitivity, Steer, StopReason,
-    Summary, Target, Tool, ToolArgs, ToolContext, ToolDescriptor, ToolEntry, ToolError, ToolOutput,
-    ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset, ToolsetContext, ToolsetError, Verdict,
-};
 use crucible_runtime::BoxFuture;
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_tools::{
+    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolContext, ToolDescriptor,
+    ToolEntry, ToolError, ToolOutput, ToolProvenance, ToolSnapshot, ToolSourceKind, Toolset,
+    ToolsetContext, ToolsetError, Verdict,
+};
+use crucible_types::{AgentId, Ancestry, StopReason, ToolArgs};
 
 use super::*;
 

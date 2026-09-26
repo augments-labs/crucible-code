@@ -26,7 +26,7 @@ use std::fs::File;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::Workspace;
+use crucible_workspace::Workspace;
 use serde_json::{Value, json};
 
 use super::SessionError;

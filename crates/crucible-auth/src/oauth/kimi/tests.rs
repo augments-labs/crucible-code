@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::task::{Context, Poll, Waker};
 use std::thread;
 
-use crucible_core::{Authorization, Outgoing};
+use crucible_credentials::{Authorization, Outgoing};
 
 /// Polls `authorizing` once and panics if it was not ready: a credential with
 /// nothing to renew answers at its first poll.

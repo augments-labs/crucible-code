@@ -9,7 +9,7 @@
 //! So a `Rules` travels with the document that stated it, and resolving the
 //! layers concatenates them. Nothing re-reads the text afterwards.
 
-use crucible_core::{Disposition, Rules};
+use crucible_tools::{Disposition, Rules};
 use serde_json::Value;
 
 use super::check::Reader;

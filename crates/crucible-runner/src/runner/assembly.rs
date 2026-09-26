@@ -7,7 +7,7 @@
 //! replayable as typed state.
 
 use crucible_context::{Live, assemble};
-use crucible_core::{Ancestry, Message};
+use crucible_types::{Ancestry, Message};
 
 use super::Runner;
 

@@ -37,13 +37,16 @@ use crucible_context::compaction::{
     RECAP_REQUEST, TrackedFiles, append_files, carried, is_structured,
 };
 use crucible_context::{ContextSection, PermissionsSection, Room};
-use crucible_core::{
-    CompactionRecord, Delta, Message, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request,
-    RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
+use crucible_models::{
+    Delta, PromptCacheAttempt, PromptCachePreparationError, ProviderError, Request,
 };
+use crucible_storage::{CompactionRecord, RunItem};
 use crucible_types::{Compacted, Compacting, RECAP};
+use crucible_types::{
+    Message, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
+    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheUsageFact,
+    RecordedToolOutput, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
+};
 
 use crate::context::RunContext;
 use crate::prompt_cache::{self, ScopeInputs};
@@ -381,7 +384,7 @@ impl Runner {
     /// compactions; the recaps already written are the record, and this reads
     /// them back rather than hold a second copy that could drift from it.
     ///
-    /// [`Tool::remember`]: crucible_core::Tool::remember
+    /// [`Tool::remember`]: crucible_tools::Tool::remember
     fn tracked(&self, replacing: usize) -> TrackedFiles {
         let mut files = TrackedFiles::default();
 
@@ -481,7 +484,7 @@ impl Runner {
         let user = self.store.owner();
         let session = self.store.session_id();
         let request = Request {
-            purpose: crucible_core::RequestPurpose::Recap,
+            purpose: crucible_models::RequestPurpose::Recap,
             model: &self.agent.model().name,
             transcript: &self.state.transcript,
             tools: &[],
@@ -505,11 +508,11 @@ impl Runner {
             max_tokens: room,
             effort: self.agent.model().effort,
             run: run.run(),
-            session: session.as_ref().map(crucible_core::SessionId::as_str),
+            session: session.as_ref().map(crucible_types::SessionId::as_str),
             workspace,
             user: user
                 .as_ref()
-                .map_or(&[], crucible_core::SessionOwner::as_bytes),
+                .map_or(&[], crucible_storage::SessionOwner::as_bytes),
             trust: b"local-workspace-authority-v1",
             authority: authority.as_bytes(),
             // The standalone recap deliberately sends no system prompt or
@@ -672,12 +675,12 @@ impl Runner {
     async fn report_recap_resource(
         &self,
         run: &RunContext<'_>,
-        attempt: crucible_core::ProviderAttemptId,
-        resource: &crucible_core::PromptCacheResourceRecord,
+        attempt: crucible_types::ProviderAttemptId,
+        resource: &crucible_types::PromptCacheResourceRecord,
     ) {
         self.report_prompt_cache(
             run,
-            PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
+            PromptCacheFact::ResourceChanged(crucible_types::PromptCacheResourceFact {
                 attempt: Some(attempt),
                 resource: resource.id().clone(),
                 operation: resource.pending(),
@@ -692,7 +695,7 @@ impl Runner {
     /// Reads one standalone recap response while preserving attempt accounting.
     async fn read_recap(
         &mut self,
-        asked: Result<Box<dyn crucible_core::DeltaStream>, ProviderError>,
+        asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
         reading: RecapReading<'_>,
     ) -> Result<Recap, TurnError> {
         let RecapReading {
@@ -752,7 +755,7 @@ impl Runner {
                         self.provider.name(),
                     )?;
                     if let Some(tokens) = usage.output {
-                        *spent = before.and(crucible_core::Spend::new(tokens));
+                        *spent = before.and(crucible_types::Spend::new(tokens));
                         events.post(crate::Event::Spent { spend: *spent });
                     }
                     let cost = self

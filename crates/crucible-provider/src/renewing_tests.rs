@@ -14,10 +14,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Fetch, Search, SourceError};
 use crucible_credentials::{Authorization, Credential, Outgoing};
 use crucible_models::{Provider, ProviderError, Request, RequestPurpose};
 use crucible_runtime::Cancel;
+use crucible_tools::{Fetch, Search, SourceError};
 
 use crucible_types::{CredentialScopeId, Message, Transcript};
 

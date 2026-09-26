@@ -8,18 +8,24 @@ use std::collections::VecDeque;
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Approved, Ask, Cancel, CredentialScopeId, Delta, DeltaStream, DescribeTool, Diff, Effort,
-    Fragment, Message, Modalities, Modality, PriceRate, PricingCurrency, PricingDate, PricingError,
-    PricingUnit, PromptCacheCapabilities, PromptCacheEncoding, PromptCachePricing,
+use crucible_models::{
+    Delta, DeltaStream, Effort, PriceRate, PromptCacheCapabilities, PromptCachePricing,
     PromptCacheRates, PromptCacheResourceCreate, PromptCacheResourceCreated,
-    PromptCacheResourceDeadline, PromptCacheResourceError, PromptCacheResourceLifecycle,
-    PromptCacheResourceRecord, PromptCacheResourceRemote, PromptCacheResourceState,
-    PromptCacheRetentionClass, PromptCacheRoute, Provider, ProviderError, Remember, Request,
-    Sensitivity, Steer, Summary, Target, Tool, ToolArgs, ToolCall, ToolContext, ToolError,
-    ToolOutput, UsageRate, Verdict, Wrote,
+    PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceRemote,
+    PromptCacheRoute, Provider, ProviderError, Request, UsageRate,
 };
 use crucible_runtime::BoxFuture;
+use crucible_runtime::{Cancel, Steer};
+use crucible_tools::{
+    Approved, Ask, DescribeTool, Remember, Sensitivity, Summary, Target, Tool, ToolContext,
+    ToolError, ToolOutput, Verdict, Wrote,
+};
+use crucible_types::{
+    CredentialScopeId, Diff, Fragment, Message, Modalities, Modality, PricingCurrency, PricingDate,
+    PricingError, PricingUnit, PromptCacheEncoding, PromptCacheResourceError,
+    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheRetentionClass, ToolArgs,
+    ToolCall,
+};
 
 /// The name a scripted provider answers to.
 const SCRIPT: &str = "script";
@@ -70,9 +76,9 @@ pub(crate) struct SentRequest {
     /// recording is the yes or no: one request a turn deliberately sends none,
     /// and nothing else could tell that request apart from the ordinary ones.
     pub(crate) had_system: bool,
-    pub(crate) cache_attempt: Option<crucible_core::ProviderAttemptId>,
-    pub(crate) cache_identity: Option<crucible_core::PromptCacheIdentity>,
-    pub(crate) cache_selection: Option<crucible_core::PromptCacheSelection>,
+    pub(crate) cache_attempt: Option<crucible_types::ProviderAttemptId>,
+    pub(crate) cache_identity: Option<crucible_models::PromptCacheIdentity>,
+    pub(crate) cache_selection: Option<crucible_models::PromptCacheSelection>,
     pub(crate) cache_resource: bool,
 }
 
@@ -122,7 +128,7 @@ pub(crate) struct Script {
     /// How many more requests go away before they have said anything.
     drops: Mutex<usize>,
     /// Optional provider usage reported by each otherwise empty dropped request.
-    drop_usage: Option<crucible_core::ProviderUsage>,
+    drop_usage: Option<crucible_types::ProviderUsage>,
     /// A line typed into this queue as the first request goes out.
     types: Mutex<Option<(Steer, Box<str>)>>,
     /// Whether an exhausted script reports cancellation instead of silence.
@@ -279,7 +285,7 @@ impl Script {
 
     /// A first transport-ambiguous request reports usage before disappearing.
     pub(crate) fn dropping_with_usage(
-        usage: crucible_core::ProviderUsage,
+        usage: crucible_types::ProviderUsage,
         rounds: Vec<Vec<Delta>>,
     ) -> Self {
         Self {
@@ -385,21 +391,21 @@ impl Provider for Script {
             return PromptCacheCapabilities::supported(
                 "script-encoding-failure-v1",
                 (model == "claude-test").then_some("script-revision-v1"),
-                crucible_core::PromptCacheProvenance::new(
+                crucible_models::PromptCacheProvenance::new(
                     "https://provider.invalid/prompt-cache",
                     "2026-08-31",
                     "script-encoding-failure-v1",
                 ),
-                crucible_core::StatefulTransportCapability::Unsupported,
+                crucible_models::StatefulTransportCapability::Unsupported,
                 &[
-                    crucible_core::PromptCacheMechanismCapability::explicit_breakpoints(
+                    crucible_models::PromptCacheMechanismCapability::explicit_breakpoints(
                         0,
                         1,
-                        &[crucible_core::PromptCacheBoundary::AfterSystem],
-                        &[crucible_core::PromptCacheContent::Text],
+                        &[crucible_models::PromptCacheBoundary::AfterSystem],
+                        &[crucible_models::PromptCacheContent::Text],
                     ),
                 ],
-                crucible_core::PromptCacheUsageReporting::ReadAndWriteTokens,
+                crucible_types::PromptCacheUsageReporting::ReadAndWriteTokens,
             );
         }
         if !self.cache.persistent {
@@ -408,19 +414,19 @@ impl Provider for Script {
         PromptCacheCapabilities::supported(
             "script-persistent-v1",
             (model == "claude-test").then_some("script-revision-v1"),
-            crucible_core::PromptCacheProvenance::new(
+            crucible_models::PromptCacheProvenance::new(
                 "https://provider.invalid/persistent-cache",
                 "2026-08-31",
                 "script-persistent-v1",
             ),
-            crucible_core::StatefulTransportCapability::Unsupported,
+            crucible_models::StatefulTransportCapability::Unsupported,
             &[
-                crucible_core::PromptCacheMechanismCapability::persistent_content(
+                crucible_models::PromptCacheMechanismCapability::persistent_content(
                     0,
-                    &[crucible_core::PromptCacheContent::Text],
+                    &[crucible_models::PromptCacheContent::Text],
                 ),
             ],
-            crucible_core::PromptCacheUsageReporting::ReadAndWriteTokens,
+            crucible_types::PromptCacheUsageReporting::ReadAndWriteTokens,
         )
     }
 
@@ -487,7 +493,7 @@ impl Provider for Script {
                 .is_some()
         {
             return PromptCacheEncoding::Failed(
-                crucible_core::PromptCacheIneligibleReason::UnsupportedBoundary,
+                crucible_types::PromptCacheIneligibleReason::UnsupportedBoundary,
             );
         }
         if request
@@ -648,7 +654,7 @@ impl PromptCacheResourceLifecycle for Script {
                 .unwrap_or_default()
                 .as_secs();
             Ok(PromptCacheResourceCreated {
-                handle: crucible_core::PromptCacheResourceHandle::new("script-remote-resource")
+                handle: crucible_types::PromptCacheResourceHandle::new("script-remote-resource")
                     .expect("bounded fixture handle"),
                 expires_at: now.saturating_add(600),
             })
@@ -679,7 +685,7 @@ impl PromptCacheResourceLifecycle for Script {
     fn renew<'a>(
         &'a self,
         record: &'a PromptCacheResourceRecord,
-        _retention: crucible_core::PromptCacheRetention,
+        _retention: crucible_types::PromptCacheRetention,
         deadline: PromptCacheResourceDeadline,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
@@ -723,7 +729,7 @@ impl PromptCacheResourceLifecycle for Script {
                     expires_at: record.expires_at(),
                 }),
                 ResourceDelete::Ambiguous => Err(PromptCacheResourceError::Ambiguous(
-                    crucible_core::PromptCacheResourceOperation::Delete,
+                    crucible_types::PromptCacheResourceOperation::Delete,
                 )),
             }
         })
@@ -736,7 +742,7 @@ impl PromptCacheResourceLifecycle for Script {
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
         Box::pin(async move {
-            if record.pending() == Some(crucible_core::PromptCacheResourceOperation::Delete) {
+            if record.pending() == Some(crucible_types::PromptCacheResourceOperation::Delete) {
                 return self.delete(record, deadline, cancel).await;
             }
             self.resolve(record, deadline, cancel).await

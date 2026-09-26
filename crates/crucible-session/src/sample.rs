@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use crucible_core::Workspace;
+use crucible_workspace::Workspace;
 
 /// Tells apart two samples that were given the same name.
 static NTH: AtomicU32 = AtomicU32::new(0);

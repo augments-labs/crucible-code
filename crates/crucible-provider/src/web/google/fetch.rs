@@ -4,7 +4,7 @@
 //! call, its successful result, and a valid citation to that exact URL. Search
 //! steps or another destination are refused, never normalized into a page.
 
-use crucible_core::{Page, SourceError};
+use crucible_tools::{Page, SourceError};
 use crucible_types::{ContinuationPart, ProviderContinuation};
 use serde_json::Value;
 

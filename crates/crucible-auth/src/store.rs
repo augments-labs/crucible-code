@@ -22,7 +22,7 @@ use std::fs::{self, File};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::ApiKey;
+use crucible_credentials::ApiKey;
 
 use crate::error::AuthError;
 use crate::oauth::{OAuthError, Tokens};
@@ -465,7 +465,7 @@ impl StoredCredentials {
     /// Tokens remain crate-private: callers receive only a [`Credential`]
     /// through [`crate::SubscriptionLogin::credential`].
     ///
-    /// [`Credential`]: crucible_core::Credential
+    /// [`Credential`]: crucible_credentials::Credential
     pub(crate) fn subscription(&self, provider: &str) -> Option<(Store, Tokens)> {
         Some((
             self.store.as_ref()?.clone(),

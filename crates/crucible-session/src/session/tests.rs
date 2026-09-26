@@ -6,13 +6,16 @@ use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Ancestry, Calibration, CallResultKey, CallResultStoreError, Carried, ContextPatch,
-    ContextSnapshot, CustomEntry, Fragment, InvocationId, JournalEntryId, JournalStore, Message,
-    RecordedToolOutput, RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolResult, Transcript,
+use crucible_storage::{
+    CallResultKey, CallResultStoreError, CustomEntry, InvocationId, JournalEntryId, JournalStore,
+    RunItem,
 };
 use crucible_types::ResultProvenance;
+use crucible_types::{
+    Ancestry, Calibration, Carried, ContextPatch, ContextSnapshot, Fragment, Message,
+    RecordedToolOutput, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
+    Transcript,
+};
 use serde_json::Value;
 
 use super::claim::{Claimed, claim};
@@ -68,7 +71,7 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
 
 #[test]
 fn appending_continuation_to_an_old_log_requires_a_new_reader() {
-    use crucible_core::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
+    use crucible_types::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
     let sample = Sample::new("continuation-old-format");
     let id = "0198abcd-0000-7000-8000-000000000001";
     let path = sample.plant(
@@ -162,7 +165,7 @@ fn a_newer_required_reader_is_refused_without_truncating_even_at_eof() {
 
 #[test]
 fn replay_enforces_the_aggregate_private_history_limit_without_truncating() {
-    use crucible_core::{
+    use crucible_types::{
         CONTINUATION_BYTES, Continuation, ContinuationData, ContinuationPart, ContinuationScope,
     };
     let sample = Sample::new("continuation-replay-cap");
@@ -1549,7 +1552,7 @@ fn sessions_kept_in_one_place_answer_one_owner_and_another_place_another() {
     // records under another's identity, so it has to name somebody: an owner
     // that could be empty would make every store with nothing to say the same
     // principal as any other.
-    use crucible_core::SessionStore;
+    use crucible_storage::SessionStore;
 
     let here = Sample::new("owner-here");
     let there = Sample::new("owner-there");
@@ -1562,7 +1565,7 @@ fn sessions_kept_in_one_place_answer_one_owner_and_another_place_another() {
     assert_eq!(Some(&owner), SessionStore::owner(&second).as_ref());
     assert_ne!(Some(&owner), SessionStore::owner(&other).as_ref());
     assert_eq!(
-        crucible_core::SessionOwner::new(""),
+        crucible_storage::SessionOwner::new(""),
         None,
         "nobody was accepted as an owner"
     );
@@ -1578,7 +1581,7 @@ fn two_places_whose_names_are_not_text_are_two_owners() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
 
-    use crucible_core::SessionStore;
+    use crucible_storage::SessionStore;
 
     // Spelt as text, with what is not text replaced, both of these are the
     // same one character, and one reader's cache scope was the other's.

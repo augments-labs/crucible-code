@@ -14,7 +14,7 @@
 //! prompt to keep it, and a reader who wants their own prompt should not have
 //! it silently concatenated with the one they were replacing.
 
-use crucible_core::Tone;
+use crucible_types::Tone;
 
 use super::Settings;
 
@@ -54,7 +54,7 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
-    use crucible_core::Tone;
+    use crucible_types::Tone;
 
     use crate::document::{Document, Origin};
     use crate::shape;

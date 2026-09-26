@@ -395,10 +395,11 @@ name = "crucible-auth"
 version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
- "crucible-core",
+ "crucible-credentials",
  "crucible-http",
  "crucible-privacy",
  "crucible-runtime",
+ "crucible-types",
  "getrandom 0.4.3",
  "hyper",
  "rustls",
@@ -478,8 +479,11 @@ dependencies = [
 name = "crucible-config"
 version = "0.42.0"
 dependencies = [
- "crucible-core",
  "crucible-models",
+ "crucible-sandbox",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
  "libc",
  "serde_json",
  "thiserror",
@@ -594,11 +598,11 @@ name = "crucible-provider"
 version = "0.42.0"
 dependencies = [
  "base64 0.23.1",
- "crucible-core",
  "crucible-credentials",
  "crucible-http",
  "crucible-models",
  "crucible-runtime",
+ "crucible-tools",
  "crucible-types",
  "hyper",
  "serde_json",
@@ -621,10 +625,14 @@ dependencies = [
  "crucible-agents",
  "crucible-attachments",
  "crucible-context",
- "crucible-core",
  "crucible-models",
+ "crucible-registry",
  "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-storage",
+ "crucible-tools",
  "crucible-types",
+ "crucible-workspace",
  "sha2",
  "thiserror",
  "tokio",
@@ -687,11 +695,13 @@ dependencies = [
 name = "crucible-session"
 version = "0.42.0"
 dependencies = [
- "crucible-core",
  "crucible-privacy",
  "crucible-runtime",
+ "crucible-sandbox",
  "crucible-storage",
+ "crucible-tools",
  "crucible-types",
+ "crucible-workspace",
  "serde_json",
  "sha2",
  "thiserror",
