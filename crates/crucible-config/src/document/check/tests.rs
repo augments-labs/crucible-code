@@ -494,3 +494,382 @@ fn a_committed_project_file_may_not_configure_an_extension() {
     // The key still exists; only its origin was wrong.
     mine(written).unwrap();
 }
+
+/// A secret value the report must never carry, wherever a document holds one.
+///
+/// Spelled to match no credential format the repository gate scans for: a
+/// fixture shaped like a real key teaches nobody to ignore that gate.
+const SENTINEL: &str = "hunter2-config-check-sentinel";
+
+/// The home directory a `config check` test reads, inside the scratch tree.
+fn checked_home(scratch: &crate::sample::Scratch) -> crate::home::Home {
+    let base = scratch.at("home");
+    crate::home::Home::find(&move |wanted| {
+        (wanted == crate::HOME).then(|| std::ffi::OsString::from(base.clone()))
+    })
+    .expect("an absolute path was given")
+}
+
+#[test]
+fn a_secret_beside_any_env_value_is_nowhere_in_the_report() {
+    // Failing first: this fails against an unredacted stub that carries the
+    // files' raw text into the report, and passes once the report holds only
+    // names, sentences and digests.
+    let scratch = crate::sample::Scratch::new("check-sentinel");
+    scratch.write(
+        "home/config.json",
+        &format!(
+            r#"{{"env": {{"TOKEN": "{SENTINEL}"}},
+                 "mcp": {{"servers": {{"docs": {{"command": "npx",
+                                                "env": {{"KEY": "{SENTINEL}"}}}}}}}},
+                 "extensions": {{"acme.reviewer": {{"enabled": true,
+                                                    "config": {{"token": "{SENTINEL}"}}}}}}}}"#
+        ),
+    );
+    scratch.write(
+        ".crucible/config.local.json",
+        r#"{"env": {"CRUCIBLE_CODE_MOUSE_SCROLL_SPEED": "12"}}"#,
+    );
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    assert!(report.valid(), "got {:?}", report.failures());
+    for shown in [report.human(), report.json()] {
+        assert!(!shown.contains(SENTINEL), "got {shown}");
+    }
+
+    // Provenance still arrives: every layer is named with the file read there,
+    // including the one that was not there at all.
+    let human = report.human();
+    for layer in ["user config", "project config", "project-local config"] {
+        assert!(human.contains(layer), "got {human}");
+    }
+    assert!(human.contains("absent"), "got {human}");
+}
+
+#[test]
+fn a_refused_file_names_its_variable_and_shows_nothing_of_its_value() {
+    // The report carries the refusal's sentence, which is where a leak would
+    // arrive second: naming the variable is what makes it actionable, quoting
+    // what was set beside it would put a possible secret into the report.
+    let scratch = crate::sample::Scratch::new("check-refused");
+    scratch.write(
+        ".crucible/config.json",
+        &format!(r#"{{"env": {{"TOKEN": "{SENTINEL}"}}}}"#),
+    );
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    assert!(!report.valid());
+    assert_eq!(report.failures().len(), 1, "got {:?}", report.failures());
+    for shown in [report.human(), report.json()] {
+        assert!(shown.contains("TOKEN"), "got {shown}");
+        assert!(!shown.contains(SENTINEL), "got {shown}");
+    }
+}
+
+#[test]
+fn every_layer_is_reported_with_where_it_was_looked_for() {
+    // Provenance is the report's first job: a reader deciding whether a file
+    // applies needs to know which files were read and which were not there.
+    let scratch = crate::sample::Scratch::new("check-provenance");
+    scratch.write("home/config.json", r#"{"provider": "anthropic"}"#);
+    scratch.write(".crucible/config.json", r#"{"colour": "always"}"#);
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    assert!(!report.valid());
+    let files = report.files();
+    assert_eq!(files.len(), 3, "got {files:?}");
+    let (user, project, local) = (
+        files.first().expect("the user layer"),
+        files.get(1).expect("the project layer"),
+        files.get(2).expect("the project-local layer"),
+    );
+    assert_eq!(user.layer(), "user");
+    assert_eq!(user.state(), FileState::Valid);
+    assert!(user.file().ends_with("config.json"), "got {}", user.file());
+    assert_eq!(project.layer(), "project");
+    assert_eq!(project.state(), FileState::Invalid);
+    // The failure names the file it came from, so the reader opens that one.
+    let failure = report.failures().first().expect("the one refusal");
+    assert_eq!(failure.file(), project.file());
+    assert_eq!(local.layer(), "project-local");
+    assert_eq!(local.state(), FileState::Absent);
+    assert!(report.into_result().is_err());
+}
+
+#[test]
+fn a_machine_with_no_configuration_files_at_all_is_reported_valid() {
+    // The common case: crucible runs before anybody has configured anything,
+    // so absence everywhere is valid rather than a failure to report.
+    let scratch = crate::sample::Scratch::new("check-empty");
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    assert!(report.valid());
+    assert!(report.failures().is_empty());
+    assert!(
+        report
+            .files()
+            .iter()
+            .all(|file| file.state() == FileState::Absent),
+        "got {:?}",
+        report.files()
+    );
+    assert!(report.into_result().is_ok());
+}
+
+#[test]
+fn a_file_that_is_there_and_will_not_open_is_invalid_rather_than_absent() {
+    // A directory where a file should be: present, so not the missing-file
+    // case, and unreadable for a reason nobody would guess from settings that
+    // simply stopped applying.
+    let scratch = crate::sample::Scratch::new("check-unreadable");
+    scratch.make(".crucible/config.json");
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    assert!(!report.valid());
+    let project = report.files().get(1).expect("the project layer");
+    assert_eq!(project.state(), FileState::Invalid);
+    assert_eq!(report.failures().len(), 1, "got {:?}", report.failures());
+}
+
+#[test]
+fn two_layers_that_contradict_each_other_are_invalid_with_their_files_named() {
+    // No single file owns this refusal: each parses on its own, and only the
+    // resolved layers disagree. The sentence still names a file, and the
+    // failure is filed under it.
+    let scratch = crate::sample::Scratch::new("check-resolve");
+    scratch.write("home/config.json", "{}");
+    scratch.write(
+        ".crucible/config.json",
+        r#"{"sandbox": {"network": {"allowLocalBinding": true}}}"#,
+    );
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    assert!(!report.valid());
+    assert_eq!(
+        report
+            .files()
+            .iter()
+            .filter(|file| file.state() == FileState::Valid)
+            .count(),
+        2,
+        "got {:?}",
+        report.files()
+    );
+    assert_eq!(report.failures().len(), 1, "got {:?}", report.failures());
+    let failure = report.failures().first().expect("the one refusal");
+    assert!(
+        failure.file().ends_with("config.json"),
+        "got {}",
+        failure.file()
+    );
+}
+
+#[test]
+fn failures_are_bounded_and_say_where_they_were_cut() {
+    // At most one sentence per file plus one for the layers disagreeing, each
+    // cut to the ceiling on a character boundary with the cut marked — never
+    // a whole file, and never silently shortened.
+    let scratch = crate::sample::Scratch::new("check-bounded");
+    scratch.write(".crucible/config.json", r#"{"providers": 1}"#);
+    scratch.write(".crucible/config.local.json", "not json at all");
+
+    let report = check(&checked_home(&scratch), scratch.root());
+
+    assert!(!report.valid());
+    assert!(report.failures().len() <= 4, "got {:?}", report.failures());
+    for failure in report.failures() {
+        assert!(
+            failure.message().len() <= crate::MAX_FAILURE_BYTES,
+            "got {}",
+            failure.message().len()
+        );
+        assert!(!failure.truncated(), "a short sentence is whole");
+    }
+
+    // And a sentence past the ceiling is cut on a boundary and marked: built
+    // from a refusal directly, since no sentence this crate writes is long.
+    let mut failures = Vec::new();
+    super::push_failure(
+        &mut failures,
+        "config.json",
+        &ConfigError::Malformed {
+            file: "x".repeat(crate::MAX_FAILURE_BYTES).into(),
+            line: 1,
+            column: 1,
+            problem: "grapheme boundary test: café".into(),
+        },
+    );
+    assert_eq!(failures.len(), 1);
+    let cut = failures.first().expect("the one sentence");
+    assert_eq!(cut.message().len(), crate::MAX_FAILURE_BYTES);
+    assert!(cut.truncated());
+    assert!(cut.message().is_char_boundary(crate::MAX_FAILURE_BYTES));
+}
+
+#[test]
+fn the_json_report_is_one_complete_envelope() {
+    // The common contract: one document with an explicit version, a kind, a
+    // status, bounded data and explicit incompleteness — parseable by the
+    // consumer that asked for it.
+    let scratch = crate::sample::Scratch::new("check-envelope");
+    scratch.write("home/config.json", r#"{"provider": "anthropic"}"#);
+
+    let report = check(&checked_home(&scratch), scratch.root());
+    let text = report.json();
+    assert!(text.ends_with('\n'), "got {text:?}");
+
+    let envelope: serde_json::Value =
+        serde_json::from_str(&text).expect("the report is one JSON document");
+    assert_eq!(envelope.get("format_version"), Some(&serde_json::json!(1)));
+    assert_eq!(
+        envelope.get("kind"),
+        Some(&serde_json::json!("config-check"))
+    );
+    assert_eq!(envelope.get("status"), Some(&serde_json::json!("valid")));
+    assert_eq!(
+        envelope.get("schema"),
+        Some(&serde_json::json!({"id": report.schema_id()}))
+    );
+    assert_eq!(
+        envelope
+            .get("files")
+            .map(|files| files.as_array().map(Vec::len)),
+        Some(Some(3))
+    );
+    assert_eq!(envelope.get("truncated"), Some(&serde_json::json!(false)));
+
+    let files = envelope
+        .get("files")
+        .expect("files")
+        .as_array()
+        .expect("a list");
+    let layers: Vec<&str> = files
+        .iter()
+        .map(|file| {
+            file.get("layer")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(layers, vec!["user", "project", "project-local"]);
+}
+
+#[test]
+fn the_report_names_the_schema_the_parser_and_the_schema_agree_on() {
+    // Parser and schema are read from the one shape, so agreement is
+    // structural; this holds it from both sides. A key the parser takes that
+    // the schema does not describe is an editor staying quiet until startup
+    // refuses the file, and the reverse is a squiggle on a document crucible
+    // accepts.
+    let schema: serde_json::Value =
+        serde_json::from_str(&crate::shape::schema::schema()).expect("the schema is JSON");
+    let properties = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .expect("an object schema");
+    let mut described: Vec<&str> = properties.keys().map(String::as_str).collect();
+    described.retain(|key| !crate::shape::schema::RESERVED.contains(key));
+    described.sort_unstable();
+    let mut declared = crate::shape::DOCUMENT.keys();
+    declared.sort_unstable();
+    assert_eq!(described, declared);
+
+    // And the report carries that schema's identifier, not a copy of it: one
+    // source, so the two cannot drift.
+    let scratch = crate::sample::Scratch::new("check-schema-id");
+    let report = check(&checked_home(&scratch), scratch.root());
+    assert_eq!(report.schema_id(), crate::shape::schema::ID);
+    assert!(report.human().contains(report.schema_id()));
+    assert!(report.json().contains(report.schema_id()));
+}
+
+#[test]
+fn checking_reads_the_files_and_writes_nothing_anywhere() {
+    // The denied write hook, tested as denied: the tree — configuration,
+    // extensions, sessions, everything under it — is byte-identical after the
+    // check, so no path in the implementation can rewrite a file.
+    let scratch = crate::sample::Scratch::new("check-no-write");
+    scratch.write("home/config.json", r#"{"provider": "anthropic"}"#);
+    scratch.write(".crucible/config.json", r#"{"output": {"color": "never"}}"#);
+    scratch.write("home/extensions/acme.reviewer/manifest.json", "{}");
+
+    let before = tree_hash(scratch.root());
+    let home_before = tree_hash(&scratch.at("home"));
+    let report = check(&checked_home(&scratch), scratch.root());
+    assert!(report.valid(), "got {:?}", report.failures());
+
+    assert_eq!(
+        tree_hash(scratch.root()),
+        before,
+        "the workspace tree changed"
+    );
+    assert_eq!(
+        tree_hash(&scratch.at("home")),
+        home_before,
+        "the home tree changed"
+    );
+}
+
+/// Every regular file under `root`, hashed with its relative path.
+fn tree_hash(root: &std::path::Path) -> Vec<(String, u64)> {
+    use std::hash::Hasher as _;
+
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_owned()];
+    while let Some(next) = pending.pop() {
+        let entries = std::fs::read_dir(&next).expect("a readable test tree");
+        for entry in entries {
+            let entry = entry.expect("a readable test tree");
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let bytes = std::fs::read(&path).expect("a readable test tree");
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                hash.write(&bytes);
+                found.push((
+                    path.strip_prefix(root)
+                        .expect("under the root")
+                        .display()
+                        .to_string(),
+                    hash.finish(),
+                ));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn checking_starts_nothing_it_only_names() {
+    // The denied launch hooks, tested as denied rather than uncalled: a server
+    // record pointing at a tripwire script and an enabled extension nobody
+    // installed both validate, and the tripwire never fires. Had the check
+    // launched either, the marker would be on disk.
+    let scratch = crate::sample::Scratch::new("check-no-launch");
+    let tripwire = scratch.at("tripwire.sh");
+    std::fs::write(&tripwire, "#!/bin/sh\ntouch \"$0.fired\"\n")
+        .expect("a writable temporary directory");
+    scratch.write(
+        "home/config.json",
+        &format!(
+            r#"{{"mcp": {{"servers": {{"docs": {{"command": {}, "args": ["serve"]}}}}}},
+                 "extensions": {{"acme.reviewer": {{"enabled": true}}}}}}"#,
+            serde_json::json!(tripwire.display().to_string())
+        ),
+    );
+
+    let report = check(&checked_home(&scratch), scratch.root());
+    assert!(report.valid(), "got {:?}", report.failures());
+    assert!(
+        !scratch.at("tripwire.sh.fired").exists(),
+        "the check launched the server it only validated"
+    );
+}

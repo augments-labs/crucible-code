@@ -60,6 +60,13 @@ mod shape;
 // the type that parses one file and the type that resolves several are both
 // crate-private: a caller who could build a `Document` would then have nothing
 // to do with it, and a second way in is a second answer to which files exist.
+//
+// What is public beside them is the read-only check: `config check` reports
+// what the files say without opening anything else, so its report and the one
+// function that builds it travel while the documents do not.
+pub use document::check::{
+    CheckFailure, CheckReport, FileCheck, FileState, MAX_FAILURE_BYTES, check,
+};
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{allowing, asking, choosing, drawing, reading, sandboxing, thinking, unasked};
