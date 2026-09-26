@@ -21,7 +21,8 @@
 use std::path::Path;
 
 use crucible_attachments::{AttachmentError, CEILING, Opened};
-use crucible_core::{Attached, Attachment, Content, Modalities, Modality, Transcript};
+use crucible_models::{Attached, Content};
+use crucible_types::{Attachment, Modalities, Modality, Transcript};
 
 /// One request's worth of attachments, owned until the request returns.
 pub(crate) struct Resolved(Vec<Held>);

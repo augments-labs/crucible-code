@@ -7,7 +7,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, Read as _, Take};
 
-use crucible_core::{Change, Compacted, Compacting, Diff, Line, Message, ToolId};
+use crucible_types::{Change, Compacted, Compacting, Diff, Line, Message, ToolId};
 use serde_json::{Value, json};
 
 use super::{replay, wire};
@@ -155,7 +155,7 @@ impl DisplayHistory {
                         // 64 lines of 1024 four-byte characters. The framework
                         // history ceiling admits that complete batch while
                         // bounding a corrupt log independently of its call IDs.
-                        if held > crucible_core::MAX_RUN_HISTORY_BYTES {
+                        if held > crucible_storage::MAX_RUN_HISTORY_BYTES {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 "session display previews exceed the tool-batch byte limit",

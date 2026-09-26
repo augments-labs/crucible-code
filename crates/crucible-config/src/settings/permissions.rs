@@ -5,9 +5,9 @@
 //! is left of them is a [`Rules`]. Everything else in the block is a string the
 //! merged document still holds, read the way any other setting is.
 //!
-//! [`Rules`]: crucible_core::Rules
+//! [`Rules`]: crucible_tools::Rules
 
-use crucible_core::{Mode, Permission};
+use crucible_tools::{Mode, Permission};
 use serde_json::Value;
 
 use super::Settings;

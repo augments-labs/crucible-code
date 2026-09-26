@@ -19,7 +19,9 @@
 use std::fmt;
 
 use crucible_agents::Rejection;
-use crucible_core::{PromptCacheAttempt, PromptCacheScopeDigest, ToolSnapshot, Transcript, TurnId};
+use crucible_models::PromptCacheAttempt;
+use crucible_tools::ToolSnapshot;
+use crucible_types::{PromptCacheScopeDigest, Transcript, TurnId};
 
 use super::load::Load;
 

@@ -2,7 +2,7 @@
 
 use super::waiting::{Slow, Waits};
 use super::*;
-use crucible_core::TOOL_RESULT_BYTES;
+use crucible_types::TOOL_RESULT_BYTES;
 
 /// A response that reports it carried `carried` tokens and then calls a tool.
 fn carrying(carried: u64, id: &str) -> Vec<Delta> {

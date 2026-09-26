@@ -45,7 +45,7 @@
 //! unrestricted would be widening the rule above by the only route this file
 //! does not close.
 //!
-//! [`Ask`]: crucible_core::Ask
+//! [`Ask`]: crucible_tools::Ask
 //! [`Runner::pick_up`]: crate::Runner::pick_up
 //! [`RunContext`]: crate::RunContext
 //!
@@ -57,7 +57,7 @@
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
-use crucible_core::PromptCachePolicy;
+use crucible_types::PromptCachePolicy;
 
 /// The hard upper bound on the scheduler ceiling one run may ask for. However
 /// wide a wave that allows, at most [`crate::TOOL_RUNS`] of its calls run at

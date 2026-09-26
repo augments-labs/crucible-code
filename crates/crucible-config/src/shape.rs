@@ -333,7 +333,7 @@ const ENV: &[Field] = &[Field {
 
 /// Every answer `providers.<name>.effort` accepts, weakest first.
 ///
-/// The rungs [`crucible_core::Effort`] holds, spelled the way it spells them —
+/// The rungs [`crucible_models::Effort`] holds, spelled the way it spells them —
 /// this is the declaration an editor completes from, and the type is what turns
 /// one back into a value. A test walks this list through that parse, so a rung
 /// added to one and not the other is a build that fails rather than a key the
@@ -342,7 +342,7 @@ pub(crate) const EFFORT: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
 /// Every answer `systemPrompt.tone` accepts, in the order a picker offers them.
 ///
-/// The tones [`crucible_core::Tone`] holds, spelled the way it spells them.
+/// The tones [`crucible_types::Tone`] holds, spelled the way it spells them.
 /// The second `Choice` in this file whose meaning belongs to another crate, and
 /// tested the same way the first is: both directions, so a word here the
 /// program no longer parses is caught, and so is a tone the program grew that
@@ -526,7 +526,7 @@ const UPDATES: &[Field] = &[Field {
 
 /// Every answer `permissions.mode` accepts.
 ///
-/// Spelled the way [`crucible_core::Mode`] spells it, so what the prompt line
+/// Spelled the way [`crucible_tools::Mode`] spells it, so what the prompt line
 /// shows is what you would type here.
 pub(crate) const MODE: &[&str] = &["ask", "allowEdits", "fullAccess"];
 
@@ -536,8 +536,8 @@ const SANDBOX_FILESYSTEM: &[Field] = &[
         name: "writable",
         about: "Additional writable paths; only user configuration may grant access",
         shape: Shape::TextSet {
-            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
-            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+            maximum: crucible_sandbox::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_sandbox::MAX_SANDBOX_PATH_BYTES,
         },
         examples: &[],
         usual: Some("[]"),
@@ -548,8 +548,8 @@ const SANDBOX_FILESYSTEM: &[Field] = &[
         name: "readOnly",
         about: "Readable paths without write access; projects may only narrow existing access",
         shape: Shape::TextSet {
-            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
-            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+            maximum: crucible_sandbox::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_sandbox::MAX_SANDBOX_PATH_BYTES,
         },
         examples: &[],
         usual: Some("[]"),
@@ -560,8 +560,8 @@ const SANDBOX_FILESYSTEM: &[Field] = &[
         name: "unreadable",
         about: "Paths hidden from sandboxed commands on Linux/WSL2 and macOS; nonempty lists are unsupported on native Windows",
         shape: Shape::TextSet {
-            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
-            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+            maximum: crucible_sandbox::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_sandbox::MAX_SANDBOX_PATH_BYTES,
         },
         examples: &[],
         usual: Some("[]"),
@@ -572,8 +572,8 @@ const SANDBOX_FILESYSTEM: &[Field] = &[
         name: "protected",
         about: "Readable paths that no nested writable grant may reopen",
         shape: Shape::TextSet {
-            maximum: crucible_core::MAX_SANDBOX_FILESYSTEM_RULES,
-            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+            maximum: crucible_sandbox::MAX_SANDBOX_FILESYSTEM_RULES,
+            bytes: crucible_sandbox::MAX_SANDBOX_PATH_BYTES,
         },
         examples: &[],
         usual: Some("[]"),
@@ -587,8 +587,8 @@ const SANDBOX_NETWORK: &[Field] = &[
         name: "allowedDomains",
         about: "Allowed hostnames, IP literals, *.domain patterns or * on Linux/WSL2 and macOS; projects may only narrow user grants; unsupported on native Windows",
         shape: Shape::TextSet {
-            maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
-            bytes: crucible_core::MAX_SANDBOX_HOST_BYTES + 2,
+            maximum: crucible_sandbox::MAX_SANDBOX_NETWORK_RULES,
+            bytes: crucible_sandbox::MAX_SANDBOX_HOST_BYTES + 2,
         },
         examples: &[],
         usual: Some("[]"),
@@ -599,8 +599,8 @@ const SANDBOX_NETWORK: &[Field] = &[
         name: "deniedDomains",
         about: "Overriding denied hostnames, IP literals or domain patterns on Linux/WSL2 and macOS; nonempty lists are unsupported on native Windows",
         shape: Shape::TextSet {
-            maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
-            bytes: crucible_core::MAX_SANDBOX_HOST_BYTES + 2,
+            maximum: crucible_sandbox::MAX_SANDBOX_NETWORK_RULES,
+            bytes: crucible_sandbox::MAX_SANDBOX_HOST_BYTES + 2,
         },
         examples: &[],
         usual: Some("[]"),
@@ -620,8 +620,8 @@ const SANDBOX_NETWORK: &[Field] = &[
         name: "allowUnixSockets",
         about: "Exact host Unix socket paths on Linux/WSL2 and macOS; projects may only narrow user grants; nonempty lists are unsupported on native Windows",
         shape: Shape::TextSet {
-            maximum: crucible_core::MAX_SANDBOX_NETWORK_RULES,
-            bytes: crucible_core::MAX_SANDBOX_PATH_BYTES,
+            maximum: crucible_sandbox::MAX_SANDBOX_NETWORK_RULES,
+            bytes: crucible_sandbox::MAX_SANDBOX_PATH_BYTES,
         },
         examples: &[],
         usual: Some("[]"),

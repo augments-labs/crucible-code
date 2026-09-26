@@ -16,7 +16,8 @@ use std::sync::mpsc::{Receiver, channel};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
-use crucible_core::{SessionStore, Workspace};
+use crucible_storage::SessionStore;
+use crucible_workspace::Workspace;
 
 use super::*;
 use crate::session::QUEUE;

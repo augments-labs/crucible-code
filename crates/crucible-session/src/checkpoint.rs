@@ -11,18 +11,23 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crucible_core::{
-    ActionId, ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, CheckpointId,
-    CheckpointStore, ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId,
-    InvocationRecord, InvocationState, MAX_HUMAN_INPUT_BYTES, Modality, PendingAction,
-    PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput,
-    PromptCacheFingerprint, PromptCacheResourceId, PromptCacheScopeDigest, ProviderAttemptId,
-    RecordedToolOutput, ResumeDigest, ResumeScope, RunId, SandboxBackendId, SandboxBackendIdentity,
-    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCheckpoint,
-    SandboxFeature, SandboxId, SandboxNetworkInspection, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
-    ToolEffect, ToolId, ToolOutcome,
-};
 use crucible_runtime::BoxFuture;
+use crucible_sandbox::{
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCapability, SandboxCheckpoint, SandboxFeature, SandboxNetworkInspection,
+};
+use crucible_storage::{
+    ActionId, ActionResolution, ApprovalDecision, CheckpointId, CheckpointStore,
+    ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
+    InvocationState, MAX_HUMAN_INPUT_BYTES, PendingAction, PendingActions, PendingApproval,
+    PendingExternalTool, PendingHumanInput, ResumeDigest, ResumeScope, ToolEffect,
+};
+use crucible_tools::ToolOutcome;
+use crucible_types::{
+    Ancestry, CacheCheckpoint, Modality, PromptCacheFingerprint, PromptCacheResourceId,
+    PromptCacheScopeDigest, ProviderAttemptId, RecordedToolOutput, RunId, SandboxId,
+    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolId,
+};
 use serde_json::{Value, json};
 
 /// Current execution-checkpoint document format.
@@ -691,7 +696,7 @@ fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
         return Err(CheckpointError::TooLarge);
     }
     if let Some(changed) = nullable(value, "changed")? {
-        output = output.counting(crucible_core::Changed::new(
+        output = output.counting(crucible_types::Changed::new(
             usize::try_from(number(changed, "added")?).map_err(|_| CheckpointError::Unreadable)?,
             usize::try_from(number(changed, "removed")?)
                 .map_err(|_| CheckpointError::Unreadable)?,
@@ -700,7 +705,7 @@ fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
     let attachments = array(value, "attachments")?
         .iter()
         .map(|attachment| {
-            Ok(crucible_core::Attachment {
+            Ok(crucible_types::Attachment {
                 path: text(attachment, "path")?.into(),
                 modality: Modality::from_str(text(attachment, "modality")?)
                     .map_err(|_| CheckpointError::Unreadable)?,

@@ -10,18 +10,25 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# Domain messages, identifiers and workspaces.
-crucible-core.workspace = true
 # The recent-session index is replaced whole: an exclusively-created sibling,
 # synced, then renamed over it. That durable replacement is the privacy
 # crate's, already reviewed for the configuration and auth stores.
 crucible-privacy.workspace = true
 # The future a store's waiting methods hand back.
 crucible-runtime.workspace = true
+# What a confined process was allowed to do, recorded in the journal so a
+# resume can tell a live backend from a weaker one.
+crucible-sandbox.workspace = true
 # The contract a persistent prompt-cache resource is remembered under, and the
 # record it keeps; the file that keeps it is this crate's.
 crucible-storage.workspace = true
+# `Approved` and `Verdict`, which is what a recorded pending action and the
+# decision that settled it are written as.
+crucible-tools.workspace = true
 crucible-types.workspace = true
+# `Workspace`, which the paths a recorded attachment and a session sidecar name
+# are proved against.
+crucible-workspace.workspace = true
 # A session log is JSON, one object per line, read back by a build that may
 # not be the one that wrote it. Hand-rolling that parser would be a second
 # place for a malformed line to become a panic.

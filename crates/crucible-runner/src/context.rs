@@ -18,7 +18,8 @@
 
 use std::fmt;
 
-use crucible_core::{Ancestry, Aside, Cancel, RunId, Steer};
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_types::{Ancestry, RunId};
 
 use crate::policy::RunPolicy;
 
@@ -378,7 +379,7 @@ mod tests {
                 ..Compaction::default()
             },
             tools: crate::ToolScheduling::default(),
-            prompt_cache: crucible_core::PromptCachePolicy::default(),
+            prompt_cache: crucible_types::PromptCachePolicy::default(),
         });
 
         let child = run.child(RunPolicy {
@@ -397,7 +398,7 @@ mod tests {
                 ..Compaction::default()
             },
             tools: crate::ToolScheduling::default(),
-            prompt_cache: crucible_core::PromptCachePolicy::default(),
+            prompt_cache: crucible_types::PromptCachePolicy::default(),
         });
 
         // Every budget, not only the three in `Bounds`: the name says what a

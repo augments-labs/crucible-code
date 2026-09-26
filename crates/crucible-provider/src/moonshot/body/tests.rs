@@ -1,5 +1,5 @@
-use crucible_core::ToolOutput;
 use crucible_models::{Attached, Content, Effort};
+use crucible_tools::ToolOutput;
 use crucible_types::{
     Attachment, Change, Changed, Diff, Fragment, Line, Modality, PromptCacheMechanism,
     PromptCacheRetentionClass, RecordedToolOutput, ToolArgs, ToolCall, ToolId, Transcript,

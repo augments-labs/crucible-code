@@ -11,7 +11,7 @@ use std::task::{Context, Poll, Waker};
 use std::thread;
 
 use base64::Engine as _;
-use crucible_core::{Authorization, CredentialError, Outgoing};
+use crucible_credentials::{Authorization, CredentialError, Outgoing};
 
 /// Polls `authorizing` once and panics if it was not ready: a credential with
 /// nothing to renew answers at its first poll.

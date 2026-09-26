@@ -6,10 +6,10 @@
 //! posted, so a reader watching the stream sees the fact only once the record
 //! naming it is already on its way to the log.
 
-use crucible_core::{
-    Ancestry, JournalStore, RunItem, SandboxAudit, SandboxAuditRecord, SandboxAuditRegistry,
-    ToolError, ToolId,
-};
+use crucible_sandbox::{SandboxAudit, SandboxAuditRecord, SandboxAuditRegistry};
+use crucible_storage::{JournalStore, RunItem};
+use crucible_tools::ToolError;
+use crucible_types::{Ancestry, ToolId};
 
 use crate::{Event, Reporter};
 pub(super) async fn report_sandbox_audit(

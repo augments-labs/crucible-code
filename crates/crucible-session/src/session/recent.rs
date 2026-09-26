@@ -17,7 +17,8 @@ use std::path::Path;
 use std::str::FromStr as _;
 use std::time::SystemTime;
 
-use crucible_core::{Message, SessionId, Workspace};
+use crucible_types::{Message, SessionId};
+use crucible_workspace::Workspace;
 
 use super::index;
 use super::wire;

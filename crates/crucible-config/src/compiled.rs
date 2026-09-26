@@ -50,8 +50,8 @@ fn a_baked_path_that_is_gone_is_reported_as_a_build_that_outlived_its_checkout()
     // Without this check the reader is handed the workspace's own error, which
     // says the directory is not there and stops — true, and no help at all when
     // the directory is one the compiler chose and the reader has never seen.
-    let workspace =
-        crucible_core::Workspace::open(&removed).expect_err("a directory that was never created");
+    let workspace = crucible_workspace::Workspace::open(&removed)
+        .expect_err("a directory that was never created");
     assert!(
         !workspace.to_string().contains("test binary"),
         "{workspace}"

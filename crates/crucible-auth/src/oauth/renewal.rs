@@ -57,9 +57,10 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use crucible_core::{CredentialScopeId, Outgoing};
+use crucible_credentials::Outgoing;
 use crucible_http::{BodyError, Http, Lookups, ProxyEnv, Tls, read_limited};
 use crucible_runtime::BoxFuture;
+use crucible_types::CredentialScopeId;
 use hyper::Method;
 use tokio::runtime::Handle;
 use tokio::sync::{Semaphore, watch};

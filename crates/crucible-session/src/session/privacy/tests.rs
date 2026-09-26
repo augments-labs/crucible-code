@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crucible_core::Message;
+use crucible_types::Message;
 
 use crate::sample::Sample;
 use crate::session::Session;

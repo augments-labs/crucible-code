@@ -94,7 +94,7 @@ pub(super) fn resolve(
                 }
             }
         }
-        if rules.len() > crucible_core::MAX_SANDBOX_FILESYSTEM_RULES {
+        if rules.len() > crucible_sandbox::MAX_SANDBOX_FILESYSTEM_RULES {
             return Err(setting
                 .source
                 .error("effective filesystem rules exceed their bound"));

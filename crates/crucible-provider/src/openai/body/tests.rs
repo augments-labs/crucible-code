@@ -3,8 +3,8 @@
 //! Separate from the builder next door only because the builder reached the
 //! per-file cap.
 
-use crucible_core::ToolOutput;
 use crucible_models::{Attached, Content, Effort};
+use crucible_tools::ToolOutput;
 use crucible_types::{
     Change, Changed, Diff, Fragment, Line, Modality, RecordedToolOutput, ToolArgs, ToolId,
     Transcript,

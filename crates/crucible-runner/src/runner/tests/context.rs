@@ -1,7 +1,9 @@
 //! Per-pass context assembly, including the history-rewrite adversary.
 
-use crucible_core::{ContextSection, Fragment, Revealed, Seen, ToolOutput, WorkspaceSection};
+use crucible_context::{ContextSection, WorkspaceSection};
 use crucible_runtime::BoxFuture;
+use crucible_tools::{Revealed, ToolOutput};
+use crucible_types::{Fragment, Seen};
 
 use super::*;
 
@@ -143,7 +145,7 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
         .context_snapshot()
         .expect("the typed state survived compaction");
     assert!(matches!(
-        crucible_core::seen(&recorded, &section, scripted.runner.state.transcript()),
+        crucible_context::seen(&recorded, &section, scripted.runner.state.transcript()),
         Seen::Stale
     ));
 

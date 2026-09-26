@@ -166,7 +166,7 @@ fn a_worker_job_that_committed_after_the_stop_is_answered_as_done() {
             )
             .unwrap(),
             Arc::new(super::waves::Effecting {
-                worker: crucible_core::ToolWorker::new(runtime.handle().clone()),
+                worker: crucible_tools::ToolWorker::new(runtime.handle().clone()),
                 stops: Some(cancel.clone()),
                 started: Arc::clone(&started),
                 ended: Arc::clone(&ended),

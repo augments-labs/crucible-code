@@ -9,11 +9,12 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crucible_core::{
+use crucible_sandbox::{
     SandboxEnablement, SandboxFilesystemAccess as Access,
     SandboxFilesystemProvenance as Provenance, SandboxFilesystemRule, SandboxPolicy,
-    SandboxResourceLimits, Workspace,
+    SandboxResourceLimits,
 };
+use crucible_workspace::Workspace;
 use serde_json::Value;
 
 use crate::document::{Document, Origin};
@@ -259,7 +260,7 @@ pub(crate) fn read(
             });
         }
     }
-    if filesystem.len() > crucible_core::MAX_SANDBOX_FILESYSTEM_RULES {
+    if filesystem.len() > crucible_sandbox::MAX_SANDBOX_FILESYSTEM_RULES {
         return Err(source("filesystem").error("too many filesystem rules"));
     }
     let limit = |key: &'static str| {
@@ -297,7 +298,7 @@ pub(crate) fn resolve(documents: &[Document]) -> Result<SandboxSettings, ConfigE
             required |= layer.origin.in_the_workspace() && stated;
         }
         settings.filesystem.extend(layer.filesystem.iter().cloned());
-        if settings.filesystem.len() > crucible_core::MAX_SANDBOX_FILESYSTEM_RULES {
+        if settings.filesystem.len() > crucible_sandbox::MAX_SANDBOX_FILESYSTEM_RULES {
             return Err(policy_error());
         }
         for (effective, stated) in [

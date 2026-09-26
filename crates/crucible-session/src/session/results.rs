@@ -15,9 +15,10 @@ use std::fs::{self, File};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
-use crucible_core::{
-    CallResultKey, CallResultReceipt, CallResultStoreError, MAX_RUN_ITEM_BYTES, ToolResult,
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, MAX_RUN_ITEM_BYTES,
 };
+use crucible_types::ToolResult;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 

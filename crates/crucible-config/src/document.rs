@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crucible_core::Rules;
+use crucible_tools::Rules;
 use serde_json::Value;
 
 use crate::env;
