@@ -1527,7 +1527,7 @@ pub(super) fn testing_plan(
     )
     .map_err(|_| crucible_sandbox::SandboxError::InvalidInspection)?;
     let manifest = SandboxManifest::empty();
-    let inspection = SandboxInspection::new(
+    let inspection = crucible_sandbox::inspection(
         SandboxId::new(),
         identity,
         SandboxCapabilities::none(),

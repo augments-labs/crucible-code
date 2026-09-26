@@ -1,7 +1,13 @@
 //! What a sandbox command and its policy promise before anything spawns.
 
 use super::*;
-use crate::policy::{SandboxFilesystemProvenance, SandboxFilesystemRule};
+use crucible_storage::{
+    SandboxCleanup, SandboxFilesystemProvenance, SandboxNetworkInspection, SandboxResourceLimits,
+    SandboxUsage, SandboxViolation,
+};
+
+use crate::inspect::{confined_inspection, inspection, unconfined_inspection};
+use crate::policy::SandboxFilesystemRule;
 use crate::{
     SandboxBackendId, SandboxBackendProvenance, SandboxDomainPattern, SandboxDomainPolicy,
     SandboxFilesystemAccess, SandboxNetworkProvenance,
@@ -55,7 +61,7 @@ fn unconfined_backend_cannot_label_itself_confined() {
     let policy = policy();
     let manifest = SandboxManifest::empty();
     assert!(
-        SandboxInspection::new(
+        inspection(
             SandboxId::new(),
             identity.clone(),
             SandboxCapabilities::none(),
@@ -68,7 +74,7 @@ fn unconfined_backend_cannot_label_itself_confined() {
         .is_err()
     );
     assert!(
-        SandboxInspection::new(
+        inspection(
             SandboxId::new(),
             identity.clone(),
             SandboxCapabilities::none(),
@@ -82,7 +88,7 @@ fn unconfined_backend_cannot_label_itself_confined() {
         "an unconfined report requires an explicit disabled_reason reason"
     );
     assert!(
-        SandboxInspection::new(
+        inspection(
             SandboxId::new(),
             identity,
             SandboxCapabilities::none(),
@@ -107,7 +113,7 @@ fn enabled_policy_cannot_be_reported_as_unconfined() {
     )
     .unwrap();
     assert!(
-        SandboxInspection::new(
+        inspection(
             SandboxId::new(),
             identity,
             SandboxCapabilities::none(),
@@ -166,7 +172,7 @@ fn confined_inspection_reports_the_domain_network_feature_and_redacts_reach() {
         None,
     )
     .unwrap();
-    let inspection = SandboxInspection::new(
+    let inspection = inspection(
         SandboxId::new(),
         identity,
         capabilities,
@@ -453,8 +459,7 @@ fn restricted_requests_inspect_requested_and_effective_policy_separately() {
         Some([1; 32]),
     )
     .expect("backend identity");
-    let inspection = SandboxInspection::confined_for_request(identity, capabilities, &request)
-        .expect("inspection");
+    let inspection = confined_inspection(identity, capabilities, &request).expect("inspection");
     assert_eq!(inspection.requested_plan().unreadable_patterns(), 0);
     assert_eq!(inspection.plan().unreadable_patterns(), 1);
     assert_ne!(
@@ -544,7 +549,7 @@ fn the_default_ending_follows_the_status_the_backend_reports() {
         None,
     )
     .expect("a backend identity");
-    let inspection = SandboxInspection::unconfined_for_request(
+    let inspection = unconfined_inspection(
         identity,
         SandboxCapabilities::none(),
         &request,
@@ -583,7 +588,7 @@ impl io::Write for Stuck {
 }
 
 /// An inspection for a process a test builds, which confines nothing.
-fn unconfined_inspection() -> SandboxInspection {
+fn compatibility_inspection() -> SandboxInspection {
     let request = SandboxRequest::new(
         SandboxId::new(),
         Ancestry::new(),
@@ -603,7 +608,7 @@ fn unconfined_inspection() -> SandboxInspection {
         .expect("policy"),
         SandboxManifest::empty(),
     );
-    SandboxInspection::unconfined_for_request(
+    unconfined_inspection(
         SandboxBackendIdentity::new(
             SandboxBackendId::new("test").expect("a backend name"),
             "1",
@@ -632,7 +637,7 @@ fn the_default_asynchronous_input_does_not_hold_the_worker_that_polls_it() {
     let (release, held) = std::sync::mpsc::channel::<()>();
     let mut process = Counted {
         exited: false,
-        inspection: unconfined_inspection(),
+        inspection: compatibility_inspection(),
         stdin: Some(Box::new(Stuck(held))),
     };
     let mut input = process

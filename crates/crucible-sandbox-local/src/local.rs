@@ -10,7 +10,7 @@ use crucible_sandbox::{
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxCommandStage, SandboxError,
     SandboxFactKind, SandboxFailurePhase, SandboxFeature, SandboxGuardrailDecision,
     SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest,
-    SandboxService, SandboxSession,
+    SandboxService, SandboxSession, unconfined_inspection,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -195,12 +195,7 @@ fn compatibility(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
     let reservation = Reservation::take(active, maximum)?;
-    let inspection = SandboxInspection::unconfined_for_request(
-        backend,
-        capabilities,
-        &request,
-        disabled_reason,
-    )?;
+    let inspection = unconfined_inspection(backend, capabilities, &request, disabled_reason)?;
     request.audit().record(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),

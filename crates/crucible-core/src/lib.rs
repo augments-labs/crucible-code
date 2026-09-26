@@ -20,9 +20,10 @@
 //!
 //! Two kinds of type live here, and the split is deliberate:
 //!
-//! - **Closed sets are enums.** `RunItem` is owned here, and the runner's
-//!   events and errors by `crucible-runner`, so adding a variant breaks every
-//!   `match` and forces each site to decide.
+//! - **Closed sets are enums.** `RunItem` and the sandbox records a journal
+//!   keeps are owned by `crucible-storage`, and the runner's events and errors
+//!   by `crucible-runner`, so adding a variant breaks every `match` and forces
+//!   each site to decide.
 //! - **Open sets are traits.** `Provider` is owned by `crucible-models` and
 //!   implemented in the crates above, so adding one must never edit this crate.
 //!
@@ -82,18 +83,21 @@ pub use crucible_sandbox::{
     SandboxNetworkProvenance, SandboxOutput, SandboxPlanInspection, SandboxPolicy,
     SandboxPolicyError, SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits,
     SandboxRootInspection, SandboxService, SandboxSession, SandboxSpeech, SandboxUnreadablePattern,
-    SandboxUsage, SandboxViolation,
+    SandboxUsage, SandboxViolation, confined_inspection, inspection, plan_inspection,
+    unconfined_inspection,
 };
 pub use crucible_storage::PromptCacheResourceStore;
 pub use crucible_storage::{
     ActionId, ActionResolution, ApprovalDecision, CallResultKey, CallResultReceipt,
     CallResultStoreError, CheckpointId, CompactionRecord, CustomEntry, CustomProjector,
-    IdempotencyKey, InterruptionError, InvocationId, InvocationRecord, InvocationState,
-    JournalEntryId, JournalError, MAX_CHECKPOINT_INVOCATIONS, MAX_CHECKPOINT_SANDBOXES,
-    MAX_CHECKPOINT_WORD_BYTES, MAX_CUSTOM_DATA_BYTES, MAX_HUMAN_INPUT_BYTES,
-    MAX_JOURNAL_WORD_BYTES, MAX_PENDING_ACTIONS, PendingAction, PendingActions, PendingApproval,
-    PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange, ResumeDigest,
-    ResumeScope, ResumedAction, SessionOwner, SessionStore, ToolEffect,
+    ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
+    InvocationState, JournalEntryId, JournalError, MAX_CHECKPOINT_INVOCATIONS,
+    MAX_CHECKPOINT_SANDBOXES, MAX_CHECKPOINT_WORD_BYTES, MAX_CUSTOM_DATA_BYTES,
+    MAX_HUMAN_INPUT_BYTES, MAX_JOURNAL_WORD_BYTES, MAX_PENDING_ACTIONS, MAX_RUN_HISTORY_BYTES,
+    MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, PendingAction, PendingActions,
+    PendingApproval, PendingExternalTool, PendingHumanInput, RecoveryAction, ResolutionChange,
+    ResumeDigest, ResumeEvidence, ResumeScope, ResumedAction, RunHistory, RunItem, SessionOwner,
+    SessionStore, ToolEffect, ValidatedResume,
 };
 pub use crucible_tools::{
     Account, Approved, ArgumentTransform, Ask, CallResultAcceptance, Command, DescribeTool,
@@ -146,10 +150,9 @@ pub use crucible_types::{
 };
 pub use crucible_types::{Compacted, Compacting, RECAP, Tone, ToneError, later};
 pub use crucible_workspace::{PathError, WalkFiles, Workspace, WorkspacePath, written};
-pub use interruption::{
-    CacheCheckpoint, CheckpointStore, ExecutionCheckpoint, ResumeEvidence, ValidatedResume,
-};
-pub use journal::{
-    JournalStore, MAX_RUN_HISTORY_BYTES, MAX_RUN_ITEM_BYTES, MAX_RUN_ITEM_RETAINED_BYTES,
-    MAX_RUN_ITEMS, RunHistory, RunItem,
-};
+// The ports stay here, where the runner holds them, and synchronous; the values
+// they carry moved to the crates that own them and are re-exported above. The
+// cache checkpoint is a value in the root crate because it holds no record.
+pub use crucible_types::{CacheCheckpoint, CacheCheckpointError, MAX_CACHE_CHECKPOINT_WORD_BYTES};
+pub use interruption::CheckpointStore;
+pub use journal::JournalStore;

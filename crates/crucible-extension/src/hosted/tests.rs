@@ -15,6 +15,7 @@ use crucible_sandbox::{
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
     SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
     SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    unconfined_inspection,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use serde_json::{Value, json};
@@ -87,7 +88,7 @@ fn inspection() -> SandboxInspection {
         None,
     )
     .expect("identity");
-    SandboxInspection::unconfined_for_request(
+    unconfined_inspection(
         backend,
         SandboxCapabilities::none(),
         &request,

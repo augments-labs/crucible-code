@@ -17,6 +17,7 @@ use crucible_sandbox::{
     SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxManifest, SandboxNetworkPolicy,
     SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
     SandboxResourceLimits, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
+    unconfined_inspection,
 };
 use crucible_tools::{
     Approved, Ask, Mode, Permission, Remember, Rules, Sensitivity, Settled, Summary, Target, Tool,
@@ -100,7 +101,7 @@ fn inspection() -> SandboxInspection {
         None,
     )
     .expect("a backend identity");
-    SandboxInspection::unconfined_for_request(
+    unconfined_inspection(
         backend,
         SandboxCapabilities::none(),
         &request,

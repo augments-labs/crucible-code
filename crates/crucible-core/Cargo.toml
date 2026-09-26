@@ -10,9 +10,9 @@ repository.workspace = true
 authors.workspace = true
 
 # Core is the bottom of the graph, so a dependency added here is one every layer
-# above inherits, and what is left here earns that cost. `serde_json` writes a
-# run item's recorded tool output as the one text a journal retains, which is a
-# document format rather than a string this crate could compose itself.
+# above inherits, and what is left here earns that cost. The last one to leave
+# was `serde_json`, which wrote a run item's recorded tool output: that
+# vocabulary now lives in `crucible-storage`, and nothing here reaches for it.
 #
 # The twelve crates below are the extraction this crate is being emptied into.
 # Core consumes them so its remaining callers keep compiling against one name
@@ -31,7 +31,6 @@ crucible-tools.workspace = true
 crucible-transport.workspace = true
 crucible-types.workspace = true
 crucible-workspace.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

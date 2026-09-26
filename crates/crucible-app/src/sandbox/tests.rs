@@ -4,8 +4,8 @@ use crucible_runtime::{BoxFuture, Bridge};
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxEnablement, SandboxError, SandboxFeature,
-    SandboxInspection, SandboxManifest, SandboxPolicy, SandboxRequest, SandboxResourceLimits,
-    SandboxService, SandboxSession,
+    SandboxManifest, SandboxPolicy, SandboxRequest, SandboxResourceLimits, SandboxService,
+    SandboxSession, inspection,
 };
 use crucible_types::SandboxId;
 
@@ -44,7 +44,7 @@ fn backend() -> SandboxBackendIdentity {
 
 /// One report over `policy`, as the flag would have written it.
 fn written(sample: &Sample, policy: &SandboxPolicy, capabilities: SandboxCapabilities) -> String {
-    let inspection = SandboxInspection::new(
+    let inspection = inspection(
         SandboxId::new(),
         backend(),
         capabilities,
@@ -253,7 +253,7 @@ fn disabled_confinement_is_reported_as_an_explicit_choice() {
     assert!(confined.contains("enabled   true"), "{confined}");
     assert!(confined.contains("confined  yes"), "{confined}");
     let policy = policy.with_enabled(false);
-    let inspection = SandboxInspection::new(
+    let inspection = inspection(
         SandboxId::new(),
         backend(),
         SandboxCapabilities::none(),
