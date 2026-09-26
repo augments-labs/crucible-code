@@ -352,11 +352,16 @@ for command in --sandbox --extensions; do
     status=$(headless "$candidate" "$chome" "$command")
     [[ $status == 0 ]] || fail "candidate $command exited $status"
     # The listing names the home it was read from, and the two homes differ by
-    # construction, so the two are compared past that name. Nothing else in
-    # them can differ by path and is left alone: both runs read the same stage
-    # and the same workspace directory, and each prints paths the way its
-    # platform spells them, so a shell that rewrote a whole path it chose would
-    # rewrite nothing and compare two scratch locations as behaviour. A
+    # construction, so the two are compared past that name. The mask is that
+    # name and not a path this shell chose, so a path a binary spells its own
+    # way — /var against /private/var on macOS, a Git Bash path against the
+    # native one — is no longer normalized into an agreement it never had. The
+    # name is masked wherever it appears, path or not, so this masks more than a
+    # whole-path rewrite did: a difference made of nothing but the home's own
+    # name would go unfound. That is no behaviour to lose, the name being scratch
+    # by construction, and it is the price of not choosing a path in this shell.
+    # Every other path in the two listings is one directory both runs read, so
+    # it cancels, each binary spelling it the way its own platform does. A
     # workspace the two spell differently is left to be a difference found.
     sed "s|${chome##*/}|HOME|g" "$stage/out" >"$stage/candidate-$command.out"
     status=$(headless "$prior" "$phome" "$command")

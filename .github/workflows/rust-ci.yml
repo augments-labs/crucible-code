@@ -131,11 +131,17 @@ jobs:
           prior="$RUNNER_TEMP/prior-src/target/debug/crucible"
           [[ -x $prior ]] || prior="$prior.exe"
           scripts/sh/rollback-drill.sh --prior-binary "$prior"
+      # A second, independent gate, so it runs whatever the drill did. It builds
+      # its own previous binary in a scratch worktree and needs only the
+      # checkout and the fetched tag, so a red drill cell still reports it.
       - name: Run the rollback drill self-test
+        if: ${{ always() }}
         shell: bash
         run: scripts/sh/rollback-drill-selftest.sh
       - name: Remove the previous release worktree
         if: ${{ always() }}
         shell: bash
         run: git worktree remove --force "$RUNNER_TEMP/prior-src"
+      # A check whose only value is as a check, like the self-test above.
       - uses: ./.github/actions/check-clean-worktree
+        if: ${{ always() }}

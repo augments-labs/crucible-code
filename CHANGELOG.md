@@ -91,6 +91,15 @@ change in any release with no deprecation period.
   64 frames read past while waiting and the same errors as the blocking calls,
   and an answer to a call given up on is refused rather than taken for the
   next. Nothing uses them yet, so nothing a user runs behaves differently.
+- **Check the effective configuration without starting anything.**
+  `crucible config check [--json]` reads the three configuration files the way
+  a startup would and resolves them the way it would, then reports each file's
+  provenance with the schema identity and the bounded failures that made it
+  invalid, leaving 0 where everything holds and 1 where a file is invalid or
+  unreadable. Nothing is written, launched or dialled on the way, and no secret
+  or credential value reaches either the human report or the JSON one;
+  non-secret values a failure sentence quotes — a path, a rule's text, a
+  rejected choice — reach both by design.
 
 ### Changed
 
