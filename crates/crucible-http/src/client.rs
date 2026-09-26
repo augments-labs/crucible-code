@@ -12,8 +12,9 @@
 //! it began, so a slow upload does not use up the time a slow answer needs.
 //! The head's own minute ends when hyper has encoded it, before it is written,
 //! so writing it counts towards the body's or the answer's minute: about two
-//! minutes before the response head at worst, where the previous client gave
-//! three.
+//! minutes before the response head at worst, where `ureq`, the client this
+//! tree no longer depends on, gave three. A request still waiting on a slow
+//! answer is now given up on about a minute sooner.
 //!
 //! What the steps measure is what hyper has been handed, which can lead what
 //! the socket has taken by hyper's 64 KiB buffer and one more 16 KiB frame,
@@ -41,9 +42,11 @@ use crate::dns::{Lookups, PlainLookups};
 use crate::proxy::{ProxyEnv, Route, select};
 use crate::tasks::Tasks;
 
-/// The `user-agent` a request is sent with when it names none: what the
-/// previous client sent, so a server sees the same user-agent. That client
-/// also added `accept: */*` to a request naming no `accept`; this one does not.
+/// The `user-agent` a request is sent with when it names none: what `ureq`, the
+/// client this tree no longer depends on, sent, so a server sees the same
+/// user-agent. `ureq` also added `accept: */*` to a request naming no `accept`;
+/// this client does not. The value is a wire string, not a version anybody here
+/// builds against.
 pub const DEFAULT_USER_AGENT: &str = "ureq/3.4.2";
 
 /// The two non-secret headers the release source asks for. They are fixed here

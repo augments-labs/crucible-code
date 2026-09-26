@@ -1,26 +1,43 @@
 //! Cross-module contracts for framework history and durable interruption.
+//!
+//! These are the records two modules of this crate hand to each other, read
+//! through the public surface only: what a journal projects for a provider, what
+//! a checkpoint validates a resume against, and what a journal without a
+//! durable result sink answers a background acceptance with. The file names this
+//! crate and `crucible-types` and no other, which is the same boundary an
+//! external store implementation is written against.
 
-use crucible_core::{
-    ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, Calibration, CallResultKey,
-    CallResultStoreError, Change, CheckpointId, Compacted, CompactionRecord, ContextError,
-    ContextPatch, ContextSnapshot, CustomEntry, CustomProjector, Diff, ExecutionCheckpoint,
-    IdempotencyKey, InputTokenUsage, InterruptionError, InvocationId, InvocationRecord,
-    InvocationState, JournalError, JournalStore, Line, MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS,
-    Message, PendingAction, PendingActions, PendingApproval, PendingExternalTool,
-    PendingHumanInput, PromptCacheFingerprint, PromptCachePolicyVersion, PromptCacheResourceId,
-    PromptCacheScopeDigest, RecordedToolOutput, RecoveryAction, ResumeDigest, ResumeEvidence,
-    ResumeScope, RunHistory, RunItem, SandboxAuditRegistry, SandboxFactKind, SandboxId,
-    SandboxLifecycle, SessionId, SessionOwner, SessionStore, StopReason, TOOL_CALL_ID_BYTES,
-    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolEffect, ToolId, ToolOutcome, ToolResult,
+use std::future::Future;
+use std::pin::Pin;
+
+use crucible_storage::{
+    ActionResolution, ApprovalDecision, CallResultKey, CallResultStoreError, CheckpointId,
+    CompactionRecord, CustomEntry, CustomProjector, ExecutionCheckpoint, IdempotencyKey,
+    InterruptionError, InvocationId, InvocationRecord, InvocationState, JournalError, JournalStore,
+    MAX_RUN_ITEM_RETAINED_BYTES, MAX_RUN_ITEMS, PendingAction, PendingActions, PendingApproval,
+    PendingExternalTool, PendingHumanInput, RecoveryAction, ResumeDigest, ResumeEvidence,
+    ResumeScope, ResumedAction, RunHistory, RunItem, SessionOwner, SessionStore, ToolEffect,
 };
-use crucible_runtime::BoxFuture;
+use crucible_types::{
+    Ancestry, CacheCheckpoint, Calibration, Change, ContextError, ContextPatch, ContextSnapshot,
+    Diff, InputTokenUsage, Line, Message, PromptCacheFingerprint, PromptCachePolicyVersion,
+    PromptCacheResourceId, PromptCacheScopeDigest, RecordedToolOutput, StopReason,
+    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolId, ToolOutcome, ToolResult,
+};
+
+/// What a waiting store method hands back, spelled out.
+///
+/// The same type as `crucible_runtime::BoxFuture`, written out because this
+/// crate names no runtime, and an implementer with no runtime of its own spells
+/// it out too.
+type Written<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 struct MemoryOnlyJournal;
 
 /// Nothing model-visible is kept: what this journal exists to answer is what a
 /// framework record and a durable result do without a session behind them.
 impl SessionStore for MemoryOnlyJournal {
-    fn session_id(&self) -> Option<SessionId> {
+    fn session_id(&self) -> Option<crucible_types::SessionId> {
         None
     }
 
@@ -28,7 +45,7 @@ impl SessionStore for MemoryOnlyJournal {
         None
     }
 
-    fn append_message<'a>(&'a self, _message: &'a Message) -> BoxFuture<'a, ()> {
+    fn append_message<'a>(&'a self, _message: &'a Message) -> Written<'a, ()> {
         Box::pin(async {})
     }
 
@@ -36,22 +53,23 @@ impl SessionStore for MemoryOnlyJournal {
         None
     }
 
-    fn contextual<'a>(
-        &'a self,
-        _patch: &'a ContextPatch,
-    ) -> BoxFuture<'a, Result<(), ContextError>> {
+    fn contextual<'a>(&'a self, _patch: &'a ContextPatch) -> Written<'a, Result<(), ContextError>> {
         Box::pin(async move { Ok(()) })
     }
 
-    fn compacted<'a>(&'a self, _replaced: usize, _recap: &'a str) -> BoxFuture<'a, ()> {
+    fn compacted<'a>(&'a self, _replaced: usize, _recap: &'a str) -> Written<'a, ()> {
         Box::pin(async {})
     }
 
-    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) -> BoxFuture<'_, ()> {
+    fn display_compacted(
+        &self,
+        _compacted: crucible_types::Compacted,
+        _pruned: bool,
+    ) -> Written<'_, ()> {
         Box::pin(async {})
     }
 
-    fn pruned<'a>(&'a self, _freed: usize, _results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+    fn pruned<'a>(&'a self, _freed: usize, _results: &'a [ToolId]) -> Written<'a, ()> {
         Box::pin(async {})
     }
 
@@ -60,11 +78,11 @@ impl SessionStore for MemoryOnlyJournal {
         _freed: usize,
         _results: &'a [ToolId],
         _notice: &'a str,
-    ) -> BoxFuture<'a, ()> {
+    ) -> Written<'a, ()> {
         Box::pin(async {})
     }
 
-    fn measured<'a>(&'a self, _calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+    fn measured<'a>(&'a self, _calibration: &'a Calibration) -> Written<'a, ()> {
         Box::pin(async {})
     }
 
@@ -74,7 +92,28 @@ impl SessionStore for MemoryOnlyJournal {
 }
 
 impl JournalStore for MemoryOnlyJournal {
-    fn append_run_item(&self, _item: &RunItem) {}
+    fn append_run_item<'a>(&'a self, _item: &'a RunItem) -> Written<'a, ()> {
+        Box::pin(async {})
+    }
+}
+
+/// Asks a future once and evaluates to its answer.
+///
+/// Every store in this file keeps in memory what it is told, so each answers
+/// the first time it is asked; one that would have had to wait fails the test
+/// at the line that asked, rather than hanging.
+#[allow(clippy::panic)] // A store that would wait is a test failure.
+#[track_caller]
+fn at_once<T>(mut future: Written<'_, T>) -> T {
+    use std::task::{Context, Poll, Waker};
+
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(answer) => answer,
+        Poll::Pending => panic!("an in-memory store answers when it is first asked"),
+    }
 }
 
 #[test]
@@ -109,35 +148,8 @@ fn journals_without_a_durable_result_sink_fail_closed() {
     };
 
     assert_eq!(
-        MemoryOnlyJournal.put_call_result(key, &result),
+        at_once(MemoryOnlyJournal.put_call_result(key, &result)),
         Err(CallResultStoreError::Unavailable)
-    );
-}
-
-#[test]
-fn the_longest_call_a_sandbox_audit_accepts_still_reaches_the_journal() {
-    let call = ToolId::new("x".repeat(TOOL_CALL_ID_BYTES));
-    let collector = SandboxAuditRegistry::new()
-        .collector(Ancestry::new(), call)
-        .expect("the audit ceiling admits this identity");
-    collector
-        .record(
-            SandboxId::new(),
-            SandboxFactKind::Lifecycle(SandboxLifecycle::Prepared),
-        )
-        .expect("a fact under an admitted identity");
-    let records = collector.records().expect("the recorded fact");
-    let [record] = records.as_ref() else {
-        panic!("exactly one fact")
-    };
-
-    assert!(
-        RunItem::sandbox(
-            record.ancestry(),
-            record.call().clone(),
-            record.fact().clone()
-        )
-        .is_ok()
     );
 }
 
@@ -411,7 +423,7 @@ fn rejected_cancelled_and_external_actions_resume_to_exactly_one_tool_result() {
     let results = [rejected_id, cancelled_id, external_id]
         .into_iter()
         .map(|id| pending.resume(id).expect("resolved action resumes"))
-        .filter_map(crucible_core::ResumedAction::into_tool_result)
+        .filter_map(ResumedAction::into_tool_result)
         .collect::<Vec<_>>();
     assert_eq!(results.len(), 3);
     assert_eq!(

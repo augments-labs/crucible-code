@@ -94,8 +94,10 @@ struct KeepingJournal(Mutex<Vec<RunItem>>);
 journal_only!(KeepingJournal);
 
 impl JournalStore for KeepingJournal {
-    fn append_run_item(&self, item: &RunItem) {
-        self.0.lock().unwrap().push(item.clone());
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(item.clone());
+        })
     }
 }
 
@@ -108,17 +110,21 @@ struct ResultJournal {
 journal_only!(ResultJournal);
 
 impl JournalStore for ResultJournal {
-    fn append_run_item(&self, item: &RunItem) {
-        self.items.lock().unwrap().push(item.clone());
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.items.lock().unwrap().push(item.clone());
+        })
     }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        self.results.lock().unwrap().push((key, result.clone()));
-        Ok(CallResultReceipt::from_digest([0x44; 32]))
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            self.results.lock().unwrap().push((key, result.clone()));
+            Ok(CallResultReceipt::from_digest([0x44; 32]))
+        })
     }
 }
 
@@ -349,14 +355,16 @@ struct FailingResultJournal;
 journal_only!(FailingResultJournal);
 
 impl JournalStore for FailingResultJournal {
-    fn append_run_item(&self, _item: &RunItem) {}
+    fn append_run_item<'a>(&'a self, _item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         _key: CallResultKey,
-        _result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        Err(CallResultStoreError::Storage)
+        _result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async { Err(CallResultStoreError::Storage) })
     }
 }
 

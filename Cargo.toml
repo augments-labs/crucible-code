@@ -160,18 +160,13 @@ insta = "=1.48.0"
 crossterm = { version = "=0.29.0", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 
 # The sandbox's host proxy parses bounded HTTP/1 headers and chunk framing with
-# caller-owned buffers; std has no HTTP parser. Already used by ureq-proto.
+# caller-owned buffers; std has no HTTP parser. Already in the tree under
+# `hyper`, which parses every request and response head it is handed.
 httparse = "=1.10.1"
 # URI authorities and header names at the proxy boundary need a complete HTTP
-# grammar, including bracketed IPv6 and absolute-form targets. Already in ureq.
+# grammar, including bracketed IPv6 and absolute-form targets. Already in the
+# tree under `hyper` and `http-body`.
 http = "=1.5.0"
-
-# HTTP. Blocking by design. Brings `rustls` rather than linking a system
-# OpenSSL, so a release binary is the same on every machine. Confined to one
-# file behind `Transport`. Default features minus `gzip`: a response here is an
-# event stream that is read as it arrives, and compressing one buys nothing for
-# the `flate2` it costs.
-ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 
 # HTTP, asynchronously: a client whose request waits on the runtime rather than
 # on a thread of its own. `hyper` is the
@@ -199,7 +194,8 @@ rustls = { version = "=0.23.45", default-features = false, features = ["std", "t
 tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
 # The Mozilla root set a server's certificate is checked against, compiled in:
 # no system store, bundle or platform verifier is read, so a certificate is
-# trusted the same way on every machine. Already in the tree under `ureq`.
+# trusted the same way on every machine. Named here for `crucible-http`, the one
+# crate that builds a client to verify a recipient.
 webpki-roots = "=1.0.9"
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
@@ -314,10 +310,10 @@ signal-hook = { version = "=0.3.18", default-features = false }
 # with the inheritance from the user profile switched off. Nothing in `std`
 # reaches that call and no safe wrapper is maintained — the one on crates.io was
 # last published in 2021, which is not what security-critical code should be
-# resting on. Already in the tree as a transitive dependency of `ureq` and
-# `ignore` for Windows targets, so it costs no crate that was not being compiled
-# already. Every call stays behind the target-gated boundary of the crate that
-# made it; the manifests naming this crate are the list of those boundaries.
+# resting on. Already in the tree for Windows targets under `hyper`, `tokio` and
+# `ignore`, so it costs no crate that was not being compiled already. Every call
+# stays behind the target-gated boundary of the crate that made it; the
+# manifests naming this crate are the list of those boundaries.
 # The WDK file-system surface contributes the one ntdll rename call whose
 # directory-relative contract the Win32 wrapper does not honor consistently;
 # JobObjects, ToolHelp and Pipes contain and poll spawned command descendants.
@@ -566,13 +562,14 @@ strip = "symbols"
 # Unwinding, left at the default and written down because the tempting change is
 # to abort: panics are denied by lint here, so the machinery reads as dead
 # weight. It is not. The lint reaches this workspace and not crossterm's reader,
-# ureq, or a failed allocation — and raw mode, mouse reporting and the tab title
-# are handed back by `Drop`, which an abort does not run. The transcript survives
-# either way, being an append-only log already on disk; the terminal does not,
-# and the user's remedy is `reset`, which most people do not know. Unwinding also
-# makes `Fatal::Lost` reachable, so a turn thread that dies becomes an exit code
-# from `main` rather than an abort in the middle of a frame. The price is about
-# 465 KB of landing pads on a 5 MB binary and nothing at run time.
+# hyper's, tokio's, or a failed allocation — and raw mode, mouse reporting and
+# the tab title are handed back by `Drop`, which an abort does not run. The
+# transcript survives either way, being an append-only log already on disk; the
+# terminal does not, and the user's remedy is `reset`, which most people do not
+# know. Unwinding also makes `Fatal::Lost` reachable, so a turn thread that dies
+# becomes an exit code from `main` rather than an abort in the middle of a
+# frame. The price is about 465 KB of landing pads on a 5 MB binary and nothing
+# at run time.
 #
 # `crucible-tui`'s guards refuse to compile against `panic = "abort"`, so this
 # cannot be quietly undone by a profile somewhere else.

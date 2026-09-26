@@ -1397,8 +1397,10 @@ fn a_session_written_through_its_store_writes_down_the_same_record() {
         let framework = item("the framework's own copy of a prompt");
         let said = framework.model_message().expect("a conversation item");
         store.append_message(said).await;
-        store.append_run_item(&framework);
-        store.append_run_item(&item("journal only, no conversation line"));
+        store.append_run_item(&framework).await;
+        store
+            .append_run_item(&item("journal only, no conversation line"))
+            .await;
         store
             .compacted(3, "they renamed a field and found its readers")
             .await;

@@ -1,5 +1,5 @@
-//! Framework history: what a journal keeps, and the keys and receipts it keeps
-//! them beside.
+//! Framework history: what a journal keeps, the keys and receipts it keeps
+//! them beside, and the seam a runner appends them through.
 //!
 //! A provider receives the deliberately closed [`Message`] vocabulary. The
 //! framework needs a wider history for attempts, interruptions, invocation
@@ -13,22 +13,32 @@
 //! validates and bounds itself from values in `crucible-types`, and from the
 //! records beside it, so the crate compiles for an external store that will
 //! never run a turn.
+//!
+//! So the seam is here too, beside the records it writes: [`JournalStore`] is
+//! what a runner and an invocation worker append through, and holding it
+//! beside the values it carries is what lets a store implementation be written
+//! against one crate that names nothing but `crucible-types`. Every write hands
+//! back a boxed `Send` future borrowing no more than it was given, because a
+//! write that has to wait for the store is part of what the store is.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::future;
 
 use sha2::{Digest as _, Sha256};
 
 use crucible_types::{
     Ancestry, Diff, Message, PromptCacheFact, RecordedToolOutput, StopReason, TOOL_ARGUMENT_BYTES,
-    TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESULT_BYTES, ToolCall, ToolId, Transcript,
-    is_checkpoint_word,
+    TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, TOOL_RESULT_BYTES, ToolCall, ToolId, ToolResult,
+    Transcript, is_checkpoint_word,
 };
 
+use crate::BoxFuture;
 use crate::interruption::{
     InvocationId, InvocationRecord, InvocationState, JournalEntryId, PendingAction,
 };
 use crate::sandbox::SandboxFact;
+use crate::session::SessionStore;
 
 const COMPACTION_DIGEST_DOMAIN: &[u8] = b"crucible:journal-compaction:v1\0";
 const CALL_RESULT_KEY_DOMAIN: &[u8] = b"crucible:call-result-key:v1\0";
@@ -608,6 +618,71 @@ impl fmt::Debug for RunItem {
                 .finish(),
             Self::Compaction(compaction) => f.debug_tuple("Compaction").field(compaction).finish(),
             Self::Custom(entry) => f.debug_tuple("Custom").field(entry).finish(),
+        }
+    }
+}
+
+/// The framework-history writing seam used by runners and invocation workers.
+///
+/// Above [`SessionStore`] rather than beside it, because framework history and
+/// conversation are two readings of one turn: a journal record that named a
+/// message the conversation never kept, or a conversation that went on past the
+/// journal, would be a session whose two halves disagree about what happened. A
+/// runner therefore holds one store and writes both through it.
+///
+/// Every write hands back a boxed `Send` future borrowing no more than it was
+/// given, so a store that takes its records durably is waited for rather than
+/// assumed.
+///
+/// `append_run_item` answers the first time it is asked. A runner writes a
+/// call's durable result and then the record that says the call finished, both
+/// through this seam, so a store that answered `Pending` on the second would
+/// let the turn be dropped with the sidecar written and the record not, and a
+/// resume would find a call whose result exists and whose outcome was never
+/// journaled. A store that has to wait for a remote service waits inside the
+/// write.
+pub trait JournalStore: SessionStore + Send + Sync {
+    /// Appends one already bounded framework record.
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()>;
+
+    /// Durably inserts one source-qualified result exactly once.
+    ///
+    /// Implementations must return the same receipt when the same key and
+    /// logical result are repeated, and [`CallResultStoreError::Conflict`]
+    /// when the key is already bound to different content. The default keeps
+    /// in-memory and test journals fail closed at a background-acceptance
+    /// boundary instead of pretending they are durable.
+    ///
+    /// # Errors
+    ///
+    /// Storage is unavailable, the key conflicts with different content, the
+    /// result is invalid, or the protected write could not complete durably.
+    fn put_call_result<'a>(
+        &'a self,
+        _key: CallResultKey,
+        _result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(future::ready(Err(CallResultStoreError::Unavailable)))
+    }
+
+    /// Removes accepted sidecars only after their ordinary result message and
+    /// companion journal metadata have crossed the sink's durability barrier.
+    ///
+    /// The default is for in-memory journals, which cannot own sidecars.
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(future::ready(()))
+    }
+}
+
+impl fmt::Debug for dyn JournalStore {
+    /// Names the session and nothing else.
+    ///
+    /// A store's contents are the conversation; printing them here would put a
+    /// transcript into any structure that derives `Debug` over one.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.session_id() {
+            Some(id) => write!(f, "JournalStore({})", id.as_str()),
+            None => f.write_str("JournalStore(unrecorded)"),
         }
     }
 }

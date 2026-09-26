@@ -12,7 +12,9 @@ pub(crate) mod http;
 
 use std::error::Error as _;
 use std::fmt;
-use std::io::{self, Read};
+use std::io;
+#[cfg(test)]
+use std::io::Read;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -60,23 +62,6 @@ impl TransportError {
             },
             Self::Unreachable(problem) => ProviderError::Transport { provider, problem },
         }
-    }
-}
-
-/// What came back.
-pub struct Response {
-    /// The HTTP status.
-    pub status: u16,
-    /// The body, still arriving.
-    pub body: Box<dyn Read + Send>,
-}
-
-impl fmt::Debug for Response {
-    /// By hand, because a body being read cannot be shown without consuming it.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Response")
-            .field("status", &self.status)
-            .finish_non_exhaustive()
     }
 }
 
@@ -142,7 +127,7 @@ impl PostResponse {
 }
 
 impl fmt::Debug for PostResponse {
-    /// By hand, for the same reason as [`Response`].
+    /// By hand, because a body being read cannot be shown without consuming it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PostResponse")
             .field("status", &self.status)
@@ -338,6 +323,20 @@ impl Replay {
         }
     }
 
+    /// How many requests reached this transport, so a test can say that none
+    /// did. The absence of a request is the harder half of a guard to show, and
+    /// `sent` cannot show it: a record with nothing in it and a record that
+    /// cannot be read both answer a `Sent` empty in every field, and an empty
+    /// answer does not say which of the two it is.
+    ///
+    /// `None` when the count cannot be read at all, which is not the same claim
+    /// as zero and must not be read as it. The lock is only poisoned by a panic
+    /// while it is held, so the state is rare, and a caller acting on the
+    /// absence of a request is the one caller that cannot afford to guess at it.
+    pub(crate) fn sent_count(&self) -> Option<usize> {
+        self.sent.lock().ok().map(|sent| sent.len())
+    }
+
     /// The last request made, for asserting on what went out.
     pub(crate) fn sent(&self) -> Sent {
         self.sent
@@ -349,6 +348,17 @@ impl Replay {
                 headers: Vec::new(),
                 body: String::new(),
             })
+    }
+
+    /// Poisons the record of what was sent, so a test can show that a count it
+    /// cannot give is not read as a count of nothing.
+    ///
+    /// A `Mutex` is poisoned by a panic while it is held, and that is the only
+    /// way to reach the state, so the unwind is here and the caller catches it.
+    /// The flag is what outlives the call.
+    pub(crate) fn poison(&self) {
+        let _held = self.sent.lock();
+        panic!("poison the record of what the transport was asked for");
     }
 }
 

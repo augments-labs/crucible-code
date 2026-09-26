@@ -4,13 +4,13 @@
       "id": "CASE-TURN-PROJECTION-ANSWERED",
       "family": "turn",
       "obligation": "Every provider call is answered exactly once before the projection is handed on.",
-      "package": "crucible-core",
+      "package": "crucible-storage",
       "target": {
         "kind": "test",
         "name": "journal_interruption"
       },
       "case": "provider_projection_refuses_an_unanswered_or_twice_answered_call",
-      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "source": "crates/crucible-storage/tests/journal_interruption.rs",
       "body_sha256": "42bbc97a37673839a5f8affb53fdf5c35c465ac9748a7da193ae11d2cc0d0eb6",
       "platforms": [
         "linux",
@@ -627,13 +627,13 @@
       "id": "CASE-RECOVERY-CRASH-WINDOWS",
       "family": "recovery",
       "obligation": "Invocation recovery distinguishes all three crash windows.",
-      "package": "crucible-core",
+      "package": "crucible-storage",
       "target": {
         "kind": "test",
         "name": "journal_interruption"
       },
       "case": "invocation_recovery_distinguishes_all_three_crash_windows",
-      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "source": "crates/crucible-storage/tests/journal_interruption.rs",
       "body_sha256": "ec2a3c87289fc0d032610ad203280d2b08200586764968af94982b83a4234986",
       "platforms": [
         "linux",
@@ -645,13 +645,13 @@
       "id": "CASE-RECOVERY-EXPIRED-APPROVAL",
       "family": "recovery",
       "obligation": "Resume refuses an expired approval that has not executed.",
-      "package": "crucible-core",
+      "package": "crucible-storage",
       "target": {
         "kind": "test",
         "name": "journal_interruption"
       },
       "case": "checkpoint_resume_refuses_an_expired_approval_that_has_not_executed",
-      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "source": "crates/crucible-storage/tests/journal_interruption.rs",
       "body_sha256": "700924dc7e93971d7bc9b481955fc655bb14658ad410a4021d23366abe8fe256",
       "platforms": [
         "linux",
@@ -670,7 +670,7 @@
       },
       "case": "obsolete_checkpoint_formats_are_rejected_without_compatibility_aliases",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "b03cd66c9d078c87cf0aa431cc5d11c5c910df1aabfec7071f74bccc5433799f",
+      "body_sha256": "9ba98530ac3180330626b60973110c2ca4c4b68a46d05e9df7c6c4368f8b3cda",
       "platforms": [
         "linux",
         "macos",
@@ -688,7 +688,7 @@
       },
       "case": "sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "c75e5370a48d4a695095f3b8621e9fc5b1b5603aa98f1c25b8d41c57934718f8",
+      "body_sha256": "13b25194af6ee2c37efe6ab0f157d971af7f32833c8593d7b65c5cca1860398f",
       "platforms": [
         "linux",
         "macos",
@@ -706,7 +706,7 @@
       },
       "case": "every_pending_outcome_survives_stop_and_resume_with_one_provider_result",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "3aca02f53a9bd70e62c9ef00bf0aa300e6b71bd90d8a1b4be68fe21cfa769094",
+      "body_sha256": "7c1ba3c1ad1f03d1c9f5cbe47891db11f38fc8af4a74f90ee117f69c98a54767",
       "platforms": [
         "linux",
         "macos",

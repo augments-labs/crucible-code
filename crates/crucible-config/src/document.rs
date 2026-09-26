@@ -11,7 +11,7 @@ use crate::settings::prompt_cache::{self, PromptCacheLayer};
 use crate::settings::sandbox::{self, SandboxLayer};
 use crate::shape::DOCUMENT;
 
-mod check;
+pub(crate) mod check;
 mod rules;
 
 use check::{Reader, Spot};

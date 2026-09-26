@@ -59,6 +59,18 @@ pub struct RunContext<'a> {
     /// Whether somebody has asked this run to stop.
     cancel: &'a Cancel,
 
+    /// The stop scope this run answers to, where one started it.
+    ///
+    /// `None` on a root: a root answers to the flag it was handed. Set on a
+    /// descendant to a child of the scope the run that started it answers
+    /// to, so requesting the descendant stops it without reaching the run
+    /// that started it, while a request of the
+    /// parent still reaches down. Owned here rather than borrowed beside
+    /// `cancel` because no caller holds it: the scope exists for this run
+    /// alone, and handing it out would let a second run answer to a stop
+    /// minted for the first.
+    scope: Option<Cancel>,
+
     /// Lines the reader typed while the run was working.
     steer: &'a Steer,
 
@@ -89,6 +101,7 @@ impl<'a> RunContext<'a> {
             policy,
             to: events,
             cancel,
+            scope: None,
             steer,
             aside,
         }
@@ -112,12 +125,35 @@ impl<'a> RunContext<'a> {
     /// never back on. [`Compaction::ask_on_resume`] is this run's outright and
     /// a descendant's is dropped whichever way the two differ.
     ///
-    /// The services are handed straight down: a descendant stops when its
-    /// parent is stopped, and its progress reaches the same screen. They are
-    /// private fields with read-only accessors, so that is a property of the
-    /// type rather than of what its callers remember to do. Nothing calls this
-    /// yet — it is here because the ancestry and the narrowing are the two
-    /// things that have to be right before anything does.
+    /// The spend bound narrows differently again: it is reserved, not merely
+    /// capped. What the descendant is granted leaves this run — a descendant
+    /// granted sixty of a hundred leaves forty behind, and one granted the
+    /// whole of what is left leaves nothing. Two descendants started in turn
+    /// split the one pool they were started under, so the tree as a whole
+    /// cannot outspend the root it descends from. Only the spend bound is a
+    /// pool: it is the one figure denominated in units the tree consumes
+    /// additively, while the byte ceilings bound one turn's peak memory and
+    /// every other figure bounds behaviour a descendant inherits. An unbounded
+    /// run grants without depleting, because unbounded minus a grant is still
+    /// unbounded.
+    ///
+    /// Taking `&mut self` is that reservation: starting a run rewrites what
+    /// the run that started it may still spend.
+    ///
+    /// The descendant answers to a stop scope of its own, a child of the
+    /// scope this run answers to. Requesting the descendant stops it without stopping this
+    /// run; requesting this run still reaches the descendant, because the
+    /// scope observes its parent. The scope is owned by the descendant's
+    /// context, so [`RunContext::cancel`] answers with it rather than with
+    /// the flag the descendant was started under.
+    ///
+    /// The services are handed straight down otherwise: a descendant's
+    /// progress reaches the same screen, and it reads the same typed lines
+    /// and notes. They are private fields with read-only accessors, so that
+    /// is a property of the type rather than of what its callers remember to
+    /// do. Nothing calls this yet — it is here because the ancestry, the
+    /// reservation and the narrowing are the three things that have to be
+    /// right before anything does.
     ///
     /// Not published while that is true. A descendant is a run this crate
     /// starts, and one minted from outside would deepen the ancestry of every
@@ -135,12 +171,21 @@ impl<'a> RunContext<'a> {
         not(test),
         expect(dead_code, reason = "the first caller is a later phase's")
     )]
-    pub(crate) fn child(&self, wanted: RunPolicy) -> Self {
+    pub(crate) fn child(&mut self, wanted: RunPolicy) -> Self {
+        let policy = self.policy.narrowed(wanted);
+        // The grant leaves the holder: `narrowed` capped it at what this run
+        // holds, so the remainder is what is left. An unbounded holder grants
+        // without depleting.
+        self.policy.bounds.spend = match (self.policy.bounds.spend, policy.bounds.spend) {
+            (Some(held), Some(granted)) => Some(held.saturating_sub(granted)),
+            (remaining, _) => remaining,
+        };
         Self {
             ancestry: self.ancestry.child(),
-            policy: self.policy.narrowed(wanted),
+            policy,
             to: self.to,
             cancel: self.cancel,
+            scope: Some(self.cancel().child()),
             steer: self.steer,
             aside: self.aside,
         }
@@ -151,7 +196,11 @@ impl<'a> RunContext<'a> {
     /// Not [`RunContext::child`]: no new run is started and the ancestry is
     /// kept, so the events a turn posts and the result it returns still name
     /// one run. What changes is only the policy, by the same rule a descendant
-    /// gets — [`RunPolicy::narrowed`], with the holder on the left.
+    /// gets — [`RunPolicy::narrowed`], with the holder on the left — and
+    /// without the reservation [`RunContext::child`] keeps: holding spends
+    /// nothing, so nothing leaves. The stop scope travels with the run for the
+    /// same reason the ancestry does: a held descendant answers to the scope
+    /// it was started under, not to the flag that scope observes.
     ///
     /// This is how the session's own policy becomes a ceiling rather than a
     /// starting point. A context is minted from the session's policy at the
@@ -167,6 +216,7 @@ impl<'a> RunContext<'a> {
             policy: ceiling.narrowed(self.policy),
             to: self.to,
             cancel: self.cancel,
+            scope: self.scope.clone(),
             steer: self.steer,
             aside: self.aside,
         }
@@ -206,13 +256,15 @@ impl<'a> RunContext<'a> {
 
     /// Whether somebody has asked this run to stop.
     ///
-    /// Read-only for the same reason the policy is: a descendant that could
-    /// be pointed at a different flag would go on working after the run that
-    /// started it was stopped, and a descendant is handed this one down
-    /// specifically so that cannot happen.
+    /// A descendant answers with the scope it was started under rather than
+    /// with the flag that scope observes, so stopping the descendant ends it
+    /// without ending the run around it. Read-only for the same reason the
+    /// policy is: a descendant that could be pointed at a different flag would
+    /// go on working after the run that started it was stopped, and a
+    /// descendant is handed this one down specifically so that cannot happen.
     #[must_use]
-    pub const fn cancel(&self) -> &'a Cancel {
-        self.cancel
+    pub fn cancel(&self) -> &Cancel {
+        self.scope.as_ref().unwrap_or(self.cancel)
     }
 
     /// Lines the reader typed while this run was working.
@@ -294,7 +346,7 @@ mod tests {
     #[test]
     fn a_run_a_run_started_names_it_and_keeps_the_root() {
         let nowhere = Nowhere::new();
-        let run = nowhere.context(RunPolicy::default());
+        let mut run = nowhere.context(RunPolicy::default());
         let child = run.child(RunPolicy::default());
 
         assert_eq!(child.ancestry().parent(), Some(run.run()));
@@ -310,7 +362,7 @@ mod tests {
     #[test]
     fn a_run_a_run_started_cannot_spend_more_than_the_one_that_started_it() {
         let nowhere = Nowhere::new();
-        let run = nowhere.context(RunPolicy {
+        let mut run = nowhere.context(RunPolicy {
             bounds: Bounds {
                 response_bytes: 1024,
                 tool_output_bytes: 512,
@@ -358,6 +410,202 @@ mod tests {
         assert_eq!(child.policy().retry.first_pause, Duration::from_millis(250));
         assert_eq!(child.policy().compaction.keep_tokens, 1_000);
         assert_eq!(child.policy().compaction.recap_tokens, 256);
+    }
+
+    /// A spend figure for one run: everything else this test's parent holds is
+    /// the default, so the assertions below read only what reservation moves.
+    fn spending(parent: Option<u64>) -> RunPolicy {
+        RunPolicy {
+            bounds: Bounds {
+                spend: parent,
+                ..Bounds::default()
+            },
+            ..RunPolicy::default()
+        }
+    }
+
+    #[test]
+    fn a_child_granted_spend_leaves_its_parent_with_the_remainder() {
+        // The reservation: what the descendant was granted is no longer the
+        // run that started it's to spend. A parent that kept its whole ceiling
+        // beside the grant would let the tree outspend the root.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(spending(Some(100)));
+
+        let child = run.child(spending(Some(60)));
+
+        assert_eq!(
+            child.policy().bounds.spend,
+            Some(60),
+            "a descendant was granted more than it asked for"
+        );
+        assert_eq!(
+            run.policy().bounds.spend,
+            Some(40),
+            "starting a descendant left the run that started it with its whole ceiling"
+        );
+    }
+
+    #[test]
+    fn a_child_that_asks_for_more_spend_than_its_parent_holds_gets_what_is_left() {
+        // Asking for more is not refused, by the narrowing rule: the
+        // descendant gets what the run holds. Reservation is what that takes
+        // away — the whole of what is left, down to nothing.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(spending(Some(40)));
+
+        let child = run.child(spending(None));
+
+        assert_eq!(
+            child.policy().bounds.spend,
+            Some(40),
+            "an unbounded ask under a bounded run came back unbounded"
+        );
+        assert_eq!(
+            run.policy().bounds.spend,
+            Some(0),
+            "a descendant granted the whole remainder left its parent able to spend"
+        );
+    }
+
+    #[test]
+    fn an_unbounded_parent_grants_spend_without_depleting() {
+        // Reserving from no bound is not spending it down: unbounded minus a
+        // grant is still unbounded, so the next descendant asks against the
+        // same absence.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(spending(None));
+
+        let one = run.child(spending(Some(50)));
+        let two = run.child(spending(Some(50)));
+
+        assert_eq!(one.policy().bounds.spend, Some(50));
+        assert_eq!(two.policy().bounds.spend, Some(50));
+        assert_eq!(
+            run.policy().bounds.spend,
+            None,
+            "granting from an unbounded run bounded it"
+        );
+    }
+
+    #[test]
+    fn two_children_started_in_turn_split_the_one_pool_they_were_started_under() {
+        // The count the tree holds: the second descendant asks against what
+        // the first left, so it cannot be granted what is already spoken for.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(spending(Some(100)));
+
+        let one = run.child(spending(Some(60)));
+        let two = run.child(spending(Some(60)));
+
+        assert_eq!(one.policy().bounds.spend, Some(60));
+        assert_eq!(
+            two.policy().bounds.spend,
+            Some(40),
+            "a second descendant was granted spend the first had already reserved"
+        );
+        assert_eq!(run.policy().bounds.spend, Some(0));
+    }
+
+    #[test]
+    fn requesting_a_descendant_does_not_stop_the_run_that_started_it() {
+        // The narrowing: a descendant answers to a scope of its own, so
+        // stopping it ends it without ending the run around it.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(RunPolicy::default());
+
+        let child = run.child(RunPolicy::default());
+        child.cancel().request();
+
+        assert!(
+            child.cancel().requested(),
+            "requesting a descendant left the descendant running"
+        );
+        assert!(
+            !run.cancel().requested(),
+            "stopping a descendant stopped the run that started it"
+        );
+    }
+
+    #[test]
+    fn a_request_of_the_parent_still_reaches_its_descendant() {
+        // The other half of the narrowing: the descendant's scope observes
+        // its parent, so stopping the run ends what it started.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(RunPolicy::default());
+
+        let child = run.child(RunPolicy::default());
+        run.cancel().request();
+
+        assert!(
+            child.cancel().requested(),
+            "a request of the run did not reach its descendant"
+        );
+    }
+
+    #[test]
+    fn stopping_an_intermediate_run_stops_its_descendant_without_stopping_the_root() {
+        // Depth 2 chains: the grandchild's scope observes the intermediate
+        // scope rather than the root directly, so requesting the run in the
+        // middle reaches what it started without reaching what started it.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(RunPolicy::default());
+
+        let mut child = run.child(RunPolicy::default());
+        let grandchild = child.child(RunPolicy::default());
+        child.cancel().request();
+
+        assert!(
+            grandchild.cancel().requested(),
+            "stopping an intermediate run left its descendant running"
+        );
+        assert!(
+            !run.cancel().requested(),
+            "stopping an intermediate run stopped the root"
+        );
+    }
+
+    #[test]
+    fn holding_a_run_to_a_ceiling_keeps_the_stop_scope_it_already_had() {
+        // Not `child`: holding re-narrows the run rather than starting one,
+        // so the scope travels with it — stopping through the held handle
+        // stops the descendant, and neither stops the run that started it.
+        let nowhere = Nowhere::new();
+        let mut run = nowhere.context(RunPolicy::default());
+
+        let child = run.child(RunPolicy::default());
+        let held = child.held_to(spending(Some(10)));
+
+        assert_eq!(held.policy().bounds.spend, Some(10));
+        held.cancel().request();
+
+        assert!(
+            child.cancel().requested(),
+            "a held run answered to a different stop than the run it holds"
+        );
+        assert!(
+            !run.cancel().requested(),
+            "stopping a held descendant stopped the run that started it"
+        );
+    }
+
+    #[test]
+    fn a_reserved_budget_and_a_narrowed_stop_hold_across_an_await() {
+        // The turn that reads these is asynchronous: what the reservation
+        // granted and the scope narrowed must be what the turn still sees
+        // after a suspension point, not only at the moment of minting.
+        crate::fake::Awaited::awaited(async {
+            let nowhere = Nowhere::new();
+            let mut run = nowhere.context(spending(Some(100)));
+
+            let child = run.child(spending(Some(60)));
+            tokio::task::yield_now().await;
+
+            assert_eq!(child.policy().bounds.spend, Some(60));
+            assert_eq!(run.policy().bounds.spend, Some(40));
+            child.cancel().request();
+            assert!(!run.cancel().requested());
+        });
     }
 
     #[test]
@@ -448,7 +696,7 @@ mod tests {
         // and an inverted `narrowed` shows up here rather than in whichever
         // caller first starts a descendant.
         let nowhere = Nowhere::new();
-        let run = nowhere.context(RunPolicy::default());
+        let mut run = nowhere.context(RunPolicy::default());
 
         let child = run.child(RunPolicy {
             compaction: Compaction {
@@ -468,7 +716,7 @@ mod tests {
     #[test]
     fn the_services_a_run_was_given_are_the_ones_it_hands_down() {
         let nowhere = Nowhere::new();
-        let run = nowhere.context(RunPolicy::default());
+        let mut run = nowhere.context(RunPolicy::default());
         let child = run.child(RunPolicy::default());
 
         // All four, not the one that is easiest to reach: the name claims the
@@ -517,7 +765,7 @@ mod tests {
         // assertion that has to exist before there is one, because an event
         // already drawn was drawn without saying whose it was.
         let nowhere = Nowhere::new();
-        let run = nowhere.context(RunPolicy::default());
+        let mut run = nowhere.context(RunPolicy::default());
         let child = run.child(RunPolicy::default());
 
         child.reporting().post(Event::Delta {
