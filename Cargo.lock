@@ -480,6 +480,7 @@ version = "0.42.0"
 dependencies = [
  "crucible-core",
  "crucible-models",
+ "libc",
  "serde_json",
  "thiserror",
 ]

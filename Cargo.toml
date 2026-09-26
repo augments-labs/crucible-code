@@ -293,8 +293,12 @@ rustix = { version = "=1.1.5", features = ["fs"] }
 # workload child, where bind/listen and io_uring network setup are forbidden.
 seccompiler = { version = "=0.5.0", default-features = false }
 
-# Supplies kernel syscall numbers seccompiler does not name on every supported
-# Linux architecture; the workspace already locks this exact libc.
+# Names the platform constants a `std` call takes as a raw integer and never
+# spells: the `O_NONBLOCK` open flag `std` carries but does not name, and the
+# kernel syscall numbers seccompiler does not name on every supported Linux
+# architecture. The open itself is `std`'s, which supplies it, so this is here
+# for the names alone and brings no open of its own; the workspace already
+# locks this exact libc, and both edges are what is compiled.
 libc = "=0.2.189"
 
 # Being told to stop from outside. A closed window or a `kill` arrives as a
