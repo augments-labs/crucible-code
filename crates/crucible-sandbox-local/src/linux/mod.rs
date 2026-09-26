@@ -34,6 +34,7 @@ use crucible_sandbox::{
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
     SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxInvocationMode,
     SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRead, SandboxRequest, SandboxSession,
+    confined_inspection,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -71,7 +72,7 @@ pub(super) fn prepare(
     request.negotiate(backend.capabilities())?;
     let view = command::prepare(&request)?;
 
-    let inspection = SandboxInspection::confined_for_request(
+    let inspection = confined_inspection(
         backend.identity().clone(),
         backend.capabilities().clone(),
         &request,

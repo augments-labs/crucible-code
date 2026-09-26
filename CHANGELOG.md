@@ -86,6 +86,19 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The redacted sandbox records a journal and a checkpoint keep are owned by
+  `crucible-storage`.** `SandboxFact`, `SandboxInspection`, the negotiated
+  capability matrix and the rest of that vocabulary now live beside the ports
+  that store them, together with `RunItem`, `RunHistory`,
+  `ExecutionCheckpoint` and the values a resume is validated against, so a store
+  compiles and reads a session back with no sandbox in the build;
+  `crucible-core` re-exports each name from its new home and
+  `crucible-sandbox` re-exports the records it still hands out, so a consumer
+  keeps one import. An inspection is now built by `inspection`,
+  `confined_inspection` or `unconfined_inspection` instead of a method on
+  `SandboxInspection`, and `CacheCheckpoint::new` reports a
+  `CacheCheckpointError` rather than `InterruptionError`; session files and
+  checkpoints are written and read exactly as before.
 - **A guardrail's name and reason are kept to a ceiling.** A refusal, a check
   that could not decide and a refused duplicate name keep at most 256 bytes of
   the name and 4 KiB of the reason, ending in ` [cut]` where there was more;

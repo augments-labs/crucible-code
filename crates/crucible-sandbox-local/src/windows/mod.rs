@@ -15,7 +15,7 @@ use crucible_sandbox::{
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
     SandboxFeature, SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection,
     SandboxInvocationMode, SandboxLaunch, SandboxLifecycle, SandboxNetworkPolicy, SandboxProcess,
-    SandboxRequest, SandboxSession,
+    SandboxRequest, SandboxSession, confined_inspection,
 };
 
 use super::process::{
@@ -81,8 +81,7 @@ pub(super) fn prepare(
     ))?;
     let capabilities = declared_capabilities();
     request.negotiate(&capabilities)?;
-    let inspection =
-        SandboxInspection::confined_for_request(broker.identity().clone(), capabilities, &request)?;
+    let inspection = confined_inspection(broker.identity().clone(), capabilities, &request)?;
     request.audit().record(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),

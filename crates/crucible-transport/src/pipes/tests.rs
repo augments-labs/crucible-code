@@ -11,7 +11,7 @@ use crucible_sandbox::{
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInput,
     SandboxInspection, SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
     SandboxProcess, SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxUsage,
-    SandboxViolation,
+    SandboxViolation, unconfined_inspection,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
@@ -188,7 +188,7 @@ fn process(withheld: Withheld) -> (Process, Arc<Held>) {
         None,
     )
     .expect("a backend identity");
-    let inspection = SandboxInspection::unconfined_for_request(
+    let inspection = unconfined_inspection(
         backend,
         SandboxCapabilities::none(),
         &request,

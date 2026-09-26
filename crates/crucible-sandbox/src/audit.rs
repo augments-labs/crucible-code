@@ -1,13 +1,15 @@
 //! Bounded, fixed-attribution facts from one tool call's sandbox lifecycles.
+//!
+//! What a fact *is* is owned by `crucible-storage`, beside the journal and the
+//! checkpoint that keep it: the lifecycle identity, the typed payload and the
+//! record both of them make. This module fixes the attribution — which
+//! execution, which tool call — and bounds how many facts one call may retain,
+//! which is the half only the runtime that recorded them can know.
 
 use std::sync::{Arc, Mutex};
 
+use crucible_storage::{SandboxFact, SandboxFactKind};
 use crucible_types::{Ancestry, SandboxId, ToolId};
-
-use super::{
-    SandboxCleanup, SandboxCommandStage, SandboxGuardrailDecision, SandboxInspection, SandboxUsage,
-    SandboxViolation,
-};
 
 /// Most sandbox facts one admitted tool call may retain.
 pub const MAX_SANDBOX_AUDIT_FACTS: usize = 128;
@@ -15,125 +17,6 @@ pub const MAX_SANDBOX_AUDIT_FACTS: usize = 128;
 /// Most live or detached sandbox lifecycles one runner may retain for late
 /// journal delivery.
 pub const MAX_SANDBOX_AUDIT_LIFECYCLES: usize = 128;
-
-/// A lifecycle transition that contains no backend-controlled prose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxLifecycle {
-    /// Effective policy and manifest identities were fixed.
-    PolicyResolved,
-    /// A session and its cleanup ownership were prepared.
-    Prepared,
-    /// The manifest transaction committed.
-    Materialized,
-    /// The exact command and release channel were fixed before `GO`.
-    ReleaseIntent,
-    /// The authenticated one-shot `GO` was sent or became ambiguous.
-    CommandReleased,
-    /// Application background ownership was durable before `GO`.
-    OwnerTransferred,
-    /// The governed command started.
-    CommandStarted,
-    /// The command leader exited and its descendant scope was emptied.
-    CommandFinished,
-    /// Terminal publication began after proved scope death.
-    PublicationStarted,
-    /// Valid workspace effects were durably published.
-    Published,
-    /// Private effects were discarded or publication was reversed.
-    RolledBack,
-    /// Preparation ended before any possible command release.
-    Refused,
-    /// Cleanup or recovery could not safely select publish or rollback.
-    Quarantined,
-}
-
-/// Stable failure category retained without OS errors, paths, or command text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxFailureKind {
-    /// A requested capability was unsupported.
-    Unsupported,
-    /// No suitable backend could be prepared.
-    BackendUnavailable,
-    /// A command guardrail denied an image.
-    Guardrail,
-    /// The concurrent reservation was exhausted.
-    Concurrency,
-    /// Manifest or filesystem preparation failed.
-    Materialization,
-    /// Process creation failed.
-    Spawn,
-    /// A step in a sandbox's life, from probing a backend to accepting a
-    /// command's result, did not complete, including one dropped unanswered
-    /// because it would have had to wait.
-    Lifecycle,
-    /// The bounded audit collector itself could not retain the fact.
-    Audit,
-    /// A command or environment record was structurally invalid.
-    InvalidInput,
-}
-
-/// Lifecycle phase in which a typed failure occurred.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxFailurePhase {
-    /// Backend selection and capability negotiation.
-    Prepare,
-    /// Transactional manifest/workspace setup.
-    Materialize,
-    /// Guardrail evaluation and process creation.
-    Start,
-    /// Process control, accounting, or cleanup.
-    Execute,
-}
-
-/// One redacted lifecycle fact. The surrounding record supplies attribution.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SandboxFactKind {
-    /// A deterministic lifecycle transition.
-    Lifecycle(SandboxLifecycle),
-    /// The immutable negotiated inspection snapshot.
-    Negotiated(Box<SandboxInspection>),
-    /// One requested/effective command-filter decision.
-    Guardrail {
-        /// Image evaluated.
-        stage: SandboxCommandStage,
-        /// Redacted allow/deny outcome.
-        decision: SandboxGuardrailDecision,
-    },
-    /// A hard resource ceiling was crossed.
-    Violation(SandboxViolation),
-    /// Bounded current/final usage.
-    Usage(SandboxUsage),
-    /// Terminal cleanup state.
-    Cleanup(SandboxCleanup),
-    /// A typed phase failed without retaining its diagnostic text.
-    Failed {
-        /// Phase that could not complete.
-        phase: SandboxFailurePhase,
-        /// Stable failure class.
-        kind: SandboxFailureKind,
-    },
-}
-
-/// One fact tied to one stable sandbox identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxFact {
-    sandbox: SandboxId,
-    kind: SandboxFactKind,
-}
-
-impl SandboxFact {
-    /// Stable lifecycle identity.
-    #[must_use]
-    pub const fn sandbox(&self) -> SandboxId {
-        self.sandbox
-    }
-
-    /// Redacted fact payload.
-    #[must_use]
-    pub const fn kind(&self) -> &SandboxFactKind {
-        &self.kind
-    }
-}
 
 /// A fact with attribution fixed by the host-created tool context.
 #[derive(Clone, PartialEq, Eq)]
@@ -156,7 +39,7 @@ impl SandboxAuditRecord {
         &self.call
     }
 
-    /// Redacted sandbox fact.
+    /// The redacted record this fact is delivered as.
     #[must_use]
     pub const fn fact(&self) -> &SandboxFact {
         &self.fact
@@ -214,7 +97,7 @@ impl SandboxAudit {
         facts.push(SandboxAuditRecord {
             ancestry: self.ancestry,
             call: self.call.clone(),
-            fact: SandboxFact { sandbox, kind },
+            fact: SandboxFact::new(sandbox, kind),
         });
         Ok(())
     }
@@ -402,6 +285,8 @@ pub enum SandboxAuditError {
 
 #[cfg(test)]
 mod tests {
+    use crucible_storage::{SandboxCleanup, SandboxLifecycle};
+
     use super::*;
 
     #[test]

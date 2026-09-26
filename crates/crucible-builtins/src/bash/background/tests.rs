@@ -13,7 +13,7 @@ use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
     SandboxInspection, SandboxLifecycle, SandboxManifest, SandboxNetworkPolicy, SandboxOutput,
-    SandboxPolicy, SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    SandboxPolicy, SandboxRead, SandboxResourceLimits, SandboxUsage, SandboxViolation, inspection,
 };
 use crucible_tools::Unwatched;
 
@@ -241,7 +241,7 @@ fn process(observed: &Arc<Observed>) -> Process {
         SandboxResourceLimits::default(),
     )
     .expect("policy");
-    let inspection = SandboxInspection::new(
+    let inspection = inspection(
         crucible_types::SandboxId::new(),
         identity,
         SandboxCapabilities::none(),

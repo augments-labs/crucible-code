@@ -21,7 +21,7 @@ use crucible_sandbox::{
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
     SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection, SandboxInvocationMode,
     SandboxLaunch, SandboxLifecycle, SandboxNetworkPolicy, SandboxProcess, SandboxRequest,
-    SandboxResourceLimits, SandboxSession,
+    SandboxResourceLimits, SandboxSession, confined_inspection,
 };
 
 #[cfg(target_os = "macos")]
@@ -77,7 +77,7 @@ pub(super) fn prepare(
         &unreadable,
     )?
     .with_scratch(&scratch_root)?;
-    let inspection = SandboxInspection::confined_for_request(
+    let inspection = confined_inspection(
         backend.identity().clone(),
         backend.capabilities().clone(),
         &request,
