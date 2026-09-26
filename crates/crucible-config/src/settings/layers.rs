@@ -70,7 +70,7 @@ impl Settings {
 }
 
 /// One layer, or nothing where that file is not on this machine.
-fn read_one(path: &Path, origin: Origin) -> Result<Option<Document>, ConfigError> {
+pub(crate) fn read_one(path: &Path, origin: Origin) -> Result<Option<Document>, ConfigError> {
     // Named by its whole path. Two of these live in the project and one does
     // not, so `config.json` alone would leave the reader working out which file
     // the message is about.
@@ -122,7 +122,7 @@ pub fn user(home: &Home) -> PathBuf {
 }
 
 /// The three files, in the order they merge: furthest first.
-fn files(home: &Home, workspace: &Path) -> [(PathBuf, Origin); 3] {
+pub(crate) fn files(home: &Home, workspace: &Path) -> [(PathBuf, Origin); 3] {
     let project = workspace.join(PROJECT);
 
     [

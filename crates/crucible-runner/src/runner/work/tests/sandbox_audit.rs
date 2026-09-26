@@ -551,6 +551,7 @@ fn detached_sandbox_facts_keep_the_original_call_until_the_next_runner_boundary(
         .recv_timeout(Duration::from_secs(2))
         .expect("detached fact was recorded");
     report_sandbox_registry(&audits, Reporter::new(Ancestry::new(), &keeping), &journal)
+        .awaited()
         .expect("next runner boundary");
 
     let events = seen.try_iter().collect::<Vec<_>>();

@@ -21,7 +21,8 @@ impl Runner {
     /// transcript without appending to it, and each writes a line of its own.
     ///
     /// Each line is awaited: the message joins the transcript only once the
-    /// session has taken its line, and the reading of the window that follows
+    /// session has taken its line, and the framework record beside it has been
+    /// offered to the same log, and the reading of the window that follows
     /// it, and any clearing of what this run's vendor may not be sent, are
     /// written after it the same way. A line the log could not keep is the
     /// session's to report, as its trouble, and does not end the turn. A pass's
@@ -52,7 +53,7 @@ impl Runner {
         match RunItem::message(ancestry, message.clone()) {
             Ok(item) => {
                 self.store.append_message(&message).await;
-                self.store.append_run_item(&item);
+                self.store.append_run_item(&item).await;
             }
             // The provider and tool admission boundaries already enforce
             // these bounds. Preserve the conversation if an internal caller
@@ -76,7 +77,7 @@ impl Runner {
             self.store.measured(&calibration).await;
         }
         if answers_calls {
-            self.store.settle_call_results();
+            self.store.settle_call_results().await;
             // After the results line, so the log reads what was answered and
             // then what was taken out of it. The search source was chosen when
             // the run started, so a session that moved away from its vendor
