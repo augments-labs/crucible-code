@@ -37,6 +37,8 @@ crucible-models.workspace = true
 crucible-privacy.workspace = true
 # The shared asynchronous HTTP service the provider and web factories inject.
 crucible-http.workspace = true
+# The release owner whose cached answer and bounded check are composed here.
+crucible-update.workspace = true
 # Every provider this build serves: the one place a name becomes a type.
 crucible-provider.workspace = true
 # The bounded registry the providers are held in.

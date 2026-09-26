@@ -1,0 +1,39 @@
+[package]
+name = "crucible-update"
+description = "Release discovery and the cached release check."
+publish.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The pooled asynchronous client, its TLS configuration, proxy policy and
+# bounded response reader. The release check owns its own client over these
+# pieces rather than sharing a provider's pool.
+crucible-http.workspace = true
+# The cached version is private local state and is replaced through the same
+# owner-only filesystem boundary as the other durable user state.
+crucible-privacy.workspace = true
+# Cancellation lets the owner ask an in-flight check to stop before its bounded
+# shutdown gives up and aborts it.
+crucible-runtime.workspace = true
+# Version ordering is a shared value, not a second parser in this crate.
+crucible-types.workspace = true
+# GitHub's release answer is JSON, parsed once after its bounded body read.
+serde_json.workspace = true
+# The cleanup result has one typed error for the application to report.
+thiserror.workspace = true
+# The runtime handle, task ownership and the request/body clock. This crate
+# never builds a runtime of its own.
+tokio = { workspace = true, features = ["rt", "time"] }
+
+[dev-dependencies]
+# The tests use an OS-assigned loopback listener and a small multi-thread
+# runtime to observe cancellation; no external endpoint is contacted.
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

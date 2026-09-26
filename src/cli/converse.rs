@@ -71,6 +71,7 @@ use super::{Fatal, standing};
 use answering::{Answers, asked, cramped, read, verdict};
 use command::Ran;
 use expanding::Standing;
+pub(crate) use first::First;
 use planning::Planning;
 use recalling::Recalling;
 use turning::Turning;
@@ -82,6 +83,7 @@ mod attaching;
 pub(crate) mod command;
 mod expanding;
 mod finding;
+mod first;
 mod leaving;
 mod mode;
 mod picking;
@@ -353,7 +355,7 @@ pub(crate) fn converse<T: Terminal>(
     mut conversation: Conversation,
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    opening: &draw::opening::Standing,
+    first: First<'_>,
     input: &mut dyn BufRead,
 ) -> Result<Parting, Fatal> {
     // Named once here because the prompt asks for it every frame: it is what the
@@ -422,7 +424,7 @@ pub(crate) fn converse<T: Terminal>(
         terms.plan.clone(),
         terms.sending,
         Answers { input, keys },
-        opening,
+        first.card,
     );
 
     // What this directory has been asked before, read once here rather than at
@@ -436,7 +438,7 @@ pub(crate) fn converse<T: Terminal>(
     // box: the band it lands in is the one that scrolls, so the card keeps its
     // place under whatever is said next instead of being drawn again over it
     // every frame until the first prompt goes.
-    opening.commit(renderer)?;
+    first.drawn(renderer)?;
 
     attaching::refresh_store(&mut held, importing(conversation.session()));
 

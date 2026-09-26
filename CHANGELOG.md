@@ -18,14 +18,21 @@ change in any release with no deprecation period.
   deadline, a minute each for sending a request's body and awaiting the
   response head, and a bounded response head.
   A proxy's credential is registered for redaction on the headers a request is
-  sent with, so `Http::send` takes them mutably. Provider turns, web posts and
-  account requests use it; the release check and web `get` still use the old
+  sent with, so `Http::send` takes them mutably. Provider turns, web posts,
+  account requests and release discovery use it; the legacy `get` surface is
+  retained with no remaining caller, for the unit that retires the old
   client.
+- **Release discovery is owned work with a cached startup answer.**
+  `crucible-update` reads the existing `release` cache without opening a socket
+  and moves the post-frame discovery request onto the application's runtime. It
+  keeps the same GitHub answer, 24-hour freshness rule, 10-second lifetime,
+  256 KiB body ceiling and atomic cache replacement, while a separate pool and
+  a bounded shutdown keep the check from outliving the run.
 - **A crossing that waits, and one runtime the application owns.**
   `Bridge::wait` polls a future on the caller's thread against a runtime
   handle until it answers or the turn's `Cancel` is raised, noticed within
   20 ms, and refuses with `Unwaited` on a runtime thread or with no handle.
-  `crucible-app` lends a multi-thread runtime of 4 workers and at most 13
+  `crucible-app` lends a multi-thread runtime of 4 workers and at most 14
   blocking threads, with a timer and an I/O driver, through
   `services::Services`, built only when first asked for and shut down within
   2 s once a run ends.
@@ -50,8 +57,9 @@ change in any release with no deprecation period.
   8 KiB within 10 s, each reading one byte past its limit so a cut body is
   reported as cut; dropping a request or a body's reader closes its
   connection, and a client makes at most four connections at once. Provider
-  turns and web posts use these readers; the release check and web `get` still
-  use the old client.
+  turns, web posts and release discovery use these readers; the legacy `get`
+  surface is retained with no remaining caller, for the unit that retires the
+  old client.
 - **A bounded worker for a tool's blocking work.** `ToolWorker` runs at most 4
   jobs at once on the application runtime's blocking threads, and a call
   cancelled while it waits for room leaves without starting its job, while one
@@ -188,7 +196,8 @@ change in any release with no deprecation period.
   longer implements `Default`; nothing in crucible hosts an extension yet.
 - **A command left running no longer holds up the screen.** Each one is owned
   by a task of its own that asks its process everything on the application
-  runtime's blocking threads, which grow to 13 so these four still leave one
+  runtime's blocking threads, four of the thirteen that fit in the fourteen
+  the runtime has — the release check's cache write among them — leaving one
   spare, so neither drawing nor a sandbox's limit kills wait on a process;
   `Background` takes that runtime through `watching_on`, and one given none
   ends a command rather than keeping it. Pressing <kbd>x</kbd> asks for the
@@ -301,8 +310,8 @@ change in any release with no deprecation period.
 - **Model turns and web posts share the application's HTTP client.** Provider
   requests and `Search`/`Fetch` posts now await one bounded asynchronous
   service, keeping their existing status, refusal, redaction, retry and
-  cancellation behavior; the release check and web `get` still use the old
-  client.
+  cancellation behavior; the legacy `get` surface is retained with no
+  remaining caller, for the unit that retires the old client.
 
 ### Fixed
 

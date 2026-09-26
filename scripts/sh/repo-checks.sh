@@ -604,6 +604,7 @@ code extension
 code mcp
 code privacy
 code provider
+code update
 code runner
 code runtime
 code session
@@ -633,6 +634,7 @@ app sandbox-local
 app session
 app tools
 app types
+app update
 app workspace
 agents models
 agents tools
@@ -717,6 +719,10 @@ tools workspace
 transport runtime
 transport sandbox
 transport types
+update http
+update privacy
+update runtime
+update types
 builtins attachments
 builtins runtime
 builtins sandbox
@@ -1016,8 +1022,6 @@ src/cli/converse/resuming.rs crucible_session
 src/cli/converse/typing.rs crucible_builtins
 src/cli/draw.rs crucible_builtins
 src/cli/draw/opening.rs crucible_session
-src/cli/release.rs crucible_privacy
-src/cli/release.rs crucible_provider
 src/cli/standing.rs crucible_builtins'
 concrete=$(grep -E ' crucible_(auth|builtins|privacy|provider|sandbox_broker|sandbox_local|session)$' <<<"$named")
 while IFS= read -r line; do

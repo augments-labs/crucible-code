@@ -32,7 +32,7 @@ use crucible_tui::{Editor, Recording, Renderer};
 
 use super::{Client, Witness};
 use crate::cli::converse::tests::{opening, paired, plain, scripted};
-use crate::cli::converse::{Terms, converse};
+use crate::cli::converse::{First, Terms, converse};
 use crate::cli::fake::{Script, changing};
 use crate::cli::sample::Sample;
 
@@ -206,8 +206,17 @@ fn at_the_terminal(
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(conversation, &mut renderer, terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     journal.noted()
 }

@@ -4,6 +4,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -31,6 +32,7 @@ use crate::connect::{Conn, ConnectError, Connector, MAX_SETUPS, Setups, Tls};
 use crate::dns::tests::{Answer, Stall, raised, settle, stalled, stalled_plain, until_inside};
 use crate::dns::{Lookup, Lookups, PlainLookups, Poison};
 use crate::proxy::ProxyEnv;
+use crate::read_limited;
 use crate::tasks::Tasks;
 
 /// A self-signed certificate for 127.0.0.1, and its key. It protects nothing:
@@ -67,6 +69,182 @@ fn proxy_env(name: &'static str, value: String) -> ProxyEnv {
 async fn get(http: &Http, url: &str) -> Result<Response<Incoming>, HttpError> {
     http.send(Method::GET, url, &mut Outgoing::new(), String::new())
         .await
+}
+
+/// A source that answers one request and records the head it was asked with.
+async fn asking_once(said: &Heard) -> String {
+    let (listener, url) = listen("http").await;
+    let heard = Arc::clone(said);
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        answer(tcp, move |request| {
+            heard
+                .lock()
+                .unwrap()
+                .push(format!("{:?} {:?}", request.method(), request.headers()));
+            Response::new(String::from("{}"))
+        })
+        .await;
+    });
+
+    url
+}
+
+/// The route documented as taking no caller header accepts no name and value
+/// here that a caller holding one could send. The library still adds its own
+/// default `User-Agent`.
+#[tokio::test]
+async fn an_uncredentialed_get_carries_no_caller_header() {
+    let said = Heard::default();
+    let url = asking_once(&said).await;
+
+    let response = http(&Tls::new().unwrap()).get(&url).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let asked = said.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    for forbidden in [
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "x-api-key",
+    ] {
+        assert!(
+            !asked.first().is_some_and(|head| head.contains(forbidden)),
+            "{forbidden} went out of the uncredentialed route: {asked:?}"
+        );
+    }
+}
+
+/// The fixed release route sends its two non-secret headers and accepts no
+/// caller header of its own.
+#[tokio::test]
+async fn a_release_get_sends_its_fixed_headers() {
+    let said = Heard::default();
+    let url = asking_once(&said).await;
+
+    let response = http(&Tls::new().unwrap()).get_release(&url).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        read_limited(response.into_body(), 2, Duration::from_secs(1))
+            .await
+            .unwrap(),
+        b"{}"
+    );
+    let asked = said.lock().unwrap().clone();
+    assert!(
+        asked.first().is_some_and(|head| {
+            head.contains("application/vnd.github+json")
+                && head.contains(&format!("crucible-code/{}", env!("CARGO_PKG_VERSION")))
+        }),
+        "{asked:?}"
+    );
+}
+
+#[tokio::test]
+async fn separate_clients_keep_separate_pools() {
+    let (listener, url) = listen("http").await;
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let server_accepted = Arc::clone(&accepted);
+    let server = tokio::spawn(async move {
+        let (first, _) = listener.accept().await.unwrap();
+        server_accepted.fetch_add(1, Ordering::AcqRel);
+        let first = tokio::spawn(answer(first, |_| Response::new(String::new())));
+
+        if let Ok(Ok((second, _))) =
+            tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+        {
+            server_accepted.fetch_add(1, Ordering::AcqRel);
+            tokio::spawn(answer(second, |_| Response::new(String::new())));
+        }
+        first.abort();
+    });
+
+    let tls = Tls::new().unwrap();
+    let first = http(&tls);
+    let second = http(&tls);
+    for client in [&first, &second] {
+        let response = client.get(&url).await.unwrap();
+        let _ = read_limited(response.into_body(), 1, Duration::from_secs(1))
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(accepted.load(Ordering::Acquire), 2);
+    server.abort();
+}
+
+/// An idle connection is closed by the pool's own timer, fifteen seconds after
+/// it was last used.
+///
+/// A paused clock is not moved only by this test: the runtime moves it to the
+/// next deadline whenever it has nothing to do, and this test has two deadlines
+/// it does not want moved. The request has a minute of its own, and a peer that
+/// has accepted but not yet answered is parked with nothing to wake it, so on a
+/// loaded runner the runtime could end that minute under the peer and the test
+/// would blame the pool: this failed that way, with `Stalled(Answer)`, on one
+/// macOS runner. The reading below is the other: the reaping has to be read at
+/// the instant this test's own jump put the clock at, not at whatever instant a
+/// jump of the runtime's choosing would land on, or a pool that let the
+/// connection live twice as long would pass. So the clock is held still for the
+/// whole test, the exchange is over — and so the connection is idle — before the
+/// clock is moved at all, and both waits are on the wall clock.
+#[tokio::test(start_paused = true)]
+async fn idle_connections_are_reaped_by_the_pool_timer() {
+    // A blocking task is what holds the clock: while one is running the runtime
+    // parks for real instead of advancing a paused clock to the next deadline.
+    // It ends when the sender is dropped, however the test ends, so it cannot be
+    // left holding the runtime's shutdown.
+    let (_release, waiting) = std::sync::mpsc::channel::<()>();
+    tokio::task::spawn_blocking(move || {
+        let _ = waiting.recv();
+    });
+    let (listener, url) = listen("http").await;
+    let peer = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        answer(tcp, |_| Response::new(String::new())).await;
+    });
+    let http = http(&Tls::new().unwrap());
+    let exchange = tokio::spawn({
+        let http = http.clone();
+        async move {
+            let response = get(&http, &url).await.unwrap();
+            let _ = read_limited(response.into_body(), 1, Duration::from_secs(1))
+                .await
+                .unwrap();
+        }
+    });
+    until_finished(&exchange).await;
+    assert!(
+        exchange.is_finished(),
+        "the request did not finish with the clock held still"
+    );
+    exchange.await.unwrap();
+
+    settle().await;
+    tokio::time::advance(Duration::from_millis(15_001)).await;
+    settle().await;
+    until_finished(&peer).await;
+
+    assert!(
+        peer.is_finished(),
+        "the idle connection outlived the pool timer"
+    );
+    peer.await.unwrap();
+}
+
+/// Waits, on the wall clock, for `task` to end however it ends, up to five
+/// seconds; the caller says whether it did. A bound taken from a paused clock
+/// is one the runtime would jump to, so it says nothing about whether `task`
+/// could have ended.
+async fn until_finished(task: &tokio::task::JoinHandle<()>) {
+    let started = std::time::Instant::now();
+    while !task.is_finished() && started.elapsed() < Duration::from_secs(5) {
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 async fn listen(scheme: &str) -> (TcpListener, String) {

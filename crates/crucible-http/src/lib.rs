@@ -1,7 +1,7 @@
 //! An HTTP client built for crucible's outgoing requests to share, and the
-//! policy a request sent through it is sent under. Provider turns, web posts
-//! and account requests use it; the release check and web `get` remain on the
-//! legacy client.
+//! policy a request sent through it is sent under. Provider turns, web posts,
+//! account requests and release discovery use it; each consumer receives a
+//! client over the configuration its owner supplies.
 //!
 //! [`Http`] is a pooled HTTP/1.1 client. What it will and will not do is fixed
 //! here rather than by each caller, because each of these is a promise about
@@ -88,5 +88,12 @@ pub use body::{
 };
 pub use client::{DEFAULT_USER_AGENT, Http, HttpError, Phase};
 pub use connect::{ConnectError, Tls};
+/// The header carrier a caller applies a credential to and [`Http::send`]
+/// accepts.
+///
+/// The fixed release route builds its own non-secret headers internally. An
+/// [`Outgoing`] does not protect a value merely by carrying it; the caller must
+/// register each exact secret representation with `Outgoing::protect`.
+pub use crucible_credentials::Outgoing;
 pub use dns::{LookupError, Lookups, PlainLookups, Poison};
 pub use proxy::ProxyEnv;

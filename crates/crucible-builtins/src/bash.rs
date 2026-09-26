@@ -38,7 +38,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
-use crucible_runtime::{BoxFuture, Bridge};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxCommand, SandboxEnablement, SandboxEnvironment, SandboxManifest, SandboxPolicy,
     SandboxRequest, SandboxResourceLimits, SandboxService,
@@ -411,12 +411,11 @@ impl Bash {
         self
     }
 
-    fn keep_running(
+    async fn keep_running(
         &self,
         approved: &Approved,
         context: &ToolContext<'_>,
         mut taking: background::Taking,
-        mut ownership: Option<background::Lease>,
     ) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text(COMMAND)?;
@@ -432,7 +431,8 @@ impl Bash {
         // starting turn has scrolled away, so keep the caller's description.
         let said = crate::account::of(approved.args());
 
-        let number = ownership
+        let number = taking
+            .lease
             .as_ref()
             .map(background::Lease::number)
             .ok_or_else(|| {
@@ -457,20 +457,49 @@ impl Bash {
                 std::io::Error::other("durable call-result identity is unavailable"),
             )
         })?;
-        Bridge::BashSandbox
-            .cross(taking.process.begin_background_acceptance(key))
-            .unwrap_or_else(|unready| {
-                Err(crucible_sandbox::SandboxError::Lifecycle(
-                    std::io::Error::other(unready),
-                ))
-            })
-            .map_err(|error| sandbox_io("could not begin background result acceptance", error))?;
+        let began = match taking.process.as_mut() {
+            Some(process) => {
+                match background::bounded(
+                    process.begin_background_acceptance(key),
+                    background::ACCEPTANCE,
+                )
+                .await
+                {
+                    Ok(began) => began,
+                    Err(()) => Err(crucible_sandbox::SandboxError::Lifecycle(
+                        std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "background result acceptance did not begin within its bound",
+                        ),
+                    )),
+                }
+            }
+            None => Err(crucible_sandbox::SandboxError::Lifecycle(
+                std::io::Error::other("background process ownership is unavailable"),
+            )),
+        };
+        if let Err(error) = began {
+            // The lifecycle future was refused before the registry handoff.
+            // Give the process to the same owner anyway; a refusal is not a
+            // confirmed stop, and the entry must remain retryable.
+            let _ = left.keep(
+                taking,
+                background::Keep {
+                    called: command,
+                    said: said.description(),
+                    accepting: false,
+                },
+            );
+            return Err(sandbox_io(
+                "could not begin background result acceptance",
+                error,
+            ));
+        }
         let Some(kept) = left.keep(
             taking,
             background::Keep {
                 called: command,
                 said: said.description(),
-                lease: ownership.take(),
                 accepting: true,
             },
         ) else {
@@ -755,8 +784,9 @@ impl Tool for Bash {
 
                 // Kept, or refused and ended — the registry owns both, because it
                 // knows the cap and is the owner that can end the command later.
-                output::Left::Running(taking) => {
-                    self.keep_running(&approved, context, taking, ownership.take())
+                output::Left::Running(mut taking) => {
+                    taking.lease = ownership.take();
+                    self.keep_running(&approved, context, taking).await
                 }
             }
         })

@@ -372,6 +372,7 @@ dependencies = [
  "crucible-session",
  "crucible-tools",
  "crucible-types",
+ "crucible-update",
  "crucible-workspace",
  "serde_json",
  "thiserror",
@@ -462,6 +463,7 @@ dependencies = [
  "crucible-session",
  "crucible-tools",
  "crucible-tui",
+ "crucible-update",
  "image",
  "insta",
  "rustix",
@@ -757,6 +759,19 @@ dependencies = [
  "sha2",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "crucible-update"
+version = "0.42.0"
+dependencies = [
+ "crucible-http",
+ "crucible-privacy",
+ "crucible-runtime",
+ "crucible-types",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -33,6 +33,7 @@ use hyper::header::{HeaderValue, USER_AGENT};
 use hyper::{Method, Request, Response};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::{Connect, capture_connection};
+use hyper_util::rt::TokioTimer;
 use tokio::time::{Instant, sleep_until};
 
 use crate::connect::{ConnectError, Connector, Setups, Tls, Waiting};
@@ -44,6 +45,11 @@ use crate::tasks::Tasks;
 /// previous client sent, so a server sees the same user-agent. That client
 /// also added `accept: */*` to a request naming no `accept`; this one does not.
 pub const DEFAULT_USER_AGENT: &str = "ureq/3.4.2";
+
+/// The two non-secret headers the release source asks for. They are fixed here
+/// so the release route has no caller-supplied header sink.
+const RELEASE_ACCEPT: &str = "application/vnd.github+json";
+const RELEASE_USER_AGENT: &str = concat!("crucible-code/", env!("CARGO_PKG_VERSION"));
 
 /// How long each part of a request may take before the response head.
 ///
@@ -67,6 +73,9 @@ const FRAME: usize = 16 * 1024;
 
 /// A pooled HTTP/1.1 client, and the policy it sends under.
 ///
+/// Idle connections are reaped after 15 seconds by a Tokio pool timer. The
+/// timer gives idle sockets a lifetime without imposing a total lifetime on a
+/// request; the request's own phase deadlines remain the bound on its work.
 /// A 3xx is handed back as the response it is and never followed, and every
 /// other status the same way: nothing here decides a status is an error.
 ///
@@ -152,9 +161,11 @@ impl Http {
     /// status.
     ///
     /// `headers` go out as given, with [`DEFAULT_USER_AGENT`] added when they
-    /// name no `user-agent`. When the request is to go through a proxy that
-    /// is sent a credential, that credential is registered on `headers` for
-    /// redaction ([`Outgoing::protect`]).
+    /// name no `user-agent`. A caller that applies a credential must register
+    /// each exact outgoing representation with [`Outgoing::protect`]; the
+    /// [`Outgoing`] container does not protect a value by itself. When the
+    /// request is to go through a proxy that is sent a credential, that
+    /// credential is registered on `headers` for redaction.
     ///
     /// Dropping the future before it answers closes the connection it was
     /// making or awaiting an answer on.
@@ -189,6 +200,74 @@ impl Http {
         }
         exchange(&self.client, request).await
     }
+
+    /// Sends one GET with no caller header and hands back its response head.
+    ///
+    /// The client adds [`DEFAULT_USER_AGENT`] when the request names no
+    /// `user-agent`. A caller that has applied a credential uses [`Http::send`]
+    /// with an [`Outgoing`], and [`Outgoing::protect`] is what registers each
+    /// exact secret representation for response redaction. The fixed request
+    /// used for release discovery is [`Http::get_release`].
+    ///
+    /// ```compile_fail,E0061
+    /// # use crucible_http::Http;
+    /// # async fn ask(client: &Http) {
+    /// let _ = client
+    ///     .get("https://example.invalid/releases", &[("authorization", "Bearer sk-live-1")])
+    ///     .await;
+    /// # }
+    /// ```
+    ///
+    /// ```compile_fail,E0061
+    /// # use crucible_http::Http;
+    /// # async fn ask(client: &Http) {
+    /// let _ = client
+    ///     .get(
+    ///         "https://example.invalid/releases",
+    ///         &[("cookie", "session=1"), ("x-api-key", "sk-live-1")],
+    ///     )
+    ///     .await;
+    /// # }
+    /// ```
+    ///
+    /// The prepared route cannot be used to bypass exact response redaction:
+    ///
+    /// ```compile_fail
+    /// # use crucible_http::{Http, Outgoing};
+    /// # async fn forbidden(client: &Http) {
+    /// let mut request = Outgoing::new();
+    /// request.set_header("authorization", "Bearer sk-live-1");
+    /// let _ = client
+    ///     .get_prepared("https://example.invalid/releases", &mut request)
+    ///     .await;
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`HttpError`] when no response head arrived.
+    pub async fn get(&self, url: &str) -> Result<Response<Incoming>, HttpError> {
+        self.send(Method::GET, url, &mut Outgoing::new(), String::new())
+            .await
+    }
+
+    /// Sends the fixed GET used to discover a release and hands back its
+    /// response head.
+    ///
+    /// This route owns the two non-secret headers the release source asks for;
+    /// it accepts no caller header. Redirects, proxy routing, TLS and response
+    /// limits are exactly those of [`Http::send`].
+    ///
+    /// # Errors
+    ///
+    /// [`HttpError`] when no response head arrived.
+    pub async fn get_release(&self, url: &str) -> Result<Response<Incoming>, HttpError> {
+        let mut headers = Outgoing::new();
+        headers.set_header("accept", RELEASE_ACCEPT);
+        headers.set_header("user-agent", RELEASE_USER_AGENT);
+        self.send(Method::GET, url, &mut headers, String::new())
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +289,8 @@ where
     Setups<C>: Connect + Clone,
 {
     Client::builder(tasks.spawner())
+        .pool_idle_timeout(Duration::from_secs(15))
+        .pool_timer(TokioTimer::new())
         .http1_max_buf_size(MAX_HEAD)
         .http1_max_headers(MAX_FIELDS)
         .build(Setups::new(connector))
