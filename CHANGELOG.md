@@ -321,6 +321,11 @@ change in any release with no deprecation period.
   and stops made while dropping a process or cleaning a failed start call the
   new synchronous `SandboxProcess::stop_sync` directly; the `LocalBackend`
   bridge is gone.
+- **`--sandbox`, the `/sandbox` panel and a sandbox choice wait for the
+  backend.** A backend that answers only after waiting is now heard rather than
+  reported as not ready. `crucible_app::sandbox::confinement` and `choosing`
+  are `async`, and `AppError::Unready`, `Unchanged::Unready` and the
+  `SandboxReport` and `SandboxPanel` bridges are gone.
 
 - **Model turns and web posts share the application's HTTP client.** Provider
   requests and `Search`/`Fetch` posts now await one bounded asynchronous

@@ -27,10 +27,9 @@
 //! awaits and looks at it between them, so a stop ends it as it always has,
 //! and how soon an awaited step heeds that stop is the step's own contract.
 //! No step on the turn's path is still reached through a bridge that asks
-//! once: the bridges that remain — `BashSandbox`, `LocalBackend`,
-//! `SandboxReport` and `SandboxPanel` — are crossed outside the turn, and a
-//! step that would have had to wait there is refused where it is crossed,
-//! naming its bridge.
+//! once: the bridges that remain — `CommandStop` and `CommandAcceptance` —
+//! are crossed outside the turn, and a step that would have had to wait there
+//! is refused where it is crossed, naming its bridge.
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,

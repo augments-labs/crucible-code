@@ -433,12 +433,25 @@ fn listed() -> Result<(), Fatal> {
 /// Writes the confinement a command here would run under, and stops.
 ///
 /// What the report is made of, and why a backend's refusal is an answer rather
-/// than a failure, is [`crucible_app::sandbox::confinement`]'s to say. A write
-/// that fails is dropped for the reason [`listed`] drops one.
+/// than a failure, is [`crucible_app::sandbox::confinement`]'s to say. The
+/// backend is asked on the application's runtime, and a shutdown of it that
+/// ran out of time is reported the way [`run`] reports one. A write that fails
+/// is dropped for the reason [`listed`] drops one.
 fn confined() -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let home = Home::find(&|name| std::env::var_os(name))?;
-    let said = crucible_app::sandbox::confinement(&here, &home)?;
+    let (said, stopped) = crucible_app::services::serving(|services| {
+        let runtime = services.runtime().handle().map_err(AppError::from)?;
+        runtime.block_on(crucible_app::sandbox::confinement(&here, &home))
+    });
+    let said = match (said, stopped) {
+        (said, Ok(())) => said?,
+        (Ok(_), Err(unstopped)) => return Err(AppError::from(unstopped).into()),
+        (Err(first), Err(unstopped)) => {
+            let _ = fail(&AppError::from(unstopped).into());
+            return Err(first.into());
+        }
+    };
 
     let _ = io::stdout().write_all(said.as_bytes());
     Ok(())

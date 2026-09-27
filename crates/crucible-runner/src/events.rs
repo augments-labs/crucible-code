@@ -110,8 +110,8 @@ pub enum TurnError {
     /// preparation, listing, refreshing and disposal, so no step on the
     /// turn's own path refuses this way anymore. What still refuses is a step
     /// reached through one of the bridges that still asks once —
-    /// `BashSandbox`, `LocalBackend`, `SandboxReport` or `SandboxPanel` —
-    /// refusing rather than blocking, naming which it was. The step was
+    /// `CommandStop` or `CommandAcceptance` — refusing rather than blocking,
+    /// naming which it was. The step was
     /// dropped unanswered, so its effect is unconfirmed rather than undone.
     #[error(transparent)]
     Unready(#[from] crucible_runtime::Unready),

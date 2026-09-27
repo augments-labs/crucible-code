@@ -184,6 +184,7 @@ pub async fn perform(
                 desk.switching.choosing,
                 *enabled,
             )
+            .await
             .err(),
         },
         Command::Theme(_) => keep(request, desk),
