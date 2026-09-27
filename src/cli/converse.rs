@@ -65,6 +65,7 @@ use crucible_types::{Attachment, Compacting, SessionId, Spend};
 use super::draw;
 use super::gathering::Gathering;
 use super::kept::Kept;
+use super::panicked::Panics;
 use super::seen::{Asking, CAPACITY, Inbox, Putting, Relay, Seen};
 use super::style::Style;
 use super::{Fatal, standing};
@@ -370,6 +371,13 @@ pub(crate) fn converse<T: Terminal>(
     // there is anything left to end.
     let left = &terms.leaving;
 
+    // Named before every guard, so that it is the last thing given back: what
+    // panicked on another thread while the terminal was held, and was never
+    // said on it, is written out once the screen is the reader's own again.
+    // Taken only once raw mode is, below; a session that holds no terminal
+    // lets a panic be written the way it always is.
+    let mut panics = None;
+
     // First of the guards, so that it is the last of them given back: raw mode
     // is left while this is still held, and the sequence that leaves it goes to
     // the screen that is about to stop existing rather than to the reader's own.
@@ -393,6 +401,9 @@ pub(crate) fn converse<T: Terminal>(
     // at one end or the other, which reads whole lines instead.
     let raw = Raw::enter()?;
     let keys = raw.is_some();
+    if keys {
+        panics = Some(Panics::kept());
+    }
 
     // Held the same way and for the same length, and asked for unconditionally
     // rather than from a setting: the older key encoding has no room for the
@@ -493,6 +504,13 @@ pub(crate) fn converse<T: Terminal>(
         // reports one; between turns there is nobody reading, so it is noticed
         // here instead.
         renderer.resized()?;
+
+        // What panicked on another thread since the last pass, said here
+        // rather than written past the screen by whichever thread it was.
+        if let Some(panics) = &panics {
+            let (said, unkept) = panics.take();
+            draw::panicked(renderer, &said, unkept)?;
+        }
 
         // The fixed foot — the transcript-map door. Said here rather than
         // once at startup because a session that reopens the screen — a view,

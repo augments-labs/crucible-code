@@ -334,6 +334,12 @@ change in any release with no deprecation period.
   escaped the kill, kept running, and held the output open, so the command read
   as still printing. Crucible now repeats the kill until nothing in the
   command's process group is left running.
+- **A panic on another thread no longer writes over the session's screen.**
+  While a session holds the terminal, a panic on any thread but the one that
+  draws, such as a task on the application's runtime, is said in the
+  transcript at the next prompt instead of being written to standard error in
+  the middle of a frame. One the session never said is written to standard
+  error once the screen is handed back.
 - **A pipe left where a configuration file is read no longer holds the first
   frame.** The three settings layers are read before anything is drawn, and each
   name was opened in a way that waits for a writer, so anything able to write in

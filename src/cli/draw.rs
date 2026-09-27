@@ -552,6 +552,28 @@ pub(crate) fn trouble<T: Terminal>(
     ))
 }
 
+/// Says what panicked on another thread, a line each, and how many more
+/// were not kept.
+///
+/// Worth interrupting for, as a log that stopped recording is: something
+/// stopped while the session went on, and the screen is the one place the
+/// reader will see it.
+pub(crate) fn panicked<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    said: &[String],
+    unkept: usize,
+) -> Result<(), TerminalError> {
+    for one in said {
+        renderer.settle()?;
+        renderer.commit(&format!("! {}", flattened(one)))?;
+    }
+    if unkept > 0 {
+        renderer.settle()?;
+        renderer.commit(&format!("! and {unkept} more panics"))?;
+    }
+    Ok(())
+}
+
 /// Says how to come back, on the screen the session did not run on.
 ///
 /// The last thing crucible writes. A quit that was asked for gets exactly two

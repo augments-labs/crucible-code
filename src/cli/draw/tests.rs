@@ -1876,3 +1876,26 @@ fn a_guardrail_that_could_not_decide_about_an_answer_says_the_answer_is_not_acce
     );
     assert!(!written.contains("nothing was asked"), "{written}");
 }
+
+#[test]
+fn a_panic_on_another_thread_is_said_in_the_transcript_a_line_each() {
+    let mut renderer = Renderer::new(Recording::new(WIDE, 24));
+
+    panicked(
+        &mut renderer,
+        &["probe panicked at src/probe.rs:1:1: gave up".to_owned()],
+        2,
+    )
+    .expect("the panics to be said");
+
+    let rows = renderer.terminal().picture().said();
+    assert!(
+        rows.iter()
+            .any(|row| row == "! probe panicked at src/probe.rs:1:1: gave up"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row == "! and 2 more panics"),
+        "{rows:?}"
+    );
+}

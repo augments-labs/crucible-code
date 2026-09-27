@@ -23,6 +23,7 @@ mod ending;
 mod fake;
 mod gathering;
 mod kept;
+mod panicked;
 #[cfg(test)]
 mod sample;
 mod seen;
