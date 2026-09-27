@@ -200,8 +200,9 @@ impl Gate {
 /// The probe puts one task per worker on the runtime and has each wait for
 /// all the others. They can only all arrive if no worker is held by anything
 /// else, so a tool call, a stream or a status task that held a worker for as
-/// long as [`WAIT`] after the probe looked is what makes it fail. One probe runs at a time:
-/// two at once would each hold workers the other is waiting for.
+/// long as [`WAIT`] after the probe looked is what makes it fail. One probe
+/// runs at a time: two at once would each hold workers the other is waiting
+/// for.
 #[derive(Clone)]
 pub(crate) struct Probe {
     runtime: Handle,

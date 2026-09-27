@@ -2,19 +2,22 @@
 //! as the runner allows, with the faults a turn has to survive put into it on
 //! purpose.
 //!
-//! Everything a turn starts is a task on that runtime too, and the turn talks to a loopback vendor over the shared HTTP client, to
-//! built-in tools, to an MCP server hosted through the sandbox seam and to a
-//! real session log. Into that go a stalled answer, a stop at each point a
-//! call is recorded, a call past its deadline, a tool that panics, a process
-//! that dies mid-turn and a server whose cleanup fails; and two agents take
-//! their turns at once, each on its own wire, with its own tools, check,
-//! session and spend.
+//! Everything a turn starts is a task on that runtime too, and the turn talks
+//! to a loopback vendor over the shared HTTP client, to built-in tools, to an
+//! MCP server hosted through the sandbox seam and to a real session log. Into
+//! that go a stalled answer, a stop at each point a call is recorded, a call
+//! past its deadline, a tool that panics, a process that dies mid-turn and a
+//! server whose cleanup fails; and two agents take their turns at once, each
+//! on its own wire, with its own tools, check, session and spend.
 //!
-//! What every case holds the turn to is the same: each call the model asked
-//! for is answered exactly once and none is run twice, nothing either agent
-//! has reaches the other, the runtime's workers are free whenever the vendor
+//! What the cases hold the turn to is the same: each call the model asked for
+//! is answered exactly once and none is run twice, nothing either agent has
+//! reaches the other, the runtime's workers are free whenever the vendor
 //! looks, and every task the turn started has ended before the application's
-//! services shut down.
+//! services shut down. A process that dies is held to its log instead: the
+//! call is answered there once, and the pick-up after it, which drops the pass
+//! that died, may carry that call not at all but never twice, and never runs
+//! it again.
 
 // Test-only helpers fail the owning case when its controlled fixture is invalid.
 #![allow(clippy::expect_used, clippy::panic)]
@@ -205,10 +208,10 @@ fn turn(runtime: &Handle, runner: Runner, asked: &'static str, cancel: &Cancel) 
 /// until the second agent's turn is over, a stalled stream the first turn
 /// simply waits on. The first agent's first pass asks for four calls: a stamp,
 /// a call that outlives its deadline, a tool that panics and the hosted
-/// server's search. The second agent stamps
-/// once per pass under a spend ceiling its passes cross on the second, and is
-/// stopped at the third before it asks for anything, while the first agent
-/// spends ten times as much under no ceiling and is never stopped.
+/// server's search. The second agent stamps once per pass under a spend
+/// ceiling its passes cross on the second, and is stopped at the third before
+/// it asks for anything, while the first agent spends ten times as much under
+/// no ceiling and is never stopped.
 #[test]
 fn two_agents_take_their_turns_at_once_without_sharing_anything() {
     let (alpha_scratch, beta_scratch) = (Scratch::new(), Scratch::new());
@@ -643,6 +646,9 @@ fn a_stop_at_each_record_of_a_call_accounts_for_it_once() {
 /// A turn whose process dies after a call's result is recorded, and before
 /// the result reaches the transcript, leaves the result in its log once, and
 /// is picked up with no call left hanging and without running the call again.
+/// The pick-up drops the pass that died, so the request after it may carry the
+/// call and its result not at all; what it may not do is carry one without the
+/// other, or either of them twice.
 #[test]
 fn a_turn_that_dies_after_its_call_is_picked_up_without_running_it_again() {
     let scratch = Scratch::new();
