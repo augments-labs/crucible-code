@@ -1,9 +1,10 @@
 //! The loop: read a line, take a turn, draw what the turn does.
 //!
 //! The turn runs as a task on the application's runtime and the terminal stays
-//! with this thread. That split is the whole reason a turn can stream while a question is waiting to
-//! be answered, and it is why no lock appears anywhere on the render path: the
-//! only thread that writes to the terminal is the one running this loop.
+//! with this thread. That split is the whole reason a turn can stream while a
+//! question is waiting to be answered, and it is why no lock appears anywhere
+//! on the render path: the only thread that writes to the terminal is the one
+//! running this loop.
 //!
 //! Raw mode is held for the whole session rather than for each prompt, because
 //! the box takes typing while a turn runs: the keyboard cannot be handed back
@@ -36,7 +37,6 @@
 //! the caller to report once the screen is the reader's again.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,6 +74,7 @@ use command::Ran;
 use expanding::Standing;
 pub(crate) use first::First;
 use planning::Planning;
+use queueing::{Prompts, Retained, batched};
 use recalling::Recalling;
 use turning::Turning;
 use typing::{Asked, Says};
@@ -1574,132 +1575,6 @@ fn stop_if_failed<T>(result: Result<T, Fatal>, cancel: &Cancel) -> Result<T, Fat
         cancel.request();
     }
     result
-}
-
-/// Prompts finished while a turn is still running.
-///
-/// Kept in order, and every one of them kept — the other two answers were both
-/// wrong for the same reason: keeping one line and dropping the rest loses
-/// something the user typed, watched the box take, and never sees again, and
-/// joining them into one prompt puts a message in the transcript nobody wrote.
-///
-/// Lines and bytes are both bounded: one-byte prompts cannot choose an
-/// unbounded number of allocations, and full-sized prompts cannot choose an
-/// unbounded retained buffer. Refusal leaves the editor untouched, so a prompt
-/// is never silently dropped after the box appeared to accept it.
-#[derive(Debug, Default)]
-struct Prompts {
-    lines: VecDeque<String>,
-    bytes: usize,
-}
-
-/// Whether a finished line moved from the editor into [`Prompts`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Retained {
-    /// The line is waiting for its turn.
-    Accepted,
-    /// A line or byte ceiling left it in the editor.
-    Refused,
-}
-
-impl Prompts {
-    /// Takes the editor whole where both ceilings have room.
-    fn accept(&mut self, editor: &mut Editor) -> Retained {
-        let bytes = editor.text().len();
-        if self.lines.len() >= QUEUED_LINES || bytes > QUEUED_BYTES.saturating_sub(self.bytes) {
-            return Retained::Refused;
-        }
-
-        self.bytes += bytes;
-        self.lines.push_back(editor.take());
-        Retained::Accepted
-    }
-
-    /// The prompt the next turn will be taken from, where one is waiting.
-    ///
-    /// Read while the turn ahead of it is still running, for the row that says
-    /// what is coming after it. A line that went into the box and vanished is
-    /// the thing this exists to stop: the queue is the only place it is, and
-    /// until it is named there is nothing on screen to say it was kept.
-    #[cfg(test)]
-    fn waiting(&self) -> Option<&str> {
-        self.lines.front().map(String::as_str)
-    }
-
-    /// Every prompt waiting, oldest first.
-    ///
-    /// The panel above the box is drawn from these: the second and third are as
-    /// much queued as the first, and a list that named only the front one said
-    /// the rest were not there.
-    fn waiting_all(&self) -> impl Iterator<Item = &str> {
-        self.lines.iter().map(String::as_str)
-    }
-
-    /// How many prompts are waiting.
-    fn waiting_count(&self) -> usize {
-        self.lines.len()
-    }
-
-    /// Drops the prompt `at` places back, releasing its byte reservation.
-    ///
-    /// What the queue's full view removes one with: a line typed and not yet
-    /// sent is the reader's to take back until the turn takes it. `None` where
-    /// there is no such place.
-    fn drop(&mut self, at: usize) -> Option<String> {
-        let prompt = self.lines.remove(at)?;
-        self.bytes = self.bytes.saturating_sub(prompt.len());
-        Some(prompt)
-    }
-
-    /// Drops the oldest waiting prompt that says `line`, and answers whether
-    /// there was one.
-    ///
-    /// What a turn taking a line to steer by leaves behind. From the moment it
-    /// is taken the line is in the transcript, so a panel that goes on naming
-    /// it says the reader is owed a turn they have already had — and the count
-    /// beside it says so twice. Matched on what the line says rather than on
-    /// where it sat, because the reader may have taken an earlier one back
-    /// between the turn reading the queue and saying what it read.
-    fn steered(&mut self, line: &str) -> bool {
-        let Some(at) = self.lines.iter().position(|waiting| waiting == line) else {
-            return false;
-        };
-
-        self.drop(at).is_some()
-    }
-
-    /// Takes the oldest waiting prompt and releases its byte reservation.
-    fn pop(&mut self) -> Option<String> {
-        let prompt = self.lines.pop_front()?;
-        self.bytes = self.bytes.saturating_sub(prompt.len());
-        Some(prompt)
-    }
-}
-
-/// Takes the whole queue for one turn: the oldest line is the prompt, and every
-/// line behind it is offered to that same turn.
-///
-/// A burst typed behind a turn is one thing the reader wanted said. Taken a line
-/// per turn, the first was answered before the model had read the second, so the
-/// agent worked to a question the reader had already added to — and three turns
-/// went by answering what was asked once. Handed over together, the runner
-/// records the batch at the first boundary of the turn this starts, which is
-/// before it asks anything: the model reads all of it and then answers all of
-/// it.
-///
-/// The lines behind the prompt go through the steer rather than into it,
-/// because joining them would put a message in the transcript nobody wrote.
-/// Each reaches it as the line it was typed as; what they share is the turn.
-///
-/// `None` where nothing is waiting, which is the ordinary case.
-fn batched(queued: &mut Prompts, steer: &crucible_runtime::Steer) -> Option<String> {
-    let said = queued.pop()?;
-
-    while let Some(behind) = queued.pop() {
-        steer.say(behind);
-    }
-
-    Some(said)
 }
 
 /// What the session holds between turns and lends to each one, beyond the
