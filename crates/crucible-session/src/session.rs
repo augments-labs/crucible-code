@@ -261,10 +261,6 @@ pub struct Session {
     /// observe the first writer's not-yet-synced file.
     result_lock: Mutex<()>,
     trouble: Trouble,
-    /// Lines whoever holds the session knows its log is missing, which the
-    /// writer cannot: see [`Session::missing`]. Not trouble, and gates
-    /// nothing.
-    missed: Mutex<Option<Box<str>>>,
 }
 
 impl Session {
@@ -506,7 +502,6 @@ impl Session {
             pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble: Trouble::default(),
-            missed: Mutex::new(None),
         }
     }
 
@@ -805,40 +800,6 @@ impl Session {
         Ok(())
     }
 
-    /// Keeps `problem` as what this session's log is missing, where nothing
-    /// is kept already.
-    ///
-    /// For what whoever holds the session knows its log is missing and the
-    /// writer cannot: lines owed to it that were never handed over. Kept apart
-    /// from [`Session::trouble`], because the log has not stopped working:
-    /// every later line, result and read goes on as before, and
-    /// [`Session::missed`] is where this is read back.
-    pub fn missing(&self, problem: &str) {
-        self.missed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_or_insert_with(|| problem.into());
-    }
-
-    /// What [`Session::missing`] was told, until
-    /// [`Session::no_longer_missing`] says it has been written.
-    #[must_use]
-    pub fn missed(&self) -> Option<Box<str>> {
-        self.missed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-
-    /// Says that what [`Session::missing`] was told about has since been
-    /// written.
-    pub fn no_longer_missing(&self) {
-        self.missed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-    }
-
     /// Keeps, as trouble, that a line was never acknowledged.
     fn unacknowledged(&self) {
         log::record(
@@ -921,7 +882,6 @@ impl Session {
             pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble,
-            missed: Mutex::new(None),
         }
     }
 }

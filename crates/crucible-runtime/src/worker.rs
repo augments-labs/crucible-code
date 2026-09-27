@@ -2,9 +2,9 @@
 //! runtime to drive one.
 //!
 //! [`tokio::runtime::Handle::try_current`] cannot make this distinction: it
-//! answers `Ok` both on a worker task and on the thread that called
-//! [`Bridge::wait`](crate::Bridge::wait), which enters the runtime it waits on
-//! without being spawned onto it. Only a spawned task has a
+//! answers `Ok` both on a worker task and on a thread that entered a runtime,
+//! or drives one from outside it, without being spawned onto it. Only a
+//! spawned task has a
 //! [`tokio::task::Id`], so [`not_worker`] asks for that instead.
 //!
 //! A step that must never run on a worker checks this itself, at the point in
@@ -13,8 +13,8 @@
 
 use std::fmt;
 
-/// [`not_worker`] found the caller polled as a spawned task rather than on the
-/// turn thread or a crossing's caller thread.
+/// [`not_worker`] found the caller polled as a spawned task rather than on a
+/// thread of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OnWorker;
 
@@ -22,8 +22,7 @@ impl fmt::Display for OnWorker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "this step cannot run on a runtime worker task, only on the turn thread or a \
-             crossing's caller thread"
+            "this step cannot run on a runtime worker task, only on a thread of its own"
         )
     }
 }
@@ -31,9 +30,8 @@ impl fmt::Display for OnWorker {
 impl std::error::Error for OnWorker {}
 
 /// `Ok(())` everywhere but a spawned task, including a thread that entered a
-/// runtime through [`Bridge::wait`](crate::Bridge::wait)'s
-/// [`Handle::enter`](tokio::runtime::Handle::enter) without being spawned onto
-/// it.
+/// runtime through [`Handle::enter`](tokio::runtime::Handle::enter) without
+/// being spawned onto it.
 ///
 /// # Errors
 ///
@@ -112,8 +110,7 @@ mod tests {
     fn the_refusal_names_what_it_refuses() {
         assert_eq!(
             OnWorker.to_string(),
-            "this step cannot run on a runtime worker task, only on the turn thread or a \
-             crossing's caller thread"
+            "this step cannot run on a runtime worker task, only on a thread of its own"
         );
     }
 }

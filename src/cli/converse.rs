@@ -1,7 +1,7 @@
 //! The loop: read a line, take a turn, draw what the turn does.
 //!
-//! The turn runs on its own thread and the terminal stays with this one. That
-//! split is the whole reason a turn can stream while a question is waiting to
+//! The turn runs as a task on the application's runtime and the terminal stays
+//! with this thread. That split is the whole reason a turn can stream while a question is waiting to
 //! be answered, and it is why no lock appears anywhere on the render path: the
 //! only thread that writes to the terminal is the one running this loop.
 //!
@@ -150,6 +150,13 @@ pub(crate) struct Terms {
     pub(crate) reading: RefCell<Option<String>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
+    /// The application's runtime, which a turn runs on as a task and a
+    /// command is waited for on.
+    ///
+    /// The drawing thread is never inside it, which is what lets this thread
+    /// wait on it: for a command's answer, and for a turn that has ended to
+    /// hand the conversation back.
+    pub(crate) runtime: tokio::runtime::Handle,
     /// What the process has been told from outside it, which stops a turn too
     /// and then the run.
     pub(crate) ending: super::ending::Ending,
@@ -1322,6 +1329,7 @@ fn take<T: Terminal>(
 
     attaching::refresh_store(held, importing(conversation.session()));
     let working = sent(
+        &terms.runtime,
         conversation,
         work,
         asking,
@@ -1329,7 +1337,7 @@ fn take<T: Terminal>(
         running,
         terms.steer.clone(),
         terms.aside.clone(),
-    )?;
+    );
 
     // The first thing drawn, and held like everything drawn after it: the runner
     // is with the worker now, so a terminal that failed here has to be carried
@@ -1385,7 +1393,9 @@ fn take<T: Terminal>(
             .map_err(Fatal::from);
     }
 
-    let (conversation, did) = working.join().map_err(|_| Fatal::Lost)?;
+    // The task has dropped both senders, so it has ended or is ending: this
+    // waits only for it to hand back what it took.
+    let (conversation, did) = terms.runtime.block_on(working).map_err(|_| Fatal::Lost)?;
 
     // Written down before the signal it was held back from is let through,
     // and a turn that failed written down whoever else holds the session:
@@ -1401,18 +1411,21 @@ fn take<T: Terminal>(
     })
 }
 
-/// Sends the work away on its own thread, with the runner.
+/// Sends the work away as a task on `runtime`, with the runner.
 ///
 /// The runner goes with it and comes back beside what it found to do, which is
 /// what makes the transcript and the permission memory survive a turn without
 /// being shared between threads. Nothing on this side waits on the provider,
-/// which is what keeps the box under the turn live while it runs. The turn is
-/// waited for on that thread, and nothing of it is spawned.
-// Every one of these has to cross the thread boundary as a value the worker
-// owns or clones; the run that bundles four of them borrows, so it can only be
-// made on the far side. The lint counts to five; what has to travel is seven.
+/// which is what keeps the box under the turn live while it runs. The turn
+/// holds a worker only while it is polled: what it waits on — the model, a
+/// question, a terminal slow to take what it reports — hands the worker back
+/// while it lasts.
+// Every one of these has to cross into the task as a value it owns or clones;
+// the run that bundles four of them borrows, so it can only be made inside it.
+// The lint counts to five; what has to travel is seven, and where it goes.
 #[allow(clippy::too_many_arguments)]
 fn sent(
+    runtime: &tokio::runtime::Handle,
     mut conversation: Conversation,
     work: Work,
     mut asking: Asking,
@@ -1420,69 +1433,68 @@ fn sent(
     running: Cancel,
     steer: crucible_runtime::Steer,
     aside: crucible_runtime::Aside,
-) -> Result<thread::JoinHandle<(Conversation, Did)>, Fatal> {
-    thread::Builder::new()
-        .name("turn".to_owned())
-        .spawn(move || {
-            // One run for the whole of what this worker was sent to do, and
-            // the identity every event of it carries. Minted here rather than
-            // inside the runner because the failure below is this side's to
-            // post: a `TurnError` is handed back rather than reported, and a
-            // failure stamped with a run of its own would say the turn that
-            // failed was somebody else's.
-            let run = conversation
-                .runner()
-                .starting(&relay, &running, &steer, &aside);
-            let reporting = run.reporting();
+) -> tokio::task::JoinHandle<(Conversation, Did)> {
+    runtime.spawn(async move {
+        // One run for the whole of what this worker was sent to do, and
+        // the identity every event of it carries. Minted here rather than
+        // inside the runner because the failure below is this side's to
+        // post: a `TurnError` is handed back rather than reported, and a
+        // failure stamped with a run of its own would say the turn that
+        // failed was somebody else's.
+        let run = conversation
+            .runner()
+            .starting(&relay, &running, &steer, &aside);
+        let reporting = run.reporting();
 
-            // What somebody asked for is asked of the application as the
-            // command it is. Room made because the window filled, or because
-            // a session was picked up as notes, is the host's own doing and
-            // no client's to ask for.
-            //
-            // A turn and a compaction are the same shape, and that is the
-            // whole of why this is one function: one request, answered over
-            // seconds, reporting as it goes. Everything the loop that draws
-            // does for a turn — the bar, the clock, the box taking the next
-            // prompt, the key that stops it — is what a reader waiting on a
-            // compaction needs, and none of it is about a turn.
-            let ended = match work {
-                Work::Turn(prompt, attached) => match Prompt::new(&prompt) {
-                    Ok(prompt) => {
-                        let asked = Command::Prompt(prompt);
-                        asking.turn(&mut conversation, asked, attached, &run)
-                    }
-                    Err(refusal) => Ended::Refused(refusal),
-                },
-                Work::Room(Compacting::Asked) => {
-                    asking.turn(&mut conversation, Command::Compact, Box::default(), &run)
+        // What somebody asked for is asked of the application as the
+        // command it is. Room made because the window filled, or because
+        // a session was picked up as notes, is the host's own doing and
+        // no client's to ask for.
+        //
+        // A turn and a compaction are the same shape, and that is the
+        // whole of why this is one function: one request, answered over
+        // seconds, reporting as it goes. Everything the loop that draws
+        // does for a turn — the bar, the clock, the box taking the next
+        // prompt, the key that stops it — is what a reader waiting on a
+        // compaction needs, and none of it is about a turn.
+        let ended = match work {
+            Work::Turn(prompt, attached) => match Prompt::new(&prompt) {
+                Ok(prompt) => {
+                    let asked = Command::Prompt(prompt);
+                    asking.turn(&mut conversation, asked, attached, &run).await
                 }
-                // No turn is running, so the reading starts at nothing and
-                // what it comes to is the recap request's own cost — posted
-                // on the way, which is all the row above the box asks.
-                Work::Room(why) => {
-                    Ended::Room(conversation.compact(why, &run, &mut Spend::default()))
-                }
-            };
+                Err(refusal) => Ended::Refused(refusal),
+            },
+            Work::Room(Compacting::Asked) => {
+                asking
+                    .turn(&mut conversation, Command::Compact, Box::default(), &run)
+                    .await
+            }
+            // No turn is running, so the reading starts at nothing and
+            // what it comes to is the recap request's own cost — posted
+            // on the way, which is all the row above the box asks.
+            Work::Room(why) => {
+                Ended::Room(conversation.compact(why, &run, &mut Spend::default()).await)
+            }
+        };
 
-            // What a turn came to is read rather than dropped: one that ran
-            // reported itself as it went, and one a guardrail refused may
-            // have reported nothing at all.
-            let did = match ended {
-                Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
-                Ended::Turn(Ok(refused)) => Did::Refused(refused),
-                Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
-                Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
-                Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
-                    reporting.post(Event::Failed { error: problem });
-                    Did::Reported
-                }
-                Ended::Refused(refusal) => Did::Unsent(refusal),
-            };
+        // What a turn came to is read rather than dropped: one that ran
+        // reported itself as it went, and one a guardrail refused may
+        // have reported nothing at all.
+        let did = match ended {
+            Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
+            Ended::Turn(Ok(refused)) => Did::Refused(refused),
+            Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
+            Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
+            Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
+                reporting.post(Event::Failed { error: problem });
+                Did::Reported
+            }
+            Ended::Refused(refusal) => Did::Unsent(refusal),
+        };
 
-            (conversation, did)
-        })
-        .map_err(Fatal::Worker)
+        (conversation, did)
+    })
 }
 
 /// What a worker is sent away to do.

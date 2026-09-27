@@ -25,6 +25,7 @@ fn in_force(sample: &Sample) -> Terms {
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        runtime: crate::cli::fake::runtime(),
         ending: crate::cli::ending::Ending::deaf(),
         steer: crucible_runtime::Steer::new(),
         aside: crucible_runtime::Aside::new(),

@@ -1,9 +1,10 @@
 //! One receiver for the two things the drawing thread has to answer.
 //!
-//! A turn runs on its own thread and reports through [`Post`]; it also stops
-//! mid-flight to ask a question through a [`Front`]. The thread that draws is
-//! parked in `recv`, and a channel has no `select`, so both have to arrive on
-//! the same one. That is all [`Seen`] is: the union of what can turn up.
+//! A turn runs as a task on the application's runtime and reports through
+//! [`Post`]; it also stops mid-flight to ask a question through a [`Front`].
+//! The thread that draws is parked in `recv`, and a channel has no `select`,
+//! so both have to arrive on the same one. That is all [`Seen`] is: the union
+//! of what can turn up.
 //!
 //! The alternative — a second thread forwarding events into the first — buys
 //! nothing and adds a hop to every delta.
@@ -28,7 +29,7 @@
 //! action: a dropped ask drops its receiver, so a reply sent after that finds
 //! nobody rather than queuing for whatever asks next.
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SendError, SyncSender, TrySendError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -137,11 +138,13 @@ impl Post for Relay {
     /// to tell two runs apart it is this line that has to change rather than
     /// every pattern downstream of it.
     fn post(&self, reported: EventEnvelope) {
-        drop(deliver(&self.to, Seen::Turn(reported.into_event())));
+        // A drawing thread that has gone has nothing left to show it on.
+        deliver(&self.to, Seen::Turn(reported.into_event()));
     }
 }
 
-/// Sends `seen` to the drawing thread, waiting while the channel is full.
+/// Sends `seen` to the drawing thread, waiting while the channel is full, and
+/// answers `None` once the drawing thread is gone.
 ///
 /// That wait is the backpressure a slow terminal applies, and a turn is a task
 /// on the application's runtime: waiting as it stands, it would hold its
@@ -150,17 +153,17 @@ impl Post for Relay {
 /// been handed to another thread. Off the runtime, or on a runtime with one
 /// thread and so nowhere to hand them, the wait is where it stands: the
 /// drawing thread that empties the channel never waits on the runtime.
-fn deliver(to: &SyncSender<Seen>, seen: Seen) -> Result<(), SendError<Seen>> {
+fn deliver(to: &SyncSender<Seen>, seen: Seen) -> Option<()> {
     match to.try_send(seen) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Disconnected(seen)) => Err(SendError(seen)),
+        Ok(()) => Some(()),
+        Err(TrySendError::Disconnected(_)) => None,
         Err(TrySendError::Full(seen)) => {
             let on_a_worker = Handle::try_current()
                 .is_ok_and(|runtime| runtime.runtime_flavor() == RuntimeFlavor::MultiThread);
             if on_a_worker {
-                tokio::task::block_in_place(|| to.send(seen))
+                tokio::task::block_in_place(|| to.send(seen).ok())
             } else {
-                to.send(seen)
+                to.send(seen).ok()
             }
         }
     }
@@ -185,7 +188,7 @@ impl Asking {
 
     /// Asks the application for the turn `command` names, answering from the
     /// drawing thread whatever it stops on.
-    pub(crate) fn turn(
+    pub(crate) async fn turn(
         &mut self,
         conversation: &mut Conversation,
         command: Command,
@@ -193,7 +196,7 @@ impl Asking {
         run: &RunContext<'_>,
     ) -> Ended {
         let request = self.client.asking(command);
-        let ended = client::turn(conversation, &request, attached, self, run);
+        let ended = client::turn(conversation, &request, attached, self, run).await;
 
         self.client
             .answered(&request, conversation, || ended.outcome());
@@ -233,7 +236,7 @@ impl Front for Asking {
                 sensitivity: sensitivity.clone(),
                 reply,
             };
-            deliver(&self.to, question).ok()?;
+            deliver(&self.to, question)?;
             let (verdict, remember) = hear.await.ok()?;
 
             let decision = Decision::Ruled {
@@ -469,8 +472,7 @@ impl Front for Lent<'_> {
                     questions: questions.to_vec(),
                     reply,
                 },
-            )
-            .ok()?;
+            )?;
             drop(to);
 
             let id = pending.id();

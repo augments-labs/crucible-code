@@ -74,6 +74,7 @@ pub(crate) fn plain() -> Terms {
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        runtime: runtime(),
         ending: crate::cli::ending::Ending::deaf(),
         steer: crucible_runtime::Steer::new(),
         aside: crucible_runtime::Aside::new(),
@@ -151,7 +152,7 @@ pub(crate) fn paired(
     session: Arc<Session>,
     build: impl FnOnce(Arc<Session>) -> Runner,
 ) -> Conversation {
-    Conversation::recording(session, Some("anthropic"), build).on(runtime())
+    Conversation::recording(session, Some("anthropic"), build)
 }
 
 /// A runner that answers from `script` and records into `session`.

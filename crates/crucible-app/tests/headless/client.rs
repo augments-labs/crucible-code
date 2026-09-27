@@ -113,8 +113,7 @@ fn asking(tree: &Tree, script: Script) -> Result<(Conversation, Arc<AtomicUsize>
             session,
         )
         .permitting(Permission::with(crucible_tools::Mode::Ask, Rules::new()))
-    })
-    .on(super::runtime()?);
+    });
 
     Ok((conversation, ran))
 }
@@ -228,7 +227,13 @@ fn turned(
         let run = conversation
             .runner()
             .starting(&events, &cancel, &steer, &aside);
-        client::turn(conversation, request, Box::default(), remote, &run)
+        super::runtime()?.block_on(client::turn(
+            conversation,
+            request,
+            Box::default(),
+            remote,
+            &run,
+        ))
     };
     drop(events);
 
@@ -419,7 +424,7 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
         lasting: Lasting::Session,
     }))?;
 
-    let performed = client::perform(&mut conversation, &request, &desk);
+    let performed = super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
 
     assert_eq!(
         received(&performed.response(&request))?.outcome,
@@ -451,7 +456,7 @@ fn a_decision_on_its_own_is_answered_the_same_at_every_door() -> Result<(), Fail
 
     // Whichever door it is handed in at, no action is pending there for it to
     // be about, and a client is told that in one word rather than two.
-    let performed = client::perform(&mut conversation, &request, &desk);
+    let performed = super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
     assert_eq!(received(&performed.response(&request))?.outcome, stale);
 
     let kept = client::keep(&request, &desk);
@@ -488,7 +493,7 @@ fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> R
 
     let unread = crucible_client_api::Name::new("no theme by this name")?;
     let request = wire.sent(Command::Theme(Theme::Syntax(unread)))?;
-    let performed = client::perform(&mut conversation, &request, &desk);
+    let performed = super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
     assert_eq!(received(&performed.response(&request))?.outcome, invalid);
     let kept = client::keep(&request, &desk);
     assert_eq!(received(&kept.response(&request))?.outcome, invalid);
@@ -523,7 +528,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
     let mut wire = Wire::default();
     let mut answered = |conversation: &mut Conversation, command: Command| {
         let request = wire.sent(command)?;
-        let performed = client::perform(conversation, &request, &desk);
+        let performed = super::runtime()?.block_on(client::perform(conversation, &request, &desk));
         let response = received(&performed.response(&request))?;
         assert_eq!(response.correlation, Some(request.correlation()));
         Ok::<_, Failed>((performed, response.outcome))
@@ -626,8 +631,11 @@ fn a_cache_that_cannot_be_retired_holds_the_model_where_it_was() -> Result<(), F
     };
 
     let request = Wire::default().sent(haiku()?)?;
-    let response =
-        received(&client::perform(&mut conversation, &request, &desk).response(&request))?;
+    let response = received(
+        &super::runtime()?
+            .block_on(client::perform(&mut conversation, &request, &desk))
+            .response(&request),
+    )?;
 
     let Outcome::Model(ModelOutcome::CacheHeld(problem)) = &response.outcome else {
         return Err(format!("{:?}", response.outcome).into());
@@ -660,8 +668,11 @@ fn a_choice_that_could_not_be_written_down_is_still_taken_and_says_so() -> Resul
     };
 
     let request = Wire::default().sent(haiku()?)?;
-    let response =
-        received(&client::perform(&mut conversation, &request, &desk).response(&request))?;
+    let response = received(
+        &super::runtime()?
+            .block_on(client::perform(&mut conversation, &request, &desk))
+            .response(&request),
+    )?;
 
     let Outcome::Model(ModelOutcome::Taken {
         unwritten: Some(problem),
@@ -713,7 +724,8 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         ),
     ] {
         let request = wire.sent(command)?;
-        let performed = client::perform(&mut conversation, &request, &desk);
+        let performed =
+            super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
         assert_eq!(
             received(&performed.response(&request))?.outcome,
             Outcome::Refused(code.into()),
@@ -759,7 +771,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
 
     for palette in Palette::EVERY {
         let request = wire.sent(Command::Theme(Theme::Drawing(palette)))?;
-        client::perform(&mut conversation, &request, &desk);
+        super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
         let choice = super::written(&tree)?
             .theme()
             .ok_or_else(|| format!("{} is not a theme the settings read", palette.as_str()))?;

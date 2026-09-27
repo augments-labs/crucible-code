@@ -10,22 +10,24 @@
 //! first time it is called and hands back the same runtime's handle every time
 //! after. A path that never asks — `--help` and `--version`, which end while
 //! the arguments are parsed, and the listings that print and stop — starts no
-//! thread for it. Assembling a conversation asks, because its turns are
-//! waited for on it, every command its sandbox starts is watched there,
+//! thread for it. Assembling a conversation asks, because its turns run on
+//! it, every command its sandbox starts is watched there,
 //! including the kill of one that breaks its time or output limit, and an
 //! account's tokens are renewed there.
 //!
 //! **Multi-thread, because a waiting caller does not drive the runtime.** A
-//! synchronous caller waits for a future by polling it on its own thread,
-//! entered into this runtime (see `crucible_runtime::Bridge::wait`), which is
-//! the shape of `Handle::block_on`. Tokio's own documentation of that method,
-//! at `src/runtime/handle.rs:248-253` in the pinned 1.53.1 source, says that on
-//! a `current_thread` runtime only `Runtime::block_on` can drive the IO and
-//! timer drivers and `Handle::block_on` cannot, so anything relying on IO or
-//! timers does not work unless another thread is inside `Runtime::block_on` on
-//! the same runtime. A current-thread runtime would therefore leave every
-//! future a caller waits on unwoken by the timer it waits for. The workers of
-//! a multi-thread runtime run those drivers themselves, whoever is waiting.
+//! turn is a task spawned here, run while the drawing thread goes on drawing,
+//! and a synchronous caller — the drawing thread answering a command, or
+//! joining a turn that has ended — waits for a future with `Handle::block_on`.
+//! Tokio's own documentation of that method, at `src/runtime/handle.rs:248-253`
+//! in the pinned 1.53.1 source, says that on a `current_thread` runtime only
+//! `Runtime::block_on` can drive the IO and timer drivers and
+//! `Handle::block_on` cannot, so anything relying on IO or timers does not work
+//! unless another thread is inside `Runtime::block_on` on the same runtime. A
+//! current-thread runtime would therefore run no turn while nobody was inside
+//! `Runtime::block_on`, and leave every future a caller waits on unwoken by the
+//! timer it waits for. The workers of a multi-thread runtime run the tasks and
+//! those drivers themselves, whoever is waiting.
 //!
 //! **A timer and an I/O driver.** The timer is what every timed wait on this
 //! runtime is measured against. The I/O driver is what a hosted program's
@@ -62,11 +64,13 @@ use tokio::runtime::{Builder, Handle, Runtime};
 
 /// How many threads poll the tasks spawned onto the runtime.
 ///
-/// A turn is not one of them: it is polled on the thread that takes it. What
-/// runs here is work the application owns on the turn's behalf and between
-/// turns — a process's status, a hosted program's streams, a credential's
-/// renewal — each of which spends most of its life waiting, and the runs of a
-/// turn's tool calls, which may hold a worker inside synchronous work for as
+/// A turn is one of the tasks they poll, and holds a worker only while it is
+/// polled: the model, a permission question and a terminal slow to take what
+/// the turn reports are each awaited, or hand the worker back while they
+/// last. The rest is work the application owns on the turn's behalf and
+/// between turns — a process's status, a hosted program's streams, a
+/// credential's renewal — each of which spends most of its life waiting, and
+/// the runs of a turn's tool calls, which may hold a worker inside synchronous work for as
 /// long as a call lasts. Those are at most `crucible_runner::TOOL_RUNS` at
 /// once, held below this less one, so two workers stay free and a process's
 /// status task, where its deadline and output-limit kills run, finds one

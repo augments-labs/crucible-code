@@ -1,11 +1,13 @@
-//! Waiting for a turn: on the thread that asks for it, never spawned, and
-//! refused where it cannot wait.
+//! Taking a turn over the application's own runtime: polled wherever it is
+//! awaited, spawning nothing of its own, and writing what a session picked up
+//! owes before anything else.
 //!
-//! The runner's turn is asynchronous and a conversation's is not, so a
-//! conversation waits for each turn on the thread that asked for it, entered
-//! into the application's runtime. These drive a conversation over the
-//! application's own runtime, from [`serving`], and read where the model was
-//! asked from, what the runtime was running meanwhile, and how the turn ended.
+//! A conversation's turn is asynchronous, and its caller decides where it
+//! runs: the terminal spawns it as a task, and these wait for it with
+//! [`Handle::block_on`] on a thread of their own. They drive a conversation
+//! over the application's own runtime, from [`serving`], and read where the
+//! model was asked from, what the runtime was running meanwhile, what the log
+//! holds, and how the turn ended.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -22,7 +24,7 @@ use crucible_models::{
     Delta, DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
 use crucible_runner::{Event, EventEnvelope, Runner, Tools, TurnError, Turned};
-use crucible_runtime::{Aside, BoxFuture, Bridge, Cancel, Steer, Unwaited};
+use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
 use crucible_types::{
     AgentId, CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding,
@@ -234,7 +236,7 @@ impl Future for Stopped {
 }
 
 /// A conversation asking `provider`, recording into a session of its own in
-/// `tree`, handed no runtime.
+/// `tree`.
 fn asking(tree: &Tree, provider: Watched) -> Result<Conversation, Failed> {
     let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
     let agent = AgentBuilder::new(
@@ -259,9 +261,11 @@ fn asking(tree: &Tree, provider: Watched) -> Result<Conversation, Failed> {
     }))
 }
 
-/// Takes one turn of `conversation` under `cancel`, handing back how it ended
-/// and every event it posted.
+/// Takes one turn of `conversation` under `cancel`, waiting for it on this
+/// thread over `runtime`, and hands back how it ended and every event it
+/// posted.
 fn turned(
+    runtime: &Handle,
     conversation: &mut Conversation,
     cancel: &Cancel,
 ) -> (Result<Turned, TurnError>, Vec<Event>) {
@@ -271,7 +275,7 @@ fn turned(
         let run = conversation
             .runner()
             .starting(&events, cancel, &steer, &aside);
-        conversation.turn("go", Box::default(), &mut Nobody, &run)
+        runtime.block_on(conversation.turn("go", Box::default(), &mut Nobody, &run))
     };
     drop(events);
     (
@@ -281,19 +285,18 @@ fn turned(
 }
 
 #[test]
-fn a_turn_is_polled_on_the_thread_that_asks_for_it_and_spawns_nothing() -> Result<(), Failed> {
+fn a_turn_is_polled_where_it_is_awaited_and_spawns_nothing() -> Result<(), Failed> {
     let tree = Tree::new("crossing-thread")?;
     let provider = Watched::new(Answering::Saying("from the turn thread"));
     let seen = Arc::clone(&provider.seen);
-    let conversation = asking(&tree, provider)?;
+    let mut conversation = asking(&tree, provider)?;
 
     let (ran, stopped) = serving(|services| -> Result<Option<StopReason>, String> {
-        let mut conversation =
-            conversation.on(services.runtime().handle().map_err(|e| e.to_string())?);
+        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
         thread::Builder::new()
             .name("turn".to_owned())
             .spawn(move || {
-                let (turned, _) = turned(&mut conversation, &Cancel::new());
+                let (turned, _) = turned(&runtime, &mut conversation, &Cancel::new());
                 turned
                     .map(|turned| turned.stop())
                     .map_err(|e| e.to_string())
@@ -314,76 +317,12 @@ fn a_turn_is_polled_on_the_thread_that_asks_for_it_and_spawns_nothing() -> Resul
     assert!(
         seen.iter()
             .all(|(thread, _)| thread.as_deref() == Some("turn")),
-        "a step of the turn was polled off the thread that asked for it: {seen:?}"
+        "a step of the turn was polled off the thread that awaited it: {seen:?}"
     );
     assert!(
         seen.iter().all(|(_, alive)| *alive == Some(0)),
-        "the runtime had a task alive while the turn was polled, or was not entered: {seen:?}"
+        "the turn spawned a task while it was polled, or was polled outside the runtime: {seen:?}"
     );
-    Ok(())
-}
-
-#[test]
-fn a_turn_asked_for_on_a_runtime_s_thread_is_refused_and_never_asked() -> Result<(), Failed> {
-    let tree = Tree::new("crossing-inside")?;
-    let provider = Watched::new(Answering::Saying("never said"));
-    let asked = Arc::clone(&provider.asked);
-    let conversation = asking(&tree, provider)?;
-
-    let (refused, stopped) = serving(|services| -> Result<String, String> {
-        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let mut conversation = conversation.on(runtime.clone());
-        let _entered = runtime.enter();
-        match turned(&mut conversation, &Cancel::new()).0 {
-            Err(TurnError::Unwaited(Unwaited::InsideRuntime(Bridge::AppTurn))) => {
-                Ok("refused".to_owned())
-            }
-            other => Err(format!("{other:?}")),
-        }
-    });
-
-    assert_eq!(refused?, "refused");
-    assert!(stopped.is_ok(), "{stopped:?}");
-    assert_eq!(asked.load(Ordering::Relaxed), 0, "the model was asked");
-    Ok(())
-}
-
-#[test]
-fn a_conversation_handed_no_runtime_refuses_its_turns_and_compactions() -> Result<(), Failed> {
-    let tree = Tree::new("crossing-none")?;
-    let provider = Watched::new(Answering::Saying("never said"));
-    let asked = Arc::clone(&provider.asked);
-    let mut conversation = asking(&tree, provider)?;
-
-    let turn = turned(&mut conversation, &Cancel::new()).0;
-    let room = {
-        let (events, _reported) = mpsc::channel::<EventEnvelope>();
-        let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
-        let run = conversation
-            .runner()
-            .starting(&events, &cancel, &steer, &aside);
-        conversation.compact(
-            crucible_types::Compacting::Asked,
-            &run,
-            &mut crucible_types::Spend::default(),
-        )
-    };
-
-    assert!(
-        matches!(
-            turn,
-            Err(TurnError::Unwaited(Unwaited::NoRuntime(Bridge::AppTurn)))
-        ),
-        "{turn:?}"
-    );
-    assert!(
-        matches!(
-            room,
-            Err(TurnError::Unwaited(Unwaited::NoRuntime(Bridge::AppTurn)))
-        ),
-        "{room:?}"
-    );
-    assert_eq!(asked.load(Ordering::Relaxed), 0, "the model was asked");
     Ok(())
 }
 
@@ -435,42 +374,31 @@ fn resuming_a_restricted_result(tree: &Tree, provider: Watched) -> Result<Conver
 }
 
 #[test]
-fn a_clearing_line_the_conversation_could_not_wait_for_is_reported_until_a_turn_writes_it()
--> Result<(), Failed> {
+fn a_clearing_line_still_owed_is_written_before_the_turn_s_own() -> Result<(), Failed> {
+    // Built with no pick-up to write it, the line is still owed when the turn
+    // starts, and the turn writes it before anything of its own.
     let tree = Tree::new("crossing-owed")?;
-    let conversation =
+    let mut conversation =
         resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("after")))?;
 
     let (seen, stopped) = serving(|services| -> Result<_, String> {
         let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        // Handed its runtime on a thread entered into it, so the wait for
-        // what picking the session up owes is refused.
-        let entered = runtime.enter();
-        let mut conversation = conversation.on(runtime.clone());
-        drop(entered);
-        let refused = conversation.session().missed();
-
-        turned(&mut conversation, &Cancel::new())
+        let owed = conversation.runner().owes_clearings();
+        turned(&runtime, &mut conversation, &Cancel::new())
             .0
             .map_err(|e| e.to_string())?;
         let session = Arc::clone(conversation.session());
-        let written = session.missed();
+        let still = conversation.runner().owes_clearings();
         drop(conversation);
         let trouble = session.finish();
         let log = std::fs::read_to_string(session.path()).map_err(|e| e.to_string())?;
-        Ok((refused, written, trouble, log))
+        Ok((owed, still, trouble, log))
     });
-    let (refused, written, trouble, log) = seen?;
+    let (owed, still, trouble, log) = seen?;
 
     assert!(stopped.is_ok(), "{stopped:?}");
-    assert!(
-        refused.is_some(),
-        "a clearing line nobody waited for went unreported"
-    );
-    assert_eq!(
-        written, None,
-        "the report outlived the turn that wrote the line"
-    );
+    assert!(owed, "picking the session up owed no clearing line");
+    assert!(!still, "the turn left the line owed");
     assert_eq!(trouble, None, "the log was said to have stopped recording");
     let cleared = log.lines().position(|line| line.contains("\"restricted\""));
     let asked = log.lines().position(|line| line == r#"{"user":"go"}"#);
@@ -481,58 +409,6 @@ fn a_clearing_line_the_conversation_could_not_wait_for_is_reported_until_a_turn_
     Ok(())
 }
 
-#[test]
-fn a_clearing_line_dropped_with_the_conversation_stays_reported() -> Result<(), Failed> {
-    let tree = Tree::new("crossing-owed-dropped")?;
-    let conversation =
-        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
-
-    let (seen, stopped) = serving(|services| -> Result<_, String> {
-        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let entered = runtime.enter();
-        let conversation = conversation.on(runtime.clone());
-        drop(entered);
-        let session = Arc::clone(conversation.session());
-        drop(conversation);
-        Ok((session.missed(), session.finish()))
-    });
-    let (missed, trouble) = seen?;
-
-    assert!(stopped.is_ok(), "{stopped:?}");
-    assert!(
-        missed.is_some(),
-        "clearing lines lost with the runner went unreported"
-    );
-    assert_eq!(trouble, None, "the log was said to have stopped recording");
-    Ok(())
-}
-
-#[test]
-fn a_conversation_that_owes_nothing_reports_nothing_where_it_could_not_wait() -> Result<(), Failed>
-{
-    // Nothing is owed, so there is nothing to wait for and nothing to report,
-    // even where waiting would have been refused.
-    let tree = Tree::new("crossing-owes-nothing")?;
-    let conversation = asking(&tree, Watched::new(Answering::Saying("never")))?;
-
-    let (seen, stopped) = serving(|services| -> Result<_, String> {
-        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let entered = runtime.enter();
-        let conversation = conversation.on(runtime.clone());
-        drop(entered);
-        Ok((
-            conversation.session().missed(),
-            conversation.session().trouble(),
-        ))
-    });
-    let (missed, trouble) = seen?;
-
-    assert!(stopped.is_ok(), "{stopped:?}");
-    assert_eq!(missed, None, "a wait with nothing to write was reported");
-    assert_eq!(trouble, None, "a wait with nothing to write was trouble");
-    Ok(())
-}
-
 /// Whether `session`'s log holds a line clearing a restricted result.
 fn cleared_in(session: &Session) -> Result<bool, String> {
     let log = std::fs::read_to_string(session.path()).map_err(|e| e.to_string())?;
@@ -540,188 +416,71 @@ fn cleared_in(session: &Session) -> Result<bool, String> {
 }
 
 #[test]
-fn a_report_stays_through_a_refused_turn_and_names_only_the_session_owed() -> Result<(), Failed> {
-    // The line is owed to the session picked up first. A turn that could not
-    // be waited for writes nothing, so the report stays; and a new session
-    // started where the wait is refused again is owed nothing, so it is not
-    // said to be missing anything.
-    let tree = Tree::new("crossing-owed-refused-turn")?;
-    let conversation =
-        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
-    let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
-
-    let (seen, stopped) = serving(|services| -> Result<_, String> {
-        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let entered = runtime.enter();
-        let mut conversation = conversation.on(runtime.clone());
-        let first = Arc::clone(conversation.session());
-        let refused = turned(&mut conversation, &Cancel::new()).0.is_err();
-        let after_turn = first.missed();
-        conversation
-            .clear(&sessions, &workspace, None)
-            .map_err(|e| e.to_string())?;
-        let started = conversation.session().missed();
-        drop(entered);
-        Ok((refused, after_turn, first.missed(), started))
-    });
-    let (refused, after_turn, first, started) = seen?;
-
-    assert!(stopped.is_ok(), "{stopped:?}");
-    assert!(refused, "the turn was not refused");
-    assert!(
-        after_turn.is_some(),
-        "a turn that wrote nothing withdrew the report"
-    );
-    assert!(
-        first.is_some(),
-        "the session still owed its line stopped being reported"
-    );
-    assert_eq!(
-        started, None,
-        "a session owed nothing was said to be missing lines"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_refused_pick_up_reports_the_session_left_that_is_owed_and_not_the_new_one()
--> Result<(), Failed> {
-    // With no runtime, neither resuming nor the pick-up after it can wait. The
-    // line is owed to the session left behind, and the one started is owed
-    // nothing, so only the first is said to be missing it.
+fn a_pick_up_writes_the_line_owed_to_the_session_it_leaves() -> Result<(), Failed> {
+    // The line is owed to the session picked up first. Clearing waits for it
+    // to be written there, and the session started in its place is owed
+    // nothing.
     let tree = Tree::new("crossing-owed-pick-up")?;
     let mut conversation =
         resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
-    let first = Arc::clone(conversation.session());
-
-    let left = conversation.clear(&tree.sessions(), &tree.workspace()?, None)?;
-
-    assert!(Arc::ptr_eq(&left, &first), "a different session was left");
-    assert!(
-        first.missed().is_some(),
-        "the session left owing a line was not reported"
-    );
-    assert_eq!(
-        conversation.session().missed(),
-        None,
-        "the session started, owed nothing, was said to be missing lines"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_waited_pick_up_clears_the_report_of_the_session_it_wrote_to() -> Result<(), Failed> {
-    // Refused twice — the first session is owed its line, and a second one is
-    // started without it — then a pick-up that is waited for writes the line
-    // to the first session, which is two sessions back by then.
-    let tree = Tree::new("crossing-owed-left")?;
-    let conversation =
-        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
     let (sessions, workspace) = (tree.sessions(), tree.workspace()?);
+    let first = Arc::clone(conversation.session());
 
     let (seen, stopped) = serving(|services| -> Result<_, String> {
         let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let entered = runtime.enter();
-        let mut conversation = conversation.on(runtime.clone());
-        let first = Arc::clone(conversation.session());
-        let second = conversation
-            .clear(&sessions, &workspace, None)
-            .map(|_| Arc::clone(conversation.session()))
-            .map_err(|e| e.to_string())?;
-        drop(entered);
-        conversation
-            .clear(&sessions, &workspace, None)
+        let left = runtime
+            .block_on(conversation.clear(&sessions, &workspace, None))
             .map_err(|e| e.to_string())?;
         Ok((
+            Arc::ptr_eq(&left, &first),
             cleared_in(&first)?,
-            first.missed(),
-            second.missed(),
-            conversation.session().missed(),
+            cleared_in(conversation.session())?,
+            conversation.runner().owes_clearings(),
         ))
     });
-    let (written, first, second, third) = seen?;
+    let (same, written, started, owed) = seen?;
 
     assert!(stopped.is_ok(), "{stopped:?}");
-    assert!(written, "the waited pick-up did not write the owed line");
-    assert_eq!(first, None, "the report outlived the line it named");
-    assert_eq!(second, None, "a session owed nothing was reported");
-    assert_eq!(third, None, "a session owed nothing was reported");
+    assert!(same, "a different session was left");
+    assert!(written, "the pick-up did not write the owed line");
+    assert!(
+        !started,
+        "the session started was written a line it was not owed"
+    );
+    assert!(!owed, "the line was still owed after the pick-up");
     Ok(())
 }
 
 #[test]
-fn a_report_clears_when_a_conversation_handed_its_runtime_writes_the_line() -> Result<(), Failed> {
-    // With no runtime yet, a pick-up cannot wait, and the session left behind
-    // is the one owed its line. Handing the runtime over writes it there.
-    let tree = Tree::new("crossing-owed-on")?;
+fn a_compaction_writes_the_line_still_owed() -> Result<(), Failed> {
+    let tree = Tree::new("crossing-owed-compaction")?;
     let mut conversation =
         resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
-    let first = Arc::clone(conversation.session());
-    conversation.clear(&tree.sessions(), &tree.workspace()?, None)?;
-    let second = Arc::clone(conversation.session());
-    let refused = (first.missed(), second.missed());
 
     let (seen, stopped) = serving(|services| -> Result<_, String> {
         let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let conversation = conversation.on(runtime);
-        Ok((
-            cleared_in(&first)?,
-            first.missed(),
-            conversation.session().missed(),
-        ))
-    });
-    let (written, first_after, second_after) = seen?;
-
-    assert!(stopped.is_ok(), "{stopped:?}");
-    assert!(
-        refused.0.is_some(),
-        "the session owed the line was not reported"
-    );
-    assert_eq!(refused.1, None, "the session owed nothing was reported");
-    assert!(written, "handing the runtime over did not write the line");
-    assert_eq!(first_after, None, "the report outlived the line it named");
-    assert_eq!(second_after, None, "a session owed nothing was reported");
-    Ok(())
-}
-
-#[test]
-fn a_waited_compaction_clears_the_report_once_it_writes_the_line() -> Result<(), Failed> {
-    let tree = Tree::new("crossing-owed-compaction")?;
-    let conversation =
-        resuming_a_restricted_result(&tree, Watched::new(Answering::Saying("never")))?;
-
-    let (seen, stopped) = serving(|services| -> Result<_, String> {
-        let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
-        let entered = runtime.enter();
-        let mut conversation = conversation.on(runtime.clone());
-        drop(entered);
-        let refused = conversation.session().missed();
+        let owed = conversation.runner().owes_clearings();
         {
             let (events, _reported) = mpsc::channel::<EventEnvelope>();
             let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
             let run = conversation
                 .runner()
                 .starting(&events, &cancel, &steer, &aside);
-            conversation
-                .compact(
+            runtime
+                .block_on(conversation.compact(
                     crucible_types::Compacting::Asked,
                     &run,
                     &mut crucible_types::Spend::default(),
-                )
+                ))
                 .map_err(|e| e.to_string())?;
         }
-        Ok((
-            refused,
-            cleared_in(conversation.session())?,
-            conversation.session().missed(),
-        ))
+        Ok((owed, cleared_in(conversation.session())?))
     });
-    let (refused, written, after) = seen?;
+    let (owed, written) = seen?;
 
     assert!(stopped.is_ok(), "{stopped:?}");
-    assert!(refused.is_some(), "the refused wait went unreported");
+    assert!(owed, "picking the session up owed no clearing line");
     assert!(written, "the compaction did not write the owed line");
-    assert_eq!(after, None, "the report outlived the line it named");
     Ok(())
 }
 
@@ -734,7 +493,7 @@ fn a_turn_stopped_while_the_model_waits_ends_as_a_stopped_turn() -> Result<(), F
     // waiting, so it lands on a step that is pending, whatever the timing.
     let tree = Tree::new("crossing-stopped")?;
     let (waiting, heard) = mpsc::sync_channel(1);
-    let conversation = asking(
+    let mut conversation = asking(
         &tree,
         Watched::new(Answering::UntilStopped).telling(waiting),
     )?;
@@ -743,8 +502,7 @@ fn a_turn_stopped_while_the_model_waits_ends_as_a_stopped_turn() -> Result<(), F
 
     let (ended, stopped) = serving(
         |services| -> Result<(Option<StopReason>, Vec<Event>, bool), String> {
-            let mut conversation =
-                conversation.on(services.runtime().handle().map_err(|e| e.to_string())?);
+            let runtime = services.runtime().handle().map_err(|e| e.to_string())?;
             // Raises the stop on hearing the response wait, and says whether
             // it ever did: the response drops its end once it has answered,
             // and the conversation drops the rest below.
@@ -755,7 +513,7 @@ fn a_turn_stopped_while_the_model_waits_ends_as_a_stopped_turn() -> Result<(), F
                 }
                 waited
             });
-            let (turned, events) = turned(&mut conversation, &cancel);
+            let (turned, events) = turned(&runtime, &mut conversation, &cancel);
             drop(conversation);
             let waited = raiser
                 .join()
