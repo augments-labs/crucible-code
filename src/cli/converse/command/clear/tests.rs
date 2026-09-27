@@ -6,10 +6,12 @@ use std::time::{Duration, Instant};
 use crucible_app::Conversation;
 use crucible_auth::Store;
 use crucible_builtins::{Ledger, Plan};
-use crucible_core::{AgentId, Cancel, Message, Revealed, StopReason, ToolArgs, Transcript};
 use crucible_runner::{Agent, Model, Runner, Tools};
+use crucible_runtime::Cancel;
 use crucible_session::{Session, recent};
+use crucible_tools::Revealed;
 use crucible_tui::{Recording, Renderer};
+use crucible_types::{AgentId, Message, StopReason, ToolArgs, Transcript};
 
 use crate::cli::converse::tests::paired;
 use crate::cli::converse::{Answers, Held};
@@ -57,8 +59,8 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         ending: crate::cli::ending::Ending::deaf(),
-        steer: crucible_core::Steer::new(),
-        aside: crucible_core::Aside::new(),
+        steer: crucible_runtime::Steer::new(),
+        aside: crucible_runtime::Aside::new(),
         ledger: ledger.clone(),
         revealed: Revealed::new(),
         plan: plan.clone(),
@@ -236,7 +238,7 @@ fn clearing_takes_the_screen_and_what_was_held_behind_it() {
     let mut input = std::io::empty();
     let opening = standing(&sample);
     let mut held = lent(&mut input, &opening);
-    let call = crucible_core::ToolId::new("call-1");
+    let call = crucible_types::ToolId::new("call-1");
     held.kept.calling(call.clone(), "read".into());
     held.kept
         .finished(&call, "what the row had no room for".into(), 3);

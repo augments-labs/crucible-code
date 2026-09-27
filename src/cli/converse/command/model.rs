@@ -23,7 +23,7 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::switching::Switched;
 use crucible_client_api::{Command, Name};
-use crucible_core::Effort;
+use crucible_models::Effort;
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
     clip, fold,

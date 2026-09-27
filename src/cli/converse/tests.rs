@@ -9,13 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crucible_auth::Store;
-use crucible_core::{
-    AgentId, Compacting, Delta, Mode, Permission, Revealed, Rules, StopReason, ToolId,
-};
+use crucible_models::Delta;
 use crucible_runner::Event;
 use crucible_runner::{Agent, Model, Tools};
 use crucible_session::Session;
+use crucible_tools::{Mode, Permission, Revealed, Rules};
 use crucible_tui::{Picture, Recording, Size, Terminal, TerminalError};
+use crucible_types::{AgentId, Compacting, StopReason, ToolId};
+use crucible_workspace::Workspace;
 
 use crucible_tui::Key;
 
@@ -30,7 +31,7 @@ use crate::cli::sample::Sample;
 /// exists here.
 pub(crate) fn opening() -> draw::opening::Standing {
     let workspace =
-        crucible_core::Workspace::open(std::env::temp_dir()).expect("a temporary directory");
+        crucible_workspace::Workspace::open(std::env::temp_dir()).expect("a temporary directory");
 
     draw::opening::Standing::new(
         &draw::Opening {
@@ -74,8 +75,8 @@ pub(crate) fn plain() -> Terms {
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         ending: crate::cli::ending::Ending::deaf(),
-        steer: crucible_core::Steer::new(),
-        aside: crucible_core::Aside::new(),
+        steer: crucible_runtime::Steer::new(),
+        aside: crucible_runtime::Aside::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
@@ -279,7 +280,7 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
     }))
     .expect("progress to fit");
     post.send(Seen::Turn(Event::Compacted {
-        compacted: crucible_core::Compacted {
+        compacted: crucible_types::Compacted {
             why: Compacting::Asked,
             replaced: 2,
             before: 80,
@@ -579,7 +580,7 @@ fn the_whole_queue_goes_into_one_turn_rather_than_one_turn_each() {
     // The oldest is the turn's prompt and the rest are offered to that same
     // turn, which records them together at its first boundary. Nothing is left
     // waiting, and the bytes they reserved come back with them.
-    let steer = crucible_core::Steer::new();
+    let steer = crucible_runtime::Steer::new();
     assert_eq!(
         batched(&mut waiting, &steer).as_deref(),
         Some("run the tests")
@@ -598,7 +599,7 @@ fn an_empty_queue_is_no_turn_and_offers_nothing() {
     // time there is nothing there. Nothing is what it must get back: a turn
     // taken on an empty queue is a prompt nobody typed.
     let mut waiting = Prompts::default();
-    let steer = crucible_core::Steer::new();
+    let steer = crucible_runtime::Steer::new();
 
     assert!(batched(&mut waiting, &steer).is_none());
     assert!(steer.take().is_empty());
@@ -814,7 +815,7 @@ fn a_log_that_failed_with_the_last_line_still_queued_is_reported_before_the_prom
     // still say anything is the drain after it. A test that let the poll run
     // would pass with the report after the loop deleted.
     let session = Arc::new(Session::onto("/nowhere".into(), Failing));
-    session.append(&crucible_core::Message::said("queued"));
+    session.append(&crucible_types::Message::said("queued"));
 
     let conversation = paired(Arc::clone(&session), |session| {
         Runner::new(

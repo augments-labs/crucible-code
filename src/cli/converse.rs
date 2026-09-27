@@ -53,14 +53,14 @@ use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_client_api::{Command, Prompt, Refusal};
-use crucible_core::{
-    Attachment, Cancel, Compacting, Mode, Revealed, Room, SessionId, Spend, Workspace,
-};
+use crucible_context::Room;
 use crucible_runner::{Event, Runner, Turned};
+use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
     Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal, TerminalError,
 };
+use crucible_types::{Attachment, Compacting, SessionId, Spend};
 
 use super::draw;
 use super::gathering::Gathering;
@@ -157,7 +157,7 @@ pub(crate) struct Terms {
     /// from between one pass and the next. Held for the session the way the
     /// cancel is: it is made once beside it, and the turn's thread and the loop
     /// that reads the keyboard each hold an end.
-    pub(crate) steer: crucible_core::Steer,
+    pub(crate) steer: crucible_runtime::Steer,
     /// What a fact the session learned mid-turn is pushed into, and the turn
     /// draws from at the same boundary it draws steering from.
     ///
@@ -167,7 +167,7 @@ pub(crate) struct Terms {
     /// exited is the only thing that goes in it today, and the agent was told
     /// not to poll for that — so this is the channel that makes the promise
     /// true.
-    pub(crate) aside: crucible_core::Aside,
+    pub(crate) aside: crucible_runtime::Aside,
     /// Which files this session has read, which is what `write` asks before it
     /// replaces one.
     ///
@@ -180,7 +180,7 @@ pub(crate) struct Terms {
     /// Which deferred tools this session has looked up. `/clear` empties it for
     /// the reason it empties the plan: what it would otherwise leave is a model
     /// holding tools this conversation never asked for.
-    pub(crate) revealed: Revealed,
+    pub(crate) revealed: crucible_tools::Revealed,
     /// Where a tool's questions reach the thread that draws them.
     ///
     /// Held for the reason the ledger and the plan are: it is made once, beside
@@ -221,7 +221,7 @@ pub(crate) struct Terms {
     /// again. The row under the box says the step at once, marked for the next
     /// turn, so the press is not dead and the row is not a lie about the mode
     /// the running turn is decided under.
-    pub(crate) pending_mode: Cell<Option<Mode>>,
+    pub(crate) pending_mode: Cell<Option<crucible_tools::Mode>>,
     /// The settled configuration model limits are read from. Kept in memory so
     /// `/model` resolves a new name exactly as startup did without touching a
     /// file on the command path.
@@ -247,7 +247,7 @@ pub(crate) struct Terms {
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
     /// sessions are listed and which of them may be picked up.
-    pub(crate) workspace: Workspace,
+    pub(crate) workspace: crucible_workspace::Workspace,
     /// Which press finishes a prompt, and which one opens a line under it.
     ///
     /// Read once at startup and never again: it is a fact about the keyboard in
@@ -261,14 +261,14 @@ pub(crate) struct Terms {
     /// generation: the built-ins at startup, and whatever is committed beside
     /// them later. A line is read against the snapshot taken as it is read, so
     /// a name it resolves is one that was in force when it was typed.
-    pub(crate) commands: crucible_core::Registry<command::Slash>,
+    pub(crate) commands: crucible_registry::Registry<command::Slash>,
     /// The providers a name is read against, from `--model provider/…` to the
     /// rows `/login` and `/model` draw.
     ///
     /// A registry for the reason the commands are: the built-ins at startup,
     /// and whatever is committed beside them later. Each reader takes its own
     /// snapshot, so a provider it names is one that was in force when it asked.
-    pub(crate) providers: crucible_core::Registry<crucible_app::providers::Arm>,
+    pub(crate) providers: crucible_registry::Registry<crucible_app::providers::Arm>,
 }
 
 impl Terms {
@@ -1418,8 +1418,8 @@ fn sent(
     mut asking: Asking,
     relay: Relay,
     running: Cancel,
-    steer: crucible_core::Steer,
-    aside: crucible_core::Aside,
+    steer: crucible_runtime::Steer,
+    aside: crucible_runtime::Aside,
 ) -> Result<thread::JoinHandle<(Conversation, Did)>, Fatal> {
     thread::Builder::new()
         .name("turn".to_owned())
@@ -1662,7 +1662,7 @@ impl Prompts {
 /// Each reaches it as the line it was typed as; what they share is the turn.
 ///
 /// `None` where nothing is waiting, which is the ordinary case.
-fn batched(queued: &mut Prompts, steer: &crucible_core::Steer) -> Option<String> {
+fn batched(queued: &mut Prompts, steer: &crucible_runtime::Steer) -> Option<String> {
     let said = queued.pop()?;
 
     while let Some(behind) = queued.pop() {

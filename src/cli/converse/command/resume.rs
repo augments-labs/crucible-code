@@ -35,9 +35,10 @@ use std::time::SystemTime;
 use crucible_app::Conversation;
 use crucible_app::client::{Performed, Resumed};
 use crucible_client_api::Command;
-use crucible_core::{Compacting, SessionId, Workspace};
 use crucible_session::{Glimpse, Pruned, Recorded, glimpse, recent, retitle};
 use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
+use crucible_types::{Compacting, SessionId};
+use crucible_workspace::Workspace;
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;

@@ -30,7 +30,7 @@
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_client_api::Command;
-use crucible_core::{Effort, EffortError};
+use crucible_models::{Effort, EffortError};
 use crucible_runner::Runner;
 use crucible_tui::{Glyphs, Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 

@@ -5,15 +5,21 @@
 //! the decision actually lives.
 
 use crucible_builtins::{Background, Bash};
-use crucible_core::{
-    Ancestry, Ask, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel,
-    Compacted, ContextError, ContextPatch, ContextSnapshot, DescribeTool, InvocationId,
-    JournalStore, Message, Mode, Permission, Remember, Rules, RunItem, Sensitivity, SessionId,
-    SessionOwner, SessionStore, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult,
+use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
+use crucible_sandbox_local::LocalSandbox;
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, InvocationId, JournalStore, RunItem,
+    SessionOwner, SessionStore,
+};
+use crucible_tools::{
+    Ask, DescribeTool, Mode, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolContext,
     Unwatched, Verdict,
 };
-use crucible_runtime::BoxFuture;
-use crucible_sandbox_local::LocalSandbox;
+use crucible_types::{
+    Ancestry, Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
+    SessionId, ToolArgs, ToolCall, ToolId, ToolResult,
+};
 use sha2::{Digest, Sha256};
 
 use crate::cli::sample::Sample;
@@ -62,7 +68,7 @@ fn local() -> LocalSandbox {
 fn running_with(
     case: &str,
     count: usize,
-    sandbox: std::sync::Arc<dyn crucible_core::SandboxService>,
+    sandbox: std::sync::Arc<dyn crucible_sandbox::SandboxService>,
 ) -> (Background, Sample) {
     let left = Background::new();
     left.watching_on(runtime());
@@ -75,7 +81,7 @@ fn started(
     left: &Background,
     case: &str,
     count: usize,
-    sandbox: std::sync::Arc<dyn crucible_core::SandboxService>,
+    sandbox: std::sync::Arc<dyn crucible_sandbox::SandboxService>,
 ) -> Sample {
     let here = Sample::new(case);
     let cancel = Cancel::new();

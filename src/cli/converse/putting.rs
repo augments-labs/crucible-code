@@ -28,11 +28,11 @@
 //! rows it covered are back; what is left behind is the call's own result on the
 //! row under it, which is the bargain the permission panel already makes.
 
-use crucible_core::{Answer, Answered, Question};
 use crucible_tui::{
     Asked, Caret, Choice, Editor, Given, Key, Pressed, Renderer, Row, Stop, Terminal, Typed,
     Writing,
 };
+use crucible_types::{Answer, Answered, Question};
 
 use crate::cli::Fatal;
 use crate::cli::style::Style;

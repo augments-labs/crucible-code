@@ -12,10 +12,10 @@
 
 use std::collections::HashMap;
 
-use crucible_core::{Diff, Message, RECAP, ToolId};
 use crucible_runner::Runner;
 use crucible_session::{DisplayHistory, DisplayItem, Pruned, Session, SessionError};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
+use crucible_types::{Diff, Message, RECAP, ToolId};
 
 use crate::cli::Fatal;
 use crate::cli::converse::Terms;

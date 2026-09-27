@@ -8,13 +8,18 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    Approved, Cancel, Command, CredentialScopeId, Delta, DeltaStream, DescribeTool, Message,
-    Modalities, Modality, PromptCacheCapabilities, PromptCacheEncoding, PromptCacheRoute, Provider,
-    ProviderError, Request, Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolError,
-    ToolOutput,
+use crucible_models::{
+    Delta, DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
 use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
+use crucible_tools::{
+    Approved, Command, DescribeTool, Sensitivity, Summary, Target, Tool, ToolContext, ToolError,
+    ToolOutput,
+};
+use crucible_types::{
+    CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding, ToolArgs,
+};
 
 /// Drives a future to its answer on a current-thread runtime of its own, the
 /// way a test takes a turn on a runner it holds.

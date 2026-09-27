@@ -11,9 +11,11 @@ use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 
 use crucible_attachments::{AttachmentError, CEILING, Opened, kind};
-use crucible_core::{Attachment, Modalities, Provider, SessionId, Workspace, written};
+use crucible_models::Provider;
 use crucible_runner::Runner;
 use crucible_tui::{Renderer, Row, Terminal, TerminalError, fold};
+use crucible_types::{Attachment, Modalities, SessionId};
+use crucible_workspace::{Workspace, written};
 use sha2::{Digest as _, Sha256};
 
 use crate::cli::draw;
@@ -209,7 +211,7 @@ pub(super) fn beside<T: Terminal>(
 /// decides about it the way it decides about a path typed by hand.
 pub(super) fn clipboard(
     path: &Path,
-    id: &crucible_core::SessionId,
+    id: &crucible_types::SessionId,
     board: &mut arboard::Clipboard,
 ) -> Result<String, String> {
     let image = match board.get_image() {
@@ -394,7 +396,7 @@ fn decide(workspace: &Workspace, asking: Asking<'_>, word: &str) -> Named {
 
 /// A file already under agent reach, or one the user alone selected.
 enum Source {
-    Workspace(crucible_core::WorkspacePath),
+    Workspace(crucible_workspace::WorkspacePath),
     External(PathBuf),
 }
 

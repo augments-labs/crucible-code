@@ -21,12 +21,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crucible_builtins::{Bash, Edit, Glob, Ledger, Read, Write};
-use crucible_core::{
-    Ancestry, Ask, Cancel, Mode, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs,
-    ToolCall, ToolContext, ToolError, ToolId, ToolOutput, Unwatched, Verdict, Workspace,
-};
+use crucible_runtime::Cancel;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tools::ToolWorker;
+use crucible_tools::{
+    Ask, Mode, Permission, Remember, Sensitivity, Settled, Tool, ToolContext, ToolError,
+    ToolOutput, Unwatched, Verdict,
+};
+use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId};
+use crucible_workspace::Workspace;
 use tokio::runtime::{Builder, Runtime};
 
 /// Median invocations retained for each operation.
@@ -39,7 +42,7 @@ enum ProbeError {
     #[error("bench-tools: {0}")]
     Io(#[from] io::Error),
     #[error("bench-tools: {0}")]
-    Workspace(#[from] crucible_core::PathError),
+    Workspace(#[from] crucible_workspace::PathError),
     #[error("bench-tools: {0}")]
     Tool(#[from] ToolError),
     #[error("bench-tools: permission did not approve {0}")]
@@ -136,7 +139,7 @@ fn invoke(
     };
     tool.validate(&call.args)?;
     let sensitivity = tool.sensitivity(&call.args);
-    let mut permission = Permission::with(Mode::FullAccess, crucible_core::Rules::new());
+    let mut permission = Permission::with(Mode::FullAccess, crucible_tools::Rules::new());
     let Settled::Approved(approved) =
         driver.answer(permission.decide(&call, &sensitivity, &mut Unasked))
     else {
@@ -202,7 +205,7 @@ fn edit_latency(driver: &Driver, scratch: &Scratch) -> Result<f64, ProbeError> {
         fs::write(scratch.base.join(&path), "before\n")?;
         let args = format!(r#"{{"path":"{path}","find":"before","replace":"after"}}"#);
         let (output, elapsed) = invoke(driver, &tool, "edit", args)?;
-        if output.diff().is_none_or(crucible_core::Diff::is_empty)
+        if output.diff().is_none_or(crucible_types::Diff::is_empty)
             || fs::read_to_string(scratch.base.join(path))? != "after\n"
         {
             return Err(ProbeError::Wrong(
@@ -221,7 +224,7 @@ fn write_latency(driver: &Driver, scratch: &Scratch, ledger: &Ledger) -> Result<
         let path = format!("write-{number:02}.txt");
         let args = format!(r#"{{"path":"{path}","content":"written {number}\\n"}}"#);
         let (output, elapsed) = invoke(driver, &tool, "write", args)?;
-        if output.diff().is_none_or(crucible_core::Diff::is_empty)
+        if output.diff().is_none_or(crucible_types::Diff::is_empty)
             || !scratch.base.join(path).is_file()
         {
             return Err(ProbeError::Wrong(

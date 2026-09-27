@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use crucible_core::AgentId;
 use crucible_runner::{Agent, Model as RunnerModel, Tools};
 use crucible_session::Session;
 use crucible_tui::{Glyphs, Recording, Renderer};
+use crucible_types::AgentId;
 
 use crate::cli::converse::tests::{keeping, plain};
 use crate::cli::fake::Script;

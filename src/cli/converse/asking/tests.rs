@@ -1,7 +1,8 @@
 //! What a call is asked about, and what a key does to the panel asking it.
 
-use crucible_core::{Account, Command, Sensitivity, Target, ToolArgs, ToolCall, ToolId, Verdict};
+use crucible_tools::{Account, Command, Sensitivity, Target, Verdict};
 use crucible_tui::{Key, Pressed};
+use crucible_types::{ToolArgs, ToolCall, ToolId};
 
 use super::region::{Ended, Moved};
 use super::{ANSWERS, Answered, CANCEL, EXPLAIN, HIDE, Standing, Words, answered, footer, moving};

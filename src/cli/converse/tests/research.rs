@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use crucible_core::{Cancel, Fetch, Host, Page, Search, SearchResponse, SourceError};
 use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
+use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 
 use super::*;
 
@@ -91,9 +92,9 @@ fn researching(failed: bool) -> String {
             tools,
             session,
         )
-        .permitting(crucible_core::Permission::with(
-            crucible_core::Mode::FullAccess,
-            crucible_core::Rules::new(),
+        .permitting(crucible_tools::Permission::with(
+            crucible_tools::Mode::FullAccess,
+            crucible_tools::Rules::new(),
         ))
     });
     let mut renderer = Renderer::new(Recording::new(100, 30));

@@ -40,11 +40,10 @@ use crucible_client_api::bounds::SAID_BYTES;
 use crucible_client_api::{
     Capabilities, Command, Decision, Lasting, Pending, Picked, Refusal, Ruling, Said,
 };
-use crucible_core::{
-    Answered, Attachment, Put, Question, Remember, Sensitivity, ToolCall, Verdict, Wrote,
-};
 use crucible_runner::{Event, EventEnvelope, Post, RunContext};
 use crucible_runtime::BoxFuture;
+use crucible_tools::{Put, Remember, Sensitivity, Verdict, Wrote};
+use crucible_types::{Answered, Attachment, Question, ToolCall};
 
 use super::client::Client;
 

@@ -23,7 +23,7 @@ use crucible_app::providers::Providers;
 use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Theme,
 };
-use crucible_core::Cancel;
+use crucible_runtime::Cancel;
 
 use super::converse::Terms;
 

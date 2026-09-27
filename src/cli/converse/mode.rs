@@ -11,7 +11,7 @@
 //! caller ever has a word and wants a mode. Both would be dead weight compiled
 //! into every crate if they sat one level down.
 
-use crucible_core::Mode;
+use crucible_tools::Mode;
 use crucible_tui::{Glyphs, Slot};
 
 /// Every mode, in the order the key steps through them.

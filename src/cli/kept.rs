@@ -35,7 +35,7 @@
 
 use std::collections::VecDeque;
 
-use crucible_core::ToolId;
+use crucible_types::ToolId;
 
 /// The most text held at once, in bytes.
 ///

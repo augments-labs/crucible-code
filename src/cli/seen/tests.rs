@@ -5,8 +5,9 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use crucible_app::client::Deciding;
-use crucible_core::{Ancestry, Answer as Offered, Ask, Command, ToolArgs, ToolId, TurnId, Wrote};
 use crucible_runner::Reporter;
+use crucible_tools::{Ask, Command, Wrote};
+use crucible_types::{Ancestry, Answer as Offered, ToolArgs, ToolId, TurnId};
 
 use super::*;
 use crate::cli::client::tests::Noted;
@@ -292,7 +293,7 @@ fn output_is_never_drawn_across_the_event_that_ended_the_call() {
     .unwrap();
     to.send(Seen::Turn(Event::TurnFinished {
         turn: TurnId::FIRST,
-        stop: crucible_core::StopReason::Yielded,
+        stop: crucible_types::StopReason::Yielded,
     }))
     .unwrap();
 

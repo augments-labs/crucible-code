@@ -8,13 +8,16 @@
 use std::fs;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Ancestry, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Compacted,
-    ContextError, ContextPatch, ContextSnapshot, InvocationId, JournalStore, Message,
-    RecordedToolOutput, RunItem, SessionId, SessionOwner, SessionStore, ToolId, ToolResult,
-};
 use crucible_runtime::BoxFuture;
 use crucible_session::Session;
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, InvocationId, JournalStore, RunItem,
+    SessionOwner, SessionStore,
+};
+use crucible_types::{
+    Ancestry, Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
+    RecordedToolOutput, SessionId, ToolId, ToolResult,
+};
 
 /// What the file held each time the runner asked for a settle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

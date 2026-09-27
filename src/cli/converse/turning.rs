@@ -61,9 +61,10 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crucible_core::{Compacting, Looking, ToolId};
 use crucible_runner::Event;
+use crucible_tools::Looking;
 use crucible_tui::{Prompt, Row, Slot, Working};
+use crucible_types::{Compacting, ToolId};
 
 use super::super::draw;
 use super::super::style::Style;

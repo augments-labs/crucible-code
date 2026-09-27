@@ -8,8 +8,8 @@
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_client_api::Command;
-use crucible_core::SandboxService;
 use crucible_runtime::Bridge;
+use crucible_sandbox::SandboxService;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tui::{Key, Offered, Pressed, Renderer, SandboxPanel, SandboxTab, Terminal};
 
@@ -160,8 +160,8 @@ impl Standing {
                 choices.push((
                     "Network".into(),
                     match policy.network() {
-                        crucible_core::SandboxNetworkPolicy::Closed => "Configured closed while sandbox is enabled".into(),
-                        crucible_core::SandboxNetworkPolicy::Domains(network) => format!(
+                        crucible_sandbox::SandboxNetworkPolicy::Closed => "Configured closed while sandbox is enabled".into(),
+                        crucible_sandbox::SandboxNetworkPolicy::Domains(network) => format!(
                             "{} allowed domains, {} denied domains, local binding {}, {} Unix sockets",
                             network.allowed().len(), network.denied().len(),
                             if network.allow_local_binding() { "allowed" } else { "denied" }, network.unix_sockets().len(),

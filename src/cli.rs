@@ -45,10 +45,14 @@ use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_config::{Home, Settings};
-use crucible_core::{Cancel, Effort, Revealed, SessionId, Workspace};
+use crucible_models::Effort;
+use crucible_runtime::Cancel;
+use crucible_tools::Revealed;
 use crucible_tui::{
     RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
 };
+use crucible_types::SessionId;
+use crucible_workspace::Workspace;
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
@@ -326,9 +330,9 @@ macro_rules! through_the_application {
 }
 
 through_the_application!(
-    crucible_core::PathError,
+    crucible_workspace::PathError,
     crucible_config::ConfigError,
-    crucible_core::RegistryError,
+    crucible_registry::RegistryError,
     crucible_session::SessionError,
     crucible_app::providers::ArmError,
 );
@@ -647,8 +651,8 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // command line is read: a run that prints help, a version or a listing
         // has nothing a signal could interrupt half-written.
         ending: ending::Ending::listening(renderer.is_terminal()),
-        steer: crucible_core::Steer::new(),
-        aside: crucible_core::Aside::new(),
+        steer: crucible_runtime::Steer::new(),
+        aside: crucible_runtime::Aside::new(),
         ledger: ledger.clone(),
         revealed: revealed.clone(),
         plan: plan.clone(),

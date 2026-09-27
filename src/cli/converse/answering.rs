@@ -21,10 +21,9 @@
 
 use std::io::{self, BufRead};
 
-use crucible_core::{
-    Answer as Chosen, Answered, Question, Remember, Sensitivity, ToolCall, Verdict,
-};
+use crucible_tools::{Remember, Sensitivity, Verdict};
 use crucible_tui::{Key, Pressed, Renderer, Terminal};
+use crucible_types::{Answer as Chosen, Answered, Question, ToolCall};
 
 use super::super::Fatal;
 use super::super::draw;

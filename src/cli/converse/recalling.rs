@@ -23,9 +23,9 @@
 
 use std::path::PathBuf;
 
-use crucible_core::Workspace;
 use crucible_session::{PROMPTS, prompts, remember};
 use crucible_tui::{Editor, Recalled, Typed};
+use crucible_workspace::Workspace;
 
 /// Where the walk stands, what it is walking, and where it started.
 #[derive(Debug, Default)]
