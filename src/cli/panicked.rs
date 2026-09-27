@@ -13,8 +13,11 @@
 //! lets go is written to standard error then, once the screen is the reader's
 //! own again, so a panic is never lost. A panic on the drawing thread itself
 //! still goes to the hook in force before: it ends the session, and there is
-//! nobody left to keep it for. One the drawing thread took but could not draw
-//! is put back, and is written out with the rest.
+//! nobody left to keep it for — nor for what it had taken to say, if it gave
+//! up while saying it. What the drawing thread took for a draw that failed is
+//! put back whole and written out with the rest: a line drawn before the
+//! failure went to a terminal that has just failed, so it may be said twice,
+//! but it is not lost.
 //!
 //! Only a session holding the terminal takes the hook, and it puts back the
 //! hook it found when it lets go, so every other path panics the way that hook
@@ -44,8 +47,9 @@ type Found = Arc<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>;
 /// What panicked on another thread while a session held the terminal.
 ///
 /// Dropped as the session lets go of the terminal, after the screen is handed
-/// back: the hook it found is put back, and whatever the drawing thread has
-/// not taken is written to standard error.
+/// back: the hook it found is put back, unless the drawing thread is
+/// unwinding, and whatever the drawing thread has not taken is written to
+/// standard error.
 pub(crate) struct Panics {
     kept: Arc<Mutex<Kept>>,
     found: Found,
@@ -89,7 +93,7 @@ impl Panics {
         (kept.said.drain(..).collect(), unkept)
     }
 
-    /// Hands back what [`Panics::take`] gave and could not be said, ahead of
+    /// Hands back what [`Panics::take`] gave for a draw that failed, ahead of
     /// anything kept since and under the same ceiling, past which a panic is
     /// counted rather than kept.
     pub(crate) fn put_back(&self, said: Vec<String>, unkept: usize) {

@@ -68,11 +68,11 @@ use tokio::runtime::{Builder, Handle, Runtime};
 /// polled: the model, a permission question and a terminal slow to take what
 /// the turn reports are each awaited, or hand the worker back while they
 /// last, the last at the cost of one of the [`BLOCKING`] threads for as long
-/// as the terminal is behind. The rest is work the application owns on the turn's behalf and
-/// between turns — a process's status, a hosted program's streams, a
-/// credential's renewal — each of which spends most of its life waiting, and
-/// the runs of a turn's tool calls, which may hold a worker inside synchronous
-/// work for as long as a call lasts. Those are at most
+/// as the terminal is behind. The rest is work the application owns on the
+/// turn's behalf and between turns — a process's status, a hosted program's
+/// streams, a credential's renewal — each of which spends most of its life
+/// waiting, and the runs of a turn's tool calls, which may hold a worker
+/// inside synchronous work for as long as a call lasts. Those are at most
 /// `crucible_runner::TOOL_RUNS` at once, held below this less one, so two
 /// workers stay free and a process's status task, where its deadline and
 /// output-limit kills run, finds one even while something else is polled on

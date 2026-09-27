@@ -45,8 +45,13 @@ fn give_up() {
 
 /// Gives up on a thread of its own, named the same in every copy.
 fn a_thread_gives_up() {
+    a_thread_named_gives_up("probe");
+}
+
+/// Gives up on a thread of its own, named `name`.
+fn a_thread_named_gives_up(name: &str) {
     let gave_up = thread::Builder::new()
-        .name("probe".to_owned())
+        .name(name.to_owned())
         .spawn(give_up)
         .expect("a thread")
         .join();
@@ -231,7 +236,7 @@ fn a_panic_on_the_drawing_thread_while_the_session_holds_the_terminal_loses_noth
 fn a_panic_the_drawing_thread_could_not_draw_is_put_back_under_the_same_ceiling() {
     if body().is_some() {
         let panics = Panics::kept();
-        a_thread_gives_up();
+        a_thread_named_gives_up("undrawn");
         let (said, unkept) = panics.take();
         for _ in 0..super::KEPT {
             a_thread_gives_up();
@@ -247,9 +252,13 @@ fn a_panic_the_drawing_thread_could_not_draw_is_put_back_under_the_same_ceiling(
     );
     let said = said(&copy);
 
+    assert!(
+        said.starts_with("crucible: undrawn panicked"),
+        "a panic put back was not said ahead of those kept since: {said:?}"
+    );
     assert_eq!(
         said.matches("crucible: probe panicked").count(),
-        super::KEPT,
+        super::KEPT - 1,
         "{said:?}"
     );
     assert!(

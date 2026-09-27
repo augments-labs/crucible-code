@@ -336,11 +336,12 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
 /// Awaited from a thread of its own, because whoever assembles a run may be
 /// anywhere, and a runtime refuses to be waited on from inside one; and only
 /// when something is owed, so a run that owes nothing starts no thread. A
-/// thread that could not be started leaves the lines owed, and the first turn
-/// or compaction writes them before anything of its own. A run that ends
-/// before either writes none, and says nothing of it: the results stay out of
-/// what this run sends either way, and the next pick-up of the session clears
-/// them from what it reads again and owes the same lines.
+/// thread that could not be started leaves the lines owed, and whatever next
+/// writes to the session — a turn, a compaction, a switch of vendor or
+/// account, a pick-up — writes them before anything of its own. A run that
+/// ends before any of those writes none, and says nothing of it: the results
+/// stay out of what this run sends either way, and the next pick-up of the
+/// session clears them from what it reads again and owes the same lines.
 fn recorded(conversation: &mut Conversation, runtime: &tokio::runtime::Handle) {
     if !conversation.runner().owes_clearings() {
         return;
