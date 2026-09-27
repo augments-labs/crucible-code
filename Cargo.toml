@@ -293,7 +293,9 @@ seccompiler = { version = "=0.5.0", default-features = false }
 # kernel syscall numbers seccompiler does not name on every supported Linux
 # architecture. The open itself is `std`'s, which supplies it, so this is here
 # for the names alone and brings no open of its own; the workspace already
-# locks this exact libc, and both edges are what is compiled.
+# locks this exact libc, and both edges are what is compiled. The binary makes
+# one call through it besides: `mallopt`, fixing glibc's threshold for handing
+# a freed block back to the system, which `std` has no way to reach.
 libc = "=0.2.189"
 
 # Being told to stop from outside. A closed window or a `kill` arrives as a
@@ -565,6 +567,12 @@ rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
 # reach.
 [target.'cfg(unix)'.dependencies]
 signal-hook.workspace = true
+
+# Keeps glibc from holding on to large blocks once they are freed, which it
+# otherwise does across the threads a turn moves between. Only glibc has that
+# threshold, so only a glibc build names libc here.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc.workspace = true
 
 [lints]
 workspace = true

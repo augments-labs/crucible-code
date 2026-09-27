@@ -473,6 +473,7 @@ dependencies = [
  "crucible-workspace",
  "image",
  "insta",
+ "libc",
  "rustix",
  "serde_json",
  "sha2",

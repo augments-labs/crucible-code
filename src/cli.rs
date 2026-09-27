@@ -21,6 +21,7 @@ mod draw;
 mod ending;
 #[cfg(test)]
 mod fake;
+mod freed;
 mod gathering;
 mod kept;
 mod panicked;
@@ -336,6 +337,7 @@ through_the_application!(
 
 /// Reads the command line and does what it says.
 pub(crate) fn start() -> ExitCode {
+    freed::handed_back();
     let cli = Cli::parse();
 
     let done = match (&cli.command, cli.extensions, cli.sandbox) {
