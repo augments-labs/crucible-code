@@ -338,10 +338,10 @@ change in any release with no deprecation period.
 ### Fixed
 
 - **On macOS, a command's background process can no longer outlive the
-  command.** A process a command was starting at the moment it was stopped
+  command.** A process the command was starting as it ended or was stopped
   escaped the kill, kept running, and held the output open, so the command read
-  as still printing. Crucible now repeats the kill until nothing the command
-  started is left running.
+  as still printing. Crucible now repeats the kill until nothing in the
+  command's process group is left running.
 - **A pipe left where a configuration file is read no longer holds the first
   frame.** The three settings layers are read before anything is drawn, and each
   name was opened in a way that waits for a writer, so anything able to write in

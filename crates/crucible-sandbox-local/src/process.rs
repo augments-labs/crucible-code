@@ -21,13 +21,13 @@
 //!
 //! **Nothing waits behind a cancel.** The leader, its scope and what has been
 //! seen of them share one lock, held only to look at the leader or signal its
-//! scope, and by a stop through its bounded reap. A backend's cancel, which may
-//! wait for the leader within a budget of its own, runs on a thread of its own
-//! without that lock; the kill that follows it takes the lock only to make
-//! sure the leader has not been reaped, so a signal never reaches a process
-//! identity that may have been reused. A status asked for meanwhile answers
-//! from a look, and a stop kills and reaps the command itself and then waits a
-//! bounded time for the cancel to end.
+//! scope, and by a stop through its bounded kill and reap. A backend's cancel,
+//! which may wait for the leader within a budget of its own, runs on a thread
+//! of its own without that lock; the kill that follows it takes the lock only
+//! to make sure the leader has not been reaped, so a signal never reaches a
+//! process identity that may have been reused. A status asked for meanwhile
+//! answers from a look, and a stop kills and reaps the command itself and then
+//! waits a bounded time for the cancel to end.
 
 use std::io::{self, Write as _};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
@@ -1368,8 +1368,8 @@ impl SandboxProcess for LocalProcess {
 
     /// The same stop the future above drives, for the owners that have no
     /// future to drive. What bounds it is what bounds that body: the scope's
-    /// own reap bound, the cancel's join bound, and the network proxy's stop
-    /// bound, each reported as failed cleanup where it gives out.
+    /// own kill and reap bounds, the cancel's join bound, and the network
+    /// proxy's stop bound, each reported as failed cleanup where it gives out.
     fn stop_sync(&mut self) -> io::Result<()> {
         LocalProcess::stop(self)
     }
