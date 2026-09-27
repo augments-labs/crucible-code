@@ -10,8 +10,9 @@
 //! runtime its service was handed, which the process owns and its stop
 //! aborts. Every [`SUPERVISE`] it enforces the command-time limit, starts the
 //! cancel of a violation, and looks at the leader, reaping it and keeping its
-//! status once it has exited. A look never waits, so neither the task nor a
-//! caller asking for the status holds up a runtime thread or the other.
+//! status once it has exited and its scope has been stopped. A look never
+//! waits, so neither the task nor a caller asking for the status holds up a
+//! runtime thread or the other.
 //!
 //! The task shares the runtime's worker threads with whatever else runs
 //! there. A worker held inside other work delays its next pass, and with it a
