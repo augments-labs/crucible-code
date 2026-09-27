@@ -28,10 +28,11 @@
 //! action: a dropped ask drops its receiver, so a reply sent after that finds
 //! nobody rather than queuing for whatever asks next.
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SendError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
@@ -136,7 +137,32 @@ impl Post for Relay {
     /// to tell two runs apart it is this line that has to change rather than
     /// every pattern downstream of it.
     fn post(&self, reported: EventEnvelope) {
-        drop(self.to.send(Seen::Turn(reported.into_event())));
+        drop(deliver(&self.to, Seen::Turn(reported.into_event())));
+    }
+}
+
+/// Sends `seen` to the drawing thread, waiting while the channel is full.
+///
+/// That wait is the backpressure a slow terminal applies, and a turn is a task
+/// on the application's runtime: waiting as it stands, it would hold its
+/// worker, and every task queued behind that worker, until the terminal caught
+/// up. So a full channel is waited on only once the worker's other tasks have
+/// been handed to another thread. Off the runtime, or on a runtime with one
+/// thread and so nowhere to hand them, the wait is where it stands: the
+/// drawing thread that empties the channel never waits on the runtime.
+fn deliver(to: &SyncSender<Seen>, seen: Seen) -> Result<(), SendError<Seen>> {
+    match to.try_send(seen) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Disconnected(seen)) => Err(SendError(seen)),
+        Err(TrySendError::Full(seen)) => {
+            let on_a_worker = Handle::try_current()
+                .is_ok_and(|runtime| runtime.runtime_flavor() == RuntimeFlavor::MultiThread);
+            if on_a_worker {
+                tokio::task::block_in_place(|| to.send(seen))
+            } else {
+                to.send(seen)
+            }
+        }
     }
 }
 
@@ -207,7 +233,7 @@ impl Front for Asking {
                 sensitivity: sensitivity.clone(),
                 reply,
             };
-            self.to.send(question).ok()?;
+            deliver(&self.to, question).ok()?;
             let (verdict, remember) = hear.await.ok()?;
 
             let decision = Decision::Ruled {
@@ -437,10 +463,13 @@ impl Front for Lent<'_> {
 
             let (reply, hear) = oneshot::channel();
             let to = self.ends.lock().ok()?.clone()?;
-            to.send(Seen::Asked {
-                questions: questions.to_vec(),
-                reply,
-            })
+            deliver(
+                &to,
+                Seen::Asked {
+                    questions: questions.to_vec(),
+                    reply,
+                },
+            )
             .ok()?;
             drop(to);
 
