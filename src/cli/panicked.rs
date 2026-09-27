@@ -13,11 +13,15 @@
 //! lets go is written to standard error then, once the screen is the reader's
 //! own again, so a panic is never lost. A panic on the drawing thread itself
 //! still goes to the hook in force before: it ends the session, and there is
-//! nobody left to keep it for.
+//! nobody left to keep it for. One the drawing thread took but could not draw
+//! is put back, and is written out with the rest.
 //!
 //! Only a session holding the terminal takes the hook, and it puts back the
 //! hook it found when it lets go, so every other path panics the way that hook
-//! has it.
+//! has it. A session let go of by its drawing thread's own panic cannot put
+//! it back — std refuses to change the hook from a thread that is unwinding,
+//! and a panic there aborts the process — so its hook stays in force, handing
+//! every later panic straight to the one it found.
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -53,12 +57,13 @@ impl std::fmt::Debug for Panics {
     }
 }
 
-/// The panics waiting for the drawing thread, and how many went past the
-/// ceiling.
+/// The panics waiting for the drawing thread, how many went past the
+/// ceiling, and whether the session has let go, after which nothing is kept.
 #[derive(Debug, Default)]
 struct Kept {
     said: VecDeque<String>,
     unkept: usize,
+    let_go: bool,
 }
 
 impl Panics {
@@ -83,14 +88,36 @@ impl Panics {
         let unkept = std::mem::take(&mut kept.unkept);
         (kept.said.drain(..).collect(), unkept)
     }
+
+    /// Hands back what [`Panics::take`] gave and could not be said, ahead of
+    /// anything kept since and under the same ceiling, past which a panic is
+    /// counted rather than kept.
+    pub(crate) fn put_back(&self, said: Vec<String>, unkept: usize) {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut again = VecDeque::from(said);
+        again.append(&mut kept.said);
+        let over = again.len().saturating_sub(KEPT);
+        again.truncate(KEPT);
+        kept.said = again;
+        kept.unkept = kept.unkept.saturating_add(unkept).saturating_add(over);
+    }
 }
 
 impl Drop for Panics {
     fn drop(&mut self) {
-        let found = Arc::clone(&self.found);
-        panic::set_hook(Box::new(move |info| found(info)));
+        if !thread::panicking() {
+            let found = Arc::clone(&self.found);
+            panic::set_hook(Box::new(move |info| found(info)));
+        }
 
-        let (said, unkept) = self.take();
+        // Let go and drained under one lock, so a panic on another thread is
+        // either among what is written below or handed to the hook found.
+        let (said, unkept) = {
+            let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+            kept.let_go = true;
+            let unkept = std::mem::take(&mut kept.unkept);
+            (kept.said.drain(..).collect::<Vec<_>>(), unkept)
+        };
         let mut written = String::new();
         for one in said {
             written.push_str("crucible: ");
@@ -107,7 +134,7 @@ impl Drop for Panics {
 }
 
 /// The hook while a session holds the terminal: `info` kept for the drawing
-/// thread, unless it is the drawing thread's own.
+/// thread, unless it is the drawing thread's own or the session has let go.
 fn keep(kept: &Mutex<Kept>, found: &Found, drawing: ThreadId, info: &PanicHookInfo<'_>) {
     let current = thread::current();
     if current.id() == drawing {
@@ -129,6 +156,10 @@ fn keep(kept: &Mutex<Kept>, found: &Found, drawing: ThreadId, info: &PanicHookIn
     }
 
     let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
+    if kept.let_go {
+        drop(kept);
+        return found(info);
+    }
     if kept.said.len() < KEPT {
         kept.said.push_back(said);
     } else {

@@ -18,6 +18,9 @@ const BODY: &str = "CRUCIBLE_PANICKED_BODY";
 /// What every task and thread below gives up with.
 const GIVING_UP: &str = "the probe gave up";
 
+/// What the drawing thread gives up with, where a test has it give up.
+const DRAWING: &str = "the drawing thread gave up";
+
 /// Runs `test` alone in a fresh copy of this binary, as the body `body` names.
 fn in_a_copy(test: &str, body: &str) -> Output {
     Command::new(std::env::current_exe().expect("the test binary's own path"))
@@ -185,4 +188,73 @@ fn once_the_session_lets_go_a_panic_is_written_as_the_default_hook_writes_it() {
         "a session that has let go left a panic written differently"
     );
     assert!(never.status.success() && after.status.success());
+}
+
+#[test]
+fn a_panic_on_the_drawing_thread_while_the_session_holds_the_terminal_loses_nothing_kept() {
+    if body().is_some() {
+        let panics = Panics::kept();
+        a_thread_gives_up();
+        let drew = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _held = panics;
+            panic!("{DRAWING}");
+        }));
+        assert!(drew.is_err());
+        return a_thread_gives_up();
+    }
+
+    let copy = in_a_copy(
+        "cli::panicked::tests::a_panic_on_the_drawing_thread_while_the_session_holds_the_terminal_loses_nothing_kept",
+        "unwinding",
+    );
+    let said = said(&copy);
+
+    assert_eq!(
+        said.matches("crucible: probe panicked").count(),
+        1,
+        "the panic kept before the drawing thread's own was lost, or said twice: {said:?}"
+    );
+    assert_eq!(
+        said.matches(DRAWING).count(),
+        1,
+        "the drawing thread's own panic was not written by the hook it found: {said:?}"
+    );
+    assert_eq!(
+        said.matches(GIVING_UP).count(),
+        2,
+        "a panic after the session let go was not written by the hook it found: {said:?}"
+    );
+    assert!(copy.status.success(), "{:?}: {said}", copy.status);
+}
+
+#[test]
+fn a_panic_the_drawing_thread_could_not_draw_is_put_back_under_the_same_ceiling() {
+    if body().is_some() {
+        let panics = Panics::kept();
+        a_thread_gives_up();
+        let (said, unkept) = panics.take();
+        for _ in 0..super::KEPT {
+            a_thread_gives_up();
+        }
+        panics.put_back(said, unkept);
+        drop(panics);
+        return;
+    }
+
+    let copy = in_a_copy(
+        "cli::panicked::tests::a_panic_the_drawing_thread_could_not_draw_is_put_back_under_the_same_ceiling",
+        "undrawn",
+    );
+    let said = said(&copy);
+
+    assert_eq!(
+        said.matches("crucible: probe panicked").count(),
+        super::KEPT,
+        "{said:?}"
+    );
+    assert!(
+        said.contains("crucible: and 1 more panics"),
+        "a panic put back past the ceiling was not counted: {said:?}"
+    );
+    assert!(copy.status.success(), "{:?}: {said}", copy.status);
 }

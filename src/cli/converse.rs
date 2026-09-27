@@ -510,7 +510,10 @@ pub(crate) fn converse<T: Terminal>(
         // rather than written past the screen by whichever thread it was.
         if let Some(panics) = &panics {
             let (said, unkept) = panics.take();
-            draw::panicked(renderer, &said, unkept)?;
+            if let Err(error) = draw::panicked(renderer, &said, unkept) {
+                panics.put_back(said, unkept);
+                return Err(error.into());
+            }
         }
 
         // The fixed foot — the transcript-map door. Said here rather than
