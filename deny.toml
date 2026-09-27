@@ -129,6 +129,15 @@ skip = [
     # happen to disagree about a release.
     { crate = "hashbrown:0.15.5", reason = "petgraph pins the older line under arboard" },
 
+    # `signal-hook` registers the handlers a terminal program needs, and
+    # `crossterm` 0.29 is built against the 0.3 line, so moving crucible's own
+    # pin to 0.4 adds the second copy rather than replacing the first. Both
+    # lines are the same thin wrapper over the operating system's own signal
+    # calls, and only one of them is ever linked in: `crossterm` is the only
+    # path that reaches either, and it reaches 0.3. The duplicate goes away when
+    # `crossterm` moves, not before, and not by anything this repository can do.
+    { crate = "signal-hook:0.3.18", reason = "crossterm pins the older line" },
+
     # `syn` is the Rust parser that procedural macros are written against. Both
     # copies are build-time only — neither is linked into the binary — and a
     # macro crate can only use the line it was written for. `zerocopy-derive`,
