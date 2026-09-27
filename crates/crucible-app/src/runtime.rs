@@ -18,8 +18,10 @@
 //!
 //! **Multi-thread, because a waiting caller does not drive the runtime.** A
 //! turn is a task spawned here, run while the drawing thread goes on drawing,
-//! and a synchronous caller — the drawing thread answering a command, or
-//! joining a turn that has ended — waits for a future with `Handle::block_on`.
+//! and a synchronous caller — `--sandbox` asking the backend it reports on,
+//! the drawing thread answering a command, asking the backend the sandbox
+//! panel shows, or joining a turn that has ended — waits for a future with
+//! `Handle::block_on`.
 //! Tokio's own documentation of that method, at `src/runtime/handle.rs:248-253`
 //! in the pinned 1.53.1 source, says that on a `current_thread` runtime only
 //! `Runtime::block_on` can drive the IO and timer drivers and

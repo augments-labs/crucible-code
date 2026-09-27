@@ -310,6 +310,43 @@ fn the_registry_of_commands_left_running_ends_before_the_runtime_is_shut_down() 
 }
 
 #[test]
+fn a_sandbox_report_is_written_even_when_the_shutdown_after_it_ran_out_of_time() {
+    // The report is the answer the flag was asked for, and a cleanup that
+    // failed once it had been made does not make it untrue. The run still ends
+    // on the cleanup's failure, so the exit status says it.
+    let mut out = Vec::new();
+
+    let ended = reported(
+        Ok("confined\n".to_owned()),
+        Err(Fatal::Providerless),
+        &mut out,
+    );
+
+    assert_eq!(String::from_utf8_lossy(&out), "confined\n");
+    assert!(matches!(ended, Err(Fatal::Providerless)), "{ended:?}");
+}
+
+#[test]
+fn a_sandbox_report_that_was_never_made_writes_nothing_and_ends_on_its_own_failure() {
+    let mut out = Vec::new();
+
+    let ended = reported(Err(Fatal::Here(io::Error::other("gone"))), Ok(()), &mut out);
+
+    assert!(out.is_empty(), "{out:?}");
+    assert!(matches!(ended, Err(Fatal::Here(_))), "{ended:?}");
+}
+
+#[test]
+fn a_sandbox_report_after_a_clean_shutdown_is_written_whole() {
+    let mut out = Vec::new();
+
+    let ended = reported(Ok("confined\n".to_owned()), Ok(()), &mut out);
+
+    assert_eq!(String::from_utf8_lossy(&out), "confined\n");
+    assert!(ended.is_ok(), "{ended:?}");
+}
+
+#[test]
 fn windows_sandbox_maintenance_is_an_exclusive_early_action() {
     let setup = Cli::try_parse_from(["crucible", "sandbox", "setup", "--owner", r"MACHINE\person"])
         .expect("targeted setup");

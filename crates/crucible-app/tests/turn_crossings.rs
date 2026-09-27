@@ -197,24 +197,24 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
     );
 }
 
-/// Every line mentioning `block_on` a shipped file may hold, trimmed, with
-/// how many times that file may hold it, and none of them is reached by a
-/// turn: the runtime owner's documentation of why it is built multi-thread,
-/// the five waits made from outside every turn — startup writing what a
-/// session picked up owes before any turn exists, `--sandbox` asking the
-/// backend it reports on before any conversation exists, the drawing thread
-/// answering a command, asking the backend the sandbox panel shows, and
-/// joining a turn that has ended — the runner's test helper that drives a turn to its end on a
-/// runtime of the test's own, the two performance probes waiting, on their
-/// own main thread, for each call they time on a runtime of the probe's own,
-/// and the lines inside the `#[cfg(test)] mod tests` of the bridge ledger, of
-/// the sandbox's redaction and of the worker-task check, which only a test
-/// build compiles. The count makes the same line written once more in that
-/// file, wherever, one too many.
+/// Every line mentioning `block_on` a shipped file may hold, trimmed, with how
+/// many times that file may hold it, and none of them is reached by a turn: the
+/// runtime owner's documentation of why it is built multi-thread, the five
+/// waits made from outside every turn — startup writing what a session picked
+/// up owes before any turn exists, `--sandbox` asking the backend it reports on
+/// before any conversation exists, the drawing thread answering a command,
+/// asking the backend the sandbox panel shows, and joining a turn that has
+/// ended — the runner's test helper that drives a turn to its end on a runtime
+/// of the test's own, the two performance probes waiting, on their own main
+/// thread, for each call they time on a runtime of the probe's own, and the
+/// lines inside the `#[cfg(test)] mod tests` of the bridge ledger, of the
+/// sandbox's redaction and of the worker-task check, which only a test build
+/// compiles. The count makes the same line written once more in that file,
+/// wherever, one too many.
 const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "crates/crucible-app/src/runtime.rs",
-        "//! joining a turn that has ended — waits for a future with `Handle::block_on`.",
+        "//! `Handle::block_on`.",
         1,
     ),
     (

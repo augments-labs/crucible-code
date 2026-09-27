@@ -156,8 +156,8 @@ pub(crate) struct Terms {
     /// command is waited for on.
     ///
     /// The drawing thread is never inside it, which is what lets this thread
-    /// wait on it: for a command's answer, and for a turn that has ended to
-    /// hand the conversation back.
+    /// wait on it: for a command's answer, for the backend the sandbox panel
+    /// shows, and for a turn that has ended to hand the conversation back.
     pub(crate) runtime: tokio::runtime::Handle,
     /// What the process has been told from outside it, which stops a turn too
     /// and then the run.

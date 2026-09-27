@@ -434,9 +434,8 @@ fn listed() -> Result<(), Fatal> {
 ///
 /// What the report is made of, and why a backend's refusal is an answer rather
 /// than a failure, is [`crucible_app::sandbox::confinement`]'s to say. The
-/// backend is asked on the application's runtime, and a shutdown of it that
-/// ran out of time is reported the way [`run`] reports one. A write that fails
-/// is dropped for the reason [`listed`] drops one.
+/// backend is asked on the application's runtime, and what a shutdown of it
+/// that ran out of time does to the answer is [`reported`]'s to say.
 fn confined() -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let home = Home::find(&|name| std::env::var_os(name))?;
@@ -444,17 +443,39 @@ fn confined() -> Result<(), Fatal> {
         let runtime = services.runtime().handle().map_err(AppError::from)?;
         runtime.block_on(crucible_app::sandbox::confinement(&here, &home))
     });
-    let said = match (said, stopped) {
-        (said, Ok(())) => said?,
-        (Ok(_), Err(unstopped)) => return Err(AppError::from(unstopped).into()),
-        (Err(first), Err(unstopped)) => {
-            let _ = fail(&AppError::from(unstopped).into());
-            return Err(first.into());
-        }
-    };
+    reported(
+        said.map_err(Fatal::from),
+        stopped.map_err(|unstopped| AppError::from(unstopped).into()),
+        &mut io::stdout(),
+    )
+}
 
-    let _ = io::stdout().write_all(said.as_bytes());
-    Ok(())
+/// Writes a report to `out` where one was made, and answers with how the run
+/// ends once its services have been shut down.
+///
+/// A report that was made is written whether or not the shutdown after it
+/// finished: it is the answer the flag was asked for, and a cleanup that failed
+/// once it existed does not make it untrue. The run still ends on that
+/// failure, so the exit status says it. Where no report was made, the report's
+/// own failure is the one the run ends with, and a cleanup that failed as well
+/// is said first, the way [`run`] says one. A write that fails is dropped for
+/// the reason [`listed`] drops one.
+fn reported(
+    said: Result<String, Fatal>,
+    stopped: Result<(), Fatal>,
+    out: &mut impl io::Write,
+) -> Result<(), Fatal> {
+    match (said, stopped) {
+        (Ok(said), stopped) => {
+            let _ = out.write_all(said.as_bytes());
+            stopped
+        }
+        (Err(first), Ok(())) => Err(first),
+        (Err(first), Err(unstopped)) => {
+            let _ = fail(&unstopped);
+            Err(first)
+        }
+    }
 }
 
 /// What the terminal says its background is, where the answer would be used.
