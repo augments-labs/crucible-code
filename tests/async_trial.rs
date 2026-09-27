@@ -1,8 +1,8 @@
-//! A whole asynchronous turn, taken the way the application takes one, with
-//! the faults a turn has to survive put into it on purpose.
+//! A whole asynchronous turn, spawned as a task on the application's runtime
+//! as the runner allows, with the faults a turn has to survive put into it on
+//! purpose.
 //!
-//! Each turn is a task on the application's own runtime, as is everything it
-//! starts, and talks to a loopback vendor over the shared HTTP client, to
+//! Everything a turn starts is a task on that runtime too, and the turn talks to a loopback vendor over the shared HTTP client, to
 //! built-in tools, to an MCP server hosted through the sandbox seam and to a
 //! real session log. Into that go a stalled answer, a stop at each point a
 //! call is recorded, a call past its deadline, a tool that panics, a process
@@ -13,7 +13,7 @@
 //! What every case holds the turn to is the same: each call the model asked
 //! for is answered exactly once and none is run twice, nothing either agent
 //! has reaches the other, the runtime's workers are free whenever the vendor
-//! looks, and everything the turn started has stopped once the application's
+//! looks, and every task the turn started has ended before the application's
 //! services shut down.
 
 // Test-only helpers fail the owning case when its controlled fixture is invalid.
@@ -27,8 +27,11 @@ mod server;
 mod vendor;
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crucible_app::services::serving;
 use crucible_context::ContextInputs;
@@ -137,6 +140,22 @@ fn answered_once(transcript: &Transcript) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// Asserts that no task is left alive on `runtime`, waiting at most [`WAIT`]
+/// for the ones already ending to finish.
+///
+/// A runtime shut down drops a task that is still pending without a word, so
+/// the shutdown itself cannot say whether a turn left work behind. The count
+/// is not taken under a lock, which is why it is read until it settles.
+fn quiet(runtime: &Handle, case: &str) {
+    let by = Instant::now() + WAIT;
+    let mut alive = runtime.metrics().num_alive_tasks();
+    while alive > 0 && Instant::now() < by {
+        thread::sleep(Duration::from_millis(10));
+        alive = runtime.metrics().num_alive_tasks();
+    }
+    assert_eq!(alive, 0, "{case}: a task the turn started was still alive");
+}
+
 /// What a turn's task hands back once the turn is over.
 struct Taken {
     /// The runner, holding the transcript the turn left.
@@ -147,7 +166,7 @@ struct Taken {
     permit: Permit,
 }
 
-/// One turn of `runner`, taken as a task on `runtime`, posting to `seen` and
+/// One turn of `runner`, spawned as a task on `runtime`, posting to `seen` and
 /// stopped by `cancel`, as the key a person presses stops one.
 fn taking(
     runtime: &Handle,
@@ -184,8 +203,9 @@ fn turn(runtime: &Handle, runner: Runner, asked: &'static str, cancel: &Cancel) 
 /// answer back until the first agent's stamp has run, so both turns are in
 /// flight together; and the first agent's vendor holds its last answer back
 /// until the second agent's turn is over, a stalled stream the first turn
-/// simply waits on. The first agent's one pass asks for four calls: a stamp, a call that outlives its deadline, a
-/// tool that panics and the hosted server's search. The second agent stamps
+/// simply waits on. The first agent's first pass asks for four calls: a stamp,
+/// a call that outlives its deadline, a tool that panics and the hosted
+/// server's search. The second agent stamps
 /// once per pass under a spend ceiling its passes cross on the second, and is
 /// stopped at the third before it asks for anything, while the first agent
 /// spends ten times as much under no ceiling and is never stopped.
@@ -401,11 +421,12 @@ fn two_agents_take_their_turns_at_once_without_sharing_anything() {
         assert_eq!(served.launches(), 1);
         assert!(served.all_ended(), "the hosted server was let go");
         drop((alpha, beta));
+        quiet(&runtime, "two agents");
     });
     assert_eq!(
         shutdown,
         Ok(()),
-        "every task either turn started was over by the end"
+        "no runtime thread was left inside synchronous work"
     );
 }
 
@@ -455,17 +476,27 @@ fn asking_for_the_stamp() -> Reply {
     Reply::saying(Wire::Claude.answer("stamping", &[Call::to("call-1", "stamp")], 5))
 }
 
+/// What a session held when it was picked up again, and what the one turn
+/// taken on it sent.
+struct PickedUp {
+    /// Every call the transcript picked up holds.
+    calls: Vec<String>,
+    /// The resumed turn's one request, as it was sent.
+    sent: String,
+}
+
 /// Picks the session up again and takes one more turn, which the vendor
-/// answers in words. What the turn was sent holds every call it names
-/// exactly once with exactly one result.
+/// answers in words, having checked that the transcript picked up and the
+/// one the turn left each answer every call they hold exactly once.
 fn carried_on(
     scratch: &Scratch,
     stamp: &Arc<Stamp>,
     runtime: &Handle,
     http: &crucible_provider::HttpTurns,
-) {
+) -> PickedUp {
     let (session, transcript) = scratch.resumed();
     answered_once(&transcript);
+    let picked = calls(&transcript);
     let vendor = Vendor::new(
         Wire::Claude,
         vec![Reply::saying(Wire::Claude.answer("carried on", &[], 5))],
@@ -480,17 +511,52 @@ fn carried_on(
         .first()
         .map(ToString::to_string)
         .expect("the resumed turn asked");
-    for asked in ["\"tool_use\"", "\"tool_result\""] {
-        assert!(
-            sent.matches(asked).count() <= 1,
-            "the resumed request repeats a call: {sent}"
-        );
+    PickedUp {
+        calls: picked,
+        sent,
     }
-    assert_eq!(
-        sent.matches("\"tool_use\"").count(),
-        sent.matches("\"tool_result\"").count(),
-        "the resumed request holds a call without its result: {sent}"
-    );
+}
+
+/// How many times `sent` carries `call` as asked for, and as answered.
+///
+/// A picked-up session is sent to the model as history written out in words,
+/// not as calls it could be taken to have made; and the request is JSON, so
+/// the line breaks that history is written with are escaped in it.
+fn historical(sent: &str, call: &str) -> (usize, usize) {
+    let asked = sent
+        .matches(&format!("Historical tool request {call} ("))
+        .count();
+    let answered = sent.matches(&format!("\\n{call}:\\n")).count()
+        + sent.matches(&format!("\\n{call} (failed):\\n")).count();
+    (asked, answered)
+}
+
+/// How many times the one session logged under `scratch` records `call` as
+/// finished.
+fn finishes(scratch: &Scratch, call: &str) -> usize {
+    let logged: Vec<_> = fs::read_dir(scratch.logs())
+        .expect("the session logs")
+        .map(|entry| entry.expect("a session log").path())
+        .filter(|path| path.extension().is_some_and(|suffix| suffix == "jsonl"))
+        .collect();
+    let [log] = logged.as_slice() else {
+        panic!("one session log: {logged:?}");
+    };
+    fs::read_to_string(log)
+        .expect("the session log")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|line| line.get("run_item")?.get("body").cloned())
+        .filter(|line| {
+            line.get("kind").and_then(serde_json::Value::as_str) == Some("invocation")
+                && line.get("call").and_then(serde_json::Value::as_str) == Some(call)
+                && line
+                    .get("invocation_state")
+                    .and_then(|state| state.get("state"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("finished")
+        })
+        .count()
 }
 
 /// A stop requested at each point a call is recorded ends the turn with the
@@ -551,24 +617,32 @@ fn a_stop_at_each_record_of_a_call_accounts_for_it_once() {
             assert_eq!(answered.len(), 1, "{stage:?}: {answered:?}");
             drop(runner);
 
-            carried_on(&scratch, &stamp, &runtime, &http);
+            let picked = carried_on(&scratch, &stamp, &runtime, &http);
+            assert_eq!(picked.calls, ["call-1"], "{stage:?}: the call picked up");
+            assert_eq!(
+                historical(&picked.sent, "call-1"),
+                (1, 1),
+                "{stage:?}: the resumed request did not carry the call once, with its result: {}",
+                picked.sent
+            );
             assert_eq!(
                 stamps.load(Ordering::SeqCst),
                 ran,
                 "{stage:?}: picking the session up ran the call again"
             );
+            quiet(&runtime, &format!("{stage:?}"));
         });
         assert_eq!(
             shutdown,
             Ok(()),
-            "{stage:?}: the stopped turn left work behind"
+            "{stage:?}: no runtime thread was left inside synchronous work"
         );
     }
 }
 
 /// A turn whose process dies after a call's result is recorded, and before
-/// the result reaches the transcript, is picked up with no call left hanging
-/// and without running the call again.
+/// the result reaches the transcript, leaves the result in its log once, and
+/// is picked up with no call left hanging and without running the call again.
 #[test]
 fn a_turn_that_dies_after_its_call_is_picked_up_without_running_it_again() {
     let scratch = Scratch::new();
@@ -596,15 +670,32 @@ fn a_turn_that_dies_after_its_call_is_picked_up_without_running_it_again() {
         );
         drop(vendor);
         assert_eq!(stamps.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            finishes(&scratch, "call-1"),
+            1,
+            "the call's result was not recorded exactly once"
+        );
 
-        carried_on(&scratch, &stamp, &runtime, &http);
+        let picked = carried_on(&scratch, &stamp, &runtime, &http);
+        let (asked, answered) = historical(&picked.sent, "call-1");
+        assert!(
+            asked <= 1 && asked == answered,
+            "the resumed request carries the call {asked} times and its result {answered}: {}",
+            picked.sent
+        );
+        assert_eq!(asked, picked.calls.len(), "{:?}", picked.calls);
         assert_eq!(
             stamps.load(Ordering::SeqCst),
             1,
             "picking the session up ran the call again"
         );
+        quiet(&runtime, "died");
     });
-    assert_eq!(shutdown, Ok(()), "the dead turn left work behind");
+    assert_eq!(
+        shutdown,
+        Ok(()),
+        "no runtime thread was left inside synchronous work"
+    );
 }
 
 /// A hosted server that will not stop fails the turn that started it, after
@@ -684,10 +775,15 @@ fn a_server_that_will_not_stop_fails_its_turn_and_refuses_the_next() {
         assert_eq!(served.launches(), 1, "nothing was started over it");
         assert_eq!(served.calls(), 1);
         drop(runner);
+        assert!(
+            served.all_closed(),
+            "the stubborn server's input was let go"
+        );
+        quiet(&runtime, "stubborn");
     });
     assert_eq!(
         shutdown,
         Ok(()),
-        "the stubborn server's streams were let go with the turn"
+        "no runtime thread was left inside synchronous work"
     );
 }

@@ -145,6 +145,15 @@ impl Ledger {
         self.lives.lock().expect("the launches").len()
     }
 
+    /// Whether crucible let go of every launch's input.
+    pub(crate) fn all_closed(&self) -> bool {
+        self.lives
+            .lock()
+            .expect("the launches")
+            .iter()
+            .all(|life| life.closed.load(Ordering::SeqCst))
+    }
+
     /// Whether every launch was let go and has ended.
     pub(crate) fn all_ended(&self) -> bool {
         self.lives
