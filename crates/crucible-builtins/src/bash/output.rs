@@ -456,13 +456,14 @@ pub(super) fn stop_here(process: &mut (dyn SandboxProcess + 'static)) -> io::Res
 /// work inside the contract, so the poll answers — and a stop that would have
 /// had to wait is refused rather than held, leaving it to the caller whether to
 /// ask again and from when. The in-tree stops end the task watching the
-/// command's status, end the command's group, reap it within the reap bound,
-/// join a limit's cancel within a bound of its own, stop its network proxy
-/// where it has one and clean up its stage, and a projected command's stop also
-/// joins an ending already writing it: that ending may roll back or publish
-/// before the stop returns. The only bounds within one are those two steps',
-/// the reap's and the cancel join's; the stop's own duration is bounded by
-/// nothing here, the crossing spending one poll on it and dropping the rest.
+/// command's status, end the command's group within the kill bound, reap it
+/// within the reap bound, join a limit's cancel within a bound of its own, stop
+/// its network proxy where it has one and clean up its stage, and a projected
+/// command's stop also joins an ending already writing it: that ending may roll
+/// back or publish before the stop returns. The only bounds within one are
+/// those three steps', the kill's, the reap's and the cancel join's; the stop's
+/// own duration is bounded by nothing here, the crossing spending one poll on
+/// it and dropping the rest.
 ///
 /// Reached from neither a destructor nor the thread that draws, neither of
 /// which can wait for a stop: those paths hand the process to the builtins'

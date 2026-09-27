@@ -4,6 +4,8 @@
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd};
 use std::process::{Child, ChildStdin, Command, ExitStatus};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::SandboxInput;
@@ -46,6 +48,10 @@ impl Scope {
 
     /// Observes leader exit without first releasing its numeric group identity,
     /// then stops descendants before the standard child handle reaps it.
+    ///
+    /// Where a fork under way can outlive the kill, a kill that still reached
+    /// something running leaves the leader unreaped for the next look to kill
+    /// the group again, so its output closes before its status is known.
     #[allow(clippy::unused_self)]
     pub(crate) fn try_wait(
         &self,
@@ -62,25 +68,48 @@ impl Scope {
         if rustix::process::waitid(WaitId::Pid(pid), options)?.is_none() {
             return Ok(None);
         }
-        terminator.stop()?;
+        if terminator.signalled()? && FORK_OUTLIVES_KILL {
+            return Ok(None);
+        }
         child.try_wait()
     }
 
     /// Stops the shell and every descendant still in its inherited group.
+    ///
+    /// Where a fork under way can outlive the kill, the group is killed again
+    /// until nothing in it is left running, before the caller reaps the leader.
     pub(crate) fn stop(child: &mut Child) -> io::Result<()> {
-        let group_result = i32::try_from(child.id())
+        let group = i32::try_from(child.id())
             .ok()
             .and_then(rustix::process::Pid::from_raw)
-            .map_or(Ok(()), |group| Terminator(group).stop());
+            .map(Terminator);
+        let group_result = group.map_or(Ok(()), Terminator::stop);
         let child_result = child.kill().or_else(|problem| {
             (problem.kind() == io::ErrorKind::InvalidInput)
                 .then_some(())
                 .ok_or(problem)
         });
 
-        group_result.and(child_result)
+        group_result.and(child_result)?;
+        match group {
+            Some(group) if FORK_OUTLIVES_KILL => group.emptied(),
+            _ => Ok(()),
+        }
     }
 }
+
+/// Whether a fork under way when its process group is killed can finish, and
+/// leave a child in the group that the kill never reached.
+///
+/// XNU completes the fork, and the child lives on holding the command's
+/// output. Linux abandons a fork when a group signal arrives during it, so
+/// one kill reaches everything there; it also counts an unreaped leader as
+/// reached, so it could not tell when a group was empty anyway.
+const FORK_OUTLIVES_KILL: bool = cfg!(target_os = "macos");
+
+/// How long a stop keeps killing a group before it reports a member that
+/// outlived every kill.
+const EMPTIED: Duration = Duration::from_millis(250);
 
 impl Terminator {
     /// Sends an uncatchable signal to every process still in the command group.
@@ -91,9 +120,34 @@ impl Terminator {
     /// cannot tell that case from a live member the caller may not signal, and
     /// a command group here holds only the user's own descendants.
     pub(crate) fn stop(self) -> io::Result<()> {
-        rustix::process::kill_process_group(self.0, rustix::process::Signal::KILL)
-            .or_else(|problem| already_stopped(problem).then_some(()).ok_or(problem))
-            .map_err(io::Error::from)
+        self.signalled().map(drop)
+    }
+
+    /// Sends the group kill, and whether it reached anything. On macOS that
+    /// is something still running; elsewhere an unreaped leader counts too.
+    fn signalled(self) -> io::Result<bool> {
+        match rustix::process::kill_process_group(self.0, rustix::process::Signal::KILL) {
+            Ok(()) => Ok(true),
+            Err(problem) if already_stopped(problem) => Ok(false),
+            Err(problem) => Err(problem.into()),
+        }
+    }
+
+    /// Kills the group until a kill reaches nothing still running in it,
+    /// which a caller holding the leader unreaped can trust the group's number
+    /// for, or reports it still running after [`EMPTIED`].
+    fn emptied(self) -> io::Result<()> {
+        let deadline = Instant::now() + EMPTIED;
+        while self.signalled()? {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "sandbox process group was still running after termination",
+                ));
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        Ok(())
     }
 }
 
@@ -259,3 +313,6 @@ fn registered<'a, P: AsRawFd>(
 fn lost() -> io::Error {
     io::Error::other("the command's pipe is no longer held here")
 }
+
+#[cfg(test)]
+mod tests;
