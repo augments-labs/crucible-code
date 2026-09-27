@@ -169,7 +169,7 @@ fn failed_stop_keeps_the_last_row_and_its_retry_notice() {
         left.running().first().is_some_and(|one| one.refused)
     });
     assert_eq!(
-        leaving.watched(&left),
+        leaving.watched(&left, &Ending::deaf()),
         Moved::Redraw,
         "the refusal was not drawn on the next beat"
     );
@@ -195,7 +195,7 @@ fn failed_stop_keeps_the_last_row_and_its_retry_notice() {
         Moved::Redraw
     );
     waiting_until("the stopped command's row going", || left.count() == 0);
-    assert_eq!(leaving.watched(&left), Moved::Left);
+    assert_eq!(leaving.watched(&left, &Ending::deaf()), Moved::Left);
 }
 
 /// Waits, up to a ceiling no passing run comes near, until `until` holds.
@@ -216,20 +216,131 @@ fn waiting_until(what: &str, until: impl Fn() -> bool) {
 /// letting go, or on one already draining where the stop would never run.
 #[test]
 fn a_command_left_running_at_exit_is_ended_on_the_runtime_before_it_is_shut_down() {
+    let on_runtime = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (started_one, stopped) = crate::cli::leaving_first(Background::new, |services, left| {
         let runtime = services.runtime().handle()?;
         left.watching_on(runtime.clone());
-        let (sandbox, on_runtime) = cleanup::counting_on(runtime);
-        let here = started(left, "ended-at-exit", 1, sandbox);
-        Ok::<_, crucible_app::runtime::Unstarted>((here, on_runtime))
+        let sandbox = cleanup::counting_on(runtime, &on_runtime);
+        Ok::<_, crucible_app::runtime::Unstarted>(started(left, "ended-at-exit", 1, sandbox))
     });
 
-    let (_here, on_runtime) = started_one.expect("the runtime could not be started");
+    let _here = started_one.expect("the runtime could not be started");
     assert_eq!(stopped, Ok(()), "the runtime was left with work on it");
     assert_eq!(
         on_runtime.load(std::sync::atomic::Ordering::Acquire),
         1,
         "the command left running was not ended on the runtime before it shut down"
+    );
+}
+
+/// What a run let go of at exit, in the order it went.
+type Order = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+/// Puts what `said` makes of the moment it goes at the end of an [`Order`].
+struct Going {
+    order: Order,
+    said: Box<dyn Fn() -> String + Send>,
+}
+
+impl Going {
+    fn into(order: &Order, said: impl Fn() -> String + Send + 'static) -> Self {
+        Self {
+            order: std::sync::Arc::clone(order),
+            said: Box::new(said),
+        }
+    }
+}
+
+impl Drop for Going {
+    fn drop(&mut self) {
+        let said = (self.said)();
+        self.order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(said);
+    }
+}
+
+/// The order a run ends in, with a task on the runtime still writing to the
+/// session when it comes. What the session held goes first, as the loop
+/// returns — here one value in its place, dropped where its locals are. The
+/// registry of commands left running goes next, with its command ended, and
+/// the runtime last, whose shutdown cancels the task wherever it had got to
+/// in a line. Every line the task was told had been written is in the log
+/// once the run is over, and the log reads back whole.
+#[test]
+fn at_exit_the_runtime_goes_last_and_every_acknowledged_line_is_kept() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let order = Order::default();
+    let on_runtime = Arc::new(AtomicUsize::new(0));
+    let acknowledged = Arc::new(AtomicUsize::new(0));
+
+    let (ran, stopped) = crate::cli::leaving_first(
+        || {
+            let ended = Arc::clone(&on_runtime);
+            // A tuple drops its fields in order, so this is said once the
+            // registry has gone.
+            let gone = Going::into(&order, move || {
+                format!("registry, {} ended", ended.load(Ordering::Acquire))
+            });
+            (Background::new(), gone)
+        },
+        |services, leaving: &(Background, Going)| {
+            let left = &leaving.0;
+            let runtime = services.runtime().handle()?;
+            left.watching_on(runtime.clone());
+            let here = started(
+                left,
+                "drained-at-exit",
+                1,
+                cleanup::counting_on(runtime.clone(), &on_runtime),
+            );
+
+            let session = Arc::new(
+                crucible_session::Session::start(&here.logs(), &here.workspace(), None)
+                    .expect("a session to write to"),
+            );
+            let id = session.id().expect("a recorded session has a name").clone();
+            let writing = Arc::clone(&session);
+            let written = Arc::clone(&acknowledged);
+            let last = Going::into(&order, || "runtime".to_owned());
+            drop(runtime.spawn(async move {
+                let _last = last;
+                let line = Message::said("written before the exit");
+                loop {
+                    writing.append_message(&line).await;
+                    written.fetch_add(1, Ordering::AcqRel);
+                }
+            }));
+            waiting_until("a line acknowledged", || {
+                acknowledged.load(Ordering::Acquire) > 0
+            });
+
+            let _held = Going::into(&order, || "held".to_owned());
+            Ok::<_, crucible_app::runtime::Unstarted>((here, id))
+        },
+    );
+
+    let (here, id) = ran.expect("the runtime could not be started");
+    assert_eq!(stopped, Ok(()), "the runtime was left with work on it");
+    assert_eq!(
+        *order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        ["held", "registry, 1 ended", "runtime"],
+        "the run was not let go of in the order its exit is documented in"
+    );
+
+    let told = acknowledged.load(Ordering::Acquire);
+    let (_reopened, transcript) =
+        crucible_session::Session::reopen(&here.logs(), &here.workspace(), &id)
+            .expect("the log read back whole");
+    assert!(
+        transcript.len() >= told,
+        "{told} lines were acknowledged and {} are in the log",
+        transcript.len()
     );
 }
 
@@ -433,7 +544,7 @@ fn stopping_the_last_one_takes_the_list_with_it() {
         Moved::Redraw
     );
     waiting_until("the command ending", || left.count() == 0);
-    assert_eq!(leaving.watched(&left), Moved::Left);
+    assert_eq!(leaving.watched(&left, &Ending::deaf()), Moved::Left);
 }
 
 #[test]
@@ -447,7 +558,31 @@ fn stopping_one_of_several_keeps_the_list_open() {
         Moved::Redraw
     );
     waiting_until("one command ending", || left.count() == 1);
-    assert_eq!(leaving.watched(&left), Moved::Redraw);
+    assert_eq!(leaving.watched(&left, &Ending::deaf()), Moved::Redraw);
+}
+
+/// The list is the one thing a running turn stands that waits on a beat rather
+/// than with no clock, so a signal lands there noted rather than obeyed. The
+/// turn's worker has stopped behind it by then, its queue to this thread full,
+/// and nothing but a key would ever close the list and let the turn's loop read
+/// the note. So the beat reads it: the list goes, and the turn it stood over is
+/// ended the way the signal asked.
+#[test]
+fn a_signal_noted_while_the_list_stands_closes_it_on_the_next_beat() {
+    let (left, _here) = running("told-while-listed", 1);
+    let mut leaving = Leaving::default();
+    drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
+    let ending = Ending::deaf();
+    assert_eq!(leaving.watched(&left, &ending), Moved::Still);
+
+    ending.tell(15);
+
+    assert_eq!(
+        leaving.watched(&left, &ending),
+        Moved::Left,
+        "a noted signal left the list standing until a key"
+    );
+    assert_eq!(left.count(), 1, "closing the list stopped a command");
 }
 
 #[test]

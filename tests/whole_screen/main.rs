@@ -1891,3 +1891,45 @@ fn a_termination_sent_while_a_question_stands_is_not_kept_waiting_for_a_key() {
 
     assert_eq!(ended.signal(), Some(15), "{ended:?}");
 }
+
+#[test]
+fn a_termination_sent_while_the_list_stands_over_an_answer_is_not_kept_waiting() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    // The list of running commands holds the keyboard over a turn the way the
+    // question above does, and while it stands the drawing thread takes nothing
+    // more from the turn. With the answer still arriving, the queue between them
+    // is full a few words after the click and the turn waits on it. A
+    // termination noted there has to close the list, stop the turn and end the
+    // run, rather than wait for a key or for the answer to finish.
+    let answer = format!("{}ANSWER-ENDS-HERE", "still arriving ".repeat(1500));
+    let vendor = Vendor::calling(
+        "bash",
+        r#"{"command":"sleep 30","background":true}"#,
+        &answer,
+    );
+    let mut window = Watched::allowing("terminated-listing", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", "still arriving");
+    let at = count_row(&window.picture());
+    window.clicks_catching(at, 0, "Still running");
+    let (ended, wrote) = window.ends_on("TERM");
+
+    assert_eq!(ended.signal(), Some(15), "{ended:?}");
+    assert!(
+        wrote.contains("\u{1b}[?1049l"),
+        "the screen was never handed back: {wrote:?}"
+    );
+    // What was heard before the signal is saved, as it is for a signal anywhere
+    // else. Three thousand words at the vendor's pace is fifteen seconds of
+    // answer, so one that reached the log whole was waited out, not stopped.
+    let recorded = window.recorded();
+    assert!(
+        recorded.contains("still arriving"),
+        "the answer heard before the signal never reached the log: {recorded:?}"
+    );
+    assert!(
+        !recorded.contains("ANSWER-ENDS-HERE"),
+        "the turn ran to the end of its answer instead of being stopped"
+    );
+}

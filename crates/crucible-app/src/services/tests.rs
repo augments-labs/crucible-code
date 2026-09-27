@@ -74,6 +74,41 @@ fn the_runtime_is_shut_down_only_after_what_the_run_was_given_has_been_dropped()
     );
 }
 
+/// A run that failed, and left a thread its runtime could not stop within the
+/// bound, answers with both: its own failure, and beside it the cleanup that
+/// did not finish, so neither is said in place of the other. The thread is let
+/// go once the run has answered.
+#[test]
+fn a_run_that_failed_and_then_failed_to_clean_up_answers_with_both() {
+    let (release, held) = mpsc::channel::<()>();
+
+    let (ran, stopped) = serving(move |services| {
+        let runtime = services
+            .runtime()
+            .handle()
+            .map_err(|_| "the runtime could not be started")?;
+        let (started, began) = mpsc::channel();
+        let _stuck = runtime.spawn_blocking(move || {
+            let _ = started.send(());
+            let _ = held.recv();
+        });
+        began
+            .recv_timeout(LANDING)
+            .map_err(|_| "the thread left running never started")?;
+        Err::<(), _>("the run failed")
+    });
+    drop(release);
+
+    assert_eq!(ran, Err("the run failed"), "the run's own failure was lost");
+    let said = stopped.map_err(|unfinished| unfinished.to_string());
+    assert!(
+        matches!(&said, Err(said) if said.starts_with(
+            "1 of the threads crucible runs its work on had not stopped"
+        )),
+        "the cleanup that failed after the run did was not said: {said:?}"
+    );
+}
+
 #[test]
 fn a_run_that_asks_for_no_runtime_starts_none() {
     let (built, stopped) = serving(|services| services.runtime().is_built());

@@ -45,6 +45,7 @@ use crucible_tui::{
 };
 
 use crate::cli::Fatal;
+use crate::cli::ending::Ending;
 use crate::cli::kept::Kept;
 use crate::cli::standing;
 use crate::cli::style::Style;
@@ -372,8 +373,9 @@ fn stood<T: Terminal>(
     style: Style,
     listing: &mut Leaving,
     left: &Background,
+    ending: &Ending,
 ) -> Result<bool, Fatal> {
-    listing.stand(renderer, style, left)?;
+    listing.stand(renderer, style, left, ending)?;
     Ok(true)
 }
 
@@ -552,7 +554,7 @@ pub(crate) fn ask<T: Terminal>(
         // a key that moved nothing costs no frame, and the arms that end the
         // call leave through their own `return` without drawing at all.
         let moved = match arrived {
-            Pressed::Background => stood(renderer, style, &mut listing, left)?,
+            Pressed::Background => stood(renderer, style, &mut listing, left, &terms.ending)?,
             // Redrawn rather than re-wrapped: the box was laid out for a width
             // the window no longer has, and the rows it left on screen are the
             // renderer's to take back before the new ones go down.
@@ -634,7 +636,7 @@ pub(crate) fn ask<T: Terminal>(
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
                     Landed::Line => true,
 
-                    Landed::Counted => stood(renderer, style, &mut listing, left)?,
+                    Landed::Counted => stood(renderer, style, &mut listing, left, &terms.ending)?,
                     Landed::Nothing => offered.is_some(),
                 }
             }
@@ -1248,7 +1250,9 @@ pub(super) fn during<T: Terminal>(
                 // is between turns: the key cannot open the list here — it
                 // means backgrounding the command the turn is waiting on — so
                 // the click is the way the list is reached while a turn runs.
-                Landed::Counted => moved |= stood(renderer, style, listing, background)?,
+                Landed::Counted => {
+                    moved |= stood(renderer, style, listing, background, &terms.ending)?;
+                }
                 Landed::Nothing => {}
             },
 
