@@ -103,7 +103,10 @@ pub enum Shown<'a> {
 }
 
 /// Whoever answers pending actions: a terminal, or a consumer with none.
-pub trait Front: Send {
+///
+/// `Sync` for the reason [`Ask`] is: the asker a turn lends by shared reference
+/// holds its front end, and the turn may be carried between workers.
+pub trait Front: Send + Sync {
     /// Puts `pending` and awaits a word about it.
     ///
     /// The wait is human-length, so this hands back a future rather than

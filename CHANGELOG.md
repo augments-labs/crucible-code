@@ -103,6 +103,11 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **A turn can run as a runtime task.** `Runner::turn` now returns a `Send`
+  future, so a caller can spawn it onto a multi-thread runtime rather than
+  wait for it on a thread of its own. `Ask`, `Front` and
+  `PromptCacheResourceStore` now require `Sync` as well as `Send`; nothing a
+  user runs behaves differently.
 - **The redacted sandbox records a journal and a checkpoint keep are owned by
   `crucible-storage`.** `SandboxFact`, `SandboxInspection`, the negotiated
   capability matrix and the rest of that vocabulary now live beside the ports
@@ -187,7 +192,7 @@ change in any release with no deprecation period.
 - **A question, a permission ask and the panel front end hand back futures.**
   `Put::put`, which a tool puts its questions to whoever is at the keyboard
   through, the permission engine's `Ask::ask`, and `crucible_app::client`'s
-  `Front::put` (now `Front: Send`) return a boxed `Send` future rather than
+  `Front::put` (now `Front: Send + Sync`) return a boxed `Send` future rather than
   blocking inside a ready one; `client::questions` is now `async`, awaiting
   `Front::put` in turn, so a human-length wait for an answer never occupies
   the thread polling it. `Permission::decide`, `decide_admitted` and

@@ -18,9 +18,10 @@
 //! it, every prompt-cache step, every call's run, a background result's
 //! acceptance and the toolset's preparation, listing, refreshing and
 //! disposal, so a step that has to wait for its answer is waited for rather
-//! than refused. It starts no runtime: whoever awaits it polls it, on that
-//! caller's own thread, and the one thing it spawns is its calls' runs, onto
-//! the runtime it is polled in, at most [`TOOL_RUNS`] at once and each awaited
+//! than refused. It starts no runtime: whoever awaits it polls it, and a
+//! runtime that took it as a task may carry it from one worker to another at
+//! any wait. The one thing it spawns is its calls' runs, onto the runtime it
+//! is polled in, at most [`TOOL_RUNS`] at once and each awaited
 //! before the pass goes on — so a turn is polled inside a runtime, as the
 //! application's wait for one is. It hands its [`Cancel`] to every step it
 //! awaits and looks at it between them, so a stop ends it as it always has,
@@ -973,13 +974,17 @@ impl Runner {
     /// would have had to wait after another failure is reported as that
     /// failure, and named at most in its text.
     ///
+    /// The turn is `Send`: a runtime may take it as one of its tasks and carry
+    /// it from one worker to another at any wait.
+    ///
     /// # Panics
     ///
     /// At the turn's first tool call where it is polled outside a Tokio
     /// runtime: every call's run is spawned onto the runtime the turn is
     /// polled in, and spawning outside one panics. The application waits for
     /// a turn inside its own runtime; a caller of its own polls the turn
-    /// inside one, with a timer where a call has a deadline.
+    /// inside one, or spawns it onto one, with a timer where a call has a
+    /// deadline.
     ///
     /// [`ToolsetError::Unready`]: crucible_tools::ToolsetError::Unready
     /// [`ToolsetError::Source`]: crucible_tools::ToolsetError::Source

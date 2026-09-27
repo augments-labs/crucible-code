@@ -840,3 +840,41 @@ fn every_call_of_a_turn_is_lent_the_runner_s_worker() {
     assert_eq!(turned.unwrap(), StopReason::Yielded);
     assert_eq!(only_result(&scripted).output.text(), "lent a worker");
 }
+
+#[test]
+fn a_turn_runs_as_a_task_a_runtime_may_move_between_workers() {
+    // A front end with no thread to spare hands its turn to the runtime as a
+    // task, and a worker that picks it up may put it down at any wait for
+    // another to carry on. So nothing the turn holds across a wait may belong
+    // to the thread it started on: the call put to the user and the call's
+    // run are among what it holds.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .build()
+        .unwrap();
+    let mut scripted = Scripted::new(
+        Script::new(vec![calling("a", "write", "{}"), saying("written")]),
+        tools([Fixed::new("write").risking(changing())]),
+        Verdict::Allow,
+    );
+
+    let task = runtime.spawn(async move {
+        let run = scripted.runner.starting(
+            &scripted.events,
+            &scripted.cancel,
+            &scripted.steer,
+            &scripted.aside,
+        );
+        let turned = scripted
+            .runner
+            .turn("go", Box::new([]), &mut scripted.says, &run)
+            .await;
+        drop(run);
+        (turned.map(ran), scripted)
+    });
+    let (turned, scripted) = runtime.block_on(task).unwrap();
+
+    assert_eq!(turned.unwrap(), StopReason::Yielded);
+    assert_eq!(scripted.says.asked, 1);
+    assert_eq!(only_result(&scripted).output.text(), "done");
+}

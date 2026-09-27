@@ -19,7 +19,10 @@ use crate::BoxFuture;
 ///
 /// Every operation waits on that file, so each hands back a boxed `Send`
 /// future holding the store for as long as it runs: one operation at a time.
-pub trait PromptCacheResourceStore: Send + fmt::Debug {
+/// `Sync` too, because a turn lends the runner keeping a store by shared
+/// reference to the steps it waits on, and a runtime that took the turn as a
+/// task may carry those steps to another worker at any wait.
+pub trait PromptCacheResourceStore: Send + Sync + fmt::Debug {
     /// Finds the newest exact binding, including non-ready records for reconciliation.
     ///
     /// An older orphan may be retained for explicit cleanup after a replacement

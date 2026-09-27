@@ -41,7 +41,11 @@ pub enum Remember {
 ///
 /// Implemented above this crate, because asking is a matter of whatever is on
 /// screen and this crate knows nothing about that.
-pub trait Ask: Send {
+///
+/// `Sync` as well as `Send`: a turn lends its asker by shared reference to the
+/// steps it waits on, and a runtime that took the turn as a task may carry
+/// those steps to another worker at any wait.
+pub trait Ask: Send + Sync {
     /// Puts one call to the user and awaits the answer.
     ///
     /// A permission question's wait is human-length too, so this hands back a

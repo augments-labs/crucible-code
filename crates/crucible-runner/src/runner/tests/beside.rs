@@ -46,7 +46,7 @@ struct Deliberating {
     /// Told each time a question arrives.
     put: Sender<()>,
     /// Waited on before the answer is given.
-    go: Receiver<()>,
+    go: Mutex<Receiver<()>>,
     /// How often the reader was put to the question.
     asked: usize,
 }
@@ -63,7 +63,11 @@ impl Ask for Deliberating {
         // poll, that must wait here.
         self.asked += 1;
         self.put.send(()).expect("the test to be waiting");
-        self.go.recv().expect("the test to let the reader answer");
+        self.go
+            .get_mut()
+            .expect("an unpoisoned rendezvous")
+            .recv()
+            .expect("the test to let the reader answer");
         Box::pin(async { (Verdict::Allow, Remember::Session) })
     }
 }
@@ -175,7 +179,11 @@ fn a_question_one_run_is_waiting_on_is_neither_put_to_nor_settled_for_the_other(
     let writing = || tools([Fixed::new("write").risking(changing())]);
     let (put, asked) = channel();
     let (answer, go) = channel();
-    let mut reader = Deliberating { put, go, asked: 0 };
+    let mut reader = Deliberating {
+        put,
+        go: Mutex::new(go),
+        asked: 0,
+    };
 
     let mut one = Scripted::under(
         Script::new(vec![
