@@ -11,9 +11,9 @@
 //! after. A path that never asks — `--help` and `--version`, which end while
 //! the arguments are parsed, and the listings that print and stop — starts no
 //! thread for it. Assembling a conversation asks, because its turns run on
-//! it, every command its sandbox starts is watched there,
-//! including the kill of one that breaks its time or output limit, and an
-//! account's tokens are renewed there.
+//! it, every command its sandbox starts is watched there, including the kill
+//! of one that breaks its time or output limit, and an account's tokens are
+//! renewed there.
 //!
 //! **Multi-thread, because a waiting caller does not drive the runtime.** A
 //! turn is a task spawned here, run while the drawing thread goes on drawing,
@@ -70,23 +70,17 @@ use tokio::runtime::{Builder, Handle, Runtime};
 /// last. The rest is work the application owns on the turn's behalf and
 /// between turns — a process's status, a hosted program's streams, a
 /// credential's renewal — each of which spends most of its life waiting, and
-/// the runs of a turn's tool calls, which may hold a worker inside synchronous work for as
-/// long as a call lasts. Those are at most `crucible_runner::TOOL_RUNS` at
-/// once, held below this less one, so two workers stay free and a process's
-/// status task, where its deadline and output-limit kills run, finds one
-/// even while something else is polled on the other. Four keeps a task that
-/// holds a worker from stopping the rest, and costs four idle threads.
+/// the runs of a turn's tool calls, which may hold a worker inside synchronous
+/// work for as long as a call lasts. Those are at most
+/// `crucible_runner::TOOL_RUNS` at once, held below this less one, so two
+/// workers stay free and a process's status task, where its deadline and
+/// output-limit kills run, finds one even while something else is polled on
+/// the other. Four keeps a task that holds a worker from stopping the rest, and
+/// costs four idle threads.
 pub const WORKERS: usize = 4;
 
 /// The most threads the runtime starts for blocking work handed to it.
 ///
-/// Blocking work is disk and platform calls, the shared HTTP client's two
-/// hostname-lookup places, account renewals' lock, file and lookup work, the
-/// release check's one cache write, and the calls into a command left running,
-/// which have no asynchronous form, each bounded by its owner. What every owner
-/// may hold at once is checked against this in [`crate::services`]: the tool
-/// worker's four jobs, the shared client's two lookup places and account work's
-/// two threads, each counting work it gave up on that is still running, plus
 /// Blocking work is disk and platform calls, the shared HTTP client's two
 /// hostname-lookup places, account renewals' lock, file and lookup work, the
 /// release check's one cache write, the calls into a command left running,
@@ -102,6 +96,7 @@ pub const WORKERS: usize = 4;
 /// plus four plus one plus two, fifteen; and one thread to spare, so an owner at
 /// its most never makes another's job queue.
 pub const BLOCKING: usize = 16;
+
 /// How long the runtime's threads are given to stop once it is shut down.
 ///
 /// By the time the runtime is shut down, everything that owned work on it has
