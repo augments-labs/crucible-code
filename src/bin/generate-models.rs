@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Read;
 
-use crucible_core::{Modalities, Modality};
+use crucible_types::{Modalities, Modality};
 use serde_json::Value;
 
 /// Every model crucible offers, and the key the database lists it under.

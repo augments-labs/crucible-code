@@ -26,7 +26,7 @@
 //! which is what stops the queue being committed out from under a reader who was
 //! halfway through it.
 
-use crucible_core::Steer;
+use crucible_runtime::Steer;
 use crucible_tui::{Caret, Editor, Key, Pressed, Renderer, Row, Terminal};
 
 use crate::cli::Fatal;

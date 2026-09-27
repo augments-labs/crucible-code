@@ -33,12 +33,14 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crucible_builtins::Grep;
-use crucible_core::{
-    Ancestry, Approved, Ask, Cancel, DescribeTool, Disposition, Mode, Permission, Remember,
-    RuleError, Rules, Sensitivity, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId,
-    Unwatched, Verdict, Workspace,
-};
+use crucible_runtime::Cancel;
 use crucible_tools::ToolWorker;
+use crucible_tools::{
+    Approved, Ask, DescribeTool, Disposition, Mode, Permission, Remember, RuleError, Rules,
+    Sensitivity, Settled, Tool, ToolContext, Unwatched, Verdict,
+};
+use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId};
+use crucible_workspace::Workspace;
 use tokio::runtime::{Builder, Runtime};
 
 /// How far over `rg` the tool may be.
@@ -499,10 +501,10 @@ enum Problem {
     Corpus(#[from] io::Error),
 
     #[error("the workspace could not be opened: {0}")]
-    Workspace(#[from] crucible_core::PathError),
+    Workspace(#[from] crucible_workspace::PathError),
 
     #[error("the search failed: {0}")]
-    Search(#[from] crucible_core::ToolError),
+    Search(#[from] crucible_tools::ToolError),
 
     #[error("the runtime searches are waited on could not be built: {0}")]
     Runtime(io::Error),

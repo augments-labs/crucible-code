@@ -5,9 +5,11 @@ use std::sync::Arc;
 
 use crucible_auth::Store;
 use crucible_builtins::{Ledger, Plan};
-use crucible_core::{AgentId, Cancel, Revealed};
 use crucible_runner::{Agent, Model, Runner, Tools};
+use crucible_runtime::Cancel;
+use crucible_tools::Revealed;
 use crucible_tui::Recording;
+use crucible_types::AgentId;
 
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
@@ -24,8 +26,8 @@ fn in_force(sample: &Sample) -> Terms {
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         ending: crate::cli::ending::Ending::deaf(),
-        steer: crucible_core::Steer::new(),
-        aside: crucible_core::Aside::new(),
+        steer: crucible_runtime::Steer::new(),
+        aside: crucible_runtime::Aside::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),

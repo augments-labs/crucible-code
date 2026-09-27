@@ -24,7 +24,7 @@ fn cut(called: &[&str]) -> Kept {
     let mut kept = Kept::default();
 
     for (at, one) in called.iter().enumerate() {
-        let call = crucible_core::ToolId::new(format!("call-{at}"));
+        let call = crucible_types::ToolId::new(format!("call-{at}"));
         kept.calling(call.clone(), (*one).to_owned());
         kept.finished(
             &call,
@@ -48,7 +48,7 @@ fn opened(standing: &mut Standing) -> &mut View {
 fn overflowing() -> Kept {
     let mut kept = Kept::default();
 
-    let call = crucible_core::ToolId::new("build");
+    let call = crucible_types::ToolId::new("build");
     kept.calling(call.clone(), "Bash(cargo build)".to_owned());
     kept.finished(&call, "a line of it\n".repeat(200).into(), 0);
 
@@ -161,7 +161,7 @@ fn a_view_over_a_result_the_ceiling_dropped_lays_out_no_rows() {
     let mut standing = Standing::default();
     standing.one(&held, 0);
 
-    let call = crucible_core::ToolId::new("cat");
+    let call = crucible_types::ToolId::new("cat");
     held.calling(call.clone(), "Bash(cat big)".to_owned());
     held.finished(&call, "x".repeat(1024 * 1024).into_boxed_str(), 1);
 
@@ -181,7 +181,7 @@ fn a_view_stands_still_while_the_turn_under_it_goes_on_cutting() {
     standing.open(&held);
     let before = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
 
-    let call = crucible_core::ToolId::new("test");
+    let call = crucible_types::ToolId::new("test");
     held.calling(call.clone(), "Bash(cargo test)".to_owned());
     held.finished(&call, "something else entirely\n".into(), 1);
 
@@ -200,7 +200,7 @@ fn opening_it_again_is_what_brings_the_newer_results_in() {
     standing.open(&held);
     let before = laying(&held, opened(&mut standing), Glyphs::Unicode, 60, 20);
 
-    let call = crucible_core::ToolId::new("test");
+    let call = crucible_types::ToolId::new("test");
     held.calling(call.clone(), "Bash(cargo test)".to_owned());
     held.finished(&call, "something else entirely\n".into(), 1);
 

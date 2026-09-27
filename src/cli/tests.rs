@@ -339,7 +339,7 @@ fn resume_round_trip() {
         Session::start(&sample.logs(), &workspace, None).expect("a new session to record");
     let id = session.id().expect("a recorded session has a name").clone();
     let path = session.path().to_owned();
-    session.append(&crucible_core::Message::said("keep this turn"));
+    session.append(&crucible_types::Message::said("keep this turn"));
     drop(session);
 
     // The parting message names the command that comes back to this session.
@@ -363,7 +363,7 @@ fn resume_round_trip() {
     drop(reopened);
 
     // An id nothing here answers to is told so in one sentence.
-    let stranger = crucible_core::SessionId::new();
+    let stranger = crucible_types::SessionId::new();
     let refused = startup::reopening(&sample.logs(), &workspace, &stranger)
         .expect_err("a session nobody recorded");
     assert_eq!(

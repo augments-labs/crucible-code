@@ -28,11 +28,12 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::providers::Served;
 use crucible_client_api as api;
-use crucible_core::{
-    Collision, Compacting, Mode, Provenance, Registered, Registry, RegistryError, RegistrySnapshot,
-    SourceKind,
+use crucible_registry::{
+    Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
+use crucible_tools::Mode;
 use crucible_tui::{Glyphs, Key, Listed, Menu, Pressed, Renderer, Row, Slot, Terminal, clip, fold};
+use crucible_types::Compacting;
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;
@@ -118,7 +119,7 @@ pub(crate) struct Slash {
     command: Command,
     /// Where it came from.
     provenance: Provenance,
-    enablement: Option<std::sync::Arc<crucible_core::SandboxEnablement>>,
+    enablement: Option<std::sync::Arc<crucible_sandbox::SandboxEnablement>>,
 }
 
 impl Slash {
@@ -173,7 +174,7 @@ pub(crate) type Commands = RegistrySnapshot<Slash>;
 /// twice in [`EVERY`], or one too long for a source identity. Both are wiring
 /// defects, and the sentence names the command.
 pub(crate) fn builtins(
-    enablement: &std::sync::Arc<crucible_core::SandboxEnablement>,
+    enablement: &std::sync::Arc<crucible_sandbox::SandboxEnablement>,
 ) -> Result<Registry<Slash>, RegistryError> {
     let registry = Registry::new(Collision::Refuse);
     let mut staged = registry.stage();

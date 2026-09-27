@@ -1,7 +1,8 @@
 //! What a run of calls that only looked around says it did.
 
 use super::Gathering;
-use crucible_core::{Looking, ToolId, ToolOutput};
+use crucible_tools::{Looking, ToolOutput};
+use crucible_types::ToolId;
 
 /// A run holding one of each, in the order the counters are said.
 fn gathering(looking: &[Looking]) -> Gathering {

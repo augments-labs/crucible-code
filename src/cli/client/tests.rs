@@ -20,15 +20,17 @@ use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, ErrorCode, Lasting, Outcome, Pending, PendingId,
     Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, TurnOutcome,
 };
-use crucible_core::{
-    Approved, Aside, Cancel, Delta, DescribeTool, Message, Mode, Permission, Rules, Sensitivity,
-    SessionId, Steer, StopReason, Summary, Tool, ToolArgs, ToolContext, ToolError, ToolId,
-    ToolOutput,
-};
+use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Tools};
 use crucible_runtime::BoxFuture;
+use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_session::Session;
+use crucible_tools::{
+    Approved, DescribeTool, Mode, Permission, Rules, Sensitivity, Summary, Tool, ToolContext,
+    ToolError, ToolOutput,
+};
 use crucible_tui::{Editor, Recording, Renderer};
+use crucible_types::{Message, SessionId, StopReason, ToolArgs, ToolId};
 
 use super::{Client, Witness};
 use crate::cli::converse::tests::{opening, paired, plain, scripted};
@@ -584,7 +586,7 @@ fn a_turn_interrupted_from_either_side_stops_at_the_same_place() {
     let rounds = || vec![calling(), saying("never said")];
     let reading = |ran: &Arc<AtomicUsize>, pressing: Pressing| Counting {
         sensitivity: Sensitivity::ReadOnly {
-            target: crucible_core::Target::unresolved(),
+            target: crucible_tools::Target::unresolved(),
         },
         ran: Arc::clone(ran),
         pressing,

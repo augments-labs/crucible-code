@@ -45,25 +45,30 @@ use crucible_builtins::{
     WebFetch, WebSearch, Write,
 };
 use crucible_config::{HOME, Home, Settings};
-use crucible_core::{
-    Ancestry, Calibration, Carried, ContextSnapshot, Fragment, RunId, RunItem, Spend,
-};
-use crucible_core::{Answered, Fetch, Put, Search};
-use crucible_core::{
-    Authorization, Cancel, Credential, CredentialScopeId, DescribeTool, Host, Message, Outgoing,
-    Page, PromptCacheFingerprint, PromptCacheIdentity, PromptCacheKey, PromptCacheMechanism,
-    PromptCacheMechanisms, PromptCachePlan, PromptCachePolicy, PromptCacheProjection,
-    PromptCacheRequest, PromptCacheRetention, PromptCacheScopeDigest, PromptCacheSelected,
-    PromptCacheSelection, Provider, ProviderAttemptId, Question, RecordedToolOutput, Request,
-    RequestPurpose, SearchResponse, SourceError, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolProvenance, ToolResult, ToolSchema, Transcript, Workspace,
-};
+use crucible_credentials::{Authorization, Credential, Outgoing};
 use crucible_extension::Extensions;
+use crucible_models::{
+    PromptCacheIdentity, PromptCacheKey, PromptCachePlan, PromptCacheProjection,
+    PromptCacheRequest, PromptCacheSelection, Provider, Request, RequestPurpose,
+};
 use crucible_provider::{
     Anthropic, Google, Moonshot, OpenAi, PostResponse, Transport, TransportError,
 };
 use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
 use crucible_session::Session;
+use crucible_storage::RunItem;
+use crucible_tools::{DescribeTool, Host, Page, SearchResponse, SourceError, ToolProvenance};
+use crucible_tools::{Fetch, Put, Search};
+use crucible_types::Answered;
+use crucible_types::{Ancestry, Calibration, Carried, ContextSnapshot, Fragment, RunId, Spend};
+use crucible_types::{
+    CredentialScopeId, Message, PromptCacheFingerprint, PromptCacheMechanism,
+    PromptCacheMechanisms, PromptCachePolicy, PromptCacheRetention, PromptCacheScopeDigest,
+    PromptCacheSelected, ProviderAttemptId, Question, RecordedToolOutput, StopReason, ToolArgs,
+    ToolCall, ToolId, ToolResult, ToolSchema, Transcript,
+};
+use crucible_workspace::Workspace;
 
 /// The frozen answer for `name`, as a path.
 fn frozen(name: &str) -> PathBuf {
@@ -384,7 +389,7 @@ fn every_built_in_tool_advertises_what_it_did() {
         Box::new(Grep::new(workspace.clone())),
         Box::new(Read::new(workspace.clone(), ledger.clone())),
         Box::new(TodoWrite::new(Plan::new())),
-        Box::new(ToolSearch::new(held, crucible_core::Revealed::new())),
+        Box::new(ToolSearch::new(held, crucible_tools::Revealed::new())),
         Box::new(WebFetch::new(unreached.clone())),
         Box::new(WebSearch::new(unreached)),
         Box::new(Write::new(workspace, ledger)),
@@ -1374,7 +1379,7 @@ fn a_session_written_through_its_store_writes_down_the_same_record() {
     let session = Session::onto(path, kept.clone());
     // Named as the contract, which is how the runner holds it: the session's
     // own methods of the same names are the calls that do not wait.
-    let store: &dyn crucible_core::JournalStore = &session;
+    let store: &dyn crucible_storage::JournalStore = &session;
     let run = RunId::parse("01900000-0000-7000-8000-0000000000b1").expect("a run identity");
     let ancestry = Ancestry::restore(run, None, run, 0).expect("a top-level ancestry");
     let item = |said: &str| {
@@ -1488,7 +1493,7 @@ impl<F: std::future::Future> std::future::Future for Paced<'_, F> {
 struct Probed {
     pace: Pace,
     waited: Arc<Waited>,
-    rounds: std::sync::Mutex<std::collections::VecDeque<Vec<crucible_core::Delta>>>,
+    rounds: std::sync::Mutex<std::collections::VecDeque<Vec<crucible_models::Delta>>>,
     scope: CredentialScopeId,
 }
 
@@ -1497,16 +1502,16 @@ impl Provider for Probed {
         "probed"
     }
 
-    fn spells(&self) -> crucible_core::Modalities {
-        crucible_core::Modalities::empty().insert(crucible_core::Modality::Text)
+    fn spells(&self) -> crucible_types::Modalities {
+        crucible_types::Modalities::empty().insert(crucible_types::Modality::Text)
     }
 
-    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_core::PromptCacheCapabilities {
-        crucible_core::PromptCacheCapabilities::unknown("differential-turn-probe-v1")
+    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_models::PromptCacheCapabilities {
+        crucible_models::PromptCacheCapabilities::unknown("differential-turn-probe-v1")
     }
 
-    fn prompt_cache_route(&self) -> crucible_core::PromptCacheRoute<'_> {
-        crucible_core::PromptCacheRoute {
+    fn prompt_cache_route(&self) -> crucible_models::PromptCacheRoute<'_> {
+        crucible_models::PromptCacheRoute {
             protocol: "probed",
             endpoint: "probed",
             custom_endpoint: true,
@@ -1517,8 +1522,8 @@ impl Provider for Probed {
         }
     }
 
-    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
-        crucible_core::PromptCacheEncoding::NoControlIntended
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
+        crucible_types::PromptCacheEncoding::NoControlIntended
     }
 
     fn stream<'a>(
@@ -1527,7 +1532,7 @@ impl Provider for Probed {
         _cancel: &'a Cancel,
     ) -> crucible_runtime::BoxFuture<
         'a,
-        Result<Box<dyn crucible_core::DeltaStream>, crucible_core::ProviderError>,
+        Result<Box<dyn crucible_models::DeltaStream>, crucible_models::ProviderError>,
     > {
         let round = self
             .rounds
@@ -1541,7 +1546,7 @@ impl Provider for Probed {
             deltas: round.into(),
         };
         Box::pin(Paced::new(self.pace, &self.waited.provider, async move {
-            Ok(Box::new(stream) as Box<dyn crucible_core::DeltaStream>)
+            Ok(Box::new(stream) as Box<dyn crucible_models::DeltaStream>)
         }))
     }
 }
@@ -1550,15 +1555,15 @@ impl Provider for Probed {
 struct Recited {
     pace: Pace,
     waited: Arc<Waited>,
-    deltas: std::collections::VecDeque<crucible_core::Delta>,
+    deltas: std::collections::VecDeque<crucible_models::Delta>,
 }
 
-impl crucible_core::DeltaStream for Recited {
+impl crucible_models::DeltaStream for Recited {
     fn next(
         &mut self,
     ) -> crucible_runtime::BoxFuture<
         '_,
-        Option<Result<crucible_core::Delta, crucible_core::ProviderError>>,
+        Option<Result<crucible_models::Delta, crucible_models::ProviderError>>,
     > {
         let next = self.deltas.pop_front().map(Ok);
         Box::pin(Paced::new(
@@ -1585,29 +1590,31 @@ impl DescribeTool for Probe {
     }
 }
 
-impl crucible_core::Tool for Probe {
-    fn validate(&self, _args: &ToolArgs) -> Result<(), crucible_core::ToolError> {
+impl crucible_tools::Tool for Probe {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), crucible_tools::ToolError> {
         Ok(())
     }
 
-    fn sensitivity(&self, _args: &ToolArgs) -> crucible_core::Sensitivity {
-        crucible_core::Sensitivity::ReadOnly {
-            target: crucible_core::Target::unresolved(),
+    fn sensitivity(&self, _args: &ToolArgs) -> crucible_tools::Sensitivity {
+        crucible_tools::Sensitivity::ReadOnly {
+            target: crucible_tools::Target::unresolved(),
         }
     }
 
-    fn summary(&self, args: &ToolArgs) -> crucible_core::Summary {
-        crucible_core::Summary::new(args.as_str())
+    fn summary(&self, args: &ToolArgs) -> crucible_tools::Summary {
+        crucible_tools::Summary::new(args.as_str())
     }
 
     fn run<'a>(
         &'a self,
-        _approved: crucible_core::Approved,
-        _context: &'a crucible_core::ToolContext<'_>,
-    ) -> crucible_runtime::BoxFuture<'a, Result<crucible_core::ToolOutput, crucible_core::ToolError>>
-    {
+        _approved: crucible_tools::Approved,
+        _context: &'a crucible_tools::ToolContext<'_>,
+    ) -> crucible_runtime::BoxFuture<
+        'a,
+        Result<crucible_tools::ToolOutput, crucible_tools::ToolError>,
+    > {
         Box::pin(Paced::new(self.pace, &self.waited.tool, async {
-            Ok(crucible_core::ToolOutput::ok("the probe found one reader"))
+            Ok(crucible_tools::ToolOutput::ok("the probe found one reader"))
         }))
     }
 }
@@ -1617,14 +1624,14 @@ impl crucible_core::Tool for Probe {
 struct Offering {
     pace: Pace,
     waited: Arc<Waited>,
-    snapshot: crucible_core::ToolSnapshot,
+    snapshot: crucible_tools::ToolSnapshot,
 }
 
-impl crucible_core::Toolset for Offering {
+impl crucible_tools::Toolset for Offering {
     fn prepare<'a>(
         &'a self,
-        _context: &'a crucible_core::ToolsetContext,
-    ) -> crucible_runtime::BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+        _context: &'a crucible_tools::ToolsetContext,
+    ) -> crucible_runtime::BoxFuture<'a, Result<(), crucible_tools::ToolsetError>> {
         Box::pin(Paced::new(self.pace, &self.waited.toolset, async {
             Ok(())
         }))
@@ -1632,28 +1639,28 @@ impl crucible_core::Toolset for Offering {
 
     fn snapshot<'a>(
         &'a self,
-        _context: &'a crucible_core::ToolsetContext,
+        _context: &'a crucible_tools::ToolsetContext,
     ) -> crucible_runtime::BoxFuture<
         'a,
-        Result<crucible_core::ToolSnapshot, crucible_core::ToolsetError>,
+        Result<crucible_tools::ToolSnapshot, crucible_tools::ToolsetError>,
     > {
         Box::pin(async { Ok(self.snapshot.clone()) })
     }
 
     fn refresh<'a>(
         &'a self,
-        _context: &'a crucible_core::ToolsetContext,
+        _context: &'a crucible_tools::ToolsetContext,
     ) -> crucible_runtime::BoxFuture<
         'a,
-        Result<crucible_core::ToolSnapshot, crucible_core::ToolsetError>,
+        Result<crucible_tools::ToolSnapshot, crucible_tools::ToolsetError>,
     > {
         Box::pin(async { Ok(self.snapshot.clone()) })
     }
 
     fn dispose<'a>(
         &'a self,
-        _context: &'a crucible_core::ToolsetContext,
-    ) -> crucible_runtime::BoxFuture<'a, Result<(), crucible_core::ToolsetError>> {
+        _context: &'a crucible_tools::ToolsetContext,
+    ) -> crucible_runtime::BoxFuture<'a, Result<(), crucible_tools::ToolsetError>> {
         Box::pin(Paced::new(self.pace, &self.waited.toolset, async {
             Ok(())
         }))
@@ -1663,16 +1670,16 @@ impl crucible_core::Toolset for Offering {
 /// Allows every call it is asked about, once.
 struct Allowing;
 
-impl crucible_core::Ask for Allowing {
+impl crucible_tools::Ask for Allowing {
     fn ask<'a>(
         &'a mut self,
         _call: &'a ToolCall,
-        _sensitivity: &'a crucible_core::Sensitivity,
-    ) -> crucible_runtime::BoxFuture<'a, (crucible_core::Verdict, crucible_core::Remember)> {
+        _sensitivity: &'a crucible_tools::Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (crucible_tools::Verdict, crucible_tools::Remember)> {
         Box::pin(async {
             (
-                crucible_core::Verdict::Allow,
-                crucible_core::Remember::Never,
+                crucible_tools::Verdict::Allow,
+                crucible_tools::Remember::Never,
             )
         })
     }
@@ -1745,7 +1752,7 @@ fn renumbered(text: &str) -> String {
 fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
     let waited = Arc::new(Waited::default());
     let provenance = ToolProvenance::new(
-        crucible_core::ToolSourceKind::Other,
+        crucible_tools::ToolSourceKind::Other,
         "differential:probe",
         "the differential turn's tool",
     )
@@ -1754,9 +1761,9 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
         pace,
         waited: Arc::clone(&waited),
     };
-    let descriptor = crucible_core::ToolDescriptor::new("probe", probe.schema(), provenance)
+    let descriptor = crucible_tools::ToolDescriptor::new("probe", probe.schema(), provenance)
         .expect("a descriptor");
-    let snapshot = crucible_core::ToolSnapshot::new([crucible_core::ToolEntry::new(
+    let snapshot = crucible_tools::ToolSnapshot::new([crucible_tools::ToolEntry::new(
         descriptor,
         Arc::new(probe),
     )])
@@ -1772,17 +1779,17 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
         rounds: std::sync::Mutex::new(
             [
                 vec![
-                    crucible_core::Delta::Text("Looking for its readers.".into()),
-                    crucible_core::Delta::ToolStarted {
+                    crucible_models::Delta::Text("Looking for its readers.".into()),
+                    crucible_models::Delta::ToolStarted {
                         id: ToolId::new("probe-call-1"),
                         name: "probe".into(),
                     },
-                    crucible_core::Delta::ToolArgs("{}".into()),
-                    crucible_core::Delta::Stopped(StopReason::WantsTools),
+                    crucible_models::Delta::ToolArgs("{}".into()),
+                    crucible_models::Delta::Stopped(StopReason::WantsTools),
                 ],
                 vec![
-                    crucible_core::Delta::Text("One reader, in the runner.".into()),
-                    crucible_core::Delta::Stopped(StopReason::Yielded),
+                    crucible_models::Delta::Text("One reader, in the runner.".into()),
+                    crucible_models::Delta::Stopped(StopReason::Yielded),
                 ],
             ]
             .into(),
@@ -1801,7 +1808,7 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
             .handle()
             .expect("the application's runtime");
         let agent = crucible_runner::Agent::new(
-            crucible_core::AgentId::new("probe"),
+            crucible_types::AgentId::new("probe"),
             crucible_runner::Model {
                 name: "probed".into(),
                 max_tokens: 64,
@@ -1825,8 +1832,8 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
         let (events, seen) = std::sync::mpsc::channel::<crucible_runner::EventEnvelope>();
         let (cancel, steer, aside) = (
             Cancel::new(),
-            crucible_core::Steer::new(),
-            crucible_core::Aside::new(),
+            crucible_runtime::Steer::new(),
+            crucible_runtime::Aside::new(),
         );
         let turned = {
             let run = conversation

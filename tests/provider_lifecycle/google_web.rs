@@ -7,9 +7,11 @@
 use super::*;
 use crucible_builtins::{WebFetch, WebSearch};
 use crucible_context::ContextInputs;
-use crucible_core::{AgentId, ApiKey, ContinuationPart, Effort, Header, HeaderKey};
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::Effort;
 use crucible_provider::{Endpoint, GoogleWeb};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
+use crucible_types::{AgentId, ContinuationPart};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -254,9 +256,9 @@ fn native_google_web_survives_restart_compaction_and_recipient_rotation() {
             StopReason::Yielded
         );
         assert_eq!(sample.approved(), 2, "resume re-executed web tools");
-        let cancel = crucible_core::Cancel::new();
-        let steer = crucible_core::Steer::new();
-        let aside = crucible_core::Aside::new();
+        let cancel = crucible_runtime::Cancel::new();
+        let steer = crucible_runtime::Steer::new();
+        let aside = crucible_runtime::Aside::new();
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert!(matches!(
             run.compact(Compacting::Asked, &context, &mut Spend::default())

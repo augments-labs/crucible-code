@@ -452,19 +452,25 @@ dependencies = [
  "crucible-client-api",
  "crucible-config",
  "crucible-context",
- "crucible-core",
+ "crucible-credentials",
  "crucible-extension",
  "crucible-mcp",
+ "crucible-models",
  "crucible-privacy",
  "crucible-provider",
+ "crucible-registry",
  "crucible-runner",
  "crucible-runtime",
+ "crucible-sandbox",
  "crucible-sandbox-broker",
  "crucible-sandbox-local",
  "crucible-session",
+ "crucible-storage",
  "crucible-tools",
  "crucible-tui",
+ "crucible-types",
  "crucible-update",
+ "crucible-workspace",
  "image",
  "insta",
  "rustix",
@@ -498,24 +504,6 @@ dependencies = [
  "crucible-types",
  "crucible-workspace",
  "serde_json",
-]
-
-[[package]]
-name = "crucible-core"
-version = "0.42.0"
-dependencies = [
- "crucible-attachments",
- "crucible-context",
- "crucible-credentials",
- "crucible-models",
- "crucible-registry",
- "crucible-runtime",
- "crucible-sandbox",
- "crucible-storage",
- "crucible-tools",
- "crucible-transport",
- "crucible-types",
- "crucible-workspace",
 ]
 
 [[package]]

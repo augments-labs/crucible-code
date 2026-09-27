@@ -7,10 +7,12 @@
 
 use std::sync::Arc;
 
-use crucible_core::{AgentId, Aside, Mode, Permission, Rules, ToolArgs};
 use crucible_runner::{Agent, Model, Tools};
+use crucible_runtime::Aside;
 use crucible_session::Session;
+use crucible_tools::{Mode, Permission, Rules};
 use crucible_tui::{Aimed, Key, Recording};
+use crucible_types::{AgentId, ToolArgs};
 
 use super::drawing::writing;
 use super::*;

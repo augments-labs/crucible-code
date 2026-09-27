@@ -5,13 +5,14 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crucible_core::{
-    CallResultKey, CallResultReceipt, SandboxBackendIdentity, SandboxCapabilities, SandboxCommand,
-    SandboxError, SandboxInspection, SandboxLaunch, SandboxOutput, SandboxProcess, SandboxRequest,
-    SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
-};
 use crucible_runtime::BoxFuture;
+use crucible_sandbox::{
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxError, SandboxInspection,
+    SandboxLaunch, SandboxOutput, SandboxProcess, SandboxRequest, SandboxService, SandboxSession,
+    SandboxUsage, SandboxViolation,
+};
 use crucible_sandbox_local::LocalSandbox;
+use crucible_storage::{CallResultKey, CallResultReceipt};
 
 pub(super) const PRIVATE_ERROR: &str = "synthetic-private-cleanup-details";
 

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{Home, Settings};
-use crucible_core::Workspace;
+use crucible_workspace::Workspace;
 
 /// The key [`Sample::stored`] writes down.
 ///

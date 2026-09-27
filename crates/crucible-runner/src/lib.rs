@@ -21,8 +21,8 @@
 //! session goes on.
 //!
 //! Where the names went. `Event`, `EventEnvelope`, `Post`, `Reporter` and
-//! `TurnError` are this crate's, not `crucible-core`'s: a whole execution
-//! event is what a turn produces, and core cannot depend on what runs one. The
+//! `TurnError` are this crate's: a whole execution event is what a turn
+//! produces, so it belongs to the crate that runs one. The
 //! session names this crate once re-exported — `Session`, `SessionError`,
 //! `Glimpse`, `Pruned`, `Recorded`, `DisplayHistory`, `DisplayItem`, `PROMPTS`,
 //! `glimpse`, `prompts`, `recent`, `remember` and `retitle` — are

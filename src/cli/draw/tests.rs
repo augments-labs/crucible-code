@@ -3,12 +3,14 @@
 use std::cell::Cell;
 use std::path::Path;
 
-use crucible_core::{
-    Attachment, Change, Command, Diff, Line, Modality, ProviderError, Question, Summary, Target,
-    ToolArgs, ToolId, TurnId, Workspace, written,
-};
+use crucible_models::ProviderError;
 use crucible_runner::TurnError;
+use crucible_tools::{Command, Summary, Target};
 use crucible_tui::{Picture, Recording, Size};
+use crucible_types::{
+    Attachment, Change, Diff, Line, Modality, Question, ToolArgs, ToolId, TurnId,
+};
+use crucible_workspace::{Workspace, written};
 
 use super::*;
 use crate::cli::kept::Whole;
@@ -1346,7 +1348,7 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
         &mut renderer,
         Event::Wrote {
             call: ToolId::new("a"),
-            text: crucible_core::Wrote::new("   Compiling crucible-core v0.5.0\n"),
+            text: crucible_tools::Wrote::new("   Compiling crucible-core v0.5.0\n"),
         },
         &here(),
         Style::plain(),
@@ -1368,8 +1370,8 @@ fn what_a_running_command_printed_is_held_and_nothing_is_committed_for_it() {
 #[test]
 fn prune_only_compaction_does_not_claim_a_recap_was_written() {
     let rows = compacted_rows(
-        crucible_core::Compacted {
-            why: crucible_core::Compacting::Full,
+        crucible_types::Compacted {
+            why: crucible_types::Compacting::Full,
             replaced: 0,
             before: 90_000,
             after: 30_000,
@@ -1399,8 +1401,8 @@ fn language() -> Question {
         "Language",
         "Which language should the examples be written in?",
         [
-            crucible_core::Answer::new("Rust").saying("crucible's own implementation language"),
-            crucible_core::Answer::new("Python"),
+            crucible_types::Answer::new("Rust").saying("crucible's own implementation language"),
+            crucible_types::Answer::new("Python"),
         ],
     )
 }
@@ -1833,7 +1835,7 @@ fn an_answer_a_guardrail_refused_says_the_answer_was_what_it_refused() {
     // the first about the second goes looking for a prompt that was fine.
     let written = refusal(&Turned::Rejected {
         rejection: crucible_runner::Rejection::new("no-secrets", "the answer quotes a key"),
-        stop: Some(crucible_core::StopReason::Yielded),
+        stop: Some(crucible_types::StopReason::Yielded),
     });
 
     assert!(
@@ -1862,7 +1864,7 @@ fn a_guardrail_that_could_not_decide_about_a_prompt_says_nothing_was_asked() {
 fn a_guardrail_that_could_not_decide_about_an_answer_says_the_answer_is_not_accepted() {
     let written = refusal(&Turned::Undecided {
         problem: crucible_runner::GuardrailError::undecided("no-secrets", "its list is missing"),
-        stop: Some(crucible_core::StopReason::Yielded),
+        stop: Some(crucible_types::StopReason::Yielded),
     });
 
     assert!(

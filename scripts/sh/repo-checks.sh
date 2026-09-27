@@ -468,8 +468,8 @@ section "the path that is described, not opened"
 # `Workspace::intended` hands back a plain path instead of a proof, and it
 # resolves through the nearest *existing* ancestor — the one shape that must
 # never be opened by name. The permission engine needs exactly that, because it
-# describes a call rather than making one. Splitting the workspace out of core
-# turned the call `pub`, and Cargo cannot say "public to one caller", so the pin
+# describes a call rather than making one. The workspace being a crate of its
+# own makes the call `pub`, and Cargo cannot say "public to one caller", so the pin
 # says it here. The owning crate defines and tests it, as the pins above leave
 # their owners.
 asker="crates/crucible-tools/src/permissions/sensitivity.rs"
@@ -552,23 +552,19 @@ elif [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the twelve crates its old names now come from. Those edges are
-# the compatibility facade and go away with the crate that holds them.
-#
-# Edges past the facade are listed here as they are taken. `attachments` is
-# named directly because the two types a file's bytes are read through are
-# withheld from the facade; the sandbox crates are named directly because a
-# backend and the contract it answers are what this split gave their own names;
-# `tools` and `builtins` name their owners directly because neither may reach
-# back into core.
+# Every crate names each type it uses from its owner, or from the crate that
+# hands it out; there is no facade that re-exports other crates' names
+# wholesale, so an edge here is a dependency on a crate that owns or hands out
+# what is named.
 #
 # `app` is where a run is composed, so it is the one crate that names concrete
 # providers, tools, storage and sandboxes together. It names their owners
-# directly and never the facade, and never the broker, which is the command
+# directly, and never the broker, which is the command
 # line's to install. `code extension` and `code mcp` are test-only edges: the
 # integration tests drive those two crates, and nothing that ships names them,
-# which the next section holds. `code tools` is the probes': `bench-grep` and
-# `bench-tools` lend the calls they time the tool worker, which the probe list
+# which the next section holds. `code tools` ships: the command line draws and
+# asks about tool calls in that crate's words, and `bench-grep` and
+# `bench-tools` lend the calls they time its tool worker, which the probe list
 # below writes down.
 #
 # `client-api` is what a front end and the application say to each other, so it
@@ -594,35 +590,38 @@ fi
 # runtime future, and it names nothing else in the workspace. `auth` sends
 # every account login and renewal request through it.
 #
-# `config`, `auth`, `provider`, `runner` and `session` name the crate that owns
-# each type they use, so none of the five reaches the facade: what a turn
-# exchanges belongs to `types`, `models`, `tools`, `storage` and the rest, and a
-# name taken from `core` was a second import path for a crate that already had
-# one. `provider` names `tools` for the source contract its web adapters answer;
+# `provider` names `tools` for the source contract its web adapters answer;
 # `runner` names `tools`, `storage` and `sandbox` for what a tool is, what a turn
 # is resumed from and what a confined process was allowed to do; `session` names
-# `sandbox` for the records a resume reads a live backend out of. `code` is the
-# one crate left on the facade, and that edge goes when `core` does.
+# `sandbox` for the records a resume reads a live backend out of.
+# `code credentials` and `code storage` are test-only edges: the tests build
+# fixtures from those values, and the command line names neither.
 allowed='code app
 code attachments
 code auth
 code client-api
 code config
 code context
-code core
+code credentials
 code extension
 code mcp
+code models
 code privacy
 code provider
+code registry
 code update
 code runner
 code runtime
+code sandbox
 code session
 code builtins
 code sandbox-broker
 code sandbox-local
+code storage
 code tools
 code tui
+code types
+code workspace
 app agents
 app auth
 app builtins
@@ -666,18 +665,6 @@ context models
 context tools
 context types
 context workspace
-core attachments
-core context
-core credentials
-core models
-core registry
-core runtime
-core sandbox
-core storage
-core tools
-core transport
-core types
-core workspace
 credentials types
 models credentials
 models runtime
@@ -1114,26 +1101,29 @@ fi
 # A probe measures one owner and imports it directly: routed through the
 # application it would measure the composition instead, and a budget would move
 # for a reason the probe cannot see. What each probe names is written down
-# whole, so a new import is a decision taken here. `generate-models` imports
-# `crucible_core` alone; `crucible_types` is in the text of the table it writes,
-# which is compiled where the table is kept and not where it is generated.
+# whole, so a new import is a decision taken here. `generate-models` names
+# `crucible_types` for the modalities it reads, and again in the text of the
+# table it writes, which is compiled where the table is kept.
 # `bench-grep` and `bench-tools` name `crucible_tools` for the tool worker they
 # lend the calls they time, so what they time includes handing the work to it,
-# and `crucible_runtime` for the future their permission prompts answer with.
+# `crucible_runtime` for the future their permission prompts answer with, and
+# `crucible_types` and `crucible_workspace` for the call they build and the
+# directory it reaches.
 probes='src/bin/bench-grep.rs crucible_builtins
-src/bin/bench-grep.rs crucible_core
 src/bin/bench-grep.rs crucible_runtime
 src/bin/bench-grep.rs crucible_tools
+src/bin/bench-grep.rs crucible_types
+src/bin/bench-grep.rs crucible_workspace
 src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-tools.rs crucible_builtins
-src/bin/bench-tools.rs crucible_core
 src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
 src/bin/bench-tools.rs crucible_tools
-src/bin/generate-models.rs crucible_core
+src/bin/bench-tools.rs crucible_types
+src/bin/bench-tools.rs crucible_workspace
 src/bin/generate-models.rs crucible_types'
 probe_sources=(src/bin/*.rs)
 if ((${#probe_sources[@]} == 0)); then

@@ -10,15 +10,20 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crucible_context::ContextInputs;
-use crucible_core::{
-    AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, Header, HeaderKey, Host,
-    JournalStore, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary, Tool,
-    ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Workspace,
-};
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::{Effort, Provider};
 use crucible_provider::{Anthropic, Endpoint, Google, HttpTurns, OpenAi, PostResponse};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_runner::{EventEnvelope, Post, TurnError};
 use crucible_runtime::BoxFuture;
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_storage::JournalStore;
+use crucible_tools::{
+    Approved, Ask, DescribeTool, Host, Remember, Sensitivity, Summary, Tool, ToolContext,
+    ToolError, ToolOutput, Verdict,
+};
+use crucible_types::{AgentId, SessionId, StopReason, ToolArgs, ToolCall};
+use crucible_workspace::Workspace;
 use tokio::io::{AsyncRead, ReadBuf};
 
 use crucible_session::Session;
@@ -303,7 +308,7 @@ pub(crate) fn cancelling(model: &str, endpoint: Endpoint, body: String) -> Box<d
         fn post<'a>(
             &'a self,
             _: &'a str,
-            _: &'a mut crucible_core::Outgoing,
+            _: &'a mut crucible_credentials::Outgoing,
             _: String,
             cancel: &'a Cancel,
         ) -> BoxFuture<'a, Result<PostResponse, crucible_provider::TransportError>> {

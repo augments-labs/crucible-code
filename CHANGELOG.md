@@ -10,6 +10,9 @@ change in any release with no deprecation period.
 
 ### Removed
 
+- **`crucible-core` is gone.** It had become a crate of re-exports, and every
+  name it carried is now imported from the crate that owns or hands it out,
+  which the workspace map in `AGENTS.md` lists. Nothing a person runs changes.
 - **The old blocking HTTP client is gone.** Every outgoing request now goes
   through `crucible-http`, so a turn, a web search or fetch and the release
   check share one TLS configuration and one hostname-lookup owner. Turns and
@@ -114,7 +117,6 @@ change in any release with no deprecation period.
   that store them, together with `RunItem`, `RunHistory`,
   `ExecutionCheckpoint` and the values a resume is validated against, so a store
   compiles and reads a session back with no sandbox in the build;
-  `crucible-core` re-exports each name from its new home and
   `crucible-sandbox` re-exports the records it still hands out, so a consumer
   keeps one import. An inspection is now built by `inspection`,
   `confined_inspection` or `unconfined_inspection` instead of a method on
@@ -305,8 +307,7 @@ change in any release with no deprecation period.
   refreshing, so `Bridge::TurnTools` is gone; a call's deadline is now
   cooperative, never dropping a run, and a call is answered with what its run
   answered even after a stop. `Runner::lending` lends every call a
-  `ToolWorker`, which `crucible-core` now re-exports, and `startup::assemble`
-  lends the run's own.
+  `ToolWorker`, and `startup::assemble` lends the run's own.
 - **A bash call's output is read by tasks the call awaits.** `Bash` reads a
   command's output through the sandbox's waiting reads, in tasks on the Tokio
   runtime polling the call, and waits between its looks at the command on that

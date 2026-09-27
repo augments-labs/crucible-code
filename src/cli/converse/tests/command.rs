@@ -15,12 +15,13 @@ use crucible_app::Conversation;
 use crucible_app::providers::{offered, providers};
 use crucible_auth::StoredCredentials;
 use crucible_builtins::Ledger;
-use crucible_core::{
-    Delta, Message, Mode, Permission, Revealed, Rules, StopReason, ToolId, Workspace,
-};
+use crucible_models::Delta;
 use crucible_runner::Tools;
 use crucible_session::Session;
+use crucible_tools::{Mode, Permission, Revealed, Rules};
 use crucible_tui::{Prompt, Recording, Renderer};
+use crucible_types::{Message, StopReason, ToolId};
+use crucible_workspace::Workspace;
 
 use crate::cli::converse::{Answers, First, Held, Terms, command, converse};
 use crate::cli::fake::Script;
