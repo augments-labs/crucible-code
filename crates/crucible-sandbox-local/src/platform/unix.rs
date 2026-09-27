@@ -259,3 +259,6 @@ fn registered<'a, P: AsRawFd>(
 fn lost() -> io::Error {
     io::Error::other("the command's pipe is no longer held here")
 }
+
+#[cfg(test)]
+mod tests;
