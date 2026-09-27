@@ -4,10 +4,10 @@
 //! threads from one await to the next, so what it allocates is spread over
 //! several of glibc's per-thread arenas. glibc maps a block above a threshold
 //! on its own and unmaps it when freed, but by default raises that threshold
-//! each time such a block is freed, up to 32 MiB. Once it has risen, the
-//! blocks a session carrying pictures holds are carved out of those arenas'
-//! heaps instead, and a heap keeps what is freed in it: resident memory for
-//! a session at its picture ceiling roughly tripled when turns began moving
+//! each time such a block is freed, up to 32 MiB on a 64-bit build. Once it has
+//! risen, the blocks a session carrying pictures holds are carved out of those
+//! arenas' heaps instead, and a heap keeps what is freed in it: resident memory
+//! for a session at its picture ceiling roughly tripled when turns began moving
 //! between workers.
 //!
 //! So on glibc the threshold is fixed at its starting value before anything
@@ -28,9 +28,9 @@ const MAPPED_FROM: libc::c_int = 128 * 1024;
 )]
 pub(super) fn handed_back() {
     // SAFETY: mallopt reads two integers and changes only the allocator's own
-    // parameters, under the allocator's lock; M_MMAP_THRESHOLD with a value
-    // below its 32 MiB maximum is a documented pair. It answers 0 only for a
-    // value out of range, and the allocator then goes on as it was.
+    // parameters, under the allocator's lock; M_MMAP_THRESHOLD with 128 KiB, its
+    // own starting value, is a documented pair on every glibc build. Its answer
+    // is not needed: taken or not, the allocator is left consistent.
     let _ = unsafe { libc::mallopt(libc::M_MMAP_THRESHOLD, MAPPED_FROM) };
 }
 

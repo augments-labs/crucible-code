@@ -291,11 +291,12 @@ seccompiler = { version = "=0.5.0", default-features = false }
 # Names the platform constants a `std` call takes as a raw integer and never
 # spells: the `O_NONBLOCK` open flag `std` carries but does not name, and the
 # kernel syscall numbers seccompiler does not name on every supported Linux
-# architecture. The open itself is `std`'s, which supplies it, so this is here
-# for the names alone and brings no open of its own; the workspace already
-# locks this exact libc, and both edges are what is compiled. The binary makes
-# one call through it besides: `mallopt`, fixing glibc's threshold for handing
-# a freed block back to the system, which `std` has no way to reach.
+# architecture. The open itself is `std`'s, which supplies it, so for those two
+# crates this is here for the names alone and brings no open of its own. The
+# binary makes one call through it: `mallopt`, fixing glibc's threshold for
+# handing a freed block back to the system, which `std` has no way to reach.
+# The workspace already locks this exact libc, and these edges are what is
+# compiled.
 libc = "=0.2.189"
 
 # Being told to stop from outside. A closed window or a `kill` arrives as a
