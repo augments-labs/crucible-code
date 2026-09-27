@@ -42,7 +42,7 @@ change in any release with no deprecation period.
   256 KiB body ceiling and atomic cache replacement, while a separate pool and
   a bounded shutdown keep the check from outliving the run.
 - **One runtime the application owns.** `crucible-app` lends a multi-thread
-  runtime of 4 workers and at most 16 blocking threads, with a timer and an
+  runtime of 4 workers and at most 18 blocking threads, with a timer and an
   I/O driver, through `services::Services`. It is built only when first asked
   for and shut down within 2 s once a run ends.
 - **A sandboxed command's pipes can be read and written asynchronously.**

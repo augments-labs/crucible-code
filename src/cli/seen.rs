@@ -150,9 +150,13 @@ impl Post for Relay {
 /// on the application's runtime: waiting as it stands, it would hold its
 /// worker, and every task queued behind that worker, until the terminal caught
 /// up. So a full channel is waited on only once the worker's other tasks have
-/// been handed to another thread. Off the runtime, or on a runtime with one
-/// thread and so nowhere to hand them, the wait is where it stands: the
-/// drawing thread that empties the channel never waits on the runtime.
+/// been handed to another thread, which is one of the runtime's blocking
+/// threads for as long as the wait lasts. At most two such waits are handed
+/// over at once — the turn's, and a question put through the tool that asks,
+/// which runs alone — and `crucible_app::runtime::BLOCKING` counts both. Off
+/// the runtime, or on a runtime with one thread and so nowhere to hand them,
+/// the wait is where it stands: the drawing thread that empties the channel
+/// never waits on the runtime.
 fn deliver(to: &SyncSender<Seen>, seen: Seen) -> Option<()> {
     match to.try_send(seen) {
         Ok(()) => Some(()),

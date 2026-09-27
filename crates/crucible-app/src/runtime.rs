@@ -67,7 +67,8 @@ use tokio::runtime::{Builder, Handle, Runtime};
 /// A turn is one of the tasks they poll, and holds a worker only while it is
 /// polled: the model, a permission question and a terminal slow to take what
 /// the turn reports are each awaited, or hand the worker back while they
-/// last. The rest is work the application owns on the turn's behalf and
+/// last, the last at the cost of one of the [`BLOCKING`] threads for as long
+/// as the terminal is behind. The rest is work the application owns on the turn's behalf and
 /// between turns — a process's status, a hosted program's streams, a
 /// credential's renewal — each of which spends most of its life waiting, and
 /// the runs of a turn's tool calls, which may hold a worker inside synchronous
@@ -84,18 +85,21 @@ pub const WORKERS: usize = 4;
 /// Blocking work is disk and platform calls, the shared HTTP client's two
 /// hostname-lookup places, account renewals' lock, file and lookup work, the
 /// release check's one cache write, the calls into a command left running,
-/// which have no asynchronous form, and the stop and reap of a foreground
-/// command, each bounded by its owner. What every owner may hold at once is
+/// which have no asynchronous form, the stop and reap of a foreground
+/// command, and a terminal's wait for a drawing thread that is behind, each
+/// bounded by its owner. What every owner may hold at once is
 /// checked against this in [`crate::services`]: the tool worker's four jobs,
 /// the shared client's two lookup places and account work's two threads, each
 /// counting work it gave up on that is still running, the release check's one
 /// cache write, one step at a time for each of the four commands that may be
 /// left running, whose owner makes every call into its process here, and the
 /// two foreground stops a turn may have at once, whose owner is the tool call
-/// that made them rather than a command left running — four plus two plus two
-/// plus four plus one plus two, fifteen; and one thread to spare, so an owner at
-/// its most never makes another's job queue.
-pub const BLOCKING: usize = 16;
+/// that made them rather than a command left running, and the two waits a
+/// terminal may hand over at once, its turn's and a question put through the
+/// tool that asks, which runs alone — four plus two plus two plus four plus one
+/// plus two plus two, seventeen; and one thread to spare, so an owner at its
+/// most never makes another's job queue.
+pub const BLOCKING: usize = 18;
 
 /// How long the runtime's threads are given to stop once it is shut down.
 ///
