@@ -386,9 +386,9 @@ impl Drop for Waited {
             return;
         }
 
-        // A destructor cannot wait for the process contract's stop, and an ask
-        // it made of its own would be refused the moment it had to. Hand the
-        // process to the builtins' owned release task instead: where a runtime
+        // A destructor may not block on the process contract's stop, which
+        // ends and reaps a whole process group. Hand the process to the
+        // builtins' owned release task instead: where a runtime
         // is running the stop is asked on the runtime's blocking pool, a
         // refusal is retried, and the thread doing this drop never waits for
         // that stop. With no runtime running the release task is never made,
@@ -430,40 +430,23 @@ fn stop_and_reap_blocking(
     reap(process, settling)
 }
 
-/// Runs one process stop on a blocking task.
-///
-/// Asked from the thread the runtime's blocking pool handed out for process
-/// work, so a backend that blocks inside its own contract blocks that one
-/// thread rather than a runtime worker; see [`super::background`].
-pub(super) fn stop_here(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
-    crucible_runtime::Bridge::CommandStop
-        .cross(end(process))
-        .map_err(|unready| {
-            io::Error::other(format!(
-                "the stop was asked again rather than held: {unready}"
-            ))
-        })?
-}
-
 /// Ends a command's whole process group, whatever the platform calls one.
 ///
-/// Asked from a thread that already holds the command, as the one-poll
-/// [`crucible_runtime::Bridge::CommandStop`] crossing: the wait that owns a
-/// command stops it from inside its call, the registry's release task stops a
-/// command it holds, and a command the registry has taken is stopped by the
-/// task that owns it, on the runtime that owns it; see [`super::background`].
-/// One poll is the whole bound — the process contract keeps its bounded stop
-/// work inside the contract, so the poll answers — and a stop that would have
-/// had to wait is refused rather than held, leaving it to the caller whether to
-/// ask again and from when. The in-tree stops end the task watching the
-/// command's status, end the command's group within the kill bound, reap it
-/// within the reap bound, join a limit's cancel within a bound of its own, stop
-/// its network proxy where it has one and clean up its stage, and a projected
-/// command's stop also joins an ending already writing it: that ending may roll
-/// back or publish before the stop returns. The only bounds within one are
-/// those three steps', the kill's, the reap's and the cancel join's; the stop's
-/// own duration is bounded by nothing here, the crossing spending one poll on
-/// it and dropping the rest.
+/// Asked from a thread the runtime's blocking pool handed out, which already
+/// holds the command: the wait that owns a command stops it from inside its
+/// call, the registry's release task stops a command it holds, and a command
+/// the registry has taken is stopped by the task that owns it, on the runtime
+/// that owns it; see [`super::background`]. The stop is the process contract's
+/// synchronous one, so it blocks this one thread rather than a runtime worker.
+/// The in-tree stops end the task watching the command's status, end the
+/// command's group within the kill bound, reap it within the reap bound, join a
+/// limit's cancel within a bound of its own, stop its network proxy where it
+/// has one and clean up its stage, and a projected command's stop also joins an
+/// ending already writing it: that ending may roll back or publish before the
+/// stop returns. The only bounds within one are those three steps', the kill's,
+/// the reap's and the cancel join's. A backend with no synchronous stop refuses
+/// it, and every caller reads that refusal as a stop that did not happen,
+/// leaving it to the caller whether to ask again and from when.
 ///
 /// Reached from neither a destructor nor the thread that draws, neither of
 /// which can wait for a stop: those paths hand the process to the builtins'
@@ -471,8 +454,8 @@ pub(super) fn stop_here(process: &mut (dyn SandboxProcess + 'static)) -> io::Res
 /// is running, a refused stop keeps that task retrying — further apart each
 /// time — and only a confirmed stop gives up the handle. With none running,
 /// [`super::background`] is what says what is given back instead.
-pub(super) async fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
-    process.stop().await
+pub(super) fn stop_here(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
+    process.stop_sync()
 }
 
 /// Everything the wait needs besides the command itself.

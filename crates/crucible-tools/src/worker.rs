@@ -29,15 +29,14 @@
 //! not end while work it started goes on.
 //!
 //! **What a dropped call leaves.** A call whose future is dropped while its job
-//! runs — a turn abandoning the call, or a crossing that asks a run once and
-//! drops what would have waited — raises its job's token as it goes, and leaves
-//! the job to the runtime alone: nobody waits for it and nobody hears what it
-//! answers. Until its next look at the token the job goes on working, with
-//! whatever it was given, after whoever dropped the call has reported it; it
-//! keeps its place for as long as it runs, and the place comes back when it
-//! returns. So a job looks at its token before each step whose effect
-//! outlives the process — a write, a rename, a removal — and not only between
-//! long ones.
+//! runs — a turn abandoning the call, or any caller that stops waiting for it —
+//! raises its job's token as it goes, and leaves the job to the runtime alone:
+//! nobody waits for it and nobody hears what it answers. Until its next look at
+//! the token the job goes on working, with whatever it was given, after whoever
+//! dropped the call has reported it; it keeps its place for as long as it runs,
+//! and the place comes back when it returns. So a job looks at its token before
+//! each step whose effect outlives the process — a write, a rename, a removal —
+//! and not only between long ones.
 //!
 //! A job that never looks at its token runs to its end and keeps its place
 //! until then. That is the whole of what the worker cannot promise, and it is

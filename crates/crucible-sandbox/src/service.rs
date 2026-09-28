@@ -991,19 +991,19 @@ pub trait SandboxProcess: Send {
     ///
     /// The backend could not confirm scope termination or reap the leader, or
     /// work it started for the command, such as the cancel of a broken limit,
-    /// had not ended within the stop's bound. A step of the stop that would
-    /// have had to wait and was dropped is one way that happens, and leaves the
-    /// same uncertainty.
+    /// had not ended within the stop's bound.
     fn stop(&mut self) -> BoxFuture<'_, io::Result<()>>;
 
     /// Stops the same scope as [`Self::stop`], synchronously on the calling
-    /// thread, for the owners that have no future to drive: dropping a process
-    /// or cleaning one whose start failed.
+    /// thread: for dropping a process or cleaning one whose start failed, and
+    /// for a command tool, which stops what it ran from a thread the runtime's
+    /// blocking pool lent it, because ending and reaping a process group
+    /// blocks whichever way it is driven.
     ///
     /// What bounds it is what bounds the stop itself, which does its work
     /// without waiting on anything but the threads and descriptors it owns. A
-    /// caller that cannot afford to block its thread does not call this; it
-    /// awaits [`Self::stop`] instead.
+    /// caller on a runtime worker does not call this; it awaits
+    /// [`Self::stop`], or moves the call to a blocking thread first.
     ///
     /// The default refuses, so a backend whose stop cannot run on the calling
     /// thread fails closed: callers read the refusal the way they read any
@@ -1231,10 +1231,6 @@ pub enum SandboxError {
     /// describes. A launch that ended before readiness, where the backend can
     /// quote what its launcher wrote meanwhile, is
     /// [`LaunchRefused`](Self::LaunchRefused) instead.
-    ///
-    /// A dropped step leaves whatever it began unconfirmed, and its error holds
-    /// the [`Unready`](crucible_runtime::Unready) it was refused with, which
-    /// `get_ref` finds.
     #[error("sandbox lifecycle failed")]
     Lifecycle(#[source] io::Error),
     /// The backend's launch ended before the command was released, and words

@@ -2,9 +2,8 @@
 //!
 //! A test drives a call lent a worker from its own thread: once, to see that
 //! the call is waiting rather than answering, and then until it answers. Only
-//! a test does either — shipped code crosses to a future through a `Bridge` —
-//! and this file's name is what says so to the checks that look for hand-made
-//! polls.
+//! a test does either — shipped code awaits a future — and this file's name is
+//! what says so to the check that looks for hand-made polls.
 
 use std::future::Future;
 use std::pin::Pin;

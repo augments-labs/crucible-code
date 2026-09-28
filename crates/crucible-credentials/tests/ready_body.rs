@@ -1,11 +1,11 @@
 //! Every shipped `authorize` future answers the first time it is polled.
 //!
-//! A synchronous caller crosses through `crucible-runtime`'s `Bridge`, which
-//! this crate cannot name — it keeps `crucible-types` as its only internal
-//! dependency. Standing in for that one poll here, in an integration test
-//! rather than in the crate's own shipped source, is what keeps the poll
-//! machinery out of the files `scripts/python/bridge-ledger.py` treats as
-//! polling a future by hand instead of crossing a bridge.
+//! A test elsewhere asks a future once through `crucible-runtime`'s
+//! `answered!`, which this crate cannot name — it keeps `crucible-types` as its
+//! only internal dependency. Standing in for that one poll here, in an
+//! integration test rather than in the crate's own shipped source, is what
+//! keeps the poll machinery out of the files the workspace's hand-poll check
+//! treats as shipped.
 
 use std::task::{Context, Poll, Waker};
 
@@ -19,7 +19,7 @@ const SECRET: &str = "sk-ant-do-not-log-me";
 
 /// Polls `authorizing` once and panics if it was not ready: every
 /// implementation this crate ships answers at its first poll, which is what
-/// keeps a synchronous crossing that polls once prerequisite-free.
+/// keeps a request that needs no renewal from waiting.
 #[allow(clippy::panic)] // A credential that would wait is a test failure.
 #[track_caller]
 fn authorized(authorizing: Authorization<'_>) -> Result<(), CredentialError> {
@@ -44,8 +44,8 @@ fn header<'a>(request: &'a Outgoing, name: &str) -> &'a str {
 
 #[test]
 fn a_header_keys_future_answers_the_first_time_it_is_polled() {
-    // A tool run's crossing polls a future once; a `HeaderKey` that pended
-    // there would be refused on every request it signs.
+    // A `HeaderKey` has nothing to wait for; one that pended would hold every
+    // request it signs.
     let mut request = Outgoing::new();
     let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
     let mut authorizing = credential.authorize(&mut request);

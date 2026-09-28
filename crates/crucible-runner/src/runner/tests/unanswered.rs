@@ -1,13 +1,13 @@
 //! A turn over steps that do not answer at once.
 //!
-//! A turn awaits the provider, the session, every call's run, a background
-//! result's acceptance and the toolset's preparation, listing, refreshing
-//! and disposal, and crosses to the prompt cache through a bridge that asks
-//! once. The stand-ins here each leave exactly one such step unanswered at
-//! first, so what ends the turn is what that step answers once the turn is
-//! stopped. A provider that has not answered is awaited instead, and what
-//! ends the turn then is what the provider answers once the turn is stopped.
-//! The recap a compaction asks for is a request like any other.
+//! A turn awaits the provider, the session, the prompt cache, every call's
+//! run, a background result's acceptance and the toolset's preparation,
+//! listing, refreshing and disposal. The stand-ins here each leave exactly one
+//! such step unanswered at first, so what ends the turn is what that step
+//! answers once the turn is stopped. A provider that has not answered is
+//! awaited instead, and what ends the turn then is what the provider answers
+//! once the turn is stopped. The recap a compaction asks for is a request like
+//! any other.
 //!
 //! Two things decide what the ending is reported as. Awaiting across the stop
 //! still ends the turn stopped: the model is not asked again. And each call

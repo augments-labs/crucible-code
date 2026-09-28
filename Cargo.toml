@@ -480,8 +480,7 @@ crucible-provider.workspace = true
 crucible-update.workspace = true
 crucible-runner.workspace = true
 # The future an asynchronous contract hands back, which the command line and
-# its probes implement, and the bridge the `/sandbox` panel crosses to ask the
-# local backend while the command line is synchronous.
+# its probes implement, and the controls a turn is stopped and steered by.
 crucible-runtime.workspace = true
 # The main binary exposes the explicit Windows administrator setup and removal
 # commands from the same audited crate that owns the native broker. Running the

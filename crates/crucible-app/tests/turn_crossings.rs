@@ -7,27 +7,32 @@
 //! - **A `block_on`.** Tokio refuses one inside a task by panicking, so one
 //!   reached from inside a turn would end it on a panic rather than on its
 //!   own ending.
-//! - **A waiting crossing.** A crossing that waited would hold the worker the
-//!   turn runs on until it was answered, so the bridge ledger holds none.
+//! - **A future polled by hand.** A poll written out with a waker of its own
+//!   either holds the worker the turn runs on until it is answered, or gives
+//!   up on a step that was not ready at once. Every caller awaits what it is
+//!   handed instead.
 //!
 //! Both are kept out by what the shipped sources say, and these read them:
 //! every Rust file shipped under `crates/` and under the command line's own
-//! `src/` — which a terminal turn reaches too, through the permission prompt
-//! and the event relay — the way the bridge ledger's own check reads them. A
-//! file under a directory named `tests`, or named `tests.rs` or ending in
-//! `_tests.rs`, is not shipped, and neither is a file listed in [`TEST_ONLY`].
-//! Every line of a shipped file is read, its own `#[cfg(test)]` module
-//! included: a `block_on` such a module holds is allowed by its exact line
-//! and how many times the file may hold it, in [`BLOCK_ON_ALLOWED`], rather
-//! than told apart from shipped code by a reading of the source, which can
-//! only err by hiding one.
+//! `src/`, which a terminal turn reaches too, through the permission prompt and
+//! the event relay. A file under a directory named `tests`, or named `tests.rs`
+//! or ending in `_tests.rs`, is not shipped, and neither is a file listed in
+//! [`TEST_ONLY`]. Every line of a shipped file is read, its own `#[cfg(test)]`
+//! module included: a `block_on` or a hand poll such a module holds is allowed
+//! by its exact line and how many times the file may hold it, in
+//! [`BLOCK_ON_ALLOWED`] and [`BY_HAND_ALLOWED`], rather than told apart from
+//! shipped code by a reading of the source, which can only err by hiding one.
 //!
-//! What is looked for is the name itself, which no import can hide: a
-//! `block_on` is a method or a function named that, and a waiting entry is
-//! read off the ledger's own documentation. A glob import from Tokio, from
-//! `futures` or from the bridges is refused outright as well, since it is the
-//! one spelling that brings such a name in without writing it where it is
-//! imported.
+//! What is looked for is the name itself: a `block_on` is a method or a
+//! function named that, and a hand poll is seen by the waker or the context it
+//! builds. On stable Rust a poll made outside an async context needs a
+//! `Context`, and `Context::from_waker` is the only stable way to build one, so
+//! that spelling is looked for, and so are the waker constructions
+//! `Waker::noop`, `noop_waker`, `Waker::from` and `RawWaker`. `Context` reached
+//! through an alias, and a context an enclosing `poll` hands in, build nothing
+//! this can see. A glob import from Tokio, from `futures` or from
+//! `crucible_runtime` is refused outright as well, since it is the one spelling
+//! that brings a `block_on` in without writing it where it is imported.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -148,7 +153,7 @@ fn declared_for_tests(root: &Path, path: &str) -> bool {
 }
 
 /// The lines of `text` that are code, a line whose first characters are `//`
-/// left out, as the bridge ledger's own check leaves them out.
+/// left out.
 fn code(text: &str) -> impl Iterator<Item = &str> {
     text.lines()
         .map(str::trim)
@@ -181,7 +186,7 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
             if !line.ends_with(';') {
                 continue;
             }
-            let from = ["tokio", "futures", "crucible_runtime", "Bridge"]
+            let from = ["tokio", "futures", "crucible_runtime"]
                 .iter()
                 .any(|root| names(&statement, root));
             if from && statement.contains('*') {
@@ -192,8 +197,8 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
     }
     assert!(
         found.is_empty(),
-        "a shipped file glob-imports from Tokio, `futures` or the bridges, which could bring \
-         a `block_on` or a waiting crossing in unnamed: {found:#?}"
+        "a shipped file glob-imports from Tokio, `futures` or `crucible_runtime`, which could \
+         bring a `block_on` in unnamed: {found:#?}"
     );
 }
 
@@ -207,10 +212,9 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 /// ended — the runner's test helper that drives a turn to its end on a runtime
 /// of the test's own, the two performance probes waiting, on their own main
 /// thread, for each call they time on a runtime of the probe's own, and the
-/// lines inside the `#[cfg(test)] mod tests` of the bridge ledger, of the
-/// sandbox's redaction and of the worker-task check, which only a test build
-/// compiles. The count makes the same line written once more in that file,
-/// wherever, one too many.
+/// lines inside the `#[cfg(test)] mod tests` of the sandbox's redaction and of
+/// the worker-task check, which only a test build compiles. The count makes the
+/// same line written once more in that file, wherever, one too many.
 const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "crates/crucible-app/src/runtime.rs",
@@ -272,14 +276,6 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     // does: a probe is a program of its own, not a part of crucible.
     ("src/bin/bench-grep.rs", "self.runtime.block_on(future)", 1),
     ("src/bin/bench-tools.rs", "self.runtime.block_on(future)", 1),
-    // Inside `crates/crucible-runtime/src/bridge.rs`'s `#[cfg(test)] mod tests`:
-    // the documentation of the test that makes both crossings on a runtime
-    // worker.
-    (
-        "crates/crucible-runtime/src/bridge.rs",
-        "/// A worker thread is where a `block_on` would panic or deadlock, so both",
-        1,
-    ),
     // Inside `crates/crucible-sandbox-local/src/redaction.rs`'s
     // `#[cfg(test)] mod tests`: the test helper that reads a protected output
     // to its end on a runtime of its own.
@@ -305,12 +301,15 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     ),
 ];
 
-#[test]
-fn nothing_a_turn_reaches_calls_block_on() {
+/// The lines of the shipped files that `matches`, trimmed, held against
+/// `allowed`: none may be there that the list does not name, none the list
+/// names may be gone, and each must be there exactly as many times as the list
+/// allows. `what` says what was looked for.
+fn held_to(allowed: &[(&str, &str, usize)], what: &str, matches: impl Fn(&str) -> bool) {
     let mut found: Vec<(String, String)> = Vec::new();
     for (path, text) in shipped() {
         for line in text.lines() {
-            if line.contains("block_on") {
+            if matches(line) {
                 found.push((path.clone(), line.trim().to_owned()));
             }
         }
@@ -319,14 +318,14 @@ fn nothing_a_turn_reaches_calls_block_on() {
     let unexpected: Vec<&(String, String)> = found
         .iter()
         .filter(|(path, line)| {
-            !BLOCK_ON_ALLOWED
+            !allowed
                 .iter()
                 .any(|(allowed, said, _)| allowed == path && said == line)
         })
         .collect();
     assert!(
         unexpected.is_empty(),
-        "a shipped file names `block_on` where nothing may: {unexpected:#?}"
+        "a shipped file names {what} where nothing may: {unexpected:#?}"
     );
     let counted = |allowed: &str, said: &str| {
         found
@@ -334,15 +333,15 @@ fn nothing_a_turn_reaches_calls_block_on() {
             .filter(|(path, line)| path == allowed && line == said)
             .count()
     };
-    let stale: Vec<&(&str, &str, usize)> = BLOCK_ON_ALLOWED
+    let stale: Vec<&(&str, &str, usize)> = allowed
         .iter()
         .filter(|(allowed, said, _)| counted(allowed, said) == 0)
         .collect();
     assert!(
         stale.is_empty(),
-        "an allowed mention of `block_on` is no longer there, so the list is stale: {stale:#?}"
+        "an allowed mention of {what} is no longer there, so the list is stale: {stale:#?}"
     );
-    let multiplied: Vec<(&str, &str, usize, usize)> = BLOCK_ON_ALLOWED
+    let multiplied: Vec<(&str, &str, usize, usize)> = allowed
         .iter()
         .filter_map(|(allowed, said, times)| {
             let now = counted(allowed, said);
@@ -351,42 +350,40 @@ fn nothing_a_turn_reaches_calls_block_on() {
         .collect();
     assert!(
         multiplied.is_empty(),
-        "an allowed mention of `block_on` is not there the number of times the list allows, so \
+        "an allowed mention of {what} is not there the number of times the list allows, so \
          a shipped line may be hiding behind a test's (path, line, allowed, found): {multiplied:#?}"
     );
 }
 
-/// The ledger entries that wait, read off the ledger: each variant of
-/// `Bridge` whose documentation says `- Crossing: waits.`.
-fn waiting_entries() -> Vec<String> {
-    let ledger = fs::read_to_string(workspace().join("crates/crucible-runtime/src/bridge.rs"))
-        .expect("the bridge ledger");
-    let start = ledger.find("pub enum Bridge {").expect("the ledger's enum");
-    let body = &ledger[start..];
-    let end = body.find("\n}\n").expect("the end of the ledger's enum");
-    let mut waiting = Vec::new();
-    let mut waits = false;
-    for line in body[..end].lines().skip(1) {
-        let line = line.trim();
-        if let Some(doc) = line.strip_prefix("///") {
-            if doc.trim() == "- Crossing: waits." {
-                waits = true;
-            }
-        } else if let Some(variant) = line.strip_suffix(',') {
-            if waits {
-                waiting.push(variant.to_owned());
-            }
-            waits = false;
-        }
-    }
-    waiting
+#[test]
+fn nothing_a_turn_reaches_calls_block_on() {
+    held_to(BLOCK_ON_ALLOWED, "`block_on`", |line| {
+        line.contains("block_on")
+    });
 }
 
+/// The spellings a hand poll builds its waker or its context with.
+const BY_HAND: &[&str] = &[
+    "Waker::noop",
+    "noop_waker",
+    "Waker::from",
+    "RawWaker",
+    "Context::from_waker",
+];
+
+/// Every hand poll a shipped file may hold, trimmed, with how many times that
+/// file may hold it: `answered!`'s one poll, which only the `proof` feature
+/// compiles, for a test driving a fake service. The count makes the same line
+/// written once more in that file, wherever, one too many.
+const BY_HAND_ALLOWED: &[(&str, &str, usize)] = &[(
+    "crates/crucible-runtime/src/future.rs",
+    ".poll(&mut Context::from_waker(Waker::noop()))",
+    1,
+)];
+
 #[test]
-fn no_crossing_in_the_ledger_waits() {
-    assert_eq!(
-        waiting_entries(),
-        Vec::<String>::new(),
-        "a ledger entry waits, and a turn is a task, where a wait would hold the worker it runs on"
-    );
+fn nothing_shipped_polls_a_future_by_hand() {
+    held_to(BY_HAND_ALLOWED, "a hand poll", |line| {
+        !line.trim().starts_with("//") && BY_HAND.iter().any(|spelling| names(line, spelling))
+    });
 }

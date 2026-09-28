@@ -225,14 +225,10 @@ impl<'a> AgentLoop<'a> {
     /// nothing, and [`TurnError::Refused`] where the reader declined a call.
     /// None of the four is a failure, and all four end a turn the way one
     /// does, which is why they leave through here rather than through
-    /// [`StopReason`]. A step that would have had to wait ends it wherever
-    /// [`Runner::turn`] says one does, and leaves what that says: as
-    /// [`TurnError::Unready`], or as the source's failure where it was a tool
-    /// source's own step.
+    /// [`StopReason`]. A tool source's own step that gave up ends it as the
+    /// source's failure, as [`Runner::turn`] says.
     ///
-    /// Every step the turn crosses to that would have had to wait ends it on
-    /// the refusal, even where a stop was asked for: the turn's cache steps
-    /// end it so. A compaction's steps end it as [`Runner::compact`] says.
+    /// A compaction's steps end it as [`Runner::compact`] says.
     /// The line recording the last answer, the part of an answer a full
     /// window cut short, and the results of a pass are each awaited before
     /// the ending they lead to is reached.

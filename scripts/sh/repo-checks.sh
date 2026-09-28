@@ -573,17 +573,13 @@ fi
 # line, which is one front end. The check after the list holds both ends.
 #
 # `runtime` is named by each crate whose contract hands back its future, each
-# that implements one, and each that crosses into one through a bridge while its
-# own callers are synchronous; the bridges are listed where they are defined.
-# `extension`'s shipped source names it for none of these, only for `Unready`,
-# so that a stop the transport dropped rather than wait on is told apart from
-# one that failed; its tests also name `BoxFuture`, because a stand-in process
-# implements `SandboxProcess`.
+# that implements one, and each that is stopped or steered by its controls.
+# `extension runtime` is a test-only edge: a stand-in process in its tests
+# implements `SandboxProcess`, whose stop hands back a `BoxFuture`.
 # `storage` hands back the same type spelled out, because it names no workspace
 # crate but `types`, and so it names no runtime.
 # `auth` names it for `BoxFuture`, the shape a renewal's request is handed to
-# the owner of renewals in, and for the one waiting crossing it owns, which the
-# thread a login runs on takes to wait for each of that login's requests.
+# the owner of renewals in.
 #
 # `http` is an HTTP client built for outgoing requests to share. It sends the
 # headers a credential was applied to and hands its connector's work back as a
@@ -882,47 +878,6 @@ while IFS= read -r line; do
     printf '    FAIL %s\n' "$line"
     failed=1
 done <<<"$sandbox_state"
-
-section "bridge ledger"
-# `Bridge` is the ledger of every synchronous caller that crosses into an
-# asynchronous contract, and each entry says what bounds it, which crate owns
-# it and what retires it. The code is held to it as it is written. Outside the
-# ledger's package, a bridge is named only in the crate that owns it. Every
-# bridge is named in its owner's shipped source, judged by path under `src/`,
-# inline test modules included; in the ledger's own package no bridge's path
-# counts, so a bridge that package owns always fails here. No shipped source
-# but the ledger builds the waker or the context of a hand poll in a spelling
-# the check knows, which is one way a crossing nobody wrote down can look:
-# `Context` reached through an alias, a context an enclosing `poll` hands in,
-# and a library call that polls or waits for its caller, such as tokio's
-# `block_on`, build nothing it can see. None of the spellings the check knows
-# hides a bridge from the search for its path: an alias of the enum by `use` or
-# `type`, or a glob or braced import of its variants, and `Bridge as` is
-# refused wherever it is written, a qualified trait path included. `Self::`
-# inside an impl for `Bridge`, `<Bridge>::Name`, and a `Bridge` handed across
-# crates as a value, are seen by none of these. Two more are refused, likewise
-# only as they are written: a crossing whose own argument spells a borrow of a
-# future, beginning with `&mut`, `Pin::new(&mut` or `Box::pin(&mut`, or ending
-# with an `.as_mut()` after an argument that holds no `;`, `{` or `}`, not even
-# in a literal, and parentheses at most two deep; and a bridge taken off a
-# refusal and crossed again, where `.bridge()` comes directly before `.cross`.
-# `Pin::as_mut(&mut …)`, a path-qualified `std::pin::Pin::new(…)`, a crossing
-# written as a path call, `Bridge::cross(Bridge::Name, &mut …)`, and either one
-# bound to a name first pass, and a literal holding an unpaired parenthesis can
-# make the borrow check report a crossing that lends nothing or miss one that
-# lends. Only whole `//` comment lines are left out: a trailing or block
-# comment and a literal are read as code, so a spelling refused here is
-# reported there too, and a bridge's path written there in its owner's shipped
-# source counts as a crossing. Any answer but 0 fails, because 2 is a ledger
-# the check could not read and 1 is also what a crashed reader exits with.
-if ! python3 scripts/python/bridge-ledger.py --self-test; then
-    printf '    FAIL the bridge-ledger check failed its self-test\n'
-    failed=1
-fi
-if ! python3 scripts/python/bridge-ledger.py crates/crucible-runtime/src/bridge.rs "${manifests[@]}"; then
-    printf '    FAIL the bridge ledger and the code that crosses it disagree\n'
-    failed=1
-fi
 
 section "no spawned thread in the hosted crates"
 # No shipped source in the transport, MCP, or extension crates starts its own

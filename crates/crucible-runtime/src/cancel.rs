@@ -36,11 +36,19 @@ use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::Notify;
 use tokio::sync::futures::Notified;
 use tokio::time::Sleep;
+
+/// How long a wait that a [`Cancel`] cannot wake may go without looking at it:
+/// a raised cancel wakes nobody, so such a wait is also woken this often to
+/// look.
+///
+/// Short against a person pressing a key and waiting to see the turn stop, and
+/// long against a thread waking only to find nothing to do.
+pub const NOTICED: Duration = Duration::from_millis(20);
 
 /// A shared "stop what you are doing" flag.
 ///

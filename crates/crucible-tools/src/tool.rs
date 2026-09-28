@@ -53,24 +53,16 @@ pub enum ToolError {
         problem: Box<str>,
     },
 
-    /// The operating system refused, a step that would have had to wait was
-    /// dropped before it answered, or the tool worker would not start the
+    /// The operating system refused, or the tool worker would not start the
     /// tool's work because its runtime was shutting down.
-    ///
-    /// A dropped step leaves whatever it began unconfirmed. The
-    /// [`Unready`](crucible_runtime::Unready) it was refused with is in
-    /// `source`, as the error an [`std::io::Error`] holds, perhaps beneath
-    /// another error: `get_ref` on that `io::Error` finds it, and its `source`
-    /// does not. A refusal met while restarting a hosted server after a failed
-    /// call is the exception: it is named only in `problem`.
     #[error("{tool}: {problem}")]
     Io {
         /// Which tool was running.
         tool: Box<str>,
         /// What failed, without the underlying path if it is sensitive.
         problem: Box<str>,
-        /// What the operating system reported, the refusal of a step that
-        /// would have had to wait, or the tool worker's [`Unrun`](crate::Unrun).
+        /// What the operating system reported, or the tool worker's
+        /// [`Unrun`](crate::Unrun).
         source: std::io::Error,
     },
 

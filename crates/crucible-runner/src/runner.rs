@@ -26,10 +26,6 @@
 //! application's wait for one is. It hands its [`Cancel`] to every step it
 //! awaits and looks at it between them, so a stop ends it as it always has,
 //! and how soon an awaited step heeds that stop is the step's own contract.
-//! No step on the turn's path is still reached through a bridge that asks
-//! once: the bridges that remain — `CommandStop` and `CommandAcceptance` —
-//! are crossed outside the turn, and a step that would have had to wait there
-//! is refused where it is crossed, naming its bridge.
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,
@@ -944,13 +940,10 @@ impl Runner {
     /// did not like what it found, both go back to the model as results it can
     /// work around.
     ///
-    /// The turn itself never ends on [`TurnError::Unready`]: the provider's
-    /// stream and each read of it, every prompt-cache step, every call's run,
-    /// a background result's acceptance and the toolset's preparation,
-    /// listing, refreshing and disposal are all awaited, so a step that would
-    /// have had to wait is waited for rather than refused. A refusal still
-    /// names its bridge — one of the crossings that remain outside the turn —
-    /// and what the dropped step began is unconfirmed rather than undone.
+    /// The provider's stream and each read of it, every prompt-cache step,
+    /// every call's run, a background result's acceptance and the toolset's
+    /// preparation, listing, refreshing and disposal are all awaited, so a
+    /// step that has to wait is waited for rather than refused.
     /// The turn's session writes are awaited, and a line the log could not
     /// keep is the session's to report rather than the turn's to end on.
     /// Before anything of the turn is recorded or sent, the lines picking a
@@ -963,15 +956,11 @@ impl Runner {
     /// step of a compaction the turn made leaves what [`Runner::compact`]
     /// says it does.
     ///
-    /// A tool source's own step that was dropped before it answered is the
+    /// A tool source's own step that gave up before it answered is the
     /// source's failure, which [`TurnError::Toolset`] or
-    /// [`TurnError::ToolsetCleanup`] carries: as [`ToolsetError::Unready`]
-    /// where the source crossed a bridge that could not wait, or in the
-    /// source's own words as [`ToolsetError::Source`], which is how MCP
-    /// hosting reports a step it gave up on; either way what that step began
-    /// is unconfirmed rather than undone. A cleanup step of the source's that
-    /// would have had to wait after another failure is reported as that
-    /// failure, and named at most in its text.
+    /// [`TurnError::ToolsetCleanup`] carries in the source's own words as
+    /// [`ToolsetError::Source`], which is how MCP hosting reports a step it
+    /// gave up on; what that step began is unconfirmed rather than undone.
     ///
     /// The turn is `Send`: a runtime may take it as one of its tasks and carry
     /// it from one worker to another at any wait.
@@ -985,7 +974,6 @@ impl Runner {
     /// inside one, or spawns it onto one, with a timer where a call has a
     /// deadline.
     ///
-    /// [`ToolsetError::Unready`]: crucible_tools::ToolsetError::Unready
     /// [`ToolsetError::Source`]: crucible_tools::ToolsetError::Source
     pub async fn turn(
         &mut self,

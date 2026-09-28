@@ -1381,9 +1381,9 @@ impl SandboxProcess for ProjectedProcess {
         Box::pin(async move { self.stop() })
     }
 
-    /// The same stop the future above drives, for the owners that have no
-    /// future to drive, bounded the way that body is and reported as failed
-    /// cleanup where it gives out.
+    /// The same stop the future above drives, run on this thread, since that
+    /// body blocks either way; bounded the way that body is and reported as
+    /// failed cleanup where it gives out.
     fn stop_sync(&mut self) -> io::Result<()> {
         ProjectedProcess::stop(self)
     }

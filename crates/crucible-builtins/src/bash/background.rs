@@ -26,10 +26,9 @@
 //! call that binds its receipt; and the release task, which asks the one stop
 //! that nothing else is left to ask. The complete owner step runs on one
 //! blocking thread of the runtime's pool, so a status, publication wait, stop,
-//! reap, or reader join never occupies a runtime worker. A stop is asked there
-//! as [`crucible_runtime::Bridge::CommandStop`] — one poll, which is the whole
-//! bound, because the process contract keeps its bounded stop work inside the
-//! contract; a stop that would have had to wait is refused rather than held.
+//! reap, or reader join never occupies a runtime worker. A stop is the process
+//! contract's synchronous one, run on that thread and bounded by the stop's own
+//! steps; one that fails, or that the backend cannot run there, is refused.
 //! Asking again is then the caller's own: a descendant stop, the end a
 //! registry being let go asks for, and the release task are asked again from
 //! their next attempt — the release task's own interval growing each time —
@@ -51,9 +50,10 @@
 //! to the host process so that loss still ends the workload; compatibility mode
 //! has no equivalent kernel boundary, and the shipped documentation says so
 //! rather than implying otherwise. A destructor reached where no runtime is
-//! running is the same case in miniature: a stop is a future, so the
-//! reservation is given back and the handle is left to the operating system
-//! rather than counted as a stop that happened.
+//! running is the same case in miniature: it may not block on a stop, and there
+//! is no blocking pool to hand one to, so the reservation is given back and the
+//! handle is left to the operating system rather than counted as a stop that
+//! happened.
 
 use std::future::Future;
 use std::io;
@@ -63,7 +63,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::output::Pipe;
-use crucible_runtime::{BoxFuture, Bridge};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{SandboxError, SandboxProcess};
 use crucible_tools::{CallResultAcceptance, CallResultReceipt};
 use tokio::runtime::Handle;
@@ -1291,48 +1291,37 @@ fn guarded<T>(call: impl FnOnce() -> T) -> Result<T, ()> {
 
 /// Bounds a lifecycle future on the runtime that owns the call.
 ///
-/// On a runtime the wait is timed. With no runtime there is no clock to time it
-/// against, so the call is asked once and refused unless it answers on that
-/// poll — the rule [`Bridge::cross`] is, which the runner's own result seam does
-/// not follow: that one awaits its acceptance, so an executor that has to wait
-/// to close its transition is waited for. A future that would have waited is
-/// dropped there and the caller is handed the refusal with the process, which
-/// is the whole point of the bound: a process is never left borrowed for a wait
+/// Every caller asks on a runtime, and the wait is timed on its clock. One that
+/// asks where no runtime is running is refused without the future being
+/// polled: there is no clock to time the wait against, and a lifecycle call
+/// that is never made hands the caller the refusal with the process, which is
+/// the whole point of the bound: a process is never left borrowed for a wait
 /// nothing can end.
 pub(super) async fn bounded<F: Future>(future: F, allowed: Duration) -> Result<F::Output, ()> {
     if Handle::try_current().is_err() {
-        return Bridge::CommandAcceptance.cross(future).map_err(|_| ());
+        return Err(());
     }
     tokio::time::timeout(allowed, future).await.map_err(|_| ())
 }
 
 /// Asks for one stop, on the thread that already owns this command's process
-/// work, and answers what one poll of it says.
+/// work, and answers what it says.
 ///
-/// The stop is a future and the thread is one the runtime's blocking pool
-/// handed out, so the ask belongs here rather than on a runtime worker: a
-/// backend that blocks inside its own contract blocks this one thread, and a
-/// timer on the runtime still fires. One poll is the whole bound — the process
-/// contract keeps its bounded stop work inside the contract, so the poll
-/// answers — and a stop that would have had to wait is refused rather than
-/// waited for, so the caller is told only that. Asking again is the caller's
-/// own decision: a descendant stop, a registry's own end, and the release task
-/// are asked again from their next attempt, and a stop asked for by a key or by
-/// an abandoned result waits for that ask to be made again, which is what the
-/// ask flag being consumed before this call means. The process stays lent
-/// either way: only a confirmed stop, which the caller gives up, ends the
-/// ownership.
+/// The thread is one the runtime's blocking pool handed out, so the stop runs
+/// here, through [`super::output::stop_here`], rather than on a runtime worker:
+/// it blocks this one thread, and a timer on the runtime still fires. A stop
+/// that fails, or that the backend cannot run on this thread, is refused, and
+/// the caller is told only that. Asking again is the caller's own decision: a
+/// descendant stop, a registry's own end, and the release task are asked again
+/// from their next attempt, and a stop asked for by a key or by an abandoned
+/// result waits for that ask to be made again, which is what the ask flag being
+/// consumed before this call means. The process stays lent either way: only a
+/// confirmed stop, which the caller gives up, ends the ownership.
 fn stop_lent(loan: &mut Loan) -> io::Result<()> {
     let Some(process) = loan.as_mut() else {
         return Err(io::Error::other("the process was already released"));
     };
-    Bridge::CommandStop
-        .cross(super::output::end(process))
-        .map_err(|unready| {
-            io::Error::other(format!(
-                "the stop was asked again rather than held: {unready}"
-            ))
-        })?
+    super::output::stop_here(process)
 }
 pub(super) struct Kept {
     standing: Arc<Registry>,
@@ -1525,11 +1514,12 @@ pub(super) fn release_process(process: Box<dyn SandboxProcess>, lease: Option<Le
 fn schedule_cell_release(runtime: Option<Handle>, cell: Cell, lease: Option<Lease>) {
     let Some(runtime) = runtime else {
         // A process reaches this path from a destructor or from a caller still
-        // constructing its runtime. A stop is a future, and with no runtime
-        // there is nothing to answer one, so the reservation is given back and
-        // the handle is left with the operating system. That is the one thing
-        // this cannot do twice: it is not a stop, nothing records one, and the
-        // process contract is what a stop would have asked for.
+        // constructing its runtime. Neither may block on a stop, and with no
+        // runtime there is no blocking pool to run one on, so the reservation
+        // is given back and the handle is left with the operating system. That
+        // is the one thing this cannot do twice: it is not a stop, nothing
+        // records one, and the process contract is what a stop would have asked
+        // for.
         drop(cell);
         drop(lease);
         return;

@@ -10,9 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 # `crucible-sandbox` states what a backend must satisfy; everything here is one
-# machine's answer to it, handed back in the future `crucible-runtime` names,
-# and crossed, where a synchronous caller here reaches one, through the bridge
-# that crate names for this one.
+# machine's answer to it, handed back in the future `crucible-runtime` names.
 # The other three are what a launch is described in:
 # the frame the broker binary is handed, the identities a call is attributed
 # by, and the receipt a background command's result is accepted against.

@@ -24,15 +24,12 @@
 //! dropped, because a reader shown a truncated stream that does not say it was
 //! truncated has been told something false.
 //!
-//! Where the service contracts hand back a future and the caller is still
-//! synchronous, [`Bridge`] is how it crosses: once, without waiting, and with
-//! [`Unready`] where the future would have had to wait. Its variants are the
-//! ledger of every such caller, and [`BoxFuture`] is the one shape every
-//! contract hands back.
+//! [`BoxFuture`] is the one shape every service contract hands back, and every
+//! caller awaits it.
 //!
 //! Nothing here starts a runtime. A library that built its own would decide
 //! for the application how many threads it gets; [`Group`] runs on the runtime
-//! of whoever called it, and a crossing enters none.
+//! of whoever called it.
 //!
 //! [`not_worker`] answers one narrower question: whether the code calling it
 //! is polled as a spawned task right now, which [`Handle::try_current`] cannot
@@ -43,19 +40,19 @@
 //! [`Handle::try_current`]: tokio::runtime::Handle::try_current
 
 mod aside;
-mod bridge;
 mod cancel;
+mod future;
 mod group;
 mod progress;
 mod steer;
 mod worker;
 
 pub use aside::Aside;
+pub use cancel::{Cancel, NOTICED};
 #[cfg(feature = "proof")]
 #[doc(hidden)]
-pub use bridge::__answered;
-pub use bridge::{BoxFuture, Bridge, NOTICED, Unready};
-pub use cancel::Cancel;
+pub use future::__answered;
+pub use future::BoxFuture;
 pub use group::{Ended, Full, Group};
 pub use progress::{Progress, Told};
 pub use steer::Steer;
