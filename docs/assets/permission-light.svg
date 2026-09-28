@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 770" width="720" height="770" role="img" aria-label="A tool call is decided in order: a write or edit of crucible's own configuration files or a matching deny rule refuses it, a matching ask rule asks, allow rules that cover all of it allow it, and the mode decides a call no rule named, allowing a read inside the workspace in every mode. A call that comes to asking runs if it was already allowed for this session or on your yes, once or for the session; a refusal by policy tells the model and the turn carries on, an allowed call runs only after this decision, and your no ends the turn.">
+  <title>How one tool call is decided</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#14161A"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0D6E68"/>
+    </marker>
+  </defs>
+
+  <!-- A tool call, classified by its tool -->
+  <rect x="180" y="16" width="360" height="72" rx="8" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="40" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">A tool call</text>
+  <text x="360" y="60" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">the tool says what it would do: read, read outside the</text>
+  <text x="360" y="77" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">workspace, change a file, run a command, reach the web</text>
+  <line x1="360" y1="88" x2="360" y2="157" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Settled before asking, tried in order -->
+  <rect x="184" y="112" width="352" height="350" rx="10" fill="none" stroke="#0D6E68" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="200" y="130" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Settled before asking</text>
+  <text x="200" y="145" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#0D6E68">the first to speak wins</text>
+
+  <rect x="200" y="158" width="320" height="50" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="179" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#14161A">1. write or edit of crucible's config</text>
+  <text x="360" y="198" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">config.json or config.local.json in any .crucible</text>
+  <line x1="360" y1="208" x2="360" y2="229" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="200" y="230" width="320" height="34" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="252" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#14161A">2. a deny rule matches</text>
+  <line x1="360" y1="264" x2="360" y2="285" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="200" y="286" width="320" height="34" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="308" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#14161A">3. an ask rule matches</text>
+  <line x1="360" y1="320" x2="360" y2="341" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="200" y="342" width="320" height="34" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="364" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#14161A">4. allow rules cover all of it</text>
+  <line x1="360" y1="376" x2="360" y2="397" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <rect x="200" y="398" width="320" height="50" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="419" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#14161A">5. the mode, for a call no rule named</text>
+  <text x="360" y="438" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">a read inside the workspace runs in every mode</text>
+
+  <!-- Refused by policy: rows 1 and 2 -->
+  <path d="M200,183 H110 V683" fill="none" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="155" y="178" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">refuse</text>
+  <path d="M200,247 H110" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="155" y="242" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">refuse</text>
+
+  <!-- An ask rule skips ahead to the question -->
+  <path d="M200,303 H160 V482 H359" fill="none" stroke="#0D6E68" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
+  <text x="152" y="330" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#0D6E68">ask</text>
+
+  <!-- Allowed: rows 4 and 5, the session, and your yes -->
+  <path d="M520,359 H610 V683" fill="none" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="565" y="354" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">allow</text>
+  <path d="M520,423 H610" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="565" y="418" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">allow</text>
+  <path d="M520,523 H610" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="565" y="518" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">yes</text>
+  <path d="M520,616 H610" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="565" y="611" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">yes</text>
+
+  <!-- The mode said ask -->
+  <line x1="360" y1="448" x2="360" y2="497" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="372" y="480" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">ask</text>
+
+  <rect x="200" y="498" width="320" height="50" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="519" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#14161A">6. already allowed for this session?</text>
+  <text x="360" y="538" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">by an earlier "don't ask again this session"</text>
+  <line x1="360" y1="548" x2="360" y2="579" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="372" y="568" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">no</text>
+
+  <rect x="200" y="580" width="320" height="72" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="602" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">7. You are asked</text>
+  <text x="360" y="621" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">Yes, once · Yes, and don't ask again this session</text>
+  <text x="360" y="638" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">No, and end the turn, or nobody there to answer</text>
+  <line x1="360" y1="652" x2="360" y2="683" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="372" y="672" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">no</text>
+
+  <!-- The three outcomes -->
+  <rect x="20" y="684" width="180" height="70" rx="8" fill="none" stroke="#14161A" stroke-width="2"/>
+  <text x="110" y="706" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">Refused by policy</text>
+  <text x="110" y="725" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">the model is told</text>
+  <text x="110" y="741" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">and the turn carries on</text>
+
+  <rect x="200" y="684" width="320" height="70" rx="8" fill="none" stroke="#14161A" stroke-width="2"/>
+  <text x="360" y="706" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">Your no: the turn ends</text>
+  <text x="360" y="725" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">the call does not run</text>
+  <text x="360" y="741" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">the model sees the refusal next turn</text>
+
+  <rect x="520" y="684" width="180" height="70" rx="8" fill="none" stroke="#14161A" stroke-width="2"/>
+  <text x="610" y="706" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">Runs</text>
+  <text x="610" y="725" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">only after this decision</text>
+</svg>

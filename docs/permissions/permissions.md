@@ -1,5 +1,10 @@
 # Permissions
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/permission-dark.svg">
+  <img alt="A tool call is decided in order: a write or edit of crucible's own configuration files or a matching deny rule refuses it, a matching ask rule asks, allow rules that cover all of it allow it, and otherwise the mode allows or asks. A call that comes to asking runs if it was already allowed for this session or you say yes; a refusal by policy tells the model and the turn carries on, but your no ends the turn." src="../assets/permission-light.svg" width="720">
+</picture>
+
 Nothing changes a file or starts a process without a decision. The decision
 comes from three places, tried in order: [rules](rules.md) you wrote speak
 first, the [mode](modes.md) answers for calls no rule mentions, and when what
