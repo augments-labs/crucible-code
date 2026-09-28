@@ -1,8 +1,8 @@
 # Directories
 
 The file tools reach the directory crucible was started in, and nothing else
-without you. A read that leads outside it — measured after symbolic links are
-resolved — is put to you the way a command is, and runs only on your yes. A
+without you. A read that leads outside it, measured after symbolic links are
+resolved, is put to you the way a command is, and runs only on your yes. A
 write outside it is refused by the tool itself, before any question could be
 asked, because the question a write outside would need has no honest wording:
 nothing out there was handed over. `bash` is the standing exception: a shell
@@ -35,7 +35,7 @@ directory is reached by its own name.
 ## What containment is measured against
 
 A path is resolved once to say what a call is about, and resolved again inside
-the tool that acts on it — so a symbolic link planted while a question was on
+the tool that acts on it, so a symbolic link planted while a question was on
 screen changes the answer rather than slipping past it. What that leaves is a
 path with no symbolic link anywhere in it, and on Unix the file is then reached
 by walking it rather than by naming it: crucible opens the directory the path
@@ -82,7 +82,7 @@ does not make the same directory-durability promise as Unix.
 What that bounds is crucible, on either platform. It is not a boundary on the
 machine, and two things get past it on Unix as well. A directory crucible is
 walking through can be *moved* out of the working directory and the file below
-it goes with it — the file opened is still the file that was checked, and
+it goes with it: the file opened is still the file that was checked, and
 whoever moved it could already read it. And a second hard name for a file
 elsewhere is not a link at all, so nothing distinguishes it from the original
 and no check made on names reaches it.
@@ -97,7 +97,7 @@ paths can promise.
 An extra directory moves the boundary, not the verdicts. A read there stops
 being asked about, because the directory was handed over at startup; a write
 there is still a write: under `ask` it prompts like any other, and a `deny`
-rule reaches it like any other path. Only an absolute pattern can name one —
-`deny edit(/home/you/src/shared-lib/**)` — because a file there has no
-spelling below the working directory, and `src/**` would honestly mean nothing
-there.
+rule reaches it like any other path. Only an absolute pattern, such as
+`deny edit(/home/you/src/shared-lib/**)`, can name one, because a file there
+has no spelling below the working directory, and `src/**` would honestly mean
+nothing there.

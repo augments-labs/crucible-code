@@ -19,10 +19,11 @@ ask mode on (shift+tab to cycle)
 ```
 
 It is on screen every time rather than said once in the transcript, because the
-moment it matters is hours in, when what was said then has scrolled away. A full-access session must
-never be distinguishable from an asking one only by what you remember starting.
-Where there is no box — a redirected run — the mode is written in front of the
-prompt instead, spelled the way configuration spells it: `ask › `.
+moment it matters is hours in, when what was said then has scrolled away. A
+full-access session must never be distinguishable from an asking one only by
+what you remember starting. Where there is no box (a redirected run), the mode
+is written in front of the prompt instead, spelled the way configuration spells
+it: `ask › `.
 
 ## The question
 
@@ -46,7 +47,7 @@ the prompt box:
   esc to cancel · ctrl+e to explain
 ```
 
-The line over the frame names the tool and what the call is about — a file for
+The line over the frame names the tool and what the call is about: a file for
 `read`, `write` and `edit`, a command for `bash`. Inside the frame is the thing
 being consented to. A file change names the file it would touch: the resolved
 path, after symbolic links, spelled relative to the working directory when it
@@ -61,7 +62,7 @@ left in it moves the cursor inside a row nothing measured. Nothing runs while
 the panel is on screen.
 
 Under it, where the call gave one, is the model's own line saying what the call
-is for. It is a caption on the command and not a claim standing beside it —
+is for. It is a caption on the command and not a claim standing beside it;
 there is no blank between them, which is what says whose sentence it is about.
 Read it as what the model *says* it is doing; what it *would* do is the line
 above, and that one was read out of the arguments rather than written. The
@@ -77,7 +78,7 @@ takes the answer the mark stands on, and `1`, `2` and `3` take theirs directly.
 `esc` refuses, and `ctrl+e` opens [what the call said about
 itself](#the-long-version) where it said more than a line.
 
-Where there is no keyboard — a redirected run — or no room to stand a panel in,
+Where there is no keyboard (a redirected run) or no room to stand a panel in,
 the same question is asked a row at a time and the answer is typed:
 
 ```
@@ -88,10 +89,10 @@ the same question is asked a row at a time and the answer is typed:
 What each leaves in the transcript is what was on screen. The typed question
 was written there, so it stays there, and the letter typed under it stays with
 it. The panel stood in the rows above the box and those rows were given back,
-so it leaves nothing — not the question, and not the answer either. What a yes leaves
-behind is the call's own result on the row beneath it, which is the row the
-reader was waiting for; a line saying "Yes, and don't ask again this session"
-between a call and its result says nothing the result does not.
+so it leaves nothing: not the question, and not the answer either. What a yes
+leaves behind is the call's own result on the row beneath it, which is the row
+the reader was waiting for; a line saying "Yes, and don't ask again this
+session" between a call and its result says nothing the result does not.
 
 A no leaves its trace the same way, because a refusal comes back as that call's
 result and is drawn as one. So the record is the same shape however the verdict
@@ -134,7 +135,7 @@ reading, and not evidence: what would actually happen is the line at the top.
 
 The paragraphs are the first thing on the panel to give way. The command, the
 sentence and the three answers are its floor and are never traded for room, so
-where the window is short it is the prose that gets less of it — down to none,
+where the window is short it is the prose that gets less of it, down to none,
 which is a call whose explanation cannot be opened in a terminal that size.
 Where they run past the room there is, the last row of them counts what is
 underneath, `↑` and `↓` move the window, and the count falls as you go until
@@ -143,7 +144,7 @@ them.
 
 Where the paragraphs fit whole there is nothing to scroll, so the arrows go on
 moving the mark. And a call that sent none gets the panel that was there before
-any of this, footer included — the key is named where it does something, and
+any of this, footer included. The key is named where it does something, and
 nowhere else.
 
 ## The three answers
@@ -157,7 +158,7 @@ nowhere else.
 **Anything else** is the typed question's third answer, and it means exactly
 that: `n`, `no`, an empty line, a typo, or the input ending. There are two ways
 to say yes and both are explicit; everything that is not one of them leaves the
-tool unrun. At the panel there is no anything-else — every key that answers is
+tool unrun. At the panel there is no anything-else: every key that answers is
 one of the three, and `esc` is how to refuse without choosing one.
 
 `s` is the answer for a command you will run twenty times this afternoon and
@@ -169,15 +170,15 @@ effect.
 
 Your no ends the turn. The refusal is written into the transcript as that
 call's result, so the transcript stays one a provider will accept and the
-model sees the refusal on your next prompt — but it does not carry on and try
+model sees the refusal on your next prompt, but it does not carry on and try
 something else within the turn you stopped. That is deliberate: a model that
 can keep going after a no gets to ask the same question in a different shape
 until one of them is answered yes.
 
 A `deny` rule's no does not end the turn. A rule is standing policy: the call
 comes back to the model as a failed result saying the policy will not change,
-and the turn carries on. That costs you nothing — a retry hits the same wall
-without a question — while ending the turn on a rule match would let one stray
+and the turn carries on. That costs you nothing (a retry hits the same wall
+without a question), while ending the turn on a rule match would let one stray
 call throw away a piece of work. In a sentence: a rule stops a call, you stop
 a turn.
 
@@ -190,12 +191,12 @@ Both durations remember exactly what the question named.
   and `edit` is separate too.
 - For a command, it is the tool **and the whole command**, with runs of
   whitespace collapsed. `session` on `cargo test` stops asking about
-  `cargo test`; `cargo build` — same program, different command — asks again.
-  Standing permission for a family of commands is a job for an
+  `cargo test`; `cargo build`, the same program but a different command, asks
+  again. Standing permission for a family of commands is a job for an
   [allow rule](rules.md), which is written down where you can read it back.
 
 A session-long allow lives as long as the process that made it and is never
-written to disk, so `--continue` starts with none — resuming a session does
+written to disk, so `--continue` starts with none. Resuming a session does
 not resume its permissions, and the mode comes fresh from configuration at
 every start.
 
@@ -230,6 +231,6 @@ program rather than a rule contributors remember.
 
 Reading is not an exception to that; it is a question answered without being
 asked. The permission engine mints the proof for a read-only call itself
-instead of putting it to you — after the rules have spoken, which is how a
-`deny` still reaches a read — so a tool that reported the wrong sensitivity
+instead of putting it to you (after the rules have spoken, which is how a
+`deny` still reaches a read), so a tool that reported the wrong sensitivity
 would be one that got the wrong question, never one that skipped the check.
