@@ -182,7 +182,7 @@ out, since drawn it would move a cursor this process had already placed.
 
 <kbd>Ctrl+V</kbd> reads an image from the operating-system clipboard. It
 imports the PNG into the session's private attachment store and puts a marker
-such as `[image 1]` in the box, numbered in the order the images were pasted;
+such as `[Image #1]` in the box, numbered in the order the images were pasted;
 ordinary text paste still uses the terminal's paste action. The marker can be
 written into any later prompt of the same session to attach that image again,
 and a clipboard holding a copied image *file* (a path, or a `file://` address
