@@ -1693,12 +1693,10 @@ mod tests {
 
         let policy =
             SandboxDomainPolicy::new([], [], false, [], SandboxNetworkProvenance::User).unwrap();
-        let proxy = crate::network::Mediator::tcp(
-            policy,
-            SandboxId::new(),
-            Some(std::time::Duration::from_secs(5)),
-        )
-        .unwrap();
+        let deadline = Some(std::time::Duration::from_secs(5));
+        let proxy =
+            crate::network::Mediator::tcp(policy, SandboxId::new(), deadline, Arc::default())
+                .unwrap();
         let mut command = std::process::Command::new("/bin/sh");
         command.args([
             "-c",

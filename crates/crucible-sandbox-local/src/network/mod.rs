@@ -6,6 +6,17 @@
 //! Each plain HTTP connection forwards exactly one normalized request/body.
 //! Headers, queues, connections and buffers have fixed bounds. Cancellation owns
 //! listeners and relay workers; the process-wide OS resolver is never joined.
+//!
+//! A permitted connection leaves the way crucible's own request to the same
+//! host would ([`ProxyEnv::relay`]): straight to the checked address, or
+//! through an `http://` proxy with a `CONNECT` to that address. Straight
+//! includes past a SOCKS proxy that request connects past. The proxy is
+//! asked only after the host and address are both permitted, and it hears
+//! nothing of the command's own credential. An `https://` proxy, a SOCKS
+//! proxy that request refuses, and an address that cannot be used are
+//! refused with `502` rather than connected around, as is a proxy that
+//! cannot be reached or does not open the tunnel within the handshake's
+//! bound.
 
 mod body;
 mod request;
@@ -14,7 +25,7 @@ mod socket;
 mod stream;
 
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
-use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::AtomicU8;
@@ -23,10 +34,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 #[cfg(any(test, not(target_os = "linux")))]
-use std::net::TcpListener;
+use std::net::{Ipv4Addr, TcpListener};
 
 use base64::Engine as _;
-use crucible_sandbox::SandboxDomainPolicy;
+use crucible_http::{ConnectProxy, ProxyEnv, Relay};
+use crucible_sandbox::{SandboxDomainPolicy, SandboxNetworkEndpoint, SandboxNetworkProvenance};
 use crucible_types::SandboxId;
 
 use socket::{Listener, Socket};
@@ -35,6 +47,9 @@ use stream::{Lifetime, POLL, Stream};
 const CONNECTIONS: usize = 16;
 const HANDSHAKE: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a refusal is given to reach the command, however much of the
+/// handshake's bound deciding on it spent.
+const ANSWER: Duration = Duration::from_secs(1);
 /// How long the stop joins the listener's thread before giving it up.
 ///
 /// A normal shutdown is milliseconds: the accept loop ticks every [`POLL`]
@@ -86,22 +101,23 @@ impl Mediator {
         policy: SandboxDomainPolicy,
         id: SandboxId,
         duration: Option<Duration>,
+        upstream: Arc<ProxyEnv>,
     ) -> io::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
-        Self::start(Listener::Tcp(listener), address, policy, id, duration)
+        let mut mediator = Self::start(Listener::Tcp(listener), policy, id, duration, upstream)?;
+        mediator.address = address;
+        Ok(mediator)
     }
 
     fn start(
         listener: Listener,
-        address: SocketAddr,
         policy: SandboxDomainPolicy,
         id: SandboxId,
         duration: Option<Duration>,
+        upstream: Arc<ProxyEnv>,
     ) -> io::Result<Self> {
-        #[cfg(all(target_os = "linux", not(test)))]
-        let _ = address;
         let userinfo = credential()?;
         let authorization = format!(
             "Basic {}",
@@ -121,6 +137,7 @@ impl Mediator {
                 })
                 .transpose()?,
             authorization: authorization.clone(),
+            upstream,
             stop: Arc::clone(&stop),
             #[cfg(test)]
             fault: Arc::clone(&fault),
@@ -130,7 +147,7 @@ impl Mediator {
             .spawn(move || accept(listener, &Arc::new(context)))?;
         Ok(Self {
             #[cfg(any(test, not(target_os = "linux")))]
-            address,
+            address: (Ipv4Addr::LOCALHOST, 0).into(),
             #[cfg(test)]
             authorization,
             userinfo,
@@ -150,17 +167,12 @@ impl Mediator {
         policy: SandboxDomainPolicy,
         id: SandboxId,
         duration: Option<Duration>,
+        upstream: Arc<ProxyEnv>,
     ) -> io::Result<Self> {
         let listener = socket::listen_unix(path)?;
         let owned = socket::UnixPath::bound(path)?;
         listener.set_nonblocking(true)?;
-        let mut mediator = Self::start(
-            Listener::Unix(listener),
-            (Ipv4Addr::LOCALHOST, 0).into(),
-            policy,
-            id,
-            duration,
-        )?;
+        let mut mediator = Self::start(Listener::Unix(listener), policy, id, duration, upstream)?;
         mediator.socket_path = Some(owned);
         Ok(mediator)
     }
@@ -290,6 +302,8 @@ struct Context {
     id: SandboxId,
     deadline: Option<Instant>,
     authorization: String,
+    /// The proxy settings a permitted connection is routed by.
+    upstream: Arc<ProxyEnv>,
     stop: Arc<AtomicBool>,
     #[cfg(test)]
     fault: Arc<AtomicU8>,
@@ -376,17 +390,26 @@ fn serve(socket: Socket, context: &Context) -> io::Result<()> {
     );
     let stream = Stream::new(socket, Arc::clone(&life))?;
     let mut client = BufReader::with_capacity(8192, stream);
-    let prepared = prepare(&mut client, context, &life);
-    let Ok((request, origin)) = prepared else {
-        let _ = client
-            .get_mut()
-            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-        client.get_ref().shutdown(Shutdown::Both);
-        return Ok(());
+    let (request, mut origin) = match prepare(&mut client, context, &life) {
+        Ok(prepared) => prepared,
+        Err(refusal) => {
+            let answering = Instant::now() + ANSWER;
+            client.get_mut().following(Lifetime::new(
+                Some(
+                    context
+                        .deadline
+                        .map_or(answering, |deadline| deadline.min(answering)),
+                ),
+                Arc::clone(&context.stop),
+            ));
+            let _ = client.get_mut().write_all(&refusal.answer());
+            client.get_ref().shutdown(Shutdown::Both);
+            return Ok(());
+        }
     };
     let life = Lifetime::new(context.deadline, Arc::clone(&context.stop));
     client.get_mut().following(Arc::clone(&life));
-    let mut origin = Stream::new(origin, Arc::clone(&life))?;
+    origin.following(Arc::clone(&life));
     if request.tunnel {
         if client
             .get_mut()
@@ -449,35 +472,176 @@ fn serve(socket: Socket, context: &Context) -> io::Result<()> {
     Ok(())
 }
 
+/// Why a command's connection was answered rather than made.
+#[derive(Clone, Copy)]
+enum Refusal {
+    /// Malformed, unauthorized or denied, or no permitted address answered.
+    Denied,
+    /// The proxy crucible's environment names would not carry it.
+    Upstream(Upstream),
+}
+
+/// What kept the proxy crucible's environment names from carrying a
+/// permitted connection.
+#[derive(Clone, Copy)]
+enum Upstream {
+    /// It is not a usable `http://` proxy, the only kind spoken to here, nor
+    /// a SOCKS one connected past.
+    Unsupported,
+    /// No connection to it could be made, or the request not written.
+    Unreachable,
+    /// It answered the `CONNECT` with this status instead of a tunnel.
+    Refused(u16),
+    /// It answered nothing a tunnel could be taken from within the bound.
+    Unanswered,
+}
+
+impl Refusal {
+    /// What the command is told: `403` for anything it asked for that was
+    /// not allowed or not there, and `502` with one line saying why when the
+    /// proxy it has to go through would not carry it. Neither says anything
+    /// of that proxy's address or credential.
+    fn answer(self) -> Vec<u8> {
+        let reason = match self {
+            Self::Denied => {
+                return b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_vec();
+            }
+            Self::Upstream(Upstream::Unsupported) => "the proxy in crucible's environment cannot carry a sandboxed command's traffic: only a usable http:// proxy can\n".to_owned(),
+            Self::Upstream(Upstream::Unreachable) => {
+                "the proxy in crucible's environment could not be reached\n".to_owned()
+            }
+            Self::Upstream(Upstream::Refused(status)) => format!(
+                "the proxy in crucible's environment refused the connection with status {status}\n"
+            ),
+            Self::Upstream(Upstream::Unanswered) => {
+                "the proxy in crucible's environment gave no usable answer\n".to_owned()
+            }
+        };
+        format!(
+            "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reason}",
+            reason.len()
+        )
+        .into_bytes()
+    }
+}
+
+/// The request a command made and the connection that carries it, once
+/// everything it asked for was checked and reached.
+///
+/// Nothing leaves this machine until the host and the address are both
+/// permitted. The proxy settings are asked about the host the command named,
+/// as crucible's own request to it would be, and a tunnel through a proxy is
+/// asked for the checked address rather than that name, so what the proxy
+/// reaches is what the policy permitted.
 fn prepare(
     client: &mut BufReader<Stream>,
     context: &Context,
     life: &Arc<Lifetime>,
-) -> io::Result<(request::Request, TcpStream)> {
-    let header = read_header(client)?;
-    let request = request::parse(&header, context.authorization.as_bytes(), &context.policy)?;
-    let addresses = resolver::resolve(request.endpoint.clone(), context.id, life)?;
+) -> Result<(request::Request, Stream), Refusal> {
+    let header = read_header(client).map_err(|_| Refusal::Denied)?;
+    let request = request::parse(&header, context.authorization.as_bytes(), &context.policy)
+        .map_err(|_| Refusal::Denied)?;
+    let relay = context.upstream.relay(request.endpoint.host());
+    let addresses = resolver::resolve(request.endpoint.clone(), context.id, life)
+        .map_err(|_| Refusal::Denied)?;
+    let mut refusal = Refusal::Denied;
     for address in addresses {
-        life.check()?;
+        if life.check().is_err() {
+            break;
+        }
         if !context.policy.permits_address(address.ip()) {
             continue;
         }
+        let reached = match relay {
+            Relay::Direct => dial([address], life)
+                .and_then(|origin| Stream::new(origin, Arc::clone(life)).ok())
+                .ok_or(Refusal::Denied),
+            Relay::Through(proxy) => {
+                tunnel(proxy, address, context.id, life).map_err(Refusal::Upstream)
+            }
+            Relay::Unsupported => Err(Refusal::Upstream(Upstream::Unsupported)),
+        };
+        match reached {
+            Ok(origin) if life.check().is_ok() => return Ok((request, origin)),
+            Ok(_) => return Err(refusal),
+            // Every other address goes to the same proxy, with the same result.
+            Err(Refusal::Upstream(problem @ (Upstream::Unsupported | Upstream::Unreachable))) => {
+                return Err(Refusal::Upstream(problem));
+            }
+            Err(problem) => refusal = problem,
+        }
+    }
+    Err(refusal)
+}
+
+/// A connection to the first of `addresses` that answers within `life`.
+fn dial(addresses: impl IntoIterator<Item = SocketAddr>, life: &Lifetime) -> Option<TcpStream> {
+    for address in addresses {
+        life.check().ok()?;
         let remaining = life
             .remaining()
             .unwrap_or(CONNECT_TIMEOUT)
             .min(CONNECT_TIMEOUT);
         if remaining.is_zero() {
-            break;
+            return None;
         }
-        if let Ok(origin) = TcpStream::connect_timeout(&address, remaining) {
-            life.check()?;
-            return Ok((request, origin));
+        if let Ok(connection) = TcpStream::connect_timeout(&address, remaining) {
+            return Some(connection);
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "sandbox proxy target unavailable or denied",
-    ))
+    None
+}
+
+/// A tunnel to the permitted `target` through `proxy`, opened within `life`.
+///
+/// The proxy is the user's own, named by crucible's environment rather than
+/// by the command, so its address is not held to the command's policy. Its
+/// answer is read a byte at a time under the ceiling a command's own request
+/// head has, so a far end that speaks first loses nothing to this read, and
+/// only a `2xx` opens the tunnel.
+///
+/// The target is asked for in the form the policy checked it in: an IPv4
+/// address written as IPv6 is written as IPv4, and an IPv6 address loses its
+/// scope, which has no meaning on the proxy's machine and no place in an
+/// authority.
+fn tunnel(
+    proxy: &ConnectProxy,
+    target: SocketAddr,
+    command: SandboxId,
+    life: &Arc<Lifetime>,
+) -> Result<Stream, Upstream> {
+    let at =
+        SandboxNetworkEndpoint::new(proxy.host(), proxy.port(), SandboxNetworkProvenance::User)
+            .map_err(|_| Upstream::Unreachable)?;
+    let addresses = resolver::resolve(at, command, life).map_err(|_| Upstream::Unreachable)?;
+    let connection = dial(addresses, life).ok_or(Upstream::Unreachable)?;
+    let mut upstream =
+        Stream::new(connection, Arc::clone(life)).map_err(|_| Upstream::Unreachable)?;
+    let target = SocketAddr::new(target.ip().to_canonical(), target.port());
+    let mut head = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n").into_bytes();
+    for (name, value) in &proxy.headers() {
+        head.extend_from_slice(name.as_str().as_bytes());
+        head.extend_from_slice(b": ");
+        head.extend_from_slice(value.as_bytes());
+        head.extend_from_slice(b"\r\n");
+    }
+    head.extend_from_slice(b"\r\n");
+    upstream
+        .write_all(&head)
+        .map_err(|_| Upstream::Unreachable)?;
+    let answer = read_header(&mut BufReader::with_capacity(1, &mut upstream))
+        .map_err(|_| Upstream::Unanswered)?;
+    let mut fields = [httparse::EMPTY_HEADER; 64];
+    let mut parsed = httparse::Response::new(&mut fields);
+    if parsed.parse(&answer).ok() != Some(httparse::Status::Complete(answer.len())) {
+        return Err(Upstream::Unanswered);
+    }
+    match parsed.code {
+        Some(200..=299) => Ok(upstream),
+        Some(status) => Err(Upstream::Refused(status)),
+        None => Err(Upstream::Unanswered),
+    }
 }
 
 fn read_header(source: &mut impl io::BufRead) -> io::Result<Vec<u8>> {

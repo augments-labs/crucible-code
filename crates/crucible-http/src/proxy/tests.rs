@@ -1,4 +1,4 @@
-use super::{ProxyEnv, Route, select};
+use super::{ProxyEnv, Relay, Route, select};
 
 /// Variables set, a target, and where a request for it goes.
 type Row<'a> = (&'a [(&'a str, &'a str)], &'a str, &'a str);
@@ -253,5 +253,118 @@ fn a_tunnel_says_what_the_previous_client_said_and_keeps_its_credential_hidden()
     for shown in [format!("{env:?}"), format!("{headers:?}")] {
         assert!(!shown.contains("secret"), "{shown}");
         assert!(!shown.contains("dXNlcjpzZWNyZXQ="), "{shown}");
+    }
+}
+
+/// How a relayed connection to `host` leaves when the environment holds only
+/// `vars`: `direct`, `unsupported`, or the host and port of the proxy it is
+/// sent through and the credential that proxy is sent.
+fn relay(vars: &[(&str, &str)], host: &str) -> String {
+    let env = env(vars);
+    match env.relay(host) {
+        Relay::Direct => "direct".to_owned(),
+        Relay::Unsupported => "unsupported".to_owned(),
+        Relay::Through(proxy) => match proxy.headers().get("proxy-authorization") {
+            Some(basic) => format!(
+                "{} {} {}",
+                proxy.host(),
+                proxy.port(),
+                basic.to_str().unwrap()
+            ),
+            None => format!("{} {}", proxy.host(), proxy.port()),
+        },
+    }
+}
+
+/// A relayed connection is chosen a route from the same settings a request
+/// is, with `NO_PROXY` matched the same way and an IPv6 host matched with
+/// its brackets, but only an `http://` proxy carries it. A SOCKS proxy a
+/// request connects past is connected past here too; one a request would
+/// reach over TLS, or refuses, is one a relay cannot go through, and so
+/// the connection does not go at all.
+#[test]
+fn a_relay_goes_through_an_http_proxy_past_a_socks_one_and_never_around_another() {
+    let proxied = ("HTTPS_PROXY", "http://p:3128");
+    let rows: &[Row<'_>] = &[
+        (&[], "a.test", "direct"),
+        (
+            &[("HTTPS_PROXY", "http://user:secret@p:3128")],
+            "a.test",
+            "p 3128 Basic dXNlcjpzZWNyZXQ=",
+        ),
+        (&[("ALL_PROXY", "p:3128")], "a.test", "p 3128"),
+        (&[("HTTPS_PROXY", "http://p")], "a.test", "p 80"),
+        (
+            &[("HTTPS_PROXY", "http://[::1]:3128")],
+            "a.test",
+            "::1 3128",
+        ),
+        (&[proxied, ("NO_PROXY", "a.test")], "a.test", "direct"),
+        (&[proxied, ("NO_PROXY", "a.test")], "b.test", "p 3128"),
+        (&[proxied, ("NO_PROXY", ".test")], "A.TEST", "direct"),
+        (&[proxied, ("NO_PROXY", "127.0.0.1")], "127.0.0.1", "direct"),
+        (&[proxied, ("NO_PROXY", "[::1]")], "::1", "direct"),
+        (&[proxied, ("NO_PROXY", "[::1]")], "[::1]", "direct"),
+        (&[proxied, ("NO_PROXY", "::1")], "::1", "p 3128"),
+        (
+            &[("HTTPS_PROXY", "https://p:3128")],
+            "a.test",
+            "unsupported",
+        ),
+        (&[("HTTPS_PROXY", "socks5://p:1080")], "a.test", "direct"),
+        (
+            &[("HTTPS_PROXY", "socks5h://p:1080")],
+            "a.test",
+            "unsupported",
+        ),
+        (&[("HTTPS_PROXY", "socks4://p:1080")], "a.test", "direct"),
+        (
+            &[("HTTPS_PROXY", "socks4a://p:1080")],
+            "a.test",
+            "unsupported",
+        ),
+        (&[("HTTPS_PROXY", "socks://p:1080")], "a.test", "direct"),
+        (
+            &[("HTTPS_PROXY", "http://[a@p]:1")],
+            "a.test",
+            "unsupported",
+        ),
+        (
+            &[("HTTPS_PROXY", "socks5://p:1080"), ("NO_PROXY", "a.test")],
+            "a.test",
+            "direct",
+        ),
+        (
+            &[("HTTPS_PROXY", "https://p:3128"), ("NO_PROXY", "*")],
+            "a.test",
+            "direct",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (vars, host, expected) in rows {
+        let chosen = relay(vars, host);
+        if chosen != *expected {
+            wrong.push(format!("{vars:?} {host}: {chosen}, expected {expected}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// What a relay is sent through shows, in its `Debug`, neither the proxy's
+/// address nor its credential.
+#[test]
+fn a_relay_shows_nothing_of_the_proxy_it_goes_through() {
+    let env = env(&[("HTTPS_PROXY", "http://user:secret@proxy.corp.test:3128")]);
+    let relay = env.relay("a.test");
+    assert!(matches!(relay, Relay::Through(_)), "{relay:?}");
+    let shown = format!("{relay:?}");
+    for hidden in [
+        "user",
+        "secret",
+        "dXNlcjpzZWNyZXQ=",
+        "proxy.corp.test",
+        "3128",
+    ] {
+        assert!(!shown.contains(hidden), "{hidden} in {shown}");
     }
 }

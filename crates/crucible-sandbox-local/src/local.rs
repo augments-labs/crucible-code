@@ -4,6 +4,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use crucible_http::ProxyEnv;
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
@@ -53,12 +54,23 @@ use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 /// of what it wrote, run on a dedicated per-command thread launched through the
 /// service's bound, at most sixteen at once, rather than on whoever asks how
 /// the command ended.
+///
+/// # The proxy a command's allowed traffic leaves through
+///
+/// On Linux and macOS a command allowed some domains reaches them only through
+/// a private proxy of its own. That proxy connects straight to each permitted
+/// address unless [`Self::through`] names proxy settings that apply to the
+/// host, in which case it goes the way crucible's own request to that host
+/// would: tunnelled through an `http://` proxy, connected past a SOCKS proxy
+/// that request connects past, or refused.
 #[derive(Debug, Clone, Default)]
 pub struct LocalSandbox {
     active: Arc<AtomicUsize>,
     runtime: Option<tokio::runtime::Handle>,
     #[cfg(target_os = "linux")]
     publications: super::linux::BoundedPublication,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    upstream: Arc<ProxyEnv>,
 }
 
 impl LocalSandbox {
@@ -76,6 +88,25 @@ impl LocalSandbox {
     #[must_use]
     pub fn watching_on(mut self, runtime: tokio::runtime::Handle) -> Self {
         self.runtime = Some(runtime);
+        self
+    }
+
+    /// This service, sending each command's allowed traffic through the
+    /// proxy `upstream` names for its host, as crucible's own requests are.
+    ///
+    /// Only an `http://` proxy can carry it. A SOCKS proxy crucible's own
+    /// requests connect past is connected past here too; under any other
+    /// proxy that applies to a host, a command's connections to that host are
+    /// refused rather than made directly. Windows confines no traffic by
+    /// domain, so there it changes nothing.
+    #[must_use]
+    pub fn through(mut self, upstream: ProxyEnv) -> Self {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            self.upstream = Arc::new(upstream);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let _ = upstream;
         self
     }
 
@@ -161,11 +192,17 @@ fn enforcing(
     let runtime = service.runtime.clone();
     #[cfg(target_os = "linux")]
     {
-        super::linux::prepare(request, active, runtime, service.publications.clone())
+        super::linux::prepare(
+            request,
+            active,
+            runtime,
+            service.publications.clone(),
+            Arc::clone(&service.upstream),
+        )
     }
     #[cfg(target_os = "macos")]
     {
-        super::macos::prepare(request, active, runtime)
+        super::macos::prepare(request, active, runtime, Arc::clone(&service.upstream))
     }
     #[cfg(target_os = "windows")]
     {

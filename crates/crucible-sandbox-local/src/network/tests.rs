@@ -2,12 +2,21 @@
 
 use std::io::{BufRead as _, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crucible_http::ProxyEnv;
 use crucible_sandbox::{SandboxDomainPattern, SandboxDomainPolicy, SandboxNetworkProvenance};
 use crucible_types::SandboxId;
 
 use super::Mediator;
+
+mod upstream;
+
+/// The proxy settings of an environment that names no proxy.
+fn direct() -> Arc<ProxyEnv> {
+    Arc::default()
+}
 
 fn policy(allow: bool) -> SandboxDomainPolicy {
     SandboxDomainPolicy::new(
@@ -38,8 +47,13 @@ fn an_authenticated_tunnel_reaches_only_an_authorized_pinned_address() {
         assert_eq!(&bytes, b"ping");
         stream.write_all(b"pong").unwrap();
     });
-    let proxy =
-        Mediator::tcp(policy(true), SandboxId::new(), Some(Duration::from_secs(5))).unwrap();
+    let proxy = Mediator::tcp(
+        policy(true),
+        SandboxId::new(),
+        Some(Duration::from_secs(5)),
+        direct(),
+    )
+    .unwrap();
     let mut stream = TcpStream::connect(proxy.address()).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -66,12 +80,18 @@ fn refused_targets_and_other_command_credentials_never_reach_the_origin() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = listener.local_addr().unwrap();
-    let allowed =
-        Mediator::tcp(policy(true), SandboxId::new(), Some(Duration::from_secs(5))).unwrap();
+    let allowed = Mediator::tcp(
+        policy(true),
+        SandboxId::new(),
+        Some(Duration::from_secs(5)),
+        direct(),
+    )
+    .unwrap();
     let denied = Mediator::tcp(
         policy(false),
         SandboxId::new(),
         Some(Duration::from_secs(5)),
+        direct(),
     )
     .unwrap();
     for (address, authorization) in [
@@ -99,8 +119,13 @@ fn refused_targets_and_other_command_credentials_never_reach_the_origin() {
 
 #[test]
 fn an_idle_client_does_not_keep_a_cancelled_mediator_or_listener_alive() {
-    let proxy =
-        Mediator::tcp(policy(true), SandboxId::new(), Some(Duration::from_mins(1))).unwrap();
+    let proxy = Mediator::tcp(
+        policy(true),
+        SandboxId::new(),
+        Some(Duration::from_mins(1)),
+        direct(),
+    )
+    .unwrap();
     let address = proxy.address();
     let mut stream = TcpStream::connect(address).unwrap();
     stream
@@ -149,6 +174,7 @@ fn the_private_unix_transport_enforces_the_same_authenticated_policy() {
         policy(false),
         SandboxId::new(),
         Some(Duration::from_secs(5)),
+        direct(),
     )
     .unwrap();
     let mut stream = UnixStream::connect(&path).unwrap();
@@ -176,7 +202,7 @@ fn a_hung_mediator_is_stopped_within_its_bound_and_reports_failed_cleanup() {
     // bound, not joined without end.
     const MARGIN: Duration = Duration::from_secs(10);
 
-    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None).unwrap();
+    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None, direct()).unwrap();
     proxy.hang_listener();
     let started = Instant::now();
     let stopped = proxy.stop();
@@ -206,6 +232,7 @@ fn listener_failure_cannot_be_erased_by_a_second_stop() {
         policy(false),
         SandboxId::new(),
         Some(Duration::from_secs(5)),
+        direct(),
     )
     .unwrap();
     proxy.stop().unwrap();
@@ -221,7 +248,7 @@ fn listener_failure_cannot_be_erased_by_a_second_stop() {
 
 #[test]
 fn relay_thread_creation_failure_reaches_mediator_cleanup() {
-    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None).unwrap();
+    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None, direct()).unwrap();
     proxy.inject_relay_spawn_failure();
     let mut client = TcpStream::connect(proxy.address()).unwrap();
     client
@@ -236,7 +263,7 @@ fn relay_thread_creation_failure_reaches_mediator_cleanup() {
 fn response_worker_panic_reaches_mediator_cleanup() {
     let origin = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = origin.local_addr().unwrap();
-    let mut proxy = Mediator::tcp(policy(true), SandboxId::new(), None).unwrap();
+    let mut proxy = Mediator::tcp(policy(true), SandboxId::new(), None, direct()).unwrap();
     proxy.inject_response_panic();
     let mut client = TcpStream::connect(proxy.address()).unwrap();
     client
@@ -261,7 +288,7 @@ fn response_worker_panic_reaches_mediator_cleanup() {
 
 #[test]
 fn no_command_deadline_keeps_the_mediator_owned_until_stop() {
-    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None).unwrap();
+    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None, direct()).unwrap();
     std::thread::sleep(Duration::from_millis(150));
     let mut client = TcpStream::connect(proxy.address()).unwrap();
     client
@@ -284,6 +311,7 @@ fn proxy_environment_encodes_each_commands_credential_and_clears_bypasses() {
         policy(false),
         SandboxId::new(),
         Some(Duration::from_secs(5)),
+        direct(),
     )
     .unwrap();
     let endpoint = "127.0.0.1:31337".parse().unwrap();
@@ -349,7 +377,13 @@ fn hostname_resolution_requires_private_address_consent_and_respects_denies() {
             SandboxNetworkProvenance::User,
         )
         .unwrap();
-        let proxy = Mediator::tcp(policy, SandboxId::new(), Some(Duration::from_secs(8))).unwrap();
+        let proxy = Mediator::tcp(
+            policy,
+            SandboxId::new(),
+            Some(Duration::from_secs(8)),
+            direct(),
+        )
+        .unwrap();
         let mut client = TcpStream::connect(proxy.address()).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(6)))

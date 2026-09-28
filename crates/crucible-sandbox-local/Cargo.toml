@@ -20,7 +20,12 @@ authors.workspace = true
 # Basic-auth header it is admitted with, and `getrandom` draws the credential
 # that header carries. `sha2` seals what a sandbox was admitted on, so a
 # resumed run can tell a frame apart from a frame edited under it.
+#
+# `crucible-http` owns which proxy crucible's own requests go through, and
+# `NO_PROXY`; the private proxy asks it the same question for a host a command
+# was allowed, so the traffic of both leaves this machine the same way.
 [dependencies]
+crucible-http.workspace = true
 crucible-runtime.workspace = true
 crucible-sandbox.workspace = true
 crucible-sandbox-broker.workspace = true

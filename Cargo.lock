@@ -664,6 +664,7 @@ name = "crucible-sandbox-local"
 version = "0.43.1"
 dependencies = [
  "base64 0.23.1",
+ "crucible-http",
  "crucible-privacy",
  "crucible-runtime",
  "crucible-sandbox",
