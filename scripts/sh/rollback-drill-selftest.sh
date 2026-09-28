@@ -7,7 +7,7 @@
 #   2. the drill fails (exit 1, falsification held) when a fixture is
 #      corrupted in a way the previous binary must refuse.
 #
-# The previous binary is built once here, from the local v0.43.0 tag in a
+# The previous binary is built once here, from the local v0.43.1 tag in a
 # scratch worktree, and handed to both runs — so this also exercises the
 # drill's --prior-binary path. The drill's own default path (building the tag
 # itself) is covered by running the drill directly. Everything the drill or
@@ -18,7 +18,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 readonly DRILL=$PWD/scripts/sh/rollback-drill.sh
-readonly PRIOR_TAG=v0.43.0
+readonly PRIOR_TAG=v0.43.1
 
 failed=0
 say() {
