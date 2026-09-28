@@ -128,15 +128,18 @@ jobs:
             exit 1
           }
           echo "PRIOR_TAG=$tag" >>"$GITHUB_ENV"
+          # The runner image, since a binary built on a newer image may not
+          # start on an older one while a label rolls between them.
+          echo "PRIOR_IMAGE=${ImageOS:-unknown}" >>"$GITHUB_ENV"
           git fetch --depth=1 origin tag "$tag"
       # The previous binary depends on nothing but the tag and the platform, so
-      # it is built once per release and restored from the cache after that.
+      # it is restored from the cache once a run on `dev` has saved it.
       - name: Restore the previous release binary
         id: prior
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/prior-bin
-          key: rollback-prior-${{ runner.os }}-${{ runner.arch }}-${{ env.PRIOR_TAG }}
+          key: rollback-prior-${{ runner.os }}-${{ env.PRIOR_IMAGE }}-${{ runner.arch }}-${{ env.PRIOR_TAG }}
       # Built in a worktree of this checkout so the candidate tree is untouched.
       # No sandbox setup: the drill runs the binaries headless with redirected
       # input and compares replay, pending-action recovery and read-only
