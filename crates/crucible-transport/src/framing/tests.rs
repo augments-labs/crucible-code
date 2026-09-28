@@ -449,13 +449,24 @@ fn holds(case: &Case, how: &str, outcome: &Outcome) {
 
 #[tokio::test]
 async fn every_stream_comes_to_the_same_outcome_read_blocking_or_asynchronously() {
+    // One read size divides the ceiling and the other does not, so the
+    // ceiling falls between two reads in one run and inside a read in the
+    // other. Reads of a few bytes cost a megabyte stream a quarter of a
+    // million polls of the pipe and test no more arithmetic; the short
+    // streams are split at every byte by the test below.
     for case in cases() {
-        holds(&case, "blocking", &read_blocking(&case.sent, 4));
-        holds(
-            &case,
-            "asynchronously",
-            &read_asynchronously(case.sent.clone(), 4).await,
-        );
+        for size in [4096, 4099] {
+            holds(
+                &case,
+                &format!("blocking, {size} bytes a read"),
+                &read_blocking(&case.sent, size),
+            );
+            holds(
+                &case,
+                &format!("asynchronously, {size} bytes a read"),
+                &read_asynchronously(case.sent.clone(), size).await,
+            );
+        }
     }
 }
 
