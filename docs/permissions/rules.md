@@ -129,8 +129,10 @@ checkout. A deny in any layer still beats them.
 
 ## The model never sees them
 
-The rules are yours; they are not put into the system prompt. Telling the
-model what is denied would hand your security posture to something that reads
+The rules are yours; they are not put into the system prompt or the
+[facts the model is told](../sessions/context.md), whose permissions section
+names only the mode and what you allowed for this session. Telling the model
+what is denied would hand your security posture to something that reads
 instructions out of files in the workspace. It is also unnecessary: a denied
 call comes back as a cheap failed result, so the model learns each boundary by
 meeting it.
