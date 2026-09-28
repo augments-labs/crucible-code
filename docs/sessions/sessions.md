@@ -413,11 +413,11 @@ Nothing is decided for you. The one case where carrying it whole is right (you
 are about to ask about something said two hours ago) is the case crucible
 cannot see from here.
 
-Escape carries it whole, which is the answer that changes nothing. It means the
-same thing once the notes have started, where it stops them and leaves the
-session as it was. *Stop asking* writes `compaction.askOnResume` down as `0`;
-set it to a number of tokens instead to move the point where the question
-appears.
+Escape carries it whole, which is the answer that changes nothing. Pressed once
+the notes have started, it stops them and nothing is replaced, though old tool
+output cleared before the notes began stays cleared. *Stop asking* writes
+`compaction.askOnResume` down as `0`; set it to a number of tokens instead to
+move the point where the question appears.
 
 ## When recording stops
 
