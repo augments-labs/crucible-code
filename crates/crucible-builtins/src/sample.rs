@@ -151,6 +151,10 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
     digest.update(result.output.text().as_bytes());
     digest.update([u8::from(result.output.is_failed())]);
     let receipt = CallResultReceipt::from_digest(digest.finalize().into());
+    // Accepted where a runtime is running, as the runner accepts a result: one
+    // asked where none is, is refused.
+    let runtime = runtime();
+    let _entered = runtime.enter();
     crucible_runtime::answered!(pending.accept(receipt)).expect("test result acceptance");
 }
 

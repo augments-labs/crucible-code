@@ -134,6 +134,10 @@ fn started(
         };
         let receipt = crucible_runtime::answered!(JOURNAL.put_call_result(pending.key(), &result))
             .expect("the test journal stores the result");
+        // Accepted where a runtime is running, as the runner accepts a result:
+        // one asked where none is, is refused.
+        let runtime = runtime();
+        let _entered = runtime.enter();
         crucible_runtime::answered!(pending.accept(receipt))
             .expect("the detached command accepts its receipt");
     }

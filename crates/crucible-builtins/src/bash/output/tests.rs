@@ -257,6 +257,106 @@ fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
     crucible_runtime::answered!(process.stop()).unwrap();
 }
 
+/// A real command whose stop future panics when polled: only a stop run on
+/// the thread that holds it can end it.
+#[cfg(unix)]
+struct Unpolled(Box<dyn crucible_sandbox::SandboxProcess>);
+
+#[cfg(unix)]
+impl crucible_sandbox::SandboxProcess for Unpolled {
+    fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.0.try_wait()
+    }
+
+    fn ended(&mut self) -> bool {
+        self.0.ended()
+    }
+
+    fn stop(&mut self) -> crucible_runtime::BoxFuture<'_, io::Result<()>> {
+        Box::pin(async { panic!("the stop future was polled") })
+    }
+
+    fn stop_sync(&mut self) -> io::Result<()> {
+        self.0.stop_sync()
+    }
+
+    fn inspection(&self) -> &crucible_sandbox::SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> crucible_sandbox::SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<crucible_sandbox::SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_waited_command_is_stopped_without_its_stop_future_being_polled() {
+    let sample = crate::sample::Sample::new("bash-waited-stop");
+    let process = admitted(&sample, "sleep 5", &[]);
+    let runtime = crate::bash::tests::alone();
+    let mut waited = super::Waited::new(Box::new(Unpolled(process)));
+
+    let stopped = runtime
+        .block_on(waited.stop())
+        .expect("the command was stopped");
+
+    assert!(stopped.is_some(), "the stopped command was not reaped");
+}
+
+/// What a command left running when its shell returned is stopped by a stop
+/// run on the thread that holds it.
+#[cfg(unix)]
+#[test]
+fn what_an_exited_command_left_running_is_stopped_without_its_stop_future_being_polled() {
+    let sample = crate::sample::Sample::new("bash-waited-after-exit");
+    let base =
+        std::env::temp_dir().join(format!("crucible-bash-after-exit-{}", std::process::id()));
+    let forked = base.with_extension("forked");
+    let _ = std::fs::remove_file(&base);
+    let _ = std::fs::remove_file(&forked);
+    let mut process = admitted(
+        &sample,
+        "(sleep 0.3; printf x > \"$MARKER\") & printf f > \"$FORKED\"",
+        &[("MARKER", base.as_os_str()), ("FORKED", forked.as_os_str())],
+    );
+    let waiting = std::time::Instant::now();
+    while !forked.exists() || process.try_wait().expect("the shell's status").is_none() {
+        assert!(
+            waiting.elapsed() < std::time::Duration::from_secs(5),
+            "the shell never returned after forking a descendant"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let runtime = crate::bash::tests::alone();
+    let mut waited = super::Waited::new(Box::new(Unpolled(process)));
+
+    let finished = runtime.block_on(waited.finish_after_exit());
+    std::thread::sleep(std::time::Duration::from_millis(450));
+
+    let survived = base.exists();
+    let _ = std::fs::remove_file(&base);
+    let _ = std::fs::remove_file(&forked);
+    finished.expect("what the command left running was stopped");
+    assert!(!survived, "a descendant survived its shell's stop");
+}
+
 /// What a command leaves running does not outlive the command.
 ///
 /// Named for the outcome rather than for whichever participant produced it:

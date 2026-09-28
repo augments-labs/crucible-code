@@ -178,6 +178,20 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
         })
     }
 
+    fn stop_sync(&mut self) -> io::Result<()> {
+        while self.stalled.load(Ordering::Acquire) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.on_runtime.fetch_add(1, Ordering::AcqRel);
+        }
+        if self.denied.swap(false, Ordering::Relaxed) {
+            Err(io::Error::other(PRIVATE_ERROR))
+        } else {
+            self.inner.stop_sync()
+        }
+    }
+
     fn inspection(&self) -> &SandboxInspection {
         self.inner.inspection()
     }

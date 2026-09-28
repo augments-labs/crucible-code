@@ -62,6 +62,9 @@ struct Observed {
     complete_never: AtomicBool,
     /// While set, the next status look panics.
     look_panics: AtomicBool,
+    /// While set, polling its stop future panics: only a stop run on the
+    /// calling thread ends it.
+    stop_future_panics: AtomicBool,
 }
 
 impl Observed {
@@ -125,26 +128,34 @@ impl SandboxProcess for Process {
 
     fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
         Box::pin(async move {
-            self.observed.stall(&self.observed.stops_held);
-            self.observed.stops.fetch_add(1, Ordering::Relaxed);
-            if !self.observed.exited.load(Ordering::Relaxed) {
-                self.observed.stopped_early.store(true, Ordering::Relaxed);
-            }
-            if self.observed.cleanup_allowed.load(Ordering::Relaxed) {
-                // A stop that joins an already-ended publication lets it stand.
-                if self.observed.publish_on_stop.load(Ordering::Relaxed)
-                    && self.observed.ended.load(Ordering::Relaxed)
-                {
-                    self.observed.published.store(true, Ordering::Release);
-                }
-                // A stop that confirms the scope ended has reaped the leader, so a
-                // look after it answers, the way the real one does.
-                self.observed.exited.store(true, Ordering::Relaxed);
-                Ok(())
-            } else {
-                Err(io::Error::other("synthetic cleanup failure"))
-            }
+            assert!(
+                !self.observed.stop_future_panics.load(Ordering::Acquire),
+                "the stop future was polled"
+            );
+            SandboxProcess::stop_sync(self)
         })
+    }
+
+    fn stop_sync(&mut self) -> io::Result<()> {
+        self.observed.stall(&self.observed.stops_held);
+        self.observed.stops.fetch_add(1, Ordering::Relaxed);
+        if !self.observed.exited.load(Ordering::Relaxed) {
+            self.observed.stopped_early.store(true, Ordering::Relaxed);
+        }
+        if self.observed.cleanup_allowed.load(Ordering::Relaxed) {
+            // A stop that joins an already-ended publication lets it stand.
+            if self.observed.publish_on_stop.load(Ordering::Relaxed)
+                && self.observed.ended.load(Ordering::Relaxed)
+            {
+                self.observed.published.store(true, Ordering::Release);
+            }
+            // A stop that confirms the scope ended has reaped the leader, so a
+            // look after it answers, the way the real one does.
+            self.observed.exited.store(true, Ordering::Relaxed);
+            Ok(())
+        } else {
+            Err(io::Error::other("synthetic cleanup failure"))
+        }
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -263,7 +274,7 @@ fn keep(left: &Background, observed: &Arc<Observed>, accepting: bool) -> Kept {
     keeping(left, process(observed), accepting)
 }
 
-fn keeping(left: &Background, process: Process, accepting: bool) -> Kept {
+fn keeping(left: &Background, process: impl SandboxProcess + 'static, accepting: bool) -> Kept {
     let taken = crate::bash::tests::awaited(output::collect(
         Box::new(process),
         &output::Waiting {
@@ -333,6 +344,93 @@ fn failed_stop_keeps_the_process_and_its_capacity_until_cleanup_succeeds() {
         left.reported().is_empty(),
         "explicit stop is not a natural completion"
     );
+}
+
+#[test]
+fn a_kept_command_is_stopped_without_its_stop_future_being_polled() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    observed.stop_future_panics.store(true, Ordering::Release);
+    let number = keep(&left, &observed, false).number();
+
+    left.stop(number).expect("the stop was asked for");
+    waiting_until("the stopped command's entry going", || left.count() == 0);
+
+    assert_eq!(observed.stops.load(Ordering::Relaxed), 1);
+    assert!(observed.dropped.load(Ordering::Relaxed));
+}
+
+/// A backend that answers everything but a stop on the calling thread.
+struct Unsynchronised(Process);
+
+impl SandboxProcess for Unsynchronised {
+    fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        self.0.try_wait()
+    }
+
+    fn ended(&mut self) -> bool {
+        self.0.ended()
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        self.0.stop()
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+#[test]
+fn a_backend_with_no_synchronous_stop_is_refused_and_kept_for_retry() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let number = keeping(&left, Unsynchronised(process(&observed)), false).number();
+
+    left.stop(number).expect("the stop was asked for");
+    waiting_until("the refused stop", || refused(&left, number));
+    assert_eq!(left.count(), 1, "a refused stop released the entry");
+    assert!(left.running().iter().any(|entry| entry.number == number));
+    assert!(!observed.dropped.load(Ordering::Relaxed));
+
+    left.stop(number).expect("the stop was asked for again");
+    waiting_until("the retried stop, refused", || {
+        !asked(&left, number) && refused(&left, number)
+    });
+    assert_eq!(left.count(), 1);
+    assert!(!observed.dropped.load(Ordering::Relaxed));
+    assert_eq!(
+        observed.stops.load(Ordering::Relaxed),
+        0,
+        "a stop was run through the backend's future"
+    );
+
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
 }
 
 #[test]
@@ -1526,6 +1624,36 @@ fn a_ready_acceptance_answers_without_waiting() {
         "the admitted call was not recorded exactly once"
     );
     assert_eq!(*observed.completed.lock().unwrap(), Some(receipt));
+
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
+}
+
+#[test]
+fn an_acceptance_asked_off_a_runtime_is_refused_before_the_backend_hears_it() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    observed.cleanup_allowed.store(true, Ordering::Relaxed);
+    let kept = keep(&left, &observed, true);
+    let receipt = CallResultReceipt::from_digest([0x5a; 32]);
+
+    let accepted =
+        crucible_runtime::answered!(kept.acceptance().expect("pending receipt").accept(receipt));
+
+    assert!(
+        accepted.is_err(),
+        "an acceptance off a runtime was accepted"
+    );
+    assert_eq!(
+        observed.completions.load(Ordering::Acquire),
+        0,
+        "a lifecycle call was made off a runtime"
+    );
+    waiting_until("the refused acceptance's command ending", || {
+        left.count() == 0
+    });
+    assert!(observed.dropped.load(Ordering::Relaxed));
 
     drop(left);
     runtime.shutdown_timeout(Duration::from_secs(5));
