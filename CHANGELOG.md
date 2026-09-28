@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-09-28
+
+**Turns, tool calls, logins and the pipes of hosted servers now run as tasks
+on one runtime the application owns.** Esc therefore stops a web search or
+fetch, a login, or a turn waiting on a token renewal at once, and the renewal
+itself still finishes and is saved. `crucible config check` is new: it checks
+the effective configuration without starting anything. There is no managed
+installer or self-update in this release: install and upgrade with the same
+`install.sh` as 0.42.0.
+
 ### Removed
 
 - **`crucible-core` is gone.** It had become a crate of re-exports, and every
@@ -4411,7 +4421,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...v0.41.0
