@@ -163,7 +163,8 @@ paragraph should not mean restating the prompt you wanted to keep, and putting
 your own prompt in should not silently concatenate it with the one you were
 replacing. Neither reaches the workspace root, the tool list or the model's own
 name: those are what the session found out rather than something crucible has an
-opinion about.
+opinion about, and they are [sent as facts](../sessions/context.md) of their
+own.
 
 `custom` is one of the keys [workspace files](#the-workspace-files) may not set.
 What it replaces includes the lines about reading a file before changing it and
