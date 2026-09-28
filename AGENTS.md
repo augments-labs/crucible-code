@@ -133,7 +133,9 @@ Keep repository prose focused on shipped behavior and why the reader cares:
 
 - Commit: a conventional subject and at most one short paragraph explaining why.
 - Changelog: a bold lead and at most three sentences for someone deciding
-  whether to upgrade. Release notes reuse that entry.
+  whether to upgrade. A version section opens with a summary written the same
+  way, and the release notes are that summary, the comparison link and a link
+  to the changelog.
 - Pull request: follow the template, answering every section with one short
   paragraph and naming the test that failed before a behavior change.
 

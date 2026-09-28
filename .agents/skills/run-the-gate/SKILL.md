@@ -18,7 +18,7 @@ That compatibility command runs:
 ```bash
 scripts/sh/rust-checks.sh   # rustfmt, all-feature clippy, tests, rustdoc, generated agreement
 scripts/sh/repo-checks.sh   # cross-file repository policy
-scripts/sh/python-checks.sh # maintained harness fixtures and campaign reports
+scripts/sh/python-checks.sh # harness fixtures, campaign reports and this version's release notes
 ```
 
 CI calls the named scripts through their owning workflows. New ecosystems get

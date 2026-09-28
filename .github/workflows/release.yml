@@ -51,17 +51,10 @@ jobs:
         env:
           CRUCIBLE_TEST_REQUIRE_ENFORCING_SANDBOX: 1
 
+      # The section's summary and comparison link, not its whole list; the
+      # script says why and refuses a section it cannot write them from.
       - name: Release notes from the changelog
-        run: |
-          awk -v v="${GITHUB_REF_NAME#v}" '
-            $0 ~ "^## \\[" v "\\]" { on = 1; next }
-            on && /^## \[/         { exit }
-            on                     { print }
-          ' CHANGELOG.md >NOTES.md
-          if [[ ! -s NOTES.md ]]; then
-            echo "CHANGELOG.md has no section for ${GITHUB_REF_NAME#v}"
-            exit 1
-          fi
+        run: scripts/python/release-notes.py "${GITHUB_REF_NAME#v}" >NOTES.md
 
       - name: Stage release metadata
         run: |

@@ -74,6 +74,11 @@ same way afterwards.
 4. **The changelog is real.** Move everything under `Unreleased` into a new
    version section with today's date, and add the comparison link. Written for
    someone deciding whether to upgrade, not generated from commit subjects.
+   Open the section with a summary above its first `###` list: a bold lead and
+   at most three sentences saying what the release changes for that person.
+   The release page shows that summary, the comparison link and a link to the
+   changelog, and
+   `scripts/python/release-notes.py <version>` prints it as it will appear.
 5. **The install path works from scratch** — advisory for now: the release
    workflow still runs its smoke job but no longer waits for it before
    publishing, and this local run is
@@ -192,7 +197,8 @@ dependency workflow.
 
 Pushing the tag is the trigger. The release workflow builds every artifact,
 checksums and attests them, and opens the GitHub Release with the changelog
-section as its body.
+section's summary, its comparison link and a link to the full changelog as its
+body.
 
 ## Artifacts
 
