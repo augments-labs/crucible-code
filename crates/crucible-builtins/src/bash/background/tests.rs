@@ -1278,11 +1278,16 @@ fn a_command_whose_owner_never_ran_is_stopped_when_the_registry_goes() {
         );
         runtime.block_on(async { tokio::time::sleep(Duration::from_millis(1)).await });
     }
-
-    assert!(
-        observed.dropped.load(Ordering::Relaxed),
-        "a command whose owner never ran was not released with the registry"
-    );
+    // The stop is counted on the blocking pool, and the process is let go of
+    // only when the release task is next polled: a slow host can end the wait
+    // above between the two.
+    while !observed.dropped.load(Ordering::Relaxed) {
+        assert!(
+            Instant::now() < deadline,
+            "a command whose owner never ran was not released with the registry"
+        );
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(1)).await });
+    }
     drop(runtime);
 }
 
