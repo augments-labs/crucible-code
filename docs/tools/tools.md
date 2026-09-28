@@ -76,9 +76,11 @@ somebody `cat`'d by accident. Every tool here stops at 30000 bytes.
 `todo_write` is the one that does not arrive there with an ordinary plan. Its
 answer is the plan it just wrote, and a plan is bounded before it is written
 rather than after it is read — sixty-four tasks of at most 256 bytes each, a
-little over half that figure. Only a plan spelled mostly in quotes, backslashes
-or control characters, which the answer has to escape, can reach the cut, and
-it says so like any other.
+little over half that figure. The answer is measured escaped, though: a quote,
+backslash, tab, newline or carriage return counts twice, and most other control
+characters six times. A full plan with about four-fifths of its text in the
+first kind, or a sixth in the second, can reach the cut, and it says so like
+any other.
 
 A cut answer says so, in the answer:
 

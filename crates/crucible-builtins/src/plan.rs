@@ -433,9 +433,13 @@ fn refused(tasks: &[Task]) -> Option<String> {
 /// result still learns what the plan did.
 ///
 /// Bounded by the figures above rather than by [`crate::bound`]: sixty-four
-/// tasks of two hundred and fifty-six bytes is a fifth of what that module
-/// allows, and it is bounded before the plan is written rather than after it is
-/// read, so there is no answer here that could have been cut.
+/// tasks of two hundred and fifty-six bytes is a little over half of what that
+/// module allows, and it is bounded before the plan is written rather than
+/// after it is read. The answer is cut on its escaped size, though, where a
+/// quote, backslash, tab, newline or carriage return counts twice and most
+/// other control characters six times, so a full plan with about four-fifths
+/// of its text in the first kind, or a sixth in the second, can still reach
+/// the cut, and the answer then says so like any other.
 fn report(tasks: &[Task]) -> String {
     if tasks.is_empty() {
         return "the plan is empty".to_owned();
@@ -868,8 +872,8 @@ mod tests {
 
     #[test]
     fn the_fullest_plan_answers_well_inside_what_a_tool_may_answer_with() {
-        // The bounds are what stand in for `crate::bound` here, so they owe the
-        // same promise: no answer this tool produces was ever going to be cut.
+        // The bounds are what stand in for `crate::bound` here: a full plan of
+        // ordinary text answers well inside what a tool may answer with, uncut.
         let plan = Plan::new();
         let long: Vec<String> = (0..KEPT).map(|n| format!("{n:0>256}")).collect();
         let written: Vec<(&str, &str)> = long.iter().map(|task| (task.as_str(), OPEN)).collect();
