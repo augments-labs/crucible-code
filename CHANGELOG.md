@@ -8,6 +8,12 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **A release page is now the release's summary and a link to every change.**
+  It used to repeat the version's whole changelog section, which for 0.43.0 ran
+  to 471 lines. The full list stays in `CHANGELOG.md`, linked from the page.
+
 ### Fixed
 
 - **A session picked up after crucible died mid-turn keeps the tool calls that

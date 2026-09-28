@@ -33,6 +33,18 @@ if ! scripts/python/task-campaign.py validate --suite benchmarks/coding-tasks/su
     printf '    FAIL the coding-task campaign suite is not self-contained and valid\n'
     failed=1
 fi
+if ! PYTHONDONTWRITEBYTECODE=1 scripts/python/validate-release-notes.py; then
+    printf '    FAIL release notes are not the summary and comparison link of their section\n'
+    failed=1
+fi
+# The release workflow writes the body after the tag is pushed, where a refusal
+# leaves a tag to repair: the change that bumps the version is where a section
+# without a summary or comparison link has to stop.
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+if ! PYTHONDONTWRITEBYTECODE=1 scripts/python/release-notes.py "$version" >/dev/null; then
+    printf '    FAIL CHANGELOG.md cannot give %s its release notes\n' "$version"
+    failed=1
+fi
 
 if ((failed)); then
     exit 1
