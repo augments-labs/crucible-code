@@ -96,7 +96,9 @@ reading every remaining line and answering none of them.
 turn on and writes it to `~/.crucible/config.json` under the provider this run
 is set up for, so the next run starts with it. It writes `provider` beside it, so
 the next run asks the same vendor rather than settling that question again from
-whichever keys the shell is carrying. `/model` on its own stands a shelf over
+whichever keys the shell is carrying. A name that is empty, longer than 256
+bytes or holds a control character is refused with a line instead of being
+tried. `/model` on its own stands a shelf over
 the whole shell: a search line across the top, every provider this build serves
 in one pane beside the models in the other, and the rungs the marked model takes
 on a strip underneath, under the name of the one being asked now. Typing narrows
@@ -415,8 +417,10 @@ endpoint.
 Kimi Code uses RFC 8628 device authorization and is fixed to its managed coding
 endpoint. Its token exchange stays on `auth.kimi.com`, while the browser opens
 the authorization page on `www.kimi.com`; crucible accepts only those fixed
-HTTPS origins. Both refresh in the protected store. A configured `baseUrl` is
-never allowed to receive either token.
+HTTPS origins. Both refresh in the protected store, each request within 30
+seconds; a renewal runs once for everything waiting on that account, and Escape
+stops the turn without waiting for it. A configured `baseUrl` is never allowed
+to receive either token.
 
 Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
 are not a third-party authentication contract. Anthropic is reached with a

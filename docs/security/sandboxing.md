@@ -38,7 +38,9 @@ namespace starts. It is accepted only when it and every directory
 above it belong to root or to the user running Crucible and are writable by
 neither group nor others; a copy under `/tmp`, in another user's directory or
 below a group-writable directory is ignored, and `chmod g-w` on the offending
-directory is the remedy.
+directory is the remedy. When no copy qualifies, the error names each path it
+looked at and what turned it down, so a broker that was never built reads
+differently from one below a directory others can rewrite.
 
 The Linux view starts from an empty temporary root. It exposes only the minimal
 read-only runtime needed to execute the selected absolute program, the exact
@@ -94,9 +96,7 @@ foreign process when the existing signing policy allowed that metadata. The
 target's executable bytes and signing flags did not change, and the caller did
 not acquire its task port, credentials, entitlements, filesystem access, or
 network access. Crucible treats that validation bookkeeping as a trusted-OS
-effect rather than guest authority. The bounded TG2, TG3, and TG5 authority and
-effect checks remain a Phase 4B release gate on both supported macOS
-architectures; daemon resource-stress testing is outside that gate.
+effect rather than guest authority.
 
 ## Windows setup maintenance
 
@@ -186,8 +186,10 @@ IPv4 loopback port. Direct connections remain denied; enabling local binding
 or selected Unix sockets adds only those separately declared operations.
 Proxy credentials are unique to a command, replace inherited proxy settings,
 and are masked in captured stdout and stderr without changing byte counts or
-MCP framing. Listener and relay cleanup belongs to the command lifecycle;
-failed cleanup retains its resources and admission slot for recovery.
+MCP framing. Output cut by the output limit, or from a command crucible
+stopped, also masks any last few bytes that could begin the credential.
+Listener and relay cleanup belongs to the command lifecycle; failed cleanup
+retains its resources and admission slot for recovery.
 
 ## Platform support
 
