@@ -63,7 +63,7 @@ contributor machine. Its current children can also be run independently:
 ```bash
 scripts/sh/rust-checks.sh     # formatting, package isolation, clippy, tests, required cases and rustdoc
 scripts/sh/repo-checks.sh     # cross-file repository policy and crate layering
-scripts/sh/python-checks.sh   # canary and campaign harness fixtures and reports
+scripts/sh/python-checks.sh   # harness fixtures, campaign reports and this version's release notes
 ```
 
 `scripts/sh/repo-checks.sh` needs `python3` 3.11 or later: its crate-layering
