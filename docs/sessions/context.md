@@ -8,9 +8,9 @@ facts that changed are sent again. The request for notes a
 
 ## Instructions
 
-The instructions are crucible's own — how to hold a task, read before changing,
-and say where the work stands — in the tone you chose, plus whatever `append`
-adds or `custom` puts in their place; all three are
+The instructions are crucible's own: how to hold a task, read before changing
+and say where the work stands, in the tone you chose. `append` adds to them and
+`custom` puts your own in their place; all three are
 [`systemPrompt`](../configuration/configuration.md#systemprompt) keys. They are
 fixed when crucible starts and go in the provider's system field. Nothing about
 the session enters them, so a new model, a new tool or the date rolling over
@@ -46,7 +46,7 @@ crucible keeps what it last told the model, section by section, and compares
 before every request, including each one inside a turn:
 
 - **Nothing changed**: nothing is sent.
-- **A section changed**: only that section is sent, and it says what changed —
+- **A section changed**: only that section is sent, and it says what changed:
   `## Model changed` with the new model and effort after `/model`, or
   `## What you have changed` with the tools added and removed.
 - **The model has never been told**: the whole section is sent. That is every
@@ -77,8 +77,9 @@ sent, followed by a line recording the state behind them. `--continue` and
 what the model already knows rather than starting over. The tools section is
 always sent again, as a short change note: each run of crucible builds its
 tools afresh under a new generation, and the note names it along with any tool
-added or removed. Any other section is sent only if it changed — the date moved
-on, or you resume under another model. The mode and any session-long allow
+added or removed. Any other section is sent only if it changed, as when the
+date moved on or you resume under another model. The mode and any
+session-long allow
 [are not carried over](../permissions/modes.md#--continue-resumes-the-transcript-not-the-mode),
 so the model is told when they differ from what it last heard.
 
