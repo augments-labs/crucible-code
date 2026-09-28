@@ -599,7 +599,9 @@ fi
 # `http` is an HTTP client built for outgoing requests to share. It sends the
 # headers a credential was applied to and hands its connector's work back as a
 # runtime future, and it names nothing else in the workspace. `auth` sends
-# every account login and renewal request through it.
+# every account login and renewal request through it. `sandbox-local` asks it
+# which proxy, if any, carries a confined command's allowed traffic, so that
+# traffic and crucible's own requests are routed by the same settings.
 #
 # `provider` names `tools` for the source contract its web adapters answer;
 # `runner` names `tools`, `storage` and `sandbox` for what a tool is, what a turn
@@ -720,6 +722,7 @@ sandbox runtime
 sandbox storage
 sandbox types
 sandbox workspace
+sandbox-local http
 sandbox-local privacy
 sandbox-local runtime
 sandbox-local sandbox

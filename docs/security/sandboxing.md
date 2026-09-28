@@ -222,8 +222,16 @@ IPv4 loopback port. Direct connections remain denied; enabling local binding
 or selected Unix sockets adds only those separately declared operations.
 Proxy credentials are unique to a command, replace inherited proxy settings,
 and are masked in captured stdout and stderr without changing byte counts or
-MCP framing. Output cut by the output limit, or from a command crucible
-stopped, also masks any last few bytes that could begin the credential.
+MCP framing. A permitted connection leaves through the `http://` proxy named
+in the environment crucible was started in, unless `NO_PROXY` lists its host,
+as a `CONNECT` to the address the host proxy checked; the command sees neither
+that proxy's address nor its credential. Under an `https://` proxy, or a
+`socks4a://` or `socks5h://` one, permitted connections fail with `502` rather
+than bypassing it; a `socks://`, `socks4://` or `socks5://` proxy is passed by,
+as crucible's own requests pass it ([commands connect on their
+own](../providers/network.md#commands-connect-on-their-own)). Output cut by
+the output limit, or from a command crucible stopped, also masks any last few
+bytes that could begin the credential.
 Listener and relay cleanup belongs to the command lifecycle; failed cleanup
 retains its resources and admission slot for recovery.
 

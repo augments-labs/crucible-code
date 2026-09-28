@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 #[cfg(target_os = "macos")]
+use crucible_http::ProxyEnv;
+#[cfg(target_os = "macos")]
 use crucible_runtime::BoxFuture;
 #[cfg(target_os = "macos")]
 use crucible_sandbox::{
@@ -54,6 +56,7 @@ pub(super) fn prepare(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
     runtime: Option<tokio::runtime::Handle>,
+    upstream: Arc<ProxyEnv>,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     let excluded: Vec<_> = request
         .policy()
@@ -124,6 +127,7 @@ pub(super) fn prepare(
         scratch: Some(scratch),
         reservation: Some(reservation),
         runtime,
+        upstream,
         materialized: false,
         transferred: false,
     }))
@@ -226,6 +230,8 @@ struct MacSession {
     reservation: Option<Reservation>,
     /// Where each command's status is watched.
     runtime: Option<tokio::runtime::Handle>,
+    /// The proxy settings each command's allowed traffic is routed by.
+    upstream: Arc<ProxyEnv>,
     materialized: bool,
     transferred: bool,
 }
@@ -286,8 +292,12 @@ impl SandboxSession for MacSession {
             let duration = self.request.policy().limits().command_time;
             let mut mediator = match self.request.policy().network() {
                 SandboxNetworkPolicy::Domains(policy) if !policy.allowed().is_empty() => {
-                    match super::network::Mediator::tcp(policy.clone(), self.request.id(), duration)
-                    {
+                    match super::network::Mediator::tcp(
+                        policy.clone(),
+                        self.request.id(),
+                        duration,
+                        Arc::clone(&self.upstream),
+                    ) {
                         Ok(mediator) => Some(mediator),
                         Err(source) => {
                             let problem = SandboxError::Spawn(source);

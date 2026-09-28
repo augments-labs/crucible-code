@@ -367,7 +367,9 @@ UDP and application DNS do not acquire that grant. The host resolves permitted
 names, checks the resulting addresses before connecting, and evaluates each
 new proxy request independently. Private, loopback and metadata addresses need
 an explicit IP-literal grant; a wildcard or a public hostname resolving to a
-private address does not grant access by itself.
+private address does not grant access by itself. A permitted connection goes
+through the `http://` proxy crucible's own environment names, if any ([commands
+connect on their own](../providers/network.md#commands-connect-on-their-own)).
 
 `allowLocalBinding` allows local listeners; it does not grant host egress or
 publish a Linux namespace port onto the host. On macOS a local listener may

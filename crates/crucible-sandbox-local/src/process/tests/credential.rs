@@ -46,7 +46,12 @@ impl Stream for Script {
 fn proxy() -> io::Result<(Mediator, String)> {
     let policy = SandboxDomainPolicy::new([], [], false, [], SandboxNetworkProvenance::User)
         .map_err(io::Error::other)?;
-    let proxy = Mediator::tcp(policy, SandboxId::new(), Some(Duration::from_secs(5)))?;
+    let proxy = Mediator::tcp(
+        policy,
+        SandboxId::new(),
+        Some(Duration::from_secs(5)),
+        std::sync::Arc::default(),
+    )?;
     let userinfo = proxy
         .authorization()
         .strip_prefix("Basic ")
