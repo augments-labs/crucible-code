@@ -1768,6 +1768,12 @@ fn a_waiter_stop_that_cannot_clean_the_stage_leaves_a_terminal_rollback() {
     let original = std::fs::metadata(&stage)
         .expect("stage metadata")
         .permissions();
+    // Every admission first recovers the stages it finds, and refuses one that
+    // is not private as tampered with. Holding the registry keeps another
+    // test's admission out while this one is not; stopping does not take it.
+    let admissions =
+        super::transaction::RegistryLease::acquire(&request(&sample, SandboxManifest::empty()))
+            .expect("admissions kept out while the stage is changed");
     std::fs::set_permissions(
         &stage,
         <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o500),
@@ -1775,6 +1781,7 @@ fn a_waiter_stop_that_cannot_clean_the_stage_leaves_a_terminal_rollback() {
     .expect("a stage that cannot be cleaned");
     let stopped = crucible_runtime::answered!(process.stop());
     std::fs::set_permissions(&stage, original).expect("stage permissions restored");
+    drop(admissions);
 
     assert!(stopped.is_err(), "cleanup failure was reported as complete");
     let journal = super::transaction::tests::journaled(&stage).expect("the retained journal");
