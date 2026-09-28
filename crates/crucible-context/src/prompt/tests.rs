@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crucible_models::Effort;
 use crucible_tools::{
@@ -258,21 +258,61 @@ fn reordering_skills_does_not_report_still_present_entries_as_removed() {
 }
 
 #[test]
-fn the_tools_section_reports_the_exact_generation_it_snapshotted() {
+fn two_materializations_of_one_roster_are_one_tools_fact() {
+    // Each run materializes its tools under a generation of its own, and a
+    // session picked up by a later run is compared against what an earlier one
+    // recorded. Anything a run mints would make those two differ with every
+    // tool the same.
+    let earlier = ToolSnapshot::empty();
+    let later = ToolSnapshot::empty();
+    assert_ne!(earlier.generation(), later.generation());
+
+    let recorded = ToolsSection::new(&earlier).snapshot();
+
+    assert_eq!(recorded, ToolsSection::new(&later).snapshot());
+    assert!(
+        recorded.get("tools").is_some_and(Value::is_object),
+        "tools must be keyed: {recorded}"
+    );
+    assert!(
+        ToolsSection::new(&later)
+            .render(Seen::Known(&recorded))
+            .is_none()
+    );
+    let told = ToolsSection::new(&later)
+        .render(Seen::Known(&json!({ "tools": { "read": true } })))
+        .expect("a tool the earlier run had went away");
+    assert!(told.text().contains("read"), "{told:?}");
+    let rendered = ToolsSection::new(&earlier).render(Seen::Fresh).unwrap();
+    assert!(
+        !rendered.text().contains(earlier.generation().context_id()),
+        "{rendered:?}"
+    );
+}
+
+#[test]
+fn a_tools_state_an_earlier_release_recorded_is_compared_by_its_names() {
+    // Earlier releases recorded their run's generation label beside the names,
+    // and the sessions they wrote still hold it.
     let tools = ToolSnapshot::empty();
     let section = ToolsSection::new(&tools);
-    let state = section.snapshot();
-    let rendered = section.render(Seen::Fresh).unwrap();
+    let same = json!({ "generation": "0199a3f2-7c1e-7d10-8a3b-5b1f0c2d9e4a", "tools": {} });
+    let other = json!({
+        "generation": "0199a3f2-7c1e-7d10-8a3b-5b1f0c2d9e4a",
+        "tools": { "read": true },
+    });
 
-    let generation = state
-        .get("generation")
-        .and_then(|generation| generation.as_str())
-        .expect("a generation");
     assert!(
-        state.get("tools").is_some_and(Value::is_object),
-        "tools must be keyed: {state}"
+        section.render(Seen::Known(&same)).is_none(),
+        "the same names were told again"
     );
-    assert!(rendered.text().contains(generation), "{rendered:?}");
+    let changed = section
+        .render(Seen::Known(&other))
+        .expect("a tool went away");
+    assert_eq!(
+        changed.text(),
+        "## What you have changed\n\nTools no longer advertised: read."
+    );
 }
 
 #[test]
