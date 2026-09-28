@@ -12,4 +12,4 @@ that changes a file or starts a process.
 - [Security](security/index.md): operating-system confinement and its exact capabilities.
 - [Sessions](sessions/index.md): where a session is kept, `--continue`, what the model is told, and the files attached to a prompt.
 - [Building](building/index.md): what to install to build it from source.
-- [Reference](reference/index.md): pages to look things up in, such as every command-line flag and environment variable.
+- [Reference](reference/index.md): pages to look things up in, such as every command-line flag, environment variable and key.
