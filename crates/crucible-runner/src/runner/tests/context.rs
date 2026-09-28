@@ -198,6 +198,82 @@ fn a_pre_context_session_supersedes_every_unknown_section_on_its_first_pass() {
     );
 }
 
+/// The context told in the first turn of a later run that picks up a session
+/// recorded under `before` and offers `after`.
+///
+/// Each run gets a registry of its own, the way each `--continue` builds its
+/// tools afresh, so whatever a run mints for itself differs between the two.
+fn told_after_a_pick_up(before: Tools, after: Tools) -> Vec<Fragment> {
+    let store = Recording::started("a session picked up again");
+    let mut recorded = Scripted::recording(
+        Script::new(vec![saying("first")]),
+        before,
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    recorded.turn("one").expect("a first turn");
+    drop(recorded);
+
+    let (picked, replayed) = store.reopened();
+    let held = replayed.len();
+    let onto: Arc<dyn JournalStore> = picked;
+    let mut later = Scripted::new(Script::new(vec![saying("second")]), after, Verdict::Allow);
+    later.runner.pick_up(onto, replayed);
+    later.turn("two").expect("the turn after the pick-up");
+
+    later
+        .runner
+        .state
+        .transcript()
+        .messages()
+        .iter()
+        .skip(held)
+        .filter_map(|message| match message {
+            Message::Context(fragment) => Some(fragment.clone()),
+            Message::User { .. } | Message::Agent { .. } | Message::ToolResults(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_session_picked_up_with_the_same_tools_is_not_told_its_tools_again() {
+    let told = told_after_a_pick_up(
+        tools([Fixed::new("read"), Fixed::new("edit")]),
+        tools([Fixed::new("read"), Fixed::new("edit")]),
+    );
+
+    assert!(
+        told.is_empty(),
+        "nothing changed while the session was closed, yet the pick-up told the model: {:?}",
+        told.iter()
+            .map(|fragment| (fragment.section(), fragment.text()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_session_picked_up_with_other_tools_is_told_what_changed() {
+    let told = told_after_a_pick_up(
+        tools([Fixed::new("read"), Fixed::new("edit")]),
+        tools([Fixed::new("read"), Fixed::new("grep")]),
+    );
+
+    let [fragment] = told.as_slice() else {
+        panic!("one tools note, and nothing else: {told:?}");
+    };
+    assert_eq!(fragment.section(), "tools");
+    assert!(
+        fragment.text().contains("Tools now advertised: grep."),
+        "{fragment:?}"
+    );
+    assert!(
+        fragment
+            .text()
+            .contains("Tools no longer advertised: edit."),
+        "{fragment:?}"
+    );
+}
+
 #[derive(Clone)]
 struct ToggleReveal {
     name: &'static str,
