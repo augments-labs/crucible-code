@@ -28,7 +28,9 @@ fn conversation(session: &Session) -> (ToolCall, Diff) {
     (call, diff)
 }
 
-fn finished(session: &Session, call: ToolCall, diff: Diff) {
+/// Records the call as finished, as the runner does before the result line,
+/// and hands back the result that line would carry.
+fn recorded(session: &Session, call: &ToolCall, diff: Diff) -> ToolResult {
     let output = ToolOutput::ok("edited").showing(diff);
     let preview = output.diff().cloned();
     let recorded = output.into_recorded();
@@ -41,10 +43,15 @@ fn finished(session: &Session, call: ToolCall, diff: Diff) {
         record: invocation,
         preview,
     });
-    session.append(&Message::ToolResults(vec![ToolResult {
-        id: call.id,
+    ToolResult {
+        id: call.id.clone(),
         output: recorded,
-    }]));
+    }
+}
+
+fn finished(session: &Session, call: &ToolCall, diff: Diff) {
+    let result = recorded(session, call, diff);
+    session.append(&Message::ToolResults(vec![result]));
 }
 
 fn items(session: &Session) -> Vec<DisplayItem> {
@@ -61,7 +68,7 @@ fn full_history_and_private_preview_survive_without_changing_model_context() {
     let sample = Sample::new("display-model-separation");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
     let (call, diff) = conversation(&session);
-    finished(&session, call, diff.clone());
+    finished(&session, &call, diff.clone());
     session.compacted(3, "model recap");
     let notice = Compacted {
         why: Compacting::Asked,
@@ -104,7 +111,7 @@ fn ordinary_model_replay_does_not_restore_display_diff() {
     let sample = Sample::new("display-no-model-diff");
     let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
     let (call, diff) = conversation(&session);
-    finished(&session, call, diff);
+    finished(&session, &call, diff);
     drop(session);
     let (_, model) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
     let Message::ToolResults(results) = model.messages().get(2).unwrap() else {
@@ -344,4 +351,64 @@ fn pruning_and_recapping_one_operation_restore_one_live_marker() {
         "pruning and recap share one live completion"
     );
     assert!(matches!(display.last().unwrap(), DisplayItem::Compacted(_)));
+}
+
+#[test]
+fn a_call_finished_before_its_result_line_comes_back_answered_with_its_preview() {
+    // The process died after the call's record and before its result line.
+    // The pick-up writes the line the record stood for, so the model is told
+    // what the call did instead of being free to ask for it again, and the
+    // reader is shown the change the call made.
+    let sample = Sample::new("display-finished-unanswered");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    let (call, diff) = conversation(&session);
+    let answered = Message::ToolResults(vec![recorded(&session, &call, diff.clone())]);
+    drop(session);
+
+    let (session, model) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(model.messages().get(2), Some(&answered));
+    let log = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        log.lines().last(),
+        Some(wire::line(&answered).as_str()),
+        "the line written is the one the turn would have written"
+    );
+    let display = items(&session);
+    let Some(DisplayItem::Message {
+        message: Message::ToolResults(_),
+        previews,
+    }) = display.get(2)
+    else {
+        panic!("missing result: {display:?}")
+    };
+    assert_eq!(previews.get(&call.id), Some(&diff));
+    drop(session);
+
+    // Picked up again, it is an ordinary answered call.
+    let (_, again) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(again.messages(), model.messages());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), log);
+}
+
+#[test]
+fn a_finished_call_that_changed_no_line_comes_back_as_its_result_line_says() {
+    // The line written carries no count for a call that changed nothing, so
+    // the call the first pick-up answers is the one every later one reads.
+    let sample = Sample::new("display-finished-unchanged");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let path = session.path().to_owned();
+    let (call, _) = conversation(&session);
+    let answered = Message::ToolResults(vec![recorded(
+        &session,
+        &call,
+        Diff::new(std::iter::empty()),
+    )]);
+    drop(session);
+
+    let (_, first) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    let log = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(log.lines().last(), Some(wire::line(&answered).as_str()));
+    let (_, again) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
+    assert_eq!(first.messages(), again.messages());
 }

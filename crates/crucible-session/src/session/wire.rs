@@ -52,8 +52,8 @@ pub(crate) const FORMAT: u32 = 13;
 /// meant. Format 9 is, because format 10 only adds typed context and its
 /// snapshot patches; a log without either replays as context-unknown rather
 /// than pretending it recorded state it could not have written.
-/// Format 10 is, because format 11 only adds `run_item` journal lines that are
-/// explicitly outside provider-visible replay.
+/// Format 10 is, because format 11 only adds `run_item` journal lines, which
+/// replay never reads as messages of their own.
 /// Format 11 is, because format 12 adds optional private continuation to agent
 /// messages. Older history cannot provide state it never recorded; it stays
 /// absent. Older readers must refuse format 12 rather than discard that state.
@@ -100,11 +100,65 @@ pub(crate) const fn typed_context(format: Option<u32>) -> bool {
     matches!(format, Some(10..=13))
 }
 
-/// Whether a whole line is framework history rather than a conversation line.
-pub(crate) fn journaled(line: &str) -> bool {
-    serde_json::from_str::<Value>(line)
-        .ok()
-        .is_some_and(|value| value.get("run_item").is_some())
+/// A whole line of framework history rather than a conversation line.
+pub(crate) enum Journaled {
+    /// A tool call that recorded how it ended, and the result it was answered
+    /// with.
+    Finished(ToolResult),
+    /// Anything else the framework records. None of it is a message.
+    Other,
+}
+
+/// Whether a whole line is framework history rather than a conversation line,
+/// and the result it holds where it records a call that finished.
+///
+/// A finished call's record is the one line a process that died before its
+/// result line leaves behind to answer the call with. Its result is read the
+/// way a result line's is, except that a record carrying the change lines
+/// carries no count beside them, so the count comes off the lines' own
+/// totals, which are what the count was taken from. A record whose result
+/// this build cannot read is history like any other line here: the call it
+/// names is then read as though nothing had recorded it.
+pub(crate) fn journaled(line: &str) -> Option<Journaled> {
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    let body = value.get("run_item")?.get("body");
+    Some(
+        body.and_then(finished)
+            .map_or(Journaled::Other, Journaled::Finished),
+    )
+}
+
+/// The result a finished invocation record answered its call with.
+fn finished(body: &Value) -> Option<ToolResult> {
+    if body.get("kind")?.as_str()? != "invocation" {
+        return None;
+    }
+    let state = body.get("invocation_state")?;
+    if state.get("state")?.as_str()? != "finished" {
+        return None;
+    }
+    let recorded = state.get("result")?;
+    let answered = result(recorded)?;
+    if answered.id.as_str() != body.get("call")?.as_str()? {
+        return None;
+    }
+
+    match recorded.get("display_diff") {
+        Some(preview) if recorded.get("change").is_none() => {
+            let changed = Changed::new(counted(preview, "added")?, counted(preview, "removed")?);
+            // A call that left the file as it was has no header, and the
+            // result line would have said so by saying nothing.
+            if changed.is_empty() {
+                Some(answered)
+            } else {
+                Some(ToolResult {
+                    output: answered.output.counting(changed),
+                    ..answered
+                })
+            }
+        }
+        _ => Some(answered),
+    }
 }
 
 /// One bounded framework record as versioned append-only metadata.
@@ -1468,7 +1522,7 @@ mod tests {
 
         let written = journal(&item).expect("bounded journal metadata");
 
-        assert!(journaled(&written));
+        assert!(matches!(journaled(&written), Some(Journaled::Other)));
         assert!(written.contains(r#""version":2"#));
         assert!(written.contains(r#""kind":"message""#));
         assert!(!written.contains("prompt-plaintext-canary"));

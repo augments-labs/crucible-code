@@ -239,6 +239,9 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     // header has no typed baseline; its first appended patch upgrades it in
     // place without rewriting the header.
     let mut context = wire::typed_context(format).then(ContextSnapshot::new);
+    // What the calls the last message asked for recorded as they ended, in
+    // case the pass's result line was never written.
+    let mut ended = Ended::default();
 
     loop {
         raw.clear();
@@ -275,6 +278,7 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         // to be told it again.
         if whole.is_some_and(wire::forgets) {
             transcript.forget();
+            ended.clear();
             context = wire::typed_context(format).then(ContextSnapshot::new);
             calibration = None;
             before = through;
@@ -374,8 +378,13 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
 
         // Framework metadata is deliberately not a conversation message. It
         // advances the crash-safe file prefix while leaving transcript,
-        // calibration and typed context exactly as they were.
-        if whole.is_some_and(wire::journaled) {
+        // calibration and typed context exactly as they were. What a call
+        // recorded as it ended is kept aside, in case the result line it came
+        // before was never written.
+        if let Some(journaled) = whole.and_then(wire::journaled) {
+            if let wire::Journaled::Finished(result) = journaled {
+                ended.hold(&transcript, result);
+            }
             through += read as u64;
             continue;
         }
@@ -419,14 +428,16 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
         transcript
             .push(message)
             .map_err(|error| trouble(io::Error::new(io::ErrorKind::InvalidData, error)))?;
+        ended.clear();
         calibration = None;
         before = through;
         through += read as u64;
     }
 
     if outstanding(&transcript) {
-        if !pending_results.is_empty() {
-            let recovered = recovered_results(&transcript, &pending_results).map_err(trouble)?;
+        if !pending_results.is_empty() || !ended.is_empty() {
+            let recovered =
+                recovered_results(&transcript, &pending_results, &ended).map_err(trouble)?;
             transcript
                 .push(recovered.clone())
                 .map_err(|error| trouble(io::Error::new(io::ErrorKind::InvalidData, error)))?;
@@ -441,8 +452,10 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
                 settled_results,
             });
         }
-        // The message being cut off is the one the reading covered, so what is
-        // left is a shorter transcript than the number describes.
+        // No call of the pass recorded how it ended, so nothing was done that
+        // the model would have to be told about. The message being cut off is the
+        // one the reading covered, so what is left is a shorter transcript
+        // than the number describes.
         return Ok(Replayed {
             transcript: without_last(transcript),
             pruned,
@@ -472,9 +485,69 @@ pub(super) fn replay(path: &Path) -> Result<Replayed, SessionError> {
     })
 }
 
+/// What the calls of the last message recorded as they ended.
+///
+/// Only calls of that message are held, each once, so this is never more than
+/// one batch; the next message or a forgetting drops it. A record for anything
+/// else answers nothing a replay could still be missing: a call whose result
+/// line was written, or one a forgetting or a later message has left behind.
+#[derive(Default)]
+struct Ended {
+    results: Vec<ToolResult>,
+    /// Calls two records answer differently. That is damage, but it is only
+    /// refused where the records would have to answer the call, since a
+    /// result line written after them has already answered it.
+    disputed: Vec<ToolId>,
+}
+
+impl Ended {
+    fn hold(&mut self, transcript: &Transcript, result: ToolResult) {
+        let Some(Message::Agent { calls, .. }) = transcript.messages().last() else {
+            return;
+        };
+        if !calls.iter().any(|call| call.id == result.id) {
+            return;
+        }
+        match self.results.iter().find(|held| held.id == result.id) {
+            Some(held) if *held == result => {}
+            Some(_) if self.disputed.contains(&result.id) => {}
+            Some(_) => self.disputed.push(result.id),
+            None => self.results.push(result),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.results.clear();
+        self.disputed.clear();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.results.is_empty()
+    }
+
+    /// What the call recorded as it ended, if it recorded one answer.
+    fn answer(&self, call: &ToolId) -> Result<Option<&ToolResult>, io::Error> {
+        if self.disputed.contains(call) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "two finished records answer one call differently",
+            ));
+        }
+        Ok(self.results.iter().find(|result| result.id == *call))
+    }
+}
+
+/// The result line a process that died among its calls did not live to write.
+///
+/// Each call is answered with its durable result where the sandbox stored one,
+/// with what it recorded as it ended where it recorded that, and otherwise as
+/// interrupted: whether it ran is not something the log can say, and a call
+/// answered is a call the model can ask for again, where a call left out would
+/// have the pass's other answers sent with no question behind them.
 fn recovered_results(
     transcript: &Transcript,
     stored: &[results::StoredResult],
+    ended: &Ended,
 ) -> Result<Message, io::Error> {
     let Some(Message::Agent { calls, .. }) = transcript.messages().last() else {
         return Err(io::Error::new(
@@ -487,12 +560,15 @@ fn recovered_results(
         let mut matching = stored.iter().filter(|record| record.result.id == call.id);
         let result = match (matching.next(), matching.next()) {
             (Some(record), None) => record.result.clone(),
-            (None, None) => ToolResult {
-                id: call.id.clone(),
-                output: RecordedToolOutput::failed(
-                    "tool execution was interrupted before a durable result was recorded",
-                ),
-            },
+            (None, None) => ended
+                .answer(&call.id)?
+                .cloned()
+                .unwrap_or_else(|| ToolResult {
+                    id: call.id.clone(),
+                    output: RecordedToolOutput::failed(
+                        "tool execution was interrupted before a durable result was recorded",
+                    ),
+                }),
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -575,7 +651,8 @@ pub(super) struct Replayed {
     pub(super) settled_at: u64,
     pub(super) calibration: Option<Calibration>,
     pub(super) context: Option<ContextSnapshot>,
-    /// One result line reconstructed from create-once sidecars.
+    /// One result line reconstructed from create-once sidecars and finished
+    /// invocation records, for a log that stops before its last pass's.
     pub(super) recovered: Option<Message>,
     /// Sidecars represented by a durable ordinary transcript line.
     pub(super) settled_results: Vec<results::StoredResult>,
@@ -651,9 +728,10 @@ impl Pruned {
 /// Whether the last message is still waiting on tools.
 ///
 /// A process that died between asking for a tool and recording its result
-/// leaves calls nothing ever answered. Sending that on is not a cosmetic
-/// problem: a provider is entitled to reject a transcript whose last word is
-/// an unanswered question.
+/// line leaves calls the transcript never answered. Sending that on is not a
+/// cosmetic problem: a provider is entitled to reject a transcript whose last
+/// word is an unanswered question. So the pass is either answered from what
+/// its calls durably recorded, or, where none of them recorded anything, cut.
 fn outstanding(transcript: &Transcript) -> bool {
     matches!(
         transcript.messages().last(),
