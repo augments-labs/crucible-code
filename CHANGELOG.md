@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A session picked up with the same tools no longer tells the model its tools
+  changed.** Every `--continue` and `--resume` used to send a note naming a new
+  toolset generation, even when no tool had been added or removed. The model is
+  now told about its tools again only when their names differ from what it last
+  heard.
+
 ## [0.43.1] - 2026-09-28
 
 **A session picked up after crucible died mid-turn now tells the model what its

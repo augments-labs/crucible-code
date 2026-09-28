@@ -691,11 +691,14 @@ impl ContextSection for SkillsSection<'_> {
     }
 }
 
-/// The exact deferred-tool advertisement for one immutable generation.
+/// The names one immutable snapshot advertises.
 ///
-/// Borrowing the snapshot makes the roster and its generation indivisible. A
-/// caller cannot combine names from one materialization with another one's
-/// label, and the borrow prevents that snapshot being replaced while rendered.
+/// Borrowing the snapshot means the names reported are the ones the request
+/// carries, and the borrow prevents that snapshot being replaced while
+/// rendered. What is recorded is the names and nothing the run mints: every
+/// run materializes its tools under a generation of its own, so a label in the
+/// state would make a session picked up by a later run differ from what its
+/// model was told with every tool the same.
 pub struct ToolsSection<'a> {
     tools: &'a ToolSnapshot,
 }
@@ -724,14 +727,19 @@ impl ContextSection for ToolsSection<'_> {
             .into_iter()
             .map(|schema| (schema.name.to_owned(), Value::Bool(true)))
             .collect();
-        json!({
-            "generation": self.tools.generation().context_id(),
-            "tools": tools,
-        })
+        json!({ "tools": tools })
     }
 
     fn render(&self, prior: Seen<&Value>) -> Option<Fragment> {
         let current = self.snapshot();
+        // By the names rather than the whole state, because a session an
+        // earlier release wrote also recorded the generation its run minted,
+        // which no later run repeats.
+        if let Seen::Known(old) = prior
+            && tool_names(old) == tool_names(&current)
+        {
+            return None;
+        }
         render_fact(
             Self::ID,
             prior,
@@ -1026,7 +1034,6 @@ fn tool_names(state: &Value) -> BTreeSet<String> {
 }
 
 fn tools_full(state: &Value) -> String {
-    let generation = field(state, "generation").unwrap_or("unknown");
     let tools: Vec<String> = tool_names(state).into_iter().collect();
     let roster = if tools.is_empty() {
         "No tools are registered for this request.".to_owned()
@@ -1038,7 +1045,7 @@ fn tools_full(state: &Value) -> String {
             listing(&tools)
         )
     };
-    format!("## What you have\n\nToolset generation: {generation}. {roster}")
+    format!("## What you have\n\n{roster}")
 }
 
 fn tools_delta(old: &Value, current: &Value) -> String {
@@ -1046,8 +1053,7 @@ fn tools_delta(old: &Value, current: &Value) -> String {
     let now = tool_names(current);
     let added: Vec<String> = now.difference(&before).cloned().collect();
     let removed: Vec<String> = before.difference(&now).cloned().collect();
-    let generation = field(current, "generation").unwrap_or("unknown");
-    let mut lines = vec![format!("Toolset generation is now {generation}.")];
+    let mut lines = Vec::new();
     if !added.is_empty() {
         lines.push(format!("Tools now advertised: {}.", listing(&added)));
     }
