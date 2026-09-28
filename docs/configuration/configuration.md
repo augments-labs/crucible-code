@@ -20,6 +20,11 @@ and crucible runs the same way.
 
 ## The files
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/settings-dark.svg">
+  <img alt="Where a setting comes from, farthest layer first: your own ~/.crucible/config.json, then the project's .crucible/config.json and .crucible/config.local.json, then the command line, and the nearest layer wins. The two project files may set ordinary settings and tighten permissions, but never loosen permissions, choose a provider, credential or server, set an environment variable outside crucible's own names, or name a prompt-cache namespace; a scalar takes the nearest layer that set it, an object is merged key by key, and most lists add up." src="../assets/settings-light.svg" width="720">
+</picture>
+
 Three, read in this order. Nearer to the work wins.
 
 | File | Holds | Checked in? |
