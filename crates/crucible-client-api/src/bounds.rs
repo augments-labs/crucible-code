@@ -136,6 +136,19 @@ impl Text {
         }
     }
 
+    /// `words` whose owner kept them under a ceiling of its own, and whether
+    /// that cost any of them: cut again where they run over this one, and said
+    /// to be cut where either ceiling was.
+    ///
+    /// A mark the owner wrote into the words is for a person. What a client
+    /// acts on is this, and words can only claim a mark, not set it.
+    #[must_use]
+    pub fn cut_again(words: &str, already: bool) -> Self {
+        let mut text = Self::cut(words);
+        text.truncated |= already;
+        text
+    }
+
     /// Words that arrived already said to be whole or cut.
     ///
     /// # Errors

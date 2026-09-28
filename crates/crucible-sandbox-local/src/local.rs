@@ -4,12 +4,13 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxCommand, SandboxCommandStage, SandboxError,
     SandboxFactKind, SandboxFailurePhase, SandboxFeature, SandboxGuardrailDecision,
     SandboxInspection, SandboxLaunch, SandboxLifecycle, SandboxProcess, SandboxRequest,
-    SandboxService, SandboxSession,
+    SandboxService, SandboxSession, unconfined_inspection,
 };
 
 use super::process::{MAX_LOCAL_COMMANDS, Reservation};
@@ -19,95 +20,160 @@ use super::process::{MAX_LOCAL_COMMANDS, Reservation};
 /// Enabled requests require a verified native backend on Linux, macOS and
 /// Windows. Disabled requests still use this service for bounded execution,
 /// lifecycle tracking and audit. There is no unconfined fallback when enabled.
+///
+/// # Asynchronous pipes
+///
+/// A process this service starts reads its output with
+/// [`SandboxOutput::read`](crucible_sandbox::SandboxOutput::read) and writes
+/// the input [`SandboxProcess::take_async_stdin`] hands back without holding a
+/// thread while the pipe is not ready. On Unix that waiting is the reactor's
+/// of the Tokio runtime polling the first waiting read or write of a pipe:
+///
+/// - That runtime needs its I/O driver. Polled off any runtime, the read or
+///   write answers an error; polled on a runtime built without the driver,
+///   Tokio panics.
+/// - The pipe stays with that runtime from then on: a later waiting read or
+///   write of it waits on that runtime's reactor, whichever runtime polls it,
+///   so it is to be polled on that runtime while that runtime runs.
+///
+/// On Windows each pipe waited on gets a thread of its own instead, and needs
+/// no runtime; the process's stop joins its input's thread.
+///
+/// # A runtime to watch commands on
+///
+/// Each command this service starts is watched by a task of its own on the
+/// runtime [`Self::watching_on`] names: its time limit enforced, and its status
+/// looked at and kept. The task needs that runtime's clock and nothing else.
+/// A service given no runtime probes and prepares as any other does, and
+/// refuses to start a command.
+///
+/// # Where a command's ending is written
+///
+/// On Linux, what a command's ending journals, and the publication or discard
+/// of what it wrote, run on a dedicated per-command thread launched through the
+/// service's bound, at most sixteen at once, rather than on whoever asks how
+/// the command ended.
 #[derive(Debug, Clone, Default)]
 pub struct LocalSandbox {
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
+    #[cfg(target_os = "linux")]
+    publications: super::linux::BoundedPublication,
 }
 
 impl LocalSandbox {
-    /// A service with no active commands.
+    /// A service with no active commands, and no runtime to watch any on.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// This service, watching each command it starts on `runtime`.
+    ///
+    /// `runtime` needs its timer, as the application's has. On one without it
+    /// each command's status task panics at its first pause, which is recorded
+    /// as a failure the command's status and stop then report.
+    #[must_use]
+    pub fn watching_on(mut self, runtime: tokio::runtime::Handle) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+
+    /// Under test, where this service writes its commands' endings.
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn publications(&self) -> &super::linux::BoundedPublication {
+        &self.publications
+    }
 }
 
 impl SandboxService for LocalSandbox {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-        #[cfg(target_os = "linux")]
-        {
-            super::linux::probe(&[])
-        }
-        #[cfg(target_os = "macos")]
-        {
-            super::macos::probe()
-        }
-        #[cfg(target_os = "windows")]
-        {
-            super::windows::probe()
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-            Err(SandboxError::BackendUnavailable {
-                reason: "no enforcing local sandbox backend for this operating system".into(),
-            })
-        }
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(async move {
+            #[cfg(target_os = "linux")]
+            {
+                super::linux::probe(&[])
+            }
+            #[cfg(target_os = "macos")]
+            {
+                super::macos::probe()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                super::windows::probe()
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+            {
+                Err(SandboxError::BackendUnavailable {
+                    reason: "no enforcing local sandbox backend for this operating system".into(),
+                })
+            }
+        })
     }
 
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        let audit = request.audit().clone();
-        let id = request.id();
-        audit.record(
-            id,
-            SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
-        )?;
-        let prepared = if request.policy().enabled() {
-            enforcing(request, Arc::clone(&self.active))
-        } else {
-            compatibility(
-                request,
-                Arc::clone(&self.active),
-                "sandbox disabled by effective policy",
-            )
-        };
-        if let Err(problem) = &prepared {
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let audit = request.audit().clone();
+            let id = request.id();
             audit.record(
                 id,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Prepare,
-                    kind: problem.failure_kind(),
-                },
+                SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
             )?;
-            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
-                SandboxCleanup::Failed
+            let prepared = if request.policy().enabled() {
+                enforcing(request, self)
             } else {
-                SandboxCleanup::Complete
+                compatibility(
+                    request,
+                    Arc::clone(&self.active),
+                    self.runtime.clone(),
+                    "sandbox disabled by effective policy",
+                )
             };
-            audit.record(id, SandboxFactKind::Cleanup(cleanup))?;
-        }
-        prepared
+            if let Err(problem) = &prepared {
+                audit.record(
+                    id,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Prepare,
+                        kind: problem.failure_kind(),
+                    },
+                )?;
+                let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                    SandboxCleanup::Failed
+                } else {
+                    SandboxCleanup::Complete
+                };
+                audit.record(id, SandboxFactKind::Cleanup(cleanup))?;
+            }
+            prepared
+        })
     }
 }
 
 fn enforcing(
     request: SandboxRequest,
-    active: Arc<AtomicUsize>,
+    service: &LocalSandbox,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
+    let active = Arc::clone(&service.active);
+    let runtime = service.runtime.clone();
     #[cfg(target_os = "linux")]
     {
-        super::linux::prepare(request, active)
+        super::linux::prepare(request, active, runtime, service.publications.clone())
     }
     #[cfg(target_os = "macos")]
     {
-        super::macos::prepare(request, active)
+        super::macos::prepare(request, active, runtime)
     }
     #[cfg(target_os = "windows")]
     {
-        super::windows::prepare(request, active)
+        super::windows::prepare(request, active, runtime)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        let _ = (request, active);
+        let _ = (request, active, runtime);
         Err(SandboxError::BackendUnavailable {
             reason: "required confinement is unsupported on this operating system".into(),
         })
@@ -117,6 +183,7 @@ fn enforcing(
 fn compatibility(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
     disabled_reason: &'static str,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     let (backend, capabilities) = compatibility_capabilities()?;
@@ -128,12 +195,7 @@ fn compatibility(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(MAX_LOCAL_COMMANDS);
     let reservation = Reservation::take(active, maximum)?;
-    let inspection = SandboxInspection::unconfined_for_request(
-        backend,
-        capabilities,
-        &request,
-        disabled_reason,
-    )?;
+    let inspection = unconfined_inspection(backend, capabilities, &request, disabled_reason)?;
     request.audit().record(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),
@@ -146,6 +208,7 @@ fn compatibility(
         request,
         inspection,
         reservation: Some(reservation),
+        runtime,
         materialized: false,
         transferred: false,
     }))
@@ -182,6 +245,8 @@ struct CompatibilitySession {
     request: SandboxRequest,
     inspection: SandboxInspection,
     reservation: Option<Reservation>,
+    /// Where each command's status is watched.
+    runtime: Option<tokio::runtime::Handle>,
     materialized: bool,
     transferred: bool,
 }
@@ -191,82 +256,91 @@ impl SandboxSession for CompatibilitySession {
         &self.inspection
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        if self.materialized {
-            return Ok(());
-        }
-        self.materialized = true;
-        self.request.audit().record(
-            self.request.id(),
-            SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
-        )?;
-        Ok(())
-    }
-
-    fn stage(
-        mut self: Box<Self>,
-        command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        if !self.materialized {
-            return Err(SandboxError::Materialization {
-                problem: "session was not materialized before start".into(),
-                source: None,
-            });
-        }
-        for stage in [
-            SandboxCommandStage::Requested,
-            SandboxCommandStage::Effective,
-        ] {
-            let decision = self.request.policy().commands().evaluate(&command, stage);
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move {
+            if self.materialized {
+                return Ok(());
+            }
+            self.materialized = true;
             self.request.audit().record(
                 self.request.id(),
-                SandboxFactKind::Guardrail { stage, decision },
+                SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
             )?;
-            if decision != SandboxGuardrailDecision::Allowed {
+            Ok(())
+        })
+    }
+
+    fn stage<'a>(
+        mut self: Box<Self>,
+        command: SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if !self.materialized {
+                return Err(SandboxError::Materialization {
+                    problem: "session was not materialized before start".into(),
+                    source: None,
+                });
+            }
+            for stage in [
+                SandboxCommandStage::Requested,
+                SandboxCommandStage::Effective,
+            ] {
+                let decision = self.request.policy().commands().evaluate(&command, stage);
                 self.request.audit().record(
                     self.request.id(),
-                    SandboxFactKind::Failed {
-                        phase: SandboxFailurePhase::Start,
-                        kind: crucible_sandbox::SandboxFailureKind::Guardrail,
-                    },
+                    SandboxFactKind::Guardrail { stage, decision },
                 )?;
-                return Err(SandboxError::Guardrail);
+                if decision != SandboxGuardrailDecision::Allowed {
+                    self.request.audit().record(
+                        self.request.id(),
+                        SandboxFactKind::Failed {
+                            phase: SandboxFailurePhase::Start,
+                            kind: crucible_sandbox::SandboxFailureKind::Guardrail,
+                        },
+                    )?;
+                    return Err(SandboxError::Guardrail);
+                }
             }
-        }
-        let mut process = Command::new(command.program());
-        process
-            .args(command.arguments())
-            .current_dir(self.request.policy().working_directory())
-            .env_clear()
-            .envs(command.environment().iter());
-        let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
-        let launch = CompatibilityLaunch {
-            process: Some(process),
-            plan: Some(super::process::SpawnPlan {
-                network: None,
+            let mut process = Command::new(command.program());
+            process
+                .args(command.arguments())
+                .current_dir(self.request.policy().working_directory())
+                .env_clear()
+                .envs(command.environment().iter());
+            let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
+            let launch = CompatibilityLaunch {
+                process: Some(process),
+                plan: Some(super::process::SpawnPlan {
+                    network: None,
+                    inspection: self.inspection.clone(),
+                    reservation,
+                    stage: None,
+                    limits: self.request.policy().limits(),
+                    audit: self.request.audit().clone(),
+                    sandbox: self.request.id(),
+                    audit_started: true,
+                    audit_cleanup: true,
+                    invocation: self.request.invocation_mode(),
+                    call_result_key: self.request.call_result_key(),
+                    canceller: None,
+                    runtime: self.runtime.clone(),
+                    speech: command.speech(),
+                    startup_input: None,
+                    credentials: super::process::credential_values(command.environment()),
+                }),
                 inspection: self.inspection.clone(),
-                reservation,
-                stage: None,
-                limits: self.request.policy().limits(),
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
-                audit_started: true,
-                audit_cleanup: true,
                 invocation: self.request.invocation_mode(),
-                call_result_key: self.request.call_result_key(),
-                canceller: None,
-                speech: command.speech(),
-                startup_input: None,
-            }),
-            inspection: self.inspection.clone(),
-            audit: self.request.audit().clone(),
-            sandbox: self.request.id(),
-            invocation: self.request.invocation_mode(),
-            owner_transferred: false,
-            released: false,
-        };
-        self.transferred = true;
-        Ok(Box::new(launch))
+                owner_transferred: false,
+                released: false,
+            };
+            self.transferred = true;
+            Ok(Box::new(launch) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -302,46 +376,53 @@ impl SandboxLaunch for CompatibilityLaunch {
         Ok(())
     }
 
-    fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        if self.invocation != crucible_sandbox::SandboxInvocationMode::Foreground
-            && !self.owner_transferred
-        {
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "background sandbox has no application cleanup owner",
-            )));
-        }
-        let process = self.process.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other(
-                "compatibility command was already released",
-            ))
-        })?;
-        let plan = self.plan.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other(
-                "compatibility launch plan is unavailable",
-            ))
-        })?;
-        self.released = true;
-        let spawned = super::process::spawn(process, plan);
-        if let Err(problem) = &spawned {
-            // Spawn returns Lifecycle when cleanup itself was unconfirmed.
-            // Preserve that primary error even if the bounded audit is full.
-            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
-                SandboxCleanup::Failed
-            } else {
-                SandboxCleanup::Complete
-            };
-            let _ = self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Start,
-                    kind: problem.failure_kind(),
-                },
-            );
-            let _ = self
-                .audit
-                .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
-        }
-        spawned
+    fn release<'a>(
+        mut self: Box<Self>,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if self.invocation != crucible_sandbox::SandboxInvocationMode::Foreground
+                && !self.owner_transferred
+            {
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "background sandbox has no application cleanup owner",
+                )));
+            }
+            let process = self.process.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other(
+                    "compatibility command was already released",
+                ))
+            })?;
+            let plan = self.plan.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other(
+                    "compatibility launch plan is unavailable",
+                ))
+            })?;
+            self.released = true;
+            let spawned = super::process::spawn(process, plan);
+            if let Err(problem) = &spawned {
+                // Spawn returns Lifecycle when cleanup itself was unconfirmed.
+                // Preserve that primary error even if the bounded audit is full.
+                let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                    SandboxCleanup::Failed
+                } else {
+                    SandboxCleanup::Complete
+                };
+                let _ = self.audit.record(
+                    self.sandbox,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Start,
+                        kind: problem.failure_kind(),
+                    },
+                );
+                let _ = self
+                    .audit
+                    .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
+            }
+            spawned
+        })
     }
 }
 
@@ -411,7 +492,8 @@ mod tests {
             owner_transferred: false,
             released: false,
         };
-        let result = crucible_sandbox::SandboxLaunch::release(Box::new(launch));
+        let result =
+            crucible_runtime::answered!(crucible_sandbox::SandboxLaunch::release(Box::new(launch)));
         let facts = audit.records().map_err(std::io::Error::other)?;
         assert!(
             facts.iter().any(|record| matches!(
@@ -482,9 +564,9 @@ mod tests {
         )
         .with_audit(audit.clone())
         .expect("matching audit attribution");
-        let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from(script)],
@@ -493,7 +575,7 @@ mod tests {
         .expect("command");
 
         assert!(matches!(
-            session.start(command),
+            crucible_runtime::answered!(session.start(command)),
             Err(SandboxError::Guardrail)
         ));
         assert!(!sample.root().join("blocked.txt").exists());
@@ -537,23 +619,23 @@ mod tests {
         )
         .with_audit(audit.clone())
         .expect("matching audit attribution");
-        let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from("exit 0")],
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let deadline = Instant::now() + Duration::from_secs(2);
         while process.try_wait().expect("wait").is_none() {
             assert!(Instant::now() < deadline, "command did not finish");
             thread::sleep(Duration::from_millis(5));
         }
-        process.stop().expect("cleanup");
-        process.stop().expect("idempotent cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("idempotent cleanup");
 
         let facts = audit.records().expect("facts");
         assert_eq!(facts.len(), 10, "{facts:#?}");
@@ -622,9 +704,9 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from(requested)],
@@ -638,7 +720,7 @@ mod tests {
         .expect("transformation");
 
         assert!(matches!(
-            session.start(command),
+            crucible_runtime::answered!(session.start(command)),
             Err(SandboxError::Guardrail)
         ));
         assert!(!sample.root().join("requested.txt").exists());
@@ -669,20 +751,20 @@ mod tests {
         )
         .with_audit(audit.clone())
         .expect("matching audit attribution");
-        let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [OsString::from("-c"), OsString::from("sleep 5")],
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         thread::sleep(Duration::from_millis(250));
         let status = process.try_wait().expect("wait");
         let violation = process.violation();
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
 
         assert!(status.is_some(), "command survived its service deadline");
         assert_eq!(
@@ -738,9 +820,9 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [
@@ -750,7 +832,7 @@ mod tests {
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let mut output = process.take_stdout().expect("stdout");
         let mut retained = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -773,7 +855,7 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         let usage = process.usage();
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
 
         assert!(retained.len() <= 32, "retained {} bytes", retained.len());
         assert!(
@@ -802,9 +884,9 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [
@@ -814,7 +896,7 @@ mod tests {
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let mut stdout = process.take_stdout();
         let mut stderr = process.take_stderr();
         let mut retained = 0_usize;
@@ -848,7 +930,7 @@ mod tests {
             process.violation(),
             Some(crucible_sandbox::SandboxViolation::Output)
         );
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// Runs a command writing 24 bytes to each stream under `ceiling`, drains
@@ -865,19 +947,18 @@ mod tests {
             .with_enabled(false)
             .with_limits(limits)
             .expect("limits");
-        let service = LocalSandbox::new();
-        let mut session = service
-            .prepare(SandboxRequest::new(
-                SandboxId::new(),
-                Ancestry::new(),
-                ToolId::new("counted-output"),
-                policy,
-                SandboxManifest::empty(),
-            ))
-            .expect("session");
-        session.materialize().expect("materialized");
-        let mut process = session
-            .start(
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("counted-output"),
+            policy,
+            SandboxManifest::empty(),
+        )))
+        .expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
+        let mut process = crucible_runtime::answered!(
+            session.start(
                 SandboxCommand::new(
                     "/bin/sh",
                     [
@@ -888,7 +969,8 @@ mod tests {
                 )
                 .expect("command"),
             )
-            .expect("process");
+        )
+        .expect("process");
         let mut streams = [process.take_stdout(), process.take_stderr()];
         let mut finished = [false, false];
         let mut retained = 0_usize;
@@ -940,7 +1022,7 @@ mod tests {
             process.usage().output_bytes,
             "the count moved when it was read"
         );
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
         (retained, usage)
     }
 
@@ -973,9 +1055,9 @@ mod tests {
             policy,
             SandboxManifest::empty(),
         );
-        let service = LocalSandbox::new();
-        let mut session = service.prepare(request).expect("session");
-        session.materialize().expect("materialized");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
         let command = SandboxCommand::new(
             "/bin/sh",
             [
@@ -985,7 +1067,7 @@ mod tests {
             SandboxEnvironment::empty(),
         )
         .expect("command");
-        let mut process = session.start(command).expect("process");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
         let deadline = Instant::now() + Duration::from_secs(2);
         while process.try_wait().expect("wait").is_none() {
             assert!(Instant::now() < deadline, "leader did not exit");
@@ -993,8 +1075,193 @@ mod tests {
         }
         let pid = read_pid(&sample.root().join("descendant.pid"));
         assert_no_live_process(pid, deadline);
-        process.stop().expect("first cleanup");
-        process.stop().expect("idempotent cleanup");
+        crucible_runtime::answered!(process.stop()).expect("first cleanup");
+        crucible_runtime::answered!(process.stop()).expect("idempotent cleanup");
+    }
+
+    /// A command started with a secret that prints it back — a failed login
+    /// that repeats its request, a debug dump — hands it to whatever reads its
+    /// output. Confinement off is where every command runs by default, so the
+    /// compatibility backend masks a credential the environment carries just
+    /// as an enforcing one does.
+    #[test]
+    fn a_credential_the_command_prints_is_masked_on_both_streams() {
+        use std::ffi::OsStr;
+
+        use crucible_sandbox::{
+            SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+            SandboxRead,
+        };
+
+        let sample = Sample::new("sandbox-compatibility-credential");
+        let policy = SandboxPolicy::standard(&sample.workspace())
+            .expect("policy")
+            .with_enabled(false);
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("credential-output"),
+            policy,
+            SandboxManifest::empty(),
+        );
+        // The script names the variable, never the value, so the only way the
+        // value can reach either stream is through the environment.
+        let canary = "credential-value-canary";
+        let credential = SandboxCredentialProjection::new(
+            SandboxCredentialHandle::new("env:0", SandboxCredentialProvenance::User)
+                .expect("credential handle"),
+            "SANDBOX_TOKEN",
+            canary,
+        )
+        .expect("credential projection");
+        let environment =
+            SandboxEnvironment::with_credentials([("LANG", OsStr::new("C"))], [credential])
+                .expect("environment");
+        let command = SandboxCommand::new(
+            "/bin/sh",
+            [
+                OsString::from("-c"),
+                OsString::from(
+                    "printf 'token=%s\\n' \"$SANDBOX_TOKEN\"; \
+                     printf 'token=%s\\n' \"$SANDBOX_TOKEN\" >&2",
+                ),
+            ],
+            environment,
+        )
+        .expect("command");
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
+
+        let expected = format!("token={}\n", "*".repeat(canary.len()));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        for (stream, mut output) in [
+            ("stdout", process.take_stdout().expect("stdout")),
+            ("stderr", process.take_stderr().expect("stderr")),
+        ] {
+            let mut printed = Vec::new();
+            let mut buffer = [0_u8; 7];
+            loop {
+                assert!(Instant::now() < deadline, "output did not finish");
+                match output.read_ready(&mut buffer).expect("read") {
+                    SandboxRead::Bytes(read) => {
+                        printed.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+                    }
+                    SandboxRead::Pending => thread::sleep(Duration::from_millis(1)),
+                    SandboxRead::End => break,
+                    SandboxRead::Limited { .. } => panic!("no output limit was set"),
+                }
+            }
+            let shown = String::from_utf8_lossy(&printed);
+            assert_eq!(
+                printed.len(),
+                expected.len(),
+                "masking changed how many bytes the command printed on {stream}: {shown}"
+            );
+            assert!(
+                !shown.contains(canary),
+                "a credential value the command echoed on {stream} was not masked: {shown}"
+            );
+            assert_eq!(
+                shown, expected,
+                "what the command printed on {stream} was not kept around the masked value"
+            );
+        }
+        while process.try_wait().expect("wait").is_none() {
+            assert!(Instant::now() < deadline, "command did not finish");
+            thread::sleep(Duration::from_millis(5));
+        }
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
+    }
+
+    /// A command crucible speaks to — an MCP server — writes a protocol on its
+    /// stdout, and a credential value as short as `1` masked there would turn
+    /// `"id":1` into `"id":*`. So a credential is masked on its stderr only, and
+    /// what it says on stdout reaches the reader byte for byte: the one
+    /// speaking to it masks the value in what it decodes.
+    #[test]
+    fn a_credential_a_spoken_to_command_prints_is_masked_on_stderr_and_its_stdout_is_whole() {
+        use std::ffi::OsStr;
+
+        use crucible_sandbox::{
+            SandboxCredentialHandle, SandboxCredentialProjection, SandboxCredentialProvenance,
+            SandboxOutput, SandboxRead,
+        };
+
+        let sample = Sample::new("sandbox-compatibility-spoken-credential");
+        let policy = SandboxPolicy::standard(&sample.workspace())
+            .expect("policy")
+            .with_enabled(false);
+        let request = SandboxRequest::new(
+            SandboxId::new(),
+            Ancestry::new(),
+            ToolId::new("credential-frames"),
+            policy,
+            SandboxManifest::empty(),
+        );
+        let credential = SandboxCredentialProjection::new(
+            SandboxCredentialHandle::new("env:0", SandboxCredentialProvenance::User)
+                .expect("credential handle"),
+            "SANDBOX_TOKEN",
+            "1",
+        )
+        .expect("credential projection");
+        let environment =
+            SandboxEnvironment::with_credentials([("LANG", OsStr::new("C"))], [credential])
+                .expect("environment");
+        let frame = r#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
+        let command = SandboxCommand::new(
+            "/bin/sh",
+            [
+                OsString::from("-c"),
+                OsString::from(format!(
+                    "printf '%s\\n' '{frame}'; printf 'token=%s\\n' \"$SANDBOX_TOKEN\" >&2"
+                )),
+            ],
+            environment,
+        )
+        .expect("command")
+        .spoken_to();
+        let service = crate::sample::service();
+        let mut session = crucible_runtime::answered!(service.prepare(request)).expect("session");
+        crucible_runtime::answered!(session.materialize()).expect("materialized");
+        let mut process = crucible_runtime::answered!(session.start(command)).expect("process");
+        drop(process.take_stdin());
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let drained = |mut output: Box<dyn SandboxOutput>| {
+            let mut printed = Vec::new();
+            let mut buffer = [0_u8; 7];
+            loop {
+                assert!(Instant::now() < deadline, "output did not finish");
+                match output.read_ready(&mut buffer).expect("read") {
+                    SandboxRead::Bytes(read) => {
+                        printed.extend_from_slice(buffer.get(..read).expect("reported bytes"));
+                    }
+                    SandboxRead::Pending => thread::sleep(Duration::from_millis(1)),
+                    SandboxRead::End => break,
+                    SandboxRead::Limited { .. } => panic!("no output limit was set"),
+                }
+            }
+            String::from_utf8_lossy(&printed).into_owned()
+        };
+        let stdout = drained(process.take_stdout().expect("stdout"));
+        let stderr = drained(process.take_stderr().expect("stderr"));
+        assert_eq!(
+            stdout,
+            format!("{frame}\n"),
+            "masking altered a frame a spoken-to command wrote on stdout"
+        );
+        assert_eq!(
+            stderr, "token=*\n",
+            "an envFrom value a spoken-to command echoed on stderr was not masked"
+        );
+        while process.try_wait().expect("wait").is_none() {
+            assert!(Instant::now() < deadline, "command did not finish");
+            thread::sleep(Duration::from_millis(5));
+        }
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     #[cfg(target_os = "linux")]

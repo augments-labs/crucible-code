@@ -4,11 +4,13 @@
 //! shell: it is that a command can outlive its own exit. A killed process leaves
 //! grandchildren holding its pipes, a long one fills a pipe buffer and blocks
 //! until somebody reads it, and either one turns a naive wait into a hang. So
-//! the pipes are drained on threads from the moment the command starts, and
-//! every wait in this module is bounded. One is bounded by something other than
-//! the deadline: a command that has ended and waits its turn to publish what it
-//! wrote waits for the publication ahead of it, because stopping it then would
-//! discard what it did in time.
+//! the pipes are drained from the moment the command starts, each by a task of
+//! its own on the runtime polling the call, reading through the pipe's waiting
+//! read; the call awaits them rather than holding the thread that polls it,
+//! and every wait in this module is bounded. One is bounded by something
+//! other than the deadline: a command that has ended and waits its turn to
+//! publish what it wrote waits for the publication ahead of it, because
+//! stopping it then would discard what it did in time.
 //!
 //! A command can also outlive the *call* — that is [`super::background`], and it
 //! is the one path out of here that does not end what it was waiting on. What
@@ -19,16 +21,19 @@
 use std::collections::VecDeque;
 use std::io;
 use std::process::ExitStatus;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crucible_runtime::Cancel;
-use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation};
+use crucible_sandbox::{
+    SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRead, SandboxViolation,
+};
 use crucible_tools::{ToolError, ToolOutput, Watch, Wrote};
+use tokio::runtime::Handle;
+use tokio::task::JoinHandle;
 
-use super::background::{Background, Taking};
+use super::background::{Background, ProcessTask, Taking};
 
 use super::{NAME, TICK, io as tool_io, unpublished as tool_unpublished};
 use crate::bound::OUTPUT;
@@ -85,13 +90,26 @@ pub(super) const CANCELLATION: Duration = Duration::from_millis(500);
 /// this is only ever spent when something else is still holding a pipe open.
 const SETTLE: Duration = Duration::from_millis(200);
 
+/// How often the readers are looked at for having reached the end, once the
+/// command is over. Well above what a reader needs to take what is buffered
+/// and see its pipe's end, and well below a tick, which is what the answer
+/// would pay otherwise.
+const WOKEN: Duration = Duration::from_millis(1);
+
 /// Waits for `child`, killing it if the deadline passes or the user stops the
 /// turn, and reports what it produced.
 ///
-/// The pipes are drained on their own threads. Waiting first and reading
-/// afterwards would deadlock the moment a command produced more output than a
-/// pipe buffer holds, which is most commands worth running.
-pub(super) fn collect(
+/// The pipes are drained by tasks of their own, started on the runtime
+/// polling this and awaited by it: waiting first and reading afterwards would
+/// deadlock the moment a command produced more output than a pipe buffer
+/// holds, which is most commands worth running. Between its looks at the
+/// command this waits on that runtime's clock, so the thread polling it is
+/// free for other work while the command runs; that runtime needs its timer,
+/// and, for the local backend's pipes on Unix, its I/O driver.
+///
+/// Dropped before it answers, it ends the command the way an early return
+/// does and gives up on its readers, which stop at their next wait.
+pub(super) async fn collect(
     process: Box<dyn SandboxProcess>,
     waiting: &Waiting<'_>,
 ) -> Result<Left, ToolError> {
@@ -105,8 +123,14 @@ pub(super) fn collect(
     // therefore stops the process scope and performs only a bounded reap.
     let started = Instant::now();
     let mut running = Waited::new(process);
-    let mut out = Pipe::drain(running.taking()?.take_stdout(), "stdout")?;
-    let mut err = Pipe::drain(running.taking()?.take_stderr(), "stderr")?;
+    let on = Handle::try_current().map_err(|source| {
+        tool_io(
+            "could not start a command output reader",
+            io::Error::other(source),
+        )
+    })?;
+    let mut out = Pipe::drain(running.taking()?.take_stdout(), &on);
+    let mut err = Pipe::drain(running.taking()?.take_stderr(), &on);
 
     let deadline = started + *allowed;
     let mut expiry = Expiry::No;
@@ -123,10 +147,11 @@ pub(super) fn collect(
             && let Some(process) = running.given()
         {
             return Ok(Left::Running(Taking {
-                process,
-                out,
-                err,
+                process: Some(process),
+                out: Some(out),
+                err: Some(err),
                 since: started,
+                lease: None,
                 why,
             }));
         }
@@ -155,8 +180,9 @@ pub(super) fn collect(
         // Neither the cancel nor the deadline ends a command that has already
         // ended, until its own ceiling passes. One whose writes wait their turn
         // behind another command's publication is not running any more, and
-        // stopping it would discard what it wrote after it finished — so it is
-        // waited for, and told apart from a command that really did run too long.
+        // stopping it would cut short an ending that may still publish — so it
+        // is waited for, and told apart from a command that really did run too
+        // long.
         if cancel.requested() || Instant::now() >= deadline {
             let ended = running.taking()?.ended();
             let since = *publishing.get_or_insert_with(Instant::now);
@@ -167,11 +193,17 @@ pub(super) fn collect(
             };
             if !(ended && since.elapsed() < ceiling) {
                 if cancel.requested() {
-                    let _ = running.stop()?;
+                    let status = running.stop().await?;
+                    let published = running.taking()?.publication_outcome()
+                        == Some(SandboxLifecycle::Published);
+                    if ended && published {
+                        expiry = Expiry::Published;
+                        break status;
+                    }
                     // A cancelled call is answered to the model as one that was
-                    // not run. True of a command still running; false of one
-                    // that finished and had its writes discarded by the stop
-                    // above, which is told instead what it lost.
+                    // not run. True of a command still running; an ending that
+                    // completed during the stop is answered with its committed
+                    // publication below rather than called discarded.
                     return Err(if ended {
                         tool_unpublished(io::Error::new(
                             io::ErrorKind::TimedOut,
@@ -181,23 +213,26 @@ pub(super) fn collect(
                         ToolError::Cancelled(NAME.into())
                     });
                 }
-                let status = running.stop()?;
-                // Stopping it discarded whatever it had not published, which is
-                // the part of "ran too long" that is not true of it.
-                expiry = if ended {
-                    Expiry::Unpublished
-                } else {
-                    Expiry::RanTooLong
+                let status = running.stop().await?;
+                let published =
+                    running.taking()?.publication_outcome() == Some(SandboxLifecycle::Published);
+                // The stop joins an ending already writing. Ask that ending's
+                // terminal publication outcome rather than deciding from the
+                // pre-stop `ended` bit.
+                expiry = match (ended, published) {
+                    (true, false) => Expiry::Unpublished,
+                    (false, _) => Expiry::RanTooLong,
+                    (true, true) => Expiry::No,
                 };
                 break status;
             }
         }
 
-        // Handed over here rather than from the reader threads, and that is the
-        // load-bearing choice in this loop. A reader that blocked on a full
+        // Handed over here rather than from the reader tasks, and that is the
+        // load-bearing choice in this loop. A reader that waited on a full
         // channel would stop draining its pipe, the pipe would fill, and the
         // command would stall behind the terminal — which is the deadlock the
-        // whole module is arranged to prevent. This thread is already the one
+        // whole module is arranged to prevent. This wait is already the one
         // doing nothing but waiting, so it is the one that can afford to wait
         // again.
         //
@@ -211,7 +246,7 @@ pub(super) fn collect(
             }
         }
 
-        thread::sleep(TICK);
+        tokio::time::sleep(TICK).await;
     };
 
     let violation = running.taking()?.violation();
@@ -226,12 +261,12 @@ pub(super) fn collect(
     // instead. Nothing reaches the end of a command's life without somebody
     // holding it.
     if expiry == Expiry::No {
-        running.finish_after_exit()?;
+        running.finish_after_exit().await?;
     }
 
-    let ended = settle(&out, &err);
-    out.close()?;
-    err.close()?;
+    let ended = settle(&out, &err).await;
+    out.close().await?;
+    err.close().await?;
 
     let captured = joined(&out, &err);
     Ok(Left::Answered(
@@ -307,15 +342,16 @@ impl Waited {
         Some(taken)
     }
 
-    /// Stops the scope and gives the shell a bounded interval to become reapable.
-    fn stop(&mut self) -> Result<Option<ExitStatus>, ToolError> {
-        let Some(process) = self.process.as_deref_mut() else {
+    /// Stops the scope and gives the shell a bounded interval to become
+    /// reapable, with the whole operation owned by a blocking task.
+    async fn stop(&mut self) -> Result<Option<ExitStatus>, ToolError> {
+        let Some(process) = self.process.take() else {
             return Ok(None);
         };
-
-        end(process).map_err(|source| tool_io("could not stop the command", source))?;
-        let status = reap(self.taking()?, SETTLE)
-            .map_err(|source| tool_io("could not inspect the stopped command", source))?;
+        let task = ProcessTask::start(process, |process| stop_and_reap_blocking(process, SETTLE));
+        let (returned, result) = task.wait().await;
+        self.process = returned;
+        let status = result.map_err(|source| tool_io("could not stop the command", source))?;
         let Some(status) = status else {
             return Err(tool_io(
                 "could not reap the stopped command",
@@ -329,13 +365,16 @@ impl Waited {
         Ok(Some(status))
     }
 
-    /// Stops descendants after `try_wait` has already reaped the shell.
-    fn finish_after_exit(&mut self) -> Result<(), ToolError> {
-        let Some(process) = self.process.as_deref_mut() else {
+    /// Stops descendants after `try_wait` has already reaped the shell, with
+    /// the potentially blocking stop owned away from the polling worker.
+    async fn finish_after_exit(&mut self) -> Result<(), ToolError> {
+        let Some(process) = self.process.take() else {
             return Ok(());
         };
-
-        end(process).map_err(|source| tool_io("could not stop command descendants", source))?;
+        let task = ProcessTask::start(process, stop_here);
+        let (returned, result) = task.wait().await;
+        self.process = returned;
+        result.map_err(|source| tool_io("could not stop command descendants", source))?;
         self.released = true;
         Ok(())
     }
@@ -347,19 +386,26 @@ impl Drop for Waited {
             return;
         }
 
-        // Destructors cannot report a second failure over the error already on
-        // its way out. They can still guarantee that cleanup itself is bounded.
-        let Some(process) = self.process.as_deref_mut() else {
-            return;
-        };
-
-        let _ = end(process);
-        let _ = reap(process, SETTLE);
+        // A destructor may not block on the process contract's stop, which
+        // ends and reaps a whole process group. Hand the process to the
+        // builtins' owned release task instead: where a runtime
+        // is running the stop is asked on the runtime's blocking pool, a
+        // refusal is retried, and the thread doing this drop never waits for
+        // that stop. With no runtime running the release task is never made,
+        // the reservation is given back, and the handle is left to the
+        // operating system — the backend's own destructor runs on this thread
+        // instead, which is not a stop and records none.
+        if let Some(process) = self.process.take() {
+            super::background::release_process(process, None);
+        }
     }
 }
 
 /// Waits only until `allowed`; a failed termination can never become a hang.
-fn reap(
+///
+/// This is the synchronous bound used by the blocking cleanup task and kept as
+/// the focused test oracle for the process cleanup path.
+pub(super) fn reap(
     process: &mut (dyn SandboxProcess + 'static),
     allowed: Duration,
 ) -> io::Result<Option<ExitStatus>> {
@@ -375,12 +421,41 @@ fn reap(
     }
 }
 
+/// Runs a process stop and its bounded reap on a blocking task.
+fn stop_and_reap_blocking(
+    process: &mut (dyn SandboxProcess + 'static),
+    settling: Duration,
+) -> io::Result<Option<ExitStatus>> {
+    stop_here(process)?;
+    reap(process, settling)
+}
+
 /// Ends a command's whole process group, whatever the platform calls one.
 ///
-/// Named here rather than in two places because two modules end a command now:
-/// the wait that owns one, and the registry that took one over.
-pub(super) fn end(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
-    process.stop()
+/// Asked from a thread the runtime's blocking pool handed out, which already
+/// holds the command: the wait that owns a command stops it from inside its
+/// call, the registry's release task stops a command it holds, and a command
+/// the registry has taken is stopped by the task that owns it, on the runtime
+/// that owns it; see [`super::background`]. The stop is the process contract's
+/// synchronous one, so it blocks this one thread rather than a runtime worker.
+/// The in-tree stops end the task watching the command's status, end the
+/// command's group within the kill bound, reap it within the reap bound, join a
+/// limit's cancel within a bound of its own, stop its network proxy where it
+/// has one and clean up its stage, and a projected command's stop also joins an
+/// ending already writing it: that ending may roll back or publish before the
+/// stop returns. The only bounds within one are those three steps', the kill's,
+/// the reap's and the cancel join's. A backend with no synchronous stop refuses
+/// it, and every caller reads that refusal as a stop that did not happen,
+/// leaving it to the caller whether to ask again and from when.
+///
+/// Reached from neither a destructor nor the thread that draws, neither of
+/// which can wait for a stop: those paths hand the process to the builtins'
+/// owned release task, which asks on a runtime's blocking pool. Where a runtime
+/// is running, a refused stop keeps that task retrying — further apart each
+/// time — and only a confirmed stop gives up the handle. With none running,
+/// [`super::background`] is what says what is given back instead.
+pub(super) fn stop_here(process: &mut (dyn SandboxProcess + 'static)) -> io::Result<()> {
+    process.stop_sync()
 }
 
 /// Everything the wait needs besides the command itself.
@@ -473,8 +548,11 @@ enum Expiry {
     No,
     /// It was still running when its time ran out.
     RanTooLong,
-    /// It had ended, and the stop discarded what it had not published.
+    /// It had ended, and the joined stop did not confirm a successful
+    /// publication; its writes may have been rolled back or quarantined.
     Unpublished,
+    /// It had ended, and the stop joined a publication that committed.
+    Published,
 }
 
 impl Finished {
@@ -496,6 +574,12 @@ impl Finished {
         // and carries the other fact inside it, because a prefix still has to
         // say that it is one.
         if self.expiry != Expiry::No {
+            if self.expiry == Expiry::Published {
+                return ToolOutput::failed(format!(
+                    "{body}\n\n[stopped: the turn was cancelled after its writes were published]"
+                ))
+                .with_capture_elision(self.original, self.omitted);
+            }
             let held = if self.arriving {
                 ", and something it left running still holds the output open"
             } else {
@@ -571,6 +655,21 @@ struct Kept {
     /// miss every line that fell between them. It is what a command nobody is
     /// waiting on is counted by, since there is no result to read a figure off.
     lines: usize,
+    /// How the reader failed, where it did: set as its task goes, and taken
+    /// by whoever joins it. `None` for a reader that reached the end, was
+    /// told to stop, or is still reading.
+    failed: Option<Failed>,
+    /// The reader has been told to stop, so a task dropped before its loop
+    /// ended was stopped rather than came apart.
+    told: bool,
+}
+
+/// How a reader stopped short of the end without being told to.
+enum Failed {
+    /// A read of the pipe failed.
+    Read(io::Error),
+    /// Its task came apart.
+    Broke,
 }
 
 impl Kept {
@@ -578,7 +677,7 @@ impl Kept {
     fn push(&mut self, arrived: &[u8]) {
         // The lint here asks for a crate whose whole subject is counting bytes
         // quickly. This counts newlines in one pipe read — eight kilobytes at
-        // most — once per read, on a thread whose other job is waiting. A
+        // most — once per read, in a task whose other job is waiting. A
         // dependency is not what that is worth, and the ladder this project adds
         // one by says so.
         #[allow(clippy::naive_bytecount)]
@@ -693,9 +792,10 @@ impl Kept {
         String::from_utf8_lossy(arrived.get(..whole).unwrap_or_default()).into_owned()
     }
 
-    /// The two ends, in order, with the gap between them unmarked — [`cut`] is
-    /// where it gets said, because that is where the two streams have been put
-    /// together and there is one gap to describe.
+    /// The two ends, in order, with the gap between them unmarked — [`joined`]
+    /// and [`gathered`] are where it gets said for an answer, because that is
+    /// where the two streams have been put together and there is one gap to
+    /// describe; [`Kept::shown`] says it for this one stream, for the panel.
     fn bytes(&self) -> Vec<u8> {
         // Bounded by `OUTPUT` however long the command ran, which is what this
         // type exists to guarantee.
@@ -703,107 +803,77 @@ impl Kept {
         all.extend(&self.tail);
         all
     }
+
+    /// The two ends with the gap said where it is, for the panel that stands
+    /// this stream whole: the head, then — only where bytes were dropped — the
+    /// marker an answer carries, at the hole and counting this stream's own
+    /// printed and dropped bytes, then the tail. Nothing is trimmed.
+    ///
+    /// Where nothing was dropped the two ends are one run of bytes and are
+    /// read as one. Where they are not, each is read on its own, so a
+    /// character cut at either edge of the hole reads as damaged there rather
+    /// than as one character spliced across bytes that were never adjacent.
+    fn shown(&self) -> String {
+        if self.dropped == 0 {
+            return String::from_utf8_lossy(&self.bytes()).into_owned();
+        }
+
+        // Bounded by `OUTPUT` and the marker: the two ends together never hold
+        // more than a stream's head and tail budgets.
+        let tail: Vec<u8> = self.tail.iter().copied().collect();
+        format!(
+            "{}\n\n{}\n\n{}",
+            String::from_utf8_lossy(&self.head),
+            marker(self.taken(), self.dropped),
+            String::from_utf8_lossy(&tail)
+        )
+    }
 }
 
-/// One of a command's output pipes, being read on a thread of its own.
+/// One of a command's output pipes, being read by a task of its own.
 pub(super) struct Pipe {
     /// Shared rather than returned, so what has arrived can be taken without
     /// waiting for the end that may never come.
     kept: Arc<Mutex<Kept>>,
-    /// Told to the reader when this end of it goes away. A grandchild can hold
-    /// a pipe open long after the turn it belonged to is over, and a reader
-    /// nobody is waiting for should not still be collecting for it.
-    stop: Arc<AtomicBool>,
-    reader: Option<thread::JoinHandle<io::Result<()>>>,
+    /// The task reading the pipe, owned here: told to stop when this end of
+    /// it is released or dropped. A grandchild can hold a pipe open long after
+    /// the turn it belonged to is over, and a reader nobody is waiting for
+    /// should not still be collecting for it.
+    reader: Option<JoinHandle<()>>,
 }
 
 impl Pipe {
-    /// Starts reading `pipe` on a thread.
-    fn drain(
-        pipe: Option<Box<dyn SandboxOutput>>,
-        stream: &'static str,
-    ) -> Result<Self, ToolError> {
+    /// Starts reading `pipe` in a task on `on`, through the pipe's waiting
+    /// read, so the task waits on the pipe rather than on a thread.
+    ///
+    /// The task needs of `on` what the pipe's waiting read needs of the
+    /// runtime polling it: the local backend's pipes on Unix are waited on by
+    /// that runtime's I/O driver, and a pipe with no way to say when it is
+    /// ready is asked again on its clock.
+    fn drain(pipe: Option<Box<dyn SandboxOutput>>, on: &Handle) -> Self {
         let kept = Arc::new(Mutex::new(Kept::default()));
-        let stop = Arc::new(AtomicBool::new(false));
-        let (into, until) = (Arc::clone(&kept), Arc::clone(&stop));
-
-        let Some(mut pipe) = pipe else {
-            return Ok(Self {
-                kept,
-                stop,
-                reader: None,
-            });
-        };
-        let reader = thread::Builder::new()
-            .name(format!("crucible-bash-{stream}"))
-            .spawn(move || {
-                let mut buffer = [0_u8; 8192];
-
-                loop {
-                    if until.load(Ordering::Relaxed) {
-                        return Ok(());
-                    }
-
-                    let (read, discarded) = match pipe.read_ready(&mut buffer) {
-                        // The end of the pipe, and the only way out of here that
-                        // [`ended`] is entitled to read as one.
-                        Ok(SandboxRead::End) => return Ok(()),
-                        Ok(SandboxRead::Bytes(read)) => (read, 0),
-                        Ok(SandboxRead::Limited {
-                            retained,
-                            discarded,
-                        }) => (retained, discarded),
-                        Ok(SandboxRead::Pending) => {
-                            thread::sleep(TICK);
-                            continue;
-                        }
-                        // What `read` documents as non-fatal and asks callers to
-                        // retry. Producing one takes a signal handler that returns,
-                        // and this process installs none — catching a signal needs
-                        // `unsafe`, which the workspace denies — so it cannot
-                        // happen today. It is retried rather than reasoned about
-                        // because the fact protecting it lives in another crate:
-                        // the day anything here catches a resize, dropping this
-                        // would end a reader mid-command and send the cut output
-                        // back looking complete.
-                        Err(problem) if problem.kind() == io::ErrorKind::Interrupted => continue,
-                        Err(problem) => return Err(problem),
-                    };
-
-                    if until.load(Ordering::Relaxed) {
-                        return Ok(());
-                    }
-                    // Neither of these can be the arm that runs. `read` never
-                    // reports more than the buffer it was handed, and the lock is
-                    // poisoned only by a panic inside `push` or `bytes` — neither
-                    // of which indexes, unwraps or does arithmetic that is not
-                    // saturating, in a crate where all three are denied anyway.
-                    let (Some(arrived), Ok(mut kept)) = (buffer.get(..read), into.lock()) else {
-                        return Ok(());
-                    };
-                    kept.push(arrived);
-                    kept.discard(discarded);
-                }
-            })
-            .map_err(|source| tool_io("could not start a command output reader", source))?;
-
-        Ok(Self {
-            kept,
-            stop,
-            reader: Some(reader),
-        })
+        let reader = pipe.map(|pipe| {
+            on.spawn(read(
+                pipe,
+                Reading {
+                    kept: Arc::clone(&kept),
+                    over: None,
+                },
+            ))
+        });
+        Self { kept, reader }
     }
 
     /// Whether the reader has reached the end of the pipe.
     ///
-    /// Answered by the thread having stopped. An I/O failure can also stop the
-    /// thread, but [`Self::close`] joins it and reports that failure before a
-    /// `ToolOutput` can be returned; `ended` only bounds how long collection
-    /// waits before that definitive result.
+    /// Answered by the task having finished. An I/O failure can also finish
+    /// the task, but [`Self::close`] and [`Released::join`] report that
+    /// failure. For a command somebody waits on, that is a tool error returned
+    /// before any `ToolOutput` can be; for one that ended in the background,
+    /// the registry reads it and says the output is incomplete. `ended` only
+    /// bounds how long either waits before that definitive result.
     pub(super) fn ended(&self) -> bool {
-        self.reader
-            .as_ref()
-            .is_none_or(thread::JoinHandle::is_finished)
+        self.reader.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
     /// What has arrived so far, and how many bytes were let go to keep it
@@ -811,11 +881,23 @@ impl Pipe {
     ///
     /// This never joins the reader. It takes a bounded snapshot while the
     /// collection path remains responsible for stopping and joining the
-    /// pollable reader afterwards.
+    /// reader afterwards. [`joined`] and [`gathered`] are what turn
+    /// this pair into the text a caller reports, because the count belongs
+    /// beside the bytes it was dropped from rather than travelling alone.
     fn take(&self) -> (Vec<u8>, usize) {
         self.kept
             .lock()
             .map(|kept| (kept.bytes(), kept.dropped))
+            .unwrap_or_default()
+    }
+
+    /// What has arrived so far, as the panel stands one stream: whole where
+    /// nothing was dropped, and with the marker at the hole where it was.
+    /// See [`Kept::shown`].
+    fn shown(&self) -> String {
+        self.kept
+            .lock()
+            .map(|kept| kept.shown())
             .unwrap_or_default()
     }
 
@@ -830,14 +912,6 @@ impl Pipe {
             .unwrap_or_default()
     }
 
-    /// The end of what has arrived, for the view that stands one whole.
-    pub(super) fn text(&self) -> String {
-        self.kept
-            .lock()
-            .map(|kept| String::from_utf8_lossy(&kept.bytes()).into_owned())
-            .unwrap_or_default()
-    }
-
     /// What has arrived on this pipe since the last time it was asked.
     ///
     /// Empty where nothing has, which is the ordinary answer for a command
@@ -849,57 +923,239 @@ impl Pipe {
             .unwrap_or_default()
     }
 
-    /// Stops and joins the reader, reporting spawn-side failures as tool errors.
-    fn close(&mut self) -> Result<(), ToolError> {
-        self.stop.store(true, Ordering::Relaxed);
-        let Some(reader) = self.reader.take() else {
-            return Ok(());
+    /// Stops the reader and awaits its end, reporting one that failed or came
+    /// apart as a tool error. See [`Released::joined`].
+    async fn close(&mut self) -> Result<(), ToolError> {
+        self.release().joined().await
+    }
+
+    /// Tells the reader to stop and hands it back to be joined, so the join
+    /// can be made away from whatever lock this pipe is held under.
+    ///
+    /// What was kept stays readable, and [`Self::ended`] answers `true` from
+    /// here on, whether or not the reader had reached the end.
+    pub(super) fn release(&mut self) -> Released {
+        let reader = self.reader.take();
+        if let Some(reader) = &reader {
+            self.stop(reader);
+        }
+        Released {
+            reader,
+            kept: Arc::clone(&self.kept),
+        }
+    }
+
+    /// Tells `reader` to stop, saying first that it was told, so its end is
+    /// not read as a failure.
+    fn stop(&self, reader: &JoinHandle<()>) {
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .told = true;
+        reader.abort();
+    }
+
+    /// The most one pipe holds on to however much arrives: its head, its
+    /// tail and the reader's window.
+    #[cfg(test)]
+    pub(super) const CEILING: usize = OUTPUT + FRESH;
+
+    /// How many bytes this pipe holds on to, the reader's window included.
+    #[cfg(test)]
+    pub(super) fn retained(&self) -> usize {
+        self.kept.lock().map_or(0, |kept| {
+            kept.head
+                .len()
+                .saturating_add(kept.tail.len())
+                .saturating_add(kept.fresh.len())
+        })
+    }
+}
+
+/// Reads `pipe` into what `reading` keeps until the pipe ends or a read of it
+/// fails, or until the task is told to stop, which takes it at its next wait.
+async fn read(mut pipe: Box<dyn SandboxOutput>, mut reading: Reading) {
+    // On the heap rather than in the task, which is kept small.
+    let mut buffer = vec![0_u8; 8192];
+
+    reading.over = Some(loop {
+        // A pipe that always has more would otherwise be read for as long as
+        // it kept talking without the task ever reaching a wait, and being
+        // told to stop lands only at one.
+        tokio::task::consume_budget().await;
+
+        let (read, discarded) = match pipe.read(&mut buffer).await {
+            // The end of the pipe, and the only way out of here that
+            // [`Pipe::ended`] is entitled to read as one.
+            Ok(SandboxRead::End) => break Ok(()),
+            Ok(SandboxRead::Bytes(read)) => (read, 0),
+            Ok(SandboxRead::Limited {
+                retained,
+                discarded,
+            }) => (retained, discarded),
+            // A waiting read answers once there is something to answer, so
+            // this is a backend's own choice; asked again at once, it would be
+            // asked for as long as it kept saying so.
+            Ok(SandboxRead::Pending) => {
+                tokio::time::sleep(TICK).await;
+                continue;
+            }
+            // An interrupted read, which `std::io::Read` documents as
+            // non-fatal and to be retried.
+            Err(problem) if problem.kind() == io::ErrorKind::Interrupted => continue,
+            Err(problem) => break Err(problem),
         };
-        match reader.join() {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(source)) => Err(tool_io("could not read command output", source)),
-            Err(_) => Err(tool_io(
+
+        // Cannot be the arm that runs: `read` never reports more than the
+        // buffer it was handed.
+        let Some(arrived) = buffer.get(..read) else {
+            break Ok(());
+        };
+        reading.keep(arrived, discarded);
+    });
+}
+
+/// A reader task's hold on what it keeps, which records how the task ended as
+/// it is dropped: however it ends — at the end of its pipe, on a failed read,
+/// told to stop, or coming apart — the task drops this on its way out, and the
+/// runtime drops a task that came apart before any join can ask about it.
+struct Reading {
+    kept: Arc<Mutex<Kept>>,
+    /// How the reading loop ended, once it has; `None` while it runs, and
+    /// still `None` when the task is dropped from inside it.
+    over: Option<io::Result<()>>,
+}
+
+impl Reading {
+    /// Keeps what arrived and counts what a lower hard ceiling discarded.
+    fn keep(&self, arrived: &[u8], discarded: usize) {
+        // Poisoned only by a panic inside `push` or `discard`, neither of
+        // which indexes, unwraps or does arithmetic that is not saturating,
+        // in a crate where all three are denied anyway.
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.push(arrived);
+        kept.discard(discarded);
+    }
+}
+
+impl Drop for Reading {
+    fn drop(&mut self) {
+        let over = self.over.take();
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.failed = match over {
+            Some(Ok(())) => return,
+            Some(Err(problem)) => Some(Failed::Read(problem)),
+            // Dropped from inside the loop: told to stop, which is no
+            // failure, or anything else — a poll that came apart, or a
+            // runtime shutting down under it — which is.
+            None if kept.told => return,
+            None => Some(Failed::Broke),
+        };
+    }
+}
+
+/// A reader told to stop and not yet joined: see [`Pipe::release`].
+pub(super) struct Released {
+    reader: Option<JoinHandle<()>>,
+    kept: Arc<Mutex<Kept>>,
+}
+
+impl Released {
+    /// Joins the reader on the thread that asks, reporting one that failed or
+    /// came apart as a tool error.
+    ///
+    /// For a caller that cannot await, and so waits on its own thread: the
+    /// registry, from the runtime's blocking threads. A reader told to stop
+    /// is dropped at its next wait by the runtime that owns it, and every
+    /// wait it has is on its pipe or its clock, so this waits for that at
+    /// most [`SETTLE`]. One not gone by then is given up on: it was told to
+    /// stop, and the runtime drops it as soon as one of its threads is free
+    /// to. Whether what it kept is the whole was decided before it was
+    /// released, by [`Pipe::ended`].
+    pub(super) fn join(self) -> Result<(), ToolError> {
+        if let Some(reader) = &self.reader {
+            let deadline = Instant::now() + SETTLE;
+            while !reader.is_finished() && Instant::now() < deadline {
+                thread::sleep(WOKEN);
+            }
+        }
+        self.failure()
+    }
+
+    /// [`Self::join`], awaited: the wait for the reader to be gone is spent on
+    /// the clock of the runtime polling this rather than on its thread, and is
+    /// given up on after the same bound.
+    async fn joined(mut self) -> Result<(), ToolError> {
+        if let Some(reader) = self.reader.take() {
+            // What the join says is read from what the reader recorded
+            // instead: a reader told to stop and one that came apart both
+            // answer an error here.
+            let _ = tokio::time::timeout(SETTLE, reader).await;
+        }
+        self.failure()
+    }
+
+    /// How the reader failed, where it did.
+    fn failure(&self) -> Result<(), ToolError> {
+        let failed = self
+            .kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .failed
+            .take();
+        match failed {
+            None => Ok(()),
+            Some(Failed::Read(source)) => Err(tool_io("could not read command output", source)),
+            Some(Failed::Broke) => Err(tool_io(
                 "a command output reader stopped unexpectedly",
-                io::Error::other("the output reader thread panicked"),
+                io::Error::other("the output reader came apart"),
             )),
         }
     }
 }
 
 impl Drop for Pipe {
+    /// Tells the reader to stop without waiting for it: the only thing left
+    /// for it to do is let go of its pipe, which it does at its next wait.
+    /// Error paths therefore end their readers too.
     fn drop(&mut self) {
-        // Pollable reads make this join bounded even when a descendant still
-        // owns the writer. Error paths therefore release their reader too.
-        let _ = self.close();
+        if let Some(reader) = &self.reader {
+            self.stop(reader);
+        }
     }
 }
 
 /// How long a command that has exited is held back for, waiting for its readers
-/// to reach the end of its pipes.
+/// to reach the end of its pipes: once before what it left running is ended,
+/// and once more after, because ending it can be what lets a pipe reach its
+/// end.
 ///
 /// The same moment [`settle`] gives a command somebody is waiting on, spent the
 /// other way round: the registry cannot block the thread that draws, so instead
 /// of waiting inside one call it declines to report the ending and is asked
 /// again on the next beat. A grandchild still holding a pipe open is what the
-/// deadline is for — the ending is reported with whatever arrived, rather than
-/// never.
+/// deadline is for — the ending is reported with whatever arrived, marked
+/// incomplete, rather than never.
 pub(super) const DRAIN: Duration = SETTLE;
 
 /// Gives the readers a moment to reach the end once the command is over, and
 /// says whether they got there.
 ///
-/// Almost always they are already there: the bytes were read as they arrived,
-/// and the last of them land when the process ends. The wait is bounded because
-/// the case where they are not there is the case that never resolves — and
-/// `false` is how what was collected gets reported as the prefix it is.
-fn settle(out: &Pipe, err: &Pipe) -> bool {
+/// Almost always they are a moment from there: the bytes were read as they
+/// arrived, the last of them land when the process ends, and a reader waiting
+/// on its pipe is woken by the pipe itself to take them and see its end. The
+/// wait is bounded because the case where they never get there is the case
+/// that never resolves — and `false` is how what was collected gets reported
+/// as the prefix it is. It is spent on the clock of the runtime polling this,
+/// the one the readers run on, so looking for them never keeps them waiting.
+async fn settle(out: &Pipe, err: &Pipe) -> bool {
     let deadline = Instant::now() + SETTLE;
 
     while !(out.ended() && err.ended()) {
         if Instant::now() >= deadline {
             return false;
         }
-        thread::sleep(TICK);
+        tokio::time::sleep(WOKEN).await;
     }
 
     true
@@ -911,31 +1167,77 @@ fn settle(out: &Pipe, err: &Pipe) -> bool {
 /// belong next to the output they explain, and a model reading `cargo test`
 /// needs the failure and the summary in one piece of text. Concatenated, not
 /// interleaved: the whole of `stdout` and then the whole of `stderr`. Two pipes
-/// read on two threads carry no shared order and none is recorded, so the
+/// read by two tasks carry no shared order and none is recorded, so the
 /// result is not the sequence a terminal would have shown — a progress line on
 /// `stderr` says nothing here about which `stdout` line it came between.
 fn joined(out: &Pipe, err: &Pipe) -> Captured {
+    let (both, dropped) = taken(out, err);
+    captured(&both, dropped, CAPTURE_TEXT)
+}
+
+/// Both pipes' bytes, concatenated, and how much of the two together their
+/// readers let go to stay bounded.
+///
+/// The one place [`joined`] and [`gathered`] share, so the two never drift
+/// into counting the gap two different ways.
+fn taken(out: &Pipe, err: &Pipe) -> (Vec<u8>, usize) {
     let (mut both, from_out) = out.take();
     let (rest, from_err) = err.take();
     both.extend(rest);
-
-    captured(&both, from_out.saturating_add(from_err), CAPTURE_TEXT)
+    (both, from_out.saturating_add(from_err))
 }
 
-/// As much of `text` as `budget` allows, cut and annotated the way an answer is.
+/// Both pipes, joined and cut to `budget` the way [`joined`] cuts them to the
+/// answer's own ceiling — bytes and the count a reader dropped, together, so
+/// the marker this writes names the whole gap rather than only the slice this
+/// call still had to cut.
 ///
-/// For text that is not itself a tool result and so never reaches the
-/// invocation pipeline's ceiling: the note about a command that ended while
-/// nobody waited carries what it printed, and carries it under a budget of its
-/// own because several commands can end into one note.
+/// For a command's own output read while it is still running or just after:
+/// the note on one that ended while nobody waited, and the two live reads
+/// that answer a call directly, [`Taking::printed`] and
+/// [`Background::printed`]. Callers that build an answer from what this
+/// returns carry `original` and `omitted` on to it with
+/// [`crucible_tools::ToolOutput::with_capture_elision`], so a later limiter
+/// pass that must cut through this call's own marker still has the true
+/// count to repeat.
+///
+/// [`Taking::printed`]: super::background::Taking::printed
+/// [`Background::printed`]: super::background::Background::printed
+pub(super) fn gathered(out: &Pipe, err: &Pipe, budget: usize) -> Captured {
+    let (both, dropped) = taken(out, err);
+    captured(&both, dropped, budget)
+}
+
+/// Both pipes, one after the other, each stood the way [`Kept::shown`] stands
+/// one stream: every kept byte, and where a stream's reader dropped bytes, the
+/// marker an answer carries at that stream's own hole, counting what that
+/// stream printed and dropped.
+///
+/// For the view a reader stands rather than an answer a call is cut to. Unlike
+/// [`gathered`], nothing here is cut to a budget or trimmed: what is kept is at
+/// most a stream's head and tail per pipe, and the marker is added to that
+/// rather than taken out of it. Per stream rather than over the two glued
+/// together, because each reader's hole is its own: one marker at the middle
+/// of the glue can sit where nothing was dropped, on the boundary between the
+/// streams when both flooded, and leave the real splices unmarked.
+pub(super) fn stood(out: &Pipe, err: &Pipe) -> String {
+    let mut both = out.shown();
+    both.push_str(&err.shown());
+    both
+}
+
+/// As much of `text` as `budget` allows, cut and annotated the way an answer
+/// is, for a piece of text with no dropped-byte count of its own: an error's
+/// own message. A reader whose own drops must be counted uses [`gathered`]
+/// instead, which is where that count is carried through.
 pub(super) fn excerpt(text: &str, budget: usize) -> String {
     captured(text.as_bytes(), 0, budget).text
 }
 
-struct Captured {
-    text: String,
-    original: usize,
-    omitted: usize,
+pub(super) struct Captured {
+    pub(super) text: String,
+    pub(super) original: usize,
+    pub(super) omitted: usize,
 }
 
 /// The head and the tail, when there is more than anything can use.
@@ -973,17 +1275,23 @@ fn captured(bytes: &[u8], already: usize, budget: usize) -> Captured {
     let tail = String::from_utf8_lossy(bytes.get(tail_start..).unwrap_or_default());
     let kept = head_end.saturating_add(bytes.len().saturating_sub(tail_start));
     let omitted = already.saturating_add(bytes.len().saturating_sub(kept));
-    let text = format!(
-        "{head}\n\n[process output was {original} bytes; {omitted} bytes omitted from the middle during capture]\n\n{tail}"
-    )
-    .trim_end()
-    .to_owned();
+    let text = format!("{head}\n\n{}\n\n{tail}", marker(original, omitted))
+        .trim_end()
+        .to_owned();
 
     Captured {
         text,
         original,
         omitted,
     }
+}
+
+/// What stands where a reader dropped bytes, in an answer's cut and in the
+/// panel alike, so both say it in one phrase.
+fn marker(original: usize, omitted: usize) -> String {
+    format!(
+        "[process output was {original} bytes; {omitted} bytes omitted from the middle during capture]"
+    )
 }
 
 /// The nearest character boundary at or after `at`, so a cut never lands

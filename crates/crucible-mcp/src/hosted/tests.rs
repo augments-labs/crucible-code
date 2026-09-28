@@ -8,12 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
     SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
     SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    unconfined_inspection,
 };
 use crucible_transport::Finish;
 use crucible_types::{Ancestry, SandboxId, ToolId};
@@ -76,7 +77,7 @@ fn inspection() -> SandboxInspection {
         None,
     )
     .expect("a backend identity");
-    SandboxInspection::unconfined_for_request(
+    unconfined_inspection(
         backend,
         SandboxCapabilities::none(),
         &request,
@@ -91,6 +92,12 @@ enum Step {
     Says(String),
     /// It has nothing yet, and its writer is still there.
     Waits,
+    /// It has nothing for this long, counted from when it is first asked, and
+    /// its writer is still there.
+    ///
+    /// Real time rather than a count of asks, because what it has to exercise
+    /// is a silence measured against a clock.
+    Holds(Duration),
     /// It waits a moment, and then has a byte that finishes nothing.
     ///
     /// A silence is measured between bytes, so a run of these is never quiet
@@ -105,13 +112,22 @@ enum Step {
 /// never runs out.
 const TRICKLE: Duration = Duration::from_millis(20);
 
-/// A scripted stream that goes quiet forever once its script runs out.
-struct Says(VecDeque<Step>);
+/// A scripted stream that goes quiet forever once its script runs out, and
+/// when a [`Step::Holds`] it is in ends.
+struct Says(VecDeque<Step>, Option<Instant>);
 
 impl SandboxOutput for Says {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if let Some(Step::Holds(held)) = self.0.front() {
+            let due = *self.1.get_or_insert_with(|| Instant::now() + *held);
+            if Instant::now() < due {
+                return Ok(SandboxRead::Pending);
+            }
+            self.0.pop_front();
+            self.1 = None;
+        }
         match self.0.pop_front() {
-            None | Some(Step::Waits) => Ok(SandboxRead::Pending),
+            None | Some(Step::Waits | Step::Holds(_)) => Ok(SandboxRead::Pending),
             Some(Step::Trickles) => {
                 thread::sleep(TRICKLE);
                 match buffer.first_mut() {
@@ -190,6 +206,9 @@ enum Ending {
     Stubborn,
     /// It never exits, and cannot be reaped.
     Unreapable,
+    /// It never exits, and a stop never answers, so an awaited caller gives up
+    /// on it at the bound on a stop that does not answer.
+    Unanswering,
     /// It exits once its input closes, which is what a server does.
     OnEof,
 }
@@ -218,7 +237,7 @@ impl Fake {
         let watched = Arc::new(Watched::default());
         (
             Box::new(Self {
-                stdout: Some(Says(steps.into_iter().collect())),
+                stdout: Some(Says(steps.into_iter().collect(), None)),
                 stderr: None,
                 speaks: true,
                 ending,
@@ -253,16 +272,19 @@ impl SandboxProcess for Fake {
         match self.ending {
             Ending::Exited => Ok(Some(exited())),
             Ending::OnEof if self.watched.closed.load(Ordering::Relaxed) => Ok(Some(exited())),
-            Ending::Stubborn | Ending::Unreapable | Ending::OnEof => Ok(None),
+            Ending::Stubborn | Ending::Unreapable | Ending::Unanswering | Ending::OnEof => Ok(None),
         }
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.watched.stopped.fetch_add(1, Ordering::Relaxed);
-        match self.ending {
-            Ending::Unreapable => Err(io::Error::other("the scope could not be reaped")),
-            Ending::Exited | Ending::Stubborn | Ending::OnEof => Ok(()),
-        }
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.watched.stopped.fetch_add(1, Ordering::Relaxed);
+            match self.ending {
+                Ending::Unreapable => Err(io::Error::other("the scope could not be reaped")),
+                Ending::Unanswering => std::future::pending().await,
+                Ending::Exited | Ending::Stubborn | Ending::OnEof => Ok(()),
+            }
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -321,7 +343,9 @@ fn a_process_crucible_cannot_speak_to_is_stopped_rather_than_hosted() {
     let (mut fake, watched) = Fake::new([], Ending::Stubborn);
     fake.speaks = false;
 
-    let refused = Hosted::over(fake, PATIENCE).expect_err("a server with no input is no server");
+    let refused = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect_err("a server with no input is no server");
 
     assert!(matches!(refused, Unstarted::Unspeakable));
     assert_eq!(
@@ -336,7 +360,9 @@ fn a_process_crucible_cannot_hear_is_stopped_rather_than_hosted() {
     let (mut fake, watched) = Fake::new([], Ending::Stubborn);
     fake.stdout = None;
 
-    let refused = Hosted::over(fake, PATIENCE).expect_err("a server with no output is no server");
+    let refused = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect_err("a server with no output is no server");
 
     assert!(matches!(refused, Unstarted::Unheard));
     assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
@@ -352,7 +378,9 @@ fn a_handshake_and_a_catalogue_travel_over_the_process_streams() {
         Ending::Exited,
     );
 
-    let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
     let greeting = hosted
         .greet(None)
         .expect("a server offering a version crucible speaks");
@@ -386,7 +414,9 @@ fn a_tool_the_catalogue_offered_can_then_be_called_over_the_same_streams() {
         Ending::Exited,
     );
 
-    let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
     let greeting = hosted.greet(None).expect("an agreeable server");
     let offered = hosted
         .catalogue(&greeting, None)
@@ -419,7 +449,9 @@ fn a_tool_the_catalogue_offered_can_then_be_called_over_the_same_streams() {
 fn a_server_that_says_nothing_is_given_up_on_rather_than_waited_out_forever() {
     let (fake, _watched) = Fake::new([Step::Waits], Ending::Stubborn);
 
-    let mut hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
     let refused = hosted.greet(None).expect_err("a server that never answers");
 
     assert!(
@@ -430,11 +462,11 @@ fn a_server_that_says_nothing_is_given_up_on_rather_than_waited_out_forever() {
 
 /// Whether the server's input reaches the state of being closed.
 ///
-/// The pipe lives on the thread that writes to it, so ending the conversation
-/// closes it by leaving that thread nothing further to receive, and the close
-/// itself happens over there. Waiting for it is the only way to ask the
-/// question without asserting an ordering between two threads that nothing
-/// guarantees; a session that never let go of the pipe waits this out.
+/// The pipe lives with the task that writes to it, so ending the conversation
+/// closes it by ending that task, and the close itself happens when a runtime
+/// worker next runs it. Waiting for it is the only way to ask the question
+/// without asserting an ordering between the test's thread and a worker that
+/// nothing guarantees; a session that never let go of the pipe waits this out.
 fn closes(watched: &Watched) -> bool {
     let until = Instant::now() + PATIENCE;
     while Instant::now() < until {
@@ -450,8 +482,10 @@ fn closes(watched: &Watched) -> bool {
 fn ending_a_session_closes_crucibles_end_before_the_process_is_stopped() {
     let (fake, watched) = Fake::new([Step::Says(greeted(newest()))], Ending::Stubborn);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    let ended = hosted.stop(Duration::ZERO);
+    let hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+    let ended = crate::testing::runtime().block_on(hosted.stop(Duration::ZERO));
 
     assert!(
         closes(&watched),
@@ -465,8 +499,10 @@ fn ending_a_session_closes_crucibles_end_before_the_process_is_stopped() {
 fn a_server_that_goes_when_its_input_closes_is_given_the_chance_to() {
     let (fake, watched) = Fake::new([Step::Waits], Ending::OnEof);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    let ended = hosted.stop(PATIENCE);
+    let hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+    let ended = crate::testing::runtime().block_on(hosted.stop(PATIENCE));
 
     assert!(
         matches!(ended.finish, Finish::Exited(_)),
@@ -485,8 +521,10 @@ fn a_server_that_goes_when_its_input_closes_is_given_the_chance_to() {
 fn a_process_that_went_on_its_own_is_reaped_rather_than_stopped() {
     let (fake, watched) = Fake::new([], Ending::Exited);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    let ended = hosted.stop(Duration::ZERO);
+    let hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+    let ended = crate::testing::runtime().block_on(hosted.stop(Duration::ZERO));
 
     assert!(matches!(ended.finish, Finish::Exited(_)));
     assert_eq!(
@@ -500,8 +538,10 @@ fn a_process_that_went_on_its_own_is_reaped_rather_than_stopped() {
 fn a_process_that_cannot_be_reaped_says_so_rather_than_reporting_a_clean_ending() {
     let (fake, _watched) = Fake::new([], Ending::Unreapable);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    let ended = hosted.stop(Duration::ZERO);
+    let hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+    let ended = crate::testing::runtime().block_on(hosted.stop(Duration::ZERO));
 
     assert!(matches!(ended.finish, Finish::Unreaped(_)));
 }
@@ -511,8 +551,10 @@ fn confinement_that_killed_a_server_is_what_the_ending_carries() {
     let (mut fake, _watched) = Fake::new([Step::Waits], Ending::Exited);
     fake.violation = Some(SandboxViolation::CommandTime);
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    let ended = hosted.stop(Duration::ZERO);
+    let hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+    let ended = crate::testing::runtime().block_on(hosted.stop(Duration::ZERO));
 
     assert_eq!(
         ended.violation,
@@ -529,14 +571,17 @@ fn what_a_server_complained_about_survives_the_ending_that_it_explains() {
         [Step::Says("docs-mcp: no index at /srv/docs".to_owned())]
             .into_iter()
             .collect(),
+        None,
     ));
 
-    let hosted = Hosted::over(fake, PATIENCE).expect("a process with both pipes");
-    // The drain runs on a thread of its own, so the complaint is read while
-    // crucible waits out the silence rather than before it starts.
+    let hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+    // The drain is a task of its own, so the complaint is read while crucible
+    // waits out the silence rather than before it starts.
     let mut hosted = hosted;
     drop(hosted.greet(None));
-    let ended = hosted.stop(Duration::ZERO);
+    let ended = crate::testing::runtime().block_on(hosted.stop(Duration::ZERO));
 
     assert!(
         ended.muttered.text().contains("no index"),
@@ -553,8 +598,13 @@ fn a_handshake_nobody_is_waiting_for_any_more_ends_at_the_press() {
     let (fake, _watched) = Fake::new([Step::Waits], Ending::Exited);
     let cancel = Cancel::new();
     cancel.request();
-    let mut hosted =
-        Hosted::over(fake, Duration::from_secs(30)).expect("a process with both pipes");
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(
+            fake,
+            Duration::from_secs(30),
+            &crate::testing::runtime(),
+        ))
+        .expect("a process with both pipes");
 
     let began = Instant::now();
     let rebuffed = hosted
@@ -582,7 +632,9 @@ fn a_server_that_speaks_just_often_enough_to_never_fall_silent_is_still_given_up
         std::iter::repeat_with(|| Step::Trickles).take(100),
         Ending::Exited,
     );
-    let mut hosted = Hosted::over(fake, patience).expect("a process with both pipes");
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, patience, &crate::testing::runtime()))
+        .expect("a process with both pipes");
 
     let began = Instant::now();
     let refused = hosted
@@ -602,12 +654,22 @@ fn a_server_that_speaks_just_often_enough_to_never_fall_silent_is_still_given_up
 fn missing_input_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.speaks = false;
-    let refused = Hosted::over(process, PATIENCE).unwrap_err();
+    let refused = crate::testing::runtime()
+        .block_on(Hosted::over(process, PATIENCE, &crate::testing::runtime()))
+        .unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("input"), "{message}");
     assert!(
         message.contains("the scope could not be reaped"),
         "{message}"
+    );
+    // A failed stop's words do not say that cleanup is unconfirmed, so the
+    // message says it, once.
+    assert_eq!(
+        message,
+        "the MCP server was started without crucible keeping its input, so there is \
+         no way to ask it anything; process cleanup remains unconfirmed: the scope \
+         could not be reaped"
     );
     assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
     let Unstarted::Unreaped { cause, cleanup } = refused else {
@@ -618,10 +680,43 @@ fn missing_input_retains_failed_cleanup() {
 }
 
 #[test]
+fn missing_input_retains_a_stop_that_never_answered() {
+    // The stop is awaited up to its bound and then given up on, and the
+    // timeout it was given up with already says that what it began is
+    // unconfirmed: the message does not say it a second time.
+    let (mut process, watched) = Fake::new([], Ending::Unanswering);
+    process.speaks = false;
+    let refused = crate::testing::runtime()
+        .block_on(Hosted::over(process, PATIENCE, &crate::testing::runtime()))
+        .unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "the MCP server was started without crucible keeping its input, so there is \
+         no way to ask it anything; process cleanup: stopping a hosted program did \
+         not answer within 10s, so whatever it began is unconfirmed"
+    );
+    assert_eq!(watched.stopped.load(Ordering::Relaxed), 1);
+    let Unstarted::Unreaped { cause, cleanup } = refused else {
+        panic!("cleanup uncertainty must be typed");
+    };
+    assert!(matches!(*cause, Unstarted::Unspeakable));
+    assert_eq!(cleanup.kind(), io::ErrorKind::TimedOut);
+    assert!(
+        matches!(
+            cleanup.get_ref(),
+            Some(held) if held.is::<crucible_transport::Unanswered>()
+        ),
+        "the timeout is carried as itself, not as its words: {cleanup:?}"
+    );
+}
+
+#[test]
 fn missing_output_retains_failed_cleanup() {
     let (mut process, watched) = Fake::new([], Ending::Unreapable);
     process.stdout = None;
-    let refused = Hosted::over(process, PATIENCE).unwrap_err();
+    let refused = crate::testing::runtime()
+        .block_on(Hosted::over(process, PATIENCE, &crate::testing::runtime()))
+        .unwrap_err();
     let message = refused.to_string();
     assert!(message.contains("output"), "{message}");
     assert!(
@@ -634,4 +729,189 @@ fn missing_output_retains_failed_cleanup() {
     };
     assert!(matches!(*cause, Unstarted::Unheard));
     assert_eq!(cleanup.kind(), io::ErrorKind::Other);
+}
+
+/// Stopping a server must not hold the thread polling hosting idle for the
+/// whole grace: a task on the same runtime has to be able to make progress
+/// while the wait runs.
+///
+/// A current-thread runtime of one worker is the tightest proof of that —
+/// anything that runs while the stop is outstanding can only have run because
+/// the wait itself yielded rather than blocking the one thread there is.
+#[test]
+fn stopping_a_server_does_not_block_the_thread_polling_hosting() {
+    let (fake, _watched) = Fake::new([], Ending::Stubborn);
+    let hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+
+    let one_worker = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("a current-thread runtime for one worker");
+    let ticks = one_worker.block_on(async move {
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&ticks);
+        let ticking = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                counting.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        let _ended = hosted.stop(Duration::from_millis(100)).await;
+        ticking.abort();
+        ticks.load(Ordering::Relaxed)
+    });
+
+    assert!(
+        ticks > 0,
+        "a task on the same one-worker runtime never ran while the stop waited \
+         out its grace, so the stop held the worker rather than yielding it"
+    );
+}
+
+#[test]
+fn a_catalogue_and_a_call_can_be_awaited_over_the_same_streams() {
+    let (fake, watched) = Fake::new(
+        [
+            Step::Says(greeted(newest())),
+            Step::Says(listed(2, &["search"])),
+            Step::Says(produced(3, "one match")),
+        ],
+        Ending::Exited,
+    );
+
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, PATIENCE, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+    let (greeting, offered, answered) = crate::testing::runtime().block_on(async {
+        let greeting = hosted.greet_async(None).await.expect("an agreeable server");
+        let offered = hosted
+            .catalogue_async(&greeting, None)
+            .await
+            .expect("a catalogue within bounds");
+        let tool = offered
+            .first()
+            .expect("the server offered one tool")
+            .clone();
+        let answered = hosted
+            .call_async(&tool, &json!({"query": "sandbox"}), None)
+            .await
+            .expect("the server answered the call");
+        (greeting, offered, answered)
+    });
+
+    assert_eq!(greeting.version(), newest());
+    assert_eq!(
+        offered.iter().map(Offered::name).collect::<Vec<_>>(),
+        ["search"]
+    );
+    assert_eq!(answered.text(), "one match");
+    assert_eq!(
+        watched
+            .sent()
+            .iter()
+            .filter_map(|message| message.get("method").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        [
+            "initialize",
+            "notifications/initialized",
+            "tools/list",
+            "tools/call"
+        ],
+    );
+}
+
+#[test]
+fn an_awaited_handshake_nobody_is_waiting_for_any_more_ends_at_the_press() {
+    let patience = Duration::from_secs(5);
+    let (fake, _watched) = Fake::new([Step::Waits], Ending::Exited);
+    let cancel = Cancel::new();
+    cancel.request();
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, patience, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+
+    let began = Instant::now();
+    let rebuffed = crate::testing::runtime()
+        .block_on(hosted.greet_async(Some(&cancel)))
+        .expect_err("a handshake that was called off is not a greeting");
+    let waited = began.elapsed();
+
+    assert!(
+        waited < patience / 2,
+        "an awaited handshake carries the press as a waited one does: {waited:?} against \
+         {rebuffed}"
+    );
+}
+
+#[test]
+fn an_awaited_exchange_ends_at_its_deadline_however_the_server_dribbles() {
+    let patience = Duration::from_millis(200);
+    let dribbling = TRICKLE * 100;
+    let (fake, _watched) = Fake::new(
+        std::iter::repeat_with(|| Step::Trickles).take(100),
+        Ending::Exited,
+    );
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, patience, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+
+    let began = Instant::now();
+    let refused = crate::testing::runtime()
+        .block_on(hosted.greet_async(None))
+        .expect_err("a server that never finishes a frame is not a greeting");
+    let waited = began.elapsed();
+
+    assert!(
+        waited < dribbling / 2,
+        "the awaited exchange ran to the end of what the server was willing to dribble \
+         rather than to its own deadline: {waited:?} of a possible {dribbling:?}, against \
+         {refused}"
+    );
+}
+
+#[test]
+fn an_awaited_call_given_up_on_leaves_the_next_exchange_a_silence_of_its_own() {
+    // One silence is the patience; the call given up on sat through part of
+    // it; the next exchange is answered after more than what was left of it
+    // and less than the whole. Carried over, the next exchange is given up on
+    // for a silence it only sat through part of.
+    let patience = Duration::from_secs(2);
+    let given_up = Duration::from_millis(800);
+    let (fake, _watched) = Fake::new(
+        [
+            Step::Says(greeted(newest())),
+            Step::Says(listed(2, &["search"])),
+            Step::Holds(Duration::from_millis(2400)),
+            Step::Says(produced(4, "the second")),
+        ],
+        Ending::Exited,
+    );
+    let mut hosted = crate::testing::runtime()
+        .block_on(Hosted::over(fake, patience, &crate::testing::runtime()))
+        .expect("a process with both pipes");
+
+    let answered = crate::testing::runtime().block_on(async {
+        let greeting = hosted.greet_async(None).await.expect("an agreeable server");
+        let offered = hosted
+            .catalogue_async(&greeting, None)
+            .await
+            .expect("a catalogue within bounds");
+        let tool = offered
+            .first()
+            .expect("the server offered one tool")
+            .clone();
+        let dropped =
+            tokio::time::timeout(given_up, hosted.call_async(&tool, &json!({}), None)).await;
+        assert!(dropped.is_err(), "the first call is given up on");
+        hosted.call_async(&tool, &json!({}), None).await
+    });
+
+    assert_eq!(
+        answered
+            .expect("the second exchange sits through a silence of its own")
+            .text(),
+        "the second"
+    );
 }

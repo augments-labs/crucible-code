@@ -2,12 +2,44 @@ use super::*;
 use crate::oauth::PATIENCE;
 
 use std::collections::BTreeMap;
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::task::{Context, Poll, Waker};
 use std::thread;
 
-use crucible_core::Outgoing;
+use crucible_credentials::{Authorization, Outgoing};
+
+/// Polls `authorizing` once and panics if it was not ready: a credential with
+/// nothing to renew answers at its first poll.
+fn authorized(authorizing: Authorization<'_>) -> Result<(), CredentialError> {
+    let mut authorizing = authorizing;
+    match authorizing
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(answer) => answer,
+        Poll::Pending => panic!("the credential would have had to wait"),
+    }
+}
+
+/// The runtime a test's renewals and login requests run on, shaped as the
+/// application's: several workers, a clock and sockets.
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+/// An owner of renewals that runs them on `runtime`.
+fn renewing(runtime: &tokio::runtime::Runtime) -> Renewals {
+    let renewals = Renewals::new();
+    renewals.runs_on(runtime.handle().clone());
+    renewals
+}
 
 struct Scratch(PathBuf);
 
@@ -127,7 +159,8 @@ fn device_login_uses_crucibles_identity_and_persists_before_completion() {
     });
     let scratch = Scratch::new("device");
     let store = Store::in_home(scratch.path());
-    let oauth = KimiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = KimiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
 
     let attempt = oauth.start(KimiOAuth::DEVICE, store.clone()).unwrap();
     let authorize = attempt.wait(PATIENCE).unwrap().unwrap();
@@ -175,7 +208,7 @@ fn device_login_uses_crucibles_identity_and_persists_before_completion() {
     assert!(keys.has("moonshot"));
     let credential = oauth.credential(&keys).unwrap();
     let mut outgoing = Outgoing::new();
-    credential.authorize(&mut outgoing).unwrap();
+    authorized(credential.authorize(&mut outgoing)).unwrap();
     let headers: BTreeMap<_, _> = outgoing
         .headers()
         .iter()
@@ -201,10 +234,18 @@ fn production_browser_addresses_are_separate_from_the_token_service() {
             .to_string(),
         )]
     });
-    let flow = Flow::at(&base, VERIFY, PATIENCE, PATIENCE, Duration::from_millis(1));
+    let runtime = runtime();
+    let flow = Flow::at(
+        renewing(&runtime),
+        &base,
+        VERIFY,
+        PATIENCE,
+        PATIENCE,
+        Duration::from_millis(1),
+    );
     let identity = Identity::new("01234567-89ab-4cde-8fab-0123456789ab".to_owned()).unwrap();
 
-    let device = flow.request_device(&identity).unwrap();
+    let device = runtime.block_on(flow.request_device(&identity)).unwrap();
 
     let request = requests.recv_timeout(PATIENCE).unwrap();
     server.join().unwrap();
@@ -244,7 +285,8 @@ fn renewal_keeps_the_installation_identity() {
             .to_string(),
         )]
     });
-    let oauth = KimiOAuth::testing(Flow::testing(&base));
+    let runtime = runtime();
+    let oauth = KimiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
     let scratch = Scratch::new("refresh");
     let store = Store::in_home(scratch.path());
     store
@@ -259,7 +301,9 @@ fn renewal_keeps_the_installation_identity() {
     let credential = oauth.credential(&store.read()).unwrap();
     let scope = credential.scope();
     let mut outgoing = Outgoing::new();
-    credential.authorize(&mut outgoing).unwrap();
+    runtime
+        .block_on(credential.authorize(&mut outgoing))
+        .unwrap();
     assert_eq!(credential.scope(), scope);
 
     let sent = requests.recv_timeout(PATIENCE).unwrap();
@@ -276,6 +320,110 @@ fn renewal_keeps_the_installation_identity() {
 
     let reconstructed = oauth.credential(&store.read()).unwrap();
     assert_eq!(reconstructed.scope(), scope);
+}
+
+#[test]
+fn authorize_answers_at_its_first_poll_when_nothing_needs_renewing() {
+    // A fresh token has nothing to wait for, so its future answers at the
+    // first poll; one that pended would hold every request as though it were
+    // renewing.
+    const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
+    // Nothing here is ever dialed: the token is fresh, so `needs_refresh` is
+    // false and the flow's address is never read. The owner has no runtime,
+    // so a renewal started here would be refused rather than pend.
+    let oauth = KimiOAuth::testing(Flow::testing("http://127.0.0.1:1", &Renewals::new()));
+    let scratch = Scratch::new("fresh-token");
+    let store = Store::in_home(scratch.path());
+    store
+        .keep_subscription(
+            "moonshot",
+            Tokens::new("access-fresh".into(), "refresh-fresh".into(), u64::MAX, 0)
+                .with_detail(DEVICE_ID, STABLE)
+                .with_detail(EXPIRES_IN, "3600"),
+        )
+        .unwrap();
+    let credential = oauth.credential(&store.read()).unwrap();
+    let mut request = Outgoing::new();
+    let mut authorizing = credential.authorize(&mut request);
+
+    assert!(
+        matches!(
+            authorizing
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ),
+        "the future was still pending after one poll"
+    );
+}
+
+/// A renewal is a rotation its owner runs as a task of its own, and an
+/// authorization only waits for it, so one polled as a runtime worker task
+/// waits the way any task does — without holding the worker — and completes,
+/// keeping the installation's identity. It used to refuse there with a typed
+/// error, because the renewal then ran inside the poll: this is that test,
+/// inverted. The server really renews, so the store's bytes say whether the
+/// rotation was written.
+#[test]
+fn a_renewal_awaited_from_a_runtime_task_completes_and_writes_its_rotation() {
+    const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
+    let (base, requests, server) = server(|_| {
+        vec![(
+            200,
+            serde_json::json!({
+                "access_token": "access-fresh",
+                "refresh_token": "refresh-fresh",
+                "expires_in": 3600,
+            })
+            .to_string(),
+        )]
+    });
+    let runtime = runtime();
+    let oauth = KimiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+    let scratch = Scratch::new("worker-renewal");
+    let store = Store::in_home(scratch.path());
+    store
+        .keep_subscription(
+            "moonshot",
+            Tokens::new("access-old".into(), "refresh-old".into(), 1, 1)
+                .with_detail(DEVICE_ID, STABLE)
+                .with_detail(EXPIRES_IN, "3600"),
+        )
+        .unwrap();
+    let credential = oauth.credential(&store.read()).unwrap();
+
+    let answered = runtime.block_on(async move {
+        tokio::spawn(async move {
+            let mut outgoing = Outgoing::new();
+            credential.authorize(&mut outgoing).await.map(|()| {
+                outgoing
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect::<BTreeMap<_, _>>()
+            })
+        })
+        .await
+        .unwrap()
+    });
+
+    let headers = answered.unwrap_or_else(|problem| {
+        panic!("an authorization polled as a runtime worker task did not complete: {problem}")
+    });
+    assert_eq!(
+        headers.get("authorization").map(String::as_str),
+        Some("Bearer access-fresh")
+    );
+    assert_eq!(
+        headers.get("x-msh-device-id").map(String::as_str),
+        Some(STABLE)
+    );
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert!(sent.body.contains("refresh-old"));
+    assert_eq!(sent.headers.get("x-msh-device-id").unwrap(), STABLE);
+    let text = std::fs::read_to_string(scratch.path().join("auth.json")).unwrap();
+    assert!(text.contains("refresh-fresh") && !text.contains("refresh-old"));
 }
 
 #[test]
@@ -298,7 +446,7 @@ fn identity_and_tokens_are_redacted_from_debug() {
 
 #[test]
 fn an_unknown_method_is_rejected_before_a_worker_starts() {
-    let oauth = KimiOAuth::new();
+    let oauth = KimiOAuth::new(Renewals::new());
     let scratch = Scratch::new("method");
     let problem = oauth
         .start(LoginMethod::new("browser"), Store::in_home(scratch.path()))

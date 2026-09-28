@@ -19,7 +19,9 @@
 use std::fmt;
 
 use crucible_agents::Rejection;
-use crucible_core::{PromptCacheAttempt, PromptCacheScopeDigest, ToolSnapshot, Transcript, TurnId};
+use crucible_models::PromptCacheAttempt;
+use crucible_tools::ToolSnapshot;
+use crucible_types::{PromptCacheScopeDigest, Transcript, TurnId};
 
 use super::load::Load;
 
@@ -66,6 +68,10 @@ pub struct RunState {
 
     /// The scope the last attempt's persistent resources were owned under.
     pub(super) prompt_cache_owner_scope: Option<PromptCacheScopeDigest>,
+
+    /// The lines clearings made between turns still owe a session, oldest
+    /// first, until [`super::Runner::record_clearings`] writes them.
+    pub(super) owed: Vec<super::clearing::Owed>,
 }
 
 impl RunState {
@@ -81,6 +87,7 @@ impl RunState {
             checked: None,
             prompt_cache_attempt: None,
             prompt_cache_owner_scope: None,
+            owed: Vec::new(),
         }
     }
 

@@ -83,8 +83,10 @@ jobs:
   # garbage-collects the manifest a digest used to name, so this pin rots on
   # somebody else's schedule rather than on a change here. When it does, every
   # Linux job fails to start with `manifest unknown` before a line of this
-  # workflow runs, and the repair is to resolve the tag again and paste the new
-  # digest below:
+  # workflow runs. `scripts/sh/release-container.sh` asks the registry for the
+  # digest, weekly from `release-canary.yml` and by hand before a tag, so the
+  # rot is met there first. The repair is to resolve the tag again and paste the
+  # new digest below:
   #
   #   curl -s 'https://quay.io/api/v1/repository/centos/centos/tag/?onlyActiveTags=true&specificTag=stream9'
   #
@@ -99,7 +101,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     container:
-      image: quay.io/centos/centos:stream9@sha256:cfee9f59eb4d66295690829cebb75c6c97ca199c8929f8f933d88745280cbab4
+      image: quay.io/centos/centos:stream9@sha256:0996d37c69b3a8c33042932d415ad7bf5a8122270264e835e5c0153615aef0e4
     defaults:
       run:
         shell: bash

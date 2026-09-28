@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use crucible_core::{Cancel, Fetch, Host, Page, Search, SearchResponse, SourceError};
+use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
+use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 
 use super::*;
 
@@ -18,8 +20,12 @@ impl Search for Web {
             host: "example.com".into(),
         }
     }
-    fn search(&self, _: &str, _: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(SearchResponse::results(Vec::new()))
+    fn search<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move { Ok(SearchResponse::results(Vec::new())) })
     }
 }
 
@@ -33,18 +39,24 @@ impl Fetch for Web {
             host: "example.com".into(),
         }
     }
-    fn fetch(&self, url: &str, _: &Cancel) -> Result<Page, SourceError> {
-        if url.ends_with("missing") {
-            return Err(SourceError::Refused {
-                named: "fixture",
-                status: 404,
-                message: "page missing".into(),
-            });
-        }
-        Ok(Page {
-            url: url.into(),
-            title: Some("Reference".into()),
-            text: "retained page text".into(),
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        _: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move {
+            if url.ends_with("missing") {
+                return Err(SourceError::Refused {
+                    named: "fixture",
+                    status: 404,
+                    message: "page missing".into(),
+                });
+            }
+            Ok(Page {
+                url: url.into(),
+                title: Some("Reference".into()),
+                text: "retained page text".into(),
+            })
         })
     }
 }
@@ -80,9 +92,9 @@ fn researching(failed: bool) -> String {
             tools,
             session,
         )
-        .permitting(crucible_core::Permission::with(
-            crucible_core::Mode::FullAccess,
-            crucible_core::Rules::new(),
+        .permitting(crucible_tools::Permission::with(
+            crucible_tools::Mode::FullAccess,
+            crucible_tools::Rules::new(),
         ))
     });
     let mut renderer = Renderer::new(Recording::new(100, 30));
@@ -91,7 +103,10 @@ fn researching(failed: bool) -> String {
         conversation,
         &mut renderer,
         &plain(),
-        &opening(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
         &mut input,
     )
     .unwrap();

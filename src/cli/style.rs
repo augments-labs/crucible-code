@@ -99,7 +99,7 @@ impl Style {
     /// enough to blend a band off. Either may be absent, and both absent is a
     /// state everything downstream is correct in rather than a failure. `from` reads the environment, as a
     /// parameter because writing to the real one is `unsafe` in edition 2024
-    /// and this workspace forbids it.
+    /// and this workspace denies it.
     pub(crate) fn resolve(
         output: Output,
         terminal: bool,

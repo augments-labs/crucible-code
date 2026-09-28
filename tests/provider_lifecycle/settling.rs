@@ -8,12 +8,16 @@
 use std::fs;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Ancestry, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Compacted,
-    ContextError, ContextPatch, ContextSnapshot, InvocationId, JournalStore, Message,
-    RecordedToolOutput, RunItem, SessionId, SessionOwner, SessionStore, ToolId, ToolResult,
-};
+use crucible_runtime::BoxFuture;
 use crucible_session::Session;
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, InvocationId, JournalStore, RunItem,
+    SessionOwner, SessionStore,
+};
+use crucible_types::{
+    Ancestry, Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
+    RecordedToolOutput, SessionId, ToolId, ToolResult,
+};
 
 /// What the file held each time the runner asked for a settle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,48 +65,69 @@ impl SessionStore for Watched {
         SessionStore::owner(&*self.session)
     }
 
-    fn append_message(&self, message: &Message) {
-        self.session.append_message(message);
-        if let Message::Agent { calls, .. } = message {
-            for call in calls {
-                let accepted = ToolResult {
-                    id: call.id.clone(),
-                    output: RecordedToolOutput::ok("accepted in the background"),
-                };
-                let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &call.id);
-                self.session
-                    .put_call_result(key, &accepted)
-                    .expect("a recorded session accepts a result");
+    fn append_message<'a>(&'a self, message: &'a Message) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.session.append_message(message).await;
+            if let Message::Agent { calls, .. } = message {
+                for call in calls {
+                    let accepted = ToolResult {
+                        id: call.id.clone(),
+                        output: RecordedToolOutput::ok("accepted in the background"),
+                    };
+                    let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &call.id);
+                    self.session
+                        .put_call_result(key, &accepted)
+                        .await
+                        .expect("a recorded session accepts a result");
+                }
             }
-        }
+        })
     }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
         self.session.context_snapshot()
     }
 
-    fn contextual(&self, patch: &ContextPatch) -> Result<(), ContextError> {
-        self.session.contextual(patch)
+    fn contextual<'a>(
+        &'a self,
+        patch: &'a ContextPatch,
+    ) -> BoxFuture<'a, Result<(), ContextError>> {
+        Box::pin(async move { self.session.contextual(patch) })
     }
 
-    fn compacted(&self, replaced: usize, recap: &str) {
-        SessionStore::compacted(&*self.session, replaced, recap);
+    fn compacted<'a>(&'a self, replaced: usize, recap: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            SessionStore::compacted(&*self.session, replaced, recap).await;
+        })
     }
 
-    fn display_compacted(&self, compacted: Compacted, pruned: bool) {
-        SessionStore::display_compacted(&*self.session, compacted, pruned);
+    fn display_compacted(&self, compacted: Compacted, pruned: bool) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            SessionStore::display_compacted(&*self.session, compacted, pruned).await;
+        })
     }
 
-    fn pruned(&self, freed: usize, results: &[ToolId]) {
-        SessionStore::pruned(&*self.session, freed, results);
+    fn pruned<'a>(&'a self, freed: usize, results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            SessionStore::pruned(&*self.session, freed, results).await;
+        })
     }
 
-    fn restricted(&self, freed: usize, results: &[ToolId], notice: &str) {
-        SessionStore::restricted(&*self.session, freed, results, notice);
+    fn restricted<'a>(
+        &'a self,
+        freed: usize,
+        results: &'a [ToolId],
+        notice: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            SessionStore::restricted(&*self.session, freed, results, notice).await;
+        })
     }
 
-    fn measured(&self, calibration: &Calibration) {
-        SessionStore::measured(&*self.session, calibration);
+    fn measured<'a>(&'a self, calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            SessionStore::measured(&*self.session, calibration).await;
+        })
     }
 
     fn calibrated(&self) -> Option<Calibration> {
@@ -111,31 +136,33 @@ impl SessionStore for Watched {
 }
 
 impl JournalStore for Watched {
-    fn append_run_item(&self, item: &RunItem) {
-        self.session.append_run_item(item);
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.session.append_run_item(item).await })
     }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
         self.session.put_call_result(key, result)
     }
 
-    fn settle_call_results(&self) {
-        let waiting = self.beside().exists();
-        self.session.settle_call_results();
-        // Read as bytes on disk and through no door of the session's, so
-        // nothing here can flush a line the settle did not wait for.
-        let written = fs::read_to_string(self.session.path())
-            .expect("the log being written")
-            .lines()
-            .any(|line| line.contains("\"results\":[{"));
-        self.settles.lock().expect("valid fixture").push(Settle {
-            waiting,
-            written,
-            cleared: !self.beside().exists(),
-        });
+    fn settle_call_results(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let waiting = self.beside().exists();
+            self.session.settle_call_results().await;
+            // Read as bytes on disk and through no door of the session's, so
+            // nothing here can flush a line the settle did not wait for.
+            let written = fs::read_to_string(self.session.path())
+                .expect("the log being written")
+                .lines()
+                .any(|line| line.contains("\"results\":[{"));
+            self.settles.lock().expect("valid fixture").push(Settle {
+                waiting,
+                written,
+                cleared: !self.beside().exists(),
+            });
+        })
     }
 }

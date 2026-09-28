@@ -5,6 +5,7 @@
 //! that the change reaches the wire, and that it reaches the *next* request
 //! rather than the one already sent.
 
+use crucible_runtime::BoxFuture;
 use crucible_types::{RecordedToolOutput, ResultProvenance, ToolCall};
 
 use super::*;
@@ -283,7 +284,7 @@ fn a_result_cleared_as_it_is_recorded_is_not_in_the_bytes_the_next_report_calibr
 }
 
 /// Who answered a search through the vendor a session left, and what it keeps.
-fn left_behind() -> ResultProvenance {
+pub(super) fn left_behind() -> ResultProvenance {
     ResultProvenance::answered("restricting", Some(RESTRICTED)).expect("a bounded term")
 }
 
@@ -687,13 +688,13 @@ fn the_vendor_a_session_names_is_the_one_it_would_write_to_now() {
 /// Every other provider here is called the same thing, and one assertion needs
 /// two that can be told apart.
 struct Elsewhere {
-    credential_scope: crucible_core::CredentialScopeId,
+    credential_scope: crucible_types::CredentialScopeId,
 }
 
 impl Elsewhere {
     fn new() -> Self {
         Self {
-            credential_scope: crucible_core::CredentialScopeId::new(),
+            credential_scope: crucible_types::CredentialScopeId::new(),
         }
     }
 }
@@ -715,12 +716,12 @@ impl Provider for Elsewhere {
         Modalities::empty().insert(Modality::Text)
     }
 
-    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_core::PromptCacheCapabilities {
-        crucible_core::PromptCacheCapabilities::unknown("elsewhere-fixture-v1")
+    fn prompt_cache_capabilities(&self, _model: &str) -> crucible_models::PromptCacheCapabilities {
+        crucible_models::PromptCacheCapabilities::unknown("elsewhere-fixture-v1")
     }
 
-    fn prompt_cache_route(&self) -> crucible_core::PromptCacheRoute<'_> {
-        crucible_core::PromptCacheRoute {
+    fn prompt_cache_route(&self) -> crucible_models::PromptCacheRoute<'_> {
+        crucible_models::PromptCacheRoute {
             protocol: ELSEWHERE,
             endpoint: ELSEWHERE,
             custom_endpoint: true,
@@ -731,18 +732,20 @@ impl Provider for Elsewhere {
         }
     }
 
-    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_core::PromptCacheEncoding {
-        crucible_core::PromptCacheEncoding::NoControlIntended
+    fn prompt_cache_encoding(&self, _request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
+        crucible_types::PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        Err(ProviderError::Transport {
-            provider: ELSEWHERE,
-            problem: "nothing is there".into(),
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            Err(ProviderError::Transport {
+                provider: ELSEWHERE,
+                problem: "nothing is there".into(),
+            })
         })
     }
 }

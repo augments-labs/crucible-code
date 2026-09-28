@@ -5,13 +5,23 @@
 //! into [`Delta`]s, and knows nothing about what the agent does with either.
 //!
 //! Streaming is pull-based rather than callback-based. The runner owns the
-//! stream on the provider thread and turns each delta into an event, which
-//! keeps the render path free of provider code.
+//! stream and reads it on the turn's thread, whichever thread asked it for the
+//! turn or the compaction, and turns each delta into an event. The terminal
+//! asks for either from a worker thread of its own, which keeps the stream off
+//! the render path. A provider's prompt-cache lifecycle is the exception:
+//! `/cache cleanup` and the retirement ahead of an identity switch cross it on
+//! the thread that asked, which in the terminal is the one that draws.
+//!
+//! Opening a stream and reading from it are the two things here that wait on
+//! the world, so they hand back a [`BoxFuture`] that borrows no more than the
+//! call was given. Everything else a provider answers — its name, what it can
+//! spell, what it would encode for a request — describes it, and stays
+//! synchronous.
 
 use std::fmt;
 
 use crucible_credentials::{CredentialError, Redactions};
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
     Carried, Continuation, Modalities, Modality, PricingDate, PricingError, PromptCacheEncoding,
     PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId, ToolSchema, Transcript,
@@ -509,8 +519,7 @@ impl fmt::Debug for Delta {
 
 /// A stream of deltas from one request.
 ///
-/// `next` blocks on the socket, so it runs on the provider thread and never on
-/// the render path.
+/// `next` waits on the socket, so what reads from it is never the render path.
 pub trait DeltaStream: Send {
     /// The next delta, or `None` when the stream is finished.
     ///
@@ -526,7 +535,10 @@ pub trait DeltaStream: Send {
     ///
     /// The runner holds this rather than trusting it, and a stream that ends
     /// with nothing said fails the turn.
-    fn next(&mut self) -> Option<Result<Delta, ProviderError>>;
+    ///
+    /// The future borrows the stream, so one delta is read at a time, and
+    /// dropping it before it answers abandons that read.
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>>;
 }
 
 /// One LLM backend adapter.
@@ -655,19 +667,21 @@ pub trait Provider: Send + Sync {
 
     /// Starts a request and returns its stream of deltas.
     ///
-    /// The borrowed request must be consumed before this method returns. The
-    /// stream may retain the response, but no request field.
+    /// The borrowed request must be consumed before the future completes. The
+    /// stream may retain the response and what it copies out of the request,
+    /// but nothing the request lent it, since it is handed back with no
+    /// lifetime to borrow with.
     ///
     /// # Errors
     ///
     /// [`ProviderError`] if the request could not be sent or was refused. A
     /// failure part-way through the response arrives through the stream
     /// instead.
-    fn stream(
-        &self,
-        request: Request<'_>,
-        cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError>;
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>>;
 }
 
 impl fmt::Debug for dyn Provider {

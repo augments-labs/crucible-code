@@ -89,6 +89,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic-waker"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -317,7 +323,7 @@ dependencies = [
  "mio",
  "parking_lot",
  "rustix",
- "signal-hook",
+ "signal-hook 0.3.18",
  "signal-hook-mio",
  "winapi",
 ]
@@ -333,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-agents"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-models",
  "crucible-tools",
@@ -343,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-app"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-agents",
  "crucible-auth",
@@ -353,6 +359,7 @@ dependencies = [
  "crucible-context",
  "crucible-credentials",
  "crucible-extension",
+ "crucible-http",
  "crucible-mcp",
  "crucible-models",
  "crucible-privacy",
@@ -365,14 +372,16 @@ dependencies = [
  "crucible-session",
  "crucible-tools",
  "crucible-types",
+ "crucible-update",
  "crucible-workspace",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-attachments"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-types",
  "crucible-workspace",
@@ -383,21 +392,26 @@ dependencies = [
 
 [[package]]
 name = "crucible-auth"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "base64 0.23.1",
- "crucible-core",
+ "crucible-credentials",
+ "crucible-http",
  "crucible-privacy",
+ "crucible-runtime",
+ "crucible-types",
  "getrandom 0.4.3",
+ "hyper",
+ "rustls",
  "serde_json",
  "sha2",
  "thiserror",
- "ureq",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-builtins"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-attachments",
  "crucible-runtime",
@@ -412,12 +426,13 @@ dependencies = [
  "ignore",
  "serde_json",
  "sha2",
+ "tokio",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "crucible-client-api"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-types",
  "serde_core",
@@ -426,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-code"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "arboard",
  "clap",
@@ -437,60 +452,56 @@ dependencies = [
  "crucible-client-api",
  "crucible-config",
  "crucible-context",
- "crucible-core",
+ "crucible-credentials",
  "crucible-extension",
  "crucible-mcp",
+ "crucible-models",
  "crucible-privacy",
  "crucible-provider",
+ "crucible-registry",
  "crucible-runner",
+ "crucible-runtime",
+ "crucible-sandbox",
  "crucible-sandbox-broker",
  "crucible-sandbox-local",
  "crucible-session",
+ "crucible-storage",
+ "crucible-tools",
  "crucible-tui",
+ "crucible-types",
+ "crucible-update",
+ "crucible-workspace",
  "image",
  "insta",
+ "libc",
  "rustix",
  "serde_json",
  "sha2",
- "signal-hook",
+ "signal-hook 0.4.4",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-config"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
- "crucible-core",
  "crucible-models",
+ "crucible-sandbox",
+ "crucible-tools",
+ "crucible-types",
+ "crucible-workspace",
+ "libc",
  "serde_json",
  "thiserror",
 ]
 
 [[package]]
 name = "crucible-context"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-models",
  "crucible-tools",
- "crucible-types",
- "crucible-workspace",
- "serde_json",
-]
-
-[[package]]
-name = "crucible-core"
-version = "0.42.0"
-dependencies = [
- "crucible-attachments",
- "crucible-context",
- "crucible-credentials",
- "crucible-models",
- "crucible-registry",
- "crucible-runtime",
- "crucible-sandbox",
- "crucible-storage",
- "crucible-tools",
- "crucible-transport",
  "crucible-types",
  "crucible-workspace",
  "serde_json",
@@ -498,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-credentials"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-types",
  "sha2",
@@ -507,20 +518,39 @@ dependencies = [
 
 [[package]]
 name = "crucible-extension"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-registry",
+ "crucible-runtime",
  "crucible-sandbox",
  "crucible-transport",
  "crucible-types",
  "serde_json",
  "sha2",
  "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "crucible-http"
+version = "0.43.0"
+dependencies = [
+ "base64 0.23.1",
+ "crucible-credentials",
+ "crucible-runtime",
+ "hyper",
+ "hyper-util",
+ "rustls",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
 name = "crucible-mcp"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
@@ -529,11 +559,12 @@ dependencies = [
  "crucible-types",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-models"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-credentials",
  "crucible-runtime",
@@ -544,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-privacy"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -553,22 +584,24 @@ dependencies = [
 
 [[package]]
 name = "crucible-provider"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "base64 0.23.1",
- "crucible-core",
  "crucible-credentials",
+ "crucible-http",
  "crucible-models",
  "crucible-runtime",
+ "crucible-tools",
  "crucible-types",
+ "hyper",
  "serde_json",
  "thiserror",
- "ureq",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-registry"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "thiserror",
  "uuid",
@@ -576,40 +609,48 @@ dependencies = [
 
 [[package]]
 name = "crucible-runner"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-agents",
  "crucible-attachments",
  "crucible-context",
- "crucible-core",
  "crucible-models",
+ "crucible-registry",
+ "crucible-runtime",
+ "crucible-sandbox",
+ "crucible-storage",
+ "crucible-tools",
  "crucible-types",
+ "crucible-workspace",
  "sha2",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-runtime"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "crucible-sandbox"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
+ "crucible-runtime",
  "crucible-storage",
  "crucible-types",
  "crucible-workspace",
  "globset",
  "sha2",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-sandbox-broker"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "libc",
  "rustix",
@@ -620,10 +661,11 @@ dependencies = [
 
 [[package]]
 name = "crucible-sandbox-local"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "base64 0.23.1",
  "crucible-privacy",
+ "crucible-runtime",
  "crucible-sandbox",
  "crucible-sandbox-broker",
  "crucible-storage",
@@ -634,26 +676,31 @@ dependencies = [
  "httparse",
  "rustix",
  "sha2",
+ "tokio",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "crucible-session"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
- "crucible-core",
  "crucible-privacy",
+ "crucible-runtime",
+ "crucible-sandbox",
  "crucible-storage",
+ "crucible-tools",
  "crucible-types",
+ "crucible-workspace",
  "serde_json",
  "sha2",
  "thiserror",
+ "tokio",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "crucible-storage"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-types",
  "serde_json",
@@ -664,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-tools"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-registry",
  "crucible-runtime",
@@ -674,22 +721,24 @@ dependencies = [
  "crucible-workspace",
  "globset",
  "thiserror",
+ "tokio",
  "uuid",
 ]
 
 [[package]]
 name = "crucible-transport"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "crucible-runtime",
  "crucible-sandbox",
  "crucible-types",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "crucible-tui"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "base64 0.23.1",
  "crossterm",
@@ -703,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "crucible-types"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "serde_json",
  "sha2",
@@ -712,8 +761,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-update"
+version = "0.43.0"
+dependencies = [
+ "crucible-http",
+ "crucible-privacy",
+ "crucible-runtime",
+ "crucible-types",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "crucible-workspace"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -889,6 +951,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "futures-channel"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
+dependencies = [
+ "futures-core",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1037,10 +1108,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-body"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca2a8f2913ee65f60facd6a5905613afaa448497a0230cc41ce022d93290bc2c"
+dependencies = [
+ "bytes",
+ "http",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hybrid-array"
@@ -1049,6 +1136,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "707114b52a152fa7bdb290cd7cd5912d9467273b6d74e21b8d81aca1f8533f6b"
 dependencies = [
  "typenum",
+]
+
+[[package]]
+name = "hyper"
+version = "1.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "futures-channel",
+ "futures-core",
+ "http",
+ "http-body",
+ "httparse",
+ "httpdate",
+ "itoa",
+ "pin-project-lite",
+ "smallvec",
+ "tokio",
+ "want",
+]
+
+[[package]]
+name = "hyper-util"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "http",
+ "http-body",
+ "hyper",
+ "libc",
+ "pin-project-lite",
+ "socket2",
+ "tokio",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1496,9 +1624,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
 dependencies = [
  "bitflags",
  "errno",
@@ -1513,7 +1641,6 @@ version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
- "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -1642,6 +1769,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a0c28ca5908dbdbcd52e6fdaa00358ab88637f8ab33e1f188dd510eb44b53d"
+dependencies = [
+ "libc",
+ "signal-hook-registry",
+]
+
+[[package]]
 name = "signal-hook-mio"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1649,7 +1786,7 @@ checksum = "b75a19a7a740b25bc7944bdee6172368f988763b744e3d4dfe753f6b4ece40cc"
 dependencies = [
  "libc",
  "mio",
- "signal-hook",
+ "signal-hook 0.3.18",
 ]
 
 [[package]]
@@ -1685,6 +1822,16 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+
+[[package]]
+name = "socket2"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "strsim"
@@ -1849,8 +1996,13 @@ version = "1.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
+ "bytes",
+ "libc",
+ "mio",
  "pin-project-lite",
+ "socket2",
  "tokio-macros",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1865,6 +2017,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-rustls"
+version = "0.26.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0c85f2c3ef0b1cd58b36682f4b17aaa995f0e5db534d85692b4903abce21f67"
+dependencies = [
+ "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "tower-service"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "tracing"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
+dependencies = [
+ "pin-project-lite",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-core"
+version = "0.1.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "tree_magic_mini"
 version = "3.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1874,6 +2061,12 @@ dependencies = [
  "nom",
  "petgraph",
 ]
+
+[[package]]
+name = "try-lock"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "two-face"
@@ -1911,40 +2104,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
-name = "ureq"
-version = "3.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a7ac20be9b7726e0bbdbf974c059676d9acb1cd414961f570a4e8231cacd7fc"
-dependencies = [
- "base64 0.23.1",
- "log",
- "percent-encoding",
- "rustls",
- "rustls-pki-types",
- "ureq-proto",
- "utf8-zero",
- "webpki-roots",
-]
-
-[[package]]
-name = "ureq-proto"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f86fd172ccca569e458f61b6bdd6220965a9ef36e672a6852953b51a0e1583be"
-dependencies = [
- "base64 0.23.1",
- "http",
- "httparse",
- "log",
-]
-
-[[package]]
-name = "utf8-zero"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
-
-[[package]]
 name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1969,6 +2128,15 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "want"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
+dependencies = [
+ "try-lock",
 ]
 
 [[package]]

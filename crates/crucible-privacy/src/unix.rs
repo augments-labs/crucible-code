@@ -34,9 +34,12 @@ pub(super) fn append(path: &Path) -> io::Result<File> {
 }
 
 pub(super) fn open_read(path: &Path) -> io::Result<File> {
+    // Opening a pipe for reading blocks until somebody writes, so the descriptor
+    // is asked for without waiting: the ordinary-file proof below is what then
+    // refuses what opened. On a regular file the flag has no effect on a read.
     let file = opened(
         path,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
         Mode::empty(),
     )?;
     ordinary(&file)?;
@@ -116,9 +119,14 @@ pub(super) fn lock(path: &Path) -> io::Result<File> {
 }
 
 pub(super) fn tighten(path: &Path) -> io::Result<bool> {
+    // Opening a pipe for reading blocks until somebody writes, so the descriptor
+    // is asked for without waiting. The regular-file check below is what then
+    // refuses what opened, written out here rather than reached through
+    // `ordinary`, which also asks that nothing else names the file. Nothing
+    // here reads, so the flag bears only on the open.
     let file = opened(
         path,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
         Mode::empty(),
     )?;
     if !file.metadata()?.is_file() {

@@ -20,9 +20,10 @@
 //! where the loop lives now, not a second opinion about how a turn should go.
 
 use crucible_agents::{GuardrailError, Rejection};
-use crucible_core::{
-    Ask, Compacting, Message, ProviderContinuation, ProviderError, RunId, Spend, StopReason,
-    ToolCall, ToolsetContext,
+use crucible_models::ProviderError;
+use crucible_tools::{Ask, ToolsetContext};
+use crucible_types::{
+    Compacting, Message, ProviderContinuation, RunId, Spend, StopReason, ToolCall,
 };
 
 use crate::context::RunContext;
@@ -125,12 +126,14 @@ impl<'a> AgentLoop<'a> {
     /// goes with it — the reader did not type it, and an event saying they did
     /// would put a sentence in the panel that nobody wrote. The line above it
     /// is already on their screen.
-    fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
+    async fn interjected(&mut self, counting: &Counting) -> Result<(), TurnError> {
         let run = self.run;
         let events = run.reporting();
         for line in run.steer().take() {
             events.post(Event::Steered { line: line.clone() });
-            self.runner.record(run.ancestry(), Message::said(line))?;
+            self.runner
+                .record(run.ancestry(), Message::said(line))
+                .await?;
             events.post(Event::Carried {
                 left: self
                     .runner
@@ -140,7 +143,9 @@ impl<'a> AgentLoop<'a> {
             });
         }
         for note in run.aside().take() {
-            self.runner.record(run.ancestry(), Message::said(note))?;
+            self.runner
+                .record(run.ancestry(), Message::said(note))
+                .await?;
             events.post(Event::Carried {
                 left: self
                     .runner
@@ -165,7 +170,7 @@ impl<'a> AgentLoop<'a> {
     /// written down. A refused answer leaves no trace for the next request to
     /// carry: the deltas the reader watched arrive were provisional, and this
     /// is where that stops being true for everything else.
-    fn ending(
+    async fn ending(
         &mut self,
         text: Box<str>,
         continuation: Option<ProviderContinuation>,
@@ -178,16 +183,31 @@ impl<'a> AgentLoop<'a> {
             Err(problem) => return Ok(Ending::Undecided { problem, stop }),
         }
 
-        self.runner.record(
-            self.run.ancestry(),
-            Message::Agent {
-                continuation: if calls.is_empty() { continuation } else { None },
-                text,
-                calls: Vec::new(),
-                stop: Some(stop),
-            },
-        )?;
+        self.runner
+            .record(
+                self.run.ancestry(),
+                Message::Agent {
+                    continuation: if calls.is_empty() { continuation } else { None },
+                    text,
+                    calls: Vec::new(),
+                    stop: Some(stop),
+                },
+            )
+            .await?;
         Ok(Ending::Stopped(stop))
+    }
+
+    /// Makes room for `why` against this run's totals, and says what the
+    /// turn may do next, as [`Runner::made_room`] does.
+    async fn room(
+        &mut self,
+        why: Compacting,
+        fruitless: &mut u8,
+        counting: &mut Counting,
+    ) -> Result<After, TurnError> {
+        self.runner
+            .made_room(why, self.run, fruitless, &mut counting.spent)
+            .await
     }
 
     /// Takes passes until the turn ends, and says how it ended.
@@ -205,8 +225,14 @@ impl<'a> AgentLoop<'a> {
     /// nothing, and [`TurnError::Refused`] where the reader declined a call.
     /// None of the four is a failure, and all four end a turn the way one
     /// does, which is why they leave through here rather than through
-    /// [`StopReason`].
-    pub(super) fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
+    /// [`StopReason`]. A tool source's own step that gave up ends it as the
+    /// source's failure, as [`Runner::turn`] says.
+    ///
+    /// A compaction's steps end it as [`Runner::compact`] says.
+    /// The line recording the last answer, the part of an answer a full
+    /// window cut short, and the results of a pass are each awaited before
+    /// the ending they lead to is reached.
+    pub(super) async fn drive(&mut self, counting: &mut Counting) -> Result<Ending, TurnError> {
         let run = self.run;
         let events = run.reporting();
         let cancel = run.cancel();
@@ -216,9 +242,9 @@ impl<'a> AgentLoop<'a> {
         let mut fruitless = 0;
 
         loop {
-            self.runner.flush_sandbox_audits(events)?;
+            self.runner.flush_sandbox_audits(events).await?;
 
-            self.interjected(counting)?;
+            self.interjected(counting).await?;
 
             // Read once per pass: `tool_search` can reveal a schema mid-turn.
             // The exact set measured here is handed to the request below, so an
@@ -229,9 +255,10 @@ impl<'a> AgentLoop<'a> {
             } else {
                 self.runner.toolset.refresh(self.toolsets)
             };
+            let tools = tools.await.map_err(TurnError::from);
             let tools = super::combine_sandbox_audit(
-                tools.map_err(TurnError::from),
-                self.runner.flush_sandbox_audits(events),
+                tools,
+                self.runner.flush_sandbox_audits(events).await,
             )?;
             // Narrowed to what this agent declares, against the exact
             // generation the pass admitted rather than a later one. The
@@ -251,7 +278,7 @@ impl<'a> AgentLoop<'a> {
             // compaction from the preceding loop iteration rewrote history.
             // Recording the fragments updates `runner.load` before it is read
             // below, so reserve and fullness see exactly what will be sent.
-            self.runner.assemble_context(run.ancestry())?;
+            self.runner.assemble_context(run.ancestry()).await?;
 
             // Recording is what measures the transcript, and it happens on the
             // runner rather than here; reading it back at the top of each pass
@@ -289,12 +316,10 @@ impl<'a> AgentLoop<'a> {
                 events.post(Event::Carried {
                     left: counting.left(),
                 });
-                match self.runner.made_room(
-                    Compacting::Full,
-                    run,
-                    &mut fruitless,
-                    &mut counting.spent,
-                )? {
+                match self
+                    .room(Compacting::Full, &mut fruitless, counting)
+                    .await?
+                {
                     // Re-enter the boundary check against the reduced load.
                     // A prune that helped but did not help enough may still need
                     // the complete-active-pass recap before any request is safe.
@@ -315,24 +340,26 @@ impl<'a> AgentLoop<'a> {
                 .load
                 .requesting(self.runner.agent.instructions(), &advertised);
 
-            let heard = match self.runner.listen(
-                &bounds,
-                Listening {
-                    run,
-                    advertised: &advertised,
-                    generation: tools.generation(),
-                    counting,
-                },
-            ) {
+            let heard = match self
+                .runner
+                .listen(
+                    &bounds,
+                    Listening {
+                        run,
+                        advertised: &advertised,
+                        generation: tools.generation(),
+                        counting,
+                    },
+                )
+                .await
+            {
                 Err(TurnError::Provider(ProviderError::WindowExceeded { provider }))
                     if run.policy().compaction.automatic =>
                 {
-                    match self.runner.made_room(
-                        Compacting::Refused,
-                        run,
-                        &mut fruitless,
-                        &mut counting.spent,
-                    )? {
+                    match self
+                        .room(Compacting::Refused, &mut fruitless, counting)
+                        .await?
+                    {
                         After::Carry => continue,
                         After::Stopped => return Ok(Ending::Stopped(StopReason::Cancelled)),
                         After::Stuck => {
@@ -365,25 +392,25 @@ impl<'a> AgentLoop<'a> {
                 bounds.heard(&answer);
                 let (text, _calls) = answer.finish();
                 if !text.is_empty() {
-                    self.runner.record(
-                        run.ancestry(),
-                        Message::Agent {
-                            continuation: None,
-                            text,
-                            calls: Vec::new(),
-                            stop: Some(said),
-                        },
-                    )?;
+                    self.runner
+                        .record(
+                            run.ancestry(),
+                            Message::Agent {
+                                continuation: None,
+                                text,
+                                calls: Vec::new(),
+                                stop: Some(said),
+                            },
+                        )
+                        .await?;
                 }
                 if !run.policy().compaction.automatic {
                     return Ok(Ending::Stopped(said));
                 }
-                match self.runner.made_room(
-                    Compacting::Refused,
-                    run,
-                    &mut fruitless,
-                    &mut counting.spent,
-                )? {
+                match self
+                    .room(Compacting::Refused, &mut fruitless, counting)
+                    .await?
+                {
                     After::Carry => continue,
                     After::Stuck => return Err(TurnError::NoRoom),
                     After::Stopped => return Ok(Ending::Stopped(StopReason::Cancelled)),
@@ -394,7 +421,7 @@ impl<'a> AgentLoop<'a> {
             let (text, calls) = answer.finish();
 
             if let Some(stop) = Runner::over(said, &calls) {
-                return self.ending(text, continuation, &calls, stop);
+                return self.ending(text, continuation, &calls, stop).await;
             }
 
             for call in &calls {
@@ -403,7 +430,7 @@ impl<'a> AgentLoop<'a> {
                 let entry = tools.find(&call.name);
                 events.post(Event::ToolRequested {
                     summary: entry.map_or_else(
-                        || crucible_core::Summary::new(""),
+                        || crucible_tools::Summary::new(""),
                         |entry| entry.tool().summary(&call.args),
                     ),
                     backgroundable: entry
@@ -422,15 +449,17 @@ impl<'a> AgentLoop<'a> {
             // drops on the way back in. The calls are cloned because the pass
             // needs them too — one pass's worth, which is what the turn holds
             // either way and does not grow with the transcript.
-            self.runner.record(
-                run.ancestry(),
-                Message::Agent {
-                    continuation,
-                    text,
-                    calls: calls.clone(),
-                    stop: Some(said),
-                },
-            )?;
+            self.runner
+                .record(
+                    run.ancestry(),
+                    Message::Agent {
+                        continuation,
+                        text,
+                        calls: calls.clone(),
+                        stop: Some(said),
+                    },
+                )
+                .await?;
 
             let (results, went, output_bytes) = Work {
                 tools: &tools,
@@ -441,14 +470,17 @@ impl<'a> AgentLoop<'a> {
                 ancestry: run.ancestry(),
                 journal: &*self.runner.store,
                 audits: &self.runner.sandbox_audits,
+                worker: self.runner.worker.as_ref(),
                 concurrency: run.policy().tools.maximum_concurrency(),
             }
-            .pass(&calls, bounds.tool_output, tool_output_maximum);
+            .pass(&calls, bounds.tool_output, tool_output_maximum)
+            .await;
 
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
             self.runner
-                .record(run.ancestry(), Message::ToolResults(results))?;
+                .record(run.ancestry(), Message::ToolResults(results))
+                .await?;
             events.post(Event::Carried {
                 left: self
                     .runner

@@ -8,7 +8,8 @@
 //! leak would be a line somebody wrote rather than a field somebody shared.
 
 use crucible_agents::Availability;
-use crucible_core::{CredentialScopeId, Remember, ToolCall};
+use crucible_tools::Remember;
+use crucible_types::{CredentialScopeId, ToolCall};
 
 use super::guardrails::{Gate, agent, answering, offered};
 use super::*;
@@ -45,17 +46,29 @@ struct Deliberating {
     /// Told each time a question arrives.
     put: Sender<()>,
     /// Waited on before the answer is given.
-    go: Receiver<()>,
+    go: Mutex<Receiver<()>>,
     /// How often the reader was put to the question.
     asked: usize,
 }
 
 impl Ask for Deliberating {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+        // A real rendezvous rather than a future that answers `Pending` and
+        // wakes: this fixture holds one run against another on the threads
+        // the test itself put them on, so it is those threads, and not a
+        // poll, that must wait here.
         self.asked += 1;
         self.put.send(()).expect("the test to be waiting");
-        self.go.recv().expect("the test to let the reader answer");
-        (Verdict::Allow, Remember::Session)
+        self.go
+            .get_mut()
+            .expect("an unpoisoned rendezvous")
+            .recv()
+            .expect("the test to let the reader answer");
+        Box::pin(async { (Verdict::Allow, Remember::Session) })
     }
 }
 
@@ -100,7 +113,9 @@ fn two_runs_at_once_spend_against_their_own_ceilings_and_file_under_their_own_ru
             let run = one
                 .runner
                 .starting(filing, &one.cancel, &one.steer, &one.aside);
-            one.runner.turn("go", Box::new([]), &mut one.says, &run)
+            one.runner
+                .turn("go", Box::new([]), &mut one.says, &run)
+                .awaited()
         });
 
         mid_turn
@@ -112,6 +127,7 @@ fn two_runs_at_once_spend_against_their_own_ceilings_and_file_under_their_own_ru
         let finished = two
             .runner
             .turn("go", Box::new([]), &mut two.says, &run)
+            .awaited()
             .map(ran);
 
         release.send(()).expect("the first run to still be waiting");
@@ -163,7 +179,11 @@ fn a_question_one_run_is_waiting_on_is_neither_put_to_nor_settled_for_the_other(
     let writing = || tools([Fixed::new("write").risking(changing())]);
     let (put, asked) = channel();
     let (answer, go) = channel();
-    let mut reader = Deliberating { put, go, asked: 0 };
+    let mut reader = Deliberating {
+        put,
+        go: Mutex::new(go),
+        asked: 0,
+    };
 
     let mut one = Scripted::under(
         Script::new(vec![
@@ -194,6 +214,7 @@ fn a_question_one_run_is_waiting_on_is_neither_put_to_nor_settled_for_the_other(
                 .starting(&one.events, &one.cancel, &one.steer, &one.aside);
             one.runner
                 .turn("go", Box::new([]), reader, &run)
+                .awaited()
                 .map(ran)
                 .expect("the first run to finish once it is answered")
         });
@@ -395,6 +416,7 @@ fn two_runs_keeping_cache_resources_in_one_place_own_and_retire_only_their_own()
     let retired = one
         .runner
         .retire_prompt_cache(&Cancel::new())
+        .awaited()
         .expect("bounded retirement");
     assert_eq!(retired.deleted, 1);
     assert_eq!(
@@ -405,6 +427,7 @@ fn two_runs_keeping_cache_resources_in_one_place_own_and_retire_only_their_own()
     let retired = two
         .runner
         .retire_prompt_cache(&Cancel::new())
+        .awaited()
         .expect("bounded retirement");
     assert_eq!(
         retired.deleted, 1,

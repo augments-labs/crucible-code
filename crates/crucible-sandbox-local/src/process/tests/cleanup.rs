@@ -43,9 +43,9 @@ impl Fixture {
             .ok_or_else(|| io::Error::other("fixture has no process"))?;
         process.test_stop = fail_stop;
         process.test_reap = fail_reap;
-        self.unreaped = rustix::process::Pid::from_raw(
-            i32::try_from(process.child.id()).map_err(io::Error::other)?,
-        );
+        let leader = watched(&process.watched)?.child.id();
+        self.unreaped =
+            rustix::process::Pid::from_raw(i32::try_from(leader).map_err(io::Error::other)?);
         // Both injected operations leave this child unreaped, so the rescue
         // PID cannot be reused before Fixture::drop reaps its owned child.
         drop(process);
@@ -58,8 +58,16 @@ impl Drop for Fixture {
         if let Some(mut process) = self.process.take() {
             // Bypass injected faults and any broken cached cleanup state. This
             // guard also rescues the intentionally failing pre-fix candidate.
-            let _ = stop_scope(&process.scope, &mut process.child);
-            let _ = reap(&mut process.child, &mut process.status);
+            if let Ok(mut watched) = watched(&process.watched) {
+                let Watched {
+                    child,
+                    scope,
+                    status,
+                    ..
+                } = &mut *watched;
+                let _ = stop_scope(scope, child);
+                let _ = reap(child, status);
+            }
             process.test_stop = stop_scope;
             process.test_reap = reap;
         }
@@ -171,8 +179,7 @@ fn failed_scope_stop_preserves_staging_and_admission() -> io::Result<()> {
         .stop()
         .expect_err("scope remains unconfirmed");
     assert!(
-        fixture
-            .process()?
+        watched(&fixture.process()?.watched)?
             .child
             .try_wait()
             .expect("owned child state")
@@ -237,47 +244,31 @@ fn a_recoverable_scope_failure_is_retried() -> io::Result<()> {
         .stop()
         .expect("second stop confirms cleanup");
     assert!(
-        fixture.process()?.status.is_some(),
+        fixture.process()?.reaped(),
         "retry must really reap the leader"
     );
     assert_eq!(fixture.active.load(Ordering::Acquire), 0);
     Ok(())
 }
 
-fn supervisor_failure(fixture: &mut Fixture) -> io::Result<()> {
-    let process = fixture.process()?;
-    process.supervisor = Some(Supervisor::start(
-        Arc::clone(&process.control),
-        process
-            .terminator
-            .ok_or_else(|| io::Error::other("fixture is uninitialized"))?,
-        None,
-        None,
-        process.child.id(),
-    )?);
-    process
+/// A failure the status task records, as a violation's kill that could not
+/// be sent records one.
+fn status_task_failure(fixture: &mut Fixture) -> io::Result<()> {
+    fixture
+        .process()?
         .control
-        .record_failure(&io::Error::other("injected supervisor failure"));
+        .record_failure(&io::Error::other("injected status task failure"));
     Ok(())
 }
 
 #[test]
-fn joining_a_failed_supervisor_cannot_claim_complete_cleanup() -> io::Result<()> {
+fn a_failed_status_task_cannot_claim_complete_cleanup() -> io::Result<()> {
     let mut fixture = Fixture::new(None)?;
-    supervisor_failure(&mut fixture)?;
+    status_task_failure(&mut fixture)?;
     fixture
         .process()?
         .stop()
-        .expect_err("stored supervisor failure");
-    assert!(
-        fixture
-            .process()?
-            .supervisor
-            .as_ref()
-            .expect("supervisor")
-            .thread
-            .is_none()
-    );
+        .expect_err("stored status task failure");
     assert_eq!(
         fixture.process()?.inspection().cleanup(),
         SandboxCleanup::Failed
@@ -292,15 +283,12 @@ fn joining_a_failed_supervisor_cannot_claim_complete_cleanup() -> io::Result<()>
 #[test]
 fn cached_leader_status_cannot_hide_a_failed_stop() -> io::Result<()> {
     let mut fixture = Fixture::new(None)?;
-    supervisor_failure(&mut fixture)?;
+    status_task_failure(&mut fixture)?;
     fixture
         .process()?
         .stop()
-        .expect_err("stop observes supervisor failure");
-    assert!(
-        fixture.process()?.status.is_some(),
-        "the real leader was reaped"
-    );
+        .expect_err("stop observes the status task's failure");
+    assert!(fixture.process()?.reaped(), "the real leader was reaped");
     fixture
         .process()?
         .try_wait()
@@ -309,23 +297,16 @@ fn cached_leader_status_cannot_hide_a_failed_stop() -> io::Result<()> {
 }
 
 #[test]
-fn panicked_supervisor_stop_failure_survives_consumed_join() -> io::Result<()> {
+fn panicked_cancel_failure_survives_consumed_join() -> io::Result<()> {
     let mut fixture = Fixture::new(None)?;
     let process = fixture.process()?;
-    process.supervisor = Some(Supervisor {
-        control: Arc::clone(&process.control),
-        thread: Some(thread::spawn(|| panic!("owned supervisor panic fixture"))),
-    });
+    watched(&process.watched)?.cancel =
+        Some(thread::spawn(|| panic!("owned cancel panic fixture")));
     process
         .stop()
         .expect_err("joining the panicked thread fails");
     assert!(
-        process
-            .supervisor
-            .as_ref()
-            .expect("supervisor")
-            .thread
-            .is_none(),
+        watched(&process.watched)?.cancel.is_none(),
         "the failing join was consumed"
     );
     process
@@ -339,13 +320,27 @@ fn panicked_supervisor_stop_failure_survives_consumed_join() -> io::Result<()> {
 }
 
 #[test]
-fn panicked_supervisor_wait_failure_survives_cached_status() -> io::Result<()> {
+fn a_status_task_gone_before_its_command_is_a_failure_no_status_hides() -> io::Result<()> {
     let mut fixture = Fixture::new(None)?;
     let process = fixture.process()?;
-    process.supervisor = Some(Supervisor {
-        control: Arc::clone(&process.control),
-        thread: Some(thread::spawn(|| panic!("owned supervisor panic fixture"))),
-    });
+    // What a runtime shut down under the task, or a panic in it, leaves: the
+    // task dropped before its command ended, with no stop begun.
+    let watch = process
+        .watch
+        .as_ref()
+        .ok_or_else(|| io::Error::other("fixture has no status task"))?;
+    watch.abort();
+    // An abort only asks: the task is gone once a runtime worker has dropped
+    // it, and with every worker busy the command could otherwise end first.
+    let dropped = Instant::now() + Duration::from_secs(10);
+    while !watch.is_finished() {
+        if Instant::now() >= dropped {
+            return Err(io::Error::other(
+                "the aborted status task was never dropped",
+            ));
+        }
+        thread::sleep(SUPERVISE);
+    }
     // EOF ends the real shell's read builtin without an injected wait result.
     process.stdin.take();
     let deadline = Instant::now() + REAP;
@@ -353,24 +348,58 @@ fn panicked_supervisor_wait_failure_survives_cached_status() -> io::Result<()> {
         match process.try_wait() {
             Err(_) => break,
             Ok(None) if Instant::now() < deadline => thread::sleep(SUPERVISE),
-            other => panic!("expected the failed join after real exit, got {other:?}"),
+            other => panic!("expected the lost status task after real exit, got {other:?}"),
         }
     }
-    assert!(process.status.is_some(), "the real leader was reaped");
-    assert!(
-        process
-            .supervisor
-            .as_ref()
-            .expect("supervisor")
-            .thread
-            .is_none()
-    );
-    process
-        .try_wait()
-        .expect_err("cached status cannot erase the failed join");
     process
         .stop()
-        .expect_err("cleanup retains the historical failed join");
+        .expect_err("cleanup retains the lost status task");
+    assert!(process.reaped(), "the real leader was reaped");
+    process
+        .try_wait()
+        .expect_err("cached status cannot erase the lost status task");
     assert_eq!(process.inspection().cleanup(), SandboxCleanup::Failed);
     Ok(())
+}
+
+#[test]
+fn a_stop_ends_the_status_task() -> io::Result<()> {
+    let mut fixture = Fixture::new(None)?;
+    let process = fixture.process()?;
+    process.stop()?;
+    let deadline = Instant::now() + REAP;
+    while !process
+        .watch
+        .as_ref()
+        .is_some_and(tokio::task::JoinHandle::is_finished)
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the status task outlived the stop"
+        );
+        thread::sleep(SUPERVISE);
+    }
+    Ok(())
+}
+
+/// A stop whose scope cleanup and input thread both failed reports both: the
+/// scope's failure as the error, and the thread's beside it, so a caller that
+/// retries the stop knows the thread was not joined either.
+#[test]
+fn a_stop_reports_a_failed_input_thread_beside_a_failed_scope() {
+    let scope = io::Error::new(io::ErrorKind::PermissionDenied, "scope");
+    let input = io::Error::new(io::ErrorKind::TimedOut, "input");
+
+    let both = stopped_with_input(Err(scope), Err(input)).expect_err("two failures");
+
+    assert_eq!(both.kind(), io::ErrorKind::PermissionDenied);
+    let said = both.to_string();
+    assert!(
+        said.contains("PermissionDenied") && said.contains("TimedOut"),
+        "{said}"
+    );
+    let input_only = stopped_with_input(Ok(()), Err(io::Error::from(io::ErrorKind::TimedOut)))
+        .expect_err("the input's failure");
+    assert_eq!(input_only.kind(), io::ErrorKind::TimedOut);
+    stopped_with_input(Ok(()), Ok(())).expect("nothing failed");
 }

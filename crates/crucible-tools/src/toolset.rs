@@ -17,7 +17,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{SandboxAudit, SandboxAuditError, SandboxAuditRegistry};
 use crucible_storage::ToolEffect;
 use crucible_types::{
@@ -133,21 +133,38 @@ impl fmt::Debug for ToolsetContext {
 /// disposed. Implementations must make [`Toolset::dispose`] idempotent,
 /// including when preparation or refresh failed. A later run may prepare the
 /// same toolset again after disposal.
+///
+/// Each of those four steps may wait on a source outside the process, so each
+/// hands back a [`BoxFuture`] borrowing the toolset and its context. Naming
+/// what is registered reads what the toolset already holds and asks the source
+/// nothing, but an implementation may still make it wait behind its own
+/// lifecycle steps.
 pub trait Toolset: Send + Sync {
     /// Acquires the resources this run needs before its first snapshot.
     ///
     /// # Errors
     ///
-    /// [`ToolsetError`] when the source cannot be prepared. The caller still
-    /// invokes [`Toolset::dispose`].
-    fn prepare(&self, context: &ToolsetContext) -> Result<(), ToolsetError>;
+    /// [`ToolsetError`] when the source cannot be prepared. A step of it that
+    /// was given up on before it answered comes back in the source's own
+    /// words as [`ToolsetError::Source`], and what that step began is
+    /// unconfirmed rather than undone. A cleanup step given up on after
+    /// another failure is reported as that failure, and named at most in its
+    /// text. The caller still invokes [`Toolset::dispose`], after a refusal
+    /// too.
+    fn prepare<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>>;
 
     /// Captures the current ordered, visible, and reachable generation.
     ///
     /// # Errors
     ///
     /// [`ToolsetError`] when no bounded coherent snapshot can be produced.
-    fn snapshot(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError>;
+    fn snapshot<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>>;
 
     /// Refreshes external state between admissions and captures its new view.
     ///
@@ -157,7 +174,10 @@ pub trait Toolset: Send + Sync {
     /// # Errors
     ///
     /// [`ToolsetError`] when refresh or materialization fails.
-    fn refresh(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError>;
+    fn refresh<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>>;
 
     /// Releases every resource acquired for the lifecycle.
     ///
@@ -165,9 +185,15 @@ pub trait Toolset: Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`ToolsetError`] when cleanup could not be completed. A repeated call
-    /// must not repeat an effect merely to reproduce the error.
-    fn dispose(&self, context: &ToolsetContext) -> Result<(), ToolsetError>;
+    /// [`ToolsetError`] when cleanup could not be completed. A step of it that
+    /// was given up on before it answered comes back in the source's own
+    /// words as [`ToolsetError::Source`], and what that step began is
+    /// unconfirmed rather than undone. A repeated call must not repeat an
+    /// effect merely to reproduce the error.
+    fn dispose<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>>;
 
     /// The tool registered under `name`, whether or not a snapshot would carry
     /// it right now.
@@ -1147,11 +1173,11 @@ mod tests {
                 panic!("named, never called")
             }
 
-            fn run(
-                &self,
+            fn run<'a>(
+                &'a self,
                 _approved: Approved,
-                _context: &ToolContext<'_>,
-            ) -> Result<ToolOutput, ToolError> {
+                _context: &'a ToolContext<'_>,
+            ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
                 panic!("named, never called")
             }
         }

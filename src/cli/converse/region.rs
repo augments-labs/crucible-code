@@ -37,6 +37,8 @@
 //! belongs in the record is the answer to it, in the words of whatever asked —
 //! which is the caller's to commit after this returns.
 
+use std::time::Duration;
+
 use crucible_tui::{Aimed, Caret, Pressed, Renderer, Row, Terminal};
 
 use crate::cli::Fatal;
@@ -114,9 +116,63 @@ pub(super) fn stand_while<T: Terminal, S>(
     renderer: &mut Renderer<T>,
     style: impl Fn(&S) -> Style,
     state: &mut S,
+    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    keys: impl Fn(Pressed, &mut S) -> Moved,
+    while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Ended, Fatal> {
+    standing(
+        renderer,
+        style,
+        state,
+        laid,
+        keys,
+        while_waiting,
+        None::<(Duration, fn(&mut S) -> Moved)>,
+    )
+}
+
+/// [`stand`], for a component whose picture can change with no key pressed.
+///
+/// Every `beat` without a key, `watch` is asked what the world did to the
+/// state, and answers the way a key does: a picture that no longer matches is
+/// drawn again, and a component with nothing left to stand ends. A key still
+/// arrives the moment it is pressed.
+#[allow(clippy::too_many_arguments)]
+// The five `stand` takes, and the watch and the beat it is looked at on: two
+// arguments that mean one thing only together, and a struct for them would
+// exist only to satisfy the count.
+pub(super) fn stand_watching<T: Terminal, S>(
+    renderer: &mut Renderer<T>,
+    style: impl Fn(&S) -> Style,
+    state: &mut S,
+    laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
+    keys: impl Fn(Pressed, &mut S) -> Moved,
+    beat: Duration,
+    watch: impl FnMut(&mut S) -> Moved,
+) -> Result<Ended, Fatal> {
+    standing(
+        renderer,
+        style,
+        state,
+        laid,
+        keys,
+        |_| Ok(()),
+        Some((beat, watch)),
+    )
+}
+
+/// The loop behind [`stand_while`] and [`stand_watching`].
+#[allow(clippy::too_many_arguments)]
+// Seven for the reason `stand_while` gives its six, and the one more is the
+// watch a component that changes without a key is looked at on.
+fn standing<T: Terminal, S>(
+    renderer: &mut Renderer<T>,
+    style: impl Fn(&S) -> Style,
+    state: &mut S,
     mut laid: impl FnMut(&mut S, usize, usize) -> (Vec<Row>, Option<Caret>),
     keys: impl Fn(Pressed, &mut S) -> Moved,
     while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+    mut watching: Option<(Duration, impl FnMut(&mut S) -> Moved)>,
 ) -> Result<Ended, Fatal> {
     let mut changed = true;
     let mut while_waiting = while_waiting;
@@ -139,7 +195,23 @@ pub(super) fn stand_while<T: Terminal, S>(
         // session. A drag is answered there and comes back as nothing,
         // which is what lets a reader select across a component that has
         // never heard of one.
-        let Some(arrived) = renderer.pressed()? else {
+        let read = match watching.as_mut() {
+            None => renderer.pressed()?,
+            Some((beat, watch)) => {
+                if renderer.waiting(*beat)? {
+                    renderer.took(crucible_tui::pressed()?)?
+                } else {
+                    match watch(state) {
+                        Moved::Redraw => changed = true,
+                        Moved::Still => changed = false,
+                        Moved::Took => return over(renderer, Ended::Took),
+                        Moved::Left => return over(renderer, Ended::Left),
+                    }
+                    continue;
+                }
+            }
+        };
+        let Some(arrived) = read else {
             // A hover is one of the things answered there, and a component
             // that lights a row under the pointer is the only party that
             // knows which row that is. So where the pointer has come to rest

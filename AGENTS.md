@@ -12,18 +12,19 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `crates/crucible-types/` | Shared validated values every crate exchanges |
 | `crates/crucible-registry/` | Bounded, source-aware registries |
 | `crates/crucible-credentials/` | Credential contracts and outgoing redaction |
-| `crates/crucible-storage/` | Session, history, checkpoint and cache contracts |
+| `crates/crucible-storage/` | Session, history, checkpoint and cache contracts, and the redacted sandbox records they keep |
 | `crates/crucible-workspace/` | The directories crucible reaches, and path proofs |
 | `crates/crucible-attachments/` | What may be attached, and the one read it comes through |
 | `crates/crucible-runtime/` | The controls a turn is steered and stopped by, and how work is owned |
 | `crates/crucible-sandbox/` | What a confined process may observe or change |
 | `crates/crucible-sandbox-local/` | The confinement this machine can enforce, and the processes it runs |
 | `crates/crucible-transport/` | Bounded frames, the streams a hosted program is spoken to over, and its restart budget |
+| `crates/crucible-update/` | Release discovery and the cached release check |
+| `crates/crucible-http/` | An HTTP client for outgoing requests to share, and the TLS, proxy, redirect, lookup and head policy it sends under |
 | `crates/crucible-tools/` | What a tool is, what may run one, and the proof that it may |
 | `crates/crucible-models/` | What a model is asked and answers with, and what a cache attempt may do |
 | `crates/crucible-context/` | The words a request is built from, and what a compaction asks for |
 | `crates/crucible-agents/` | What an agent is: what it may reach for, what it is told, and what checks its words |
-| `crates/crucible-core/` | Domain types and extension traits |
 | `crates/crucible-client-api/` | What a front end asks the application and is answered with, in values that can leave the process |
 | `crates/crucible-app/` | What a run is assembled from, and the conversation it then owns |
 | `crates/crucible-auth/` | Credentials and account authorization |
@@ -42,13 +43,8 @@ Repository skills live in [`.agents/skills/`](.agents/skills/).
 | `docs/` | User documentation |
 
 Workspace manifests declare crate dependencies; `scripts/sh/repo-checks.sh`
-enforces their allowed directions. `crucible-core` re-exports the names it no
-longer defines when they moved below it, so a consumer keeps one import path;
-a name that moved above it — `Event`, `EventEnvelope`, `Post`, `Reporter` and
-`TurnError`, now owned by `crucible-runner`, and everything an extension
-manifest or an MCP roster is made of, now owned by `crucible-extension` and
-`crucible-mcp` — is imported from its owner instead, because core cannot depend
-upward. New code names the owning crate either way.
+enforces their allowed directions. New code names the crate that owns what it
+uses.
 
 ## Changing Crucible
 
@@ -56,7 +52,8 @@ Read the module documentation above code you will change; it owns the local
 invariants. Update it when the implementation makes a sentence false.
 
 - Open extension sets use traits: adding a provider, tool, sandbox, subagent or
-  skill loader must not require naming its implementation in `crucible-core`.
+  skill loader must not require naming its implementation in the crate that
+  owns its contract.
   Closed domain states use enums, matched exhaustively where new cases require
   every consumer to decide.
 - `crucible-app` composes concrete implementations into trait objects before
@@ -108,7 +105,7 @@ the required behavior justifies it; keep the declaration and checks below.
   explaining what it supplies that `std` does not. The consuming member uses
   `some-crate.workspace = true`; versions and justification live at the root.
 - Put the dependency in the narrowest crate that needs it. A dependency in
-  `crucible-core` affects every consumer. New internal edges require a deliberate
+  `crucible-types` affects every consumer. New internal edges require a deliberate
   update to the graph checked by `scripts/sh/repo-checks.sh`.
 - Use crates.io sources. Git dependencies are not an escape from version pins.
 - The dependency must support shipped paths without panicking or printing to

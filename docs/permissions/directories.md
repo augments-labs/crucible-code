@@ -57,9 +57,11 @@ previous file whole; a failure of the final directory flush is reported after
 the replacement is already visible. Crucible also checks the destination's
 file identity immediately before commit and refuses a concurrent change. That
 check and rename are separate system calls, not a compare-and-swap primitive.
-`edit` uses the same commit path after reading at most 1 MiB through the opened
-file. Its result has the same 1 MiB ceiling, and cancellation is checked between
-fixed-size reads and again before the replacement is prepared.
+`edit` uses the same commit path after reading at most 1,000,000 bytes through
+the opened file. Its result has the same ceiling, and cancellation is checked
+between fixed-size reads and again before the replacement is prepared. `write`,
+once cancelled, stops before each directory it makes and before its rename,
+leaving the file as it was; directories it already made may remain.
 
 A link you meant is untouched by any of that. A checkout reached through one
 works, because the working directory is resolved when crucible starts and the

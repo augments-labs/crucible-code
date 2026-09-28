@@ -12,7 +12,7 @@
 //! handed:
 //!
 //! ```
-//! use crucible_credentials::{Credential, CredentialError, Outgoing};
+//! use crucible_credentials::{Authorization, Credential, CredentialError, Outgoing};
 //! use crucible_types::CredentialScopeId;
 //!
 //! /// A token this crate never sees the inside of.
@@ -32,11 +32,11 @@
 //!         self.scope
 //!     }
 //!
-//!     fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
+//!     fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a> {
 //!         let value = format!("Bearer {}", self.token);
 //!         request.protect(value.clone());
 //!         request.set_header("authorization", value);
-//!         Ok(())
+//!         Box::pin(std::future::ready(Ok(())))
 //!     }
 //! }
 //! ```
@@ -44,5 +44,5 @@
 mod credential;
 
 pub use credential::{
-    ApiKey, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
+    ApiKey, Authorization, Credential, CredentialError, Header, HeaderKey, Outgoing, Redactions,
 };

@@ -1,4 +1,4 @@
-use crucible_core::Answer;
+use crucible_types::Answer;
 
 use super::*;
 

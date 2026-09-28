@@ -20,18 +20,21 @@ use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, ErrorCode, Lasting, Outcome, Pending, PendingId,
     Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, TurnOutcome,
 };
-use crucible_core::{
-    Approved, Aside, Cancel, Delta, DescribeTool, Message, Mode, Permission, Rules, Sensitivity,
-    SessionId, Steer, StopReason, Summary, Tool, ToolArgs, ToolContext, ToolError, ToolId,
-    ToolOutput,
-};
+use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Tools};
+use crucible_runtime::BoxFuture;
+use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_session::Session;
+use crucible_tools::{
+    Approved, DescribeTool, Mode, Permission, Rules, Sensitivity, Summary, Tool, ToolContext,
+    ToolError, ToolOutput,
+};
 use crucible_tui::{Editor, Recording, Renderer};
+use crucible_types::{Message, SessionId, StopReason, ToolArgs, ToolId};
 
 use super::{Client, Witness};
 use crate::cli::converse::tests::{opening, paired, plain, scripted};
-use crate::cli::converse::{Terms, converse};
+use crate::cli::converse::{First, Terms, converse};
 use crate::cli::fake::{Script, changing};
 use crate::cli::sample::Sample;
 
@@ -152,14 +155,16 @@ impl Tool for Counting {
         Summary::new(args.as_str())
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        self.ran.fetch_add(1, Ordering::Relaxed);
-        (self.pressing)();
-        Ok(ToolOutput::ok("done"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.ran.fetch_add(1, Ordering::Relaxed);
+            (self.pressing)();
+            Ok(ToolOutput::ok("done"))
+        })
     }
 }
 
@@ -203,8 +208,17 @@ fn at_the_terminal(
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(typed.as_bytes().to_vec());
 
-    converse(conversation, &mut renderer, terms, &opening(), &mut input)
-        .expect("the loop to finish");
+    converse(
+        conversation,
+        &mut renderer,
+        terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
 
     journal.noted()
 }
@@ -274,20 +288,26 @@ struct Headless {
 }
 
 impl Front for Headless {
-    fn put(&mut self, pending: &Pending, _shown: Shown<'_>) -> Option<Decision> {
-        self.journal.note(Noted::Put(pending.clone()));
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        _shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            self.journal.note(Noted::Put(pending.clone()));
 
-        let sent = self.wire.sent(Command::Decide(Decision::Ruled {
-            id: pending.id(),
-            ruling: self.rulings.next()?,
-            lasting: Lasting::Once,
-        }));
-        let Command::Decide(decision) = sent.command() else {
-            return None;
-        };
-        self.journal.note(Noted::Decided(decision.clone()));
+            let sent = self.wire.sent(Command::Decide(Decision::Ruled {
+                id: pending.id(),
+                ruling: self.rulings.next()?,
+                lasting: Lasting::Once,
+            }));
+            let Command::Decide(decision) = sent.command() else {
+                return None;
+            };
+            self.journal.note(Noted::Decided(decision.clone()));
 
-        Some(decision.clone())
+            Some(decision.clone())
+        })
     }
 
     fn refused(&mut self, _: Refusal) {}
@@ -345,7 +365,13 @@ impl<'a> Driving<'a> {
                 let run = conversation
                     .runner()
                     .starting(&events, &self.cancel, &steer, &aside);
-                let ended = client::turn(conversation, &request, Box::default(), &mut front, &run);
+                let ended = self.terms.runtime.block_on(client::turn(
+                    conversation,
+                    &request,
+                    Box::default(),
+                    &mut front,
+                    &run,
+                ));
                 drop(reported);
 
                 ended.outcome()
@@ -353,7 +379,14 @@ impl<'a> Driving<'a> {
             _ => {
                 let providers = self.terms.providers.snapshot();
 
-                client::perform(conversation, &request, &self.terms.desk(&providers)).outcome()
+                self.terms
+                    .runtime
+                    .block_on(client::perform(
+                        conversation,
+                        &request,
+                        &self.terms.desk(&providers),
+                    ))
+                    .outcome()
             }
         };
 
@@ -566,7 +599,7 @@ fn a_turn_interrupted_from_either_side_stops_at_the_same_place() {
     let rounds = || vec![calling(), saying("never said")];
     let reading = |ran: &Arc<AtomicUsize>, pressing: Pressing| Counting {
         sensitivity: Sensitivity::ReadOnly {
-            target: crucible_core::Target::unresolved(),
+            target: crucible_tools::Target::unresolved(),
         },
         ran: Arc::clone(ran),
         pressing,

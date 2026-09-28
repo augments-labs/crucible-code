@@ -1,4 +1,27 @@
 //! Host-owned sandbox lifecycle and process interfaces.
+//!
+//! Every step that waits on the machine — probing a backend, preparing,
+//! materializing, staging, releasing, stopping, and beginning and completing a
+//! background result's acceptance — hands back a [`BoxFuture`]. One that
+//! consumes its session or launch owns it for as long as it runs, and one that
+//! borrows a process holds it until it answers. A pipe read or written
+//! asynchronously ([`SandboxOutput::read`], [`SandboxInput`]) hands back one
+//! too, borrowing the pipe until it answers. What reads a state the backend
+//! already holds (an inspection, a usage snapshot) and what reads a pipe
+//! without waiting stay synchronous, and so do a status look and handing a
+//! launch to another owner. A status look never waits on the command or on
+//! another command's publication. The first [`SandboxProcess::try_wait`]
+//! after the command ends begins that ending: it reaps the command, unless an
+//! earlier look has, and on a backend that publishes, publishing or discarding
+//! what the command wrote begins there too. A backend may finish that on the
+//! calling thread, or on work of its own that the look does not wait for,
+//! answering `None` until a later look finds it finished; the in-tree Linux
+//! backend does the latter. A worker waiting for a publication slot, a
+//! publication lock held by another command or descriptor, or a discard still
+//! being recorded also leaves the ending to a later `try_wait`.
+//! [`SandboxProcess::ended`] need not begin it: it may observe the command or
+//! its handed-off ending, leaving what the command wrote to `try_wait`. The
+//! default `ended` asks `try_wait`, and so begins the ending as that does.
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -6,21 +29,16 @@ use std::path::{Component, Path, PathBuf};
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use crucible_storage::{CallResultKey, CallResultReceipt};
-use crucible_types::{Ancestry, SandboxId, ToolId};
-use sha2::{Digest as _, Sha256};
-
 use super::audit::SandboxAudit;
-use super::capability::{
-    MAX_SANDBOX_BACKEND_WORD_BYTES, SandboxBackendIdentity, SandboxCapabilities, SandboxCapability,
-    SandboxFeature,
-};
-use super::guardrail::SandboxCommandStage;
 use super::manifest::SandboxManifest;
-use super::policy::{
-    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxNetworkPolicy, SandboxPolicy,
-    SandboxPolicyError, SandboxResourceLimits,
+use super::policy::{SandboxNetworkPolicy, SandboxPolicy, SandboxPolicyError};
+use crucible_runtime::BoxFuture;
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, SandboxBackendIdentity, SandboxCapabilities,
+    SandboxCapability, SandboxCommandStage, SandboxFeature, SandboxInspection, SandboxLifecycle,
+    SandboxUsage, SandboxViolation,
 };
+use crucible_types::{Ancestry, SandboxId, ToolId};
 
 /// Maximum environment entries given to one command.
 pub const MAX_SANDBOX_ENVIRONMENT_ENTRIES: usize = 128;
@@ -99,6 +117,20 @@ impl std::fmt::Debug for SandboxCredentialHandle {
 }
 
 /// One host-resolved credential value projected under an environment name.
+///
+/// A backend that runs a command given one masks the exact bytes of every
+/// credential value wherever they appear on the command's standard error, and
+/// on its standard output unless the command was built
+/// [`SandboxSpeech::Held`], one `*` per byte, so no byte count changes. What
+/// reaches [`SandboxProcess::take_stdout`] and [`SandboxProcess::take_stderr`]
+/// is already masked. Only those exact bytes are matched: a value the command
+/// re-encodes, splits or otherwise transforms before printing it is not.
+///
+/// A held command's standard output is a protocol, where a value arrives
+/// escaped and masking bytes in place could rewrite a frame, so no credential
+/// value is masked there and the peer speaking to it hides the values in what
+/// it decodes. Only crucible's own proxy credential is masked on it, where the
+/// command has one.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SandboxCredentialProjection {
     handle: SandboxCredentialHandle,
@@ -241,6 +273,18 @@ impl SandboxEnvironment {
         self.entries
             .iter()
             .filter_map(|entry| entry.credential.as_ref())
+    }
+
+    /// The non-empty values of the credentials present in this projection,
+    /// in name order: what a backend masks in the command's output.
+    ///
+    /// An empty value is left out, because it occurs everywhere and so can
+    /// only be matched by masking nothing or everything.
+    pub fn credential_values(&self) -> impl Iterator<Item = &OsStr> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.credential.is_some() && !entry.value.is_empty())
+            .map(|entry| entry.value.as_os_str())
     }
 
     /// Whether no variable is projected.
@@ -663,633 +707,6 @@ fn capability_requirements(
     features
 }
 
-/// One redacted effective filesystem reach in an inspection report.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SandboxRootInspection {
-    identity: [u8; 32],
-    access: SandboxFilesystemAccess,
-    provenance: SandboxFilesystemProvenance,
-}
-
-impl SandboxRootInspection {
-    /// Domain-separated identity of the canonical path, never the path itself.
-    #[must_use]
-    pub const fn identity(&self) -> [u8; 32] {
-        self.identity
-    }
-
-    /// Effective access granted at this reach.
-    #[must_use]
-    pub const fn access(&self) -> SandboxFilesystemAccess {
-        self.access
-    }
-
-    /// Authority source for the reach.
-    #[must_use]
-    pub const fn provenance(&self) -> SandboxFilesystemProvenance {
-        self.provenance
-    }
-}
-
-impl std::fmt::Debug for SandboxRootInspection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SandboxRootInspection")
-            .field("identity", &"[sha256]")
-            .field("access", &self.access)
-            .field("provenance", &self.provenance)
-            .finish()
-    }
-}
-
-/// Redacted network shape from the immutable effective plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxNetworkInspection {
-    /// No network reach.
-    Closed,
-    /// Domain/local policy counts; private spellings remain behind the digest.
-    Domains {
-        /// Number of allowed host patterns.
-        allowed: usize,
-        /// Number of overriding denied patterns.
-        denied: usize,
-        /// Whether the workload may bind local listeners.
-        local_binding: bool,
-        /// Number of exact host Unix sockets.
-        unix_sockets: usize,
-    },
-}
-
-impl SandboxNetworkInspection {
-    /// Stable network-state spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Closed => "closed",
-            Self::Domains { .. } => "domains",
-        }
-    }
-}
-
-/// Bounded redacted summary of the immutable effective policy and manifest.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SandboxPlanInspection {
-    enabled: bool,
-    roots: Box<[SandboxRootInspection]>,
-    working_directory: [u8; 32],
-    network: SandboxNetworkInspection,
-    limits: SandboxResourceLimits,
-    command_policy: [u8; 32],
-    unreadable_patterns: usize,
-    persistent: bool,
-    snapshots: bool,
-    manifest_entries: usize,
-}
-
-impl SandboxPlanInspection {
-    fn new(policy: &SandboxPolicy, manifest: &SandboxManifest) -> Self {
-        let roots = policy
-            .filesystem()
-            .iter()
-            .map(|rule| SandboxRootInspection {
-                identity: path_identity(b"root", rule.path()),
-                access: rule.access(),
-                provenance: rule.provenance(),
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        let network = match policy.network() {
-            SandboxNetworkPolicy::Closed => SandboxNetworkInspection::Closed,
-            SandboxNetworkPolicy::Domains(policy) => SandboxNetworkInspection::Domains {
-                allowed: policy.allowed().len(),
-                denied: policy.denied().len(),
-                local_binding: policy.allow_local_binding(),
-                unix_sockets: policy.unix_sockets().len(),
-            },
-        };
-        Self {
-            enabled: policy.enabled(),
-            roots,
-            working_directory: path_identity(b"working-directory", policy.working_directory()),
-            network,
-            limits: policy.limits(),
-            command_policy: policy.commands().digest(),
-            unreadable_patterns: policy.unreadable_patterns().len(),
-            persistent: policy.persistent(),
-            snapshots: policy.snapshots(),
-            manifest_entries: manifest.entries().len(),
-        }
-    }
-
-    /// Whether the effective policy requires verified confinement.
-    #[must_use]
-    pub const fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// Canonical reaches, represented only by domain-separated identities.
-    #[must_use]
-    pub fn roots(&self) -> &[SandboxRootInspection] {
-        &self.roots
-    }
-
-    /// Domain-separated identity of the effective working directory.
-    #[must_use]
-    pub const fn working_directory(&self) -> [u8; 32] {
-        self.working_directory
-    }
-
-    /// Effective redacted network shape.
-    #[must_use]
-    pub const fn network(&self) -> SandboxNetworkInspection {
-        self.network
-    }
-
-    /// Effective hard/observed ceiling requests.
-    #[must_use]
-    pub const fn limits(&self) -> SandboxResourceLimits {
-        self.limits
-    }
-
-    /// Domain-separated command-filter identity.
-    #[must_use]
-    pub const fn command_policy(&self) -> [u8; 32] {
-        self.command_policy
-    }
-
-    /// Number of bounded unreadable wildcard patterns.
-    #[must_use]
-    pub const fn unreadable_patterns(&self) -> usize {
-        self.unreadable_patterns
-    }
-
-    /// Whether persistent session state was requested.
-    #[must_use]
-    pub const fn persistent(&self) -> bool {
-        self.persistent
-    }
-
-    /// Whether snapshots were requested.
-    #[must_use]
-    pub const fn snapshots(&self) -> bool {
-        self.snapshots
-    }
-
-    /// Bounded manifest entry count.
-    #[must_use]
-    pub const fn manifest_entries(&self) -> usize {
-        self.manifest_entries
-    }
-}
-
-impl std::fmt::Debug for SandboxPlanInspection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SandboxPlanInspection")
-            .field("enabled", &self.enabled)
-            .field("roots", &self.roots)
-            .field("working_directory", &"[sha256]")
-            .field("network", &self.network)
-            .field("limits", &self.limits)
-            .field("command_policy", &"[sha256]")
-            .field("unreadable_patterns", &self.unreadable_patterns)
-            .field("persistent", &self.persistent)
-            .field("snapshots", &self.snapshots)
-            .field("manifest_entries", &self.manifest_entries)
-            .finish()
-    }
-}
-
-fn path_identity(label: &[u8], path: &Path) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(b"crucible-sandbox-inspection-path-v1\0");
-    digest.update(label);
-    digest.update([0]);
-    digest.update(path.as_os_str().as_encoded_bytes());
-    digest.finalize().into()
-}
-
-/// Cleanup state retained without backend error text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxCleanup {
-    /// A session or process still owns resources.
-    Pending,
-    /// Every process, pipe, mount, stage, proxy, and lease is gone.
-    Complete,
-    /// Cleanup was attempted but could not be fully confirmed.
-    Failed,
-}
-
-/// Redacted immutable inspection snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxInspection {
-    id: SandboxId,
-    backend: SandboxBackendIdentity,
-    capabilities: SandboxCapabilities,
-    requested_plan: SandboxPlanInspection,
-    plan: SandboxPlanInspection,
-    requested_policy_digest: [u8; 32],
-    policy_digest: [u8; 32],
-    manifest_digest: [u8; 32],
-    confined: bool,
-    disabled_reason: Option<Box<str>>,
-    cleanup: SandboxCleanup,
-}
-
-impl SandboxInspection {
-    /// Builds a bounded inspection report.
-    ///
-    /// # Errors
-    ///
-    /// Disable-reason text is bounded and a report may call itself confined only
-    /// when the essential kernel boundaries are all enforced.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: SandboxId,
-        backend: SandboxBackendIdentity,
-        capabilities: SandboxCapabilities,
-        policy: &SandboxPolicy,
-        manifest: &SandboxManifest,
-        confined: bool,
-        disabled_reason: Option<impl Into<Box<str>>>,
-        cleanup: SandboxCleanup,
-    ) -> Result<Self, SandboxError> {
-        Self::build(
-            id,
-            backend,
-            capabilities,
-            policy,
-            policy,
-            manifest,
-            confined,
-            disabled_reason,
-            cleanup,
-        )
-    }
-
-    /// Builds a confined report from one request, preserving policy narrowing.
-    ///
-    /// # Errors
-    ///
-    /// The effective policy's essential kernel boundaries must all be enforced.
-    pub fn confined_for_request(
-        backend: SandboxBackendIdentity,
-        capabilities: SandboxCapabilities,
-        request: &SandboxRequest,
-    ) -> Result<Self, SandboxError> {
-        Self::build(
-            request.id(),
-            backend,
-            capabilities,
-            request.requested_policy(),
-            request.policy(),
-            request.manifest(),
-            true,
-            None::<Box<str>>,
-            SandboxCleanup::Pending,
-        )
-    }
-
-    /// Builds an explicitly unconfined compatibility report for one request.
-    ///
-    /// # Errors
-    ///
-    /// Confinement must be disabled and the reason must be non-empty and bounded.
-    pub fn unconfined_for_request(
-        backend: SandboxBackendIdentity,
-        capabilities: SandboxCapabilities,
-        request: &SandboxRequest,
-        disabled_reason: impl Into<Box<str>>,
-    ) -> Result<Self, SandboxError> {
-        Self::build(
-            request.id(),
-            backend,
-            capabilities,
-            request.requested_policy(),
-            request.policy(),
-            request.manifest(),
-            false,
-            Some(disabled_reason),
-            SandboxCleanup::Pending,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn build(
-        id: SandboxId,
-        backend: SandboxBackendIdentity,
-        capabilities: SandboxCapabilities,
-        requested_policy: &SandboxPolicy,
-        policy: &SandboxPolicy,
-        manifest: &SandboxManifest,
-        confined: bool,
-        disabled_reason: Option<impl Into<Box<str>>>,
-        cleanup: SandboxCleanup,
-    ) -> Result<Self, SandboxError> {
-        let disabled_reason = disabled_reason.map(Into::into);
-        if disabled_reason
-            .as_ref()
-            .is_some_and(|text| text.is_empty() || text.len() > MAX_SANDBOX_BACKEND_WORD_BYTES)
-            || confined == disabled_reason.is_some()
-            || policy.enabled() != confined
-        {
-            return Err(SandboxError::InvalidInspection);
-        }
-        let network = match policy.network() {
-            SandboxNetworkPolicy::Closed => SandboxFeature::NetworkDeny,
-            SandboxNetworkPolicy::Domains(_) => SandboxFeature::NetworkAllowlist,
-        };
-        let essential = [
-            SandboxFeature::Filesystem,
-            network,
-            SandboxFeature::DescriptorIsolation,
-            SandboxFeature::ProcessIsolation,
-            SandboxFeature::KernelSurface,
-            SandboxFeature::PrivilegeIsolation,
-        ];
-        if confined
-            && essential
-                .into_iter()
-                .any(|feature| capabilities.claim(feature) != SandboxCapability::Enforced)
-        {
-            return Err(SandboxError::InvalidInspection);
-        }
-        Ok(Self {
-            id,
-            backend,
-            capabilities,
-            requested_plan: SandboxPlanInspection::new(requested_policy, manifest),
-            plan: SandboxPlanInspection::new(policy, manifest),
-            requested_policy_digest: requested_policy.digest(),
-            policy_digest: policy.digest(),
-            manifest_digest: manifest.digest(),
-            confined,
-            disabled_reason,
-            cleanup,
-        })
-    }
-
-    /// Stable lifecycle identity.
-    #[must_use]
-    pub const fn id(&self) -> SandboxId {
-        self.id
-    }
-
-    /// Enforcing or compatibility backend identity.
-    #[must_use]
-    pub const fn backend(&self) -> &SandboxBackendIdentity {
-        &self.backend
-    }
-
-    /// Exact capability snapshot used for negotiation.
-    #[must_use]
-    pub const fn capabilities(&self) -> &SandboxCapabilities {
-        &self.capabilities
-    }
-
-    /// Bounded redacted plan submitted before parent restrictions were inherited.
-    #[must_use]
-    pub const fn requested_plan(&self) -> &SandboxPlanInspection {
-        &self.requested_plan
-    }
-
-    /// Bounded redacted effective plan.
-    #[must_use]
-    pub const fn plan(&self) -> &SandboxPlanInspection {
-        &self.plan
-    }
-
-    /// Requested policy identity before parent restrictions were inherited.
-    #[must_use]
-    pub const fn requested_policy_digest(&self) -> [u8; 32] {
-        self.requested_policy_digest
-    }
-
-    /// Effective policy identity.
-    #[must_use]
-    pub const fn policy_digest(&self) -> [u8; 32] {
-        self.policy_digest
-    }
-
-    /// Materialization plan/content identity.
-    #[must_use]
-    pub const fn manifest_digest(&self) -> [u8; 32] {
-        self.manifest_digest
-    }
-
-    /// Whether this is an enforcing kernel boundary rather than compatibility.
-    #[must_use]
-    pub const fn confined(&self) -> bool {
-        self.confined
-    }
-
-    /// Why the host deliberately disabled confinement.
-    #[must_use]
-    pub fn disabled_reason(&self) -> Option<&str> {
-        self.disabled_reason.as_deref()
-    }
-
-    /// Last known cleanup outcome.
-    #[must_use]
-    pub const fn cleanup(&self) -> SandboxCleanup {
-        self.cleanup
-    }
-
-    /// Returns a copy with the terminal cleanup result.
-    #[must_use]
-    pub const fn cleaned(mut self, cleanup: SandboxCleanup) -> Self {
-        self.cleanup = cleanup;
-        self
-    }
-}
-
-/// Minimal redacted sandbox identity retained by an execution checkpoint.
-#[derive(Clone, PartialEq, Eq)]
-pub struct SandboxCheckpoint {
-    id: SandboxId,
-    backend: SandboxBackendIdentity,
-    capabilities: SandboxCapabilities,
-    enabled: bool,
-    network: SandboxNetworkInspection,
-    policy_digest: [u8; 32],
-    manifest_digest: [u8; 32],
-    confined: bool,
-}
-
-impl SandboxCheckpoint {
-    /// Captures only bounded identity needed for resume revalidation.
-    #[must_use]
-    pub fn from_inspection(inspection: &SandboxInspection) -> Self {
-        Self {
-            id: inspection.id,
-            backend: inspection.backend.clone(),
-            capabilities: inspection.capabilities.clone(),
-            enabled: inspection.plan.enabled,
-            network: inspection.plan.network,
-            policy_digest: inspection.policy_digest,
-            manifest_digest: inspection.manifest_digest,
-            confined: inspection.confined,
-        }
-    }
-
-    /// Restores one typed checkpoint record from protected persistence.
-    ///
-    /// # Errors
-    ///
-    /// A record that calls itself confined without its required network and
-    /// kernel capabilities is refused.
-    #[allow(clippy::too_many_arguments)]
-    pub fn restore(
-        id: SandboxId,
-        backend: SandboxBackendIdentity,
-        capabilities: SandboxCapabilities,
-        enabled: bool,
-        network: SandboxNetworkInspection,
-        policy_digest: [u8; 32],
-        manifest_digest: [u8; 32],
-        confined: bool,
-    ) -> Result<Self, SandboxError> {
-        if enabled != confined
-            || matches!(network, SandboxNetworkInspection::Domains { allowed, denied, unix_sockets, .. }
-                if [allowed, denied, unix_sockets].into_iter().any(|count| count > super::domains::MAX_SANDBOX_NETWORK_RULES))
-        {
-            return Err(SandboxError::InvalidInspection);
-        }
-        let network_feature = match network {
-            SandboxNetworkInspection::Closed => SandboxFeature::NetworkDeny,
-            SandboxNetworkInspection::Domains { .. } => SandboxFeature::NetworkAllowlist,
-        };
-        if confined
-            && [
-                SandboxFeature::Filesystem,
-                network_feature,
-                SandboxFeature::DescriptorIsolation,
-                SandboxFeature::ProcessIsolation,
-                SandboxFeature::KernelSurface,
-                SandboxFeature::PrivilegeIsolation,
-            ]
-            .into_iter()
-            .any(|feature| capabilities.claim(feature) != SandboxCapability::Enforced)
-        {
-            return Err(SandboxError::InvalidInspection);
-        }
-        Ok(Self {
-            id,
-            backend,
-            capabilities,
-            enabled,
-            network,
-            policy_digest,
-            manifest_digest,
-            confined,
-        })
-    }
-
-    /// Original lifecycle identity.
-    #[must_use]
-    pub const fn id(&self) -> SandboxId {
-        self.id
-    }
-
-    /// Exact backend identity used before interruption.
-    #[must_use]
-    pub const fn backend(&self) -> &SandboxBackendIdentity {
-        &self.backend
-    }
-
-    /// Exact capability snapshot used before interruption.
-    #[must_use]
-    pub const fn capabilities(&self) -> &SandboxCapabilities {
-        &self.capabilities
-    }
-
-    /// Whether confinement was required before interruption.
-    #[must_use]
-    pub const fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// Effective redacted network shape before interruption.
-    #[must_use]
-    pub const fn network(&self) -> SandboxNetworkInspection {
-        self.network
-    }
-
-    /// Effective policy identity before interruption.
-    #[must_use]
-    pub const fn policy_digest(&self) -> [u8; 32] {
-        self.policy_digest
-    }
-
-    /// Materialization identity before interruption.
-    #[must_use]
-    pub const fn manifest_digest(&self) -> [u8; 32] {
-        self.manifest_digest
-    }
-
-    /// Whether the prior backend was an enforcing kernel boundary.
-    #[must_use]
-    pub const fn confined(&self) -> bool {
-        self.confined
-    }
-
-    /// Whether fresh evidence preserves the exact backend/plan and every
-    /// earlier capability claim.
-    #[must_use]
-    pub fn is_compatible_with(&self, live: &Self) -> bool {
-        self.backend == live.backend
-            && self.enabled == live.enabled
-            && self.network == live.network
-            && self.policy_digest == live.policy_digest
-            && self.manifest_digest == live.manifest_digest
-            && self.confined == live.confined
-            && SandboxFeature::ALL
-                .into_iter()
-                .all(|feature| live.capabilities.claim(feature) >= self.capabilities.claim(feature))
-    }
-}
-
-impl std::fmt::Debug for SandboxCheckpoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SandboxCheckpoint")
-            .field("id", &self.id)
-            .field("backend", &self.backend)
-            .field("capabilities", &self.capabilities)
-            .field("enabled", &self.enabled)
-            .field("network", &self.network)
-            .field("policy_digest", &"[sha256]")
-            .field("manifest_digest", &"[sha256]")
-            .field("confined", &self.confined)
-            .finish()
-    }
-}
-
-/// Bounded per-command/session accounting without raw paths or command text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SandboxUsage {
-    /// Wall time measured by the host supervisor.
-    pub wall_time: Duration,
-    /// CPU time where the backend can report it.
-    pub cpu_time: Option<Duration>,
-    /// Peak memory bytes where known.
-    pub peak_memory_bytes: Option<u64>,
-    /// Ephemeral-storage bytes where known.
-    pub disk_bytes: Option<u64>,
-    /// Outbound bytes where networking is supported.
-    pub outbound_bytes: Option<u64>,
-    /// Raw captured output bytes before retention elision.
-    pub output_bytes: u64,
-    /// Backend cost in caller-defined micros where applicable.
-    pub cost_micros: Option<u64>,
-}
-
-/// A hard command ceiling crossed while the backend owned the process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxViolation {
-    /// The command outlived its wall-clock deadline.
-    CommandTime,
-    /// The command produced more captured output than its shared stream budget.
-    Output,
-}
-
 /// Result of one non-blocking output read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SandboxRead {
@@ -1336,6 +753,91 @@ pub trait SandboxOutput: Send {
     ///
     /// The backend stream could not be read or inspected.
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead>;
+
+    /// Reads as [`Self::read_ready`] does, once there is something to answer.
+    ///
+    /// Never [`SandboxRead::Pending`]: the future waits instead, and an empty
+    /// `buffer` answers `Bytes(0)` at once, since nothing can be read into it.
+    /// Dropping the future before it answers takes nothing out of the stream,
+    /// so a caller can give up on a read and ask again.
+    ///
+    /// The default asks [`Self::read_ready`], and after each `Pending` waits a
+    /// few milliseconds on the clock of the runtime polling it before asking
+    /// again, because a stream that says only whether bytes are ready now has
+    /// no way to say when they arrive. A backend whose stream can report that
+    /// overrides this, and says what its override needs of the runtime polling
+    /// it: an I/O driver, or staying on the runtime it was first polled on.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_ready`], and, for the default, the future was polled
+    /// outside a Tokio runtime. The default also needs that runtime's clock:
+    /// on a runtime built without it, Tokio panics where the default pauses.
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<SandboxRead>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(SandboxRead::Bytes(0));
+            }
+            loop {
+                match self.read_ready(buffer)? {
+                    SandboxRead::Pending => pause().await?,
+                    read => return Ok(read),
+                }
+            }
+        })
+    }
+}
+
+/// How long the default waiting read leaves a stream before asking it again:
+/// the pause the synchronous readers of a stream already take.
+const PAUSE: Duration = Duration::from_millis(5);
+
+/// Waits [`PAUSE`] on the clock of the runtime polling this, or says there is
+/// no runtime rather than letting the timer panic.
+async fn pause() -> io::Result<()> {
+    tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
+    tokio::time::sleep(PAUSE).await;
+    Ok(())
+}
+
+/// What the default [`SandboxProcess::take_async_stdin`] hands back: the
+/// writer [`SandboxProcess::take_stdin`] hands over, written and flushed on a
+/// blocking thread of the runtime polling it.
+///
+/// A blocking thread rather than the thread polling the write, because that is
+/// a runtime worker and a pipe whose reader stopped reading holds whoever
+/// writes to it. The writer goes to the blocking thread for each write and
+/// comes back with the answer, so there is only ever one write outstanding on
+/// it; one given up on keeps the writer until the pipe answers, and every
+/// write after it is refused.
+struct Written(Option<Box<dyn io::Write + Send>>);
+
+impl SandboxInput for Written {
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+        Box::pin(async move {
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            let runtime = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
+            let Some(mut input) = self.0.take() else {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "an earlier write to this input was given up on while the pipe held it",
+                ));
+            };
+            let bytes = bytes.to_vec();
+            let (input, written) = runtime
+                .spawn_blocking(move || {
+                    let written = io::Write::write(&mut input, &bytes)
+                        .and_then(|written| io::Write::flush(&mut input).map(|()| written));
+                    (input, written)
+                })
+                .await
+                .map_err(io::Error::other)?;
+            self.0 = Some(input);
+            written
+        })
+    }
 }
 
 /// A boxed output is an output.
@@ -1347,6 +849,31 @@ impl<O: SandboxOutput + ?Sized> SandboxOutput for Box<O> {
     fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
         (**self).read_ready(buffer)
     }
+
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<SandboxRead>> {
+        (**self).read(buffer)
+    }
+}
+
+/// The writing end of a command's standard input, written asynchronously.
+///
+/// What [`SandboxProcess::take_async_stdin`] hands back. A write waits while
+/// the pipe is full, which is what a peer that stopped reading looks like, and
+/// a caller that cannot afford to wait forever drops the write at a deadline of
+/// its own; nothing here can tell a stalled peer from a slow one.
+pub trait SandboxInput: Send {
+    /// Writes some of `bytes` once the pipe will take them, and says how many
+    /// it took: at least one, unless `bytes` is empty.
+    ///
+    /// Whether a write dropped before it answers has delivered anything
+    /// depends on the backend, which says so; a caller that drops one cannot
+    /// assume either way.
+    ///
+    /// # Errors
+    ///
+    /// The pipe could not be written, for example because the command closed
+    /// its end.
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>>;
 }
 
 /// A running sandbox command, including its complete cleanup scope.
@@ -1362,17 +889,52 @@ pub trait SandboxProcess: Send {
     /// own; there is no answer this layer could give it instead.
     fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>>;
 
+    /// Takes the writing end of standard input once, to be written
+    /// asynchronously.
+    ///
+    /// The same pipe [`Self::take_stdin`] hands over, so whichever is asked
+    /// first takes it and the other then hands back nothing.
+    ///
+    /// The default adapts [`Self::take_stdin`]: each write is made, and then
+    /// flushed, on a blocking thread of the Tokio runtime polling it, so a
+    /// pipe that fills holds that thread rather than a worker; polled outside
+    /// a runtime, a write answers that there is none. A write dropped before
+    /// it answers leaves the writer with that thread until the pipe takes the
+    /// bytes or breaks, and every later write is refused. So a peer that
+    /// stops reading holds one of the runtime's blocking threads for as long
+    /// as its input stays full, however long ago the write was given up on,
+    /// and only stopping the process frees it: a backend that relies on this
+    /// default answers for that, and one whose writer can wait without a
+    /// thread overrides this, and says what its override needs of the runtime
+    /// polling it.
+    fn take_async_stdin(&mut self) -> Option<Box<dyn SandboxInput>> {
+        self.take_stdin()
+            .map(|input| Box::new(Written(Some(input))) as Box<dyn SandboxInput>)
+    }
+
     /// Takes stdout once.
+    ///
+    /// The exact bytes of every credential value the command's environment
+    /// carries read as one `*` per byte, byte counts unchanged; a value the
+    /// command re-encodes, splits or transforms is not matched. A command
+    /// built [`SandboxSpeech::Held`] is the exception: its standard output is
+    /// a protocol, where no credential value is masked and whoever speaks to
+    /// it hides those values in what it decodes; only crucible's own proxy
+    /// credential is masked there, where the command has one. See
+    /// [`SandboxCredentialProjection`].
     fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>>;
 
-    /// Takes stderr once.
+    /// Takes stderr once, masked as [`Self::take_stdout`] is for a command
+    /// that is not spoken to, whatever the command's speech.
     fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>>;
 
     /// Non-blocking process status.
     ///
     /// `None` while the command runs. On a backend that publishes what a command
-    /// wrote, also `None` while a command that has ended waits its turn behind
-    /// another command's publication; [`Self::ended`] tells the two apart.
+    /// wrote, also `None` while a command that has ended is still having what
+    /// it wrote reported back, published or discarded, waits for a publication
+    /// worker slot, or waits behind an unavailable publication lock;
+    /// [`Self::ended`] tells those states from a command still running.
     ///
     /// # Errors
     ///
@@ -1384,18 +946,33 @@ pub trait SandboxProcess: Send {
     /// Whether the command has ended, whatever becomes of what it wrote.
     ///
     /// [`Self::try_wait`] goes on answering `None` for a command that has ended
-    /// while what it wrote waits for another command's publication, because its
-    /// ending is complete only once its own publication is. This is how a caller
+    /// while its ending is being written, discarded, waiting for a worker slot,
+    /// or waiting for an unavailable publication lock. This is how a caller
     /// holding a deadline or a grace tells that wait from a command still
-    /// running: stopping a command discards what it wrote, so one that finished
-    /// in time is waited for rather than stopped. An error from `try_wait` once
-    /// this has answered `true` is how that ending went wrong, not a status that
-    /// could not be read.
+    /// running: stopping a command before its ending begins discards what has
+    /// not been published, while a stop that joins an ending already writing
+    /// lets that ending complete. An error from `try_wait` once this has
+    /// answered `true` is how that ending went wrong, not a status that could
+    /// not be read.
     ///
     /// A status that cannot be read reads as not ended, so a caller stops the
     /// command as it would have without asking.
     fn ended(&mut self) -> bool {
         matches!(self.try_wait(), Ok(Some(_)))
+    }
+
+    /// What became of this command's private effects when its ending reached a
+    /// terminal state.
+    ///
+    /// `Some(SandboxLifecycle::Published)` means the effects were durably
+    /// published; `Some(SandboxLifecycle::RolledBack)` means they were rolled
+    /// back. `Some(SandboxLifecycle::Quarantined)` means no safe decision is
+    /// known; it does not prove whether the effects were published. `None`
+    /// means the ending is still in flight or this backend has no publication
+    /// to report. A caller must ask this after a stop, rather than infer the
+    /// outcome from an earlier `ended` observation.
+    fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+        None
     }
 
     /// Stops the complete owned process scope and reaps the command leader.
@@ -1405,12 +982,42 @@ pub trait SandboxProcess: Send {
     /// Operating-system cleanup of descendant process objects may finish later.
     /// A backend publishing private effects must also establish that those
     /// effects cannot change before publication. A command stopped before its
-    /// ending is complete publishes nothing.
+    /// ending is complete publishes nothing, except where the backend's own
+    /// work is already writing that ending when the stop lands: the stop waits
+    /// for it, and a publication it made stands, since one cut short would be
+    /// half made.
     ///
     /// # Errors
     ///
-    /// The backend could not confirm scope termination or reap the leader.
-    fn stop(&mut self) -> io::Result<()>;
+    /// The backend could not confirm scope termination or reap the leader, or
+    /// work it started for the command, such as the cancel of a broken limit,
+    /// had not ended within the stop's bound.
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>>;
+
+    /// Stops the same scope as [`Self::stop`], synchronously on the calling
+    /// thread: for dropping a process or cleaning one whose start failed, and
+    /// for a command tool, which stops what it ran from a thread the runtime's
+    /// blocking pool lent it, because ending and reaping a process group
+    /// blocks whichever way it is driven.
+    ///
+    /// What bounds it is what bounds the stop itself, which does its work
+    /// without waiting on anything but the threads and descriptors it owns. A
+    /// caller on a runtime worker does not call this; it awaits
+    /// [`Self::stop`], or moves the call to a blocking thread first.
+    ///
+    /// The default refuses, so a backend whose stop cannot run on the calling
+    /// thread fails closed: callers read the refusal the way they read any
+    /// other stop failure, as cleanup they could not confirm.
+    ///
+    /// # Errors
+    ///
+    /// The default always answers that the scope has no synchronous stop.
+    /// An override answers what the stop it runs answers.
+    fn stop_sync(&mut self) -> io::Result<()> {
+        Err(io::Error::other(
+            "sandbox process scope has no synchronous stop",
+        ))
+    }
 
     /// Redacted inspection snapshot.
     fn inspection(&self) -> &SandboxInspection;
@@ -1427,11 +1034,15 @@ pub trait SandboxProcess: Send {
     /// # Errors
     ///
     /// Foreground processes, a mismatched result identity, and duplicate
-    /// transitions are refused.
-    fn begin_background_acceptance(&mut self, _key: CallResultKey) -> Result<(), SandboxError> {
-        Err(SandboxError::Lifecycle(io::Error::other(
-            "sandbox process does not support background result intent",
-        )))
+    /// transitions are refused. So, on a backend that publishes, is a command
+    /// whose ending a look has already begun: its result is that ending.
+    fn begin_background_acceptance(
+        &mut self,
+        _key: CallResultKey,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(std::future::ready(Err(SandboxError::Lifecycle(
+            io::Error::other("sandbox process does not support background result intent"),
+        ))))
     }
 
     /// Binds the protected result-store receipt into the begun transition.
@@ -1442,10 +1053,10 @@ pub trait SandboxProcess: Send {
     fn complete_background_acceptance(
         &mut self,
         _receipt: CallResultReceipt,
-    ) -> Result<(), SandboxError> {
-        Err(SandboxError::Lifecycle(io::Error::other(
-            "sandbox process does not support background result completion",
-        )))
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(std::future::ready(Err(SandboxError::Lifecycle(
+            io::Error::other("sandbox process does not support background result completion"),
+        ))))
     }
 }
 
@@ -1471,7 +1082,9 @@ pub trait SandboxLaunch: Send {
     /// # Errors
     ///
     /// A failed or ambiguous release is contained and never retried.
-    fn release(self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError>;
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a;
 }
 
 /// A prepared session. Dropping one must clean any completed staging.
@@ -1484,28 +1097,33 @@ pub trait SandboxSession: Send {
     /// # Errors
     ///
     /// No command may start after a partial or failed materialization.
-    fn materialize(&mut self) -> Result<(), SandboxError>;
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>>;
 
     /// Stages one governed command without allowing untrusted code to run.
     ///
     /// # Errors
     ///
     /// Refusal or launch failure occurs before the release boundary.
-    fn stage(
+    fn stage<'a>(
         self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError>;
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a;
 
     /// Stages and immediately releases one foreground command.
     ///
     /// # Errors
     ///
     /// Preparation or release failed and the complete owned scope was cleaned.
-    fn start(
+    fn start<'a>(
         self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        self.stage(command)?.release()
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move { self.stage(command).await?.release().await })
     }
 }
 
@@ -1516,7 +1134,9 @@ pub trait SandboxService: Send + Sync {
     /// # Errors
     ///
     /// Unavailable or unsuitable backends return a typed diagnostic.
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>;
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>>;
 
     /// Negotiates and prepares one session before side effects.
     ///
@@ -1524,7 +1144,10 @@ pub trait SandboxService: Send + Sync {
     ///
     /// Unsupported required features and backend failures are refused before
     /// materialization or spawn.
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError>;
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>>;
 }
 
 impl std::fmt::Debug for dyn SandboxService {
@@ -1603,16 +1226,48 @@ pub enum SandboxError {
     /// The enforcing command could not start.
     #[error("sandbox launch failed")]
     Spawn(#[source] io::Error),
-    /// A running process could not be controlled or reaped.
+    /// A step in a sandbox's life did not complete, as
+    /// [`SandboxFailureKind::Lifecycle`](crucible_storage::SandboxFailureKind::Lifecycle)
+    /// describes. A launch that ended before readiness, where the backend can
+    /// quote what its launcher wrote meanwhile, is
+    /// [`LaunchRefused`](Self::LaunchRefused) instead.
     #[error("sandbox lifecycle failed")]
     Lifecycle(#[source] io::Error),
+    /// The backend's launch ended before the command was released, and words
+    /// could be read from its launcher's standard error.
+    ///
+    /// Those words are usually why, but not always: they are whatever reached
+    /// that stream before readiness, some of which is written for other
+    /// reasons.
+    /// Audited as [`SandboxFailureKind::Lifecycle`](crucible_storage::SandboxFailureKind::Lifecycle),
+    /// as a launch that ended with nothing to quote is; the words stay out of
+    /// the audit.
+    #[error("sandbox launch refused: {said}")]
+    LaunchRefused {
+        /// What reached the launcher's standard error before the launch was
+        /// ready, quoted as it was: on Linux, what Bubblewrap wrote, what the
+        /// dynamic loader wrote, or the broker's runtime reporting a panic or
+        /// an abort. The loader can also write when a program starts, for
+        /// example under an environment entry setting `LD_DEBUG` or naming an
+        /// `LD_PRELOAD` object that does not exist, and a broker that refuses
+        /// does so through `source`, so these words may sit beside the reason
+        /// rather than be it. The backend cuts them to a bound, ending them
+        /// ` (truncated)` where there was more, folds them onto one line, and
+        /// masks them as [`SandboxProcess::take_stderr`] masks what a command
+        /// writes there.
+        said: Box<str>,
+        /// How the refusal was noticed: the error the launcher's status
+        /// channel gave instead of readiness.
+        #[source]
+        source: io::Error,
+    },
 }
 
 impl SandboxError {
     /// Stable redacted category suitable for audit and diagnostics.
     #[must_use]
-    pub const fn failure_kind(&self) -> super::audit::SandboxFailureKind {
-        use super::audit::SandboxFailureKind;
+    pub const fn failure_kind(&self) -> crucible_storage::SandboxFailureKind {
+        use crucible_storage::SandboxFailureKind;
 
         match self {
             Self::Unsupported { .. } => SandboxFailureKind::Unsupported,
@@ -1624,14 +1279,21 @@ impl SandboxError {
             Self::Concurrency => SandboxFailureKind::Concurrency,
             Self::Materialization { .. } => SandboxFailureKind::Materialization,
             Self::Spawn(_) => SandboxFailureKind::Spawn,
-            Self::Lifecycle(_) => SandboxFailureKind::Lifecycle,
+            Self::Lifecycle(_) | Self::LaunchRefused { .. } => SandboxFailureKind::Lifecycle,
             Self::Audit(_) => SandboxFailureKind::Audit,
         }
     }
 }
 
-// The fixtures are POSIX absolute paths, which no Windows path type accepts;
-// Windows has no confinement backend to give them a native shape.
+// The fixtures this module hands to this crate's absolute-path validation are
+// POSIX absolute paths; Windows does not accept them as absolute, so that
+// validation rejects them on Windows before any backend is called. The gate is
+// the module's, so tests that need no such rejection ride it too.
 #[cfg(test)]
 #[cfg(unix)]
 mod tests;
+// The one comparison in this module whose fixtures are absolute on every
+// target, and which reads two lists the module owns between them, so it is
+// gated on `test` alone: a Windows build holds both lists too.
+#[cfg(test)]
+mod agreement;

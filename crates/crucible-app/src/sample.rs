@@ -184,8 +184,12 @@ impl Sample {
         struct Nobody;
 
         impl Ask for Nobody {
-            fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-                (Verdict::Deny, Remember::Never)
+            fn ask<'a>(
+                &'a mut self,
+                _call: &'a ToolCall,
+                _sensitivity: &'a Sensitivity,
+            ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+                Box::pin(async { (Verdict::Deny, Remember::Never) })
             }
         }
 
@@ -196,10 +200,12 @@ impl Sample {
         })
         .expect("an absolute path was given");
 
-        Settings::read(&home, &self.root())
-            .expect("a file crucible wrote")
-            .permission(Mode::Ask)
-            .decide(call, sensitivity, &mut Nobody)
+        crucible_runtime::answered!(
+            Settings::read(&home, &self.root())
+                .expect("a file crucible wrote")
+                .permission(Mode::Ask)
+                .decide(call, sensitivity, &mut Nobody)
+        )
     }
 }
 

@@ -29,7 +29,7 @@ use crucible_models::{
     PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request,
     StatefulTransportCapability,
 };
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
     CredentialScopeId, Modalities, Modality, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
@@ -109,14 +109,19 @@ impl Moonshot {
     }
 
     /// The headers every request carries, including the secret.
-    fn headers(&self) -> Result<Outgoing, ProviderError> {
+    async fn headers(&self, cancel: &Cancel) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("accept", "text/event-stream");
         outgoing.set_header("user-agent", AGENT);
 
-        self.credential
-            .authorize(&mut outgoing)
+        // Raced against the turn's cancel: a credential renewing its token
+        // waits for a renewal that is the renewal's own work, so a turn
+        // stopped meanwhile stops waiting here and leaves it to finish.
+        cancel
+            .race(self.credential.authorize(&mut outgoing))
+            .await
+            .ok_or(ProviderError::Cancelled(NAME))?
             .map_err(|source| ProviderError::Credential {
                 provider: NAME,
                 source,
@@ -189,41 +194,39 @@ impl Provider for Moonshot {
         body::prompt_cache_encoding(request)
     }
 
-    fn stream(
-        &self,
-        request: Request<'_>,
-        cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        // Nothing is sent for a turn the user has already abandoned. Once the
-        // request is away, cancelling is the stream's business.
-        if cancel.requested() {
-            return Err(ProviderError::Cancelled(NAME));
-        }
+    fn stream<'a>(
+        &'a self,
+        request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move {
+            // Nothing is sent for a turn the user has already abandoned. Once the
+            // request is away, cancelling is the stream's business.
+            if cancel.requested() {
+                return Err(ProviderError::Cancelled(NAME));
+            }
 
-        let outgoing = self.headers()?;
-        let redactions = outgoing.redactions();
-        let body = body::serialize(&request);
+            let mut outgoing = self.headers(cancel).await?;
+            let body = body::serialize(&request);
 
-        let response = self
-            .transport
-            .post(self.endpoint.as_str(), outgoing, body, cancel)
-            .map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
+            let response = self
+                .transport
+                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
+                .await;
+            let redactions = outgoing.redactions();
+            let response =
+                response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
-        if response.status != 200 {
-            return Err(refused(
-                NAME,
-                response.status,
-                response.body,
-                &redactions,
-                cancel,
-            ));
-        }
+            if response.status() != 200 {
+                return Err(refused(NAME, response.status(), response, &redactions, cancel).await);
+            }
 
-        Ok(Box::new(Stream::new(
-            response.body,
-            cancel.clone(),
-            redactions,
-        )))
+            Ok(Box::new(Stream::new(
+                response.into_reader(),
+                cancel.clone(),
+                redactions,
+            )) as Box<dyn DeltaStream>)
+        })
     }
 }
 

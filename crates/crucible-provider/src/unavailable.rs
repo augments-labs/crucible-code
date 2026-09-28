@@ -15,7 +15,7 @@
 use crucible_models::{
     DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{CredentialScopeId, Modalities, Modality};
 
 /// What this provider is called, in the session log and in the status line.
@@ -87,12 +87,12 @@ impl Provider for Unavailable {
         crucible_types::PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-        Err(ProviderError::Unconfigured(self.said.clone()))
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        Box::pin(async move { Err(ProviderError::Unconfigured(self.said.clone())) })
     }
 }
 
@@ -125,7 +125,8 @@ mod tests {
     fn every_turn_comes_back_with_the_sentence_it_was_built_with() {
         let provider = Unavailable::new("nothing is set up");
 
-        let problem = provider.stream(asking(), &Cancel::new()).unwrap_err();
+        let problem =
+            crucible_runtime::answered!(provider.stream(asking(), &Cancel::new())).unwrap_err();
 
         assert_eq!(problem.to_string(), "nothing is set up");
     }

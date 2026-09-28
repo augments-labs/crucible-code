@@ -1,4 +1,4 @@
-use crucible_core::ToolArgs;
+use crucible_types::ToolArgs;
 
 use super::*;
 

@@ -11,11 +11,12 @@ use crucible_sandbox::{SandboxOutput, SandboxRead};
 
 use super::{KEPT, Muttered};
 
-/// The pause between polls a test drains with. Short, because a test that waits
-/// in real milliseconds should wait as few of them as it can.
+/// How long a test sleeps between looks at something it is waiting for. Short,
+/// because a test that waits in real milliseconds should wait as few of them as
+/// it can.
 const PAUSE: Duration = Duration::from_millis(1);
 
-/// How long a test waits for a thread it does not control to get somewhere.
+/// How long a test waits for a task it does not control to get somewhere.
 const LATEST: Duration = Duration::from_secs(2);
 
 /// One thing a stream does when it is asked what it has.
@@ -71,7 +72,7 @@ fn says(steps: impl IntoIterator<Item = Step>) -> (Says, Arc<AtomicUsize>) {
     )
 }
 
-/// Waits for `settled` to hold, so a test never races a thread it started.
+/// Waits for `settled` to hold, so a test never races a task it started.
 fn until(mut settled: impl FnMut() -> bool) -> bool {
     let began = Instant::now();
     while began.elapsed() < LATEST {
@@ -90,7 +91,7 @@ fn what_a_process_writes_to_standard_error_is_kept() {
         Step::Says(b"giving up\n".to_vec()),
         Step::Closes,
     ]);
-    let muttered = Muttered::with_pause(stream, PAUSE);
+    let muttered = Muttered::draining(stream, crate::testing::runtime());
 
     assert!(
         until(|| muttered.text().contains("giving up")),
@@ -104,7 +105,7 @@ fn what_a_process_writes_to_standard_error_is_kept() {
 fn a_talkative_process_is_bounded_and_told_on() {
     let over = KEPT + 500;
     let (stream, _) = says([Step::Says(vec![b'x'; over]), Step::Closes]);
-    let muttered = Muttered::with_pause(stream, PAUSE);
+    let muttered = Muttered::draining(stream, crate::testing::runtime());
 
     assert!(
         until(|| muttered.text().contains("dropped")),
@@ -123,7 +124,7 @@ fn a_talkative_process_is_bounded_and_told_on() {
 #[test]
 fn a_quiet_process_leaves_nothing_behind() {
     let (stream, _) = says([Step::Waits, Step::Waits, Step::Closes]);
-    let muttered = Muttered::with_pause(stream, PAUSE);
+    let muttered = Muttered::draining(stream, crate::testing::runtime());
 
     thread::sleep(PAUSE * 8);
     assert_eq!(muttered.text(), "");
@@ -131,9 +132,9 @@ fn a_quiet_process_leaves_nothing_behind() {
 
 #[test]
 fn dropping_it_stops_the_drain() {
-    // Never closes, so only the drop can end the thread.
+    // Never closes, so only the drop can end the task.
     let (stream, asked) = says([]);
-    let muttered = Muttered::with_pause(stream, PAUSE);
+    let muttered = Muttered::draining(stream, crate::testing::runtime());
     assert!(
         until(|| asked.load(Ordering::Relaxed) > 2),
         "the drain should be polling"
@@ -148,5 +149,72 @@ fn dropping_it_stops_the_drain() {
             asked.load(Ordering::Relaxed) == seen
         }),
         "the drain should have stopped asking"
+    );
+}
+
+/// What a flooding standard error saw of the drain reading it.
+#[derive(Default)]
+struct Seen {
+    /// Reads made on a thread that is not the runtime's.
+    elsewhere: AtomicUsize,
+    /// Whether the stream has been let go of.
+    released: std::sync::atomic::AtomicBool,
+}
+
+/// A standard error that never stops talking and never ends.
+///
+/// Always ready, so nothing about the stream itself ever pauses the drain: the
+/// only things that can end it are the drain's own bound and its owner.
+struct Floods(Arc<Seen>);
+
+impl SandboxOutput for Floods {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if !crate::testing::on_runtime() {
+            self.0.elsewhere.fetch_add(1, Ordering::Relaxed);
+        }
+        buffer.fill(b'x');
+        Ok(SandboxRead::Bytes(buffer.len()))
+    }
+}
+
+impl Drop for Floods {
+    fn drop(&mut self) {
+        self.0.released.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The flood a talkative program makes is drained so that it cannot fill its
+/// pipe, bounded so that it cannot fill crucible, and ended with its owner so
+/// that it does not outlive the program it belongs to. All three by work on
+/// the runtime the transport was handed: a thread of the transport's own is
+/// one nobody owns once its value is gone.
+#[test]
+fn a_flood_on_standard_error_is_drained_by_owned_work_and_ends_with_it() {
+    let seen = Arc::new(Seen::default());
+    let muttered = Muttered::draining(Floods(Arc::clone(&seen)), crate::testing::runtime());
+
+    assert!(
+        until(|| muttered.text().contains("further bytes were dropped")),
+        "a flood has to be drained past the bound, and the bound reported: {:?}",
+        muttered.text().len()
+    );
+    let said = muttered.text();
+    assert_eq!(
+        said.split('\n').next().map(str::len),
+        Some(KEPT),
+        "no more than the bound is kept however long the flood goes on"
+    );
+
+    drop(muttered);
+
+    assert!(
+        until(|| seen.released.load(Ordering::Relaxed)),
+        "dropping it has to end the drain and let the stream go, flood or not"
+    );
+    assert_eq!(
+        seen.elsewhere.load(Ordering::Relaxed),
+        0,
+        "every read has to be made by work on the runtime the transport was handed, \
+         never by a thread of the transport's own"
     );
 }

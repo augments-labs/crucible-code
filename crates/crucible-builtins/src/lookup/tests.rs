@@ -35,9 +35,10 @@ fn looked_up(query: &str) -> (String, Revealed) {
         r#"{{"query":{}}}"#,
         serde_json::to_string(query).expect("a query that encodes")
     );
-    let output = tool
-        .run(sample::allowed(&tool, &args), &crate::sample::context())
-        .expect("a search to answer");
+    let output = crucible_runtime::answered!(
+        tool.run(sample::allowed(&tool, &args), &crate::sample::context())
+    )
+    .expect("a search to answer");
 
     (output.text().to_owned(), revealed)
 }
@@ -81,10 +82,10 @@ fn an_empty_query_is_not_a_way_to_ask_for_everything() {
     // An absent query never reaches the matching at all — the arguments are
     // refused, which is the same answer by an earlier route.
     let (tool, revealed) = searching();
-    tool.run(
+    crucible_runtime::answered!(tool.run(
         sample::allowed(&tool, r#"{"query":""}"#),
         &crate::sample::context(),
-    )
+    ))
     .expect_err("an empty query to be refused as arguments");
     assert!(!revealed.holds("web_search"));
 
@@ -95,8 +96,10 @@ fn an_empty_query_is_not_a_way_to_ask_for_everything() {
             r#"{{"query":{}}}"#,
             serde_json::to_string(query).expect("a query that encodes")
         );
-        tool.run(sample::allowed(&tool, &args), &crate::sample::context())
-            .expect("a search to answer");
+        crucible_runtime::answered!(
+            tool.run(sample::allowed(&tool, &args), &crate::sample::context())
+        )
+        .expect("a search to answer");
 
         for name in ["web_search", "web_fetch", "todo_write", "notes"] {
             assert!(!revealed.holds(name), "{query:?} offered {name}");
@@ -124,12 +127,11 @@ fn a_query_matching_nothing_says_so_and_offers_nothing() {
     // Not a failure: asking for something absent is an answer, and the model
     // should learn that what it can already see is the whole of it.
     let (tool, revealed) = searching();
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"frobnicate"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a search to answer");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"frobnicate"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a search to answer");
 
     assert!(!output.is_failed(), "{}", output.text());
     assert!(
@@ -160,12 +162,11 @@ fn a_session_deferring_nothing_has_nothing_to_look_up() {
 fn looking_the_same_tool_up_twice_is_not_a_mistake() {
     let (tool, revealed) = searching();
     for _ in 0..2 {
-        let output = tool
-            .run(
-                sample::allowed(&tool, r#"{"query":"web_search"}"#),
-                &crate::sample::context(),
-            )
-            .expect("a search to answer");
+        let output = crucible_runtime::answered!(tool.run(
+            sample::allowed(&tool, r#"{"query":"web_search"}"#),
+            &crate::sample::context(),
+        ))
+        .expect("a search to answer");
         assert!(!output.is_failed());
     }
 

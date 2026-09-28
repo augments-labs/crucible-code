@@ -7,18 +7,17 @@ use std::os::unix::fs::PermissionsExt as _;
 use crucible_types::Change;
 
 use super::{Cancel, Edit, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput};
-use crate::sample::{Sample, allowed};
+use crate::sample::{Sample, allowed, asked_once, lent, occupied, waited};
 
 fn edit(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Edit::new(sample.workspace());
-    tool.run(allowed(&tool, args), &crate::sample::context())
-        .unwrap()
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context())).unwrap()
 }
 
 /// A call the tool cannot read, which ends the turn rather than answering.
 fn refuse(sample: &Sample, args: &str) -> ToolError {
     let tool = Edit::new(sample.workspace());
-    tool.run(allowed(&tool, args), &crate::sample::context())
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
         .unwrap_err()
 }
 
@@ -332,15 +331,14 @@ fn a_stopped_turn_does_not_scan_or_change_the_file() {
     cancel.request();
     let tool = Edit::new(sample.workspace());
 
-    let problem = tool
-        .run(
-            allowed(
-                &tool,
-                r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
-            ),
-            &crate::sample::cancelled_by(&cancel),
-        )
-        .unwrap_err();
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(
+            &tool,
+            r#"{"path":"one.txt","find":"a","replace":"b","all":true}"#,
+        ),
+        &crate::sample::cancelled_by(&cancel),
+    ))
+    .unwrap_err();
 
     assert!(matches!(
         problem,
@@ -409,12 +407,11 @@ fn a_call_with_no_find_says_what_is_missing() {
     let sample = Sample::new("edit-nofind");
 
     let tool = Edit::new(sample.workspace());
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#),
-            &crate::sample::context(),
-        )
-        .unwrap_err();
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"path":"one.rs","replace":"b"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap_err();
 
     assert_eq!(problem.to_string(), "edit: find is required");
 }
@@ -476,4 +473,67 @@ fn a_call_that_changed_nothing_leaves_nothing_to_draw() {
 
     assert!(output.is_failed());
     assert!(output.diff().is_none());
+}
+
+#[test]
+fn an_edit_lent_a_busy_worker_waits_for_room_and_touches_nothing_meanwhile() {
+    // The file work is the worker's, not the polling thread's: while every
+    // place is taken the call waits, and the file is what it was.
+    let sample = Sample::new("edit-waits");
+    sample.write("one.txt", "alpha\n");
+    let tool = Edit::new(sample.workspace());
+    let worker = crate::sample::worker();
+    let busy = occupied(&worker);
+    let context = lent(&worker, &Cancel::new());
+    let mut running = std::pin::pin!(tool.run(
+        allowed(
+            &tool,
+            r#"{"path":"one.txt","find":"alpha","replace":"beta"}"#
+        ),
+        &context,
+    ));
+
+    assert!(
+        asked_once(running.as_mut()).is_pending(),
+        "the edit answered without waiting for room on the worker"
+    );
+    assert_eq!(read(&sample, "one.txt"), "alpha\n");
+
+    drop(busy);
+    let output = waited(running).unwrap();
+
+    assert_eq!(output.text(), "changed one.txt, 1 replacements");
+    assert_eq!(read(&sample, "one.txt"), "beta\n");
+}
+
+#[test]
+fn an_edit_cancelled_while_it_waits_for_the_worker_changes_nothing() {
+    let sample = Sample::new("edit-cancelled-waiting");
+    sample.write("one.txt", "alpha\n");
+    let tool = Edit::new(sample.workspace());
+    let worker = crate::sample::worker();
+    let busy = occupied(&worker);
+    let cancel = Cancel::new();
+    let context = lent(&worker, &cancel);
+    let mut running = std::pin::pin!(tool.run(
+        allowed(
+            &tool,
+            r#"{"path":"one.txt","find":"alpha","replace":"beta"}"#
+        ),
+        &context,
+    ));
+
+    assert!(
+        asked_once(running.as_mut()).is_pending(),
+        "the edit answered without waiting for room on the worker"
+    );
+    cancel.request();
+    let answered = waited(running);
+    drop(busy);
+
+    assert!(
+        matches!(answered, Err(ToolError::Cancelled(ref tool)) if &**tool == "edit"),
+        "{answered:?}"
+    );
+    assert_eq!(read(&sample, "one.txt"), "alpha\n");
 }

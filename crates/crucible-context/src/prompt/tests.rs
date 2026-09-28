@@ -131,13 +131,32 @@ fn an_unknown_shipped_section_explicitly_supersedes_what_came_before() {
     assert!(rendered.text().contains("supersedes"), "{rendered:?}");
 }
 
+/// Drives a future to its answer, the way a test drives a fake's future by
+/// hand: this suite's [`Ask`] fake never really waits, so asking it once
+/// always has one, and a fake that did not would fail here rather than hang.
+fn answered_now<F: std::future::Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+    {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => panic!("the fake did not answer on the first poll"),
+    }
+}
+
 #[test]
 fn the_permissions_section_bounds_scopes_and_states_exactly_what_it_omits() {
     struct Remembering;
 
     impl Ask for Remembering {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Allow, Remember::Session)
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = (Verdict, Remember)> + Send + 'a>>
+        {
+            Box::pin(async { (Verdict::Allow, Remember::Session) })
         }
     }
 
@@ -156,7 +175,7 @@ fn the_permissions_section_bounds_scopes_and_states_exactly_what_it_omits() {
         };
 
         assert!(matches!(
-            permission.decide(&call, &sensitivity, &mut answer),
+            answered_now(permission.decide(&call, &sensitivity, &mut answer)),
             Settled::Approved(_)
         ));
     }

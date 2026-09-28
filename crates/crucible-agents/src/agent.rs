@@ -5,7 +5,9 @@ use std::sync::Arc;
 use crucible_types::AgentId;
 
 use crate::availability::Availability;
-use crate::guardrails::{Declared, InputGuardrail, NameTaken, OutputGuardrail};
+use crate::guardrails::{
+    Declared, GUARDRAIL_NAME_BYTES, InputGuardrail, Kept, NameTaken, OutputGuardrail,
+};
 use crate::instructions::Instructions;
 use crate::model::Model;
 
@@ -232,8 +234,8 @@ impl AgentBuilder {
     ///
     /// The error code below is what this fails with today, not something the
     /// harness checks: `compile_fail` accepts any compile error, so a rename
-    /// anywhere in the snippet would keep it green for the wrong reason. Both
-    /// snippets in this crate are kept to the one call that must not compile.
+    /// anywhere in the snippet would keep it green for the wrong reason. Every
+    /// such snippet in this crate is kept to the one thing that must not compile.
     ///
     /// ```compile_fail,E0451
     /// use crucible_agents::{Agent, AgentBuilder};
@@ -292,13 +294,18 @@ impl AgentBuilder {
     }
 
     /// `name`, kept, where no check on this definition has it yet.
-    fn free(&self, name: &str) -> Result<Box<str>, NameTaken> {
+    ///
+    /// Kept to [`GUARDRAIL_NAME_BYTES`] first and compared as it is kept: a
+    /// refusal is written under the kept name, so two names that differ only
+    /// past the ceiling are one name to everybody who reads it.
+    fn free(&self, name: &str) -> Result<Kept, NameTaken> {
+        let name = Kept::of(name, GUARDRAIL_NAME_BYTES);
         let input = self.agent.input.iter().map(Declared::name);
         let output = self.agent.output.iter().map(Declared::name);
-        if input.chain(output).any(|taken| taken == name) {
+        if input.chain(output).any(|taken| taken == name.as_str()) {
             return Err(NameTaken::of(name));
         }
-        Ok(name.into())
+        Ok(name)
     }
 
     /// The definition, settled.
@@ -456,9 +463,15 @@ mod tests {
         // Two checks answering to one name would each read as the other's
         // refusal, at either end of the invocation.
         let again = declaring().checking_input(Arc::new(Called("no-secrets")));
-        assert_eq!(again.map(|_| ()), Err(NameTaken::of("no-secrets")));
+        assert_eq!(
+            again.map(|_| ()),
+            Err(NameTaken::of(Kept::of("no-secrets", GUARDRAIL_NAME_BYTES)))
+        );
         let across = declaring().checking_output(Arc::new(Vouching("no-secrets")));
-        assert_eq!(across.map(|_| ()), Err(NameTaken::of("no-secrets")));
+        assert_eq!(
+            across.map(|_| ()),
+            Err(NameTaken::of(Kept::of("no-secrets", GUARDRAIL_NAME_BYTES)))
+        );
 
         let agent = declaring()
             .checking_output(Arc::new(Vouching("no-leaks")))
@@ -475,5 +488,45 @@ mod tests {
             .map(Declared::name)
             .collect();
         assert_eq!((input, output), (vec!["no-secrets"], vec!["no-leaks"]));
+    }
+
+    #[test]
+    fn a_name_is_kept_to_its_ceiling_and_taken_as_it_is_kept() {
+        let long: &'static str = "n".repeat(GUARDRAIL_NAME_BYTES + 8).leak();
+        let alike: &'static str = format!("{}-differs", "n".repeat(GUARDRAIL_NAME_BYTES)).leak();
+
+        let declared = AgentBuilder::new(AgentId::new("coding"), described().model().clone())
+            .checking_input(Arc::new(Called(long)))
+            .expect("the first check under a name is taken");
+        let kept = declared
+            .agent
+            .input
+            .iter()
+            .map(Declared::name)
+            .next()
+            .map(str::len);
+        assert!(
+            kept.is_some_and(|kept| kept <= GUARDRAIL_NAME_BYTES),
+            "{kept:?}"
+        );
+
+        // The kept name fits its ceiling from here on, so what the check goes
+        // on to say is written from the declaration, which still knows.
+        let said = declared.agent.input.iter().next().map(|check| {
+            (
+                check.refused("no").guard_was_cut(),
+                check.unanswered("no").was_cut(),
+            )
+        });
+        assert_eq!(
+            said,
+            Some((true, true)),
+            "a cut name was passed on as whole"
+        );
+
+        // What a refusal is written under is the kept name, so two checks whose
+        // names differ only past the ceiling would each read as the other.
+        let second = declared.checking_output(Arc::new(Vouching(alike)));
+        assert!(second.is_err(), "two checks were kept under one name");
     }
 }

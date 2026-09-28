@@ -1,6 +1,8 @@
 //! Minimal namespace PID 1 for exactly one confined workload.
 
 mod binding;
+#[cfg(test)]
+mod child_turn;
 mod network;
 mod scan;
 mod scope;

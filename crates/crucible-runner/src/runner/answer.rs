@@ -7,10 +7,8 @@
 
 use std::fmt;
 
-use crucible_core::{
-    Continuation, ProviderContinuation, ProviderError, ProviderLimit, StopReason, ToolArgs,
-    ToolCall, ToolId,
-};
+use crucible_models::{ProviderError, ProviderLimit};
+use crucible_types::{Continuation, ProviderContinuation, StopReason, ToolArgs, ToolCall, ToolId};
 
 const MAX_RESPONSE_TEXT: usize = 8 * 1024 * 1024;
 const MAX_TOOL_ARGUMENTS: usize = 1024 * 1024;
@@ -296,7 +294,7 @@ impl Answer {
     /// Why the model stopped, as a turn cannot go on without.
     ///
     /// A stream that ends having said nothing is a truncated answer with
-    /// nothing to mark it as one — see [`crucible_core::DeltaStream::next`],
+    /// nothing to mark it as one — see [`crucible_models::DeltaStream::next`],
     /// which forbids it. Both providers here prevent it and prove it; a third
     /// that forgot would produce half an answer that reads as a whole one, and
     /// this is what stops that being silent.

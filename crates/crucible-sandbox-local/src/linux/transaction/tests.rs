@@ -990,3 +990,376 @@ fn a_change_asked_for_again_by_its_holder_is_taken_at_once() {
     holder.join().expect("the holding thread");
     contender.join().expect("the contending thread");
 }
+
+/// Another checkout's state directory, removed however a test ends — unless it
+/// is this build's own, which every other test of the process shares.
+struct AnotherCheckout(PathBuf);
+
+impl Drop for AnotherCheckout {
+    fn drop(&mut self) {
+        if state_base().ok().as_deref() != Some(self.0.as_path()) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+/// A state directory's mode, put back however a test ends.
+struct ModeRestored(PathBuf, fs::Permissions);
+
+impl Drop for ModeRestored {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.0, self.1.clone());
+    }
+}
+
+#[test]
+fn a_checkout_neither_refuses_nor_recovers_another_checkouts_sandbox_state() {
+    // Two checkouts testing at once: this build, and one compiled from another
+    // directory. The other is named under this checkout, so the same test
+    // running from a third checkout names a directory of its own.
+    let own = state_base().expect("this build's state directory");
+    let other = AnotherCheckout(
+        state_base_named(&checkout_state_name(
+            &format!(
+                "crucible-code-sandbox-{}-v1",
+                rustix::process::getuid().as_raw()
+            ),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/another-checkout"),
+        ))
+        .expect("another checkout's state directory"),
+    );
+    create_state_directory(&own).expect("this build's state directory");
+    create_state_directory(&other.0).expect("another checkout's state directory");
+
+    // What a publication test does to watch a refusal: this build's directory
+    // is left in a mode no command accepts.
+    let changing = TestStateChange::change();
+    let restore = ModeRestored(
+        own.clone(),
+        fs::metadata(&own)
+            .expect("this build's state directory")
+            .permissions(),
+    );
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o750))
+        .expect("a state directory that is not private");
+    let refused = Lease::try_acquire_in(&own);
+    let granted = Lease::try_acquire_in(&other.0);
+    drop(restore);
+    drop(changing);
+    assert!(refused.is_err(), "the changed mode refused nothing");
+    assert!(
+        matches!(granted, Ok(Some(_))),
+        "another checkout's state was refused for a mode this one's was left in: {granted:?}"
+    );
+    drop(granted);
+
+    // What every preparation does first: recover the stale stages it finds,
+    // under the registry lease it holds while it makes a stage of its own, so
+    // no stage another test of this process is still making is taken for one.
+    let stage = other.0.join(stage_name(SandboxId::new()));
+    create_private_test_directory(&stage);
+    let registry = RegistryLease::acquire_at(&own).expect("this build's registry lease");
+    RegistryLease::reconcile(&registry).expect("this build's recovery");
+    drop(registry);
+    assert!(
+        stage.exists(),
+        "this build's recovery removed a stage of another checkout's"
+    );
+
+    // Both sit under the same `/var/tmp` the shipped path does, and each is the
+    // shipped name with a fixed-width token of its checkout.
+    let shipped = format!(
+        "crucible-code-sandbox-{}-v1-",
+        rustix::process::getuid().as_raw()
+    );
+    for state in [&own, &other.0] {
+        assert_eq!(state.parent(), Some(Path::new("/var/tmp")));
+        let token = state
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix(&shipped))
+            .unwrap_or_default();
+        assert!(
+            token.len() == 16
+                && token
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+            "{} is not the shipped name with a checkout's token",
+            state.display()
+        );
+    }
+    assert_ne!(own, other.0);
+}
+
+#[test]
+fn private_directory_problem_names_each_failing_property() {
+    let owner = StateDirectoryOwner {
+        uid: 1000,
+        gid: 1000,
+    };
+    let found = |is_dir, uid, gid, mode| StateDirectoryFound {
+        is_dir,
+        uid,
+        gid,
+        mode,
+    };
+    // Full `st_mode` values, file-type bits included (`S_IFDIR` is `0o040000`,
+    // `S_IFREG` is `0o100000`), so a mask dropped from `private_directory_problem`
+    // fails this test: without `& 0o7777`, `0o040700` would never equal `0o700`
+    // and even a correctly-moded directory would report `WrongMode`.
+    assert!(matches!(
+        private_directory_problem(found(false, 1000, 1000, 0o100_644), owner),
+        Some(StateDirectoryProblem::NotADirectory)
+    ));
+    assert!(matches!(
+        private_directory_problem(found(true, 1001, 1000, 0o040_700), owner),
+        Some(StateDirectoryProblem::WrongOwner(1001))
+    ));
+    assert!(matches!(
+        private_directory_problem(found(true, 1000, 1001, 0o040_700), owner),
+        Some(StateDirectoryProblem::WrongGroup(1001))
+    ));
+    assert!(matches!(
+        private_directory_problem(found(true, 1000, 1000, 0o040_750), owner),
+        Some(StateDirectoryProblem::WrongMode(0o750))
+    ));
+    assert!(private_directory_problem(found(true, 1000, 1000, 0o040_700), owner).is_none());
+}
+
+#[test]
+fn state_directory_problem_message_names_the_reason() {
+    let path = Path::new("/var/tmp/crucible-code-sandbox-1000-v1");
+    let display = path.display();
+    assert_eq!(
+        StateDirectoryProblem::NotADirectory.message(path),
+        format!(
+            "sandbox state directory {display} is not a directory; remove it (an administrator \
+             may need to) before the sandbox can be used"
+        )
+    );
+    assert_eq!(
+        StateDirectoryProblem::WrongOwner(1234).message(path),
+        format!(
+            "sandbox state directory {display} is owned by uid 1234, not this user; remove it \
+             (an administrator may need to) before the sandbox can be used"
+        )
+    );
+    assert_eq!(
+        StateDirectoryProblem::WrongGroup(1234).message(path),
+        format!("sandbox state directory {display} is owned by group 1234, not this user's group")
+    );
+    assert_eq!(
+        StateDirectoryProblem::WrongMode(0o750).message(path),
+        format!("sandbox state directory {display} has mode 0750, not 0700")
+    );
+    assert_eq!(
+        StateDirectoryProblem::Symlink.message(path),
+        format!(
+            "sandbox state directory {display} is a symlink; remove it (an administrator may \
+             need to) before the sandbox can be used"
+        )
+    );
+}
+
+#[test]
+fn state_directory_problem_classification_carries_no_path_or_uid() {
+    let path = Path::new("/var/tmp/crucible-code-sandbox-1000-v1");
+    let path_text = path.display().to_string();
+    let foreign_ids = ["824601", "824602"];
+    // `private_directory_problem` checks the owner first, so `WrongGroup` and
+    // `WrongMode` are reached only on this user's own directory: their
+    // classification must say how to fix it in place, never to remove it or
+    // that an administrator may be needed, unlike a squat by another user, a
+    // symlink or a plain file.
+    let removal_remedy = [
+        StateDirectoryProblem::Symlink,
+        StateDirectoryProblem::NotADirectory,
+        StateDirectoryProblem::WrongOwner(824_601),
+    ];
+    let in_place_remedy = [
+        StateDirectoryProblem::WrongGroup(824_602),
+        StateDirectoryProblem::WrongMode(0o750),
+    ];
+    for problem in removal_remedy.iter().chain(&in_place_remedy) {
+        let classification = problem.classification();
+        assert!(
+            !classification.contains(&path_text),
+            "{problem:?}'s classification carries the path: {classification}"
+        );
+        assert!(
+            !foreign_ids.iter().any(|id| classification.contains(id)),
+            "{problem:?}'s classification carries a numeric id: {classification}"
+        );
+    }
+    for problem in removal_remedy {
+        let classification = problem.classification();
+        assert!(
+            classification.contains("must be removed"),
+            "{problem:?}'s classification names no removal remedy: {classification}"
+        );
+    }
+    for problem in in_place_remedy {
+        let classification = problem.classification();
+        assert!(
+            !classification.contains("must be removed")
+                && !classification.contains("administrator"),
+            "{problem:?}'s classification tells the user to remove their own directory: \
+             {classification}"
+        );
+        assert!(
+            classification.contains("restoring"),
+            "{problem:?}'s classification names no in-place remedy: {classification}"
+        );
+    }
+    // `WrongGroup` and `WrongMode` cannot be told apart without the id or mode
+    // the classification withholds, so they share one reason.
+    assert_eq!(
+        StateDirectoryProblem::WrongGroup(824_602).classification(),
+        StateDirectoryProblem::WrongMode(0o750).classification()
+    );
+    // Every other pair is its own reason.
+    assert_ne!(
+        StateDirectoryProblem::Symlink.classification(),
+        StateDirectoryProblem::NotADirectory.classification()
+    );
+    assert_ne!(
+        StateDirectoryProblem::WrongOwner(824_601).classification(),
+        StateDirectoryProblem::WrongGroup(824_602).classification()
+    );
+}
+
+#[test]
+fn open_state_directory_tells_a_symlink_from_a_plain_file_at_that_name() {
+    let sample = crate::sample::Sample::new("sandbox-state-directory-open");
+    let base = sample.root();
+
+    let target = base.join("elsewhere");
+    create_private_test_directory(&target);
+    let link = base.join("link");
+    crate::sample::symlink(&target, &link);
+    let refused = open_state_directory(&link).expect_err("a symlink is refused");
+    assert!(
+        refused.to_string().contains("is a symlink"),
+        "a symlink at the state path was not named as one: {refused}"
+    );
+
+    let file = base.join("plain-file");
+    fs::write(&file, b"").expect("a plain file");
+    let refused = open_state_directory(&file).expect_err("a plain file is refused");
+    assert!(
+        refused.to_string().contains("is not a directory"),
+        "a plain file at the state path was not named as one: {refused}"
+    );
+}
+
+/// `RegistryLease::acquire` used to discard `acquire_at`'s error and always
+/// report the fixed "sandbox lifecycle registry admission is unavailable"
+/// reason, so none of the refusal text this module builds ever reached a
+/// user — every confined run's first touch of the state directory is this
+/// lease (`linux/mod.rs`, `RegistryLease::acquire`). The symlink case below
+/// goes through `acquire_at_classified`, the exact function both `acquire`
+/// and this test call, so reverting its mapping back to that fixed reason
+/// turns this test red; it passes once the classified, path-free, uid-free
+/// reason reaches the caller instead.
+#[test]
+fn registry_admission_reason_classifies_the_state_directory_problem_without_the_path_or_a_uid() {
+    // Wrong owner: synthetic, no second user needed. A real mismatched-uid
+    // directory cannot be made without root, so the tagged error is built the
+    // same way `open_state_directory` builds it.
+    let path = Path::new("/var/tmp/crucible-code-sandbox-1000-v1");
+    let wrong_owner = refuse_state_directory(StateDirectoryProblem::WrongOwner(824_601), path);
+    let reason = registry_admission_reason(&wrong_owner);
+    assert_eq!(
+        &*reason,
+        StateDirectoryProblem::WrongOwner(824_601).classification()
+    );
+    assert_ne!(
+        &*reason, "sandbox lifecycle registry admission is unavailable",
+        "the wrong-owner case fell back to the fixed reason instead of being classified"
+    );
+    assert!(
+        !reason.contains("824601") && !reason.contains(&path.display().to_string()),
+        "the reason a user sees carried another user's uid or the path: {reason}"
+    );
+
+    // Symlink: live, no second user needed either — this user's own symlink
+    // squats the name, taken through `acquire_at_classified`, the exact
+    // function `RegistryLease::acquire` calls, so this proves the reason
+    // reaches a caller and not merely that `registry_admission_reason`
+    // computes it.
+    let sample = crate::sample::Sample::new("sandbox-registry-admission-reason");
+    let base = sample.root();
+    let target = base.join("elsewhere");
+    create_private_test_directory(&target);
+    let link = base.join("link");
+    crate::sample::symlink(&target, &link);
+    let Err(SandboxError::BackendUnavailable { reason }) =
+        RegistryLease::acquire_at_classified(&link)
+    else {
+        panic!("a symlink at the state path was granted a registry lease");
+    };
+    assert_eq!(&*reason, StateDirectoryProblem::Symlink.classification());
+    assert_ne!(
+        &*reason, "sandbox lifecycle registry admission is unavailable",
+        "the symlink case fell back to the fixed reason instead of being classified"
+    );
+    assert!(
+        !reason.contains(&link.display().to_string()),
+        "the reason a user sees carried the state path: {reason}"
+    );
+
+    // Every other admission failure keeps the fixed reason.
+    let unrelated = io::Error::other("some other cause entirely");
+    assert_eq!(
+        &*registry_admission_reason(&unrelated),
+        "sandbox lifecycle registry admission is unavailable"
+    );
+}
+
+/// Under test, the records of the journal in `stage`, read without the lock
+/// its owner holds while it lives.
+pub(in crate::linux) fn journaled(stage: &Path) -> io::Result<Vec<Record>> {
+    let descriptor = rustix::fs::open(
+        stage.join("transaction.wal"),
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    Ok(recover_wal_file(File::from(descriptor))?.machine.records)
+}
+
+/// Under test, how recovery settles a command whose owner died with `records`
+/// journaled, `Initialized` first, in a stage of its own under `base`: the
+/// terminal its journal ends on, and whether a reconcile then removed the
+/// stage.
+pub(in crate::linux) fn after_a_crash(
+    base: &Path,
+    records: &[Record],
+) -> io::Result<(Option<Record>, bool)> {
+    let Some((Record::Initialized(mode), rest)) = records.split_first() else {
+        return Err(invalid("a journal begins with its initialization"));
+    };
+    let sandbox = SandboxId::new();
+    let stage = base.join(stage_name(sandbox));
+    create_state_directory(&stage)?;
+    let dead = OwnerIdentity {
+        pid: u32::MAX,
+        start: 1,
+        boot: boot_identity()?,
+    };
+    let mut transaction =
+        Transaction::start_owned(&stage, sandbox, Invocation::new(*mode, None)?, dead)?;
+    for record in rest {
+        transaction.append(*record)?;
+    }
+    drop(transaction);
+    let mut recovered = recover_wal(&stage.join("transaction.wal"))?;
+    if !recovered.machine.is_terminal() {
+        // Settled or refused, the journal says which: a refusal still
+        // journals the quarantine it leaves.
+        let _ = recover_stale_transaction(&stage, &mut recovered);
+    }
+    let terminal = recovered.machine.terminal();
+    drop(recovered);
+    let _ = reconcile_stale_transactions(base);
+    Ok((terminal, !stage.exists()))
+}

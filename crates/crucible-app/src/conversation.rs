@@ -14,6 +14,21 @@
 //! show. The runner itself is handed out to be read and never to be changed,
 //! so the session it records into and the provider it is said to be asking
 //! cannot be moved from outside without the other half moving with them.
+//!
+//! **A turn is awaited by whoever asks for it.** The runner's turn and
+//! compaction are asynchronous, and so are [`Conversation::turn`] and
+//! [`Conversation::compact`]: a front end runs each as a task on the
+//! application's runtime, or awaits it inside one, and is answered when it
+//! ends. A stop is the turn's own to answer, through the cancel on its run, so
+//! it ends the way a stopped turn ends rather than as a future dropped at a
+//! step, which could leave a call recorded with no result.
+//!
+//! **So are explicit prompt-cache operations**, and what picking a session up
+//! or changing vendor owes the session. Each clears from the transcript what
+//! the vendor being asked may not be sent, and the runner owes the session the
+//! lines saying so; the conversation awaits the session taking them after each
+//! pick-up and each change of vendor, and a turn or compaction writes any
+//! still owed before anything of its own.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -75,8 +90,7 @@ impl Conversation {
             runner: self
                 .runner
                 .with_prompt_cache_store(FilePromptCacheResourceStore::in_home(home)),
-            session: self.session,
-            serving: self.serving,
+            ..self
         }
     }
 
@@ -114,15 +128,21 @@ impl Conversation {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the request for the recap failed; the transcript is
-    /// then as it was.
-    pub fn compact(
+    /// [`TurnError`] where [`Runner::compact`] says, which also says what each
+    /// failure leaves. A failed request for the recap replaces nothing, so the
+    /// transcript is as it was but for any pruning before it.
+    ///
+    /// Every prompt-cache step of the recap request is awaited. A cache failure
+    /// replaces nothing, as a failed request does, and a changing operation
+    /// whose answer remains uncertain is recorded as ambiguous for
+    /// reconciliation. The compaction's session lines are awaited.
+    pub async fn compact(
         &mut self,
         why: Compacting,
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        self.runner.compact(why, run, spent)
+        self.runner.compact(why, run, spent).await
     }
 
     /// The persistent prompt-cache resources this conversation remembers
@@ -131,10 +151,13 @@ impl Conversation {
     /// # Errors
     ///
     /// [`PromptCacheResourceError`] where the private store could not be read.
-    pub fn prompt_cache_resources(
+    pub async fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        self.runner.prompt_cache_resources()
+        if !self.runner.prompt_cache_resources_configured() {
+            return Ok(Vec::new());
+        }
+        self.runner.prompt_cache_resources().await
     }
 
     /// Deletes the persistent prompt-cache resources held with the provider
@@ -143,12 +166,35 @@ impl Conversation {
     /// # Errors
     ///
     /// [`PromptCacheResourceError`] where the private store could not be read
-    /// or durably updated.
-    pub fn clean_prompt_cache(
+    /// or durably updated, [`PromptCacheResourceError::Unsupported`] when a
+    /// record is held
+    /// with the provider being asked and the provider has no lifecycle to
+    /// delete one through, and [`PromptCacheResourceError::Cancelled`] when the
+    /// pass comes to such a record and finds `cancel` requested, which leaves
+    /// that record and those after it as they were. Every store and provider
+    /// step is awaited; a provider cancellation, deadline or explicitly
+    /// ambiguous answer is counted as ambiguous, as
+    /// [`Runner::clean_prompt_cache`] says.
+    pub async fn clean_prompt_cache(
         &mut self,
         cancel: &Cancel,
     ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
-        self.runner.clean_prompt_cache(cancel)
+        if !self.runner.prompt_cache_resources_configured() {
+            return Ok(PromptCacheCleanup::default());
+        }
+        self.runner.clean_prompt_cache(cancel).await
+    }
+
+    /// Retires the persistent prompt-cache resources this conversation owns
+    /// before its provider identity changes.
+    pub(crate) async fn retire_prompt_cache(
+        &mut self,
+        cancel: &Cancel,
+    ) -> Result<PromptCacheCleanup, PromptCacheResourceError> {
+        if !self.runner.prompt_cache_retirement_pending() {
+            return Ok(PromptCacheCleanup::default());
+        }
+        self.runner.retire_prompt_cache(cancel).await
     }
 
     /// Takes one turn: `prompt` and what is attached to it, answered by the
@@ -161,15 +207,18 @@ impl Conversation {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the turn could not be taken at all.
-    pub fn turn(
+    /// [`TurnError`] where the turn could not be taken at all, or was not
+    /// finished, as [`Runner::turn`] says, which also says what each failure
+    /// leaves. A tool source's own step that gave up comes back as that
+    /// source's failure.
+    pub async fn turn(
         &mut self,
         prompt: &str,
         attached: Box<[Attachment]>,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        self.runner.turn(prompt, attached, ask, run)
+        self.runner.turn(prompt, attached, ask, run).await
     }
 
     /// Starts a new session and records into it from here on, with nothing
@@ -183,14 +232,14 @@ impl Conversation {
     ///
     /// [`SessionError`] where the new log could not be started; the session in
     /// hand is then untouched and still being recorded into.
-    pub fn clear(
+    pub async fn clear(
         &mut self,
         sessions: &Path,
         workspace: &Workspace,
         branch: Option<&str>,
     ) -> Result<Arc<Session>, SessionError> {
         let session = Arc::new(Session::start(sessions, workspace, branch)?);
-        Ok(self.pick_up(session, Transcript::new()))
+        Ok(self.pick_up(session, Transcript::new()).await)
     }
 
     /// Picks the session `id` names back up, with everything it already holds.
@@ -199,14 +248,14 @@ impl Conversation {
     ///
     /// [`SessionError`] where no session of this workspace answers to `id`, or
     /// where its log could not be read; the session in hand is then untouched.
-    pub fn resume(
+    pub async fn resume(
         &mut self,
         sessions: &Path,
         workspace: &Workspace,
         id: &SessionId,
     ) -> Result<Arc<Session>, SessionError> {
         let (session, transcript) = Session::reopen(sessions, workspace, id)?;
-        Ok(self.pick_up(Arc::new(session), transcript))
+        Ok(self.pick_up(Arc::new(session), transcript).await)
     }
 
     /// Records into `session` from here on, and returns the one left.
@@ -214,9 +263,16 @@ impl Conversation {
     /// The session is swapped first and the runner handed the new one second,
     /// so that nothing the runner writes in between lands in a log that has
     /// been left.
-    fn pick_up(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
+    async fn pick_up(&mut self, session: Arc<Session>, transcript: Transcript) -> Arc<Session> {
         let left = std::mem::replace(&mut self.session, Arc::clone(&session));
         self.runner.pick_up(session, transcript);
+        self.clearings_recorded().await;
         left
+    }
+
+    /// Awaits the sessions owed lines by picking a session up or changing
+    /// vendor taking them, as the module says.
+    pub(crate) async fn clearings_recorded(&mut self) {
+        self.runner.record_clearings().await;
     }
 }

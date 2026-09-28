@@ -22,14 +22,24 @@
 //! server that says anything else forever is a server crucible would wait on
 //! forever, so the waiting is bounded by how much it will listen to and not by
 //! a clock alone.
+//!
+//! It is held over either kind of stream: a blocking one, through
+//! [`Talking::ask`] and [`Talking::tell`], or an asynchronous one, through
+//! [`Talking::ask_async`] and [`Talking::tell_async`]. Both number calls from
+//! one count and hand every frame to one reading of it, so a server is
+//! answered, refused and reported on the same way whichever kind of stream it
+//! is heard over. Hosting a server awaits it; the blocking kind stays until
+//! the transport's own blocking kind is removed.
 
 use std::io::{self, BufRead, Write};
 use std::time::Duration;
 
 use crucible_transport::{FrameError, Frames, Said, Written};
 use serde_json::Value;
+use tokio::io::{AsyncBufRead, AsyncWrite};
 
 use crate::wire::{Call, Garbled, Heard, Reply, Sent};
+use crate::withheld::Withheld;
 
 /// The most frames crucible will read past while waiting on one answer.
 ///
@@ -50,7 +60,7 @@ pub enum Trouble {
     /// that ran, and one that ran and lost its answer look the same.
     ///
     /// Can, not does: a write that ran out of patience left the bytes with the
-    /// thread that owns the pipe, and they may yet be read. Which of the two
+    /// task that owns the pipe, and they may yet be read. Which of the two
     /// this is, is [`FrameError::never_left`]'s answer and not the variant's.
     #[error("crucible could not send {method} to the server: {source}")]
     Unsent {
@@ -177,6 +187,8 @@ pub struct Talking<R, W> {
     said: Written<W>,
     /// The number the next call gets.
     next: u64,
+    /// What the server was given in confidence, hidden in what it says.
+    withheld: Withheld,
 }
 
 impl<O: crucible_sandbox::SandboxOutput> Talking<crucible_transport::Heard<O>, Said> {
@@ -190,15 +202,31 @@ impl<O: crucible_sandbox::SandboxOutput> Talking<crucible_transport::Heard<O>, S
     }
 }
 
-impl<R: BufRead, W: Write> Talking<R, W> {
-    /// Speaks over `from` and `to`.
+impl<R, W> Talking<R, W> {
+    /// Speaks over `from` and `to`, to a server given nothing in confidence.
     #[must_use]
-    pub const fn new(from: R, to: W) -> Self {
+    pub fn new(from: R, to: W) -> Self {
+        Self::withholding(from, to, Withheld::nothing())
+    }
+
+    /// Speaks over `from` and `to`, to a server given `withheld`.
+    ///
+    /// What this keeps of a frame has them hidden, and whoever reads what an
+    /// answer carries hides them through [`Self::withheld`].
+    #[must_use]
+    pub fn withholding(from: R, to: W, withheld: Withheld) -> Self {
         Self {
             heard: Frames::new(from),
             said: Written::new(to),
             next: 1,
+            withheld,
         }
+    }
+
+    /// What the server was given in confidence, for whoever reads an answer.
+    #[must_use]
+    pub const fn withheld(&self) -> &Withheld {
+        &self.withheld
     }
 
     /// The stream the server is heard over, for what only it can be asked.
@@ -209,6 +237,67 @@ impl<R: BufRead, W: Write> Talking<R, W> {
         self.heard.stream_mut()
     }
 
+    /// Numbers the next call and says what goes out to ask it.
+    fn asking(&mut self, method: &str, params: &Value) -> (Call, Sent) {
+        let call = Call::new(self.next);
+        self.next = self.next.saturating_add(1);
+        (call, Sent::asking(call, method, params))
+    }
+
+    /// What one frame read while waiting on `call` comes to, or what ends the
+    /// wait.
+    ///
+    /// `None` is the stream having ended. Both waits hand every frame here and
+    /// decide nothing about it themselves, which is what keeps a server's
+    /// answer meaning the same thing whichever kind of stream it arrived on.
+    fn settle(
+        &self,
+        call: Call,
+        frame: Option<Result<String, FrameError>>,
+    ) -> Result<Waiting, Trouble> {
+        let Some(frame) = frame else {
+            return Err(Trouble::Stopped { call });
+        };
+        match Heard::read_withholding(&frame?, &self.withheld)? {
+            Heard::Answer { call: found, .. } if found != call => {
+                Err(Trouble::Astray { call, found })
+            }
+            Heard::Answer {
+                reply: Reply::Worked(result),
+                ..
+            } => Ok(Waiting::Answered(result)),
+            Heard::Answer {
+                reply: Reply::Failed { code, said },
+                ..
+            } => Err(Trouble::Refused { call, code, said }),
+            Heard::Asked {
+                call: asked,
+                method,
+            } => Ok(Waiting::Asked(Sent::refusing(asked, &method))),
+            Heard::Told { .. } => Ok(Waiting::Told),
+        }
+    }
+}
+
+/// What one frame read while waiting came to, short of ending the wait.
+enum Waiting {
+    /// The call was settled, and this is what it came back with.
+    Answered(Value),
+    /// The server asked something, and this is the refusal it is owed.
+    Asked(Sent),
+    /// The server said something that expects nothing back.
+    Told,
+}
+
+/// What a frame saying `method` that would not go comes to.
+fn unsent(method: &str) -> impl FnOnce(FrameError) -> Trouble {
+    move |source| Trouble::Unsent {
+        method: method.into(),
+        source,
+    }
+}
+
+impl<R: BufRead, W: Write> Talking<R, W> {
     /// Asks the server something and waits for its answer.
     ///
     /// # Errors
@@ -218,14 +307,8 @@ impl<R: BufRead, W: Write> Talking<R, W> {
     /// answers a call crucible was not waiting on, it says more than [`ASIDES`]
     /// frames without answering, or it stops first.
     pub fn ask(&mut self, method: &str, params: &Value) -> Result<Value, Trouble> {
-        let call = Call::new(self.next);
-        self.next = self.next.saturating_add(1);
-        self.said
-            .send(&Sent::asking(call, method, params).frame())
-            .map_err(|source| Trouble::Unsent {
-                method: method.into(),
-                source,
-            })?;
+        let (call, asking) = self.asking(method, params);
+        self.said.send(&asking.frame()).map_err(unsent(method))?;
         self.wait(call)
     }
 
@@ -239,36 +322,86 @@ impl<R: BufRead, W: Write> Talking<R, W> {
     pub fn tell(&mut self, method: &str, params: &Value) -> Result<(), Trouble> {
         self.said
             .send(&Sent::telling(method, params).frame())
-            .map_err(|source| Trouble::Unsent {
-                method: method.into(),
-                source,
-            })?;
-        Ok(())
+            .map_err(unsent(method))
     }
 
     /// Reads until `call` is settled, dealing with whatever else arrives.
     fn wait(&mut self, call: Call) -> Result<Value, Trouble> {
         for _ in 0..=ASIDES {
-            let Some(frame) = self.heard.next_frame() else {
-                return Err(Trouble::Stopped { call });
-            };
-            match Heard::read(&frame?)? {
-                Heard::Answer { call: found, .. } if found != call => {
-                    return Err(Trouble::Astray { call, found });
-                }
-                Heard::Answer {
-                    reply: Reply::Worked(result),
-                    ..
-                } => return Ok(result),
-                Heard::Answer {
-                    reply: Reply::Failed { code, said },
-                    ..
-                } => return Err(Trouble::Refused { call, code, said }),
-                Heard::Asked {
-                    call: asked,
-                    method,
-                } => self.said.send(&Sent::refusing(asked, &method).frame())?,
-                Heard::Told { .. } => {}
+            let frame = self.heard.next_frame();
+            match self.settle(call, frame)? {
+                Waiting::Answered(result) => return Ok(result),
+                Waiting::Asked(refusal) => self.said.send(&refusal.frame())?,
+                Waiting::Told => {}
+            }
+        }
+        Err(Trouble::Talkative { call, most: ASIDES })
+    }
+}
+
+impl<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin> Talking<R, W> {
+    /// Asks the server something and awaits its answer.
+    ///
+    /// The same call as [`Self::ask`], numbered from the same count and
+    /// settled by the same reading of what comes back.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::ask`].
+    ///
+    /// # Cancel safety
+    ///
+    /// None, and what dropping it leaves depends on how far it got. Dropped
+    /// while its frame is being sent, what becomes of the frame is the
+    /// stream's to say: [`Written::send_async`] promises nothing of a stream
+    /// in general, and [`Said`] goes on delivering it. Dropped once the frame
+    /// has gone, the question is with the server and its answer is on the
+    /// way, and an answer that arrives while a later call is awaited is
+    /// [`Trouble::Astray`], never the later call's answer. Either way a caller
+    /// that drops one is left holding what a [`Trouble`] that is not
+    /// [`Trouble::settled`] leaves: a conversation to ask nothing further of.
+    ///
+    /// Over the owned transport's [`Heard`](crucible_transport::Heard), a
+    /// call dropped while the server was silent leaves that silence running:
+    /// the next awaited call sits through only what is left of it, unless
+    /// something arrives first or the host marks a new exchange with
+    /// [`abandoned_when`](crucible_transport::Heard::abandoned_when) or
+    /// [`bounded_until`](crucible_transport::Heard::bounded_until).
+    pub async fn ask_async(&mut self, method: &str, params: &Value) -> Result<Value, Trouble> {
+        let (call, asking) = self.asking(method, params);
+        self.said
+            .send_async(&asking.frame())
+            .await
+            .map_err(unsent(method))?;
+        self.wait_async(call).await
+    }
+
+    /// Tells the server something that expects nothing back, over a stream
+    /// written asynchronously.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::tell`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Written::send_async`]'s over the stream underneath.
+    pub async fn tell_async(&mut self, method: &str, params: &Value) -> Result<(), Trouble> {
+        self.said
+            .send_async(&Sent::telling(method, params).frame())
+            .await
+            .map_err(unsent(method))
+    }
+
+    /// Reads until `call` is settled, dealing with whatever else arrives,
+    /// awaiting each frame.
+    async fn wait_async(&mut self, call: Call) -> Result<Value, Trouble> {
+        for _ in 0..=ASIDES {
+            let frame = self.heard.next_frame_async().await;
+            match self.settle(call, frame)? {
+                Waiting::Answered(result) => return Ok(result),
+                Waiting::Asked(refusal) => self.said.send_async(&refusal.frame()).await?,
+                Waiting::Told => {}
             }
         }
         Err(Trouble::Talkative { call, most: ASIDES })

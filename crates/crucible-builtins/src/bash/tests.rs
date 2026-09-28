@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxError, SandboxRequest,
     SandboxResourceLimits, SandboxService, SandboxSession,
@@ -14,13 +14,17 @@ use crucible_tools::{
 };
 use crucible_types::{ToolCall, ToolId};
 
-use super::background::{Background, MOST};
+use super::background::MOST;
 use super::{Bash, Sensitivity, Tool, ToolArgs, ToolError, ToolOutput, environment};
 use crate::sample::{Sample, allowed, enforcing};
 
+#[cfg(target_os = "linux")]
+mod masked;
+mod owned;
+
 /// This machine's confinement, as the service contract a tool is given.
 fn local() -> std::sync::Arc<dyn crucible_sandbox::SandboxService> {
-    std::sync::Arc::new(crucible_sandbox_local::LocalSandbox::new())
+    std::sync::Arc::new(crate::sample::sandbox())
 }
 
 fn compatibility(tool: Bash) -> Bash {
@@ -33,7 +37,7 @@ fn compatible(sample: &Sample) -> Bash {
 
 fn bash(sample: &Sample, args: &str) -> Result<ToolOutput, ToolError> {
     let tool = compatible(sample);
-    tool.run(allowed(&tool, args), &crate::sample::context())
+    awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
 }
 
 fn ran(sample: &Sample, args: &str) -> ToolOutput {
@@ -42,27 +46,132 @@ fn ran(sample: &Sample, args: &str) -> ToolOutput {
 
 fn finalized(tool: &Bash, args: &str) -> Result<ToolOutput, ToolError> {
     let context = crate::sample::context();
-    let output = tool.run(allowed(tool, args), &context)?;
+    let output = awaited(tool.run(allowed(tool, args), &context))?;
     crate::sample::finalize_call_result(&context, &output);
     Ok(output)
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct RecordingSandbox {
     inner: crucible_sandbox_local::LocalSandbox,
     limits: std::sync::Arc<std::sync::Mutex<Vec<SandboxResourceLimits>>>,
 }
 
+impl Default for RecordingSandbox {
+    fn default() -> Self {
+        Self {
+            inner: crate::sample::sandbox(),
+            limits: std::sync::Arc::default(),
+        }
+    }
+}
+
 impl SandboxService for RecordingSandbox {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
         self.inner.probe()
     }
 
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        if let Ok(mut limits) = self.limits.lock() {
-            limits.push(request.policy().limits());
-        }
-        self.inner.prepare(request)
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            if let Ok(mut limits) = self.limits.lock() {
+                limits.push(request.policy().limits());
+            }
+            self.inner.prepare(request).await
+        })
+    }
+}
+
+/// This machine's confinement, except that its launcher refuses every command
+/// released through it the way a system Bubblewrap refuses an option it does
+/// not know.
+struct RefusingSandbox(crucible_sandbox_local::LocalSandbox);
+
+impl Default for RefusingSandbox {
+    fn default() -> Self {
+        Self(crate::sample::sandbox())
+    }
+}
+
+impl SandboxService for RefusingSandbox {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        self.0.probe()
+    }
+
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let session = self.0.prepare(request).await?;
+            Ok(Box::new(RefusingSession(session)) as Box<dyn SandboxSession>)
+        })
+    }
+}
+
+/// A session of [`RefusingSandbox`], staging as this machine's does.
+struct RefusingSession(Box<dyn SandboxSession>);
+
+impl SandboxSession for RefusingSession {
+    fn inspection(&self) -> &crucible_sandbox::SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        self.0.materialize()
+    }
+
+    fn stage<'a>(
+        self: Box<Self>,
+        command: crucible_sandbox::SandboxCommand,
+    ) -> BoxFuture<'a, Result<Box<dyn crucible_sandbox::SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        let Self(session) = *self;
+        Box::pin(async move {
+            let launch = session.stage(command).await?;
+            Ok(Box::new(RefusedLaunch(launch)) as Box<dyn crucible_sandbox::SandboxLaunch>)
+        })
+    }
+}
+
+/// A command staged by [`RefusingSession`], whose release the launcher refuses
+/// before the command runs.
+struct RefusedLaunch(Box<dyn crucible_sandbox::SandboxLaunch>);
+
+impl crucible_sandbox::SandboxLaunch for RefusedLaunch {
+    fn inspection(&self) -> &crucible_sandbox::SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn transfer_owner(&mut self) -> Result<(), SandboxError> {
+        self.0.transfer_owner()
+    }
+
+    fn release<'a>(
+        self: Box<Self>,
+    ) -> BoxFuture<'a, Result<Box<dyn crucible_sandbox::SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        // The staged command is dropped unreleased, which cleans it up.
+        drop(self);
+        Box::pin(async move {
+            Err(SandboxError::LaunchRefused {
+                said: "bwrap: Unknown option --overlay-src".into(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ),
+            })
+        })
     }
 }
 
@@ -95,8 +204,7 @@ fn what_a_command_prints_is_handed_over_while_it_is_still_running() {
     let watched = Watched::default();
 
     let args = r#"{"command":"printf 'Compiling one\nCompiling two\n'; sleep 1"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::watching(&watched))
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::watching(&watched)))
         .expect("the command ran");
 
     assert_eq!(
@@ -175,15 +283,14 @@ fn the_default_linux_backend_cannot_read_an_undeclared_sibling() {
     // into place instead of reading it back.
     let sample = Sample::new("bash-sibling-confined");
     let outside = sample.outside("credential", "not-for-the-command\n");
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service));
     let args = format!(r#"{{"command":"cat {outside}"}}"#);
 
-    let output = tool
-        .run(allowed(&tool, &args), &crate::sample::context())
+    let output = awaited(tool.run(allowed(&tool, &args), &crate::sample::context()))
         .expect("a probed backend ran the command");
 
     assert!(output.is_failed(), "{}", output.text());
@@ -330,6 +437,42 @@ fn a_pipeline_the_command_started_is_stopped_with_it() {
     );
 }
 
+/// Awaits `future` on the test binary's runtime, on the test's own thread,
+/// the way a turn awaits a call on the application's: for a run that waits,
+/// which a single poll would refuse.
+pub(super) fn awaited<F: std::future::Future>(future: F) -> F::Output {
+    crate::sample::runtime().block_on(future)
+}
+
+/// A runtime of one thread, with the drivers a command's pipes are waited on
+/// with, that nothing else in this test binary shares: what is alive on it is
+/// what the code under test started there.
+pub(super) fn alone() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .expect("a runtime of the test's own")
+}
+
+/// Drives `runtime` until nothing is alive on it, failing where something
+/// still is once a ceiling no passing run comes near has passed.
+///
+/// Driven rather than looked at: a task told to stop is dropped by the
+/// runtime that owns it, and a runtime of one thread does that only while
+/// somebody lets it run.
+pub(super) fn quiesced(runtime: &tokio::runtime::Runtime, after: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while runtime.metrics().num_alive_tasks() > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "{} task(s) were still alive after {after}",
+            runtime.metrics().num_alive_tasks()
+        );
+        runtime.block_on(async { tokio::time::sleep(Duration::from_millis(5)).await });
+    }
+}
+
 #[test]
 fn a_timeout_past_the_ceiling_is_refused_rather_than_quietly_shortened() {
     let sample = Sample::new("bash-ceiling");
@@ -355,12 +498,11 @@ fn a_turn_the_user_stopped_ends_the_command_with_it() {
 
     let started = Instant::now();
     let tool = compatible(&sample);
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"command":"sleep 30"}"#),
-            &crate::sample::cancelled_by(&cancel),
-        )
-        .expect_err("the turn was stopped");
+    let problem = awaited(tool.run(
+        allowed(&tool, r#"{"command":"sleep 30"}"#),
+        &crate::sample::cancelled_by(&cancel),
+    ))
+    .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(
@@ -376,12 +518,11 @@ fn a_turn_already_stopped_never_starts_the_command() {
     cancel.request();
 
     let tool = compatible(&sample);
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
-            &crate::sample::cancelled_by(&cancel),
-        )
-        .expect_err("the turn was stopped");
+    let problem = awaited(tool.run(
+        allowed(&tool, r#"{"command":"touch should-not-exist"}"#),
+        &crate::sample::cancelled_by(&cancel),
+    ))
+    .expect_err("the turn was stopped");
 
     assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "bash"));
     assert!(!sample.root().join("should-not-exist").exists());
@@ -416,12 +557,11 @@ fn the_shell_is_not_something_the_workspace_can_supply() {
         local(),
         empty_element_first,
     ));
-    let output = tool
-        .run(
-            allowed(&tool, r#"{"command":"echo hello"}"#),
-            &crate::sample::context(),
-        )
-        .expect("the command ran");
+    let output = awaited(tool.run(
+        allowed(&tool, r#"{"command":"echo hello"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("the command ran");
 
     assert_eq!(output.text(), "hello");
 }
@@ -433,6 +573,27 @@ fn a_call_with_no_command_says_what_is_missing() {
     let problem = bash(&sample, "{}").expect_err("nothing to run");
 
     assert_eq!(problem.to_string(), "bash: command is required");
+}
+
+#[test]
+fn a_launch_the_launcher_refused_tells_the_model_what_it_said() {
+    let sample = Sample::new("bash-launch-refused");
+    let tool = compatibility(Bash::new(
+        sample.workspace(),
+        std::sync::Arc::new(RefusingSandbox::default()),
+    ));
+
+    let problem = awaited(tool.run(
+        allowed(&tool, r#"{"command":"true"}"#),
+        &crate::sample::context(),
+    ))
+    .expect_err("the launcher refused the command");
+
+    assert_eq!(
+        problem.to_string(),
+        "bash: could not start the confined shell: \
+         sandbox launch refused: bwrap: Unknown option --overlay-src"
+    );
 }
 
 #[test]
@@ -486,9 +647,13 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
     struct Watching(bool);
 
     impl Ask for Watching {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
             self.0 = true;
-            (Verdict::Allow, Remember::Never)
+            Box::pin(async { (Verdict::Allow, Remember::Never) })
         }
     }
 
@@ -500,11 +665,11 @@ fn asks(sample: &Sample, mode: Mode, line: &str) -> bool {
     };
 
     let mut watching = Watching(false);
-    Permission::with(mode, Rules::new()).decide(
+    crucible_runtime::answered!(Permission::with(mode, Rules::new()).decide(
         &call,
         &tool.sensitivity(&call.args),
         &mut watching,
-    );
+    ));
 
     watching.0
 }
@@ -583,16 +748,15 @@ fn a_call_too_malformed_to_read_reports_the_whole_of_what_was_sent() {
 
 #[test]
 fn the_variables_the_tool_was_given_reach_the_command() {
-    // crucible cannot put these in its own environment — writing to it is
-    // `unsafe` in edition 2024 and this workspace forbids that — so they are
+    // crucible does not put these in its own environment — writing to it is
+    // `unsafe` in edition 2024 and this workspace denies that — so they are
     // handed to each child directly. Which is the better answer anyway: the
     // model's commands get them and nothing else on the machine does.
     let sample = Sample::new("bash-env");
 
     let tool = compatible(&sample).exporting([("CRUCIBLE_TEST_PAGER", "cat")]);
     let args = r#"{"command":"echo $CRUCIBLE_TEST_PAGER"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
         .expect("the command ran");
 
     assert_eq!(output.text(), "cat");
@@ -625,8 +789,7 @@ fn a_variable_the_tool_was_given_wins_over_the_one_crucible_was_started_with() {
 
     let tool = compatible(&sample).exporting([("HOME", "/nowhere-in-particular")]);
     let args = r#"{"command":"echo $HOME"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
         .expect("the command ran");
 
     assert_eq!(output.text(), "/nowhere-in-particular");
@@ -664,8 +827,7 @@ fn a_key_under_a_name_nothing_could_have_guessed_never_reaches_a_command() {
 
     let tool = compatibility(Bash::inheriting(sample.workspace(), local(), crucibles_own));
     let args = r#"{"command":"echo \"[$WORK_KEY]\"; env"}"#;
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
+    let output = awaited(tool.run(allowed(&tool, args), &crate::sample::context()))
         .expect("the command ran");
 
     assert!(output.text().starts_with("[]"), "{}", output.text());
@@ -707,7 +869,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
     // timeout on it. The call comes back in the time it takes to see whether the
     // command failed on the spot, and the process is still there afterwards.
     let sample = Sample::new("bash-background");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     let started = Instant::now();
@@ -743,7 +905,7 @@ fn a_command_left_running_answers_at_once_and_keeps_running() {
 
     // And it is ended by letting go of the registry, which is what the process
     // leaving does.
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
     assert!(left.running().is_empty());
 }
 
@@ -755,7 +917,7 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
     // somebody decided the wait was not worth it, the useful move is to carry
     // on with whatever does not depend on it.
     let sample = Sample::new("bash-pressed");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     // Asked for before the command starts rather than raced with it: the wait
@@ -790,7 +952,300 @@ fn a_command_the_developer_let_go_of_says_who_let_go_of_it() {
         output.text()
     );
 
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
+}
+
+#[test]
+fn a_command_the_developer_let_go_of_still_reports_small_output_whole() {
+    // The fix must add no needless cut: output well under a stream's own
+    // ceiling comes back exactly as printed, byte for byte, same as today.
+    //
+    // The press is delayed rather than made before the command starts, as the
+    // test above does: that test never reads what was printed, only whether
+    // the markers arrived, and a press read on the very first pass can land
+    // before `printf` has run at all.
+    let sample = Sample::new("bash-pressed-small");
+    let left = crate::sample::background();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let output = thread::scope(|scope| {
+        let running =
+            scope.spawn(|| finalized(&tool, r#"{"command":"printf 'small\n'; sleep 30"}"#));
+        thread::sleep(Duration::from_millis(300));
+        left.ask();
+        running.join().expect("the wait thread")
+    })
+    .expect("the command started");
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(
+        output.text().starts_with("small\n\n[left running as #1"),
+        "small output was not reported whole: {}",
+        output.text()
+    );
+    assert!(
+        !output.text().contains("omitted from the middle"),
+        "small output should never be cut: {}",
+        output.text()
+    );
+
+    stopped(&left, 1);
+}
+
+#[test]
+fn the_panel_behind_ctrl_b_shows_kept_bytes_whole_and_untrimmed() {
+    // `wrote` used to share `gathered`'s own cut, which trims trailing
+    // whitespace even where nothing was dropped — a cut the panel never asked
+    // for, since it promises the whole of what is kept rather than an answer
+    // cut to its own ceiling. This pins that promise against a command that
+    // printed a trailing blank line, byte for byte against what base printed
+    // before either cut existed.
+    //
+    // The press is asked for before the command starts, so the first pass of
+    // the wait takes it, and the panel is then polled rather than read once:
+    // the command goes on running after the press, and what it printed lands
+    // in the readers whenever the shell gets to it, not by a fixed moment.
+    let sample = Sample::new("bash-pressed-panel-whole");
+    let left = crate::sample::background();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    left.ask();
+    finalized(&tool, r#"{"command":"printf 'kept\n\n'; sleep 30"}"#).expect("the command started");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let shown = loop {
+        let shown = left.wrote(1);
+        if shown.as_deref() == Some("kept\n\n") || Instant::now() >= deadline {
+            break shown;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    assert_eq!(
+        shown.as_deref(),
+        Some("kept\n\n"),
+        "the panel cut or trimmed output that never needed either"
+    );
+
+    stopped(&left, 1);
+}
+
+#[test]
+fn the_panel_behind_ctrl_b_marks_where_each_stream_lost_bytes() {
+    // The panel stands both streams, and each reader's hole is its own: at
+    // the end of that stream's fixed head, before its rolling tail. One marker
+    // at the midpoint of the two streams glued together would sit on the
+    // stdout/stderr boundary, where nothing was dropped, and leave both real
+    // splices silent. This pins the panel byte for byte: each stream's head,
+    // a marker at its hole with that stream's own counts, then its tail — and
+    // nothing trimmed, since the panel promises the whole of what is kept.
+    //
+    // The head and tail budgets are restated from `OUTPUT` because the
+    // reader's own are private to `output`; if they change, this fails rather
+    // than passing silently.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    // Each pattern ends in a newline and divides the flood, so each stream's
+    // kept tail ends in whitespace and a trim would be seen.
+    const PATTERN: &str = "0123456789abcde\n";
+    const REVERSED: &str = "edcba9876543210\n";
+    const _: () = assert!(FLOOD.is_multiple_of(PATTERN.len()));
+    const _: () = assert!(FLOOD.is_multiple_of(REVERSED.len()));
+    let head = crate::bound::OUTPUT / 2;
+    let tail = crate::bound::OUTPUT - head;
+    let sample = Sample::new("bash-panel-both-flooded");
+    let left = crate::sample::background();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let stream = |pattern: &str| -> String {
+        let printed = pattern.repeat(FLOOD / pattern.len() + 1);
+        let printed = printed.get(..FLOOD).unwrap_or_default();
+        format!(
+            "{}\n\n[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]\n\n{}",
+            printed.get(..head).unwrap_or_default(),
+            FLOOD - crate::bound::OUTPUT,
+            printed.get(FLOOD - tail..).unwrap_or_default(),
+        )
+    };
+    let expected = format!("{}{}", stream(PATTERN), stream(REVERSED));
+
+    let output = finalized(
+        &tool,
+        &format!(
+            r#"{{"command":"yes {} | head -c {FLOOD}; yes {} | head -c {FLOOD} >&2; sleep 30","background":true}}"#,
+            PATTERN.trim_end(),
+            REVERSED.trim_end(),
+        ),
+    )
+    .expect("the command started");
+    assert!(!output.is_failed(), "{}", output.text());
+
+    // Polled for the exact text: an early read catches a flood part-way
+    // through, with a smaller, still-correct count for what has arrived.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let shown = loop {
+        let shown = left.wrote(1).unwrap_or_default();
+        if shown == expected || Instant::now() >= deadline {
+            break shown;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    // Said in terms a reader can check rather than as two 180 KB strings.
+    let differs = shown
+        .bytes()
+        .zip(expected.bytes())
+        .position(|(got, want)| got != want)
+        .unwrap_or(shown.len().min(expected.len()));
+    let around = |text: &str| -> String {
+        let from = differs.saturating_sub(40);
+        let to = differs.saturating_add(120).min(text.len());
+        text.get(from..to).unwrap_or_default().to_owned()
+    };
+    assert!(
+        shown == expected,
+        "the panel's markers do not sit at each stream's own hole with its own counts: the \
+         {} bytes shown first differ from the {} expected at byte {differs}:\n--- shown ---\n{}\n\
+         --- expected ---\n{}",
+        shown.len(),
+        expected.len(),
+        around(&shown),
+        around(&expected),
+    );
+
+    stopped(&left, 1);
+}
+
+#[test]
+fn a_command_the_developer_let_go_of_says_where_bytes_were_omitted() {
+    // `Taking::printed` is handed straight to the model by `keep_running`,
+    // with no cut after it: its own doc claims it is "bounded and cut the
+    // same way an answer is", and this pins that claim against a command that
+    // printed more than a stream's head and tail before it was let go of.
+    //
+    // The press has to land after this reader has actually taken the whole
+    // flood, and nothing public says so before the command comes out of the
+    // wait — there is no `Taking` to ask until the press itself produces one.
+    // So this waits on the one thing that is public: the answer the press
+    // comes back with. A wait too short lands on a command that has not yet
+    // taken every byte the pipeline sent, and is retried with a longer one
+    // rather than asserted on, bounded by an overall deadline a healthy
+    // reader clears on its first attempt.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let expected = format!(
+        "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+        FLOOD - super::output::CAPTURE_TEXT
+    );
+    let sample = Sample::new("bash-pressed-flood");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut wait = Duration::from_millis(50);
+    let (output, left) = loop {
+        let left = crate::sample::background();
+        let tool = compatible(&sample).leaving(left.clone());
+
+        // The pipeline floods the stream almost at once and the trailing
+        // sleep keeps the command running, so the press lands on a command
+        // that has not exited rather than racing its own end.
+        let output = thread::scope(|scope| {
+            let running = scope.spawn(|| {
+                finalized(
+                    &tool,
+                    &format!(
+                        r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}; sleep 30","timeout":60}}"#
+                    ),
+                )
+            });
+            thread::sleep(wait);
+            left.ask();
+            running.join().expect("the wait thread")
+        });
+
+        let landed = output
+            .as_ref()
+            .is_ok_and(|output| output.text().contains(&expected));
+        if landed || Instant::now() >= deadline {
+            break (output, left);
+        }
+        let _ = left.stop(1);
+        wait = (wait * 2).min(Duration::from_secs(2));
+    };
+    let output = output.expect("the command started");
+
+    assert!(!output.is_failed(), "{}", output.text());
+    assert!(output.text().contains("ctrl+b"), "{}", output.text());
+    assert!(
+        output.text().contains(&expected),
+        "the model was told less than what the reader actually dropped, or nothing at all: {}",
+        output.text()
+    );
+
+    stopped(&left, 1);
+}
+
+#[test]
+fn a_command_the_developer_let_go_of_survives_the_runners_own_result_ceiling() {
+    // `keep_running`'s answer already carries a marker once the reader's own
+    // cut applies; the runner then applies its own encoded-size ceiling,
+    // `limit_encoded`, to every result before it reaches the model — and a
+    // flood this dense with newlines (`yes` ends every line it prints) encodes
+    // past that ceiling on top of the reader's own cut. Without
+    // `with_capture_elision` carrying the process counts along, that second
+    // cut has no process byte count of its own: it removes the reader's
+    // exact marker and names only encoded result bytes in its place.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let expected = format!(
+        "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+        FLOOD - super::output::CAPTURE_TEXT
+    );
+    let process_counts = format!(
+        "process output was {FLOOD} bytes; {} bytes omitted during capture",
+        FLOOD - super::output::CAPTURE_TEXT
+    );
+    let sample = Sample::new("bash-pressed-flood-ceiling");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut wait = Duration::from_millis(50);
+    let (output, left) = loop {
+        let left = crate::sample::background();
+        let tool = compatible(&sample).leaving(left.clone());
+
+        let output = thread::scope(|scope| {
+            let running = scope.spawn(|| {
+                finalized(
+                    &tool,
+                    &format!(
+                        r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}; sleep 30","timeout":60}}"#
+                    ),
+                )
+            });
+            thread::sleep(wait);
+            left.ask();
+            running.join().expect("the wait thread")
+        });
+
+        let landed = output
+            .as_ref()
+            .is_ok_and(|output| output.text().contains(&expected));
+        if landed || Instant::now() >= deadline {
+            break (output, left);
+        }
+        let _ = left.stop(1);
+        wait = (wait * 2).min(Duration::from_secs(2));
+    };
+    let mut output = output.expect("the command started");
+
+    // The runner's own ceiling applies to every result on the way to the
+    // model; nothing here should need it to fit already.
+    let _ = output.limit_encoded(crucible_types::TOOL_RESULT_BYTES);
+
+    assert!(
+        output.text().contains(&process_counts),
+        "the runner's own result ceiling cut through the reader's marker with no process byte \
+         count of its own: {}",
+        output.text()
+    );
+
+    stopped(&left, 1);
 }
 
 #[test]
@@ -807,12 +1262,12 @@ fn the_name_a_job_requires_a_backend_by_is_the_one_spelled_outside_this_crate() 
 
 #[test]
 fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };
     let sample = Sample::new("bash-linux-detachable");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
     left.ask();
 
@@ -822,7 +1277,7 @@ fn linux_ctrl_b_uses_owned_durable_detachment_before_go() {
     assert!(!output.is_failed(), "{}", output.text());
     assert!(output.text().contains("ctrl+b"), "{}", output.text());
     assert_eq!(left.running().len(), 1);
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
     assert!(left.running().is_empty());
 }
 
@@ -836,7 +1291,7 @@ fn a_command_whose_writes_were_refused_tells_the_model_why() {
     // Reachable only since writers stopped holding the lock for their whole
     // lives: a command that runs across another's publication into the same
     // root publishes nothing, and the model is told by the call it made.
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };
@@ -876,12 +1331,12 @@ fn a_command_whose_writes_were_refused_tells_the_model_why() {
 fn a_writer_left_running_does_not_keep_a_command_from_writing() {
     // A dev server or a watcher is left running because it has no end of its
     // own. Nothing else that writes may wait on it, or nothing else writes.
-    let service = crucible_sandbox_local::LocalSandbox::new();
+    let service = crate::sample::sandbox();
     let Some(_enforcing) = enforcing(&service) else {
         return;
     };
     let sample = Sample::new("bash-writer-beside-a-running-one");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(service)).leaving(left.clone());
 
     let started = finalized(&tool, r#"{"command":"sleep 30","background":true}"#)
@@ -899,7 +1354,7 @@ fn a_writer_left_running_does_not_keep_a_command_from_writing() {
         std::fs::read_to_string(sample.root().join("beside.txt")).expect("published file"),
         "beside\n"
     );
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
@@ -907,7 +1362,7 @@ fn one_press_lets_go_of_one_command_rather_than_every_command_after_it() {
     // The request is spent when it is read. Without that, a press meant for a
     // slow build would leave every command after it running too, and the model
     // would be told the developer stepped in each time nobody had.
-    let left = Background::new();
+    let left = crate::sample::background();
 
     left.ask();
     assert!(left.wanted());
@@ -920,7 +1375,7 @@ fn an_explicit_background_call_keeps_acceptance_as_its_only_result_after_a_fast_
     // acceptance into a terminal tool result, because recovery would then have
     // two possible owners for the one provider-projectable result.
     let sample = Sample::new("bash-background-failed");
-    let left = Background::new();
+    let left = crate::sample::background();
     // A window this test can be sure of. The default is a judgement about a
     // reader, and a host busy enough can take longer than it to start a shell
     // at all — which would leave this asserting how quickly the machine
@@ -957,7 +1412,7 @@ fn a_command_that_ended_hands_over_what_it_printed() {
     // is to run something else that asks the same question — which is the work
     // the command was already doing.
     let sample = Sample::new("bash-background-printed");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     let output = finalized(
@@ -986,9 +1441,94 @@ fn a_command_that_ended_hands_over_what_it_printed() {
 }
 
 #[test]
+fn a_command_that_ended_says_where_bytes_were_omitted() {
+    // `Left::printed` used to cut with a method that took no dropped-byte
+    // count of its own, so a cut counted only what this reader's own cut let
+    // go rather than what the command actually printed. This pins the whole
+    // gap against a command that printed more than a stream's head and tail
+    // before it ended.
+    const FLOOD: usize = crate::bound::OUTPUT * 3;
+    let share = crate::bound::OUTPUT / MOST;
+    let sample = Sample::new("bash-background-flood");
+    let left = crate::sample::background();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let output = finalized(
+        &tool,
+        &format!(r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}","background":true}}"#),
+    )
+    .expect("the command started");
+    assert!(!output.is_failed(), "{}", output.text());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let ended = loop {
+        let ended = left.reap();
+        if !ended.is_empty() || Instant::now() >= deadline {
+            break ended;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    let one = ended.first().expect("the command ended");
+    assert_eq!(one.code, Some(0));
+    assert!(
+        one.printed.contains(&format!(
+            "[process output was {FLOOD} bytes; {} bytes omitted from the middle during capture]",
+            FLOOD - share
+        )),
+        "the note counted only what this reader kept, not what the command printed: {:?}",
+        one.printed
+    );
+}
+
+#[test]
+fn a_command_left_running_holds_no_more_than_its_ceiling_however_much_it_floods() {
+    // Both streams, each far past a stream's head and tail, and together
+    // still under the ceiling that stops a command for its output, so what is
+    // measured is a command that goes on running with nobody reading it:
+    // what a registry holds for a watcher left printing all afternoon.
+    const FLOOD: usize = 1536 * 1024;
+    const _: () = assert!(2 * (FLOOD as u64) < super::PROCESS_OUTPUT_BYTES);
+    let sample = Sample::new("bash-background-flood-ceiling");
+    let left = crate::sample::background();
+    let tool = compatible(&sample).leaving(left.clone());
+
+    let output = finalized(
+        &tool,
+        &format!(
+            r#"{{"command":"yes 0123456789abcdef | head -c {FLOOD}; yes 0123456789abcdef | head -c {FLOOD} >&2; sleep 30","background":true}}"#
+        ),
+    )
+    .expect("the command started");
+    assert!(!output.is_failed(), "{}", output.text());
+    let number = left
+        .running()
+        .first()
+        .expect("the command left running")
+        .number;
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let printed = loop {
+        let printed = left.running().first().map_or(0, |standing| standing.bytes);
+        if printed >= 2 * FLOOD || Instant::now() >= deadline {
+            break printed;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let retained = left.retained(number).expect("the command is still kept");
+    stopped(&left, number);
+
+    assert_eq!(printed, 2 * FLOOD, "the flood never finished arriving");
+    assert!(
+        retained <= 2 * super::output::Pipe::CEILING,
+        "a command left running held {retained} bytes of the {printed} it printed"
+    );
+}
+
+#[test]
 fn an_explicit_background_command_has_no_foreground_deadline() {
     let sample = Sample::new("bash-background-no-deadline");
-    let left = Background::new();
+    let left = crate::sample::background();
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
     let tool = Bash::new(sample.workspace(), std::sync::Arc::new(recording))
@@ -1008,12 +1548,12 @@ fn an_explicit_background_command_has_no_foreground_deadline() {
         Some(super::PROCESS_OUTPUT_BYTES)
     );
     drop(limits);
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
 fn background_capacity_is_owned_before_any_workload_release() {
-    let left = Background::new();
+    let left = crate::sample::background();
     let mut leases = Vec::new();
     for _ in 0..MOST {
         leases.push(left.reserve().expect("reserved application owner"));
@@ -1034,7 +1574,7 @@ fn background_capacity_is_owned_before_any_workload_release() {
 #[test]
 fn the_number_of_commands_left_running_is_capped() {
     let sample = Sample::new("bash-background-cap");
-    let left = Background::new();
+    let left = crate::sample::background();
     let tool = compatible(&sample).leaving(left.clone());
 
     for _ in 0..MOST {
@@ -1124,7 +1664,7 @@ fn a_line_that_does_not_say_what_runs_is_not_looking() {
 #[test]
 fn configured_command_ceilings_survive_foreground_and_background_requests() {
     let sample = Sample::new("bash-configured-ceilings");
-    let left = Background::new();
+    let left = crate::sample::background();
     let recording = RecordingSandbox::default();
     let observed = std::sync::Arc::clone(&recording.limits);
     let mut tool = Bash::new(sample.workspace(), std::sync::Arc::new(recording))
@@ -1154,25 +1694,32 @@ fn configured_command_ceilings_survive_foreground_and_background_requests() {
     assert_eq!(limits.len(), 2);
     assert!(limits.iter().all(|limits| *limits == configured));
     drop(limits);
-    left.stop(1).expect("background cleanup");
+    stopped(&left, 1);
 }
 
 #[test]
 fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceilings() {
     struct Capture(std::sync::Mutex<Vec<crucible_sandbox::SandboxPolicy>>);
     impl SandboxService for Capture {
-        fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-            Err(SandboxError::BackendUnavailable {
-                reason: "recording fixture".into(),
+        fn probe(
+            &self,
+        ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>>
+        {
+            Box::pin(async move {
+                Err(SandboxError::BackendUnavailable {
+                    reason: "recording fixture".into(),
+                })
             })
         }
         fn prepare(
             &self,
             request: SandboxRequest,
-        ) -> Result<Box<dyn SandboxSession>, SandboxError> {
-            self.0.lock().unwrap().push(request.policy().clone());
-            Err(SandboxError::BackendUnavailable {
-                reason: "stopped at preparation".into(),
+        ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(request.policy().clone());
+                Err(SandboxError::BackendUnavailable {
+                    reason: "stopped at preparation".into(),
+                })
             })
         }
     }
@@ -1187,10 +1734,10 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
     for choice in [false, true, false] {
         control.set_enabled(choice).unwrap();
         assert!(
-            tool.run(
+            awaited(tool.run(
                 allowed(&tool, r#"{"command":"echo fixture"}"#),
                 &crate::sample::context()
-            )
+            ))
             .is_err()
         );
     }
@@ -1237,12 +1784,11 @@ fn interactive_enablement_is_sampled_for_new_commands_without_losing_kernel_ceil
         .under_policy(template.with_enabled(false))
         .following_enablement(control);
     assert!(
-        invalid
-            .run(
-                allowed(&invalid, r#"{"command":"echo fixture"}"#),
-                &crate::sample::context()
-            )
-            .is_err()
+        awaited(invalid.run(
+            allowed(&invalid, r#"{"command":"echo fixture"}"#),
+            &crate::sample::context()
+        ))
+        .is_err()
     );
     assert_eq!(
         capture.0.lock().unwrap().len(),
@@ -1257,7 +1803,7 @@ fn a_command_that_begins_by_sleeping_to_reach_a_later_one_is_refused() {
     // again. Refusing it is the mechanism behind the sentence a backgrounded
     // command comes back with, which is otherwise only a request.
     let sample = Sample::new("bash-paced");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     let problem = tool
         .validate(&ToolArgs::new(
@@ -1279,7 +1825,7 @@ fn a_command_that_only_sleeps_is_still_a_command() {
     // Nothing runs after it, so there is nothing it is polling. A rule that
     // caught this would be a rule about the word rather than about the shape.
     let sample = Sample::new("bash-paced-alone");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(r#"{"command":"sleep 30"}"#))
         .expect("a bare wait is not a poll");
@@ -1291,7 +1837,7 @@ fn a_sleep_paced_command_left_running_is_not_a_poll() {
     // over what came after it. That is the move this refusal points at, so
     // refusing it too would leave nowhere to go.
     let sample = Sample::new("bash-paced-left");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(
         r#"{"command":"sleep 15 && gh pr checks 622","background":true}"#,
@@ -1305,7 +1851,7 @@ fn a_command_that_sleeps_after_doing_something_is_not_a_poll() {
     // that starts something and waits for it. The sleep is not what the line
     // is for, and a rule that read it as one would refuse ordinary work.
     let sample = Sample::new("bash-paced-after");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(r#"{"command":"printf 'up\n'; sleep 30"}"#))
         .expect("a sleep that is not the first thing is not a wait for a later one");
@@ -1316,10 +1862,34 @@ fn a_line_whose_text_does_not_say_what_runs_is_not_read_as_a_poll() {
     // `read` reports this one as opaque, and the permission engine asks about
     // it. A refusal here would be this rule guessing at a line it cannot read.
     let sample = Sample::new("bash-paced-opaque");
-    let tool = compatible(&sample).leaving(Background::new());
+    let tool = compatible(&sample).leaving(crate::sample::background());
 
     tool.validate(&ToolArgs::new(
         r#"{"command":"(sleep 15) && gh pr checks 622"}"#,
     ))
     .expect("an unreadable line is not refused by a rule about a shape");
+}
+
+/// Stops the command running as `number` and waits, up to a ceiling no passing
+/// run comes near, for its owner to have ended it.
+fn stopped(left: &super::Background, number: usize) {
+    left.stop(number).expect("background cleanup");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while left
+        .running()
+        .iter()
+        .any(|standing| standing.number == number)
+    {
+        assert!(
+            left.running()
+                .iter()
+                .all(|standing| standing.number != number || !standing.refused),
+            "background cleanup was refused"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "background cleanup never finished"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
 }

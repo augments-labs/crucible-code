@@ -5,11 +5,19 @@
 //! word for word — enough for the model to know what it was doing, at a
 //! fraction of what it was carrying.
 //!
-//! **The turn does not end.** This runs inside the loop, between one request
-//! and the next, and the loop carries on afterwards against a transcript that
-//! now fits. A session that ended its turn to make room would answer the
-//! question the user is still waiting on with a stop. The one turn that does
-//! end here is one somebody stopped, and it ends saying so.
+//! **Making room does not end the turn.** This runs inside the loop, between
+//! one request and the next, and the loop carries on afterwards against a
+//! transcript that now fits. A session that ended its turn to make room would
+//! answer the question the user is still waiting on with a stop. A turn ends
+//! here only when somebody stopped it or when room could not be made. Room is
+//! not made where the recap failed or came back incomplete, where a
+//! prompt-cache step failed, or where two goes in a row freed nothing. Every
+//! prompt-cache store and resource-lifecycle step is awaited, and a changing
+//! operation whose answer remains uncertain is recorded as ambiguous for
+//! reconciliation. The turn ends on what it was: the stop, the failure, the
+//! incomplete recap, or a window left without room. The compaction's own
+//! session lines are awaited, each before the step it records is taken or once
+//! it is.
 //!
 //! **The log is the record.** Compaction rewrites what the model is sent; what
 //! happened is what the session log holds, and it keeps every message this
@@ -29,13 +37,16 @@ use crucible_context::compaction::{
     RECAP_REQUEST, TrackedFiles, append_files, carried, is_structured,
 };
 use crucible_context::{ContextSection, PermissionsSection, Room};
-use crucible_core::{
-    CompactionRecord, Delta, Message, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheUsageFact, ProviderError, RecordedToolOutput, Request,
-    RunItem, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
+use crucible_models::{
+    Delta, PromptCacheAttempt, PromptCachePreparationError, ProviderError, Request,
 };
+use crucible_storage::{CompactionRecord, RunItem};
 use crucible_types::{Compacted, Compacting, RECAP};
+use crucible_types::{
+    Message, PromptCacheEncoding, PromptCacheFact, PromptCacheOutcome,
+    PromptCacheRequestDisposition, PromptCacheRequestFact, PromptCacheUsageFact,
+    RecordedToolOutput, Spend, StopReason, TOOL_RESULT_BYTES, ToolId, UsageCost,
+};
 
 use crate::context::RunContext;
 use crate::prompt_cache::{self, ScopeInputs};
@@ -112,10 +123,25 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the request for the recap failed. The transcript is
-    /// untouched in that case: it is replaced once the answer is whole, so a
-    /// failure part way through leaves the session exactly as it was.
-    pub fn compact(
+    /// [`TurnError`] where the request for the recap failed. Nothing is
+    /// replaced in that case: the transcript is replaced once the answer is
+    /// whole, so a failure part way through leaves it as pruning left it.
+    /// Before anything is recorded or sent, the lines picking a session up or
+    /// changing vendor still owe the session are written, as
+    /// [`Runner::record_clearings`] writes them.
+    ///
+    /// Opening the recap's stream and reading it are awaited, as are every
+    /// prompt-cache store and resource-lifecycle step. A cache failure replaces
+    /// nothing, even when the compaction is being stopped, and a changing cache
+    /// step is recorded as ambiguous for reconciliation as a cancelled one is.
+    /// The recap request is taken back out of the transcript.
+    ///
+    /// The compaction's own session lines are awaited: the line recording what
+    /// pruning cleared, and the line reporting what pruning alone freed, after
+    /// the pruning; the line recording the recap after any pruning and before
+    /// the replacement; and the line reporting what the recap freed after the
+    /// replacement. A line the log could not keep is the session's to report.
+    pub async fn compact(
         &mut self,
         why: Compacting,
         run: &RunContext<'_>,
@@ -125,6 +151,10 @@ impl Runner {
         // the recap boundary below is read off the run, and a run asking for
         // more than the session allows does not get it.
         let run = &run.held_to(self.policy);
+
+        // What picking a session up or changing vendor still owes the
+        // session goes into its log before anything of this compaction does.
+        self.record_clearings().await;
 
         let events = run.reporting();
 
@@ -143,7 +173,7 @@ impl Runner {
         // themselves, and that is exactly where there is no older middle for a
         // recap to replace. Prune before giving up on finding one so those
         // results do not become untouchable merely because the turn is active.
-        let pruned = self.prune();
+        let pruned = self.prune().await;
 
         let replacing = if let Some(replacing) = replacing {
             replacing
@@ -157,7 +187,7 @@ impl Runner {
                     after,
                     kept: self.state.transcript.turns(),
                 };
-                self.store.display_compacted(compacted, pruned);
+                self.store.display_compacted(compacted, pruned).await;
                 events.post(crate::Event::Compacted { compacted });
                 events.post(crate::Event::Carried {
                     left: self.left_under(run.policy().compaction),
@@ -195,7 +225,7 @@ impl Runner {
         let touched = self.tracked(replacing);
         events.post(crate::Event::Compacting { why, part: 0 });
 
-        let recap = match self.recap(why, &touched, run, spent)? {
+        let recap = match self.recap(why, &touched, run, spent).await? {
             Recap::Complete(recap) => recap,
             Recap::Incomplete => return Err(TurnError::RecapIncomplete),
             Recap::Stopped => return Ok(Room::Stopped),
@@ -226,13 +256,14 @@ impl Runner {
         // Written to the log before the transcript is replaced, so a crash
         // between the two leaves a log that says what happened rather than one
         // that quietly lost the messages.
-        self.store.compacted(replacing, &standing_as);
+        self.store.compacted(replacing, &standing_as).await;
         self.store
             .append_run_item(&RunItem::Compaction(CompactionRecord::new(
                 run.ancestry(),
                 replacing,
                 &standing_as,
-            )));
+            )))
+            .await;
         self.state.transcript.compacted(replacing, standing_as);
 
         self.state.load.replaced();
@@ -256,7 +287,7 @@ impl Runner {
             after: self.state.load.tokens(),
             kept,
         };
-        self.store.display_compacted(compacted, pruned);
+        self.store.display_compacted(compacted, pruned).await;
         events.post(crate::Event::Compacted { compacted });
         events.post(crate::Event::Carried {
             left: self.left_under(run.policy().compaction),
@@ -342,12 +373,6 @@ impl Runner {
         self.state.load.bytes_to_tokens(bytes)
     }
 
-    /// Asks the model to write down what is worth keeping.
-    ///
-    /// The instruction is pushed onto the transcript and taken off again rather
-    /// than copied alongside it, because a copy of the transcript is the one
-    /// allocation this crate may not make.
-    ///
     /// The files to carry into the recap, read and modified apart.
     ///
     /// Two sources, in the order they happened: the lists every previous recap
@@ -358,6 +383,8 @@ impl Runner {
     /// was only read afterwards. The runner keeps no list of its own across
     /// compactions; the recaps already written are the record, and this reads
     /// them back rather than hold a second copy that could drift from it.
+    ///
+    /// [`Tool::remember`]: crucible_tools::Tool::remember
     fn tracked(&self, replacing: usize) -> TrackedFiles {
         let mut files = TrackedFiles::default();
 
@@ -407,7 +434,11 @@ impl Runner {
         Ok(RECAP_REQUEST.len() as u64)
     }
 
-    fn recap(
+    /// Asks the model to write down what is worth keeping.
+    ///
+    /// The instruction is never copied alongside the transcript, because a
+    /// copy of the transcript is the one allocation this crate may not make.
+    async fn recap(
         &mut self,
         why: Compacting,
         touched: &TrackedFiles,
@@ -449,11 +480,11 @@ impl Runner {
         let authority = PermissionsSection::new(&self.permission)
             .snapshot()
             .to_string();
-        let workspace = self.context.workspace().to_string_lossy();
+        let workspace = self.context.workspace();
         let user = self.store.owner();
         let session = self.store.session_id();
         let request = Request {
-            purpose: crucible_core::RequestPurpose::Recap,
+            purpose: crucible_models::RequestPurpose::Recap,
             model: &self.agent.model().name,
             transcript: &self.state.transcript,
             tools: &[],
@@ -477,11 +508,11 @@ impl Runner {
             max_tokens: room,
             effort: self.agent.model().effort,
             run: run.run(),
-            session: session.as_ref().map(crucible_core::SessionId::as_str),
-            workspace: workspace.as_bytes(),
+            session: session.as_ref().map(crucible_types::SessionId::as_str),
+            workspace,
             user: user
                 .as_ref()
-                .map_or(&[], crucible_core::SessionOwner::as_bytes),
+                .map_or(&[], crucible_storage::SessionOwner::as_bytes),
             trust: b"local-workspace-authority-v1",
             authority: authority.as_bytes(),
             // The standalone recap deliberately sends no system prompt or
@@ -494,23 +525,27 @@ impl Runner {
             self.provider.prompt_cache_resources(),
             self.prompt_cache_store.as_deref_mut(),
         ) {
-            (Some(lifecycle), Some(store)) => prompt_cache::prepare_with_resource_facts(
-                &request,
-                capabilities,
-                &scope,
-                prompt_cache::ResourceInputs {
-                    store,
-                    lifecycle,
-                    cancel,
-                    now: super::unix_now(),
-                    deadline: std::time::Instant::now() + super::PROMPT_CACHE_RESOURCE_DEADLINE,
-                },
-                &mut resource_facts,
-            ),
-            _ => prompt_cache::prepare(&request, capabilities, &scope),
+            (Some(lifecycle), Some(store)) => {
+                prompt_cache::prepare_with_resource_facts(
+                    &request,
+                    capabilities,
+                    &scope,
+                    prompt_cache::ResourceInputs {
+                        store,
+                        lifecycle,
+                        cancel,
+                        now: super::unix_now(),
+                        deadline: std::time::Instant::now() + super::PROMPT_CACHE_RESOURCE_DEADLINE,
+                    },
+                    &mut resource_facts,
+                )
+                .await
+            }
+            _ => prompt_cache::prepare(&request, capabilities, &scope).await,
         };
         for fact in resource_facts {
-            self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact));
+            self.report_prompt_cache(run, PromptCacheFact::ResourceChanged(fact))
+                .await;
         }
         let prepared = match prepared {
             Ok(prepared) => prepared,
@@ -532,19 +567,11 @@ impl Runner {
             cost: UsageCost::UNKNOWN,
         });
         let planned = cache.planned();
-        self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
+        self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)))
+            .await;
         if let Some(resource) = prepared.resource.as_ref() {
-            self.report_prompt_cache(
-                run,
-                PromptCacheFact::ResourceChanged(crucible_core::PromptCacheResourceFact {
-                    attempt: Some(cache.attempt),
-                    resource: resource.id().clone(),
-                    operation: resource.pending(),
-                    state: resource.state(),
-                    expires_at: resource.expires_at(),
-                    owner: resource.binding().owner(),
-                }),
-            );
+            self.report_recap_resource(run, cache.attempt, resource)
+                .await;
         }
         let mut encoding = self.provider.prompt_cache_encoding(&Request {
             prompt_cache: Some(&cache),
@@ -561,14 +588,16 @@ impl Runner {
                     encoding,
                     disposition: PromptCacheRequestDisposition::NotSent,
                 }),
-            );
+            )
+            .await;
             let Some(fallback) = prepared.fallback_request(reason) else {
                 self.state.transcript.pop();
                 return Err(PromptCachePreparationError::Encoding(reason).into());
             };
             cache = fallback;
             let planned = cache.planned();
-            self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)));
+            self.report_prompt_cache(run, PromptCacheFact::Planned(Box::new(planned)))
+                .await;
             encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -586,7 +615,9 @@ impl Runner {
             prompt_cache: Some(&cache),
             ..request
         };
-        let asked = self.provider.stream(request, cancel);
+        let asked = self.provider.stream(request, cancel).await;
+        // Recorded and reported before a failure ends the compaction, as a
+        // turn's own request is.
         let disposition = super::request_disposition(&asked);
         if let Some(attempt) = self.state.prompt_cache_attempt.as_mut() {
             attempt.disposition = disposition;
@@ -598,7 +629,8 @@ impl Runner {
                 encoding,
                 disposition,
             }),
-        );
+        )
+        .await;
         let cache = super::CacheObservation {
             attempt: cache.attempt,
             reporting: cache.capabilities.usage(),
@@ -611,16 +643,18 @@ impl Runner {
                 }),
             pricing_date,
         };
-        let said = self.read_recap(
-            asked,
-            RecapReading {
-                events,
-                touched,
-                spent,
-                cache,
-                why,
-            },
-        );
+        let said = self
+            .read_recap(
+                asked,
+                RecapReading {
+                    events,
+                    touched,
+                    spent,
+                    cache,
+                    why,
+                },
+            )
+            .await;
 
         self.state.transcript.pop();
         // The final EOF read may have raised cancellation without producing a
@@ -632,10 +666,36 @@ impl Runner {
         said
     }
 
+    /// Reports the prompt-cache resource a recap request was prepared against,
+    /// under that request's attempt, before the request is encoded. Where the
+    /// encoding fails, the request goes without the resource: under `Prefer`,
+    /// a fallback request that does not name it is encoded under the same
+    /// attempt, and where there is no fallback, or it cannot be encoded
+    /// either, nothing is sent.
+    async fn report_recap_resource(
+        &self,
+        run: &RunContext<'_>,
+        attempt: crucible_types::ProviderAttemptId,
+        resource: &crucible_types::PromptCacheResourceRecord,
+    ) {
+        self.report_prompt_cache(
+            run,
+            PromptCacheFact::ResourceChanged(crucible_types::PromptCacheResourceFact {
+                attempt: Some(attempt),
+                resource: resource.id().clone(),
+                operation: resource.pending(),
+                state: resource.state(),
+                expires_at: resource.expires_at(),
+                owner: resource.binding().owner(),
+            }),
+        )
+        .await;
+    }
+
     /// Reads one standalone recap response while preserving attempt accounting.
-    fn read_recap(
+    async fn read_recap(
         &mut self,
-        asked: Result<Box<dyn crucible_core::DeltaStream>, ProviderError>,
+        asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
         reading: RecapReading<'_>,
     ) -> Result<Recap, TurnError> {
         let RecapReading {
@@ -655,7 +715,7 @@ impl Runner {
         let mut stopped = None;
         let before = *spent;
 
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = stream.next().await {
             let delta = match delta {
                 Ok(delta) => delta,
                 Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
@@ -695,7 +755,7 @@ impl Runner {
                         self.provider.name(),
                     )?;
                     if let Some(tokens) = usage.output {
-                        *spent = before.and(crucible_core::Spend::new(tokens));
+                        *spent = before.and(crucible_types::Spend::new(tokens));
                         events.post(crate::Event::Spent { spend: *spent });
                     }
                     let cost = self
@@ -730,7 +790,8 @@ impl Runner {
                             usage,
                             cost,
                         })),
-                    );
+                    )
+                    .await;
                 }
                 Delta::ToolStarted { .. }
                 | Delta::ToolArgs(_)
@@ -777,7 +838,10 @@ impl Runner {
     /// calls stay, the prose stays, and the placeholder keeps the shape of a
     /// result that answered — only the bulk is gone, and only from what the
     /// model is sent.
-    fn prune(&mut self) -> bool {
+    ///
+    /// The line is awaited once the transcript has moved. A resume after a
+    /// crash between the two reads the results back uncleared.
+    async fn prune(&mut self) -> bool {
         // The newest output is protected: a result the model just read is not
         // one to pull out from under it. Counted in bytes, the figure the
         // results are actually measured in.
@@ -824,7 +888,7 @@ impl Runner {
         // holds. The line goes out once the transcript has moved, and replay
         // reads it to make the same move again.
         let freed = self.state.transcript.prune(&clearing);
-        self.store.pruned(freed, &clearing);
+        self.store.pruned(freed, &clearing).await;
 
         // The load drops by what was freed: the transcript is smaller, and the
         // next request is the thing that is measured. Recounted rather than

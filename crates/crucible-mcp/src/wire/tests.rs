@@ -219,3 +219,138 @@ fn a_question_crucible_will_not_answer_is_refused_rather_than_left_waiting() {
         Some(NO_SUCH_METHOD)
     );
 }
+
+#[test]
+fn a_withheld_value_is_hidden_in_what_a_frame_says_and_nothing_else_is_touched() {
+    use crate::Withheld;
+
+    let withheld = Withheld::new(["tok\"en/1", "1"]);
+
+    // A value of 1 is in the identifier, the code and the version: every one
+    // of them is read as it was sent.
+    let heard = Heard::read_withholding(
+        r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"bad tok\"en\/1 for 12"}}"#,
+        &withheld,
+    )
+    .expect("a frame whose numbers are left alone");
+    assert_eq!(
+        heard,
+        Heard::Answer {
+            call: Call::new(1),
+            reply: Reply::Failed {
+                code: -32001,
+                said: "bad ******** for *2".into(),
+            },
+        },
+        "a withheld value in a server's words about a failure was not hidden"
+    );
+
+    // An identifier crucible could not have issued goes into a sentence, so
+    // its spelling is hidden too, the number with it.
+    for (id, found) in [(r#""tok\"en\/1""#, r#""********""#), ("1.5", "*.5")] {
+        let frame = format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#);
+        assert_eq!(
+            Heard::read_withholding(&frame, &withheld).expect_err(id),
+            Garbled::NotACall {
+                found: found.into()
+            },
+            "a withheld value in an identifier a server answered with was not hidden"
+        );
+    }
+}
+
+#[test]
+fn what_a_server_says_that_crucible_never_keeps_is_carried_as_sent() {
+    use crate::Withheld;
+
+    // A notification is dropped and a question's name only goes back to the
+    // server that asked it, so neither is anything a value could be shown in.
+    let withheld = Withheld::new(["sk-canary"]);
+    let told = Heard::read_withholding(
+        r#"{"jsonrpc":"2.0","method":"notes/sk-canary","params":{"sk-canary":"sk-canary"}}"#,
+        &withheld,
+    )
+    .expect("a notification");
+    assert_eq!(
+        told,
+        Heard::Told {
+            method: "notes/sk-canary".into(),
+            params: json!({ "sk-canary": "sk-canary" }),
+        },
+        "a notification crucible drops was rewritten on the way past"
+    );
+
+    let asked = Heard::read_withholding(
+        r#"{"jsonrpc":"2.0","id":4,"method":"ask/sk-canary"}"#,
+        &withheld,
+    )
+    .expect("a question");
+    assert_eq!(
+        asked,
+        Heard::Asked {
+            call: Call::new(4),
+            method: "ask/sk-canary".into(),
+        },
+        "the name of a question that only goes back to the server was rewritten"
+    );
+}
+
+#[test]
+fn an_identifier_whose_member_names_would_hide_alike_is_named_by_its_kind() {
+    use crate::Withheld;
+
+    // Hidden, `ab` and `cd` are both `**`: quoting the identifier would quote
+    // one member where the server wrote two.
+    let withheld = Withheld::new(["ab", "cd"]);
+    assert_eq!(
+        Heard::read_withholding(
+            r#"{"jsonrpc":"2.0","id":{"ab":1,"cd":2},"result":{}}"#,
+            &withheld,
+        )
+        .expect_err("an identifier crucible does not issue"),
+        Garbled::NotACall {
+            found: "an object".into()
+        },
+        "an identifier was quoted with a member silently dropped"
+    );
+}
+
+#[test]
+fn debug_of_what_a_frame_says_shows_no_word_the_server_wrote() {
+    for frame in [
+        r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"sk-canary"}]}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"sk-canary"}"#,
+        r#"{"jsonrpc":"2.0","method":"sk-canary","params":{"said":"sk-canary"}}"#,
+    ] {
+        let heard = Heard::read(frame).expect("a frame crucible reads");
+        let shown = format!("{heard:?}");
+        assert!(
+            !shown.contains("sk-canary"),
+            "Debug of a frame printed what the server wrote: {shown}"
+        );
+    }
+}
+
+#[test]
+fn debug_of_a_frame_crucible_sends_shows_no_word_the_server_wrote() {
+    for sent in [
+        Sent::asking(
+            Call::new(1),
+            "tools/call",
+            &json!({ "name": "sk-canary", "arguments": {} }),
+        ),
+        Sent::asking(
+            Call::new(2),
+            "tools/list",
+            &json!({ "cursor": "sk-canary" }),
+        ),
+        Sent::telling("notifications/initialized", &json!({ "said": "sk-canary" })),
+        Sent::refusing(Call::new(3), "sk-canary"),
+    ] {
+        let shown = format!("{sent:?}");
+        assert!(
+            !shown.contains("sk-canary"),
+            "Debug of a frame crucible sends printed what the server wrote: {shown}"
+        );
+    }
+}

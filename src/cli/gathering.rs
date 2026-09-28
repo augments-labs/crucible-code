@@ -16,7 +16,8 @@
 //! how many rows a reader scrolls past, and never about what they can still
 //! reach.
 
-use crucible_core::{Looking, ToolId, ToolOutput};
+use crucible_tools::{Looking, ToolOutput};
+use crucible_types::ToolId;
 
 /// How the counters are said, in the order they are said in.
 ///

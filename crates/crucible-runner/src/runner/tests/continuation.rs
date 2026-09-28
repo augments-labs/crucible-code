@@ -1,7 +1,7 @@
 //! Private response state survives only complete turns, never partial streams.
 
 use super::*;
-use crucible_core::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
+use crucible_types::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
 
 fn state() -> Continuation {
     let mut state = Continuation::new(

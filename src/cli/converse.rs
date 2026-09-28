@@ -1,9 +1,10 @@
 //! The loop: read a line, take a turn, draw what the turn does.
 //!
-//! The turn runs on its own thread and the terminal stays with this one. That
-//! split is the whole reason a turn can stream while a question is waiting to
-//! be answered, and it is why no lock appears anywhere on the render path: the
-//! only thread that writes to the terminal is the one running this loop.
+//! The turn runs as a task on the application's runtime and the terminal stays
+//! with this thread. That split is the whole reason a turn can stream while a
+//! question is waiting to be answered, and it is why no lock appears anywhere
+//! on the render path: the only thread that writes to the terminal is the one
+//! running this loop.
 //!
 //! Raw mode is held for the whole session rather than for each prompt, because
 //! the box takes typing while a turn runs: the keyboard cannot be handed back
@@ -36,13 +37,14 @@
 //! the caller to report once the screen is the reader's again.
 
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
 use crucible_app::client::Ended;
@@ -51,25 +53,28 @@ use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_client_api::{Command, Prompt, Refusal};
-use crucible_core::{
-    Attachment, Cancel, Compacting, Mode, Revealed, Room, SessionId, Spend, Workspace,
-};
+use crucible_context::Room;
 use crucible_runner::{Event, Runner, Turned};
+use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
     Editor, Pasting, Raw, Renderer, Reporting, Screen, Sending, Spelling, Terminal, TerminalError,
 };
+use crucible_types::{Attachment, Compacting, SessionId, Spend};
 
 use super::draw;
 use super::gathering::Gathering;
 use super::kept::Kept;
+use super::panicked::Panics;
 use super::seen::{Asking, CAPACITY, Inbox, Putting, Relay, Seen};
 use super::style::Style;
 use super::{Fatal, standing};
-use answering::{Answering, Answers, asked, cramped, read, verdict};
+use answering::{Answers, asked, cramped, read, verdict};
 use command::Ran;
 use expanding::Standing;
+pub(crate) use first::First;
 use planning::Planning;
+use queueing::{Prompts, Retained, batched};
 use recalling::Recalling;
 use turning::Turning;
 use typing::{Asked, Says};
@@ -80,6 +85,7 @@ mod attaching;
 pub(crate) mod command;
 mod expanding;
 mod finding;
+mod first;
 mod leaving;
 mod mode;
 mod picking;
@@ -146,6 +152,13 @@ pub(crate) struct Terms {
     pub(crate) reading: RefCell<Option<String>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
+    /// The application's runtime, which a turn runs on as a task and a
+    /// command is waited for on.
+    ///
+    /// The drawing thread is never inside it, which is what lets this thread
+    /// wait on it: for a command's answer, for the backend the sandbox panel
+    /// shows, and for a turn that has ended to hand the conversation back.
+    pub(crate) runtime: tokio::runtime::Handle,
     /// What the process has been told from outside it, which stops a turn too
     /// and then the run.
     pub(crate) ending: super::ending::Ending,
@@ -153,7 +166,7 @@ pub(crate) struct Terms {
     /// from between one pass and the next. Held for the session the way the
     /// cancel is: it is made once beside it, and the turn's thread and the loop
     /// that reads the keyboard each hold an end.
-    pub(crate) steer: crucible_core::Steer,
+    pub(crate) steer: crucible_runtime::Steer,
     /// What a fact the session learned mid-turn is pushed into, and the turn
     /// draws from at the same boundary it draws steering from.
     ///
@@ -163,7 +176,7 @@ pub(crate) struct Terms {
     /// exited is the only thing that goes in it today, and the agent was told
     /// not to poll for that — so this is the channel that makes the promise
     /// true.
-    pub(crate) aside: crucible_core::Aside,
+    pub(crate) aside: crucible_runtime::Aside,
     /// Which files this session has read, which is what `write` asks before it
     /// replaces one.
     ///
@@ -176,7 +189,7 @@ pub(crate) struct Terms {
     /// Which deferred tools this session has looked up. `/clear` empties it for
     /// the reason it empties the plan: what it would otherwise leave is a model
     /// holding tools this conversation never asked for.
-    pub(crate) revealed: Revealed,
+    pub(crate) revealed: crucible_tools::Revealed,
     /// Where a tool's questions reach the thread that draws them.
     ///
     /// Held for the reason the ledger and the plan are: it is made once, beside
@@ -217,7 +230,7 @@ pub(crate) struct Terms {
     /// again. The row under the box says the step at once, marked for the next
     /// turn, so the press is not dead and the row is not a lie about the mode
     /// the running turn is decided under.
-    pub(crate) pending_mode: Cell<Option<Mode>>,
+    pub(crate) pending_mode: Cell<Option<crucible_tools::Mode>>,
     /// The settled configuration model limits are read from. Kept in memory so
     /// `/model` resolves a new name exactly as startup did without touching a
     /// file on the command path.
@@ -243,7 +256,7 @@ pub(crate) struct Terms {
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
     /// sessions are listed and which of them may be picked up.
-    pub(crate) workspace: Workspace,
+    pub(crate) workspace: crucible_workspace::Workspace,
     /// Which press finishes a prompt, and which one opens a line under it.
     ///
     /// Read once at startup and never again: it is a fact about the keyboard in
@@ -257,14 +270,14 @@ pub(crate) struct Terms {
     /// generation: the built-ins at startup, and whatever is committed beside
     /// them later. A line is read against the snapshot taken as it is read, so
     /// a name it resolves is one that was in force when it was typed.
-    pub(crate) commands: crucible_core::Registry<command::Slash>,
+    pub(crate) commands: crucible_registry::Registry<command::Slash>,
     /// The providers a name is read against, from `--model provider/…` to the
     /// rows `/login` and `/model` draw.
     ///
     /// A registry for the reason the commands are: the built-ins at startup,
     /// and whatever is committed beside them later. Each reader takes its own
     /// snapshot, so a provider it names is one that was in force when it asked.
-    pub(crate) providers: crucible_core::Registry<crucible_app::providers::Arm>,
+    pub(crate) providers: crucible_registry::Registry<crucible_app::providers::Arm>,
 }
 
 impl Terms {
@@ -351,13 +364,20 @@ pub(crate) fn converse<T: Terminal>(
     mut conversation: Conversation,
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    opening: &draw::opening::Standing,
+    first: First<'_>,
     input: &mut dyn BufRead,
 ) -> Result<Parting, Fatal> {
     // Named once here because the prompt asks for it every frame: it is what the
     // row under the box counts, and what that loop wakes on a clock for while
     // there is anything left to end.
     let left = &terms.leaving;
+
+    // Named before every guard, so that it is the last thing given back: what
+    // panicked on another thread while the terminal was held, and was never
+    // said on it, is written out once the screen is the reader's own again.
+    // Taken only once raw mode is, below; a session that holds no terminal
+    // lets a panic be written the way it always is.
+    let mut panics = None;
 
     // First of the guards, so that it is the last of them given back: raw mode
     // is left while this is still held, and the sequence that leaves it goes to
@@ -382,6 +402,9 @@ pub(crate) fn converse<T: Terminal>(
     // at one end or the other, which reads whole lines instead.
     let raw = Raw::enter()?;
     let keys = raw.is_some();
+    if keys {
+        panics = Some(Panics::kept());
+    }
 
     // Held the same way and for the same length, and asked for unconditionally
     // rather than from a setting: the older key encoding has no room for the
@@ -420,7 +443,7 @@ pub(crate) fn converse<T: Terminal>(
         terms.plan.clone(),
         terms.sending,
         Answers { input, keys },
-        opening,
+        first.card,
     );
 
     // What this directory has been asked before, read once here rather than at
@@ -434,7 +457,7 @@ pub(crate) fn converse<T: Terminal>(
     // box: the band it lands in is the one that scrolls, so the card keeps its
     // place under whatever is said next instead of being drawn again over it
     // every frame until the first prompt goes.
-    opening.commit(renderer)?;
+    first.drawn(renderer)?;
 
     attaching::refresh_store(&mut held, importing(conversation.session()));
 
@@ -482,6 +505,16 @@ pub(crate) fn converse<T: Terminal>(
         // reports one; between turns there is nobody reading, so it is noticed
         // here instead.
         renderer.resized()?;
+
+        // What panicked on another thread since the last pass, said here
+        // rather than written past the screen by whichever thread it was.
+        if let Some(panics) = &panics {
+            let (said, unkept) = panics.take();
+            if let Err(error) = draw::panicked(renderer, &said, unkept) {
+                panics.put_back(said, unkept);
+                return Err(error.into());
+            }
+        }
 
         // The fixed foot — the transcript-map door. Said here rather than
         // once at startup because a session that reopens the screen — a view,
@@ -868,8 +901,6 @@ struct Turn<'a, 'h> {
     says: &'a mut Says,
     /// Where the worker's events arrive.
     seen: &'a mut Inbox,
-    /// The two channels a question is answered down.
-    answering: &'a Answering,
     /// Whether the terminal is still being written to, or the last write
     /// failed and the rest of the turn is only being drained.
     drawn: &'a mut Result<(), Fatal>,
@@ -1008,17 +1039,25 @@ impl Turn<'_, '_> {
 
                 if self.drawn.is_ok() {
                     *self.drawn = stop_if_failed(
-                        shown(one, renderer, self.terms, self.held, self.answering),
+                        shown(one, renderer, self.terms, self.held),
                         &self.terms.cancel,
                     );
-                } else if matches!(one, Seen::Question { .. } | Seen::Asked { .. }) {
+                } else {
                     // Nothing is drawn and nothing is read once the terminal
                     // has failed, and both kinds of question still have to be
-                    // answered or the worker waits for ever. A refusal and
-                    // nobody-answered are what a drawing thread that has
-                    // stopped means, said out loud rather than by going quiet.
-                    let _ = self.answering.reply.send(verdict(None));
-                    let _ = self.answering.give.send(None);
+                    // answered on the channel they arrived with, or the
+                    // worker waits for ever. A refusal and nobody-answered
+                    // are what a drawing thread that has stopped means, said
+                    // out loud rather than by going quiet.
+                    match one {
+                        Seen::Question { reply, .. } => {
+                            let _ = reply.send(verdict(None));
+                        }
+                        Seen::Asked { reply, .. } => {
+                            let _ = reply.send(None);
+                        }
+                        Seen::Turn(_) => {}
+                    }
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -1251,10 +1290,10 @@ fn take<T: Terminal>(
     held: &mut Held<'_>,
 ) -> Result<Took, Fatal> {
     let (post, seen) = sync_channel(CAPACITY);
-    let (answering, hear) = Answering::new(&terms.putting, &post);
+    terms.putting.open(post.clone());
     let mut seen = Inbox::new(seen);
 
-    let asking = Asking::new(post.clone(), hear, terms.client.clone());
+    let asking = Asking::new(post.clone(), terms.client.clone());
     let relay = Relay::new(post, terms.putting.clone());
     let running = terms.cancel.clone();
 
@@ -1294,9 +1333,9 @@ fn take<T: Terminal>(
     // flag it finds raised.
     terms.cancel.reset();
 
-    // From here until the turn has been written down, a hang-up or a
-    // termination is noted for the loop below rather than obeyed where it
-    // lands: obeyed, it would take the answer on screen with it.
+    // From here until the worker has been joined, a hang-up or a termination
+    // is noted for the loop below rather than obeyed where it lands: obeyed,
+    // it would take the answer on screen with it.
     let heeding = terms.ending.turn();
 
     // Started before the worker rather than on the first thing it reports, so
@@ -1312,6 +1351,7 @@ fn take<T: Terminal>(
 
     attaching::refresh_store(held, importing(conversation.session()));
     let working = sent(
+        &terms.runtime,
         conversation,
         work,
         asking,
@@ -1319,7 +1359,7 @@ fn take<T: Terminal>(
         running,
         terms.steer.clone(),
         terms.aside.clone(),
-    )?;
+    );
 
     // The first thing drawn, and held like everything drawn after it: the runner
     // is with the worker now, so a terminal that failed here has to be carried
@@ -1357,7 +1397,6 @@ fn take<T: Terminal>(
         held,
         says: &mut says,
         seen: &mut seen,
-        answering: &answering,
         drawn: &mut drawn,
         meanwhile: &mut meanwhile,
         leaving: &mut leaving,
@@ -1376,7 +1415,9 @@ fn take<T: Terminal>(
             .map_err(Fatal::from);
     }
 
-    let (conversation, did) = working.join().map_err(|_| Fatal::Lost)?;
+    // The task has dropped both senders, so it has ended or is ending: this
+    // waits only for it to hand back what it took.
+    let (conversation, did) = terms.runtime.block_on(working).map_err(|_| Fatal::Lost)?;
 
     // Written down before the signal it was held back from is let through,
     // and a turn that failed written down whoever else holds the session:
@@ -1392,87 +1433,90 @@ fn take<T: Terminal>(
     })
 }
 
-/// Sends the work away on its own thread, with the runner.
+/// Sends the work away as a task on `runtime`, with the runner.
 ///
 /// The runner goes with it and comes back beside what it found to do, which is
 /// what makes the transcript and the permission memory survive a turn without
 /// being shared between threads. Nothing on this side waits on the provider,
-/// which is what keeps the box under the turn live while it runs.
-// Every one of these has to cross the thread boundary as a value the worker
-// owns or clones; the run that bundles four of them borrows, so it can only be
-// made on the far side. The lint counts to five; what has to travel is seven.
+/// which is what keeps the box under the turn live while it runs. The turn
+/// holds a worker only while it is polled: what it waits on — the model, a
+/// question, a terminal slow to take what it reports — hands the worker back
+/// while it lasts.
+// Every one of these has to cross into the task as a value it owns or clones;
+// the run that bundles four of them borrows, so it can only be made inside it.
+// The lint counts to five; what has to travel is seven, and where it goes.
 #[allow(clippy::too_many_arguments)]
 fn sent(
+    runtime: &tokio::runtime::Handle,
     mut conversation: Conversation,
     work: Work,
     mut asking: Asking,
     relay: Relay,
     running: Cancel,
-    steer: crucible_core::Steer,
-    aside: crucible_core::Aside,
-) -> Result<thread::JoinHandle<(Conversation, Did)>, Fatal> {
-    thread::Builder::new()
-        .name("turn".to_owned())
-        .spawn(move || {
-            // One run for the whole of what this worker was sent to do, and
-            // the identity every event of it carries. Minted here rather than
-            // inside the runner because the failure below is this side's to
-            // post: a `TurnError` is handed back rather than reported, and a
-            // failure stamped with a run of its own would say the turn that
-            // failed was somebody else's.
-            let run = conversation
-                .runner()
-                .starting(&relay, &running, &steer, &aside);
-            let reporting = run.reporting();
+    steer: crucible_runtime::Steer,
+    aside: crucible_runtime::Aside,
+) -> tokio::task::JoinHandle<(Conversation, Did)> {
+    runtime.spawn(async move {
+        // One run for the whole of what this worker was sent to do, and
+        // the identity every event of it carries. Minted here rather than
+        // inside the runner because the failure below is this side's to
+        // post: a `TurnError` is handed back rather than reported, and a
+        // failure stamped with a run of its own would say the turn that
+        // failed was somebody else's.
+        let run = conversation
+            .runner()
+            .starting(&relay, &running, &steer, &aside);
+        let reporting = run.reporting();
 
-            // What somebody asked for is asked of the application as the
-            // command it is. Room made because the window filled, or because
-            // a session was picked up as notes, is the host's own doing and
-            // no client's to ask for.
-            //
-            // A turn and a compaction are the same shape, and that is the
-            // whole of why this is one function: one request, answered over
-            // seconds, reporting as it goes. Everything the loop that draws
-            // does for a turn — the bar, the clock, the box taking the next
-            // prompt, the key that stops it — is what a reader waiting on a
-            // compaction needs, and none of it is about a turn.
-            let ended = match work {
-                Work::Turn(prompt, attached) => match Prompt::new(&prompt) {
-                    Ok(prompt) => {
-                        let asked = Command::Prompt(prompt);
-                        asking.turn(&mut conversation, asked, attached, &run)
-                    }
-                    Err(refusal) => Ended::Refused(refusal),
-                },
-                Work::Room(Compacting::Asked) => {
-                    asking.turn(&mut conversation, Command::Compact, Box::default(), &run)
+        // What somebody asked for is asked of the application as the
+        // command it is. Room made because the window filled, or because
+        // a session was picked up as notes, is the host's own doing and
+        // no client's to ask for.
+        //
+        // A turn and a compaction are the same shape, and that is the
+        // whole of why this is one function: one request, answered over
+        // seconds, reporting as it goes. Everything the loop that draws
+        // does for a turn — the bar, the clock, the box taking the next
+        // prompt, the key that stops it — is what a reader waiting on a
+        // compaction needs, and none of it is about a turn.
+        let ended = match work {
+            Work::Turn(prompt, attached) => match Prompt::new(&prompt) {
+                Ok(prompt) => {
+                    let asked = Command::Prompt(prompt);
+                    asking.turn(&mut conversation, asked, attached, &run).await
                 }
-                // No turn is running, so the reading starts at nothing and
-                // what it comes to is the recap request's own cost — posted
-                // on the way, which is all the row above the box asks.
-                Work::Room(why) => {
-                    Ended::Room(conversation.compact(why, &run, &mut Spend::default()))
-                }
-            };
+                Err(refusal) => Ended::Refused(refusal),
+            },
+            Work::Room(Compacting::Asked) => {
+                asking
+                    .turn(&mut conversation, Command::Compact, Box::default(), &run)
+                    .await
+            }
+            // No turn is running, so the reading starts at nothing and
+            // what it comes to is the recap request's own cost — posted
+            // on the way, which is all the row above the box asks.
+            Work::Room(why) => {
+                Ended::Room(conversation.compact(why, &run, &mut Spend::default()).await)
+            }
+        };
 
-            // What a turn came to is read rather than dropped: one that ran
-            // reported itself as it went, and one a guardrail refused may
-            // have reported nothing at all.
-            let did = match ended {
-                Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
-                Ended::Turn(Ok(refused)) => Did::Refused(refused),
-                Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
-                Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
-                Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
-                    reporting.post(Event::Failed { error: problem });
-                    Did::Reported
-                }
-                Ended::Refused(refusal) => Did::Unsent(refusal),
-            };
+        // What a turn came to is read rather than dropped: one that ran
+        // reported itself as it went, and one a guardrail refused may
+        // have reported nothing at all.
+        let did = match ended {
+            Ended::Turn(Ok(Turned::Ran(_))) | Ended::Room(Ok(Room::Made(_))) => Did::Reported,
+            Ended::Turn(Ok(refused)) => Did::Refused(refused),
+            Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
+            Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
+            Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
+                reporting.post(Event::Failed { error: problem });
+                Did::Reported
+            }
+            Ended::Refused(refusal) => Did::Unsent(refusal),
+        };
 
-            (conversation, did)
-        })
-        .map_err(Fatal::Worker)
+        (conversation, did)
+    })
 }
 
 /// What a worker is sent away to do.
@@ -1534,132 +1578,6 @@ fn stop_if_failed<T>(result: Result<T, Fatal>, cancel: &Cancel) -> Result<T, Fat
         cancel.request();
     }
     result
-}
-
-/// Prompts finished while a turn is still running.
-///
-/// Kept in order, and every one of them kept — the other two answers were both
-/// wrong for the same reason: keeping one line and dropping the rest loses
-/// something the user typed, watched the box take, and never sees again, and
-/// joining them into one prompt puts a message in the transcript nobody wrote.
-///
-/// Lines and bytes are both bounded: one-byte prompts cannot choose an
-/// unbounded number of allocations, and full-sized prompts cannot choose an
-/// unbounded retained buffer. Refusal leaves the editor untouched, so a prompt
-/// is never silently dropped after the box appeared to accept it.
-#[derive(Debug, Default)]
-struct Prompts {
-    lines: VecDeque<String>,
-    bytes: usize,
-}
-
-/// Whether a finished line moved from the editor into [`Prompts`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Retained {
-    /// The line is waiting for its turn.
-    Accepted,
-    /// A line or byte ceiling left it in the editor.
-    Refused,
-}
-
-impl Prompts {
-    /// Takes the editor whole where both ceilings have room.
-    fn accept(&mut self, editor: &mut Editor) -> Retained {
-        let bytes = editor.text().len();
-        if self.lines.len() >= QUEUED_LINES || bytes > QUEUED_BYTES.saturating_sub(self.bytes) {
-            return Retained::Refused;
-        }
-
-        self.bytes += bytes;
-        self.lines.push_back(editor.take());
-        Retained::Accepted
-    }
-
-    /// The prompt the next turn will be taken from, where one is waiting.
-    ///
-    /// Read while the turn ahead of it is still running, for the row that says
-    /// what is coming after it. A line that went into the box and vanished is
-    /// the thing this exists to stop: the queue is the only place it is, and
-    /// until it is named there is nothing on screen to say it was kept.
-    #[cfg(test)]
-    fn waiting(&self) -> Option<&str> {
-        self.lines.front().map(String::as_str)
-    }
-
-    /// Every prompt waiting, oldest first.
-    ///
-    /// The panel above the box is drawn from these: the second and third are as
-    /// much queued as the first, and a list that named only the front one said
-    /// the rest were not there.
-    fn waiting_all(&self) -> impl Iterator<Item = &str> {
-        self.lines.iter().map(String::as_str)
-    }
-
-    /// How many prompts are waiting.
-    fn waiting_count(&self) -> usize {
-        self.lines.len()
-    }
-
-    /// Drops the prompt `at` places back, releasing its byte reservation.
-    ///
-    /// What the queue's full view removes one with: a line typed and not yet
-    /// sent is the reader's to take back until the turn takes it. `None` where
-    /// there is no such place.
-    fn drop(&mut self, at: usize) -> Option<String> {
-        let prompt = self.lines.remove(at)?;
-        self.bytes = self.bytes.saturating_sub(prompt.len());
-        Some(prompt)
-    }
-
-    /// Drops the oldest waiting prompt that says `line`, and answers whether
-    /// there was one.
-    ///
-    /// What a turn taking a line to steer by leaves behind. From the moment it
-    /// is taken the line is in the transcript, so a panel that goes on naming
-    /// it says the reader is owed a turn they have already had — and the count
-    /// beside it says so twice. Matched on what the line says rather than on
-    /// where it sat, because the reader may have taken an earlier one back
-    /// between the turn reading the queue and saying what it read.
-    fn steered(&mut self, line: &str) -> bool {
-        let Some(at) = self.lines.iter().position(|waiting| waiting == line) else {
-            return false;
-        };
-
-        self.drop(at).is_some()
-    }
-
-    /// Takes the oldest waiting prompt and releases its byte reservation.
-    fn pop(&mut self) -> Option<String> {
-        let prompt = self.lines.pop_front()?;
-        self.bytes = self.bytes.saturating_sub(prompt.len());
-        Some(prompt)
-    }
-}
-
-/// Takes the whole queue for one turn: the oldest line is the prompt, and every
-/// line behind it is offered to that same turn.
-///
-/// A burst typed behind a turn is one thing the reader wanted said. Taken a line
-/// per turn, the first was answered before the model had read the second, so the
-/// agent worked to a question the reader had already added to — and three turns
-/// went by answering what was asked once. Handed over together, the runner
-/// records the batch at the first boundary of the turn this starts, which is
-/// before it asks anything: the model reads all of it and then answers all of
-/// it.
-///
-/// The lines behind the prompt go through the steer rather than into it,
-/// because joining them would put a message in the transcript nobody wrote.
-/// Each reaches it as the line it was typed as; what they share is the turn.
-///
-/// `None` where nothing is waiting, which is the ordinary case.
-fn batched(queued: &mut Prompts, steer: &crucible_core::Steer) -> Option<String> {
-    let said = queued.pop()?;
-
-    while let Some(behind) = queued.pop() {
-        steer.say(behind);
-    }
-
-    Some(said)
 }
 
 /// What the session holds between turns and lends to each one, beyond the
@@ -1892,15 +1810,21 @@ fn settling<T: Terminal>(
     )
 }
 
+/// Refuses a pending action already off the channel: the drain cannot meet
+/// the same [`Seen::Question`] or [`Seen::Asked`] again, so silence must
+/// still carry a refusal, or the worker waits forever beside it.
+fn refuse<T>(reply: oneshot::Sender<T>, refusal: T, problem: Fatal) -> Result<(), Fatal> {
+    let _ = reply.send(refusal);
+    Err(problem)
+}
+
 /// Draws one thing the worker sent, and answers it if it was a question.
 fn shown<T: Terminal>(
     one: Seen,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     held: &mut Held<'_>,
-    answering: &Answering,
 ) -> Result<(), Fatal> {
-    let Answering { reply, give } = answering;
     let style = terms.style();
 
     match one {
@@ -1915,7 +1839,11 @@ fn shown<T: Terminal>(
         Seen::Turn(event) => {
             draw::event(renderer, event, &terms.workspace, style, &mut held.kept)?;
         }
-        Seen::Question { call, sensitivity } => {
+        Seen::Question {
+            call,
+            sensitivity,
+            reply,
+        } => {
             // A durable rule cannot live in either project configuration file:
             // both names can arrive with a checkout, whatever an ignore rule
             // says. Until policy has a per-workspace store outside the checkout,
@@ -1925,22 +1853,15 @@ fn shown<T: Terminal>(
             let answer = terms.ending.unclocked().and_then(|_unclocked| {
                 asked(renderer, &call, &sensitivity, &mut held.answers, style)
             });
-            let answer = match answer {
-                Ok(answer) => answer,
-                Err(problem) => {
-                    // This question has already left the channel, so the drain
-                    // cannot encounter and refuse it again. Silence must still
-                    // be a refusal or the worker waits forever beside the
-                    // terminal failure this returns.
-                    let _ = reply.send(verdict(None));
-                    return Err(problem);
+            match answer {
+                Ok(answer) => {
+                    // A worker that stopped waiting has already denied itself.
+                    let _ = reply.send(answer);
                 }
-            };
-
-            // A worker that stopped waiting has already denied itself.
-            let _ = reply.send(answer);
+                Err(problem) => return refuse(reply, verdict(None), problem),
+            }
         }
-        Seen::Asked { questions } => {
+        Seen::Asked { questions, reply } => {
             // A loop reading lines rather than keys has nobody to put a panel
             // to, and neither has one whose raw mode never came up. The tool is
             // not registered in either, so this is the belt rather than the
@@ -1948,27 +1869,19 @@ fn shown<T: Terminal>(
             // ever, and waiting for ever is the one failure this loop may not
             // have.
             if !held.answers.keys {
-                let _ = give.send(None);
+                let _ = reply.send(None);
                 return Ok(());
             }
 
-            // The same wait as a permission question's, for as long as the
-            // panel stands — the cramped reading below included.
-            let unclocked = terms.ending.unclocked().inspect_err(|_| {
-                let _ = give.send(None);
-            })?;
+            // The same wait as a permission question's: as long as the panel stands.
+            let unclocked = match terms.ending.unclocked() {
+                Ok(unclocked) => unclocked,
+                Err(problem) => return refuse(reply, None, problem),
+            };
 
-            let given = putting::put(renderer, style, &questions);
-            let given = match given {
+            let given = match putting::put(renderer, style, &questions) {
                 Ok(given) => given,
-                Err(problem) => {
-                    // This ask has already left the channel, so the drain
-                    // cannot meet it again. Nobody answered is what the worker
-                    // has to hear, or it waits for ever beside the terminal
-                    // failure this returns.
-                    let _ = give.send(None);
-                    return Err(problem);
-                }
+                Err(problem) => return refuse(reply, None, problem),
             };
 
             let given = match given {
@@ -1979,15 +1892,12 @@ fn shown<T: Terminal>(
                 // have to be put: a window this small is not somebody saying no.
                 putting::Put::Cramped => match cramped(renderer, &questions, style) {
                     Ok(given) => given,
-                    Err(problem) => {
-                        let _ = give.send(None);
-                        return Err(problem);
-                    }
+                    Err(problem) => return refuse(reply, None, problem),
                 },
             };
 
             drop(unclocked);
-            let _ = give.send(given);
+            let _ = reply.send(given);
         }
     }
 

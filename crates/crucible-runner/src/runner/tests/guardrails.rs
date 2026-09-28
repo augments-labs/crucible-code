@@ -5,6 +5,7 @@ use crucible_agents::{
     AgentBuilder, AgentContext, Availability, Decision, GuardrailError, InputGuardrail,
     OutputGuardrail, Undecided,
 };
+use crucible_runtime::BoxFuture;
 
 use super::*;
 
@@ -681,20 +682,22 @@ impl Tool for Gate {
         Summary::new("waiting to be let go")
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        self.started
-            .send(())
-            .expect("the test to be waiting for this call");
-        self.go
-            .lock()
-            .unwrap()
-            .recv()
-            .expect("the test to let this call go");
-        Ok(ToolOutput::ok("let go"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.started
+                .send(())
+                .expect("the test to be waiting for this call");
+            self.go
+                .lock()
+                .unwrap()
+                .recv()
+                .expect("the test to let this call go");
+            Ok(ToolOutput::ok("let go"))
+        })
     }
 }
 
@@ -897,8 +900,8 @@ fn a_check_that_could_not_decide_is_named_by_who_asked_it_whatever_it_says() {
         .expect("an undecided check is not a failure");
 
     assert!(
-        matches!(&turned, Turned::Undecided { problem: GuardrailError::Undecided { guard, problem }, .. }
-            if &**guard == "shrugging" && &**problem == "no-secrets is away"),
+        matches!(&turned, Turned::Undecided { problem: GuardrailError::Undecided(unanswered), .. }
+            if unanswered.guard() == "shrugging" && unanswered.problem() == "no-secrets is away"),
         "a check that could not decide was put under a name it does not have: {turned:?}"
     );
 }

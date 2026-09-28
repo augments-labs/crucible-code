@@ -19,15 +19,14 @@ fn disposed_snapshots_do_not_consume_live_audit_capacity() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
     let mut snapshots = Vec::new();
     for _ in 0..=MAX_SANDBOX_AUDIT_LIFECYCLES {
         let context = lifecycle().with_sandbox_audits(registry.clone());
-        hosting
-            .prepare(&context)
-            .expect("disposed lifecycle releases its audit slot");
-        snapshots.push(hosting.snapshot(&context).unwrap());
-        hosting.dispose(&context).unwrap();
+        awaited(hosting.prepare(&context)).expect("disposed lifecycle releases its audit slot");
+        snapshots.push(awaited(hosting.snapshot(&context)).unwrap());
+        awaited(hosting.dispose(&context)).unwrap();
         assert!(registry.take_records().unwrap().is_empty());
     }
     assert_eq!(sandbox.started(), MAX_SANDBOX_AUDIT_LIFECYCLES + 1);
@@ -55,34 +54,41 @@ impl Recording {
 }
 
 impl SandboxService for Recording {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
         self.inner.probe()
     }
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        let id = request.id();
-        let audit = request.audit().clone();
-        self.seen.lock().unwrap().push((id, audit.clone()));
-        audit.record(
-            id,
-            SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
-        )?;
-        let index = self.inner.started();
-        match self.inner.prepare(request) {
-            Ok(session) => {
-                *self.inner.server(index).audit.lock().unwrap() = Some((id, audit));
-                Ok(session)
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let id = request.id();
+            let audit = request.audit().clone();
+            self.seen.lock().unwrap().push((id, audit.clone()));
+            audit.record(
+                id,
+                SandboxFactKind::Lifecycle(SandboxLifecycle::PolicyResolved),
+            )?;
+            let index = self.inner.started();
+            match self.inner.prepare(request).await {
+                Ok(session) => {
+                    *self.inner.server(index).audit.lock().unwrap() = Some((id, audit));
+                    Ok(session)
+                }
+                Err(error) => {
+                    audit.record(
+                        id,
+                        SandboxFactKind::Failed {
+                            phase: SandboxFailurePhase::Prepare,
+                            kind: SandboxFailureKind::Lifecycle,
+                        },
+                    )?;
+                    Err(error)
+                }
             }
-            Err(error) => {
-                audit.record(
-                    id,
-                    SandboxFactKind::Failed {
-                        phase: SandboxFailurePhase::Prepare,
-                        kind: SandboxFailureKind::Lifecycle,
-                    },
-                )?;
-                Err(error)
-            }
-        }
+        })
     }
 }
 
@@ -98,15 +104,16 @@ fn hosted_audits_keep_attribution_through_restart_and_disposal() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs").restarting(1)],
+        crate::testing::runtime(),
     );
-    hosting.prepare(&context).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
     let initial = registry.take_records().unwrap();
     assert_eq!(
         initial.len(),
         1,
         "preparation fact must reach host registry"
     );
-    let snapshot = hosting.snapshot(&context).unwrap();
+    let snapshot = awaited(hosting.snapshot(&context)).unwrap();
     let entry = snapshot.find("mcp:docs/search").unwrap();
     sandbox.inner.server(0).departs();
     assert!(
@@ -115,7 +122,7 @@ fn hosted_audits_keep_attribution_through_restart_and_disposal() {
             .text()
             .contains("replacement")
     );
-    hosting.dispose(&context).unwrap();
+    awaited(hosting.dispose(&context)).unwrap();
     let rest = registry.take_records().unwrap();
     let facts: Vec<_> = initial.iter().chain(rest.iter()).collect();
     assert_eq!(facts.len(), 4);
@@ -153,9 +160,10 @@ fn hosted_audits_retain_preparation_failure_facts() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
-    assert!(hosting.prepare(&context).is_err());
-    hosting.dispose(&context).unwrap();
+    assert!(awaited(hosting.prepare(&context)).is_err());
+    awaited(hosting.dispose(&context)).unwrap();
     let records = registry.take_records().unwrap();
     assert_eq!(records.len(), 2);
     assert!(
@@ -189,12 +197,13 @@ fn hosted_audits_refuse_full_registry_before_backend_effects() {
         builtin(&[]),
         sandbox.clone() as Arc<dyn SandboxService>,
         vec![chosen("docs")],
+        crate::testing::runtime(),
     );
-    assert!(hosting.prepare(&context).is_err());
+    assert!(awaited(hosting.prepare(&context)).is_err());
     assert!(sandbox.seen.lock().unwrap().is_empty());
     drop(held);
-    hosting.prepare(&context).unwrap();
-    hosting.dispose(&context).unwrap();
+    awaited(hosting.prepare(&context)).unwrap();
+    awaited(hosting.dispose(&context)).unwrap();
     assert_eq!(sandbox.seen.lock().unwrap().len(), 1);
 }
 
@@ -206,8 +215,9 @@ fn hosted_audits_validate_identity_before_backend_effects() {
             builtin(&[]),
             sandbox.clone() as Arc<dyn SandboxService>,
             vec![chosen(&"x".repeat(length))],
+            crate::testing::runtime(),
         );
-        assert!(hosting.prepare(&lifecycle()).is_err());
+        assert!(awaited(hosting.prepare(&lifecycle())).is_err());
         assert!(
             sandbox.seen.lock().unwrap().is_empty(),
             "identity must be validated before preparation"

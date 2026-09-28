@@ -13,6 +13,8 @@
 //! crucible was asked to launch. What a launched command may then do is the
 //! sandbox's to bound, and the tests below say so in both directions.
 
+use crucible_storage::{SandboxCommandStage, SandboxGuardrailDecision};
+
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
@@ -40,24 +42,6 @@ pub enum SandboxGuardrailEffect {
     Allow,
     /// A match refuses the command even if an allow rule also matches.
     Deny,
-}
-
-/// Which immutable command image a guardrail is evaluating.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxCommandStage {
-    /// The host-selected invocation before a trusted adapter transformation.
-    Requested,
-    /// The invocation after every trusted program/argument transformation.
-    Effective,
-}
-
-/// Redacted outcome retained by audit/events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SandboxGuardrailDecision {
-    /// Every independent filter admitted the command.
-    Allowed,
-    /// A deny matched or one filter's allow set did not match.
-    Denied,
 }
 
 /// One exact, prefix, or per-word anchored glob rule.
@@ -439,8 +423,10 @@ pub enum SandboxGuardrailError {
     TooManyRules,
 }
 
-// The fixtures are POSIX absolute paths, which no Windows path type accepts;
-// Windows has no confinement backend to give them a native shape.
+// The fixtures this module hands to `SandboxCommand::new` are POSIX absolute
+// paths; Windows does not accept them as absolute, so that constructor rejects
+// them on Windows before any backend is called. The gate is the module's, so
+// tests that need no such rejection ride it too.
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {

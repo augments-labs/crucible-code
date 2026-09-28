@@ -50,7 +50,7 @@ pub(super) mod tests {
     /// Every delta a response produces.
     pub(in crate::moonshot) fn deltas(stream: &mut dyn DeltaStream) -> Vec<Delta> {
         let mut out = Vec::new();
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             out.push(delta.unwrap());
         }
         out
@@ -181,7 +181,9 @@ pub(super) mod tests {
             &Cancel::new(),
         );
 
-        let problem = stream.next().unwrap().unwrap_err();
+        let problem = crucible_runtime::answered!(stream.next())
+            .unwrap()
+            .unwrap_err();
 
         assert!(
             matches!(problem, ProviderError::Protocol { .. }),
@@ -197,15 +199,20 @@ pub(super) mod tests {
         );
         let mut stream = reading(&body, &Cancel::new());
 
-        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
-        let problem = stream.next().unwrap().unwrap_err();
+        assert_eq!(
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+            Delta::Text("Hel".into())
+        );
+        let problem = crucible_runtime::answered!(stream.next())
+            .unwrap()
+            .unwrap_err();
 
         assert_eq!(
             problem.to_string(),
             "moonshot: rate_limit_reached_error: too many requests"
         );
         assert!(
-            stream.next().is_none(),
+            crucible_runtime::answered!(stream.next()).is_none(),
             "the stream continued past a failure"
         );
     }
@@ -233,14 +240,19 @@ pub(super) mod tests {
     fn a_response_that_stops_arriving_is_a_failure_and_not_a_finished_turn() {
         let mut stream = reading(&chunk(r#"{"content":"Hel"}"#, "null"), &Cancel::new());
 
-        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hel".into()));
-        let problem = stream.next().unwrap().unwrap_err();
+        assert_eq!(
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+            Delta::Text("Hel".into())
+        );
+        let problem = crucible_runtime::answered!(stream.next())
+            .unwrap()
+            .unwrap_err();
 
         assert!(
             matches!(problem, ProviderError::Transport { .. }),
             "expected a truncated response to be reported, got {problem:?}"
         );
-        assert!(stream.next().is_none());
+        assert!(crucible_runtime::answered!(stream.next()).is_none());
     }
 
     #[test]
@@ -248,13 +260,19 @@ pub(super) mod tests {
         let cancel = Cancel::new();
         let mut stream = reading(ANSWER, &cancel);
 
-        assert_eq!(stream.next().unwrap().unwrap(), Delta::Text("Hello".into()));
+        assert_eq!(
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
+            Delta::Text("Hello".into())
+        );
         cancel.request();
 
         assert_eq!(
-            stream.next().unwrap().unwrap(),
+            crucible_runtime::answered!(stream.next()).unwrap().unwrap(),
             Delta::Stopped(StopReason::Cancelled)
         );
-        assert!(stream.next().is_none(), "the stream continued after a stop");
+        assert!(
+            crucible_runtime::answered!(stream.next()).is_none(),
+            "the stream continued after a stop"
+        );
     }
 }

@@ -7,9 +7,10 @@ use serde_json::{Value, json};
 
 use super::{
     CURSOR_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS, VERSIONS,
-    hello, tools,
+    hello, hello_async, tools, tools_async,
 };
 use crate::talking::Talking;
+use crate::testing::runtime;
 
 /// A server's side of the conversation, one frame per line.
 ///
@@ -60,16 +61,28 @@ fn agreeable() -> Value {
 
 /// Greets a server against a script, and hands back the greeting and what
 /// crucible said.
+///
+/// Greeted twice, once over each kind of stream, and held to one answer: the
+/// awaited handshake has to send what the blocking one sends and come to what
+/// it comes to, so every script here is asked of both.
 fn greet(frames: &[Value]) -> (Result<Greeting, Rebuffed>, Vec<Value>) {
     let mut said = Vec::new();
     let greeting = {
         let mut talking = Talking::new(Cursor::new(script(frames)), &mut said);
         hello(&mut talking)
     };
+    let mut said_async = Vec::new();
+    let greeting_async = {
+        let mut talking = Talking::new(Cursor::new(script(frames)), &mut said_async);
+        runtime().block_on(hello_async(&mut talking))
+    };
+    agreed(&greeting, &said, &greeting_async, &said_async);
     (greeting, spoken(&said))
 }
 
 /// Greets a server and then reads its catalogue, against one script.
+///
+/// Read twice, as [`greet`] greets, and held to one answer.
 fn read(frames: &[Value]) -> (Result<Vec<Offered>, Rebuffed>, Vec<Value>) {
     let mut said = Vec::new();
     let read = {
@@ -77,7 +90,42 @@ fn read(frames: &[Value]) -> (Result<Vec<Offered>, Rebuffed>, Vec<Value>) {
         let greeting = hello(&mut talking).expect("the greeting in these scripts is agreeable");
         tools(&mut talking, &greeting)
     };
+    let mut said_async = Vec::new();
+    let read_async = {
+        let mut talking = Talking::new(Cursor::new(script(frames)), &mut said_async);
+        runtime().block_on(async {
+            let greeting = hello_async(&mut talking)
+                .await
+                .expect("the greeting in these scripts is agreeable");
+            tools_async(&mut talking, &greeting).await
+        })
+    };
+    agreed(&read, &said, &read_async, &said_async);
     (read, spoken(&said))
+}
+
+/// Holds what the awaited form came to, and what it sent, to what the
+/// blocking form did.
+///
+/// Compared as they print, because a refusal carries the conversation's own
+/// error and that is not comparable as a value: what is held equal is every
+/// word a caller could be shown.
+fn agreed<T: std::fmt::Debug>(
+    waited: &Result<T, Rebuffed>,
+    said: &[u8],
+    awaited: &Result<T, Rebuffed>,
+    said_async: &[u8],
+) {
+    assert_eq!(
+        format!("{awaited:?}"),
+        format!("{waited:?}"),
+        "the awaited form came to something else"
+    );
+    assert_eq!(
+        spoken(said_async),
+        spoken(said),
+        "the awaited form said something else"
+    );
 }
 
 /// What crucible wrote, read back as messages.
@@ -184,22 +232,13 @@ fn an_answer_carrying_no_version_is_refused() {
 
 #[test]
 fn a_server_that_says_it_has_no_tools_is_not_asked_for_any() {
-    let mut said = Vec::new();
-    let read = {
-        let mut talking = Talking::new(
-            Cursor::new(script(&[json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": { "protocolVersion": VERSIONS[0], "capabilities": {} },
-            })])),
-            &mut said,
-        );
-        let greeting = hello(&mut talking).expect("the server agreed");
-        tools(&mut talking, &greeting)
-    };
+    let (read, said) = read(&[json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": { "protocolVersion": VERSIONS[0], "capabilities": {} },
+    })]);
 
     assert_eq!(read.expect("no tools is not a failure"), Vec::new());
-    let said = spoken(&said);
     assert!(
         said.iter()
             .all(|message| message.get("method") != Some(&json!("tools/list"))),
@@ -442,4 +481,72 @@ fn a_cursor_past_its_ceiling_is_refused_rather_than_handed_back() {
         panic!("expected the cursor to be refused, got {read:?}");
     };
     assert_eq!(field, "nextCursor");
+}
+
+#[test]
+fn a_schema_whose_member_names_would_hide_alike_is_refused_rather_than_merged() {
+    // Hidden, `k_q7` and `k_z9` are both `k_**`, and an object holds one
+    // member per name: keeping either would show the model a schema with a
+    // property missing.
+    let frames = [
+        agreeable(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": { "tools": [{
+                "name": "search",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "k_q7": { "type": "string" }, "k_z9": { "type": "number" } },
+                },
+            }] },
+        }),
+    ];
+    let mut said = Vec::new();
+    let read = {
+        let mut talking = Talking::withholding(
+            Cursor::new(script(&frames)),
+            &mut said,
+            crate::Withheld::new(["q7", "z9"]),
+        );
+        let greeting = hello(&mut talking).expect("an agreeable greeting");
+        tools(&mut talking, &greeting)
+    };
+
+    let Err(refused) = read else {
+        panic!("a schema that lost a member to hiding was offered: {read:?}");
+    };
+    let told = refused.to_string();
+    assert!(
+        told.contains("search") && !told.contains("q7") && !told.contains("z9"),
+        "the refusal should name the tool and no value: {told}"
+    );
+}
+
+#[test]
+fn debug_of_an_offered_tool_shows_only_what_is_hidden() {
+    let frames = [
+        agreeable(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": { "tools": [{ "name": "search-sk-canary", "description": "sk-canary" }] },
+        }),
+    ];
+    let mut said = Vec::new();
+    let offered = {
+        let mut talking = Talking::withholding(
+            Cursor::new(script(&frames)),
+            &mut said,
+            crate::Withheld::new(["sk-canary"]),
+        );
+        let greeting = hello(&mut talking).expect("an agreeable greeting");
+        tools(&mut talking, &greeting).expect("one tool")
+    };
+
+    let shown = format!("{offered:?}");
+    assert!(
+        !shown.contains("sk-canary"),
+        "Debug of an offered tool printed the name the server wrote: {shown}"
+    );
 }

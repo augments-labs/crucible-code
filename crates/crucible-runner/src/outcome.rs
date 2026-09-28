@@ -23,7 +23,7 @@
 //! [`Runner::turn`]: crate::Runner::turn
 
 use crucible_agents::{GuardrailError, Rejection};
-use crucible_core::{RunId, Spend, StopReason};
+use crucible_types::{RunId, Spend, StopReason};
 
 /// How a run ended, in the words the harness uses rather than the model's.
 ///

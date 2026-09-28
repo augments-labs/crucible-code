@@ -17,6 +17,14 @@
 //! Nothing here connects on its own. A [`Hosted`] exists because something
 //! above it decided to start one server, for one run, and no part of reading a
 //! configuration file or registering an adapter reaches this module.
+//!
+//! A server is greeted, read and called either way the conversation is held:
+//! waited on from the caller's thread, or awaited through the `_async` forms,
+//! which hosting uses. Every exchange, either way, begins by setting its own
+//! interrupt and deadline on the stream, so an awaited one given up on part
+//! way leaves the next exchange a silence of its own rather than what was left
+//! of the last one's. Starting one and stopping one are awaited, on the runtime
+//! the transport's finish is awaited on too.
 
 use std::fmt;
 use std::io;
@@ -29,7 +37,9 @@ use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken}
 use crate::calling::{Answered, Unanswered};
 use crate::catalogue::{Greeting, Offered, Rebuffed};
 use crate::talking::Talking;
+use crate::withheld::Withheld;
 use serde_json::Value;
+use tokio::runtime::Handle;
 
 /// An MCP server, hosted over a confined process.
 pub struct Hosted {
@@ -44,28 +54,62 @@ pub struct Hosted {
 }
 
 impl Hosted {
-    /// Speaks to `process`, giving up on one silence after `patience`.
+    /// Speaks to `process`, giving up on one silence after `patience`, with
+    /// its streams read and written by tasks on `runtime`.
     ///
     /// The patience is spent on a single quiet stretch in either direction and
     /// handed back whenever anything moves, so a slow server is slow rather
     /// than dead. Standard error is drained from here on, which is what keeps a
-    /// talkative server from wedging in a write nobody is reading.
+    /// talkative server from wedging in a write nobody is reading. The tasks
+    /// that read and write the conversation end when this is stopped or
+    /// dropped; the drain goes on into what [`Self::stop`] hands back, until
+    /// the stream ends or that is dropped too.
     ///
     /// # Errors
     ///
     /// [`Unstarted`] where the process has no pipe to speak over or none to
     /// listen to. Stopping the process is attempted before either is returned, and
-    /// [`Unstarted::Unreaped`] preserves an unconfirmed stop: a peer
-    /// crucible cannot hold a conversation with is one it has no way to end
-    /// politely later.
-    pub fn over(
+    /// [`Unstarted::Unreaped`] preserves an unconfirmed stop, whether it failed
+    /// or never answered: a peer crucible cannot hold a
+    /// conversation with is one it has no way to end politely later.
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped while the refused process is being stopped, that stop is
+    /// dropped with it, leaving the process's end as unconfirmed as a stop
+    /// that did not answer.
+    pub async fn over(
+        process: Box<dyn SandboxProcess>,
+        patience: Duration,
+        runtime: &Handle,
+    ) -> Result<Self, Unstarted> {
+        Self::withholding(process, patience, Withheld::nothing(), runtime).await
+    }
+
+    /// Speaks to `process` as [`Self::over`] does, hiding `withheld` in
+    /// everything the server says that crucible keeps.
+    ///
+    /// Its standard output is decoded before anything is hidden, which is the
+    /// only place a value it escaped can be found and the one place hiding
+    /// cannot rewrite a frame. Its standard error is the backend's to mask.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::over`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::over`]'s.
+    pub async fn withholding(
         mut process: Box<dyn SandboxProcess>,
         patience: Duration,
+        withheld: Withheld,
+        runtime: &Handle,
     ) -> Result<Self, Unstarted> {
-        let pipes = Pipes::taken(process.as_mut(), patience)?;
+        let pipes = Pipes::taken(process.as_mut(), patience, runtime).await?;
         Ok(Self {
             process,
-            talking: Talking::new(pipes.heard, pipes.said),
+            talking: Talking::withholding(pipes.heard, pipes.said, withheld),
             muttered: pipes.muttered,
             patience,
         })
@@ -124,14 +168,34 @@ impl Hosted {
         interrupt: Option<&Cancel>,
         work: impl FnOnce(&mut Talking<Heard<Box<dyn SandboxOutput>>, Said>) -> Result<T, E>,
     ) -> Result<T, E> {
+        self.exchanging(interrupt);
+        let done = work(&mut self.talking);
+        self.exchanged();
+        done
+    }
+
+    /// Begins one exchange: its token and its deadline are set, which is also
+    /// what marks its edge.
+    ///
+    /// Every exchange begins here, awaited or not, and that is what an awaited
+    /// one given up on needs of the next. It left its silence running on the
+    /// stream, and setting the next exchange's token or deadline is what ends
+    /// that silence, so the next exchange sits through one of its own rather
+    /// than only what was left of the last one's.
+    fn exchanging(&mut self, interrupt: Option<&Cancel>) {
         let heard = self.talking.heard_mut();
         heard.abandoned_when(interrupt.cloned());
         heard.bounded_until(Instant::now().checked_add(self.patience));
-        let done = work(&mut self.talking);
+    }
+
+    /// Ends one exchange: its token and its deadline are put down.
+    ///
+    /// An awaited exchange given up on never reaches this, and leaves both on
+    /// the stream until the next exchange sets its own.
+    fn exchanged(&mut self) {
         let heard = self.talking.heard_mut();
         heard.abandoned_when(None);
         heard.bounded_until(None);
-        done
     }
 
     /// Reads every tool the server offers, under crucible's own bounds.
@@ -185,6 +249,73 @@ impl Hosted {
         })
     }
 
+    /// Agrees a protocol version and finishes the handshake, awaited.
+    ///
+    /// The same handshake as [`Self::greet`], under the same deadline and the
+    /// same `interrupt`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::greet`].
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped part way, it leaves a conversation to ask nothing further
+    /// of, as [`Talking::ask_async`] says; what it does not leave is its
+    /// silence, which the next exchange begun here ends.
+    pub async fn greet_async(&mut self, interrupt: Option<&Cancel>) -> Result<Greeting, Rebuffed> {
+        self.exchanging(interrupt);
+        let greeting = crate::catalogue::hello_async(&mut self.talking).await;
+        self.exchanged();
+        greeting
+    }
+
+    /// Reads every tool the server offers, awaited.
+    ///
+    /// The same catalogue as [`Self::catalogue`], under the same bounds.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::catalogue`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::greet_async`]'s.
+    pub async fn catalogue_async(
+        &mut self,
+        greeting: &Greeting,
+        interrupt: Option<&Cancel>,
+    ) -> Result<Vec<Offered>, Rebuffed> {
+        self.exchanging(interrupt);
+        let offered = crate::catalogue::tools_async(&mut self.talking, greeting).await;
+        self.exchanged();
+        offered
+    }
+
+    /// Calls one tool the server offered, awaited.
+    ///
+    /// The same call as [`Self::call`], under the same bounds.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::call`].
+    ///
+    /// # Cancel safety
+    ///
+    /// As [`Self::greet_async`]'s. A call dropped once its frame has gone is a
+    /// tool that may be running still, as [`crate::call_async`] says.
+    pub async fn call_async(
+        &mut self,
+        tool: &Offered,
+        arguments: &Value,
+        interrupt: Option<&Cancel>,
+    ) -> Result<Answered, Unanswered> {
+        self.exchanging(interrupt);
+        let answered = crate::calling::call_async(&mut self.talking, tool, arguments).await;
+        self.exchanged();
+        answered
+    }
+
     /// What the server has written to standard error so far.
     #[must_use]
     pub const fn muttered(&self) -> &Muttered {
@@ -211,11 +342,19 @@ impl Hosted {
     ///
     /// Crucible's end of the pipe closes first, which is how a server is told
     /// there is nothing further to wait for, and the grace is the chance to act
-    /// on it.
+    /// on it. Only then is it stopped, because a process killed while it
+    /// was still tidying up left whatever it was tidying half done. The wait
+    /// is [`Finish::after_async`]'s, on the runtime this is awaited on.
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped before it answers, it stops nothing further, and what it
+    /// would have handed back goes with it: the process's end is as
+    /// unconfirmed as a stop that did not answer.
     #[must_use]
-    pub fn stop(mut self, grace: Duration) -> Ended {
+    pub async fn stop(mut self, grace: Duration) -> Ended {
         drop(self.talking);
-        let finish = Finish::after(self.process.as_mut(), grace);
+        let finish = Finish::after_async(self.process.as_mut(), grace).await;
         Ended {
             // Asked after the process has finished, because the supervisor
             // records a violation at the moment it acts on one and this is the
@@ -258,16 +397,22 @@ pub enum Unstarted {
     )]
     Unheard,
 
-    /// Hosting failed, and the backend could not confirm process-scope cleanup.
+    /// Hosting failed, and cleanup of the process scope is unconfirmed: the
+    /// stop failed, or never answered.
     ///
-    /// Construction retains the original missing-pipe cause and the stop error;
-    /// it emits one wrapper, never a chain of cleanup attempts.
-    #[error("{cause}; process cleanup remains unconfirmed: {cleanup}")]
+    /// Construction retains the missing-pipe cause and the stop's error; it emits one wrapper, never a chain of cleanup attempts. A
+    /// stop that never answered already says that what it began is unconfirmed, so the
+    /// message gives it as it stands; a failed stop's words need not say it, so
+    /// the message says it before them.
+    #[error("{cause}; {}: {cleanup}", process_cleanup(.cleanup))]
     Unreaped {
         /// Why the process could not be hosted.
         #[source]
         cause: Box<Self>,
-        /// Why the backend could not confirm cleanup.
+        /// Why the backend could not confirm cleanup. A stop that never
+        /// answered is as unconfirmed as one that failed: this then holds the
+        /// [`Unanswered`](crucible_transport::Unanswered) it gave up on, which
+        /// `get_ref` finds.
         cleanup: io::Error,
     },
 }
@@ -307,6 +452,37 @@ impl From<Unspoken> for Unstarted {
             },
         }
     }
+}
+
+/// What leads in a stop's error in [`Unstarted::Unreaped`]'s message.
+fn process_cleanup(cleanup: &io::Error) -> &'static str {
+    if refused_stop(cleanup) {
+        "process cleanup"
+    } else {
+        "process cleanup remains unconfirmed"
+    }
+}
+
+/// Whether `stop` is a stop that was never waited out, rather than one that
+/// failed.
+///
+/// A stop that never answered already says that what it began is unconfirmed,
+/// which is what the message around it must not say a second time.
+///
+/// The [`Unanswered`](crucible_transport::Unanswered) is the error `stop`
+/// holds; or, for a process stopped at its publication ceiling, the error held
+/// by the stop's own error, which the one saying what the ceiling cost keeps as
+/// its source.
+pub(crate) fn refused_stop(stop: &io::Error) -> bool {
+    let Some(held) = stop.get_ref() else {
+        return false;
+    };
+    let beneath = held
+        .source()
+        .and_then(|source| source.downcast_ref::<io::Error>())
+        .and_then(io::Error::get_ref);
+    held.is::<crucible_transport::Unanswered>()
+        || matches!(beneath, Some(inner) if inner.is::<crucible_transport::Unanswered>())
 }
 
 #[cfg(test)]

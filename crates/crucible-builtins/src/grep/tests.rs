@@ -12,14 +12,13 @@ use crate::sample::{Sample, allowed, under};
 
 fn grep(sample: &Sample, args: &str) -> ToolOutput {
     let tool = Grep::new(sample.workspace());
-    tool.run(allowed(&tool, args), &crate::sample::context())
-        .unwrap()
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context())).unwrap()
 }
 
 /// The same search, with rules standing about files below the one searched.
 fn grep_under(sample: &Sample, args: &str, rules: &[(Disposition, &str)]) -> ToolOutput {
     let tool = Grep::new(sample.workspace());
-    tool.run(under(&tool, args, rules), &crate::sample::context())
+    crucible_runtime::answered!(tool.run(under(&tool, args, rules), &crate::sample::context()))
         .unwrap()
 }
 
@@ -81,13 +80,12 @@ fn a_mode_this_tool_does_not_have_is_refused_rather_than_guessed_at() {
     let sample = tree("grep-mode-unknown");
     let tool = Grep::new(sample.workspace());
 
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"pattern":"needle","mode":"paths"}"#),
-            &crate::sample::context(),
-        )
-        .unwrap_err()
-        .to_string();
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"pattern":"needle","mode":"paths"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap_err()
+    .to_string();
 
     assert_eq!(problem, "grep: mode must be one of content, files");
 }
@@ -364,12 +362,11 @@ fn a_search_the_user_stopped_never_reaches_the_files() {
     cancel.request();
 
     let tool = Grep::new(sample.workspace());
-    let output = tool
-        .run(
-            allowed(&tool, r#"{"pattern":"needle"}"#),
-            &crate::sample::cancelled_by(&cancel),
-        )
-        .unwrap();
+    let output = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"pattern":"needle"}"#),
+        &crate::sample::cancelled_by(&cancel),
+    ))
+    .unwrap();
 
     assert!(output.is_failed());
     assert!(

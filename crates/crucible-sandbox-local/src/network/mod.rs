@@ -8,7 +8,6 @@
 //! listeners and relay workers; the process-wide OS resolver is never joined.
 
 mod body;
-mod redaction;
 mod request;
 mod resolver;
 mod socket;
@@ -36,10 +35,35 @@ use stream::{Lifetime, POLL, Stream};
 const CONNECTIONS: usize = 16;
 const HANDSHAKE: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long the stop joins the listener's thread before giving it up.
+///
+/// A normal shutdown is milliseconds: the accept loop ticks every [`POLL`]
+/// and each relay it joins is already past its own timeouts once the stop is
+/// signalled. Five seconds is orders above that on a loaded machine, and well
+/// inside the ten-second stop the transport awaits around a whole process
+/// stop, so a mediator that still has not finished is wedged rather than
+/// slow, and waiting longer would only spend the transport's own bound.
+const STOP: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const FAIL_RELAY_SPAWN: u8 = 1;
 #[cfg(test)]
 const PANIC_RESPONSE: u8 = 2;
+
+/// The forms of a proxy's `userinfo` a command could print: the password, as
+/// its proxy URL carries it, and the whole userinfo in base64, as its
+/// authorization header does.
+pub(super) fn credential_forms(userinfo: &str) -> Vec<Vec<u8>> {
+    vec![
+        userinfo
+            .split_once(':')
+            .map_or("", |(_, password)| password)
+            .as_bytes()
+            .to_vec(),
+        base64::engine::general_purpose::STANDARD
+            .encode(userinfo)
+            .into_bytes(),
+    ]
+}
 
 pub(super) struct Mediator {
     #[cfg(any(test, not(target_os = "linux")))]
@@ -141,16 +165,31 @@ impl Mediator {
         Ok(mediator)
     }
 
-    pub(super) fn protect_output(
-        &self,
-        output: Box<dyn crucible_sandbox::SandboxOutput>,
-    ) -> Box<dyn crucible_sandbox::SandboxOutput> {
-        Box::new(redaction::ProtectedOutput::new(output, &self.userinfo))
+    /// What of this command's credential is masked in its output streams.
+    pub(super) fn masked(&self) -> Vec<Vec<u8>> {
+        credential_forms(&self.userinfo)
     }
 
+    /// Stops the listener and disposes the private socket pathname.
+    ///
+    /// The listener's thread is joined up to [`STOP`]; one still running then
+    /// is detached and the stop is reported as failed cleanup rather than
+    /// joined without end. The stop was already signalled and the pathname is
+    /// still disposed below, so a later stop finds no listener to join and
+    /// answers the recorded failure instead of waiting again.
     pub(super) fn stop(&mut self) -> io::Result<()> {
         self.stop.store(true, Ordering::Release);
         let stopped = self.listener.take().map_or(Ok(()), |worker| {
+            let deadline = Instant::now() + STOP;
+            while !worker.is_finished() {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "sandbox proxy listener did not stop within its bound",
+                    ));
+                }
+                thread::sleep(POLL);
+            }
             worker
                 .join()
                 .unwrap_or_else(|_| Err(io::Error::other("sandbox proxy listener failed")))
@@ -178,6 +217,24 @@ impl Mediator {
     #[cfg(test)]
     fn inject_response_panic(&self) {
         self.fault.store(PANIC_RESPONSE, Ordering::Release);
+    }
+
+    /// Replaces the listener's thread with one that never finishes, standing
+    /// in for a listener wedged past its bound. The thread it replaces is
+    /// detached and exits once the stop is signalled, as a listener whose
+    /// handle was lost still would.
+    #[cfg(test)]
+    pub(super) fn hang_listener(&mut self) {
+        self.listener = Some(
+            thread::Builder::new()
+                .name("sandbox-hung-listener".into())
+                .spawn(|| -> io::Result<()> {
+                    loop {
+                        thread::sleep(Duration::from_hours(1));
+                    }
+                })
+                .expect("a hung listener thread"),
+        );
     }
 
     /// These bounded values travel only in the workload environment. Native

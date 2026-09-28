@@ -4,18 +4,19 @@ use std::io;
 use std::process::ExitStatus;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::thread;
 use std::time::Duration;
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
-    SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
-    SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    SandboxLifecycle, SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy,
+    SandboxProcess, SandboxRequest, SandboxResourceLimits, SandboxUsage, SandboxViolation,
+    unconfined_inspection,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
-use super::Finish;
+use super::{Finish, PUBLICATION, STOPPING};
 
 /// An absolute path spelled the way the running platform's path type accepts.
 #[cfg(unix)]
@@ -36,6 +37,17 @@ struct Ending {
     stops: AtomicUsize,
     /// Stopping it does not confirm that its scope ended.
     unstoppable: AtomicBool,
+    /// Stopping it never answers, so an awaited caller gives up on it at the
+    /// bound on a stop that does not answer.
+    waits: AtomicBool,
+    /// Stopping it answers only after a wait on the runtime's clock, inside the
+    /// bound on a stop that does not answer, which a caller that can wait sits
+    /// through.
+    slow: AtomicBool,
+    /// The ending published while a stop was joining it.
+    published: AtomicBool,
+    /// Whether this fixture's stop should publish the already-ended ending.
+    publish_on_stop: AtomicBool,
 }
 
 struct Process {
@@ -69,12 +81,28 @@ impl SandboxProcess for Process {
         self.ending.ended.load(Ordering::Relaxed) || self.ending.exited.load(Ordering::Relaxed)
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.ending.stops.fetch_add(1, Ordering::Relaxed);
-        if self.ending.unstoppable.load(Ordering::Relaxed) {
-            return Err(io::Error::other("scope termination could not be confirmed"));
-        }
-        Ok(())
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.ending.stops.fetch_add(1, Ordering::Relaxed);
+            if self.ending.waits.load(Ordering::Relaxed) {
+                std::future::pending::<()>().await;
+            }
+            if self.ending.slow.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            if self.ending.unstoppable.load(Ordering::Relaxed) {
+                // Words that say what went wrong and not that the end is
+                // unconfirmed, as a backend's failure need not say it.
+                return Err(io::Error::other("the scope could not be reaped"));
+            }
+            if self.ending.publish_on_stop.load(Ordering::Relaxed)
+                && self.ending.ended.load(Ordering::Relaxed)
+            {
+                self.ending.published.store(true, Ordering::Release);
+                self.ending.exited.store(true, Ordering::Release);
+            }
+            Ok(())
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -87,6 +115,13 @@ impl SandboxProcess for Process {
 
     fn violation(&self) -> Option<SandboxViolation> {
         None
+    }
+
+    fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+        self.ending
+            .published
+            .load(Ordering::Acquire)
+            .then_some(SandboxLifecycle::Published)
     }
 }
 
@@ -127,7 +162,7 @@ fn process(ending: &Arc<Ending>) -> Process {
         None,
     )
     .expect("a backend identity");
-    let inspection = SandboxInspection::unconfined_for_request(
+    let inspection = unconfined_inspection(
         backend,
         SandboxCapabilities::none(),
         &request,
@@ -140,38 +175,34 @@ fn process(ending: &Arc<Ending>) -> Process {
     }
 }
 
-#[test]
-fn a_process_that_ended_in_its_grace_is_waited_for_rather_than_stopped() {
-    // Its ending can wait on another command's publication for longer than the
-    // grace. Stopping it then would discard what it wrote, from a process that
-    // did exactly what the grace was for.
+// The asynchronous finish, on a paused clock: every wait below is the rule's
+// own and costs no wall time, so a bound is asserted exactly rather than
+// against a scheduler's delay.
+
+#[tokio::test(start_paused = true)]
+async fn a_process_that_ended_in_its_grace_is_waited_for_asynchronously_rather_than_stopped() {
     let ending = Arc::new(Ending {
         ended: AtomicBool::new(true),
         ..Ending::default()
     });
     let mut process = process(&ending);
     let later = Arc::clone(&ending);
-    let completing = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(100));
+    let completing = async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
         later.exited.store(true, Ordering::Relaxed);
-    });
+    };
 
-    let finish = Finish::after(&mut process, Duration::ZERO);
-    completing.join().expect("the ending completed");
+    let (finish, ()) = tokio::join!(
+        Finish::after_async(&mut process, Duration::ZERO),
+        completing
+    );
 
     assert!(matches!(finish, Finish::Exited(_)), "{finish:?}");
-    assert_eq!(
-        ending.stops.load(Ordering::Relaxed),
-        0,
-        "stopping it would have discarded what it wrote"
-    );
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 0);
 }
 
-#[test]
-fn a_process_whose_ending_went_wrong_says_why_rather_than_being_stopped() {
-    // An error from a process that has ended is not a status nobody could
-    // read: it is how that ending went wrong, and stopping it afterwards would
-    // report an ordinary stop in its place.
+#[tokio::test(start_paused = true)]
+async fn a_process_whose_ending_went_wrong_says_why_asynchronously_rather_than_being_stopped() {
     let ending = Arc::new(Ending {
         ended: AtomicBool::new(true),
         failed: AtomicBool::new(true),
@@ -179,7 +210,7 @@ fn a_process_whose_ending_went_wrong_says_why_rather_than_being_stopped() {
     });
     let mut process = process(&ending);
 
-    let finish = Finish::after(&mut process, Duration::from_millis(50));
+    let finish = Finish::after_async(&mut process, Duration::from_millis(50)).await;
 
     match finish {
         Finish::Unpublished(problem) => assert!(
@@ -191,53 +222,175 @@ fn a_process_whose_ending_went_wrong_says_why_rather_than_being_stopped() {
     assert_eq!(ending.stops.load(Ordering::Relaxed), 0);
 }
 
-#[test]
-fn a_process_whose_publication_never_finishes_says_so_once_its_patience_has_passed() {
-    // The wait for an ending is worth making only while it can end. A lock held
-    // by something outside this process — an older crucible, say — would
-    // otherwise keep a turn and a shutdown waiting for ever.
+#[tokio::test(start_paused = true)]
+async fn a_process_that_will_not_go_is_stopped_asynchronously_once_its_grace_has_passed() {
+    let ending = Arc::new(Ending::default());
+    let mut process = process(&ending);
+    let grace = Duration::from_millis(50);
+    let began = tokio::time::Instant::now();
+
+    let finish = Finish::after_async(&mut process, grace).await;
+
+    assert!(matches!(finish, Finish::Stopped), "{finish:?}");
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+    assert!(
+        began.elapsed() >= grace,
+        "stopped after {:?}",
+        began.elapsed()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stop_that_takes_a_while_is_waited_for_asynchronously_rather_than_dropped() {
+    // A stop that answers inside its bound is a stop that was confirmed.
+    let ending = Arc::new(Ending {
+        slow: AtomicBool::new(true),
+        ..Ending::default()
+    });
+    let mut process = process(&ending);
+
+    let finish = Finish::after_async(&mut process, Duration::ZERO).await;
+
+    assert!(matches!(finish, Finish::Stopped), "{finish:?}");
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_publication_completed_during_a_stop_is_reported_as_exited() {
+    let ending = Arc::new(Ending {
+        ended: AtomicBool::new(true),
+        publish_on_stop: AtomicBool::new(true),
+        ..Ending::default()
+    });
+    let mut process = process(&ending);
+
+    let finish = Finish::after_async(&mut process, Duration::ZERO).await;
+
+    assert!(matches!(finish, Finish::Exited(_)), "{finish:?}");
+    assert!(ending.published.load(Ordering::Acquire));
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_process_whose_publication_never_finishes_says_so_asynchronously_at_the_ceiling() {
     let ending = Arc::new(Ending {
         ended: AtomicBool::new(true),
         ..Ending::default()
     });
     let mut process = process(&ending);
-    let (told, hears) = std::sync::mpsc::channel();
-    let waiting = thread::spawn(move || {
-        let finish = Finish::after(&mut process, Duration::ZERO);
-        told.send(format!("{finish:?}")).expect("the test hears it");
-    });
+    let began = tokio::time::Instant::now();
 
-    let finish = hears.recv_timeout(Duration::from_secs(20));
+    let finish = Finish::after_async(&mut process, Duration::ZERO).await;
 
-    let finish = finish.expect("the wait for a publication that never ends has a ceiling");
-    waiting.join().expect("the waiting thread");
-    // Stopped, and said so: the ceiling discarded what it wrote, and an ending
-    // reported as a clean stop tells the caller nothing was lost.
-    assert!(finish.starts_with("Unpublished"), "{finish}");
+    assert!(
+        matches!(&finish, Finish::Unpublished(problem) if problem.to_string()
+            == "its publication did not finish in time"),
+        "{finish:?}"
+    );
     assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+    let waited = began.elapsed();
+    assert!(waited >= PUBLICATION, "stopped after {waited:?}");
+    assert!(
+        waited < PUBLICATION + Duration::from_millis(100),
+        "stopped after {waited:?}"
+    );
 }
 
-#[test]
-fn a_stop_that_fails_after_the_ceiling_says_both_things() {
-    // Two facts, and a caller told only the second retires the program as
-    // though it might still be running: its publication did not finish in time,
-    // and the stop that followed could not be confirmed either.
+#[tokio::test(start_paused = true)]
+async fn a_stop_that_fails_asynchronously_after_the_ceiling_says_both_things() {
     let ending = Arc::new(Ending {
         ended: AtomicBool::new(true),
         unstoppable: AtomicBool::new(true),
         ..Ending::default()
     });
     let mut process = process(&ending);
-    let (told, hears) = std::sync::mpsc::channel();
-    let waiting = thread::spawn(move || {
-        let finish = Finish::after(&mut process, Duration::ZERO);
-        told.send(format!("{finish:?}")).expect("the test hears it");
+
+    let finish = Finish::after_async(&mut process, Duration::ZERO).await;
+
+    match finish {
+        Finish::Unreaped(problem) => assert_eq!(
+            problem.to_string(),
+            "its publication did not finish in time, and stopping it could not be \
+             confirmed: the scope could not be reaped"
+        ),
+        other => panic!("a stop that failed after the ceiling was reported as {other:?}"),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stop_that_never_answers_is_given_up_on_and_reported_as_failed_cleanup() {
+    // The finish is bounded end to end: a stop that is never going to answer is
+    // waited on for as long as a stop can be worth waiting on and no longer,
+    // and what that leaves is a program whose end nobody confirmed.
+    let ending = Arc::new(Ending {
+        waits: AtomicBool::new(true),
+        ..Ending::default()
     });
+    let mut process = process(&ending);
+    let grace = Duration::from_millis(50);
+    let began = tokio::time::Instant::now();
 
-    let finish = hears.recv_timeout(Duration::from_secs(20));
+    let finish = Finish::after_async(&mut process, grace).await;
 
-    let finish = finish.expect("the wait for a publication that never ends has a ceiling");
-    waiting.join().expect("the waiting thread");
-    assert!(finish.starts_with("Unreaped"), "{finish}");
-    assert!(finish.contains("publication"), "{finish}");
+    let waited = began.elapsed();
+    assert_eq!(ending.stops.load(Ordering::Relaxed), 1);
+    match finish {
+        Finish::Unreaped(problem) => {
+            assert_eq!(problem.kind(), io::ErrorKind::TimedOut, "{problem:?}");
+            assert_eq!(
+                problem.to_string(),
+                "stopping a hosted program did not answer within 50ms, so whatever it \
+                 began is unconfirmed"
+            );
+        }
+        other => panic!("a stop that never answered was reported as {other:?}"),
+    }
+    assert!(waited >= grace + STOPPING, "gave up after {waited:?}");
+    assert!(
+        waited < grace + STOPPING + Duration::from_millis(100),
+        "gave up after {waited:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stop_that_never_answers_after_the_ceiling_keeps_both_facts() {
+    let ending = Arc::new(Ending {
+        ended: AtomicBool::new(true),
+        waits: AtomicBool::new(true),
+        ..Ending::default()
+    });
+    let mut process = process(&ending);
+    let began = tokio::time::Instant::now();
+
+    let finish = Finish::after_async(&mut process, Duration::ZERO).await;
+
+    let waited = began.elapsed();
+    match finish {
+        Finish::Unreaped(problem) => {
+            assert_eq!(problem.kind(), io::ErrorKind::TimedOut, "{problem:?}");
+            // The stop's words already say that its end is unconfirmed, and
+            // the message does not say it a second time.
+            assert_eq!(
+                problem.to_string(),
+                "its publication did not finish in time, and stopping a hosted program \
+                 did not answer within 50ms, so whatever it began is unconfirmed"
+            );
+        }
+        other => panic!("a stop that never answered was reported as {other:?}"),
+    }
+    assert!(
+        waited < PUBLICATION + STOPPING + Duration::from_millis(100),
+        "gave up after {waited:?}"
+    );
+}
+
+#[test]
+fn an_asynchronous_finish_can_be_awaited_on_a_task_of_its_own() {
+    // A runtime moves a spawned task between its threads, so a finish that is
+    // not `Send` could only be awaited where it was made.
+    fn sendable<T: Send>(_: &T) {}
+    let ending = Arc::new(Ending::default());
+    let mut process = process(&ending);
+    let finishing = Finish::after_async(&mut process, Duration::ZERO);
+    sendable(&finishing);
 }

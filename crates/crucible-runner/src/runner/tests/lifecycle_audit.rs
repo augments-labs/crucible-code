@@ -1,6 +1,9 @@
 //! Toolset lifecycle audit delivery on successful and failed turn exits.
 
-use crucible_core::{SandboxFactKind, SandboxId, SandboxLifecycle, ToolsetContext, ToolsetError};
+use crucible_runtime::BoxFuture;
+use crucible_sandbox::{SandboxFactKind, SandboxLifecycle};
+use crucible_tools::{ToolsetContext, ToolsetError};
+use crucible_types::SandboxId;
 
 use super::*;
 
@@ -31,19 +34,35 @@ impl Auditing {
 }
 
 impl Toolset for Auditing {
-    fn prepare(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
-        self.stage(context, "prepare")
+    fn prepare<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move { self.stage(context, "prepare") })
     }
-    fn snapshot(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.stage(context, "snapshot")?;
-        Ok(self.snapshot.clone())
+    fn snapshot<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move {
+            self.stage(context, "snapshot")?;
+            Ok(self.snapshot.clone())
+        })
     }
-    fn refresh(&self, context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        self.stage(context, "refresh")?;
-        Ok(self.snapshot.clone())
+    fn refresh<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move {
+            self.stage(context, "refresh")?;
+            Ok(self.snapshot.clone())
+        })
     }
-    fn dispose(&self, context: &ToolsetContext) -> Result<(), ToolsetError> {
-        self.stage(context, "dispose")
+    fn dispose<'a>(
+        &'a self,
+        context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move { self.stage(context, "dispose") })
     }
 }
 
@@ -101,7 +120,9 @@ fn audit_exit(fails: Option<&'static str>) {
     let mut asks = Says::new(Verdict::Allow);
     let context = runner.starting(&events, &cancel, &steer, &aside);
     let ancestry = context.ancestry();
-    let result = runner.turn("go", Box::new([]), &mut asks, &context);
+    let result = runner
+        .turn("go", Box::new([]), &mut asks, &context)
+        .awaited();
     assert_eq!(result.is_err(), fails.is_some(), "{fails:?}: {result:?}");
     drop(runner);
     let expected = match fails {

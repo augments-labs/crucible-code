@@ -1,5 +1,6 @@
 //! Which provider a run lands on, and what each one is known to offer.
 
+use crucible_provider::HttpTurns;
 use crucible_types::{Modality, PricingDate, PromptCacheRetentionClass, PromptCacheSupport};
 
 use super::*;
@@ -88,7 +89,12 @@ fn landing(
 ) -> Result<Option<Served>, AppError> {
     chosen(
         &catalogue(),
-        authenticating(settings, from, keys, &Subscriptions::production()),
+        authenticating(
+            settings,
+            from,
+            keys,
+            &Subscriptions::production(&crucible_auth::Renewals::new()),
+        ),
     )
 }
 
@@ -208,7 +214,7 @@ fn the_source_a_credential_came_from_is_the_one_construction_would_use() {
     // `/logout` names what remains after a removal from this answer, so it has
     // to be the same order `startup::provider` resolves in: a deliberate
     // account login, then the inherited variable, then the stored key.
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let sample = Sample::new("source-subscription");
     let stored = sample.subscribed("openai");
@@ -513,7 +519,7 @@ fn google_key_discovery_preserves_empty_custom_stored_and_ambiguous_choices() {
             .unwrap()
             .is_none()
     );
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     assert_eq!(
         credential_source(
             serving("google"),
@@ -530,7 +536,7 @@ fn google_key_discovery_preserves_empty_custom_stored_and_ambiguous_choices() {
 
 #[test]
 fn google_never_uses_a_stored_product_subscription_as_api_authority() {
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     assert!(!subscriptions.supports("google"));
     assert!(subscriptions.routes("google").is_empty());
     assert!(
@@ -549,7 +555,8 @@ fn google_never_uses_a_stored_product_subscription_as_api_authority() {
     );
     let from = holding(&[]);
     let auth = authenticating(&defaults, &from, &stored, &subscriptions);
-    assert!(startup::provider(Some(serving("google")), NOTHING_TO_ASK, auth).is_err());
+    let http = HttpTurns::unavailable();
+    assert!(startup::provider(Some(serving("google")), NOTHING_TO_ASK, auth, &http).is_err());
 }
 
 #[test]
@@ -774,14 +781,16 @@ fn a_provider_built_from_its_record_is_the_one_the_vendor_module_makes() {
     // record wired to the wrong factory would be silently cheap or silently
     // expensive rather than wrong on screen.
     let stored = StoredCredentials::default();
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     let settings = Settings::default();
     let from = holding(&["ANTHROPIC_API_KEY"]);
+    let http = HttpTurns::unavailable();
 
     let built = startup::provider(
         Some(serving("anthropic")),
         NOTHING_TO_ASK,
         authenticating(&settings, &from, &stored, &subscriptions),
+        &http,
     )
     .expect("a key is exported for it");
 
@@ -791,7 +800,7 @@ fn a_provider_built_from_its_record_is_the_one_the_vendor_module_makes() {
             crucible_credentials::ApiKey::from_lookup("ANTHROPIC_API_KEY", &from).expect("the key"),
             crucible_credentials::Header::bare("x-api-key"),
         )),
-        Box::new(crucible_provider::Https::new()),
+        Box::new(HttpTurns::unavailable()),
     );
 
     assert_eq!(built.name(), direct.name());
@@ -890,14 +899,16 @@ fn an_offer_list_that_describes_a_model_wrongly_stops_the_run() {
 /// the trip has to be taken.
 fn built(serving: Served, settings: &Settings) -> Box<dyn Provider> {
     let stored = StoredCredentials::default();
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     let key = [serving.key];
     let from = holding(&key);
+    let http = HttpTurns::unavailable();
 
     startup::provider(
         Some(serving),
         NOTHING_TO_ASK,
         authenticating(settings, &from, &stored, &subscriptions),
+        &http,
     )
     .expect("a key is exported for it")
 }
@@ -1102,8 +1113,9 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
 
     let handed = re_serving(
         settings.clone(),
-        Subscriptions::production(),
+        Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|name| (name == "CRUCIBLE_FIXTURE_ONLY_KEY").then(|| "not-a-key".into())),
+        HttpTurns::unavailable(),
     );
     let found = handed(serving("openai"), &stored).expect("the handed variable holds a key");
     assert_eq!(
@@ -1111,7 +1123,12 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         CredentialSource::Environment("CRUCIBLE_FIXTURE_ONLY_KEY".into())
     );
 
-    let empty = re_serving(settings, Subscriptions::production(), Box::new(|_| None));
+    let empty = re_serving(
+        settings,
+        Subscriptions::production(&crucible_auth::Renewals::new()),
+        Box::new(|_| None),
+        HttpTurns::unavailable(),
+    );
     for one in every() {
         assert!(
             matches!(

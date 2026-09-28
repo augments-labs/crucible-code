@@ -16,7 +16,7 @@
 
 use serde_json::Value;
 
-use crate::calls::{Asked, CallError, Serving};
+use crate::calls::{Asked, Call, CallError, Generation, Serving};
 use crate::spoken::{CallId, Outcome, Spoken, Trouble};
 
 /// Why a conversation cannot go on.
@@ -59,8 +59,8 @@ pub enum Next<T> {
 
     /// The extension is asking for something, and is owed one answer.
     Asked {
-        /// Which call to answer.
-        id: CallId,
+        /// Which call to answer, in this conversation's generation.
+        id: Call,
         /// What is being asked for.
         method: Box<str>,
         /// What rides with it, still unread.
@@ -96,26 +96,27 @@ pub enum Next<T> {
 
 /// One extension's side of a conversation.
 ///
+/// One conversation is one generation: it is held with one process and ends
+/// with it. Every call it hands the host carries that generation.
+///
 /// `T` is whatever the host wants back when one of its own calls is answered.
 #[derive(Debug)]
 pub struct Conversation<T> {
+    /// Which generation of the extension this is.
+    generation: Generation,
     /// Calls crucible made.
     asked: Asked<T>,
     /// Calls the extension made.
     serving: Serving,
 }
 
-impl<T> Default for Conversation<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<T> Conversation<T> {
-    /// A conversation with nothing in flight.
+    /// A conversation with nothing in flight, with `generation` of an
+    /// extension.
     #[must_use]
-    pub const fn new() -> Self {
+    pub(crate) const fn new(generation: Generation) -> Self {
         Self {
+            generation,
             asked: Asked::new(),
             serving: Serving::new(),
         }
@@ -130,7 +131,11 @@ impl<T> Conversation<T> {
                 Err(_) => Next::Stop(Broken::Unmatched { id }),
             },
             Spoken::Request { id, method, params } => match self.serving.take(id) {
-                Ok(()) => Next::Asked { id, method, params },
+                Ok(()) => Next::Asked {
+                    id: Call::new(self.generation, id),
+                    method,
+                    params,
+                },
                 Err(CallError::Repeated { .. }) => Next::Stop(Broken::Doubled { id }),
                 Err(_) => Next::Refuse(Spoken::Answer {
                     id,
@@ -153,10 +158,10 @@ impl<T> Conversation<T> {
         method: impl Into<Box<str>>,
         params: Value,
         about: T,
-    ) -> Result<(CallId, Spoken), CallError> {
+    ) -> Result<(Call, Spoken), CallError> {
         let id = self.asked.ask(about)?;
         Ok((
-            id,
+            Call::new(self.generation, id),
             Spoken::Request {
                 id,
                 method: method.into(),
@@ -169,9 +174,11 @@ impl<T> Conversation<T> {
     ///
     /// # Errors
     ///
-    /// [`CallError::Unknown`] where that is not a call crucible took on, which
-    /// covers answering one twice.
-    pub fn answer(&mut self, id: CallId, outcome: Outcome) -> Result<Spoken, CallError> {
+    /// [`CallError::Elsewhere`] where the call was made in another generation,
+    /// and [`CallError::Unknown`] where it is not a call crucible took on,
+    /// which covers answering one twice.
+    pub fn answer(&mut self, call: Call, outcome: Outcome) -> Result<Spoken, CallError> {
+        let id = call.of(self.generation)?;
         self.serving.answered(id)?;
         Ok(Spoken::Answer { id, outcome })
     }
@@ -186,18 +193,24 @@ impl<T> Conversation<T> {
     ///
     /// # Errors
     ///
-    /// [`CallError::Unknown`] where that is not a call crucible is waiting on,
-    /// which covers giving up on one twice.
-    pub fn give_up(&mut self, id: CallId) -> Result<T, CallError> {
-        self.asked.given_up(id)
+    /// [`CallError::Elsewhere`] where the call was made in another generation,
+    /// and [`CallError::Unknown`] where it is not a call crucible is waiting
+    /// on, which covers giving up on one twice.
+    pub fn give_up(&mut self, call: Call) -> Result<T, CallError> {
+        self.asked.given_up(call.of(self.generation)?)
     }
 
     /// Everything crucible was waiting on, once the conversation is over.
     ///
     /// Whatever was waiting has to become a failure the host reports. Nothing
     /// else will answer these.
-    pub fn ended(&mut self) -> Vec<(CallId, T)> {
-        self.asked.abandoned()
+    pub fn ended(&mut self) -> Vec<(Call, T)> {
+        let generation = self.generation;
+        self.asked
+            .abandoned()
+            .into_iter()
+            .map(|(id, about)| (Call::new(generation, id), about))
+            .collect()
     }
 }
 

@@ -1,6 +1,9 @@
 //! Per-pass context assembly, including the history-rewrite adversary.
 
-use crucible_core::{ContextSection, Fragment, Revealed, Seen, ToolOutput, WorkspaceSection};
+use crucible_context::{ContextSection, WorkspaceSection};
+use crucible_runtime::BoxFuture;
+use crucible_tools::{Revealed, ToolOutput};
+use crucible_types::{Fragment, Seen};
 
 use super::*;
 
@@ -24,6 +27,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     scripted
         .runner
         .assemble_context(ancestry)
+        .awaited()
         .expect("the first context");
 
     let first = contexts(scripted.runner.state.transcript());
@@ -71,6 +75,7 @@ fn static_context_is_assembled_once_in_stable_order_and_charged_before_fullness(
     scripted
         .runner
         .assemble_context(ancestry)
+        .awaited()
         .expect("unchanged context");
 
     assert_eq!(scripted.runner.state.transcript().len(), messages);
@@ -140,7 +145,7 @@ fn a_compaction_that_removes_context_forces_a_full_render_on_the_next_pass() {
         .context_snapshot()
         .expect("the typed state survived compaction");
     assert!(matches!(
-        crucible_core::seen(&recorded, &section, scripted.runner.state.transcript()),
+        crucible_context::seen(&recorded, &section, scripted.runner.state.transcript()),
         Seen::Stale
     ));
 
@@ -225,17 +230,19 @@ impl Tool for ToggleReveal {
         Summary::new(self.name)
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        if self.present {
-            self.revealed.reveal("web_search");
-        } else {
-            self.revealed.forget();
-        }
-        Ok(ToolOutput::ok("done"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            if self.present {
+                self.revealed.reveal("web_search");
+            } else {
+                self.revealed.forget();
+            }
+            Ok(ToolOutput::ok("done"))
+        })
     }
 }
 

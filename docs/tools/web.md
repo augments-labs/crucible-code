@@ -28,7 +28,8 @@ What you get depends on what your vendor serves:
 | Moonshot — open platform | — | — |
 
 A tool with nothing to answer it does not appear at all, rather than appearing
-and failing every call.
+and failing every call. Escape stops a search or fetch at once, even while its
+request is still connecting or reading.
 
 One difference worth knowing. OpenAI has no standalone fetch — opening a page is
 an action inside its search tool — so `web_fetch` there asks that tool to open

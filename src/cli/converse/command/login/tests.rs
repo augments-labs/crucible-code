@@ -5,9 +5,11 @@ use std::sync::Arc;
 
 use crucible_auth::Store;
 use crucible_builtins::{Ledger, Plan};
-use crucible_core::{AgentId, Cancel, Revealed};
 use crucible_runner::{Agent, Model, Runner, Tools};
+use crucible_runtime::Cancel;
+use crucible_tools::Revealed;
 use crucible_tui::Recording;
+use crucible_types::AgentId;
 
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
@@ -23,9 +25,10 @@ fn in_force(sample: &Sample) -> Terms {
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
         cancel: Cancel::new(),
+        runtime: crate::cli::fake::runtime(),
         ending: crate::cli::ending::Ending::deaf(),
-        steer: crucible_core::Steer::new(),
-        aside: crucible_core::Aside::new(),
+        steer: crucible_runtime::Steer::new(),
+        aside: crucible_runtime::Aside::new(),
         ledger: Ledger::new(),
         revealed: Revealed::new(),
         plan: Plan::new(),
@@ -37,7 +40,9 @@ fn in_force(sample: &Sample) -> Terms {
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
-        subscriptions: crucible_app::subscription::Subscriptions::production(),
+        subscriptions: crucible_app::subscription::Subscriptions::production(
+            &crucible_auth::Renewals::new(),
+        ),
         serving: Box::new(|named, _| {
             Ok(crucible_app::providers::Resolved {
                 provider: Box::new(crucible_provider::Unavailable::new(

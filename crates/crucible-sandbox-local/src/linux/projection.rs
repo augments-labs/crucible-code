@@ -1,8 +1,11 @@
 //! Private writable-root projection and terminal publication.
 
 mod authority;
+pub(super) mod bounded;
 mod protocol;
 mod publish;
+#[cfg(test)]
+mod stop_tests;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -13,7 +16,9 @@ use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
+use std::sync::{Arc, Mutex};
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxAudit, SandboxError, SandboxFactKind, SandboxFilesystemAccess, SandboxInspection,
     SandboxInvocationMode, SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRequest,
@@ -24,14 +29,30 @@ use crucible_storage::{CallResultKey, CallResultReceipt};
 use crucible_types::SandboxId;
 use sha2::{Digest as _, Sha256};
 
-use super::super::process::Stage;
+use super::super::process::{Stage, StopMark};
 use super::broker::StatusChannel;
 use super::command::View;
 use super::materialize::Materialization;
 use super::transaction;
 
+pub(crate) use bounded::BoundedPublication;
+use bounded::OutputBoundary;
+
 const MAX_PROJECTED_ENTRIES: usize = 262_144;
 const MAX_PROJECTED_DEPTH: usize = 64;
+
+type SharedProcess = Arc<Mutex<Box<dyn SandboxProcess>>>;
+
+fn share_process(process: Box<dyn SandboxProcess>) -> SharedProcess {
+    Arc::new(Mutex::new(process))
+}
+
+fn with_process<T>(process: &SharedProcess, work: impl FnOnce(&mut dyn SandboxProcess) -> T) -> T {
+    let mut process = process
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    work(process.as_mut())
+}
 
 /// How long a command being prepared waits for a publication to finish before
 /// it is refused instead.
@@ -139,6 +160,9 @@ pub(super) struct Projection {
     state: PathBuf,
     stage: Stage,
     roots: Vec<Root>,
+    /// Whether the broker's scan is journaled. An ending that waits for the
+    /// lock is written again on a later look, and journals the scan once.
+    scanned: bool,
     published: bool,
     transaction: transaction::Transaction,
 }
@@ -162,6 +186,23 @@ impl Admission {
             .as_ref()
             .map_or(Ok(()), transaction::Lease::confirm)
     }
+}
+
+#[cfg(test)]
+pub(super) use bounded::{ScanGate, clear_scan_gate, scan_gate_taken};
+
+#[cfg(test)]
+pub(super) fn install_scan_gate(
+    sandbox: SandboxId,
+    reached: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+) {
+    bounded::install_scan_gate(sandbox, reached, release);
+}
+
+#[cfg(test)]
+fn take_scan_gate(sandbox: SandboxId) -> Option<ScanGate> {
+    bounded::take_scan_gate(sandbox)
 }
 
 impl Projection {
@@ -326,6 +367,7 @@ impl Projection {
             state: state_directory,
             stage,
             roots,
+            scanned: false,
             published: false,
             transaction,
         })
@@ -383,6 +425,9 @@ impl Projection {
     }
 
     fn record_terminal_scan(&mut self) -> io::Result<()> {
+        if self.scanned {
+            return Ok(());
+        }
         for record in [
             transaction::Record::CommandExited,
             transaction::Record::WorkloadReapIntent,
@@ -392,6 +437,7 @@ impl Projection {
         ] {
             self.record(record)?;
         }
+        self.scanned = true;
         Ok(())
     }
 
@@ -420,10 +466,9 @@ impl Projection {
         })
     }
 
-    /// Leave to publish now, or `None` while another publication holds the lock.
-    ///
-    /// A projection with no writable root has nothing to publish into, and is
-    /// let in without the lock.
+    /// Leave to publish now, or `None` while the publication lock is unavailable;
+    /// a copied descriptor can make it look held, so the caller asks again.
+    /// A projection with no writable root is let in without the lock.
     fn admission(&self) -> io::Result<Option<Admission>> {
         if self.roots.is_empty() {
             return Ok(Some(Admission { _lease: None }));
@@ -819,7 +864,10 @@ fn refused(problem: &'static str) -> SandboxError {
 /// Adds publication/discard semantics to the ordinary process-tree owner.
 pub(super) struct ProcessPlan {
     pub(super) projection: Option<Projection>,
+    /// Where the command's ending is written.
+    pub(super) publications: BoundedPublication,
     pub(super) status_channel: StatusChannel,
+    pub(super) stop_mark: Option<StopMark>,
     pub(super) audit: SandboxAudit,
     pub(super) sandbox: SandboxId,
     pub(super) invocation: SandboxInvocationMode,
@@ -835,7 +883,9 @@ pub(super) fn wrap(
 ) -> io::Result<Box<dyn SandboxProcess>> {
     let ProcessPlan {
         mut projection,
+        publications,
         status_channel,
+        stop_mark,
         audit,
         sandbox,
         invocation,
@@ -864,15 +914,20 @@ pub(super) fn wrap(
             return Err(source);
         }
     };
+    let process = share_process(process);
     Ok(Box::new(ProjectedProcess {
         process,
+        output_boundary: Arc::new(OutputBoundary::default()),
         projection,
+        publications,
         receiver: Some(receiver),
         status: None,
         terminal: false,
         reported: None,
+        concluding: None,
         failure: None,
         unrecorded: None,
+        publication: None,
         audit,
         sandbox,
         control: Some(control),
@@ -881,6 +936,9 @@ pub(super) fn wrap(
         acceptance_pending: false,
         inspection,
         cleanup: crucible_sandbox::SandboxCleanup::Pending,
+        stop_mark,
+        #[cfg(test)]
+        on_cancel: None,
         #[cfg(test)]
         _serial: serial,
     }))
@@ -892,7 +950,9 @@ fn cleanup_failed_wrap(
     audit: &SandboxAudit,
     sandbox: SandboxId,
 ) {
-    let _ = process.stop();
+    // Whether the scope was reaped is read from the inspection below, which
+    // a stop that failed leaves short of complete.
+    let _ = process.stop_sync();
     let scope_reaped = process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete;
     let rolled_back = projection
         .as_deref_mut()
@@ -918,23 +978,31 @@ fn cleanup_failed_wrap(
 }
 
 struct ProjectedProcess {
-    process: Box<dyn SandboxProcess>,
+    process: SharedProcess,
+    output_boundary: Arc<OutputBoundary>,
     projection: Option<Projection>,
+    /// Where the command's ending is written once its report is read.
+    publications: BoundedPublication,
     receiver: Option<protocol::Receiver>,
     status: Option<ExitStatus>,
     terminal: bool,
-    /// The broker's terminal report, from when it is read until what the command
-    /// wrote is published or discarded.
+    /// The broker's terminal report, or why it could not be read, from when it
+    /// is read until its ending is handed to a thread of its own, and again
+    /// while that ending waits for a slot or for the lock.
     ///
-    /// Kept because it can be read only once, and a clean ending that has to wait
-    /// its turn to publish is asked about again on the next look.
-    reported: Option<protocol::Terminal>,
+    /// Kept because it can be read only once, and an ending that has to wait
+    /// its turn is handed over again on a later look.
+    reported: Option<io::Result<protocol::Terminal>>,
+    /// The command's ending, being written on a thread of its own.
+    concluding: Option<bounded::Running<Ended>>,
     /// How the ending went wrong, where it did, answered again on every later
     /// look.
     failure: Option<(io::ErrorKind, Box<str>)>,
     /// A fact about a publication that went ahead, which the audit could not
     /// take. Reported with the cleanup rather than as the ending.
     unrecorded: Option<io::Error>,
+    /// The terminal publication outcome, once this command's ending has one.
+    publication: Option<SandboxLifecycle>,
     audit: SandboxAudit,
     sandbox: SandboxId,
     control: Option<std::os::unix::net::UnixStream>,
@@ -943,6 +1011,12 @@ struct ProjectedProcess {
     acceptance_pending: bool,
     inspection: SandboxInspection,
     cleanup: crucible_sandbox::SandboxCleanup,
+    /// Set before the cancel, which lets the broker end the command's output.
+    stop_mark: Option<StopMark>,
+    /// Runs just before the cancel's first byte is written, standing in for a
+    /// broker that ends the output as soon as it reads it.
+    #[cfg(test)]
+    on_cancel: Option<Box<dyn FnOnce() + Send>>,
     #[cfg(test)]
     _serial: Option<transaction::TestSerialLease>,
 }
@@ -968,21 +1042,8 @@ impl ProjectedProcess {
         problem
     }
 
-    /// Discards what the command wrote, and records how that went.
-    fn discard(&mut self) -> io::Result<()> {
-        let Some(projection) = self.projection.as_mut() else {
-            return Ok(());
-        };
-        if let Err(problem) = projection.abort(true) {
-            projection.retain_evidence();
-            self.projection.take();
-            self.lifecycle(SandboxLifecycle::Quarantined)?;
-            return Err(problem);
-        }
-        self.lifecycle(SandboxLifecycle::RolledBack)
-    }
-
-    /// Reads the broker's terminal report once it has exited, and journals the scan.
+    /// Takes the broker's terminal report, or why it could not be read, once
+    /// the leader has exited and the receiver's thread has read it.
     fn report(&mut self) -> io::Result<()> {
         let Some(terminal) = self.receiver.as_mut().map(protocol::Receiver::finish) else {
             return Err(self.failed(io::Error::other(
@@ -991,173 +1052,116 @@ impl ProjectedProcess {
         };
         self.receiver.take();
         self.control.take();
-        let terminal = match terminal {
-            Ok(terminal) => terminal,
-            Err(problem) => {
-                let problem = self.failed(problem);
-                if let Some(projection) = self.projection.as_mut() {
-                    let lifecycle = if projection.abort(true).is_ok() {
-                        SandboxLifecycle::RolledBack
-                    } else {
-                        projection.retain_evidence();
-                        SandboxLifecycle::Quarantined
-                    };
-                    if let Err(cleanup) = self.lifecycle(lifecycle) {
-                        return Err(self.failed(cleanup));
-                    }
-                }
-                return Err(problem);
-            }
-        };
-        if let Some(projection) = self.projection.as_mut()
-            && let Err(problem) = projection.record_terminal_scan()
-        {
-            let _ = projection.abort(true);
-            projection.retain_evidence();
-            let problem = self.failed(problem);
-            if let Err(cleanup) = self.lifecycle(SandboxLifecycle::Quarantined) {
-                return Err(self.failed(cleanup));
-            }
-            return Err(problem);
-        }
         self.reported = Some(terminal);
         Ok(())
     }
 
-    /// Publishes or discards what the command wrote, once its report is read.
+    /// Settles an ending with nothing to publish into, and hands one with a
+    /// projection to a thread of its own.
     ///
-    /// Only a clean ending publishes, so only a clean ending asks for the lock: a
-    /// command killed, or stopped by a limit, is discarded without waiting for
-    /// another command's publication.
+    /// That thread journals the scan and publishes or discards what the command
+    /// wrote, all of which waits on the disk; this look answers `None` and a
+    /// later one takes what it came to. With every slot taken, the ending
+    /// waits its turn and is handed over again on a later look.
     fn conclude(&mut self) -> io::Result<Option<ExitStatus>> {
         let Some(reported) = self.reported.take() else {
             return Err(self.failed(io::Error::other("sandbox terminal report is unavailable")));
         };
-        let status = reported.status;
         if self.projection.is_none() {
+            let reported = reported.map_err(|problem| self.failed(problem))?;
             if !reported.roots.is_empty() {
                 return Err(self.failed(io::Error::other(
                     "sandbox broker reported roots outside the immutable projection plan",
                 )));
             }
-        } else if status.signal().is_none() && self.process.violation().is_none() {
-            let admitted = self
-                .projection
-                .as_ref()
-                .map_or(Ok(None), Projection::admission);
-            let admission = match admitted {
-                Ok(Some(admission)) => admission,
-                // Another command is publishing. This one is asked about again on
-                // the next look rather than waited for here, where the caller may
-                // be the thread that draws.
-                Ok(None) => {
-                    self.reported = Some(reported);
-                    return Ok(None);
-                }
-                Err(problem) => {
-                    let problem = self.failed(problem);
-                    // The cleanup's own failure becomes the answer, so that the
-                    // look that returns it and every later look agree.
-                    if let Err(cleanup) = self.discard() {
-                        return Err(self.failed(cleanup));
-                    }
-                    return Err(problem);
-                }
-            };
-            if let Err(problem) = self.lifecycle(SandboxLifecycle::PublicationStarted) {
-                let problem = self.failed(problem);
-                if let Err(cleanup) = self.discard() {
-                    return Err(self.failed(cleanup));
-                }
-                return Err(problem);
-            }
-            let publication = self.projection.as_mut().map_or(Ok(()), |projection| {
-                projection.publish(&admission, &reported.baselines, &reported.roots)
-            });
-            if let Err(problem) = publication {
-                let lifecycle = if problem.requires_quarantine() {
-                    SandboxLifecycle::Quarantined
-                } else {
-                    SandboxLifecycle::RolledBack
-                };
-                let problem = self.failed(problem.into_io());
-                if let Err(cleanup) = self.lifecycle(lifecycle) {
-                    return Err(self.failed(cleanup));
-                }
-                return Err(problem);
-            }
             self.terminal = true;
-            self.status = Some(status);
-            // The publication is done. A fact that cannot be recorded is a
-            // cleanup failure, not an ending that went wrong: reported as one, it
-            // would tell the model to write everything again over the files that
-            // are already there.
-            if let Err(problem) = self.lifecycle(SandboxLifecycle::Published) {
-                self.unrecorded = Some(problem);
+            self.status = Some(reported.status);
+            self.publication = Some(SandboxLifecycle::Published);
+            return Ok(Some(reported.status));
+        }
+        let ending = Ending {
+            projection: self.projection.take(),
+            process: Arc::clone(&self.process),
+            output_boundary: Arc::clone(&self.output_boundary),
+            audit: self.audit.clone(),
+            sandbox: self.sandbox,
+            #[cfg(test)]
+            asked_by: std::thread::current().id(),
+            #[cfg(test)]
+            scan_gate: take_scan_gate(self.sandbox),
+            publication: None,
+        };
+        match self
+            .publications
+            .start((ending, reported), |(ending, reported)| {
+                ending.write(reported)
+            }) {
+            Ok(concluding) => self.concluding = Some(concluding),
+            Err((ending, reported)) => {
+                self.projection = ending.projection;
+                self.reported = Some(reported);
             }
-            return Ok(Some(status));
-        } else if let Err(problem) = self.discard() {
-            return Err(self.failed(problem));
         }
-        self.terminal = true;
-        self.status = Some(status);
-        Ok(Some(status))
-    }
-}
-
-impl SandboxProcess for ProjectedProcess {
-    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
-        self.process.take_stdin()
+        Ok(None)
     }
 
-    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.process.take_stdout()
-    }
-
-    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.process.take_stderr()
-    }
-
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(status) = self.status {
-            return Ok(Some(status));
-        }
-        if let Some((kind, problem)) = &self.failure {
-            return Err(io::Error::new(*kind, problem.to_string()));
-        }
-        if self.terminal {
-            // Stopped before its report was read, so how the leader ended is how
-            // the command ended. A zero here says the leader exited, not that
-            // what the command wrote was published: stopping discards whatever
-            // had not been published yet.
-            return self.process.try_wait();
-        }
-        if self.reported.is_none() {
-            if self.process.try_wait()?.is_none() {
-                return Ok(None);
+    /// Takes what the ending handed to its thread came to, waiting for that
+    /// thread where it has not ended, and answers as that ending does.
+    fn settle(&mut self) -> io::Result<Option<ExitStatus>> {
+        let Some(concluding) = self.concluding.take() else {
+            return Ok(None);
+        };
+        let ended = match concluding.finish() {
+            Ok(ended) => ended,
+            Err(problem) => {
+                self.publication = Some(SandboxLifecycle::Quarantined);
+                return Err(self.failed(problem));
             }
-            self.report()?;
+        };
+        self.projection = ended.projection;
+        self.publication = ended.publication;
+        match ended.outcome {
+            Outcome::Waiting(terminal) => {
+                self.reported = Some(Ok(terminal));
+                Ok(None)
+            }
+            Outcome::Settled { status, unrecorded } => {
+                self.terminal = true;
+                self.status = Some(status);
+                self.unrecorded = unrecorded;
+                Ok(Some(status))
+            }
+            Outcome::Failed(problem) => Err(self.failed(problem)),
         }
-        self.conclude()
     }
 
-    fn ended(&mut self) -> bool {
-        self.status.is_some()
-            || self.terminal
-            || self.reported.is_some()
-            || matches!(self.process.try_wait(), Ok(Some(_)))
-    }
-
+    /// What [`SandboxProcess::stop`] does, synchronously, so `Drop` can stop
+    /// the process without a future to drive.
     fn stop(&mut self) -> io::Result<()> {
         if self.cleanup != crucible_sandbox::SandboxCleanup::Pending {
+            if let Some((kind, problem)) = &self.failure {
+                return Err(io::Error::new(*kind, problem.to_string()));
+            }
             return if self.cleanup == crucible_sandbox::SandboxCleanup::Complete {
                 Ok(())
             } else {
                 Err(io::Error::other("sandbox cleanup previously failed"))
             };
         }
+        // An ending already on its thread is let finish: it holds the journal
+        // and the roots, and one cut short would leave a publication half made.
+        // What it came to is kept as a look keeps it, so a publication that
+        // finished is not rolled back below.
+        let settled = self.settle();
         let needs_terminal = self.status.is_none() && !self.terminal;
+        // The broker kills the workload on reading the cancel, which can end
+        // its output before the stop below is reached, so mark the cut first.
+        if let Some(mark) = &self.stop_mark {
+            mark.stopping();
+        }
         let cancellation = self.control.as_mut().map_or(Ok(()), |control| {
+            #[cfg(test)]
+            let control = &mut tests::BeforeFirstByte::new(control, self.on_cancel.take());
             match control
                 .write_all(&CANCEL_FRAME)
                 .and_then(|()| control.flush())
@@ -1170,10 +1174,19 @@ impl SandboxProcess for ProjectedProcess {
             }
         });
         self.reported = None;
-        let process_cleanup = self.process.stop();
-        let scope_reaped =
-            self.process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete;
+        let process_cleanup = with_process(&self.process, |process| process.stop_sync());
+        let scope_reaped = with_process(&self.process, |process| {
+            process.inspection().cleanup() == crucible_sandbox::SandboxCleanup::Complete
+        });
         if let Some(receiver) = &mut self.receiver {
+            // The report is discarded, so a scan that has not ended gets no
+            // more of the stream than is already queued on it: a broker that
+            // stalled, whose end of the stream a failed stop left open, would
+            // otherwise hold this join for as long as it stalls. See
+            // `protocol::Receiver` for what the join still waits for.
+            if let Some(control) = &self.control {
+                let _ = control.shutdown(std::net::Shutdown::Both);
+            }
             let _ = receiver.finish();
         }
         self.receiver.take();
@@ -1190,6 +1203,7 @@ impl SandboxProcess for ProjectedProcess {
                 }
             });
             if let Some(lifecycle) = lifecycle {
+                self.publication = Some(lifecycle);
                 terminal_cleanup = self.lifecycle(lifecycle);
             }
             self.terminal = true;
@@ -1205,11 +1219,19 @@ impl SandboxProcess for ProjectedProcess {
             crucible_sandbox::SandboxCleanup::Failed
         };
         let unrecorded = self.unrecorded.take().map_or(Ok(()), Err);
+        let ending = match settled {
+            Err(problem) => Err(problem),
+            Ok(_) => match &self.failure {
+                Some((kind, problem)) => Err(io::Error::new(*kind, problem.to_string())),
+                None => Ok(()),
+            },
+        };
         let mut result = cancellation
             .and(process_cleanup)
             .and(terminal_cleanup)
             .and(projection_cleanup)
-            .and(unrecorded);
+            .and(unrecorded)
+            .and(ending);
         self.inspection = self.inspection.clone().cleaned(cleanup);
         self.cleanup = cleanup;
         let audited = self.audit_cleanup(cleanup);
@@ -1217,19 +1239,11 @@ impl SandboxProcess for ProjectedProcess {
         result
     }
 
-    fn inspection(&self) -> &SandboxInspection {
-        &self.inspection
-    }
-
-    fn usage(&self) -> SandboxUsage {
-        self.process.usage()
-    }
-
-    fn violation(&self) -> Option<SandboxViolation> {
-        self.process.violation()
-    }
-
+    /// What [`SandboxProcess::begin_background_acceptance`] does, synchronously.
     fn begin_background_acceptance(&mut self, key: CallResultKey) -> Result<(), SandboxError> {
+        // An ending on its thread holds the journal; the acceptance is decided
+        // against what that ending wrote.
+        self.settle().map_err(SandboxError::Lifecycle)?;
         if self.invocation == SandboxInvocationMode::Foreground
             || self.call_result_key.is_none()
             || self.call_result_key != Some(key)
@@ -1251,10 +1265,13 @@ impl SandboxProcess for ProjectedProcess {
         Ok(())
     }
 
+    /// What [`SandboxProcess::complete_background_acceptance`] does,
+    /// synchronously.
     fn complete_background_acceptance(
         &mut self,
         receipt: CallResultReceipt,
     ) -> Result<(), SandboxError> {
+        self.settle().map_err(SandboxError::Lifecycle)?;
         if !self.acceptance_pending {
             return Err(SandboxError::Lifecycle(io::Error::other(
                 "sandbox background result intent is unavailable",
@@ -1266,7 +1283,7 @@ impl SandboxProcess for ProjectedProcess {
             ))
         })?;
         if let Err(source) = projection.record(transaction::Record::CallAccepted(receipt.bytes())) {
-            let _ = self.process.stop();
+            let _ = with_process(&self.process, |process| process.stop_sync());
             projection.retain_evidence();
             let _ = self.lifecycle(SandboxLifecycle::Quarantined);
             self.terminal = true;
@@ -1277,15 +1294,677 @@ impl SandboxProcess for ProjectedProcess {
     }
 }
 
+impl SandboxProcess for ProjectedProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        with_process(&self.process, |process| process.take_stdin())
+    }
+
+    fn take_async_stdin(&mut self) -> Option<Box<dyn crucible_sandbox::SandboxInput>> {
+        with_process(&self.process, |process| process.take_async_stdin())
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        bounded::wrap_output(
+            with_process(&self.process, |process| process.take_stdout()),
+            Arc::clone(&self.output_boundary),
+        )
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        bounded::wrap_output(
+            with_process(&self.process, |process| process.take_stderr()),
+            Arc::clone(&self.output_boundary),
+        )
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if let Some(status) = self.status {
+            return Ok(Some(status));
+        }
+        if let Some((kind, problem)) = &self.failure {
+            return Err(io::Error::new(*kind, problem.to_string()));
+        }
+        if self.terminal {
+            // Stopped before its report was read, so how the leader ended is how
+            // the command ended. A zero here says the leader exited, not that
+            // what the command wrote was published: stopping discards whatever
+            // had not been published yet.
+            return with_process(&self.process, |process| process.try_wait());
+        }
+        if let Some(concluding) = &self.concluding {
+            // Its ending is being written on a thread of its own, which is
+            // joined here only once it has ended: this look may be on the
+            // thread that draws. One that waits for the lock is handed over
+            // again on the next look.
+            if !concluding.finished() {
+                return Ok(None);
+            }
+            return self.settle();
+        }
+        if self.reported.is_none() {
+            if with_process(&self.process, |process| process.try_wait())?.is_none() {
+                return Ok(None);
+            }
+            // The leader has exited, but the broker's scan may still be
+            // arriving, or have stalled. It finishes on the receiver's own
+            // thread; this look is answered again on the next one rather than
+            // waiting for it here, where the caller may be the thread that
+            // draws.
+            if !self
+                .receiver
+                .as_ref()
+                .is_none_or(protocol::Receiver::finished)
+            {
+                return Ok(None);
+            }
+            self.report()?;
+        }
+        self.conclude()
+    }
+
+    fn ended(&mut self) -> bool {
+        self.status.is_some()
+            || self.terminal
+            || self.reported.is_some()
+            || self.concluding.is_some()
+            || matches!(
+                with_process(&self.process, |process| process.try_wait()),
+                Ok(Some(_))
+            )
+    }
+
+    fn publication_outcome(&self) -> Option<SandboxLifecycle> {
+        self.publication
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move { self.stop() })
+    }
+
+    /// The same stop the future above drives, run on this thread, since that
+    /// body blocks either way; bounded the way that body is and reported as
+    /// failed cleanup where it gives out.
+    fn stop_sync(&mut self) -> io::Result<()> {
+        ProjectedProcess::stop(self)
+    }
+
+    fn inspection(&self) -> &SandboxInspection {
+        &self.inspection
+    }
+
+    fn usage(&self) -> SandboxUsage {
+        with_process(&self.process, |process| process.usage())
+    }
+
+    fn violation(&self) -> Option<SandboxViolation> {
+        with_process(&self.process, |process| process.violation())
+    }
+
+    fn begin_background_acceptance(
+        &mut self,
+        key: CallResultKey,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.begin_background_acceptance(key) })
+    }
+
+    fn complete_background_acceptance(
+        &mut self,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.complete_background_acceptance(receipt) })
+    }
+}
+
 impl Drop for ProjectedProcess {
     fn drop(&mut self) {
         let _ = self.stop();
     }
 }
 
+/// What a command's ending is written from on its own thread: everything it
+/// journals, publishes or discards through, and the facts it records.
+struct Ending {
+    projection: Option<Projection>,
+    process: SharedProcess,
+    output_boundary: Arc<OutputBoundary>,
+    audit: SandboxAudit,
+    sandbox: SandboxId,
+    /// Under test, the thread that handed this ending over, whose change to
+    /// this user's state directory it reads through, as that thread would.
+    #[cfg(test)]
+    asked_by: std::thread::ThreadId,
+    /// Under test, a gate that holds the worker after its scan is durable.
+    #[cfg(test)]
+    scan_gate: Option<ScanGate>,
+    /// The terminal publication outcome, once this ending has one.
+    publication: Option<SandboxLifecycle>,
+}
+
+/// What an ending came to, with the projection it was written through, which
+/// goes back to the command.
+struct Ended {
+    projection: Option<Projection>,
+    outcome: Outcome,
+    publication: Option<SandboxLifecycle>,
+}
+
+enum Outcome {
+    /// The publication lock is unavailable: the report goes back, to be handed
+    /// over again on a later look.
+    Waiting(protocol::Terminal),
+    /// Published or discarded: how the command ended, and a fact about a
+    /// publication that went ahead which the audit could not take.
+    Settled {
+        status: ExitStatus,
+        unrecorded: Option<io::Error>,
+    },
+    /// How the ending went wrong. On paths where a cleanup failure is itself
+    /// recorded, that cleanup result is returned; paths that retain the
+    /// original ending error return it unless a later lifecycle audit also
+    /// fails.
+    Failed(io::Error),
+}
+
+impl Ending {
+    fn write(mut self, reported: io::Result<protocol::Terminal>) -> Ended {
+        #[cfg(test)]
+        transaction::read_for(self.asked_by);
+        let outcome = if let Ok(outcome) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match reported {
+                Ok(terminal) => self.reported(terminal),
+                Err(problem) => self.unreadable(problem),
+            })) {
+            outcome
+        } else {
+            self.publication = Some(SandboxLifecycle::Quarantined);
+            if let Some(projection) = self.projection.as_mut() {
+                projection.retain_evidence();
+            }
+            Outcome::Failed(io::Error::other(
+                "the thread writing a command's ending panicked",
+            ))
+        };
+        Ended {
+            projection: self.projection,
+            outcome,
+            publication: self.publication,
+        }
+    }
+
+    fn lifecycle(&self, lifecycle: SandboxLifecycle) -> io::Result<()> {
+        self.audit
+            .record(self.sandbox, SandboxFactKind::Lifecycle(lifecycle))
+            .map_err(io::Error::other)
+    }
+
+    /// Rolls back what the command wrote after its report could not be read.
+    fn unreadable(&mut self, problem: io::Error) -> Outcome {
+        if let Some(projection) = self.projection.as_mut() {
+            let lifecycle = if projection.abort(true).is_ok() {
+                SandboxLifecycle::RolledBack
+            } else {
+                projection.retain_evidence();
+                SandboxLifecycle::Quarantined
+            };
+            self.publication = Some(lifecycle);
+            if let Err(cleanup) = self.lifecycle(lifecycle) {
+                return Outcome::Failed(cleanup);
+            }
+        }
+        Outcome::Failed(problem)
+    }
+
+    fn violated(&self) -> bool {
+        with_process(&self.process, |process| process.violation().is_some())
+    }
+
+    fn discarded_status(&mut self, status: ExitStatus) -> Outcome {
+        match self.discard() {
+            Ok(()) => Outcome::Settled {
+                status,
+                unrecorded: None,
+            },
+            Err(problem) => Outcome::Failed(problem),
+        }
+    }
+
+    /// Journals the scan, then publishes or discards what the command wrote.
+    ///
+    /// Only a clean ending publishes, so only a clean ending asks for the lock:
+    /// a command killed, or stopped by a limit, is discarded without waiting for
+    /// another command's publication.
+    fn reported(&mut self, terminal: protocol::Terminal) -> Outcome {
+        if let Some(projection) = self.projection.as_mut()
+            && let Err(problem) = projection.record_terminal_scan()
+        {
+            let _ = projection.abort(true);
+            projection.retain_evidence();
+            self.publication = Some(SandboxLifecycle::Quarantined);
+            if let Err(cleanup) = self.lifecycle(SandboxLifecycle::Quarantined) {
+                return Outcome::Failed(cleanup);
+            }
+            return Outcome::Failed(problem);
+        }
+        #[cfg(test)]
+        if let Some((_, reached, release)) = self.scan_gate.take() {
+            let _ = reached.send(());
+            let _ = release.recv();
+        }
+        let status = terminal.status;
+        if status.signal().is_some() || self.violated() {
+            return self.discarded_status(status);
+        }
+        let admitted = self
+            .projection
+            .as_ref()
+            .map_or(Ok(None), Projection::admission);
+        let admission = match admitted {
+            Ok(Some(admission)) => admission,
+            // The publication lock is unavailable. Asked again on a later look
+            // rather than waited for here while it remains unavailable.
+            Ok(None) => return Outcome::Waiting(terminal),
+            Err(problem) => return self.discarded_after(problem),
+        };
+        if self.violated() {
+            drop(admission);
+            return self.discarded_status(status);
+        }
+        #[cfg(test)]
+        bounded::hold_final_check(self.sandbox);
+        // The handoff check above is not the boundary: seal every output read
+        // before publication; a seal timeout discards rather than publishing.
+        match self.output_boundary.seal() {
+            Ok(true) => {
+                drop(admission);
+                return self.discarded_status(status);
+            }
+            Ok(false) => {}
+            Err(problem) => {
+                drop(admission);
+                return self.discarded_after(problem);
+            }
+        }
+        if self.violated() {
+            drop(admission);
+            return self.discarded_status(status);
+        }
+        if let Err(problem) = self.lifecycle(SandboxLifecycle::PublicationStarted) {
+            drop(admission);
+            return self.discarded_after(problem);
+        }
+        let publication = self.projection.as_mut().map_or(Ok(()), |projection| {
+            projection.publish(&admission, &terminal.baselines, &terminal.roots)
+        });
+        if let Err(problem) = publication {
+            let lifecycle = if problem.requires_quarantine() {
+                SandboxLifecycle::Quarantined
+            } else {
+                SandboxLifecycle::RolledBack
+            };
+            self.publication = Some(lifecycle);
+            return match self.lifecycle(lifecycle) {
+                Ok(()) => Outcome::Failed(problem.into_io()),
+                Err(cleanup) => Outcome::Failed(cleanup),
+            };
+        }
+        // The publication is done. A fact that cannot be recorded is a cleanup
+        // failure, not an ending that went wrong: reported as one, it would tell
+        // the model to write everything again over the files that are already
+        // there.
+        self.publication = Some(SandboxLifecycle::Published);
+        Outcome::Settled {
+            status,
+            unrecorded: self.lifecycle(SandboxLifecycle::Published).err(),
+        }
+    }
+
+    /// Discards what the command wrote after `problem` kept it from being
+    /// published.
+    fn discarded_after(&mut self, problem: io::Error) -> Outcome {
+        match self.discard() {
+            Ok(()) => Outcome::Failed(problem),
+            Err(cleanup) => Outcome::Failed(cleanup),
+        }
+    }
+
+    /// Discards what the command wrote, and records how that went.
+    fn discard(&mut self) -> io::Result<()> {
+        let Some(projection) = self.projection.as_mut() else {
+            return Ok(());
+        };
+        if let Err(problem) = projection.abort(true) {
+            projection.retain_evidence();
+            self.projection.take();
+            self.publication = Some(SandboxLifecycle::Quarantined);
+            self.lifecycle(SandboxLifecycle::Quarantined)?;
+            return Err(problem);
+        }
+        match self.lifecycle(SandboxLifecycle::RolledBack) {
+            Ok(()) => {
+                self.publication = Some(SandboxLifecycle::RolledBack);
+                Ok(())
+            }
+            Err(problem) => {
+                self.publication = Some(SandboxLifecycle::Quarantined);
+                Err(problem)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs a hook before the first byte reaches the writer it wraps: what the
+    /// hook sees is what a peer that acts on the first byte it reads would see.
+    pub(super) struct BeforeFirstByte<'a, W> {
+        inner: &'a mut W,
+        hook: Option<Box<dyn FnOnce() + Send>>,
+    }
+
+    impl<'a, W> BeforeFirstByte<'a, W> {
+        pub(super) fn new(inner: &'a mut W, hook: Option<Box<dyn FnOnce() + Send>>) -> Self {
+            Self { inner, hook }
+        }
+    }
+
+    impl<W: Write> Write for BeforeFirstByte<'_, W> {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if let Some(hook) = self.hook.take() {
+                hook();
+            }
+            self.inner.write(bytes)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    /// A projected stop sends the broker a cancel, and the broker kills the
+    /// workload, ending its output, before the stop reaches the process
+    /// itself. Here the command is ended, and its output read to the end as a
+    /// reader thread may, before the cancel's first byte is written: the start
+    /// of a credential it printed must already read as cut.
+    #[test]
+    fn a_credential_start_is_masked_when_the_broker_ends_the_output_on_cancel() {
+        use crucible_sandbox::{SandboxDomainPolicy, SandboxNetworkProvenance, SandboxRead};
+
+        let policy =
+            SandboxDomainPolicy::new([], [], false, [], SandboxNetworkProvenance::User).unwrap();
+        let proxy = crate::network::Mediator::tcp(
+            policy,
+            SandboxId::new(),
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .unwrap();
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "printf 'id=%.20s' \"${HTTP_PROXY#http://crucible:}\"; read -r _",
+        ]);
+        command.envs(proxy.environment(proxy.address()));
+        let mut plan =
+            crate::process::testing_plan(crucible_sandbox::SandboxSpeech::Held, None).unwrap();
+        plan.network = Some(proxy);
+        let audit = plan.audit.clone();
+        let sandbox = plan.sandbox;
+        let (mut process, stop_mark) = crate::process::spawn_marked(command, plan).unwrap();
+        let stdin = process.take_stdin().unwrap();
+        let mut stdout = process.take_stdout().unwrap();
+
+        let (read, printed) = std::sync::mpsc::channel();
+        let broker_kills_the_workload = move || {
+            drop(stdin);
+            let mut kept = Vec::new();
+            let mut buffer = [0; 256];
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while std::time::Instant::now() < deadline {
+                match stdout.read_ready(&mut buffer) {
+                    Ok(SandboxRead::Bytes(count)) => {
+                        kept.extend_from_slice(buffer.get(..count).unwrap_or_default());
+                    }
+                    Ok(SandboxRead::Pending) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Ok(SandboxRead::End) => break,
+                    Ok(SandboxRead::Limited { .. }) | Err(_) => return,
+                }
+            }
+            let _ = read.send(kept);
+        };
+        let (control, _broker) = std::os::unix::net::UnixStream::pair().unwrap();
+        let inspection = process.inspection().clone();
+        let mut projected = ProjectedProcess {
+            process: share_process(process),
+            output_boundary: Arc::new(OutputBoundary::default()),
+            projection: None,
+            publications: BoundedPublication::default(),
+            receiver: None,
+            status: None,
+            terminal: false,
+            reported: None,
+            concluding: None,
+            failure: None,
+            unrecorded: None,
+            publication: None,
+            audit,
+            sandbox,
+            control: Some(control),
+            invocation: SandboxInvocationMode::Foreground,
+            call_result_key: None,
+            acceptance_pending: false,
+            inspection,
+            cleanup: crucible_sandbox::SandboxCleanup::Pending,
+            stop_mark: Some(stop_mark),
+            on_cancel: Some(Box::new(broker_kills_the_workload)),
+            _serial: None,
+        };
+
+        projected.stop().unwrap();
+
+        let masked = [b"id=".as_slice(), &[b'*'; 20]].concat();
+        assert_eq!(printed.recv().unwrap(), masked);
+    }
+
+    /// A projected command's input is the process's own asynchronous input,
+    /// not the default adapter over its synchronous one, which would write on
+    /// the thread polling it: a write to a command that never reads leaves
+    /// the runtime free.
+    #[test]
+    fn a_projected_command_forwards_its_asynchronous_input() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "exec sleep 3"]);
+        let plan =
+            crate::process::testing_plan(crucible_sandbox::SandboxSpeech::Held, None).unwrap();
+        let audit = plan.audit.clone();
+        let sandbox = plan.sandbox;
+        let (process, stop_mark) = crate::process::spawn_marked(command, plan).unwrap();
+        let (control, _broker) = std::os::unix::net::UnixStream::pair().unwrap();
+        let inspection = process.inspection().clone();
+        let mut projected = ProjectedProcess {
+            process: share_process(process),
+            output_boundary: Arc::new(OutputBoundary::default()),
+            projection: None,
+            publications: BoundedPublication::default(),
+            receiver: None,
+            status: None,
+            terminal: false,
+            reported: None,
+            concluding: None,
+            failure: None,
+            unrecorded: None,
+            publication: None,
+            audit,
+            sandbox,
+            control: Some(control),
+            invocation: SandboxInvocationMode::Foreground,
+            call_result_key: None,
+            acceptance_pending: false,
+            inspection,
+            cleanup: crucible_sandbox::SandboxCleanup::Pending,
+            stop_mark: Some(stop_mark),
+            on_cancel: None,
+            _serial: None,
+        };
+        let input = crucible_sandbox::SandboxProcess::take_async_stdin(&mut projected)
+            .expect("a command built Held hands back an input");
+
+        let (gave_up, ticks) = crate::process::tests::pipes::writing_to_a_deaf_command(input)
+            .expect("the write held the runtime's only thread");
+
+        assert!(gave_up, "a write to a command that never reads answered");
+        assert_eq!(ticks, Some(10), "other work stopped while the write waited");
+        projected.stop().unwrap();
+    }
+
+    /// A command with nothing to publish whose leader has already exited, and
+    /// the broker's end of its status stream, which the test writes the
+    /// terminal report into as slowly as it likes.
+    fn exited_with_its_report_to_come() -> (ProjectedProcess, std::os::unix::net::UnixStream) {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        let plan =
+            crate::process::testing_plan(crucible_sandbox::SandboxSpeech::Closed, None).unwrap();
+        let audit = plan.audit.clone();
+        let sandbox = plan.sandbox;
+        let (mut process, stop_mark) = crate::process::spawn_marked(command, plan).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !matches!(process.try_wait(), Ok(Some(_))) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the leader did not exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (control, broker) = std::os::unix::net::UnixStream::pair().unwrap();
+        let receiver = protocol::Receiver::spawn(control.try_clone().unwrap(), None).unwrap();
+        let inspection = process.inspection().clone();
+        let projected = ProjectedProcess {
+            process: share_process(process),
+            output_boundary: Arc::new(OutputBoundary::default()),
+            projection: None,
+            publications: BoundedPublication::default(),
+            receiver: Some(receiver),
+            status: None,
+            terminal: false,
+            reported: None,
+            concluding: None,
+            failure: None,
+            unrecorded: None,
+            publication: None,
+            audit,
+            sandbox,
+            control: Some(control),
+            invocation: SandboxInvocationMode::Foreground,
+            call_result_key: None,
+            acceptance_pending: false,
+            inspection,
+            cleanup: crucible_sandbox::SandboxCleanup::Pending,
+            stop_mark: Some(stop_mark),
+            on_cancel: None,
+            _serial: None,
+        };
+        (projected, broker)
+    }
+
+    /// Says the command exited with `code`, and starts the scan without
+    /// finishing it: what a broker still sending, or one that has stalled,
+    /// has written so far.
+    fn begin_the_report(broker: &mut std::os::unix::net::UnixStream, code: i32) {
+        broker
+            .write_all(&crucible_sandbox_broker::encode_wait_status(code << 8))
+            .unwrap();
+        broker
+            .write_all(&crucible_sandbox_broker::SCAN_FRAME)
+            .unwrap();
+    }
+
+    /// Finishes a report [`begin_the_report`] began, with no root in it.
+    fn end_the_report(broker: &mut std::os::unix::net::UnixStream) {
+        broker.write_all(&0_u32.to_le_bytes()).unwrap();
+        broker
+            .write_all(&crucible_sandbox_broker::SCAN_END_FRAME)
+            .unwrap();
+    }
+
+    /// How long a look or a stop may take here before it counts as waiting on
+    /// the scan: far more than either takes, far less than a stall.
+    const PROMPT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// A command whose leader has exited but whose terminal scan is still
+    /// arriving is asked how it ended. The answer is that it has ended and is
+    /// not settled yet, given at once, rather than a look that waits for the
+    /// scan; and once the scan arrives, the status is the one it reported.
+    #[test]
+    fn a_stalled_scan_does_not_hold_up_a_status() {
+        let (mut projected, mut broker) = exited_with_its_report_to_come();
+        begin_the_report(&mut broker, 3);
+
+        let (answered, answer) = std::sync::mpsc::channel();
+        let looking = std::thread::spawn(move || {
+            let look = projected.try_wait().map_err(|problem| problem.to_string());
+            let ended = projected.ended();
+            let _ = answered.send((look, ended));
+            projected
+        });
+        let looked = answer.recv_timeout(PROMPT);
+        // Ended either way, so a look that was waiting on it is let go.
+        end_the_report(&mut broker);
+        drop(broker);
+        let mut projected = looking.join().unwrap();
+
+        let (look, ended) = looked.expect("a status waited for a stalled scan");
+        assert_eq!(look, Ok(None), "a status settled before its scan arrived");
+        assert!(ended, "a command whose leader exited did not read as ended");
+        let deadline = std::time::Instant::now() + PROMPT;
+        let status = loop {
+            if let Some(status) = projected.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the status never settled once its scan arrived"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(status.code(), Some(3), "{status}");
+        projected.stop().unwrap();
+    }
+
+    /// A stop of a command whose terminal scan has stalled, with the broker's
+    /// end of the stream held open, takes no more of that scan than was
+    /// already sent rather than waiting for the rest, and still joins the
+    /// thread it ran on.
+    #[test]
+    fn a_stalled_scan_does_not_hold_up_a_stop() {
+        let (mut projected, mut broker) = exited_with_its_report_to_come();
+        begin_the_report(&mut broker, 0);
+
+        let (answered, answer) = std::sync::mpsc::channel();
+        let stopping = std::thread::spawn(move || {
+            let stopped = projected.stop().map_err(|problem| problem.to_string());
+            let _ = answered.send(stopped);
+            projected
+        });
+        let stopped = answer.recv_timeout(PROMPT);
+        // Held until now, so the stalled scan cannot have ended by itself.
+        drop(broker);
+        let projected = stopping.join().unwrap();
+
+        stopped
+            .expect("a stop waited for a stalled scan")
+            .expect("cleanup");
+        assert_eq!(
+            projected.inspection.cleanup(),
+            crucible_sandbox::SandboxCleanup::Complete
+        );
+        assert!(
+            projected.receiver.is_none(),
+            "the scan's thread was left to a later stop"
+        );
+    }
 
     #[test]
     fn protected_names_are_never_publication_entries() {

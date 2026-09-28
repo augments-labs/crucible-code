@@ -28,7 +28,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crucible_core::{Calibration, Carried, Message, Spend, TOOL_RESULT_BYTES, ToolSchema};
+use crucible_types::{Calibration, Carried, Message, Spend, TOOL_RESULT_BYTES, ToolSchema};
 
 /// Bytes per token before any response has been seen.
 ///

@@ -10,9 +10,24 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# Account login, token exchange and renewal. Blocking matches the rest of the
-# binary's thread-per-operation design; this crate never runs it on startup.
-ureq.workspace = true
+# The client account login, token exchange and renewal are sent through, and
+# the bounded read of each answer: no redirect followed, the same TLS and proxy
+# policy as every other outgoing request, and a response body cut at its limit.
+crucible-http.workspace = true
+# `Method::POST`, and the response status and body type that client hands
+# back.
+hyper.workspace = true
+# The error the client's TLS setup can fail with, kept typed in `OAuthError`.
+rustls.workspace = true
+# `rt` to run each renewal and each login as a task on the application's
+# runtime and the store's lock and file work on its blocking threads; `sync`
+# for the channel a renewal's waiters watch, the one place its blocking work
+# takes and the channel a login is handed pasted input on; `time` for each
+# request's deadline and a device login's pauses; `net` for the loopback
+# listener a browser login's callback lands on, and `io-util` to read that
+# callback's request and write its answer. Nothing here builds a runtime:
+# renewals and logins run on the one the application hands over.
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"] }
 # Decodes only the bounded JWT claim segment needed for ChatGPT account
 # selection. Token bytes stay inside the credential type.
 base64.workspace = true
@@ -21,10 +36,13 @@ base64.workspace = true
 getrandom.workspace = true
 # Computes the RFC 7636 S256 challenge for callback-based account logins.
 sha2.workspace = true
-# `ApiKey`, which is what a stored key becomes on the way out. The secret is
-# handed back as the type that can only be applied to a request, never as the
-# string it was written down as.
-crucible-core.workspace = true
+# `ApiKey`, which is what a stored key becomes on the way out, and the header a
+# request is authorized with. The secret is handed back as the type that can
+# only be applied to a request, never as the string it was written down as.
+crucible-credentials.workspace = true
+# `CredentialScopeId`, which is what a credential is scoped to and what a
+# renewal must not move.
+crucible-types.workspace = true
 # Owner-only creation and tightening for the auth directory, store, partial
 # and lock, shared with session files so Windows has one DACL implementation.
 crucible-privacy.workspace = true
@@ -34,6 +52,14 @@ crucible-privacy.workspace = true
 serde_json.workspace = true
 # `AuthError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
+# `BoxFuture`, the shape a renewal's request is handed to its owner in and a
+# login's future is held in by the task that runs it.
+crucible-runtime.workspace = true
+
+[dev-dependencies]
+# The runtime a test hands its renewals, shaped as the application's: several
+# workers, a clock and sockets.
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "net"] }
 
 [lints]
 workspace = true

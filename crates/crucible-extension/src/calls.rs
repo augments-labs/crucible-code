@@ -9,8 +9,16 @@
 //! Nothing here reads a clock. A call that is never answered is a call still
 //! waiting as far as this is concerned, and how long to wait belongs where
 //! there is something to wait with.
+//!
+//! A call is only a call within one generation of an extension. The number on
+//! the wire is chosen by whichever end starts the call, and a replacement
+//! process starts counting wherever it likes, so the host holds a [`Call`] —
+//! the number and the generation it was made in — rather than the number
+//! alone.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::spoken::CallId;
 
@@ -22,6 +30,99 @@ use crate::spoken::CallId;
 /// asking faster than crucible answers, which is bounded here so that a program
 /// somebody else wrote cannot decide how much work this process holds.
 pub const EXTENSION_CALLS: usize = 64;
+
+/// Which extension process, of every one crucible has spoken to, a call
+/// belongs to.
+///
+/// Every process a host speaks to is a generation of its own, the first one
+/// and each replacement alike. A replacement is a program crucible has not
+/// spoken to before — restarted, or rebuilt by whoever can write to where it
+/// lives — and it may have a call open under a number an earlier one also used.
+/// So a call carries its generation, and only the generation being spoken to
+/// settles it: an answer composed for the old process's call must not reach
+/// the new one's, carrying whatever the old one was being answered with.
+///
+/// Drawn from one count that every host in this process shares, so no two
+/// processes crucible has hosted share a generation, whichever host started
+/// them and however: a call from a host that was stopped and started again is
+/// refused by the new one as a replaced one's is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Generation(u64);
+
+/// The next generation any host in this process is given.
+static GENERATIONS: AtomicU64 = AtomicU64::new(0);
+
+impl Generation {
+    /// A generation no process crucible has hosted has had, or nothing once
+    /// they run out.
+    pub(crate) fn fresh() -> Option<Self> {
+        Self::drawn_from(&GENERATIONS)
+    }
+
+    /// The next generation `count` holds, or nothing once it has none left.
+    ///
+    /// Never wraps: a number handed out a second time would refuse nothing.
+    pub(crate) fn drawn_from(count: &AtomicU64) -> Option<Self> {
+        count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .ok()
+            .map(Self)
+    }
+
+    /// The generation numbered `number`, for a test that builds a conversation
+    /// by hand.
+    #[cfg(test)]
+    pub(crate) const fn numbered(number: u64) -> Self {
+        Self(number)
+    }
+}
+
+impl fmt::Display for Generation {
+    fn fmt(&self, form: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(form, "{}", self.0)
+    }
+}
+
+/// One call, as the host holds it: its number on the wire, and the generation
+/// it was made in.
+///
+/// Only a conversation hands these out, stamped with its own generation, so a
+/// number cannot be moved from one generation into another by rewrapping it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Call {
+    /// Which process the call belongs to.
+    generation: Generation,
+    /// Its number there.
+    id: CallId,
+}
+
+impl Call {
+    /// Call `id` of `generation`.
+    pub(crate) const fn new(generation: Generation, id: CallId) -> Self {
+        Self { generation, id }
+    }
+
+    /// Its number on the wire.
+    #[cfg(test)]
+    pub(crate) const fn id(self) -> CallId {
+        self.id
+    }
+
+    /// Its number on the wire, where it was made in `generation`.
+    ///
+    /// # Errors
+    ///
+    /// [`CallError::Elsewhere`] where it was made in another.
+    pub(crate) fn of(self, generation: Generation) -> Result<CallId, CallError> {
+        if self.generation == generation {
+            Ok(self.id)
+        } else {
+            Err(CallError::Elsewhere { call: self })
+        }
+    }
+}
 
 /// Why a call could not be started or settled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -50,6 +151,22 @@ pub enum CallError {
     /// There are no identifiers left to hand out.
     #[error("there are no call identifiers left")]
     Exhausted,
+
+    /// The call belongs to an extension process other than the one being
+    /// spoken to.
+    ///
+    /// Refused rather than passed on by its number: the process it was made
+    /// with has been replaced or its host stopped, and the one there now may
+    /// have a call open under the same number that this was never meant for.
+    #[error(
+        "call {} belongs to extension generation {}, not the one being spoken to",
+        .call.id,
+        .call.generation
+    )]
+    Elsewhere {
+        /// The call, as the host held it.
+        call: Call,
+    },
 }
 
 /// The calls crucible has made and is waiting on.

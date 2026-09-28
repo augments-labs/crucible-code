@@ -627,6 +627,8 @@ pub enum PromptCacheResourceError {
     #[error("prompt-cache resource metadata store is full")]
     StoreFull,
     /// A private filesystem operation failed.
+    ///
+    /// The operating-system failure is the error `source` holds.
     #[error("could not {operation} prompt-cache resource metadata: {source}")]
     Local {
         /// Stable operation name, without a path or resource handle.

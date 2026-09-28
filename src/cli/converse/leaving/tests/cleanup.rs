@@ -3,14 +3,16 @@
 use std::io;
 use std::process::ExitStatus;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crucible_core::{
-    CallResultKey, CallResultReceipt, SandboxBackendIdentity, SandboxCapabilities, SandboxCommand,
-    SandboxError, SandboxInspection, SandboxLaunch, SandboxOutput, SandboxProcess, SandboxRequest,
-    SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
+use crucible_runtime::BoxFuture;
+use crucible_sandbox::{
+    SandboxBackendIdentity, SandboxCapabilities, SandboxCommand, SandboxError, SandboxInspection,
+    SandboxLaunch, SandboxOutput, SandboxProcess, SandboxRequest, SandboxService, SandboxSession,
+    SandboxUsage, SandboxViolation,
 };
 use crucible_sandbox_local::LocalSandbox;
+use crucible_storage::{CallResultKey, CallResultReceipt};
 
 pub(super) const PRIVATE_ERROR: &str = "synthetic-private-cleanup-details";
 
@@ -18,28 +20,73 @@ pub(super) fn sandbox() -> (Arc<dyn SandboxService>, Arc<AtomicBool>) {
     let denied = Arc::new(AtomicBool::new(true));
     (
         Arc::new(Fallible {
-            inner: Box::new(LocalSandbox::new()),
+            inner: Box::new(super::local()),
             denied: Arc::clone(&denied),
+            on_runtime: Arc::default(),
+            stalled: Arc::default(),
         }),
         denied,
     )
 }
 
+/// This machine's confinement, whose stops wait while the flag handed back
+/// is set: a backend that has stopped answering.
+pub(super) fn stalling() -> (Arc<dyn SandboxService>, Arc<AtomicBool>) {
+    let stalled = Arc::new(AtomicBool::new(false));
+    (
+        Arc::new(Fallible {
+            inner: Box::new(super::local()),
+            denied: Arc::new(AtomicBool::new(false)),
+            on_runtime: Arc::default(),
+            stalled: Arc::clone(&stalled),
+        }),
+        stalled,
+    )
+}
+
+/// This machine's confinement watching on `runtime`, whose stops never fail,
+/// counting in `on_runtime` the stops that ran on a thread of a runtime.
+pub(super) fn counting_on(
+    runtime: tokio::runtime::Handle,
+    on_runtime: &Arc<AtomicUsize>,
+) -> Arc<dyn SandboxService> {
+    Arc::new(Fallible {
+        inner: Box::new(LocalSandbox::new().watching_on(runtime)),
+        denied: Arc::new(AtomicBool::new(false)),
+        on_runtime: Arc::clone(on_runtime),
+        stalled: Arc::default(),
+    })
+}
+
 struct Fallible<T: ?Sized> {
     inner: Box<T>,
     denied: Arc<AtomicBool>,
+    /// How many stops ran on a thread of a runtime, rather than on the thread
+    /// of whoever asked outside one.
+    on_runtime: Arc<AtomicUsize>,
+    /// While set, a stop waits.
+    stalled: Arc<AtomicBool>,
 }
 
 impl SandboxService for Fallible<LocalSandbox> {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-        self.inner.probe()
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(async move { self.inner.probe().await })
     }
 
-    fn prepare(&self, request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        Ok(Box::new(Fallible {
-            inner: self.inner.prepare(request)?,
-            denied: Arc::clone(&self.denied),
-        }))
+    fn prepare(
+        &self,
+        request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            Ok(Box::new(Fallible {
+                inner: self.inner.prepare(request).await?,
+                denied: Arc::clone(&self.denied),
+                on_runtime: Arc::clone(&self.on_runtime),
+                stalled: Arc::clone(&self.stalled),
+            }) as Box<dyn SandboxSession>)
+        })
     }
 }
 
@@ -48,18 +95,25 @@ impl SandboxSession for Fallible<dyn SandboxSession> {
         self.inner.inspection()
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        self.inner.materialize()
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.inner.materialize().await })
     }
 
-    fn stage(
+    fn stage<'a>(
         self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        Ok(Box::new(Fallible {
-            inner: self.inner.stage(command)?,
-            denied: self.denied,
-        }))
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Fallible {
+                inner: self.inner.stage(command).await?,
+                denied: self.denied,
+                on_runtime: self.on_runtime,
+                stalled: self.stalled,
+            }) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -72,11 +126,18 @@ impl SandboxLaunch for Fallible<dyn SandboxLaunch> {
         self.inner.transfer_owner()
     }
 
-    fn release(self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        Ok(Box::new(Fallible {
-            inner: self.inner.release()?,
-            denied: self.denied,
-        }))
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Fallible {
+                inner: self.inner.release().await?,
+                denied: self.denied,
+                on_runtime: self.on_runtime,
+                stalled: self.stalled,
+            }) as Box<dyn SandboxProcess>)
+        })
     }
 }
 
@@ -101,11 +162,33 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
         self.inner.ended()
     }
 
-    fn stop(&mut self) -> io::Result<()> {
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            while self.stalled.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            if tokio::runtime::Handle::try_current().is_ok() {
+                self.on_runtime.fetch_add(1, Ordering::AcqRel);
+            }
+            if self.denied.swap(false, Ordering::Relaxed) {
+                Err(io::Error::other(PRIVATE_ERROR))
+            } else {
+                self.inner.stop().await
+            }
+        })
+    }
+
+    fn stop_sync(&mut self) -> io::Result<()> {
+        while self.stalled.load(Ordering::Acquire) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.on_runtime.fetch_add(1, Ordering::AcqRel);
+        }
         if self.denied.swap(false, Ordering::Relaxed) {
             Err(io::Error::other(PRIVATE_ERROR))
         } else {
-            self.inner.stop()
+            self.inner.stop_sync()
         }
     }
 
@@ -121,15 +204,18 @@ impl SandboxProcess for Fallible<dyn SandboxProcess> {
         self.inner.violation()
     }
 
-    fn begin_background_acceptance(&mut self, key: CallResultKey) -> Result<(), SandboxError> {
-        self.inner.begin_background_acceptance(key)
+    fn begin_background_acceptance(
+        &mut self,
+        key: CallResultKey,
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.inner.begin_background_acceptance(key).await })
     }
 
     fn complete_background_acceptance(
         &mut self,
         receipt: CallResultReceipt,
-    ) -> Result<(), SandboxError> {
-        self.inner.complete_background_acceptance(receipt)
+    ) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { self.inner.complete_background_acceptance(receipt).await })
     }
 }
 
@@ -174,7 +260,12 @@ fn capture(glyphs: crucible_config::Glyphs) {
         &|_| None,
     );
     let ended = super::Leaving::default()
-        .stand(&mut renderer, style, &left)
+        .stand(
+            &mut renderer,
+            style,
+            &left,
+            &crate::cli::ending::Ending::deaf(),
+        )
         .expect("interactive cleanup panel");
     assert_eq!(ended, super::Ended::Left);
     assert_eq!(

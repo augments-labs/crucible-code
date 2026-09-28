@@ -5,14 +5,38 @@
 //! still cannot finish, the stage is retained and the slot stays consumed until
 //! the service restarts. This bounds new admissions without claiming that an
 //! unconfirmed workload died or retaining an unbounded cleanup thread.
+//!
+//! **A status task of its own.** Each command is watched by a task on the
+//! runtime its service was handed, which the process owns and its stop
+//! aborts. Every [`SUPERVISE`] it enforces the command-time limit, starts the
+//! cancel of a violation, and looks at the leader, reaping it and keeping its
+//! status once it has exited and its scope has been stopped. A look never
+//! waits, so neither the task nor a caller asking for the status holds up a
+//! runtime thread or the other.
+//!
+//! The task shares the runtime's worker threads with whatever else runs
+//! there. A worker held inside other work delays its next pass, and with it a
+//! deadline or output-limit kill, so work spawned onto that runtime has to
+//! leave a worker free for it.
+//!
+//! **Nothing waits behind a cancel.** The leader, its scope and what has been
+//! seen of them share one lock, held only to look at the leader or signal its
+//! scope, and by a stop through its bounded kill and reap. A backend's cancel,
+//! which may wait for the leader within a budget of its own, runs on a thread
+//! of its own without that lock; the kill that follows it takes the lock only
+//! to make sure the leader has not been reaped, so a signal never reaches a
+//! process identity that may have been reused. A status asked for meanwhile
+//! answers from a look, and a stop kills and reaps the command itself and then
+//! waits a bounded time for the cancel to end.
 
-use std::io;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::io::{self, Write as _};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxAudit, SandboxCleanup, SandboxFactKind, SandboxInspection, SandboxInvocationMode,
     SandboxLifecycle, SandboxOutput, SandboxProcess, SandboxRead, SandboxResourceLimits,
@@ -21,16 +45,24 @@ use crucible_sandbox::{
 use crucible_storage::{CallResultKey, CallResultReceipt};
 use crucible_types::SandboxId;
 
-use crate::platform::{Output as PlatformOutput, ReadState, Scope, Terminator};
+use crate::platform::{self, ReadState, Scope, Stream, Terminator};
 
 /// Absolute ceiling even where a policy omits a smaller one.
 pub(super) const MAX_LOCAL_COMMANDS: usize = 16;
 
-/// Bounded reap interval used by destructors.
+/// Bounded reap interval inside synchronous `stop`. Not only Drop reaches it.
 const REAP: Duration = Duration::from_millis(250);
 
-/// Supervisor polling interval. It bounds deadline overshoot without spinning.
+/// How often a command's status task looks at it. It bounds deadline
+/// overshoot, and how late an exit nobody asked about is seen, without
+/// spinning.
 const SUPERVISE: Duration = Duration::from_millis(5);
+
+/// How long a stop waits for a violation's cancel to end once it has killed
+/// and reaped the command. A cancel waits for the leader's exit, which that
+/// kill has just brought about, so it ends within a poll of its own; one that
+/// has not ended by then is reported as failed cleanup and left for a retry.
+const CANCELLED: Duration = Duration::from_millis(250);
 
 const NO_VIOLATION: u8 = 0;
 const COMMAND_TIME_VIOLATION: u8 = 1;
@@ -157,7 +189,8 @@ impl Drop for Stage {
 ///
 /// The argument is the process id of the spawned leader. The call may wait,
 /// within a budget of its own, for that leader to exit so the backend's report
-/// arrives before the kill.
+/// arrives before the kill. It runs on a thread of its own, holding nothing a
+/// status or a stop waits on.
 pub(super) type Canceller = Box<dyn Fn(u32) -> io::Result<()> + Send + Sync>;
 
 /// Spawns `command` inside a platform process-tree scope.
@@ -175,11 +208,14 @@ pub(super) struct SpawnPlan {
     pub(super) audit_cleanup: bool,
     pub(super) invocation: SandboxInvocationMode,
     pub(super) call_result_key: Option<CallResultKey>,
-    /// A cooperative stop the supervisor tries before the group kill. Killing
-    /// the Linux launcher alone leaves its PID namespace running, so the Linux
-    /// backend asks the broker to end the workload and report its wait status;
-    /// the kill stays as the backstop.
+    /// A cooperative stop the status task tries before the group kill when a
+    /// limit is broken. Killing the Linux launcher alone leaves its PID
+    /// namespace running, so the Linux backend asks the broker to end the
+    /// workload and report its wait status; the kill stays as the backstop.
     pub(super) canceller: Option<Canceller>,
+    /// The runtime the command's status task runs on. Without one no command
+    /// is started.
+    pub(super) runtime: Option<tokio::runtime::Handle>,
     /// Whether crucible keeps the writing end of standard input. Decided with
     /// the command, because a pipe cannot be attached after a spawn.
     pub(super) speech: crucible_sandbox::SandboxSpeech,
@@ -187,6 +223,21 @@ pub(super) struct SpawnPlan {
     /// can take the same pipe. Native brokers consume a bounded launch frame
     /// and leave any later command-protocol bytes for the workload.
     pub(super) startup_input: Option<Vec<u8>>,
+    /// The exact bytes of every credential value the command's environment
+    /// carries, from [`credential_values`], masked on standard error, and on
+    /// standard output unless the command is spoken to.
+    pub(super) credentials: Vec<Vec<u8>>,
+}
+
+/// What of `environment` is masked in the command's output: the encoded bytes
+/// of every credential value, each of which is non-empty.
+pub(super) fn credential_values(
+    environment: &crucible_sandbox::SandboxEnvironment,
+) -> Vec<Vec<u8>> {
+    environment
+        .credential_values()
+        .map(|value| value.as_encoded_bytes().to_vec())
+        .collect()
 }
 
 /// Cleans preparation owners that never reached a child process.
@@ -249,6 +300,33 @@ pub(super) fn spawn(
     spawn_local(command, plan).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
 }
 
+/// [`spawn`], with the mark a stop made from outside the process sets on it.
+#[cfg(target_os = "linux")]
+pub(super) fn spawn_marked(
+    command: Command,
+    plan: SpawnPlan,
+) -> Result<(Box<dyn SandboxProcess>, StopMark), crucible_sandbox::SandboxError> {
+    spawn_local(command, plan).map(|process| {
+        let mark = StopMark(Arc::clone(&process.control));
+        (Box::new(process) as Box<dyn SandboxProcess>, mark)
+    })
+}
+
+/// Tells a command's output streams that crucible is stopping it, for an
+/// owner that can end the command's output before [`SandboxProcess::stop`]
+/// reaches the process: the Linux projection cancels through its broker.
+#[cfg(target_os = "linux")]
+pub(super) struct StopMark(Arc<Control>);
+
+#[cfg(target_os = "linux")]
+impl StopMark {
+    /// Marks the command cut, unless it has already been seen to exit. Called
+    /// before anything that can end its output.
+    pub(super) fn stopping(&self) {
+        self.0.stopping();
+    }
+}
+
 fn spawn_local(
     command: Command,
     plan: SpawnPlan,
@@ -281,9 +359,21 @@ fn spawn_inner(
         invocation,
         call_result_key,
         canceller,
+        runtime,
         speech,
         startup_input,
+        credentials,
     } = plan;
+    let Some(runtime) = runtime else {
+        return Err(failed_before_spawn(
+            crucible_sandbox::SandboxError::Spawn(io::Error::other(
+                "this sandbox service was given no runtime to watch its commands on",
+            )),
+            stage,
+            reservation,
+            network,
+        ));
+    };
     command
         .stdin(match (speech, startup_input.is_some()) {
             // A step that reads gets end-of-file, which is an answer. A peer
@@ -322,18 +412,21 @@ fn spawn_inner(
         }
     };
     let started = Instant::now();
-    let stdin = child
-        .stdin
-        .take()
-        .map(|input| Box::new(input) as Box<dyn std::io::Write + Send>);
+    let stdin = child.stdin.take();
     let control = Arc::new(Control::new(limits.output_bytes, audit, sandbox));
     // Own every resource before the first fallible initialization operation.
     // No caller can observe this private, unfinished process. Stop and Drop
     // use the scope and child directly, without needing a borrowed terminator.
     let mut process = LocalProcess {
-        child,
-        scope,
+        watched: Arc::new(Mutex::new(Watched {
+            child,
+            scope,
+            status: None,
+            scope_stopped: false,
+            cancel: None,
+        })),
         stdin,
+        input_thread: platform::InputThread::default(),
         terminator: None,
         stdout: None,
         stderr: None,
@@ -342,9 +435,7 @@ fn spawn_inner(
         stage,
         network,
         control,
-        supervisor: None,
-        status: None,
-        scope_stopped: false,
+        watch: None,
         started,
         stopped: false,
         audit_state: AuditState::default(),
@@ -358,8 +449,6 @@ fn spawn_inner(
         test_reap: reap,
     };
     match process.initialize(
-        limits,
-        canceller,
         audit_started,
         StartupInput {
             bytes: startup_input,
@@ -368,6 +457,8 @@ fn spawn_inner(
     ) {
         Ok(terminator) => {
             process.terminator = Some(terminator);
+            process.protect_outputs(credentials, speech);
+            process.watch(&runtime, terminator, limits, canceller);
             Ok(process)
         }
         Err(startup) => match process.stop() {
@@ -436,11 +527,50 @@ fn startup_cleanup_failed(
     ))
 }
 
-/// Shared hard-limit state used by both output streams and the supervisor.
+/// A stop's scope cleanup and its input thread's end, as one answer: the
+/// scope's failure where it failed, carrying the thread's beside it where both
+/// did, so neither is lost to a caller deciding whether to retry.
+fn stopped_with_input(scope: io::Result<()>, input: io::Result<()>) -> io::Result<()> {
+    match (scope, input) {
+        (Err(scope), Err(input)) => Err(io::Error::new(
+            scope.kind(),
+            InputAlsoFailed { scope, input },
+        )),
+        (scope, input) => scope.and(input),
+    }
+}
+
+/// A stop whose scope cleanup failed, and whose input thread's end failed too.
+#[derive(Debug)]
+struct InputAlsoFailed {
+    scope: io::Error,
+    input: io::Error,
+}
+
+impl std::fmt::Display for InputAlsoFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "sandbox process scope cleanup failed ({:?}); the thread writing its input did not end either ({:?})",
+            self.scope.kind(),
+            self.input.kind(),
+        )
+    }
+}
+
+impl std::error::Error for InputAlsoFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.scope)
+    }
+}
+
+/// Shared hard-limit state used by both output streams and the status task.
 struct Control {
-    lifecycle: Mutex<()>,
+    /// Set once the leader has been seen to exit, or once a stop has begun.
     done: AtomicBool,
     violation: AtomicU8,
+    /// Set when crucible stops a command it has not seen exit.
+    stopped_running: AtomicBool,
     output_remaining: Option<AtomicU64>,
     output_bytes: AtomicU64,
     failure: Mutex<Option<Failure>>,
@@ -457,21 +587,15 @@ struct Failure {
 impl Control {
     fn new(output_limit: Option<u64>, audit: SandboxAudit, sandbox: SandboxId) -> Self {
         Self {
-            lifecycle: Mutex::new(()),
             done: AtomicBool::new(false),
             violation: AtomicU8::new(NO_VIOLATION),
+            stopped_running: AtomicBool::new(false),
             output_remaining: output_limit.map(AtomicU64::new),
             output_bytes: AtomicU64::new(0),
             failure: Mutex::new(None),
             audit,
             sandbox,
         }
-    }
-
-    fn lifecycle(&self) -> io::Result<MutexGuard<'_, ()>> {
-        self.lifecycle
-            .lock()
-            .map_err(|_| io::Error::other("sandbox lifecycle supervisor lock was poisoned"))
     }
 
     fn record_output(&self, bytes: usize) -> (usize, usize) {
@@ -508,6 +632,26 @@ impl Control {
         {
             self.record_failure(&io::Error::other(problem));
         }
+    }
+
+    /// Marks a stop of a command not yet seen to exit, which is what ends it.
+    /// `done` is set once an exit is seen, or once a stop has begun, and that
+    /// stop has already made this decision. A stop that lands after the
+    /// command exited, but before crucible saw it, masks what was held back,
+    /// and the stop is then what crucible reports; on Linux that window opens
+    /// at the workload's exit and lasts until the broker has cleaned up and
+    /// exited.
+    fn stopping(&self) {
+        if !self.done.load(Ordering::Acquire) {
+            self.stopped_running.store(true, Ordering::Release);
+        }
+    }
+
+    /// Whether crucible cut the command short: by its output or command-time
+    /// limit, or by a stop while it was still running. Either way, its output
+    /// ended early.
+    fn interrupted(&self) -> bool {
+        self.violation().is_some() || self.stopped_running.load(Ordering::Acquire)
     }
 
     fn violation(&self) -> Option<SandboxViolation> {
@@ -554,92 +698,194 @@ fn atomic_saturating_add(value: &AtomicU64, increment: u64) {
     });
 }
 
-/// One bounded thread that owns deadline/output-triggered process-tree stops.
-struct Supervisor {
-    control: Arc<Control>,
-    thread: Option<thread::JoinHandle<()>>,
+/// The leader and its scope, and what has been seen of them.
+///
+/// Shared, behind one lock, by the process, its status task and the thread a
+/// violation's cancel runs on. The lock is held only to look at the leader or
+/// to signal its scope, neither of which waits, except by a stop, which holds
+/// it through its bounded kill and reap and which the status task steps round.
+/// It is what keeps a signal from reaching the scope after the leader has been
+/// reaped, once its numeric identity may name another process.
+struct Watched {
+    child: Child,
+    scope: Scope,
+    /// The leader's status, once it has been reaped.
+    status: Option<ExitStatus>,
+    /// Whether the whole scope is known to have been stopped.
+    scope_stopped: bool,
+    /// The thread a violation's cancel runs on, until a stop joins it.
+    cancel: Option<thread::JoinHandle<()>>,
 }
 
-impl Supervisor {
-    fn start(
-        control: Arc<Control>,
+impl Watched {
+    /// Looks at the leader once without waiting, reaping it and keeping its
+    /// status if it has exited, after its scope has been stopped.
+    fn look(
+        &mut self,
         terminator: Terminator,
-        deadline: Option<Instant>,
-        canceller: Option<Canceller>,
-        leader: u32,
-    ) -> io::Result<Self> {
-        let supervised = Arc::clone(&control);
-        let thread = thread::Builder::new()
-            .name("crucible-sandbox-supervisor".into())
-            .spawn(move || {
-                loop {
-                    if supervised.done.load(Ordering::Acquire) {
-                        return;
-                    }
-                    let expired = deadline.is_some_and(|deadline| Instant::now() >= deadline);
-                    if expired {
-                        supervised.mark(SandboxViolation::CommandTime);
-                    }
-                    if supervised.violation().is_none() {
-                        thread::sleep(SUPERVISE);
-                        continue;
-                    }
-
-                    let Ok(_lifecycle) = supervised.lifecycle() else {
-                        return;
-                    };
-                    if supervised.done.load(Ordering::Acquire) {
-                        return;
-                    }
-                    if let Some(cancel) = &canceller {
-                        // A cancellation the backend cannot deliver leaves the kill.
-                        let _ = cancel(leader);
-                    }
-                    if let Err(problem) = terminator.stop() {
-                        supervised.record_failure(&problem);
-                    }
-                    return;
-                }
-            })?;
-        Ok(Self {
-            control,
-            thread: Some(thread),
-        })
-    }
-
-    fn finish(&mut self) -> io::Result<()> {
-        self.control.done.store(true, Ordering::Release);
-        let Some(thread) = self.thread.take() else {
-            return Ok(());
-        };
-        thread
-            .join()
-            .map_err(|_| io::Error::other("sandbox lifecycle supervisor panicked"))
+        control: &Control,
+    ) -> io::Result<Option<ExitStatus>> {
+        if self.status.is_some() {
+            return Ok(self.status);
+        }
+        let status = self.scope.try_wait(&mut self.child, terminator)?;
+        if status.is_some() {
+            self.status = status;
+            self.scope_stopped = true;
+            control.done.store(true, Ordering::Release);
+        }
+        Ok(status)
     }
 }
 
-/// A pipe put into non-blocking mode before the process handle escapes.
+/// Locks `watched`, answering a poisoned lock as an error.
+fn watched(watched: &Mutex<Watched>) -> io::Result<MutexGuard<'_, Watched>> {
+    watched.lock().map_err(|_| poisoned())
+}
+
+fn poisoned() -> io::Error {
+    io::Error::other("sandbox process status lock was poisoned")
+}
+
+/// The status task's work: the command-time limit enforced, a violation's
+/// cancel and kill started, and the leader looked at, every [`SUPERVISE`]
+/// until it has been reaped or a stop has begun.
+struct Watch {
+    watched: Arc<Mutex<Watched>>,
+    control: Arc<Control>,
+    terminator: Terminator,
+    deadline: Option<Instant>,
+    /// Taken when a violation is first seen, so it is tried once.
+    canceller: Option<Canceller>,
+    /// Whether a violation has been acted on.
+    cut: bool,
+    /// Whether the watch ended the way it ends, rather than being dropped
+    /// before the command did: by a panic, or a runtime shut down under it.
+    ended: bool,
+}
+
+impl Watch {
+    async fn run(mut self) {
+        loop {
+            tokio::time::sleep(SUPERVISE).await;
+            if !self.look() {
+                self.ended = true;
+                return;
+            }
+        }
+    }
+
+    /// One pass, which never waits: a lock held by someone else is left for
+    /// the next. Whether the command still needs watching.
+    fn look(&mut self) -> bool {
+        // The leader has been seen to exit, or a stop has begun and does the
+        // rest.
+        if self.control.done.load(Ordering::Acquire) {
+            return false;
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.control.mark(SandboxViolation::CommandTime);
+        }
+        let shared = Arc::clone(&self.watched);
+        let mut watched = match shared.try_lock() {
+            Ok(watched) => watched,
+            Err(TryLockError::WouldBlock) => return true,
+            Err(TryLockError::Poisoned(_)) => {
+                self.control.record_failure(&poisoned());
+                return false;
+            }
+        };
+        // Checked again under the lock. A stop says it has begun before it
+        // takes this lock, so a cancel is started here only by a pass that
+        // held the lock first, and that stop then finds the cancel and joins
+        // it; once the stop has the lock, no cancel is started.
+        if watched.status.is_some() || self.control.done.load(Ordering::Acquire) {
+            return false;
+        }
+        if !self.cut && self.control.violation().is_some() {
+            self.cut = true;
+            self.cut(&mut watched);
+        }
+        // What went wrong is the caller's to hear, from a look of its own.
+        !matches!(watched.look(self.terminator, &self.control), Ok(Some(_)))
+    }
+
+    /// Ends a command that broke a limit: through the backend's cancel where
+    /// it has one, on a thread of its own, then the kill.
+    fn cut(&mut self, watched: &mut Watched) {
+        let Some(cancel) = self.canceller.take() else {
+            if let Err(problem) = self.terminator.stop() {
+                self.control.record_failure(&problem);
+            }
+            return;
+        };
+        let shared = Arc::clone(&self.watched);
+        let control = Arc::clone(&self.control);
+        let terminator = self.terminator;
+        let leader = watched.child.id();
+        let started = thread::Builder::new()
+            .name("crucible-sandbox-cancel".into())
+            .spawn(move || {
+                // A cancellation the backend cannot deliver leaves the kill.
+                let _ = cancel(leader);
+                killed_unless_reaped(&shared, terminator, &control);
+            });
+        match started {
+            Ok(thread) => watched.cancel = Some(thread),
+            // Killed without the cancel it needed first, which is kept as the
+            // failure it is.
+            Err(problem) => {
+                self.control.record_failure(&problem);
+                if let Err(problem) = self.terminator.stop() {
+                    self.control.record_failure(&problem);
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        if !self.ended && !self.control.done.load(Ordering::Acquire) {
+            self.control.record_failure(&io::Error::other(
+                "the task watching a sandbox process ended before the process did",
+            ));
+        }
+    }
+}
+
+/// The kill after a cancel, sent only while the leader is unreaped, so its
+/// process group is still the command's.
+fn killed_unless_reaped(watched: &Mutex<Watched>, terminator: Terminator, control: &Control) {
+    match self::watched(watched) {
+        Ok(watched) if watched.status.is_none() => {
+            if let Err(problem) = terminator.stop() {
+                control.record_failure(&problem);
+            }
+        }
+        Ok(_) => {}
+        Err(problem) => control.record_failure(&problem),
+    }
+}
+
+/// A pipe put into non-blocking mode before the process handle escapes, and
+/// counted against the command's output budget as it is read.
 struct PreparedOutput {
-    inner: Box<dyn PlatformOutput>,
+    inner: Box<dyn Stream>,
     control: Arc<Control>,
 }
 
 impl PreparedOutput {
-    fn new(output: impl PlatformOutput, control: Arc<Control>) -> io::Result<Self> {
-        output.prepare()?;
-        Ok(Self {
-            inner: Box::new(output),
-            control,
-        })
+    const fn new(inner: Box<dyn Stream>, control: Arc<Control>) -> Self {
+        Self { inner, control }
     }
-}
 
-impl SandboxOutput for PreparedOutput {
-    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
-        if buffer.is_empty() {
-            return Ok(SandboxRead::Pending);
-        }
-        self.inner.read_ready(buffer).map(|read| match read {
+    /// What a read of the pipe found, counted against the output budget.
+    fn counted(&self, read: ReadState) -> SandboxRead {
+        match read {
             ReadState::Bytes(bytes) => {
                 let (retained, discarded) = self.control.record_output(bytes);
                 if discarded == 0 {
@@ -653,19 +899,59 @@ impl SandboxOutput for PreparedOutput {
             }
             ReadState::Pending => SandboxRead::Pending,
             ReadState::End => SandboxRead::End,
+        }
+    }
+}
+
+impl SandboxOutput for PreparedOutput {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if buffer.is_empty() {
+            return Ok(SandboxRead::Pending);
+        }
+        let read = self.inner.read_ready(buffer)?;
+        Ok(self.counted(read))
+    }
+
+    /// Waits on the pipe as the platform waits on one (see
+    /// [`crate::platform`]), and counts what it read as a read without waiting
+    /// is counted.
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<SandboxRead>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(SandboxRead::Bytes(0));
+            }
+            let read = self.inner.read(buffer).await?;
+            Ok(self.counted(read))
         })
     }
 }
 
+/// Masks `patterns` in one output stream of the command `control` governs,
+/// which says whether crucible cut that command short.
+fn protect_output(
+    output: Box<dyn SandboxOutput>,
+    patterns: Vec<Vec<u8>>,
+    control: &Arc<Control>,
+) -> Box<dyn SandboxOutput> {
+    let control = Arc::clone(control);
+    Box::new(
+        super::redaction::ProtectedOutput::new(output, patterns)
+            .interrupted_by(Box::new(move || control.interrupted())),
+    )
+}
+
 /// The process, its process-tree scope, streams, stage, and reservation.
 struct LocalProcess {
-    child: Child,
-    scope: Scope,
+    /// The leader and its scope, shared with the status task.
+    watched: Arc<Mutex<Watched>>,
     /// Present only after initialization has fully succeeded.
     terminator: Option<Terminator>,
     /// The writing end of a peer's input, until somebody takes it. Dropping it
     /// unread is what closes the far end's stdin.
-    stdin: Option<Box<dyn std::io::Write + Send>>,
+    stdin: Option<ChildStdin>,
+    /// The thread, where the platform starts one, that the input taken
+    /// asynchronously is written on; `stop` ends and joins it.
+    input_thread: platform::InputThread,
     stdout: Option<Box<dyn SandboxOutput>>,
     stderr: Option<Box<dyn SandboxOutput>>,
     inspection: SandboxInspection,
@@ -673,9 +959,9 @@ struct LocalProcess {
     stage: Option<Stage>,
     network: Option<super::network::Mediator>,
     control: Arc<Control>,
-    supervisor: Option<Supervisor>,
-    status: Option<ExitStatus>,
-    scope_stopped: bool,
+    /// The status task, which `stop` aborts. It never blocks on the shared
+    /// lock and between passes only sleeps, so it ends at its next poll.
+    watch: Option<tokio::task::JoinHandle<()>>,
     started: Instant,
     stopped: bool,
     audit_state: AuditState,
@@ -707,19 +993,21 @@ struct AuditState {
 impl LocalProcess {
     fn initialize(
         &mut self,
-        limits: SandboxResourceLimits,
-        canceller: Option<Canceller>,
         audit_started: bool,
         startup: StartupInput,
     ) -> Result<Terminator, crucible_sandbox::SandboxError> {
+        let mut watched =
+            self::watched(&self.watched).map_err(crucible_sandbox::SandboxError::Spawn)?;
+        let Watched { child, scope, .. } = &mut *watched;
         #[cfg(windows)]
-        self.scope
-            .attach(&self.child)
+        scope
+            .attach(child)
             .map_err(crucible_sandbox::SandboxError::Spawn)?;
-        let terminator = self
-            .scope
-            .terminator(&self.child)
+        let terminator = scope
+            .terminator(child)
             .map_err(crucible_sandbox::SandboxError::Spawn)?;
+        let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+        drop(watched);
         if let Some(startup_input) = startup.bytes {
             let input = self.stdin.as_mut().ok_or_else(|| {
                 crucible_sandbox::SandboxError::Spawn(io::Error::other(
@@ -734,51 +1022,98 @@ impl LocalProcess {
                 self.stdin.take();
             }
         }
-        self.stdout = self
-            .child
-            .stdout
-            .take()
-            .map(|pipe| PreparedOutput::new(pipe, Arc::clone(&self.control)))
+        self.stdout = stdout
+            .map(platform::stream)
             .transpose()
             .map_err(crucible_sandbox::SandboxError::Spawn)?
-            .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
-        self.stderr = self
-            .child
-            .stderr
-            .take()
-            .map(|pipe| PreparedOutput::new(pipe, Arc::clone(&self.control)))
+            .map(|pipe| {
+                Box::new(PreparedOutput::new(pipe, Arc::clone(&self.control)))
+                    as Box<dyn SandboxOutput>
+            });
+        self.stderr = stderr
+            .map(platform::stream)
             .transpose()
             .map_err(crucible_sandbox::SandboxError::Spawn)?
-            .map(|pipe| Box::new(pipe) as Box<dyn SandboxOutput>);
-        if let Some(network) = &self.network {
-            self.stdout = self
-                .stdout
-                .take()
-                .map(|output| network.protect_output(output));
-            self.stderr = self
-                .stderr
-                .take()
-                .map(|output| network.protect_output(output));
-        }
-        if limits.command_time.is_some() || limits.output_bytes.is_some() {
-            self.supervisor = Some(
-                Supervisor::start(
-                    Arc::clone(&self.control),
-                    terminator,
-                    limits
-                        .command_time
-                        .map(|allowed| self.started.checked_add(allowed).unwrap_or(self.started)),
-                    canceller,
-                    self.child.id(),
-                )
-                .map_err(crucible_sandbox::SandboxError::Spawn)?,
-            );
-        }
+            .map(|pipe| {
+                Box::new(PreparedOutput::new(pipe, Arc::clone(&self.control)))
+                    as Box<dyn SandboxOutput>
+            });
         if audit_started {
             self.control
                 .audit(SandboxFactKind::Lifecycle(SandboxLifecycle::CommandStarted))?;
         }
         Ok(terminator)
+    }
+
+    /// Starts the command's status task on `runtime`, with the command-time
+    /// limit counted from the spawn.
+    fn watch(
+        &mut self,
+        runtime: &tokio::runtime::Handle,
+        terminator: Terminator,
+        limits: SandboxResourceLimits,
+        canceller: Option<Canceller>,
+    ) {
+        self.watch = Some(
+            runtime.spawn(
+                Watch {
+                    watched: Arc::clone(&self.watched),
+                    control: Arc::clone(&self.control),
+                    terminator,
+                    deadline: limits
+                        .command_time
+                        .map(|allowed| self.started.checked_add(allowed).unwrap_or(self.started)),
+                    canceller,
+                    cut: false,
+                    ended: false,
+                }
+                .run(),
+            ),
+        );
+    }
+
+    /// Masks what the command could print that it was given as a secret: its
+    /// proxy's credential where it has one, on both output streams, and
+    /// `credentials`, every credential its environment carries, on standard
+    /// error and on standard output unless the command is spoken to.
+    ///
+    /// A spoken-to command's standard output is a protocol. There a value is
+    /// escaped as the protocol escapes it, so its own bytes need not appear,
+    /// and a short one masked in place would rewrite the frames around it; the
+    /// peer decodes each frame and masks what it keeps. A proxy credential is
+    /// crucible's own and long, and masked there as everywhere.
+    ///
+    /// Each stream is wrapped once, and not at all where there is nothing to
+    /// mask. Nothing reads either stream before the process is handed back,
+    /// so wrapping them once initialization has succeeded loses no byte.
+    fn protect_outputs(
+        &mut self,
+        credentials: Vec<Vec<u8>>,
+        speech: crucible_sandbox::SandboxSpeech,
+    ) {
+        let proxy = self
+            .network
+            .as_ref()
+            .map(super::network::Mediator::masked)
+            .unwrap_or_default();
+        let mut printed = proxy.clone();
+        if speech == crucible_sandbox::SandboxSpeech::Closed {
+            printed.extend(credentials.iter().cloned());
+        }
+        let mut muttered = proxy;
+        muttered.extend(credentials);
+        if !printed.is_empty() {
+            self.stdout = self
+                .stdout
+                .take()
+                .map(|output| protect_output(output, printed, &self.control));
+        }
+        if !muttered.is_empty() {
+            self.stderr = self
+                .stderr
+                .take()
+                .map(|output| protect_output(output, muttered, &self.control));
+        }
     }
 
     fn audit_finished(&mut self) -> io::Result<()> {
@@ -809,68 +1144,9 @@ impl LocalProcess {
         self.audit_state.cleanup = Some(cleanup);
         Ok(())
     }
-}
 
-struct StartupInput {
-    bytes: Option<Vec<u8>>,
-    speech: crucible_sandbox::SandboxSpeech,
-}
-
-impl SandboxProcess for LocalProcess {
-    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
-        self.stdin.take()
-    }
-
-    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.stdout.take()
-    }
-
-    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
-        self.stderr.take()
-    }
-
-    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        if let Some(problem) = self.control.failure() {
-            return Err(problem);
-        }
-        if let Some(status) = self.status {
-            if !self.scope_stopped {
-                return Err(io::Error::other(
-                    "sandbox process scope cleanup is unconfirmed",
-                ));
-            }
-            self.audit_finished()?;
-            return Ok(Some(status));
-        }
-
-        let status = {
-            let _lifecycle = self.control.lifecycle()?;
-            let terminator = self
-                .terminator
-                .ok_or_else(|| io::Error::other("sandbox process initialization is incomplete"))?;
-            let status = self.scope.try_wait(&mut self.child, terminator)?;
-            if status.is_some() {
-                self.control.done.store(true, Ordering::Release);
-            }
-            status
-        };
-        if let Some(status) = status {
-            self.status = Some(status);
-            self.scope_stopped = true;
-            if let Some(supervisor) = &mut self.supervisor
-                && let Err(problem) = supervisor.finish()
-            {
-                self.control.record_failure(&problem);
-                return Err(problem);
-            }
-            self.audit_finished()?;
-        }
-        if let Some(problem) = self.control.failure() {
-            return Err(problem);
-        }
-        Ok(status)
-    }
-
+    /// What [`SandboxProcess::stop`] does, synchronously, so `Drop` and a
+    /// failed startup can stop the process without a future to drive.
     fn stop(&mut self) -> io::Result<()> {
         #[cfg(test)]
         let stop_scope = self.test_stop;
@@ -880,29 +1156,38 @@ impl SandboxProcess for LocalProcess {
             return self.control.failure().map_or(Ok(()), Err);
         }
 
+        // Before the kill: a command not yet seen to exit is being cut short.
+        self.control.stopping();
         self.control.done.store(true, Ordering::Release);
-        let cleanup = match self.control.lifecycle() {
-            Ok(_lifecycle) => {
-                let signaled = if self.scope_stopped {
+        // The status task never waits, so it ends at its next poll, and a look
+        // it is in the middle of finishes under the lock first.
+        if let Some(watch) = &self.watch {
+            watch.abort();
+        }
+        let (cleanup, cancel) = match watched(&self.watched) {
+            Ok(mut watched) => {
+                let Watched {
+                    child,
+                    scope,
+                    status,
+                    scope_stopped,
+                    cancel,
+                } = &mut *watched;
+                let signaled = if *scope_stopped {
                     Ok(())
                 } else {
-                    stop_scope(&self.scope, &mut self.child)
+                    stop_scope(scope, child)
                 };
                 if signaled.is_ok() {
-                    self.scope_stopped = true;
+                    *scope_stopped = true;
                 }
                 // Keep the leader unreaped while its scope remains uncertain:
-                // Unix supervisors and retries still borrow its numeric identity.
-                signaled.and_then(|()| reap(&mut self.child, &mut self.status))
+                // a cancel's kill and a retry still borrow its numeric identity.
+                (signaled.and_then(|()| reap(child, status)), cancel.take())
             }
-            Err(problem) => Err(problem),
+            Err(problem) => (Err(problem), None),
         };
-        let joined = self.supervisor.as_mut().map_or(Ok(()), Supervisor::finish);
-        if let Err(problem) = &joined {
-            // The join handle has been consumed even on panic. Preserve that
-            // failure so a subsequent no-op join cannot erase it.
-            self.control.record_failure(problem);
-        }
+        let joined = self.joined(cancel);
         let supervised = self.control.failure().map_or(Ok(()), Err);
 
         self.stdout.take();
@@ -911,7 +1196,13 @@ impl SandboxProcess for LocalProcess {
             .network
             .as_mut()
             .map_or(Ok(()), super::network::Mediator::stop);
-        let scope_confirmed = cleanup.is_ok() && joined.is_ok() && network.is_ok();
+        // After the scope's stop, which closed the pipe's other end where it
+        // succeeded, so a write the thread was parked in has failed or is
+        // abandoned here. Ended whether or not it did: a thread left unjoined
+        // for a stop to retry is one more thing the retry has to find.
+        let input = self.input_thread.end();
+        let scope_confirmed = cleanup.is_ok() && joined.is_ok() && network.is_ok() && input.is_ok();
+        let cleanup = stopped_with_input(cleanup, input);
         let staged = if scope_confirmed {
             let staged = self.stage.as_mut().map_or(Ok(()), Stage::cleanup);
             if staged.is_ok() {
@@ -923,7 +1214,7 @@ impl SandboxProcess for LocalProcess {
             Ok(())
         };
         let mut result = cleanup.and(joined).and(network).and(staged).and(supervised);
-        if scope_confirmed && self.status.is_some() && self.terminator.is_some() {
+        if scope_confirmed && self.reaped() && self.terminator.is_some() {
             let audited = self.audit_finished();
             result = result.and(audited);
         }
@@ -942,6 +1233,146 @@ impl SandboxProcess for LocalProcess {
         }
         self.stopped = result.is_ok();
         result
+    }
+
+    /// Whether the leader has been reaped.
+    fn reaped(&self) -> bool {
+        watched(&self.watched).is_ok_and(|watched| watched.status.is_some())
+    }
+
+    /// Joins the thread a violation's cancel runs on, giving it [`CANCELLED`]
+    /// to end. One still running is kept for a later stop to join.
+    fn joined(&self, cancel: Option<thread::JoinHandle<()>>) -> io::Result<()> {
+        let Some(cancel) = cancel else {
+            return Ok(());
+        };
+        let deadline = Instant::now() + CANCELLED;
+        while !cancel.is_finished() {
+            if Instant::now() >= deadline {
+                if let Ok(mut watched) = watched(&self.watched) {
+                    watched.cancel = Some(cancel);
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the cancel of a sandbox violation had not ended",
+                ));
+            }
+            thread::sleep(SUPERVISE);
+        }
+        cancel.join().map_err(|_| {
+            // The join has been consumed. Keep its failure, so a later stop,
+            // finding nothing to join, cannot report cleanup as confirmed.
+            let problem = io::Error::other("sandbox violation cancel panicked");
+            self.control.record_failure(&problem);
+            problem
+        })
+    }
+
+    /// What [`SandboxProcess::begin_background_acceptance`] does, synchronously.
+    fn begin_background_acceptance(
+        &mut self,
+        key: CallResultKey,
+    ) -> Result<(), crucible_sandbox::SandboxError> {
+        if self.invocation == SandboxInvocationMode::Foreground
+            || self.call_result_key.is_none()
+            || self.call_result_key != Some(key)
+            || self.background_acceptance != BackgroundAcceptance::None
+        {
+            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result identity is invalid",
+            )));
+        }
+        self.background_acceptance = BackgroundAcceptance::Pending;
+        Ok(())
+    }
+
+    /// What [`SandboxProcess::complete_background_acceptance`] does,
+    /// synchronously.
+    fn complete_background_acceptance(
+        &mut self,
+        _receipt: CallResultReceipt,
+    ) -> Result<(), crucible_sandbox::SandboxError> {
+        if self.background_acceptance != BackgroundAcceptance::Pending {
+            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
+                "sandbox background result intent is unavailable",
+            )));
+        }
+        self.background_acceptance = BackgroundAcceptance::Accepted;
+        Ok(())
+    }
+}
+
+struct StartupInput {
+    bytes: Option<Vec<u8>>,
+    speech: crucible_sandbox::SandboxSpeech,
+}
+
+impl SandboxProcess for LocalProcess {
+    fn take_stdin(&mut self) -> Option<Box<dyn std::io::Write + Send>> {
+        self.stdin
+            .take()
+            .map(|input| Box::new(input) as Box<dyn std::io::Write + Send>)
+    }
+
+    /// The pipe written as the platform writes one asynchronously (see
+    /// [`crate::platform`]). A thread the platform starts for it belongs to
+    /// this process, and `stop` ends and joins it.
+    fn take_async_stdin(&mut self) -> Option<Box<dyn crucible_sandbox::SandboxInput>> {
+        self.stdin
+            .take()
+            .map(|pipe| platform::input(pipe, &self.input_thread))
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.stdout.take()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.stderr.take()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        if let Some(problem) = self.control.failure() {
+            return Err(problem);
+        }
+        // The lock is only ever held to look or to signal, never across a
+        // cancel, so this answers at once whatever a cancel is doing.
+        let status = {
+            let mut watched = watched(&self.watched)?;
+            if let Some(status) = watched.status {
+                if !watched.scope_stopped {
+                    return Err(io::Error::other(
+                        "sandbox process scope cleanup is unconfirmed",
+                    ));
+                }
+                Some(status)
+            } else {
+                let terminator = self.terminator.ok_or_else(|| {
+                    io::Error::other("sandbox process initialization is incomplete")
+                })?;
+                watched.look(terminator, &self.control)?
+            }
+        };
+        if status.is_some() {
+            self.audit_finished()?;
+        }
+        if let Some(problem) = self.control.failure() {
+            return Err(problem);
+        }
+        Ok(status)
+    }
+
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move { self.stop() })
+    }
+
+    /// The same stop the future above drives, run on this thread, since that
+    /// body blocks either way. What bounds it is what bounds that body: the
+    /// scope's own kill and reap bounds, the cancel's join bound, and the
+    /// network proxy's stop bound, each reported as failed cleanup where it
+    /// gives out.
+    fn stop_sync(&mut self) -> io::Result<()> {
+        LocalProcess::stop(self)
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -963,31 +1394,15 @@ impl SandboxProcess for LocalProcess {
     fn begin_background_acceptance(
         &mut self,
         key: CallResultKey,
-    ) -> Result<(), crucible_sandbox::SandboxError> {
-        if self.invocation == SandboxInvocationMode::Foreground
-            || self.call_result_key.is_none()
-            || self.call_result_key != Some(key)
-            || self.background_acceptance != BackgroundAcceptance::None
-        {
-            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
-                "sandbox background result identity is invalid",
-            )));
-        }
-        self.background_acceptance = BackgroundAcceptance::Pending;
-        Ok(())
+    ) -> BoxFuture<'_, Result<(), crucible_sandbox::SandboxError>> {
+        Box::pin(async move { self.begin_background_acceptance(key) })
     }
 
     fn complete_background_acceptance(
         &mut self,
-        _receipt: CallResultReceipt,
-    ) -> Result<(), crucible_sandbox::SandboxError> {
-        if self.background_acceptance != BackgroundAcceptance::Pending {
-            return Err(crucible_sandbox::SandboxError::Lifecycle(io::Error::other(
-                "sandbox background result intent is unavailable",
-            )));
-        }
-        self.background_acceptance = BackgroundAcceptance::Accepted;
-        Ok(())
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'_, Result<(), crucible_sandbox::SandboxError>> {
+        Box::pin(async move { self.complete_background_acceptance(receipt) })
     }
 }
 
@@ -1007,8 +1422,17 @@ impl Drop for LocalProcess {
     fn drop(&mut self) {
         let _ = self.stop();
         // Ordinary field destruction must not clean an uncertain workload's
-        // files or advertise room for a replacement process. No thread or Arc
-        // is leaked: the service retains only its already-bounded counter slot.
+        // files or advertise room for a replacement process: the service
+        // retains only its already-bounded counter slot. Every thread this
+        // process started has been joined by a stop that succeeded, and its
+        // status task aborted. A thread a stop could not end — an input thread
+        // whose write nothing reached in its bound, or a violation's cancel
+        // still inside its own budget — was reported by that stop as failed
+        // cleanup, and goes with this quarantined process unjoined until its
+        // pipe closes or its budget ends. The scope itself is shared with the
+        // status task, so where a stop failed, the Windows job's
+        // kill-on-close fires when the last owner of the scope drops it: this
+        // process or the aborted status task, whichever is later.
         if let Some(stage) = &mut self.stage {
             stage.retained = true;
         }
@@ -1058,7 +1482,7 @@ fn unconfined_child(
     testing_local(command, speech, None).map(|process| Box::new(process) as Box<dyn SandboxProcess>)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", windows)))]
 fn testing_local(
     command: Command,
     speech: crucible_sandbox::SandboxSpeech,
@@ -1067,7 +1491,7 @@ fn testing_local(
     spawn_local(command, testing_plan(speech, stage)?)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 pub(super) fn testing_plan(
     speech: crucible_sandbox::SandboxSpeech,
     stage: Option<Stage>,
@@ -1105,7 +1529,7 @@ pub(super) fn testing_plan(
     )
     .map_err(|_| crucible_sandbox::SandboxError::InvalidInspection)?;
     let manifest = SandboxManifest::empty();
-    let inspection = SandboxInspection::new(
+    let inspection = crucible_sandbox::inspection(
         SandboxId::new(),
         identity,
         SandboxCapabilities::none(),
@@ -1131,14 +1555,29 @@ pub(super) fn testing_plan(
         invocation: SandboxInvocationMode::Foreground,
         call_result_key: None,
         canceller: None,
+        runtime: Some(crate::sample::runtime().map_err(crucible_sandbox::SandboxError::Spawn)?),
         speech,
         startup_input: None,
+        credentials: Vec::new(),
     })
 }
 
+// What watches a command's status, on every platform that runs one.
+#[cfg(test)]
+#[path = "process/tests/watching.rs"]
+mod watching;
+
+// Windows gives each input written asynchronously a thread of its own, which
+// only there has something for the process to join.
+#[cfg(all(test, windows))]
+#[path = "process/tests/windows_input.rs"]
+mod windows_input;
+
 #[cfg(all(test, target_os = "linux"))]
-mod tests {
+pub(crate) mod tests {
     mod cleanup;
+    mod credential;
+    pub(crate) mod pipes;
     mod startup;
 
     use super::Stage;
@@ -1200,7 +1639,7 @@ mod tests {
                 "process output was not safely masked"
             );
         }
-        process.stop().unwrap();
+        crucible_runtime::answered!(process.stop()).unwrap();
     }
 
     #[test]
@@ -1223,7 +1662,7 @@ mod tests {
             std::net::TcpStream::connect(address).is_ok(),
             "live command lost its network owner"
         );
-        process.stop().unwrap();
+        crucible_runtime::answered!(process.stop()).unwrap();
         // Another test may be between fork and exec with a transient copy of
         // the CLOEXEC listener. Require closure within a fixed bound rather
         // than confusing that short window with a retained network owner.
@@ -1267,7 +1706,7 @@ mod tests {
             "a command built Closed must not hand back a writer"
         );
 
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// A peer is spoken to, and what it says back proves the bytes arrived
@@ -1288,7 +1727,7 @@ mod tests {
         let said = drained(&mut process).expect("what the peer said back");
         assert_eq!(said.trim_end(), "heard a kettle");
 
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// A trusted launcher prefix is written before the caller receives the
@@ -1313,7 +1752,7 @@ mod tests {
 
         let said = drained(&mut process).expect("what the peer received");
         assert_eq!(said.trim_end(), "trusted launch frame|caller input");
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// A one-shot command gets the trusted prefix and then end-of-file. Keeping
@@ -1334,7 +1773,7 @@ mod tests {
 
         let said = drained(&mut process).expect("what the step received");
         assert_eq!(said.trim_end(), "trusted launch frame|eof");
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// Standard input is handed over once. A second holder would be two writers
@@ -1352,7 +1791,7 @@ mod tests {
         assert!(second.is_none(), "the second take hands back nothing");
 
         drop(first);
-        process.stop().expect("cleanup");
+        crucible_runtime::answered!(process.stop()).expect("cleanup");
     }
 
     /// Reads stdout until the far end closes it.

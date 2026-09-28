@@ -7,7 +7,7 @@ which names the command rather than a directory.
 | Argument | What it is |
 | --- | --- |
 | `command` | The command line, as a shell would read it. Required. |
-| `timeout` | Seconds to allow before stopping it. Defaults to 120, and anything over 600 is refused. |
+| `timeout` | Seconds to allow before stopping it. Defaults to 120; anything over 86400 is refused, and the command still stops at [`sandbox.limits.commandSeconds`](../configuration/configuration.md#sandbox) if that comes first. |
 | `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question) and again on the row that reports a backgrounded command ending. Optional, and nothing the command runs reads it. |
 | `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 
@@ -158,8 +158,10 @@ esc to close · enter shows it · x stops it
 stood in. <kbd>x</kbd> ends it, with no confirmation: the command was started by a
 call you allowed, and stopping it is why the list is reachable.
 
-If cleanup fails, the command stays selected and the panel says
-`Stop failed; x retries`. Press <kbd>x</kbd> again to retry. Its row and command
+<kbd>x</kbd> does not wait for the stop: the row goes once the command has
+ended, a moment later, and the list closes with its last row. If cleanup fails,
+the command stays selected and the panel says `Stop failed; x retries`. Press
+<kbd>x</kbd> again to retry. Its row and command
 slot remain held until cleanup succeeds; a failed cleanup is not reported as a
 completed background command. A command whose original result was abandoned
 also remains reachable here if its cleanup failed.
@@ -209,6 +211,11 @@ answering still open, and the only move left is to run something else that asks
 it again — which is the polling the note exists to make unnecessary. Each ending
 carries a quarter of a result's ceiling, so four commands ending into one note
 cost what one result does, and output cut to fit says so where it was cut.
+Output whose reading failed part-way ends with
+`[output is incomplete: reading it failed before the end]`, so the part that
+was read never passes for the whole. A command that ended while nobody waited,
+before its output was read to the end, says so the same way: `[output is
+incomplete: it had not been read to the end when the command was reported]`.
 
 The model is told the moment there is somewhere to put it. A turn that is
 running takes the ending between one step and the next, so a plan built around a
@@ -284,9 +291,9 @@ if that removes more of an escape-heavy result, a second note gives its original
 encoded size and the encoded bytes omitted.
 
 The retained head/tail budget is separate from the raw-stream safety ceiling.
-A command that emits more than 4 MiB across standard output and standard error
-is stopped with an explicit captured-output-ceiling result instead of consuming
-host I/O indefinitely.
+A command that emits more than `sandbox.limits.outputBytes` across standard
+output and standard error, 10 MiB unless configured, is stopped with an explicit
+captured-output-ceiling result instead of consuming host I/O indefinitely.
 
 ## When it stops
 

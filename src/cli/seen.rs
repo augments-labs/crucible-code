@@ -1,33 +1,40 @@
 //! One receiver for the two things the drawing thread has to answer.
 //!
-//! A turn runs on its own thread and reports through [`Post`]; it also stops
-//! mid-flight to ask a question through a [`Front`]. The thread that draws is
-//! parked in `recv`, and a channel has no `select`, so both have to arrive on
-//! the same one. That is all [`Seen`] is: the union of what can turn up.
+//! A turn runs as a task on the application's runtime and reports through
+//! [`Post`]; it also stops mid-flight to ask a question through a [`Front`].
+//! The thread that draws is parked in `recv`, and a channel has no `select`,
+//! so both have to arrive on the same one. That is all [`Seen`] is: the union
+//! of what can turn up.
 //!
 //! The alternative — a second thread forwarding events into the first — buys
 //! nothing and adds a hop to every delta.
 //!
 //! A question is put under the identity the application minted for it, and an
 //! answer goes back as a [`Decision`] naming that identity: this thread is one
-//! front end of [`crucible_app::client`], and is held to what any other is. The
-//! name is stamped where the answer is heard rather than carried through the
-//! thread that draws, and that is sound for a reason particular to this
-//! thread. [`Asking`] reads from a channel of its own, and is put a question
-//! through `&mut self` and blocks until the answer arrives — so the value that
-//! asked is the value that reads, and it cannot have a second question
-//! outstanding while it waits. The thread that draws answers each exactly once:
-//! on the path that drew it, or on the path that has stopped drawing.
+//! front end of [`crucible_app::client`], and is held to what any other is.
+//! Each [`Seen::Question`] and [`Seen::Asked`] carries its own one-shot reply
+//! channel, made fresh when the question is and travelling with it rather
+//! than living on [`Asking`] or [`Putting`] for the length of a turn: the
+//! channel is the identity. A stray reply cannot settle a question it was not
+//! made for, because there is no shared channel left for it to arrive on —
+//! the receiver it would have to reach was dropped with the question it
+//! answered, or with the question that was never answered before something
+//! else asked again.
 //!
-//! Two turns cannot overlap either, but that is not what this rests on. A
-//! second asker would be a second [`Asking`] with a channel of its own, and
-//! what it would want is the drawing thread learning which channel to answer
-//! on, which is the reply end travelling with the question rather than being
-//! held for the turn. One asker is why it is held for the turn.
+//! Awaiting rather than blocking is what frees the thread polling the turn
+//! for the length of a human-length wait: the answer travels over an
+//! asynchronous channel, so the wait is the future's own `Pending` and never
+//! a block inside a poll. The channel is bounded by construction — a
+//! one-shot carries exactly one value — and it is dropped with the pending
+//! action: a dropped ask drops its receiver, so a reply sent after that finds
+//! nobody rather than queuing for whatever asks next.
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tokio::runtime::{Handle, RuntimeFlavor};
+use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Shown};
@@ -35,10 +42,10 @@ use crucible_client_api::bounds::SAID_BYTES;
 use crucible_client_api::{
     Capabilities, Command, Decision, Lasting, Pending, Picked, Refusal, Ruling, Said,
 };
-use crucible_core::{
-    Answered, Attachment, Put, Question, Remember, Sensitivity, ToolCall, Verdict, Wrote,
-};
 use crucible_runner::{Event, EventEnvelope, Post, RunContext};
+use crucible_runtime::BoxFuture;
+use crucible_tools::{Put, Remember, Sensitivity, Verdict, Wrote};
+use crucible_types::{Answered, Attachment, Question, ToolCall};
 
 use super::client::Client;
 
@@ -76,12 +83,18 @@ pub(crate) enum Seen {
         call: ToolCall,
         /// How much damage it could do.
         sensitivity: Sensitivity,
+        /// Where the verdict goes — made fresh for this question alone, so
+        /// answering it can never reach a different one.
+        reply: oneshot::Sender<Answer>,
     },
 
     /// A tool is waiting on a person. Put the questions, then answer.
     Asked {
         /// What to put, in the order it should be answered.
         questions: Vec<Question>,
+        /// Where the answers go — made fresh for this ask alone, for the
+        /// reason [`Seen::Question`]'s `reply` is.
+        reply: oneshot::Sender<Given>,
     },
 }
 
@@ -125,38 +138,61 @@ impl Post for Relay {
     /// to tell two runs apart it is this line that has to change rather than
     /// every pattern downstream of it.
     fn post(&self, reported: EventEnvelope) {
-        drop(self.to.send(Seen::Turn(reported.into_event())));
+        // A drawing thread that has gone has nothing left to show it on.
+        deliver(&self.to, Seen::Turn(reported.into_event()));
     }
 }
 
-/// Puts a question to the drawing thread and blocks on the answer.
+/// Sends `seen` to the drawing thread, waiting while the channel is full, and
+/// answers `None` once the drawing thread is gone.
+///
+/// That wait is the backpressure a slow terminal applies, and a turn is a task
+/// on the application's runtime: waiting as it stands, it would hold its
+/// worker, and every task queued behind that worker, until the terminal caught
+/// up. So a full channel is waited on only once the worker's other tasks have
+/// been handed to another thread, which is one of the runtime's blocking
+/// threads for as long as the wait lasts. At most two such waits are handed
+/// over at once — the turn's, and a question put through the tool that asks,
+/// which runs alone — and `crucible_app::runtime::BLOCKING` counts both. Off
+/// the runtime, or on a runtime with one thread and so nowhere to hand them,
+/// the wait is where it stands: the drawing thread that empties the channel
+/// never waits on the runtime.
+fn deliver(to: &SyncSender<Seen>, seen: Seen) -> Option<()> {
+    match to.try_send(seen) {
+        Ok(()) => Some(()),
+        Err(TrySendError::Disconnected(_)) => None,
+        Err(TrySendError::Full(seen)) => {
+            let on_a_worker = Handle::try_current()
+                .is_ok_and(|runtime| runtime.runtime_flavor() == RuntimeFlavor::MultiThread);
+            if on_a_worker {
+                tokio::task::block_in_place(|| to.send(seen).ok())
+            } else {
+                to.send(seen).ok()
+            }
+        }
+    }
+}
+
+/// Puts a question to the drawing thread and awaits the answer.
 #[derive(Debug)]
 pub(crate) struct Asking {
     to: SyncSender<Seen>,
-    answers: Receiver<Answer>,
     client: Client,
 }
 
 impl Asking {
-    /// Takes the two ends it needs — where questions go, where answers arrive
-    /// — and what a request is made with: the client that numbers requests.
-    /// What a pending action is named from is the application's and is not
-    /// handed in.
-    pub(crate) const fn new(
-        to: SyncSender<Seen>,
-        answers: Receiver<Answer>,
-        client: Client,
-    ) -> Self {
-        Self {
-            to,
-            answers,
-            client,
-        }
+    /// Takes where questions go and what a request is made with: the client
+    /// that numbers requests. Where an answer arrives is made fresh for each
+    /// question, not held here — see the module documentation. What a
+    /// pending action is named from is the application's and is not handed
+    /// in.
+    pub(crate) const fn new(to: SyncSender<Seen>, client: Client) -> Self {
+        Self { to, client }
     }
 
     /// Asks the application for the turn `command` names, answering from the
     /// drawing thread whatever it stops on.
-    pub(crate) fn turn(
+    pub(crate) async fn turn(
         &mut self,
         conversation: &mut Conversation,
         command: Command,
@@ -164,7 +200,7 @@ impl Asking {
         run: &RunContext<'_>,
     ) -> Ended {
         let request = self.client.asking(command);
-        let ended = client::turn(conversation, &request, attached, self, run);
+        let ended = client::turn(conversation, &request, attached, self, run).await;
 
         self.client
             .answered(&request, conversation, || ended.outcome());
@@ -174,45 +210,58 @@ impl Asking {
 }
 
 impl Front for Asking {
-    /// Blocks the turn until someone answers.
+    /// Awaits the turn until someone answers.
     ///
     /// Silence is a refusal, and the application is what makes it one: a
     /// channel that will not carry the question, or that closes before an
     /// answer comes back, means nobody is left to consent — and running a tool
     /// nobody agreed to is the one outcome worth avoiding more than stopping.
-    fn put(&mut self, pending: &Pending, shown: Shown<'_>) -> Option<Decision> {
-        // A model's questions come through the tool that asks them, which is
-        // lent its own ends; a turn stops here on a call and nothing else.
-        let Shown::Call { call, sensitivity } = shown else {
-            return None;
-        };
+    /// A human's answer is human-length, so this hands back a future that
+    /// answers `Pending` the moment it is asked and wakes once the drawing
+    /// thread has sent one — never a wait inside the poll that produces it.
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            // A model's questions come through the tool that asks them, which
+            // is lent its own ends; a turn stops here on a call and nothing
+            // else.
+            let Shown::Call { call, sensitivity } = shown else {
+                return None;
+            };
 
-        self.client.put(pending);
+            self.client.put(pending);
 
-        let question = Seen::Question {
-            call: call.clone(),
-            sensitivity: sensitivity.clone(),
-        };
-        self.to.send(question).ok()?;
-        let (verdict, remember) = self.answers.recv().ok()?;
+            let (reply, hear) = oneshot::channel();
+            let question = Seen::Question {
+                call: call.clone(),
+                sensitivity: sensitivity.clone(),
+                reply,
+            };
+            deliver(&self.to, question)?;
+            let (verdict, remember) = hear.await.ok()?;
 
-        let decision = Decision::Ruled {
-            id: pending.id(),
-            ruling: match verdict {
-                Verdict::Allow => Ruling::Allow,
-                Verdict::Deny => Ruling::Deny,
-            },
-            lasting: match remember {
-                Remember::Never => Lasting::Once,
-                // The prompt offers nothing that outlasts the process, and the
-                // engine keeps the two alike: for the rest of this session.
-                Remember::Session | Remember::Always => Lasting::Session,
-            },
-        };
+            let decision = Decision::Ruled {
+                id: pending.id(),
+                ruling: match verdict {
+                    Verdict::Allow => Ruling::Allow,
+                    Verdict::Deny => Ruling::Deny,
+                },
+                lasting: match remember {
+                    Remember::Never => Lasting::Once,
+                    // The prompt offers nothing that outlasts the process, and
+                    // the engine keeps the two alike: for the rest of this
+                    // session.
+                    Remember::Session | Remember::Always => Lasting::Session,
+                },
+            };
 
-        self.client.decided(&decision);
+            self.client.decided(&decision);
 
-        Some(decision)
+            Some(decision)
+        })
     }
 
     /// Nothing to say: every decision made above names the action it was put
@@ -321,343 +370,42 @@ impl Inbox {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::mpsc::{channel, sync_channel};
-    use std::time::Duration;
+mod tests;
 
-    use crucible_app::client::Deciding;
-    use crucible_core::{
-        Ancestry, Answer as Offered, Ask, Command, ToolArgs, ToolId, TurnId, Wrote,
-    };
-    use crucible_runner::Reporter;
-
-    use super::*;
-    use crate::cli::client::tests::Noted;
-
-    /// What the permission engine hears when it asks through `asking`, the way
-    /// a turn does.
-    fn asked(asking: &mut Asking) -> Answer {
-        Deciding::new(asking, Capabilities::every()).ask(&call(), &running())
-    }
-
-    fn call() -> ToolCall {
-        ToolCall {
-            id: ToolId::new("a"),
-            name: "bash".into(),
-            args: ToolArgs::new(r#"{"command":"ls"}"#),
-        }
-    }
-
-    fn running() -> Sensitivity {
-        Sensitivity::SpawnsProcess {
-            command: Command::Understood {
-                sent: "ls".into(),
-                parts: Box::from([Box::from("ls")]),
-            },
-        }
-    }
-
-    #[test]
-    fn an_event_arrives_as_something_to_draw() {
-        let (to, seen) = sync_channel(2);
-        let relay = Relay::new(to, Putting::new());
-
-        Reporter::new(Ancestry::new(), &relay).post(Event::Delta {
-            text: "hello".into(),
-        });
-
-        assert!(matches!(
-            seen.recv().unwrap(),
-            Seen::Turn(Event::Delta { text }) if &*text == "hello"
-        ));
-    }
-
-    #[test]
-    fn a_question_waits_for_the_answer_it_is_given() {
-        let (to, seen) = sync_channel(2);
-        let (reply, answers) = channel();
-        let mut asking = Asking::new(to, answers, Client::new());
-
-        let waiting = std::thread::spawn(move || asked(&mut asking));
-
-        assert!(matches!(seen.recv().unwrap(), Seen::Question { .. }));
-        reply.send((Verdict::Allow, Remember::Session)).unwrap();
-
-        assert_eq!(waiting.join().unwrap(), (Verdict::Allow, Remember::Session));
-    }
-
-    #[test]
-    fn nobody_left_to_ask_is_a_refusal() {
-        // Not a deadlock and not an allow: the process is leaving, and a tool
-        // that ran on the way out ran without consent.
-        let (to, seen) = sync_channel(2);
-        let (reply, answers) = channel::<Answer>();
-        let (client, journal) = Client::noting();
-        let mut asking = Asking::new(to, answers, client);
-        drop(reply);
-
-        let answer = asked(&mut asking);
-
-        assert_eq!(answer, (Verdict::Deny, Remember::Never));
-        drop(seen);
-
-        // Accounted for rather than timed: the question was put once, nothing
-        // was decided about it, and the no is the application's own.
-        assert!(
-            matches!(journal.noted().as_slice(), [Noted::Put(_)]),
-            "{:?}",
-            journal.noted()
-        );
-    }
-
-    #[test]
-    fn a_question_that_cannot_be_delivered_is_a_refusal() {
-        let (to, seen) = sync_channel(2);
-        let (_reply, answers) = channel::<Answer>();
-        let (client, journal) = Client::noting();
-        let mut asking = Asking::new(to, answers, client);
-        drop(seen);
-
-        assert_eq!(asked(&mut asking), (Verdict::Deny, Remember::Never));
-        assert!(
-            matches!(journal.noted().as_slice(), [Noted::Put(_)]),
-            "{:?}",
-            journal.noted()
-        );
-    }
-
-    #[test]
-    fn an_answer_as_long_as_the_panel_lets_one_be_reaches_the_tool_that_asked_whole() {
-        // Longer than any line drawn for a person is cut to, and far shorter
-        // than the panel's own editor stops at: words somebody can paste today.
-        let pasted = "\u{e9}".repeat(40 * 1024);
-        let beside = "n".repeat(20 * 1024);
-        let given = vec![Answered::new([pasted.clone()]).noting(beside.clone())];
-
-        let (to, seen) = sync_channel(CAPACITY);
-        let (reply, answers) = channel::<Given>();
-        let putting = Putting::new();
-        putting.open(to, answers);
-
-        let drawing = std::thread::spawn(move || {
-            let put = seen.recv();
-            assert!(matches!(put, Ok(Seen::Asked { .. })), "{put:?}");
-            reply.send(Some(given)).expect("the tool is waiting");
-        });
-        let question = Question::new(
-            "Words",
-            "What should it say?",
-            [Offered::new("these"), Offered::new("those")],
-        );
-        let heard = putting.put(&[question]).expect("somebody answered");
-        drawing.join().expect("the drawing side ran");
-
-        let answer = heard.first().expect("one answer for one question");
-        let chosen: Vec<&str> = answer.chosen().collect();
-        assert_eq!(chosen.len(), 1);
-        assert_eq!(chosen.first().map(|words| words.len()), Some(pasted.len()));
-        assert!(chosen.first() == Some(&pasted.as_str()), "the words differ");
-        assert_eq!(answer.note().len(), beside.len());
-        assert!(answer.note() == beside, "the note differs");
-    }
-
-    #[test]
-    fn adjacent_deltas_merge_without_crossing_a_turn_event() {
-        let (to, from) = sync_channel(8);
-        to.send(Seen::Turn(Event::Delta { text: "one".into() }))
-            .unwrap();
-        to.send(Seen::Turn(Event::Delta {
-            text: " two".into(),
-        }))
-        .unwrap();
-        to.send(Seen::Turn(Event::TurnStarted {
-            turn: TurnId::FIRST,
-        }))
-        .unwrap();
-        to.send(Seen::Turn(Event::Delta {
-            text: "three".into(),
-        }))
-        .unwrap();
-
-        let mut inbox = Inbox::new(from);
-        assert!(matches!(
-            inbox.recv_timeout(Duration::ZERO).unwrap(),
-            Seen::Turn(Event::Delta { text }) if &*text == "one two"
-        ));
-        assert!(matches!(
-            inbox.recv_timeout(Duration::ZERO).unwrap(),
-            Seen::Turn(Event::TurnStarted { .. })
-        ));
-        assert!(matches!(
-            inbox.recv_timeout(Duration::ZERO).unwrap(),
-            Seen::Turn(Event::Delta { text }) if &*text == "three"
-        ));
-    }
-
-    #[test]
-    fn what_one_call_wrote_is_drawn_together_and_never_joined_to_another_call() {
-        // The reason the event carries a call at all. Calls run one at a time
-        // today, so the second half of this is a rule about a future rather than
-        // a bug being fixed — but it is the rule the id exists to make statable,
-        // and it costs one comparison.
-        let (to, from) = sync_channel(8);
-        let piece = |call: &str, text: &str| {
-            Seen::Turn(Event::Wrote {
-                call: ToolId::new(call),
-                text: Wrote::new(text),
-            })
-        };
-
-        to.send(piece("a", "Compiling one\n")).unwrap();
-        to.send(piece("a", "Compiling two\n")).unwrap();
-        to.send(piece("b", "elsewhere\n")).unwrap();
-
-        let mut inbox = Inbox::new(from);
-
-        let Seen::Turn(Event::Wrote { call, text }) = inbox.recv_timeout(Duration::ZERO).unwrap()
-        else {
-            panic!("what arrived was not what one call wrote");
-        };
-        assert_eq!(call, ToolId::new("a"));
-        assert_eq!(text.as_str(), "Compiling one\nCompiling two\n");
-
-        let Seen::Turn(Event::Wrote { call, text }) = inbox.recv_timeout(Duration::ZERO).unwrap()
-        else {
-            panic!("the second call's output was swallowed by the first");
-        };
-        assert_eq!(call, ToolId::new("b"));
-        assert_eq!(text.as_str(), "elsewhere\n");
-    }
-
-    #[test]
-    fn output_is_never_drawn_across_the_event_that_ended_the_call() {
-        let (to, from) = sync_channel(8);
-        to.send(Seen::Turn(Event::Wrote {
-            call: ToolId::new("a"),
-            text: Wrote::new("last line\n"),
-        }))
-        .unwrap();
-        to.send(Seen::Turn(Event::TurnFinished {
-            turn: TurnId::FIRST,
-            stop: crucible_core::StopReason::Yielded,
-        }))
-        .unwrap();
-
-        let mut inbox = Inbox::new(from);
-        assert!(matches!(
-            inbox.recv_timeout(Duration::ZERO).unwrap(),
-            Seen::Turn(Event::Wrote { text, .. }) if text.as_str() == "last line\n"
-        ));
-        assert!(matches!(
-            inbox.recv_timeout(Duration::ZERO).unwrap(),
-            Seen::Turn(Event::TurnFinished { .. })
-        ));
-    }
-
-    #[test]
-    fn a_slow_renderer_bounds_and_coalesces_a_delta_flood() {
-        const POSTED: usize = 10_000;
-
-        let (to, from) = sync_channel(2);
-        let finished = Arc::new(AtomicBool::new(false));
-        let done = finished.clone();
-        let flooding = std::thread::spawn(move || {
-            let relay = Relay::new(to, Putting::new());
-            for _ in 0..POSTED {
-                Reporter::new(Ancestry::new(), &relay).post(Event::Delta { text: "x".into() });
-            }
-            done.store(true, Ordering::Release);
-        });
-
-        // With nobody rendering, the third delta must meet backpressure rather
-        // than making the queue grow with the provider's output.
-        std::thread::sleep(Duration::from_millis(20));
-        assert!(!finished.load(Ordering::Acquire));
-
-        let mut inbox = Inbox::new(from);
-        let mut deltas = 0;
-        let mut bytes = 0;
-        while !finished.load(Ordering::Acquire) || bytes < POSTED {
-            let seen = inbox.recv_timeout(Duration::from_secs(1)).unwrap();
-            if let Seen::Turn(Event::Delta { text }) = seen {
-                deltas += 1;
-                bytes += text.len();
-            }
-            std::thread::sleep(Duration::from_micros(10));
-        }
-
-        flooding.join().unwrap();
-        assert_eq!(bytes, POSTED);
-        assert!(deltas < POSTED, "the flood was not coalesced: {deltas}");
-    }
-
-    #[test]
-    fn maximum_wire_sized_deltas_neither_overfill_nor_make_an_unbounded_batch() {
-        const POSTED: usize = CAPACITY + 2;
-
-        let (to, from) = sync_channel(CAPACITY);
-        let finished = Arc::new(AtomicBool::new(false));
-        let done = finished.clone();
-        let flooding = std::thread::spawn(move || {
-            let relay = Relay::new(to, Putting::new());
-            for _ in 0..POSTED {
-                Reporter::new(Ancestry::new(), &relay).post(Event::Delta {
-                    text: "x".repeat(BATCH_BYTES).into(),
-                });
-            }
-            done.store(true, Ordering::Release);
-        });
-
-        std::thread::sleep(Duration::from_millis(20));
-        assert!(!finished.load(Ordering::Acquire));
-
-        let mut inbox = Inbox::new(from);
-        let mut received = 0;
-        for _ in 0..POSTED {
-            let Seen::Turn(Event::Delta { text }) = inbox
-                .recv_timeout(Duration::from_secs(1))
-                .expect("a bounded delta")
-            else {
-                panic!("a non-delta crossed the test bridge");
-            };
-            assert_eq!(text.len(), BATCH_BYTES);
-            received += 1;
-        }
-
-        flooding.join().unwrap();
-        assert_eq!(received, POSTED);
-    }
-}
-
-/// The two ends a turn lends whoever is asking.
+/// The ends a turn lent, as one ask reaches them.
 ///
-/// Made fresh for each turn, for the reason the verdict channel is: an answer
-/// that outlived the turn it was meant for is an answer to a question nobody
-/// asked.
-#[derive(Debug)]
-struct Ends {
-    to: SyncSender<Seen>,
-    answers: Receiver<Given>,
+/// It holds the place the ends are lent into, never a copy of them, and
+/// writes nothing back there: each question it puts reads the sending end
+/// lent there, sends, and lets go of it before waiting for the answer. So an
+/// ask still waiting when its turn ends holds nothing of that turn — the loop
+/// that draws sees the turn's channel close as it always does. A question is
+/// put down whatever ends are lent when it is sent: none once they were taken
+/// back, and those of the next turn once that turn lends its own — which a
+/// question never meets, because every run a turn starts is awaited within
+/// that turn. The end that would carry an answer back is never here (see the
+/// module documentation): each question makes its own, so an answer only
+/// ever settles the question it was made for, and a second ask in the same
+/// turn cannot take anything from a first one still outstanding.
+struct Lent<'a> {
+    ends: &'a Mutex<Option<SyncSender<Seen>>>,
 }
 
-/// Where a tool's questions go, and where the answers come back.
+/// Where a tool's questions go.
 ///
 /// Held by the tool from the moment it is built and lent its ends one turn at a
 /// time, which is the difference between this and [`Asking`]: a verdict is
 /// asked for by the loop, which can be handed a fresh value per turn, and this
 /// is asked for by a tool that was built once and never rebuilt.
 ///
-/// **Nobody there is an answer.** A turn that has lent no ends, a channel that
-/// will not carry the questions, and a reply channel that closed first all mean
-/// the same thing — there is no one to ask — and the tool turns that into a
-/// result the turn survives. That is the whole of what makes it different from
-/// the verdict beside it, whose silence has to be a refusal because running a
-/// tool nobody agreed to is worse than stopping. Here nothing runs either way.
+/// **Nobody there is an answer.** A turn that has lent no ends and a channel
+/// that will not carry the questions both mean the same thing — there is no
+/// one to ask — and the tool turns that into a result the turn survives. That
+/// is the whole of what makes it different from the verdict beside it, whose
+/// silence has to be a refusal because running a tool nobody agreed to is
+/// worse than stopping. Here nothing runs either way.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Putting {
-    ends: Arc<Mutex<Option<Ends>>>,
+    ends: Arc<Mutex<Option<SyncSender<Seen>>>>,
 }
 
 impl Putting {
@@ -666,10 +414,10 @@ impl Putting {
         Self::default()
     }
 
-    /// Lends the ends of this turn's channels.
-    pub(crate) fn open(&self, to: SyncSender<Seen>, answers: Receiver<Given>) {
+    /// Lends the ends of this turn's channel.
+    pub(crate) fn open(&self, to: SyncSender<Seen>) {
         if let Ok(mut held) = self.ends.lock() {
-            *held = Some(Ends { to, answers });
+            *held = Some(to);
         }
     }
 
@@ -684,42 +432,62 @@ impl Putting {
 }
 
 impl Put for Putting {
-    /// Blocks the turn until somebody answers.
+    /// Awaits the turn until somebody answers.
     ///
-    /// The lock is held across the wait on purpose: two asks outstanding at once
-    /// would be two questions on one screen with one reply channel between them,
-    /// and there is no shape of that which is right. Tools run one at a time, so
-    /// what this makes impossible is not something anything does today — it is
-    /// something a later change cannot start doing by accident.
-    fn put(&self, questions: &[Question]) -> Option<Vec<Answered>> {
-        let held = self.ends.lock().ok()?;
-        let mut ends = held.as_ref()?;
-
-        client::questions(Capabilities::every(), &mut ends, questions)
+    /// A human's answer is human-length, so this hands back a future that
+    /// answers `Pending` the moment it is asked and wakes once the drawing
+    /// thread has sent one — never a wait inside the poll that produces it.
+    ///
+    /// What waits for the answer is [`Lent`], which holds none of the turn's
+    /// ends across the wait and never puts any back, so a put its turn
+    /// outlived cannot keep that turn's channel open, or leave a stale end
+    /// where the next turn's are lent.
+    fn put<'a>(&'a self, questions: &'a [Question]) -> BoxFuture<'a, Option<Vec<Answered>>> {
+        Box::pin(async move {
+            if self.ends.lock().ok()?.is_none() {
+                return None;
+            }
+            let mut lent = Lent { ends: &self.ends };
+            client::questions(Capabilities::every(), &mut lent, questions).await
+        })
     }
 }
 
-impl Front for &Ends {
-    fn put(&mut self, pending: &Pending, shown: Shown<'_>) -> Option<Decision> {
-        let Shown::Questions(questions) = shown else {
-            return None;
-        };
+impl Front for Lent<'_> {
+    /// Puts `questions` down a fresh one-shot made for this ask alone, and
+    /// awaits the far end of it — see the module documentation for why the
+    /// channel is not a field of `Lent` or [`Putting`]. The turn's sending end
+    /// is read as the question is sent and let go of before the wait.
+    fn put<'a>(
+        &'a mut self,
+        pending: &'a Pending,
+        shown: Shown<'a>,
+    ) -> BoxFuture<'a, Option<Decision>> {
+        Box::pin(async move {
+            let Shown::Questions(questions) = shown else {
+                return None;
+            };
 
-        self.to
-            .send(Seen::Asked {
-                questions: questions.to_vec(),
+            let (reply, hear) = oneshot::channel();
+            let to = self.ends.lock().ok()?.clone()?;
+            deliver(
+                &to,
+                Seen::Asked {
+                    questions: questions.to_vec(),
+                    reply,
+                },
+            )?;
+            drop(to);
+
+            let id = pending.id();
+            let answers = hear
+                .await
+                .ok()?
+                .and_then(|answered| answered.iter().map(picked).collect());
+            Some(match answers {
+                Some(answers) => Decision::Answered { id, answers },
+                None => Decision::Declined { id },
             })
-            .ok()?;
-
-        let id = pending.id();
-        let answers = self
-            .answers
-            .recv()
-            .ok()?
-            .and_then(|answered| answered.iter().map(picked).collect());
-        Some(match answers {
-            Some(answers) => Decision::Answered { id, answers },
-            None => Decision::Declined { id },
         })
     }
 

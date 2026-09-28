@@ -9,12 +9,13 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCapability, SandboxCleanup, SandboxCommand,
     SandboxCommandStage, SandboxError, SandboxFactKind, SandboxFailureKind, SandboxFailurePhase,
     SandboxFeature, SandboxFilesystemAccess, SandboxGuardrailDecision, SandboxInspection,
     SandboxInvocationMode, SandboxLaunch, SandboxLifecycle, SandboxNetworkPolicy, SandboxProcess,
-    SandboxRequest, SandboxSession,
+    SandboxRequest, SandboxSession, confined_inspection,
 };
 
 use super::process::{
@@ -49,6 +50,7 @@ pub(super) fn declared_capabilities() -> SandboxCapabilities {
 pub(super) fn prepare(
     request: SandboxRequest,
     active: Arc<AtomicUsize>,
+    runtime: Option<tokio::runtime::Handle>,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     if !matches!(request.policy().network(), SandboxNetworkPolicy::Closed) {
         return Err(SandboxError::Unsupported {
@@ -79,8 +81,7 @@ pub(super) fn prepare(
     ))?;
     let capabilities = declared_capabilities();
     request.negotiate(&capabilities)?;
-    let inspection =
-        SandboxInspection::confined_for_request(broker.identity().clone(), capabilities, &request)?;
+    let inspection = confined_inspection(broker.identity().clone(), capabilities, &request)?;
     request.audit().record(
         request.id(),
         SandboxFactKind::Negotiated(Box::new(inspection.clone())),
@@ -122,6 +123,7 @@ pub(super) fn prepare(
         inspection,
         scratch: Some(scratch),
         reservation: Some(reservation),
+        runtime,
         materialized: false,
         transferred: false,
     }))
@@ -133,6 +135,8 @@ struct WindowsSession {
     inspection: SandboxInspection,
     scratch: Option<Stage>,
     reservation: Option<Reservation>,
+    /// Where each command's status is watched.
+    runtime: Option<tokio::runtime::Handle>,
     materialized: bool,
     transferred: bool,
 }
@@ -142,91 +146,100 @@ impl SandboxSession for WindowsSession {
         &self.inspection
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        if !self.materialized {
-            self.materialized = true;
-            self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
-            )?;
-        }
-        Ok(())
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move {
+            if !self.materialized {
+                self.materialized = true;
+                self.request.audit().record(
+                    self.request.id(),
+                    SandboxFactKind::Lifecycle(SandboxLifecycle::Materialized),
+                )?;
+            }
+            Ok(())
+        })
     }
 
-    fn stage(
+    fn stage<'a>(
         mut self: Box<Self>,
         command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        if !self.materialized {
-            self.record_start_failure(SandboxFailureKind::Materialization)?;
-            return Err(materialization(
-                "session was not materialized before start",
-                None,
-            ));
-        }
-        for stage in [
-            SandboxCommandStage::Requested,
-            SandboxCommandStage::Effective,
-        ] {
-            let decision = self.request.policy().commands().evaluate(&command, stage);
-            self.request.audit().record(
-                self.request.id(),
-                SandboxFactKind::Guardrail { stage, decision },
-            )?;
-            if decision != SandboxGuardrailDecision::Allowed {
-                self.record_start_failure(SandboxFailureKind::Guardrail)?;
-                return Err(SandboxError::Guardrail);
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if !self.materialized {
+                self.record_start_failure(SandboxFailureKind::Materialization)?;
+                return Err(materialization(
+                    "session was not materialized before start",
+                    None,
+                ));
             }
-        }
-        let scratch = self.scratch.as_ref().map(Stage::root).ok_or_else(|| {
-            SandboxError::Lifecycle(std::io::Error::other(
-                "Windows sandbox scratch owner is unavailable",
-            ))
-        })?;
-        let startup_input = match launch_frame(&self.request, &self.broker, &command, scratch) {
-            Ok(frame) => frame,
-            Err(problem) => {
-                self.record_start_failure(problem.failure_kind())?;
-                return Err(problem);
+            for stage in [
+                SandboxCommandStage::Requested,
+                SandboxCommandStage::Effective,
+            ] {
+                let decision = self.request.policy().commands().evaluate(&command, stage);
+                self.request.audit().record(
+                    self.request.id(),
+                    SandboxFactKind::Guardrail { stage, decision },
+                )?;
+                if decision != SandboxGuardrailDecision::Allowed {
+                    self.record_start_failure(SandboxFailureKind::Guardrail)?;
+                    return Err(SandboxError::Guardrail);
+                }
             }
-        };
-        let mut process = Command::new(self.broker.path());
-        process
-            .arg(crucible_sandbox_broker::WINDOWS_LAUNCH_MODE)
-            .current_dir(self.request.policy().working_directory());
-        let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
-        let stage = self.scratch.take().ok_or_else(|| {
-            SandboxError::Lifecycle(std::io::Error::other(
-                "Windows sandbox scratch owner is unavailable",
-            ))
-        })?;
-        let launch = WindowsLaunch {
-            process: Some(process),
-            plan: Some(super::process::SpawnPlan {
-                network: None,
+            let scratch = self.scratch.as_ref().map(Stage::root).ok_or_else(|| {
+                SandboxError::Lifecycle(std::io::Error::other(
+                    "Windows sandbox scratch owner is unavailable",
+                ))
+            })?;
+            let startup_input = match launch_frame(&self.request, &self.broker, &command, scratch) {
+                Ok(frame) => frame,
+                Err(problem) => {
+                    self.record_start_failure(problem.failure_kind())?;
+                    return Err(problem);
+                }
+            };
+            let mut process = Command::new(self.broker.path());
+            process
+                .arg(crucible_sandbox_broker::WINDOWS_LAUNCH_MODE)
+                .current_dir(self.request.policy().working_directory());
+            let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
+            let stage = self.scratch.take().ok_or_else(|| {
+                SandboxError::Lifecycle(std::io::Error::other(
+                    "Windows sandbox scratch owner is unavailable",
+                ))
+            })?;
+            let launch = WindowsLaunch {
+                process: Some(process),
+                plan: Some(super::process::SpawnPlan {
+                    network: None,
+                    inspection: self.inspection.clone(),
+                    reservation,
+                    stage: Some(stage),
+                    limits: self.request.policy().limits(),
+                    audit: self.request.audit().clone(),
+                    sandbox: self.request.id(),
+                    audit_started: true,
+                    audit_cleanup: true,
+                    invocation: self.request.invocation_mode(),
+                    call_result_key: self.request.call_result_key(),
+                    canceller: None,
+                    runtime: self.runtime.clone(),
+                    speech: command.speech(),
+                    startup_input: Some(startup_input),
+                    credentials: super::process::credential_values(command.environment()),
+                }),
                 inspection: self.inspection.clone(),
-                reservation,
-                stage: Some(stage),
-                limits: self.request.policy().limits(),
                 audit: self.request.audit().clone(),
                 sandbox: self.request.id(),
-                audit_started: true,
-                audit_cleanup: true,
                 invocation: self.request.invocation_mode(),
-                call_result_key: self.request.call_result_key(),
-                canceller: None,
-                speech: command.speech(),
-                startup_input: Some(startup_input),
-            }),
-            inspection: self.inspection.clone(),
-            audit: self.request.audit().clone(),
-            sandbox: self.request.id(),
-            invocation: self.request.invocation_mode(),
-            owner_transferred: false,
-            released: false,
-        };
-        self.transferred = true;
-        Ok(Box::new(launch))
+                owner_transferred: false,
+                released: false,
+            };
+            self.transferred = true;
+            Ok(Box::new(launch) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -285,42 +298,49 @@ impl SandboxLaunch for WindowsLaunch {
         Ok(())
     }
 
-    fn release(mut self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
-            return Err(SandboxError::Lifecycle(std::io::Error::other(
-                "background sandbox has no application cleanup owner",
-            )));
-        }
-        let process = self.process.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other(
-                "Windows sandbox command was already released",
-            ))
-        })?;
-        let plan = self.plan.take().ok_or_else(|| {
-            SandboxError::Spawn(std::io::Error::other(
-                "Windows sandbox launch plan is unavailable",
-            ))
-        })?;
-        self.released = true;
-        let spawned = super::process::spawn(process, plan);
-        if let Err(problem) = &spawned {
-            let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
-                SandboxCleanup::Failed
-            } else {
-                SandboxCleanup::Complete
-            };
-            let _ = self.audit.record(
-                self.sandbox,
-                SandboxFactKind::Failed {
-                    phase: SandboxFailurePhase::Start,
-                    kind: problem.failure_kind(),
-                },
-            );
-            let _ = self
-                .audit
-                .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
-        }
-        spawned
+    fn release<'a>(
+        mut self: Box<Self>,
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            if self.invocation != SandboxInvocationMode::Foreground && !self.owner_transferred {
+                return Err(SandboxError::Lifecycle(std::io::Error::other(
+                    "background sandbox has no application cleanup owner",
+                )));
+            }
+            let process = self.process.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other(
+                    "Windows sandbox command was already released",
+                ))
+            })?;
+            let plan = self.plan.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other(
+                    "Windows sandbox launch plan is unavailable",
+                ))
+            })?;
+            self.released = true;
+            let spawned = super::process::spawn(process, plan);
+            if let Err(problem) = &spawned {
+                let cleanup = if matches!(problem, SandboxError::Lifecycle(_)) {
+                    SandboxCleanup::Failed
+                } else {
+                    SandboxCleanup::Complete
+                };
+                let _ = self.audit.record(
+                    self.sandbox,
+                    SandboxFactKind::Failed {
+                        phase: SandboxFailurePhase::Start,
+                        kind: problem.failure_kind(),
+                    },
+                );
+                let _ = self
+                    .audit
+                    .record(self.sandbox, SandboxFactKind::Cleanup(cleanup));
+            }
+            spawned
+        })
     }
 }
 

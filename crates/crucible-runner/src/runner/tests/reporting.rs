@@ -146,25 +146,27 @@ impl Tool for Logged {
         Summary::new("")
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        let named = self
-            .store
-            .said()
-            .iter()
-            .filter_map(|message| match message {
-                Message::Agent { calls, .. } => Some(calls.clone()),
-                _ => None,
-            })
-            .flatten()
-            .map(|call| call.name.into_string())
-            .collect::<Vec<_>>()
-            .join(",");
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let named = self
+                .store
+                .said()
+                .iter()
+                .filter_map(|message| match message {
+                    Message::Agent { calls, .. } => Some(calls.clone()),
+                    _ => None,
+                })
+                .flatten()
+                .map(|call| call.name.into_string())
+                .collect::<Vec<_>>()
+                .join(",");
 
-        Ok(ToolOutput::ok(named))
+            Ok(ToolOutput::ok(named))
+        })
     }
 }
 
@@ -453,7 +455,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
     // The transcript's copy has nowhere to put a preview: what crosses into a
     // record is the header the reader's row can be drawn from again, and the
     // lines stay behind. So what the growing value holds is two integers.
-    let kept: Vec<Option<crucible_core::Changed>> = scripted
+    let kept: Vec<Option<crucible_types::Changed>> = scripted
         .runner
         .transcript()
         .messages()
@@ -466,7 +468,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
         .map(|result| result.output.changed())
         .collect();
 
-    assert_eq!(kept, [Some(crucible_core::Changed::new(1, 0))]);
+    assert_eq!(kept, [Some(crucible_types::Changed::new(1, 0))]);
 }
 
 #[test]

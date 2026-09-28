@@ -38,12 +38,11 @@ fn request(transcript: &Transcript) -> Request<'_> {
 fn google_accepts_the_documented_trailing_done_marker() {
     let (provider, _) = provider(200, &format!("{ANSWER}event: done\ndata: [DONE]\n\n"));
     let transcript = Transcript::new();
-    let mut stream = provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let mut continuation = 0;
     let mut stopped = 0;
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         match delta.unwrap() {
             Delta::Continuation(_) => continuation += 1,
             Delta::Stopped(StopReason::Yielded) => stopped += 1,
@@ -65,11 +64,11 @@ fn google_done_markers_cannot_hide_incomplete_or_contradictory_streams() {
     ] {
         let (provider, _) = provider(200, &body);
         let transcript = Transcript::new();
-        let mut stream = provider
-            .stream(request(&transcript), &Cancel::new())
-            .unwrap();
+        let mut stream =
+            crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+                .unwrap();
         let mut failed = false;
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             if let Err(error) = delta {
                 assert!(!format!("{error:?}").contains("private-canary"));
                 failed = true;
@@ -89,7 +88,9 @@ fn google_refusals_never_echo_private_request_or_response_payloads() {
                 r#"{{"error":{{"code":"invalid_request","message":"private-signature-canary {SECRET}"}}}}"#
             ),
         );
-        let Err(error) = provider.stream(request(&transcript), &Cancel::new()) else {
+        let Err(error) =
+            crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+        else {
             panic!("refusal returned a stream");
         };
         assert!(!format!("{error:?} {error}").contains("private-signature-canary"));
@@ -102,7 +103,7 @@ fn google_refusals_never_echo_private_request_or_response_payloads() {
         r#"{"error":{"code":"context_length_exceeded","message":"private-signature-canary"}}"#,
     );
     assert!(matches!(
-        provider.stream(request(&transcript), &Cancel::new()),
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())),
         Err(ProviderError::WindowExceeded { .. })
     ));
 }
@@ -118,17 +119,16 @@ fn google_posts_the_exact_key_only_sse_route_and_all_valid_efforts() {
         Some(Effort::Medium),
         Some(Effort::High),
     ] {
-        let mut stream = provider
-            .stream(
-                Request {
-                    effort,
-                    ..request(&transcript)
-                },
-                &Cancel::new(),
-            )
-            .unwrap();
+        let mut stream = crucible_runtime::answered!(provider.stream(
+            Request {
+                effort,
+                ..request(&transcript)
+            },
+            &Cancel::new(),
+        ))
+        .unwrap();
         let mut deltas = Vec::new();
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             deltas.push(delta.unwrap());
         }
         assert!(matches!(deltas.first(),Some(Delta::Text(s)) if s.as_ref()=="hello"));

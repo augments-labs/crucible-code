@@ -169,8 +169,8 @@ fn output_usage(payload: &Value) -> Result<Option<Delta>, ProviderError> {
 /// What the request this response answers carried.
 ///
 /// Sent once, in the event that opens the response, because it is settled
-/// before the model has written a word — which is the same reason [`spent`]
-/// arrives repeatedly and this does not.
+/// before the model has written a word — which is the same reason
+/// [`output_usage`] arrives repeatedly and this does not.
 ///
 /// Anthropic reports uncached input, cache writes, and cache reads as separate
 /// fields. All three occupy the request's context window, so the carried count
@@ -178,9 +178,9 @@ fn output_usage(payload: &Value) -> Result<Option<Delta>, ProviderError> {
 /// block itself — a gateway or provider feature can cache the request — and
 /// omitting them makes a mostly cached session look almost empty.
 ///
-/// Absent rather than zero only where none of the three counts is present, for
-/// the reason [`spent`] gives about its own: a request whose size nobody
-/// reported and one that carried nothing are different facts.
+/// Absent rather than zero only where none of the three counts is present: a
+/// request whose size nobody reported and one that carried nothing are
+/// different facts.
 pub(super) fn opened(payload: &Value) -> Result<Option<Delta>, ProviderError> {
     let Some(usage) = payload
         .get("message")

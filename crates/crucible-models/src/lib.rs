@@ -20,7 +20,7 @@
 //! use crucible_models::{
 //!     DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 //! };
-//! use crucible_runtime::Cancel;
+//! use crucible_runtime::{BoxFuture, Cancel};
 //! use crucible_types::{CredentialScopeId, Modalities, Modality, PromptCacheEncoding};
 //!
 //! struct Offline {
@@ -57,12 +57,12 @@
 //!         PromptCacheEncoding::NoControlIntended
 //!     }
 //!
-//!     fn stream(
-//!         &self,
-//!         _request: Request<'_>,
-//!         _cancel: &Cancel,
-//!     ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-//!         Err(ProviderError::Unconfigured("this adapter answers nothing".into()))
+//!     fn stream<'a>(
+//!         &'a self,
+//!         _request: Request<'a>,
+//!         _cancel: &'a Cancel,
+//!     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+//!         Box::pin(async { Err(ProviderError::Unconfigured("this adapter answers nothing".into())) })
 //!     }
 //! }
 //!

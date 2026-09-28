@@ -13,6 +13,7 @@ use std::fmt;
 use crucible_auth::StoredCredentials;
 use crucible_config::Settings;
 use crucible_models::{Effort, ModelCapabilities, ModelError, ModelLimits, Provider};
+use crucible_provider::HttpTurns;
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
@@ -555,7 +556,12 @@ pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
 /// run already read: nothing in them grows with the transcript. `from` is the
 /// environment lookup, handed in like every other source this crate reads, so
 /// that a caller with no environment to offer can say so.
-pub fn re_serving(settings: Settings, subscriptions: Subscriptions, from: Lookup) -> Serving {
+pub fn re_serving(
+    settings: Settings,
+    subscriptions: Subscriptions,
+    from: Lookup,
+    http: HttpTurns,
+) -> Serving {
     Box::new(move |named: Served, stored: &StoredCredentials| {
         let auth = startup::ProviderAuth {
             settings: &settings,
@@ -571,7 +577,7 @@ pub fn re_serving(settings: Settings, subscriptions: Subscriptions, from: Lookup
         // the sentence the `None` arm refuses with is never reached; it is
         // spelled the way the launch would spell it for this provider anyway.
         Ok(Resolved {
-            provider: startup::provider(Some(named), unasked(Some(named.name)), auth)?,
+            provider: startup::provider(Some(named), unasked(Some(named.name)), auth, &http)?,
             source,
         })
     })

@@ -5,14 +5,21 @@
 //! the decision actually lives.
 
 use crucible_builtins::{Background, Bash};
-use crucible_core::{
-    Ancestry, Ask, Calibration, CallResultKey, CallResultReceipt, CallResultStoreError, Cancel,
-    Compacted, ContextError, ContextPatch, ContextSnapshot, DescribeTool, InvocationId,
-    JournalStore, Message, Mode, Permission, Remember, Rules, RunItem, Sensitivity, SessionId,
-    SessionOwner, SessionStore, Settled, Tool, ToolArgs, ToolCall, ToolContext, ToolId, ToolResult,
+use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
+use crucible_sandbox_local::LocalSandbox;
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, InvocationId, JournalStore, RunItem,
+    SessionOwner, SessionStore,
+};
+use crucible_tools::{
+    Ask, DescribeTool, Mode, Permission, Remember, Rules, Sensitivity, Settled, Tool, ToolContext,
     Unwatched, Verdict,
 };
-use crucible_sandbox_local::LocalSandbox;
+use crucible_types::{
+    Ancestry, Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
+    SessionId, ToolArgs, ToolCall, ToolId, ToolResult,
+};
 use sha2::{Digest, Sha256};
 
 use crate::cli::sample::Sample;
@@ -30,16 +37,53 @@ use super::*;
 /// about nothing. The verdict comes from the engine in the mode that asks about
 /// nothing, which is the only way anything outside it can obtain one.
 fn running(case: &str, count: usize) -> (Background, Sample) {
-    running_with(case, count, std::sync::Arc::new(LocalSandbox::new()))
+    running_with(case, count, std::sync::Arc::new(local()))
+}
+
+/// A runtime of this test binary's own, whose threads run a command's status
+/// task, read its output and own a command left running, while a test waits
+/// on the command. Built with the I/O driver a command's pipes are waited on
+/// with on Unix, as the application's is.
+fn runtime() -> tokio::runtime::Handle {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("a runtime to watch commands on")
+        })
+        .handle()
+        .clone()
+}
+
+/// This machine's confinement, watching each command it starts on the test
+/// binary's runtime.
+fn local() -> LocalSandbox {
+    LocalSandbox::new().watching_on(runtime())
 }
 
 fn running_with(
     case: &str,
     count: usize,
-    sandbox: std::sync::Arc<dyn crucible_core::SandboxService>,
+    sandbox: std::sync::Arc<dyn crucible_sandbox::SandboxService>,
 ) -> (Background, Sample) {
-    let here = Sample::new(case);
     let left = Background::new();
+    left.watching_on(runtime());
+    let here = started(&left, case, count, sandbox);
+    (left, here)
+}
+
+/// Starts `count` commands left running in `left`, through the real tool.
+fn started(
+    left: &Background,
+    case: &str,
+    count: usize,
+    sandbox: std::sync::Arc<dyn crucible_sandbox::SandboxService>,
+) -> Sample {
+    let here = Sample::new(case);
     let cancel = Cancel::new();
     // This fixture exercises the real process/background path, but not Linux
     // namespace availability. Selecting the compatibility backend explicitly
@@ -57,15 +101,21 @@ fn running_with(
             args: ToolArgs::new(r#"{"command":"sleep 30","background":true}"#),
         };
 
-        let Settled::Approved(approved) =
-            engine.decide(&call, &tool.sensitivity(&call.args), &mut Nobody)
-        else {
+        let Settled::Approved(approved) = crucible_runtime::answered!(engine.decide(
+            &call,
+            &tool.sensitivity(&call.args),
+            &mut Nobody
+        )) else {
             panic!("full access asked about a command");
         };
 
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched)
             .with_invocation(InvocationId::new());
-        let output = tool.run(approved, &context).expect("the command started");
+        // Awaited on the test's runtime, as a turn awaits a call: the tool
+        // starts the readers of a command's output on the runtime awaiting it.
+        let output = runtime()
+            .block_on(tool.run(approved, &context))
+            .expect("the command started");
         assert!(
             !output.is_failed(),
             "a command this test needs running was refused: {}",
@@ -82,11 +132,13 @@ fn running_with(
             id: call.id.clone(),
             output: output.into_recorded(),
         };
-        let receipt = JOURNAL
-            .put_call_result(pending.key(), &result)
+        let receipt = crucible_runtime::answered!(JOURNAL.put_call_result(pending.key(), &result))
             .expect("the test journal stores the result");
-        pending
-            .accept(receipt)
+        // Accepted where a runtime is running, as the runner accepts a result:
+        // one asked where none is, is refused.
+        let runtime = runtime();
+        let _entered = runtime.enter();
+        crucible_runtime::answered!(pending.accept(receipt))
             .expect("the detached command accepts its receipt");
     }
 
@@ -99,7 +151,7 @@ fn running_with(
         "the registry did not take every command this test started"
     );
 
-    (left, here)
+    here
 }
 
 mod cleanup;
@@ -110,11 +162,20 @@ fn failed_stop_keeps_the_last_row_and_its_retry_notice() {
     let (left, _here) = running_with("failed-stop", 1, sandbox);
     let mut leaving = Leaving::default();
     let number = left.running().first().expect("running command").number;
+    drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
 
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
         Moved::Redraw,
         "failed cleanup closed the panel"
+    );
+    waiting_until("the refused stop", || {
+        left.running().first().is_some_and(|one| one.refused)
+    });
+    assert_eq!(
+        leaving.watched(&left, &Ending::deaf()),
+        Moved::Redraw,
+        "the refusal was not drawn on the next beat"
     );
     assert_eq!(left.running().first().map(|one| one.number), Some(number));
     for (columns, room, glyphs) in [(80, 24, Glyphs::Unicode), (24, 8, Glyphs::Ascii)] {
@@ -135,9 +196,179 @@ fn failed_stop_keeps_the_last_row_and_its_retry_notice() {
     denied.store(false, std::sync::atomic::Ordering::Relaxed);
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
-        Moved::Left
+        Moved::Redraw
     );
-    assert_eq!(left.count(), 0);
+    waiting_until("the stopped command's row going", || left.count() == 0);
+    assert_eq!(leaving.watched(&left, &Ending::deaf()), Moved::Left);
+}
+
+/// Waits, up to a ceiling no passing run comes near, until `until` holds.
+fn waiting_until(what: &str, until: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !until() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what} never happened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// The command line lets go of the registry of commands left running before it
+/// shuts the runtime down, so a command still running at exit is ended by its
+/// owner on a runtime that is still running, rather than on the thread
+/// letting go, or on one already draining where the stop would never run.
+#[test]
+fn a_command_left_running_at_exit_is_ended_on_the_runtime_before_it_is_shut_down() {
+    let on_runtime = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (started_one, stopped) = crate::cli::leaving_first(Background::new, |services, left| {
+        let runtime = services.runtime().handle()?;
+        left.watching_on(runtime.clone());
+        let sandbox = cleanup::counting_on(runtime, &on_runtime);
+        Ok::<_, crucible_app::runtime::Unstarted>(started(left, "ended-at-exit", 1, sandbox))
+    });
+
+    let _here = started_one.expect("the runtime could not be started");
+    assert_eq!(stopped, Ok(()), "the runtime was left with work on it");
+    assert_eq!(
+        on_runtime.load(std::sync::atomic::Ordering::Acquire),
+        1,
+        "the command left running was not ended on the runtime before it shut down"
+    );
+}
+
+/// What a run let go of at exit, in the order it went.
+type Order = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+/// Puts what `said` makes of the moment it goes at the end of an [`Order`].
+struct Going {
+    order: Order,
+    said: Box<dyn Fn() -> String + Send>,
+}
+
+impl Going {
+    fn into(order: &Order, said: impl Fn() -> String + Send + 'static) -> Self {
+        Self {
+            order: std::sync::Arc::clone(order),
+            said: Box::new(said),
+        }
+    }
+}
+
+impl Drop for Going {
+    fn drop(&mut self) {
+        let said = (self.said)();
+        self.order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(said);
+    }
+}
+
+/// The order a run ends in, with a task on the runtime still writing to the
+/// session when it comes. What the session held goes first, as the loop
+/// returns — here one value in its place, dropped where its locals are. The
+/// registry of commands left running goes next, with its command ended, and
+/// the runtime last, whose shutdown cancels the task wherever it had got to
+/// in a line. Every line the task was told had been written is in the log
+/// once the run is over, and the log reads back whole.
+#[test]
+fn at_exit_the_runtime_goes_last_and_every_acknowledged_line_is_kept() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let order = Order::default();
+    let on_runtime = Arc::new(AtomicUsize::new(0));
+    let acknowledged = Arc::new(AtomicUsize::new(0));
+
+    let (ran, stopped) = crate::cli::leaving_first(
+        || {
+            let ended = Arc::clone(&on_runtime);
+            // A tuple drops its fields in order, so this is said once the
+            // registry has gone.
+            let gone = Going::into(&order, move || {
+                format!("registry, {} ended", ended.load(Ordering::Acquire))
+            });
+            (Background::new(), gone)
+        },
+        |services, leaving: &(Background, Going)| {
+            let left = &leaving.0;
+            let runtime = services.runtime().handle()?;
+            left.watching_on(runtime.clone());
+            let here = started(
+                left,
+                "drained-at-exit",
+                1,
+                cleanup::counting_on(runtime.clone(), &on_runtime),
+            );
+
+            let session = Arc::new(
+                crucible_session::Session::start(&here.logs(), &here.workspace(), None)
+                    .expect("a session to write to"),
+            );
+            let id = session.id().expect("a recorded session has a name").clone();
+            let writing = Arc::clone(&session);
+            let written = Arc::clone(&acknowledged);
+            let last = Going::into(&order, || "runtime".to_owned());
+            drop(runtime.spawn(async move {
+                let _last = last;
+                let line = Message::said("written before the exit");
+                loop {
+                    writing.append_message(&line).await;
+                    written.fetch_add(1, Ordering::AcqRel);
+                }
+            }));
+            waiting_until("a line acknowledged", || {
+                acknowledged.load(Ordering::Acquire) > 0
+            });
+
+            let _held = Going::into(&order, || "held".to_owned());
+            Ok::<_, crucible_app::runtime::Unstarted>((here, id))
+        },
+    );
+
+    let (here, id) = ran.expect("the runtime could not be started");
+    assert_eq!(stopped, Ok(()), "the runtime was left with work on it");
+    assert_eq!(
+        *order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        ["held", "registry, 1 ended", "runtime"],
+        "the run was not let go of in the order its exit is documented in"
+    );
+
+    let told = acknowledged.load(Ordering::Acquire);
+    let (_reopened, transcript) =
+        crucible_session::Session::reopen(&here.logs(), &here.workspace(), &id)
+            .expect("the log read back whole");
+    assert!(
+        transcript.len() >= told,
+        "{told} lines were acknowledged and {} are in the log",
+        transcript.len()
+    );
+}
+
+/// The beat a standing panel is looked at again on without a key: the frame
+/// a key's own outcome is shown on.
+const FRAME: std::time::Duration = std::time::Duration::from_millis(250);
+
+#[test]
+fn the_key_that_stops_one_returns_at_once_while_its_stop_stalls() {
+    let (sandbox, stalled) = cleanup::stalling();
+    let (left, _here) = running_with("stalled-stop", 1, sandbox);
+    let mut leaving = Leaving::default();
+    stalled.store(true, std::sync::atomic::Ordering::Release);
+
+    let began = std::time::Instant::now();
+    let moved = leaving.against(Pressed::Key(Key::Char('x')), &left);
+    let took = began.elapsed();
+    stalled.store(false, std::sync::atomic::Ordering::Release);
+
+    assert!(
+        took < FRAME,
+        "the key waited {took:?} on a stop that stalled"
+    );
+    assert_eq!(moved, Moved::Redraw);
 }
 
 /// Answers nothing, because in this mode nothing is asked.
@@ -161,25 +392,45 @@ impl SessionStore for Journal {
         None
     }
 
-    fn append_message(&self, _message: &Message) {}
+    fn append_message<'a>(&'a self, _message: &'a Message) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
     fn context_snapshot(&self) -> Option<ContextSnapshot> {
         None
     }
 
-    fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
-        Ok(())
+    fn contextual<'a>(
+        &'a self,
+        _patch: &'a ContextPatch,
+    ) -> BoxFuture<'a, Result<(), ContextError>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    fn compacted(&self, _replaced: usize, _recap: &str) {}
+    fn compacted<'a>(&'a self, _replaced: usize, _recap: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+    fn display_compacted(&self, _compacted: Compacted, _pruned: bool) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 
-    fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+    fn pruned<'a>(&'a self, _freed: usize, _results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+    fn restricted<'a>(
+        &'a self,
+        _freed: usize,
+        _results: &'a [ToolId],
+        _notice: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn measured(&self, _calibration: &Calibration) {}
+    fn measured<'a>(&'a self, _calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
     fn calibrated(&self) -> Option<Calibration> {
         None
@@ -187,26 +438,34 @@ impl SessionStore for Journal {
 }
 
 impl JournalStore for Journal {
-    fn append_run_item(&self, _item: &RunItem) {}
+    fn append_run_item<'a>(&'a self, _item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        let mut digest = Sha256::new();
-        digest.update(b"crucible:leaving-test-call-result:v1\0");
-        digest.update(key.bytes());
-        digest.update(result.id.as_str().as_bytes());
-        digest.update(result.output.text().as_bytes());
-        digest.update([u8::from(result.output.is_failed())]);
-        Ok(CallResultReceipt::from_digest(digest.finalize().into()))
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            let mut digest = Sha256::new();
+            digest.update(b"crucible:leaving-test-call-result:v1\0");
+            digest.update(key.bytes());
+            digest.update(result.id.as_str().as_bytes());
+            digest.update(result.output.text().as_bytes());
+            digest.update([u8::from(result.output.is_failed())]);
+            Ok(CallResultReceipt::from_digest(digest.finalize().into()))
+        })
     }
 }
 
 impl Ask for Nobody {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Deny, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
 
@@ -286,21 +545,48 @@ fn stopping_the_last_one_takes_the_list_with_it() {
 
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
-        Moved::Left
+        Moved::Redraw
     );
-    assert_eq!(left.count(), 0, "the command was not ended");
+    waiting_until("the command ending", || left.count() == 0);
+    assert_eq!(leaving.watched(&left, &Ending::deaf()), Moved::Left);
 }
 
 #[test]
 fn stopping_one_of_several_keeps_the_list_open() {
     let (left, _here) = running("stopping-one", 2);
     let mut leaving = Leaving::default();
+    drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
 
     assert_eq!(
         leaving.against(Pressed::Key(Key::Char('x')), &left),
         Moved::Redraw
     );
-    assert_eq!(left.count(), 1);
+    waiting_until("one command ending", || left.count() == 1);
+    assert_eq!(leaving.watched(&left, &Ending::deaf()), Moved::Redraw);
+}
+
+/// The list is the one thing a running turn stands that waits on a beat rather
+/// than with no clock, so a signal lands there noted rather than obeyed. The
+/// turn's worker has stopped behind it by then, its queue to this thread full,
+/// and nothing but a key would ever close the list and let the turn's loop read
+/// the note. So the beat reads it: the list goes, and the turn it stood over is
+/// ended the way the signal asked.
+#[test]
+fn a_signal_noted_while_the_list_stands_closes_it_on_the_next_beat() {
+    let (left, _here) = running("told-while-listed", 1);
+    let mut leaving = Leaving::default();
+    drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
+    let ending = Ending::deaf();
+    assert_eq!(leaving.watched(&left, &ending), Moved::Still);
+
+    ending.tell(15);
+
+    assert_eq!(
+        leaving.watched(&left, &ending),
+        Moved::Left,
+        "a noted signal left the list standing until a key"
+    );
+    assert_eq!(left.count(), 1, "closing the list stopped a command");
 }
 
 #[test]
@@ -331,6 +617,7 @@ fn a_command_that_ended_while_the_list_was_open_brings_the_mark_back_inside_it()
     if let Some(last) = numbers.last() {
         left.stop(*last).expect("background cleanup");
     }
+    waiting_until("the stopped command's row going", || left.count() == 1);
 
     drop(leaving.rows(&left, 80, 24, Glyphs::Unicode));
 

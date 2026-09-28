@@ -7,28 +7,29 @@
 //! opaque details so every later request presents the same host identity. The
 //! token service and browser authorization page have different fixed origins;
 //! both are checked before a response can reach the terminal or browser.
+//!
+//! Every request goes through the client [`Renewals`] owns, within 30 s end
+//! to end. A credential's renewal is a rotation that owner runs for the
+//! installation's scope; the credential only awaits it.
 
 use std::fmt;
-use std::io::Read as _;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{Cancel, Credential, CredentialError, CredentialScopeId, Outgoing};
+use crucible_credentials::{Authorization, Credential, CredentialError, Outgoing};
+use crucible_types::CredentialScopeId;
 
 use super::{
-    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, SubscriptionLogin, Tokens,
-    credential_scope,
+    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, LoginUpdates, OAuthError, Renewals,
+    SubscriptionLogin, Tokens, credential_scope, held, renewal::Due,
 };
 use crate::{Store, StoredCredentials};
 
 const HOST: &str = "https://auth.kimi.com";
 const VERIFY: &str = "https://www.kimi.com";
 const CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
-const MAX_BODY: usize = 64 * 1024;
 const LOGIN_LIFETIME: Duration = Duration::from_mins(15);
 const REQUEST_LIFETIME: Duration = Duration::from_secs(30);
-const CANCEL_POLL: Duration = Duration::from_millis(50);
 const MINIMUM_REFRESH: u64 = 5 * 60;
 const DEVICE_ID: &str = "device_id";
 const EXPIRES_IN: &str = "expires_in";
@@ -48,12 +49,12 @@ impl KimiOAuth {
     /// Device authorization in a browser.
     pub const DEVICE: LoginMethod = LoginMethod::new("device");
 
-    /// Production Kimi login.
+    /// Production Kimi login, renewing through `renewals`.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(renewals: Renewals) -> Self {
         Self {
             shared: Arc::new(Shared {
-                flow: Flow::production(),
+                flow: Flow::production(renewals),
                 worker: LoginSlot::new(),
             }),
         }
@@ -74,10 +75,15 @@ impl KimiOAuth {
             return Err(OAuthError::Method);
         }
         let flow = self.shared.flow.clone();
+        let runtime = flow
+            .renewals
+            .runtime()
+            .ok_or(OAuthError::NotStarted)?
+            .clone();
         self.shared
             .worker
-            .start("crucible-kimi-login", move |cancel, updates| {
-                if let Err(problem) = flow.login(&store, &cancel, &updates) {
+            .start(&runtime, move |updates| async move {
+                if let Err(problem) = flow.login(&store, &updates).await {
                     let _ = updates.send(Err(problem));
                 }
             })
@@ -90,12 +96,6 @@ impl KimiOAuth {
             tokens,
             self.shared.flow.clone(),
         )))
-    }
-}
-
-impl Default for KimiOAuth {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -146,34 +146,56 @@ impl Credential for KimiCredential {
         self.scope
     }
 
-    fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
-        let mut tokens = self
-            .tokens
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if needs_refresh(&tokens, now()) {
-            *tokens = self
-                .store
-                .refresh_subscription("moonshot", needs_refresh, |current| {
-                    let refreshed = self.flow.refresh(current)?;
-                    if self.identity_bound
-                        && credential_scope(b"moonshot-device", refreshed.detail(DEVICE_ID))
-                            != Some(self.scope)
-                    {
-                        return Err(OAuthError::Invalid {
-                            step: "refreshed installation identity",
-                        });
-                    }
-                    Ok(refreshed)
+    fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a> {
+        Box::pin(async move {
+            {
+                let mut tokens = held(&self.tokens);
+                if needs_refresh(&tokens, now())
+                    && let Some(latest) = self.flow.renewals.latest("moonshot", self.scope)
+                    && !needs_refresh(&latest, now())
+                {
+                    *tokens = latest;
+                }
+                if !needs_refresh(&tokens, now()) {
+                    return apply(&tokens, request);
+                }
+            }
+
+            // Awaited with nothing held: the rotation is the owner's task, and
+            // this future only waits for it, so dropping it stops the wait and
+            // not the rotation.
+            let flow = self.flow.clone();
+            let (scope, bound) = (self.scope, self.identity_bound);
+            let fresh = self
+                .flow
+                .renewals
+                .renew(Due {
+                    scope,
+                    provider: "moonshot",
+                    store: self.store.clone(),
+                    needs_refresh,
+                    refresh: Box::new(move |current| {
+                        Box::pin(async move {
+                            let refreshed = flow.refresh(&current).await?;
+                            if bound
+                                && credential_scope(b"moonshot-device", refreshed.detail(DEVICE_ID))
+                                    != Some(scope)
+                            {
+                                return Err(OAuthError::Invalid {
+                                    step: "refreshed installation identity",
+                                });
+                            }
+                            Ok(refreshed)
+                        })
+                    }),
                 })
+                .await
                 .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
-        }
-        let identity = Identity::from_tokens(&tokens)
-            .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
-        identity.apply(request);
-        request.protect(tokens.access().to_owned());
-        request.set_header("authorization", format!("Bearer {}", tokens.access()));
-        Ok(())
+
+            let mut tokens = held(&self.tokens);
+            *tokens = fresh;
+            apply(&tokens, request)
+        })
     }
 }
 
@@ -183,6 +205,16 @@ impl fmt::Debug for KimiCredential {
             .field("tokens", &"<redacted>")
             .finish_non_exhaustive()
     }
+}
+
+/// Applies the installation's identity and the access token.
+fn apply(tokens: &Tokens, request: &mut Outgoing) -> Result<(), CredentialError> {
+    let identity = Identity::from_tokens(tokens)
+        .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
+    identity.apply(request);
+    request.protect(tokens.access().to_owned());
+    request.set_header("authorization", format!("Bearer {}", tokens.access()));
+    Ok(())
 }
 
 fn needs_refresh(tokens: &Tokens, at: u64) -> bool {
@@ -195,7 +227,12 @@ fn needs_refresh(tokens: &Tokens, at: u64) -> bool {
 
 #[derive(Clone)]
 struct Flow {
-    agent: ureq::Agent,
+    /// The owner of this installation's renewals, whose client every request
+    /// goes through and whose runtime a login runs on.
+    renewals: Renewals,
+    /// How long one request may take, from waiting for a connection to the
+    /// last byte of its answer.
+    request_lifetime: Duration,
     verification: Box<str>,
     authorize: Box<str>,
     token: Box<str>,
@@ -204,8 +241,9 @@ struct Flow {
 }
 
 impl Flow {
-    fn production() -> Self {
+    fn production(renewals: Renewals) -> Self {
         Self::at(
+            renewals,
             HOST,
             VERIFY,
             REQUEST_LIFETIME,
@@ -214,21 +252,21 @@ impl Flow {
         )
     }
 
+    // Six settings of one flow, each a different kind of thing and each named
+    // at its two call sites; a struct holding them would only rename them.
+    #[allow(clippy::too_many_arguments)]
     fn at(
+        renewals: Renewals,
         host: &str,
         verification: &str,
         request: Duration,
         login: Duration,
         interval: Duration,
     ) -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(request))
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .build();
         let host = host.trim_end_matches('/');
         Self {
-            agent: ureq::Agent::new_with_config(config),
+            renewals,
+            request_lifetime: request,
             verification: verification.trim_end_matches('/').into(),
             authorize: format!("{host}/api/oauth/device_authorization").into(),
             token: format!("{host}/api/oauth/token").into(),
@@ -238,8 +276,9 @@ impl Flow {
     }
 
     #[cfg(test)]
-    fn testing(host: &str) -> Self {
+    fn testing(host: &str, renewals: &Renewals) -> Self {
         Self::at(
+            renewals.clone(),
             host,
             host,
             crate::oauth::PATIENCE,
@@ -248,44 +287,39 @@ impl Flow {
         )
     }
 
-    fn login(
-        &self,
-        store: &Store,
-        cancel: &Cancel,
-        updates: &mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-    ) -> Result<(), OAuthError> {
-        let identity = Identity::for_login(store)?;
+    async fn login(&self, store: &Store, updates: &LoginUpdates) -> Result<(), OAuthError> {
+        let identity = Identity::for_login(&self.renewals, store).await?;
         let started = Instant::now();
         loop {
-            if cancel.requested() {
-                return Err(OAuthError::Cancelled);
-            }
             if started.elapsed() >= self.login_lifetime {
                 return Err(OAuthError::Expired);
             }
-            let device = self.request_device(&identity)?;
+            let device = self
+                .renewals
+                .login_request(self.request_device(&identity))
+                .await?;
             let issued = Instant::now();
-            updates
-                .send(Ok(LoginUpdate::Authorize {
-                    browser_uri: device.complete.clone(),
-                    shown_uri: device.verification.clone(),
-                    user_code: Some(device.user_code.clone()),
-                    manual: false,
-                }))
-                .map_err(|_| OAuthError::Cancelled)?;
+            updates.send(Ok(LoginUpdate::Authorize {
+                browser_uri: device.complete.clone(),
+                shown_uri: device.verification.clone(),
+                user_code: Some(device.user_code.clone()),
+                manual: false,
+            }))?;
             let time = LoginTime { started, issued };
-            if let Some(tokens) = self.poll(&device, &identity, time, cancel)? {
-                store.keep_subscription("moonshot", tokens)?;
-                return updates
-                    .send(Ok(LoginUpdate::Complete))
-                    .map_err(|_| OAuthError::Cancelled);
+            if let Some(tokens) = self.poll(&device, &identity, time).await? {
+                let store = store.clone();
+                self.renewals
+                    .login_store(move || store.keep_subscription("moonshot", tokens))
+                    .await?;
+                return updates.send(Ok(LoginUpdate::Complete));
             }
         }
     }
 
-    fn request_device(&self, identity: &Identity) -> Result<Device, OAuthError> {
-        let (status, response) =
-            self.post(&self.authorize, &[("client_id", CLIENT_ID)], identity)?;
+    async fn request_device(&self, identity: &Identity) -> Result<Device, OAuthError> {
+        let (status, response) = self
+            .post(&self.authorize, &[("client_id", CLIENT_ID)], identity)
+            .await?;
         if status != 200 {
             return Err(OAuthError::Refused { status });
         }
@@ -312,18 +346,14 @@ impl Flow {
         })
     }
 
-    fn poll(
+    async fn poll(
         &self,
         device: &Device,
         identity: &Identity,
         time: LoginTime,
-        cancel: &Cancel,
     ) -> Result<Option<Tokens>, OAuthError> {
         let mut interval = Duration::from_secs(device.interval).max(self.minimum_interval);
         loop {
-            if cancel.requested() {
-                return Err(OAuthError::Cancelled);
-            }
             let expired_by_server = device
                 .expires_in
                 .is_some_and(|lifetime| time.issued.elapsed() >= Duration::from_secs(lifetime));
@@ -339,7 +369,10 @@ impl Flow {
                 ("device_code", device.code.as_ref()),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ];
-            let (status, response) = self.post(&self.token, &fields, identity)?;
+            let (status, response) = self
+                .renewals
+                .login_request(self.post(&self.token, &fields, identity))
+                .await?;
             let value = json(&response, "device token")?;
             if status == 200 {
                 return token_response(&value, identity, None).map(Some);
@@ -351,18 +384,18 @@ impl Flow {
                 Some("access_denied") => return Err(OAuthError::Denied),
                 _ => return Err(OAuthError::Refused { status }),
             }
-            pause(interval, cancel)?;
+            tokio::time::sleep(interval).await;
         }
     }
 
-    fn refresh(&self, previous: &Tokens) -> Result<Tokens, OAuthError> {
+    async fn refresh(&self, previous: &Tokens) -> Result<Tokens, OAuthError> {
         let identity = Identity::from_tokens(previous)?;
         let fields = [
             ("client_id", CLIENT_ID),
             ("grant_type", "refresh_token"),
             ("refresh_token", previous.refresh()),
         ];
-        let (status, response) = self.post(&self.token, &fields, &identity)?;
+        let (status, response) = self.post(&self.token, &fields, &identity).await?;
         if status != 200 {
             return Err(OAuthError::Refused { status });
         }
@@ -373,37 +406,22 @@ impl Flow {
         )
     }
 
-    fn post(
+    /// One form request, with the installation's seven identity headers.
+    async fn post(
         &self,
         url: &str,
         fields: &[(&str, &str)],
         identity: &Identity,
     ) -> Result<(u16, String), OAuthError> {
-        let mut request = self
-            .agent
-            .post(url)
-            .header("content-type", "application/x-www-form-urlencoded")
-            .header("accept", "application/json");
+        let mut headers = Outgoing::new();
+        headers.set_header("content-type", "application/x-www-form-urlencoded");
+        headers.set_header("accept", "application/json");
         for (name, value) in identity.headers() {
-            request = request.header(name, value);
+            headers.set_header(name, value.to_owned());
         }
-        let response = request
-            .send(form(fields))
-            .map_err(|_| OAuthError::Unreachable)?;
-        let status = response.status().as_u16();
-        let mut text = String::new();
-        response
-            .into_body()
-            .into_reader()
-            .take((MAX_BODY + 1) as u64)
-            .read_to_string(&mut text)
-            .map_err(|_| OAuthError::Unreachable)?;
-        if text.len() > MAX_BODY {
-            return Err(OAuthError::Invalid {
-                step: "oversized authorization",
-            });
-        }
-        Ok((status, text))
+        self.renewals
+            .post(url, headers, form(fields), self.request_lifetime)
+            .await
     }
 }
 
@@ -430,9 +448,12 @@ struct Identity {
 }
 
 impl Identity {
-    fn for_login(store: &Store) -> Result<Self, OAuthError> {
+    async fn for_login(renewals: &Renewals, store: &Store) -> Result<Self, OAuthError> {
         let candidate = random_id()?;
-        let device_id = store.identity("moonshot", &candidate)?;
+        let store = store.clone();
+        let device_id = renewals
+            .login_store(move || store.identity("moonshot", &candidate))
+            .await?;
         Self::new(device_id)
     }
 
@@ -544,17 +565,6 @@ fn seconds(value: &serde_json::Value, field: &str) -> Option<u64> {
 fn within(host: &str, uri: &str) -> bool {
     uri.strip_prefix(host)
         .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('?'))
-}
-
-fn pause(duration: Duration, cancel: &Cancel) -> Result<(), OAuthError> {
-    let until = Instant::now() + duration;
-    while Instant::now() < until {
-        if cancel.requested() {
-            return Err(OAuthError::Cancelled);
-        }
-        std::thread::sleep(CANCEL_POLL.min(until.saturating_duration_since(Instant::now())));
-    }
-    Ok(())
 }
 
 fn random_id() -> Result<String, OAuthError> {

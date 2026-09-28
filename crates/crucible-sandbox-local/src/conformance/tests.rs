@@ -2,12 +2,13 @@
 
 use std::time::Duration;
 
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
-    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxDomainPattern,
-    SandboxDomainPolicy, SandboxError, SandboxFeature, SandboxFilesystemAccess,
-    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest, SandboxManifestEntry,
-    SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy, SandboxRequest,
-    SandboxResourceLimits, SandboxService,
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCapability, SandboxDomainPattern, SandboxDomainPolicy, SandboxError, SandboxFeature,
+    SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxManifest,
+    SandboxManifestEntry, SandboxNetworkPolicy, SandboxNetworkProvenance, SandboxPolicy,
+    SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
@@ -175,6 +176,18 @@ fn published_capability_matrix_matches_declared_backends() {
     );
 }
 
+/// The runtime this harness awaits the audit on.
+///
+/// Built for the test rather than joined to the application's: the audit's
+/// steps do their work synchronously inside their futures, so one thread
+/// drives them, with the clock the harness bounds an unanswering backend by.
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a test runtime")
+}
+
 fn expected(
     feature: SandboxFeature,
     enforced: &[SandboxFeature],
@@ -203,7 +216,7 @@ fn compatibility_refuses_every_explicit_unsupported_policy_before_a_session_exis
             policy,
             manifest,
         );
-        let Err(problem) = service.prepare(request) else {
+        let Err(problem) = crucible_runtime::answered!(service.prepare(request)) else {
             panic!("compatibility accepted unsupported {}", feature.as_str());
         };
         assert!(
@@ -442,7 +455,9 @@ fn the_local_backend_contradicts_no_claim_it_states() {
     if skipped_without_enforcement(&service) {
         return;
     }
-    let audited = Conformance::audit(&service, sample.root()).expect("a probe");
+    let audited = runtime()
+        .block_on(Conformance::audit(&service, sample.root()))
+        .expect("a probe");
 
     let faults: Vec<_> = audited
         .faults()
@@ -463,6 +478,62 @@ fn the_local_backend_contradicts_no_claim_it_states() {
     // suite that quietly skipped rows would say a backend conforms on the
     // strength of the questions it happened to ask.
     assert_eq!(audited.findings().len(), SandboxFeature::COUNT);
+}
+
+/// A backend that states a table and never answers an offer.
+///
+/// The table is built from constants and handed back at once, so nothing here
+/// depends on what this host can enforce: the only step left unanswered is a
+/// preparation, and every offer is one.
+struct Unanswering;
+
+impl SandboxService for Unanswering {
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        let identity = SandboxBackendIdentity::new(
+            SandboxBackendId::new("unanswering").expect("a backend name"),
+            "1",
+            SandboxBackendProvenance::System,
+            None,
+        )
+        .expect("a backend version");
+        let capabilities = SandboxCapabilities::none()
+            .with(SandboxFeature::Filesystem, SandboxCapability::Enforced)
+            .with(
+                SandboxFeature::CommandTimeLimit,
+                SandboxCapability::Enforced,
+            );
+        Box::pin(std::future::ready(Ok((identity, capabilities))))
+    }
+
+    fn prepare(
+        &self,
+        _request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[test]
+fn an_offer_the_backend_never_answers_never_completes_the_audit() {
+    // The audit awaits each offer, so one that never answers never completes.
+    // The harness bounds that wait on its own runtime. Read as the backend's
+    // answer it would go unreached, which is no fault, and a backend that
+    // answered nothing would hold every family.
+    const UNANSWERED: Duration = Duration::from_secs(5);
+
+    let sample = Sample::new("sandbox-conformance-unanswered");
+    let runtime = runtime();
+
+    let answered = runtime.block_on(async {
+        tokio::time::timeout(UNANSWERED, Conformance::audit(&Unanswering, sample.root())).await
+    });
+
+    assert!(
+        answered.is_err(),
+        "an audit over a backend that answered nothing completed"
+    );
 }
 
 #[test]
@@ -498,7 +569,9 @@ fn a_claim_no_policy_can_reach_is_reported_as_untested_rather_than_kept() {
     if skipped_without_enforcement(&service) {
         return;
     }
-    let audited = Conformance::audit(&service, sample.root()).expect("a probe");
+    let audited = runtime()
+        .block_on(Conformance::audit(&service, sample.root()))
+        .expect("a probe");
     let pty = audited
         .findings()
         .iter()
@@ -605,7 +678,9 @@ fn the_report_separates_the_families_and_names_the_backend_they_belong_to() {
     if skipped_without_enforcement(&service) {
         return;
     }
-    let audited = Conformance::audit(&service, sample.root()).expect("a probe");
+    let audited = runtime()
+        .block_on(Conformance::audit(&service, sample.root()))
+        .expect("a probe");
     let said = audited.report();
 
     assert!(said.starts_with(audited.backend().id().as_str()), "{said}");

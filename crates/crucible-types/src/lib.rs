@@ -15,6 +15,7 @@
 pub mod ask;
 pub mod cache;
 pub mod call;
+pub mod checkpoint;
 pub mod compaction;
 pub mod context;
 pub mod continuation;
@@ -48,6 +49,10 @@ pub use cache::{
 };
 pub use call::{
     TOOL_ARGUMENT_BYTES, TOOL_CALL_ID_BYTES, TOOL_NAME_BYTES, ToolArgs, ToolCall, ToolSchema,
+};
+pub use checkpoint::{
+    CacheCheckpoint, CacheCheckpointError, MAX_CHECKPOINT_WORD_BYTES,
+    MAX_CHECKPOINT_WORD_BYTES as MAX_CACHE_CHECKPOINT_WORD_BYTES, is_checkpoint_word,
 };
 pub use compaction::{Compacted, Compacting, RECAP};
 pub use context::{ContextError, ContextPatch, ContextSnapshot, Fragment, Seen};

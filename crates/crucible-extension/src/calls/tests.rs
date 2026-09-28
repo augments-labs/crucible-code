@@ -1,6 +1,8 @@
 //! What keeping calls straight has to guarantee.
 
-use super::{Asked, CallError, EXTENSION_CALLS, Serving};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+use super::{Asked, CallError, EXTENSION_CALLS, Generation, Serving};
 use crate::CallId;
 
 /// An answer settles the call it names and no other, so what was remembered
@@ -310,4 +312,25 @@ fn a_call_given_up_on_is_not_handed_back_again_when_the_extension_goes_away() {
     asked.given_up(given_up).expect("giving up on the second");
 
     assert_eq!(asked.abandoned(), vec![(abandoned, "still wanted")]);
+}
+
+/// Every host in this process draws from one count, so no two processes crucible
+/// hosts are ever given the same generation.
+#[test]
+fn a_generation_is_never_handed_out_twice() {
+    let first = Generation::fresh().expect("a generation");
+    let second = Generation::fresh().expect("another generation");
+
+    assert_ne!(first, second);
+}
+
+/// A count that has run out says so rather than starting again, which would
+/// hand out a generation an earlier call still carries.
+#[test]
+fn running_out_of_generations_is_refused_rather_than_wrapped() {
+    let count = AtomicU64::new(u64::MAX);
+
+    assert_eq!(Generation::drawn_from(&count), None);
+    assert_eq!(Generation::drawn_from(&count), None);
+    assert_eq!(count.load(AtomicOrdering::Relaxed), u64::MAX);
 }

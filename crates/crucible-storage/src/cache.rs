@@ -13,8 +13,16 @@ use crucible_types::{
     PromptCacheResourceRecord,
 };
 
+use crate::BoxFuture;
+
 /// Private bounded metadata store, implemented by a file store under a resolved user home.
-pub trait PromptCacheResourceStore: Send + fmt::Debug {
+///
+/// Every operation waits on that file, so each hands back a boxed `Send`
+/// future holding the store for as long as it runs: one operation at a time.
+/// `Sync` too, because a turn lends the runner keeping a store by shared
+/// reference to the steps it waits on, and a runtime that took the turn as a
+/// task may carry those steps to another worker at any wait.
+pub trait PromptCacheResourceStore: Send + Sync + fmt::Debug {
     /// Finds the newest exact binding, including non-ready records for reconciliation.
     ///
     /// An older orphan may be retained for explicit cleanup after a replacement
@@ -25,10 +33,10 @@ pub trait PromptCacheResourceStore: Send + fmt::Debug {
     ///
     /// Returns a typed store error when private metadata cannot be read or
     /// validated.
-    fn matching(
-        &mut self,
-        binding: &PromptCacheResourceBinding,
-    ) -> Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError>;
+    fn matching<'a>(
+        &'a mut self,
+        binding: &'a PromptCacheResourceBinding,
+    ) -> BoxFuture<'a, Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError>>;
 
     /// Inserts or replaces one record by local id.
     ///
@@ -36,14 +44,20 @@ pub trait PromptCacheResourceStore: Send + fmt::Debug {
     ///
     /// Returns a typed store error when the bound is reached or private
     /// metadata cannot be persisted.
-    fn put(&mut self, record: &PromptCacheResourceRecord) -> Result<(), PromptCacheResourceError>;
+    fn put<'a>(
+        &'a mut self,
+        record: &'a PromptCacheResourceRecord,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>>;
 
     /// Removes one confirmed-deleted local record.
     ///
     /// # Errors
     ///
     /// Returns a typed store error when private metadata cannot be updated.
-    fn remove(&mut self, id: &PromptCacheResourceId) -> Result<(), PromptCacheResourceError>;
+    fn remove<'a>(
+        &'a mut self,
+        id: &'a PromptCacheResourceId,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>>;
 
     /// Returns at most `maximum` records for bounded inspection or cleanup.
     ///
@@ -54,5 +68,5 @@ pub trait PromptCacheResourceStore: Send + fmt::Debug {
     fn inspect(
         &mut self,
         maximum: usize,
-    ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>;
+    ) -> BoxFuture<'_, Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>>;
 }

@@ -3,15 +3,29 @@
 //! Ask the model, run what it asked for, tell it what happened, ask again —
 //! until it yields, the user stops it, or something goes wrong.
 //!
-//! A response that failed before it said a word is asked for once more rather
-//! than counted as the thing that went wrong. The socket a provider closed
-//! while the tools ran is the usual reason, and it is safe to ask again for
-//! exactly the reason it is worth doing: nothing arrived, so nothing has been
-//! drawn that a second answer could contradict.
+//! A response that failed for a moment, before it said a word, is asked for
+//! again, up to the policy's attempts, rather than counted as the thing that
+//! went wrong. The socket a provider closed while the tools ran is the usual
+//! reason, and it is safe to ask again for exactly the reason it is worth
+//! doing: nothing arrived, so nothing has been drawn that a second answer
+//! could contradict.
 //!
 //! Progress leaves through events, because the thread that draws is not this
 //! one. The outcome leaves through the return value, because the caller is
 //! what decides whether the session continues.
+//!
+//! A turn is asynchronous. It awaits the provider's stream and each read of
+//! it, every prompt-cache step, every call's run, a background result's
+//! acceptance and the toolset's preparation, listing, refreshing and
+//! disposal, so a step that has to wait for its answer is waited for rather
+//! than refused. It starts no runtime: whoever awaits it polls it, and a
+//! runtime that took it as a task may carry it from one worker to another at
+//! any wait. The one thing it spawns is its calls' runs, onto the runtime it
+//! is polled in, at most [`TOOL_RUNS`] at once and each awaited
+//! before the pass goes on — so a turn is polled inside a runtime, as the
+//! application's wait for one is. It hands its [`Cancel`] to every step it
+//! awaits and looks at it between them, so a stop ends it as it always has,
+//! and how soon an awaited step heeds that stop is the step's own contract.
 //!
 //! The loop's own body lives in [`passes`], because it lasts one turn and this
 //! does not. What stays here is the session it is taken against — the provider,
@@ -27,21 +41,29 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crucible_core::{
-    Ancestry, Aside, Ask, Attachment, Cancel, Compacting, Content, ContextSection, Delta,
-    DeltaStream, Effort, JournalStore, Looking, Message, Modalities, Mode, Permission,
-    PermissionsSection, PromptCacheAttempt, PromptCacheEncoding, PromptCacheFact,
-    PromptCacheOutcome, PromptCachePreparationError, PromptCacheRequestDisposition,
-    PromptCacheRequestFact, PromptCacheResourceError, PromptCacheResourceRecord,
-    PromptCacheRetentionClass, PromptCacheUsageFact, PromptCacheUsageReporting, Provider,
-    ProviderError, ProviderUsage, Request, Room, RunItem, SandboxAuditRegistry, Spend, Steer,
-    StopReason, Summary, ToolCall, ToolEntry, ToolError, ToolGeneration, ToolSchema, ToolSnapshot,
-    Toolset, ToolsetContext, Transcript, TurnId, UsageCost,
+use crucible_context::{ContextSection, PermissionsSection, Room};
+use crucible_models::{
+    Content, Delta, DeltaStream, Effort, PromptCacheAttempt, PromptCachePreparationError, Provider,
+    ProviderError, Request,
+};
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_sandbox::SandboxAuditRegistry;
+use crucible_storage::{JournalStore, RunItem};
+use crucible_tools::{
+    Ask, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolGeneration, ToolSnapshot,
+    ToolWorker, Toolset, ToolsetContext,
+};
+use crucible_types::{
+    Attachment, Compacting, Message, Modalities, PromptCacheEncoding, PromptCacheFact,
+    PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheRequestFact,
+    PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
+    PromptCacheUsageFact, PromptCacheUsageReporting, ProviderUsage, Spend, StopReason, ToolCall,
+    ToolSchema, Transcript, TurnId, UsageCost,
 };
 
 use crucible_context::ContextInputs;
 
-use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model, Rejection};
+use crucible_agents::{Agent, AgentContext, Decision, GuardrailError, Model};
 
 use crate::context::RunContext;
 use crate::outcome::{RunResult, Turned};
@@ -54,9 +76,11 @@ mod answer;
 mod assembly;
 pub mod attachments;
 mod cleanup;
+mod clearing;
 mod compaction;
 mod load;
 mod passes;
+mod record;
 mod state;
 mod work;
 
@@ -66,6 +90,7 @@ use load::{Counting, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
+pub use work::TOOL_RUNS;
 use work::{Went, Work};
 
 /// How many compactions one turn may run without getting anywhere.
@@ -110,11 +135,11 @@ struct TurnBounds {
 /// Immutable cache-reporting dimensions bound to one provider attempt.
 #[derive(Clone, Copy)]
 struct CacheObservation {
-    attempt: crucible_core::ProviderAttemptId,
+    attempt: crucible_types::ProviderAttemptId,
     reporting: PromptCacheUsageReporting,
     model_revision: Option<&'static str>,
     retention: PromptCacheRetentionClass,
-    pricing_date: crucible_core::PricingDate,
+    pricing_date: crucible_types::PricingDate,
 }
 
 /// The state one provider request reads and updates together.
@@ -162,8 +187,11 @@ pub struct Runner {
     /// writes to it without ever learning what it writes to.
     store: Arc<dyn JournalStore>,
     policy: RunPolicy,
-    prompt_cache_store: Option<Box<dyn crucible_core::PromptCacheResourceStore>>,
+    prompt_cache_store: Option<Box<dyn crucible_storage::PromptCacheResourceStore>>,
     sandbox_audits: SandboxAuditRegistry,
+    /// The worker every call is lent for its blocking work, where the wiring
+    /// gave one.
+    worker: Option<ToolWorker>,
 }
 
 /// What `agent` would be advertised out of `tools`, between turns.
@@ -266,6 +294,7 @@ impl Runner {
             policy: RunPolicy::default(),
             prompt_cache_store: None,
             sandbox_audits: SandboxAuditRegistry::new(),
+            worker: None,
         };
         runner.state.load.requesting(
             runner.agent.instructions(),
@@ -299,6 +328,17 @@ impl Runner {
         self
     }
 
+    /// Lends every call this runner runs `worker` for its blocking work.
+    ///
+    /// One worker for every call of every turn, so what all of them hand it
+    /// is held to its one bound. A runner lent none leaves a tool to do that
+    /// work wherever its run is polled.
+    #[must_use]
+    pub fn lending(mut self, worker: ToolWorker) -> Self {
+        self.worker = Some(worker);
+        self
+    }
+
     /// Supplies the lazy private metadata store for explicitly authorized
     /// persistent prompt-cache resources.
     ///
@@ -308,7 +348,7 @@ impl Runner {
     #[must_use]
     pub fn with_prompt_cache_store(
         mut self,
-        store: impl crucible_core::PromptCacheResourceStore + 'static,
+        store: impl crucible_storage::PromptCacheResourceStore + 'static,
     ) -> Self {
         self.prompt_cache_store = Some(Box::new(store));
         self
@@ -322,13 +362,13 @@ impl Runner {
 
     /// Effective cache policy applied to the next provider attempt.
     #[must_use]
-    pub const fn prompt_cache_policy(&self) -> crucible_core::PromptCachePolicy {
+    pub const fn prompt_cache_policy(&self) -> crucible_types::PromptCachePolicy {
         self.policy.prompt_cache
     }
 
     /// Exact declared cache capability for the current provider/model route.
     #[must_use]
-    pub fn prompt_cache_capabilities(&self) -> crucible_core::PromptCacheCapabilities {
+    pub fn prompt_cache_capabilities(&self) -> crucible_models::PromptCacheCapabilities {
         self.provider
             .prompt_cache_capabilities(&self.agent.model().name)
     }
@@ -338,13 +378,31 @@ impl Runner {
     /// # Errors
     ///
     /// [`PromptCacheResourceError`] when the private store cannot be read.
-    pub fn prompt_cache_resources(
+    pub async fn prompt_cache_resources(
         &mut self,
     ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        self.prompt_cache_store.as_deref_mut().map_or_else(
-            || Ok(Vec::new()),
-            |store| store.inspect(crucible_core::MAX_PROMPT_CACHE_RESOURCES),
-        )
+        match self.prompt_cache_store.as_deref_mut() {
+            Some(store) => {
+                store
+                    .inspect(crucible_types::MAX_PROMPT_CACHE_RESOURCES)
+                    .await
+            }
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Whether this run has a private prompt-cache resource store to inspect,
+    /// clean, or retire.
+    #[must_use]
+    pub const fn prompt_cache_resources_configured(&self) -> bool {
+        self.prompt_cache_store.is_some()
+    }
+
+    /// Whether this run owns persistent prompt-cache resources that a change of
+    /// model, provider, or credential must retire first.
+    #[must_use]
+    pub const fn prompt_cache_retirement_pending(&self) -> bool {
+        self.state.prompt_cache_owner_scope.is_some()
     }
 
     /// Picks up a transcript that already happened — what `--continue`
@@ -353,6 +411,10 @@ impl Runner {
     /// The turn count comes with it. Numbering the first continued turn `1`
     /// would tell the user this is a new session, which is exactly what
     /// they asked it not to be.
+    ///
+    /// What this run's vendor may not be sent is cleared from the transcript,
+    /// and the lines saying so are owed to the session, as [`Runner::pick_up`]
+    /// says.
     #[must_use]
     pub fn resuming(mut self, transcript: Transcript) -> Self {
         self.state.forget_checked();
@@ -361,37 +423,6 @@ impl Runner {
         let reading = self.admit_restricted();
         self.recount(reading);
         self
-    }
-
-    /// Takes out of a transcript just read back what this run's vendor may not
-    /// be sent, and hands back the reading the log kept where it still covers
-    /// what is left.
-    ///
-    /// Nobody is being left: the run may have started on another vendor than the
-    /// one the results came from, and no switch is ever observed to say so. What
-    /// the results record about who answered them is the whole of the decision.
-    /// The reading is `None` once anything was taken out: it measured a request
-    /// that carried it, and replaying the clearing's line drops it for the same
-    /// reason.
-    fn admit_restricted(&mut self) -> Option<crucible_types::Calibration> {
-        let clearing = self.untransferable(0, self.provider.as_ref(), None);
-        // As though a report had measured every message: the recount each
-        // caller runs next rebuilds the load from the transcript either way.
-        self.clear_untransferable(&clearing, self.state.transcript.messages().len());
-        if clearing.is_empty() {
-            self.store.calibrated()
-        } else {
-            None
-        }
-    }
-
-    /// Takes out of the message just recorded what this run's vendor may not be
-    /// sent.
-    fn admit_recorded(&mut self) {
-        let recorded = self.state.transcript.messages().len().saturating_sub(1);
-        let clearing = self.untransferable(recorded, self.provider.as_ref(), None);
-        // No report has measured the message just recorded, which is the last.
-        self.clear_untransferable(&clearing, recorded);
     }
 
     /// Measures a transcript this runner did not build a message at a time.
@@ -434,6 +465,12 @@ impl Runner {
     /// and still holds: nothing is handed back, because closing the store this
     /// runner was writing to was never this crate's to do, and the caller that
     /// opened it is the one that reports what its last write came to.
+    ///
+    /// What the vendor being asked may not be sent is cleared from the
+    /// transcript picked up here, and the lines saying so are owed to the
+    /// session picked up until [`Runner::record_clearings`], or the next turn
+    /// or compaction, writes them. A line still owed to the session left
+    /// behind is written to that session.
     ///
     /// Everything about the session that was answered is answered again. The
     /// transcript, the store and the turn count come from the session picked
@@ -770,7 +807,9 @@ impl Runner {
     ///
     /// The transcript is kept across the swap, and that is deliberate rather
     /// than incidental: what was said is what the user said, and a vendor is who
-    /// it gets sent to. What does not carry is anything the old vendor knows
+    /// it gets sent to. What the new vendor may not be sent is cleared from it,
+    /// and the lines saying so are owed to the session, as
+    /// [`Runner::pick_up`] says. What does not carry is anything the old vendor knows
     /// about the old messages, which is nothing this program was ever told.
     ///
     /// Reachable between turns, where [`Runner::ask`] is and for the same
@@ -790,83 +829,6 @@ impl Runner {
         // reported them. Keep the transcript, but not that provider's exact
         // reading of it.
         self.state.load.reestimated();
-    }
-
-    /// The results from message `from` on that the next request may not carry to
-    /// `recipient`, each with the sentence to leave in its place.
-    ///
-    /// What may go where is decided by the result's own provenance, through
-    /// `crucible_models::transfer`, never from a vendor's or a tool's name here.
-    fn untransferable(
-        &self,
-        from: usize,
-        recipient: &dyn Provider,
-        leaving: Option<&dyn Provider>,
-    ) -> Vec<(crucible_core::ToolId, Box<str>)> {
-        let mut clearing = Vec::new();
-        for message in self.state.transcript.messages().iter().skip(from) {
-            if let crucible_core::Message::ToolResults(results) = message {
-                for result in results {
-                    if let crucible_models::Transfer::Clear(notice) =
-                        crucible_models::transfer(result.output.provenance(), recipient, leaving)
-                    {
-                        clearing.push((result.id.clone(), notice.into()));
-                    }
-                }
-            }
-        }
-        clearing
-    }
-
-    /// Takes the results a vendor restricts out of what is sent from here on,
-    /// and records that it happened.
-    ///
-    /// The results stay in the log holding what they held — the log is the
-    /// record of the session, and a user reading their own history is not the
-    /// third party the term is about. What the line buys is the session coming
-    /// back the same way: without it the transcript loses them and the log does
-    /// not, so the next resume reads them back and sends them on.
-    ///
-    /// One line per sentence, since a line carries one. Clearing takes the
-    /// provenance with the content, so a result is never cleared twice.
-    ///
-    /// No report has measured any message from `unmeasured` on; what the
-    /// clearing then does to the load is [`load::Load::rewritten`]'s to say.
-    fn clear_untransferable(
-        &mut self,
-        clearing: &[(crucible_core::ToolId, Box<str>)],
-        unmeasured: usize,
-    ) {
-        if clearing.is_empty() {
-            return;
-        }
-        // Weighed a message at a time on both sides, because a clearing reaches
-        // every result with a named id wherever it stands; and only here, so a
-        // pass that clears nothing walks nothing.
-        let before = load::Load::weights(self.state.transcript.messages());
-        let mut notices: Vec<&str> = Vec::new();
-        for (_, notice) in clearing {
-            if !notices.contains(&&**notice) {
-                notices.push(notice);
-            }
-        }
-
-        for notice in notices {
-            let results: Vec<crucible_core::ToolId> = clearing
-                .iter()
-                .filter(|(_, left)| **left == *notice)
-                .map(|(id, _)| id.clone())
-                .collect();
-
-            // The transcript first and the line after it, the way a pruning is
-            // written and for the same reason: a crash between the two must not
-            // leave a log claiming a clearing that the transcript never made.
-            let freed = self.state.transcript.clear_tool_outputs(&results, notice);
-            self.store.restricted(freed, &results, notice);
-        }
-        self.state
-            .load
-            .rewritten(&before, self.state.transcript.messages(), unmeasured);
     }
 
     /// How hard this session is asking the model to think.
@@ -896,71 +858,20 @@ impl Runner {
         self.agent = Arc::new(self.agent.aimed(harder));
     }
 
-    /// Appends a message to the transcript.
-    ///
-    /// The only way either the transcript or the log is written. Two calls
-    /// that could be made separately would eventually be made separately, and
-    /// a log that is missing one message is a session that cannot be continued.
-    fn record(&mut self, ancestry: Ancestry, message: Message) -> Result<(), TurnError> {
-        self.state
-            .transcript
-            .check_continuation(&message)
-            .map_err(|_| ProviderError::Protocol {
-                provider: self.provider.name(),
-                problem: "invalid or oversized provider continuation".into(),
-            })?;
-        let settles_call_results = matches!(&message, Message::ToolResults(_));
-        match RunItem::message(ancestry, message.clone()) {
-            Ok(item) => {
-                self.store.append_message(&message);
-                self.store.append_run_item(&item);
-            }
-            // The provider and tool admission boundaries already enforce
-            // these bounds. Preserve the conversation if an internal caller
-            // ever violates that contract, while its missing companion record
-            // makes the defect visible instead of writing unsafe metadata.
-            Err(_) => self.store.append_message(&message),
-        }
-        self.state.load.recorded(&message);
-        self.state
-            .transcript
-            .push(message)
-            .map_err(|_| ProviderError::Protocol {
-                provider: self.provider.name(),
-                problem: "invalid or oversized provider continuation".into(),
-            })?;
-
-        // After the message and not beside it: what this says covers the
-        // transcript including what was just appended, and a reader that found
-        // it in the other order would have it covering one message less.
-        if let Some(calibration) = self.state.load.calibrated() {
-            self.store.measured(&calibration);
-        }
-        if settles_call_results {
-            self.store.settle_call_results();
-            // After the results line, so the log reads what was answered and
-            // then what was taken out of it. The search source was chosen when
-            // the run started, so a session that moved away from its vendor
-            // still searches through that vendor, and the next request of this
-            // turn is built from what was just recorded.
-            self.admit_recorded();
-        }
-        Ok(())
-    }
-
-    fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
-        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store)
+    async fn flush_sandbox_audits(&self, events: Reporter<'_>) -> Result<(), ToolError> {
+        work::report_sandbox_registry(&self.sandbox_audits, events, &*self.store).await
     }
 
     /// Writes one normalized cache fact to the durable framework journal and
     /// emits the same typed fact to the live event stream.
-    fn report_prompt_cache(&self, run: &RunContext<'_>, fact: PromptCacheFact) {
-        self.report_prompt_cache_to(&run.reporting(), fact);
+    async fn report_prompt_cache(&self, run: &RunContext<'_>, fact: PromptCacheFact) {
+        self.report_prompt_cache_to(&run.reporting(), fact).await;
     }
 
-    fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
+    async fn report_prompt_cache_to(&self, events: &Reporter<'_>, fact: PromptCacheFact) {
         self.store
-            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()));
+            .append_run_item(&RunItem::provider_attempt(events.ancestry(), fact.clone()))
+            .await;
         events.post(Event::PromptCache { fact });
     }
 
@@ -969,14 +880,14 @@ impl Runner {
     /// The only way in from outside: [`RunContext`] is minted in this crate,
     /// so the run a caller is handed is a root, and descending from it is this
     /// crate's. What that closes is the *context* — it does not close event
-    /// attribution, because [`Ancestry`] and [`Reporter`] are public in
-    /// `crucible-core` and three calls there will stamp an event with a run
-    /// nothing started. Nothing shipped does: the one [`Post`] is the binary's
-    /// relay, and the only [`Reporter`] outside tests comes from
-    /// [`RunContext::reporting`]. So this is a run the caller cannot forge by
-    /// accident, not one the types forbid forging.
+    /// attribution, because [`Ancestry`] and [`Reporter`] are both public, the
+    /// first in `crucible-types` and the second here, and three calls to them
+    /// will stamp an event with a run nothing started. Nothing shipped does:
+    /// the one [`Post`] is the binary's relay, and the only [`Reporter`]
+    /// outside tests comes from [`RunContext::reporting`]. So this is a run the
+    /// caller cannot forge by accident, not one the types forbid forging.
     ///
-    /// [`Ancestry`]: crucible_core::Ancestry
+    /// [`Ancestry`]: crucible_types::Ancestry
     ///
     /// A context carries no session either, so "against this session" is what
     /// the caller does and not something checked here: one context per unit of
@@ -1028,14 +939,50 @@ impl Runner {
     /// that list: a call that could not be run at all, and one that ran and
     /// did not like what it found, both go back to the model as results it can
     /// work around.
-    pub fn turn(
+    ///
+    /// The provider's stream and each read of it, every prompt-cache step,
+    /// every call's run, a background result's acceptance and the toolset's
+    /// preparation, listing, refreshing and disposal are all awaited, so a
+    /// step that has to wait is waited for rather than refused.
+    /// The turn's session writes are awaited, and a line the log could not
+    /// keep is the session's to report rather than the turn's to end on.
+    /// Before anything of the turn is recorded or sent, the lines picking a
+    /// session up or changing vendor still owe the session are written, as
+    /// [`Runner::record_clearings`] writes them.
+    ///
+    /// Every step the turn takes is awaited, so none ends the turn on a
+    /// refusal. A stop ends it as it always has, through the cancel each
+    /// awaited step was handed and that the turn looks at between them. A
+    /// step of a compaction the turn made leaves what [`Runner::compact`]
+    /// says it does.
+    ///
+    /// A tool source's own step that gave up before it answered is the
+    /// source's failure, which [`TurnError::Toolset`] or
+    /// [`TurnError::ToolsetCleanup`] carries in the source's own words as
+    /// [`ToolsetError::Source`], which is how MCP hosting reports a step it
+    /// gave up on; what that step began is unconfirmed rather than undone.
+    ///
+    /// The turn is `Send`: a runtime may take it as one of its tasks and carry
+    /// it from one worker to another at any wait.
+    ///
+    /// # Panics
+    ///
+    /// At the turn's first tool call where it is polled outside a Tokio
+    /// runtime: every call's run is spawned onto the runtime the turn is
+    /// polled in, and spawning outside one panics. The application waits for
+    /// a turn inside its own runtime; a caller of its own polls the turn
+    /// inside one, or spawns it onto one, with a timer where a call has a
+    /// deadline.
+    ///
+    /// [`ToolsetError::Source`]: crucible_tools::ToolsetError::Source
+    pub async fn turn(
         &mut self,
         prompt: &str,
         attachments: Box<[Attachment]>,
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        let turned = self.invoking(prompt, attachments, ask, run);
+        let turned = self.invoking(prompt, attachments, ask, run).await;
 
         // The invocation ends where the caller gets an answer it can act on,
         // and what the input checks made of these words ends with it. A
@@ -1053,7 +1000,7 @@ impl Runner {
     /// # Errors
     ///
     /// [`TurnError`], exactly as [`Runner::turn`] describes.
-    fn invoking(
+    async fn invoking(
         &mut self,
         prompt: &str,
         attachments: Box<[Attachment]>,
@@ -1073,6 +1020,10 @@ impl Runner {
         // ceiling belongs where a run is admitted, and the two admitting
         // entries are this and [`Runner::compact`].
         let run = &run.held_to(self.policy);
+
+        // What picking a session up or changing vendor still owes the
+        // session goes into its log before anything of this turn does.
+        self.record_clearings().await;
 
         // The number this turn would have, worked out before it is known
         // whether the turn gets to take it. One expression rather than two, so
@@ -1125,13 +1076,14 @@ impl Runner {
                 text: prompt.into(),
                 attachments,
             },
-        )?;
+        )
+        .await?;
 
         // Posted from here rather than from either place the exchange ends, so
         // that a turn cannot acquire a second way to finish without one. The
         // reason is what tells a truncated answer from a complete one, and it
         // has to reach the thread that draws — a return value never does.
-        let turned = self.exchange(ask, run)?;
+        let turned = self.exchange(ask, run).await?;
         if let Some(stop) = turned.stop() {
             events.post(Event::TurnFinished {
                 turn: self.state.turn,
@@ -1189,11 +1141,11 @@ impl Runner {
             match guard
                 .check()
                 .checking(&context)
-                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+                .map_err(|unsure| guard.unanswered(unsure.problem()))?
             {
                 Decision::Allowed => {}
                 Decision::Rejected(why) => {
-                    decision = Judged::Rejected(Rejection::new(guard.name(), &why));
+                    decision = Judged::Rejected(guard.refused(&why));
                     break;
                 }
             }
@@ -1227,11 +1179,11 @@ impl Runner {
             match guard
                 .check()
                 .checking(&context, candidate)
-                .map_err(|unsure| GuardrailError::undecided(guard.name(), unsure.problem()))?
+                .map_err(|unsure| guard.unanswered(unsure.problem()))?
             {
                 Decision::Allowed => {}
                 Decision::Rejected(why) => {
-                    return Ok(Judged::Rejected(Rejection::new(guard.name(), &why)));
+                    return Ok(Judged::Rejected(guard.refused(&why)));
                 }
             }
         }
@@ -1292,7 +1244,11 @@ impl Runner {
     /// policy rather than printing megabytes to get there.
     ///
     /// The permission prompt stays outside it, because asking is `&mut`.
-    fn exchange(&mut self, ask: &mut dyn Ask, run: &RunContext<'_>) -> Result<Turned, TurnError> {
+    async fn exchange(
+        &mut self,
+        ask: &mut dyn Ask,
+        run: &RunContext<'_>,
+    ) -> Result<Turned, TurnError> {
         // Not held to the session here. [`Runner::turn`] does it, and is the
         // only caller that ships; a test reaching this directly is asking for
         // the run exactly as it wrote it. A second entry that reaches a
@@ -1301,8 +1257,13 @@ impl Runner {
 
         let toolsets = ToolsetContext::new(run.ancestry(), run.cancel().clone(), None)
             .with_sandbox_audits(self.sandbox_audits.clone());
-        let prepared = self.toolset.prepare(&toolsets).map_err(TurnError::from);
-        let prepared = combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()));
+        let prepared = self
+            .toolset
+            .prepare(&toolsets)
+            .await
+            .map_err(TurnError::from);
+        let prepared =
+            combine_sandbox_audit(prepared, self.flush_sandbox_audits(run.reporting()).await);
         let ran = match prepared {
             Ok(()) => {
                 // The turn's own running totals. A bound only where somebody asked for
@@ -1324,12 +1285,13 @@ impl Runner {
 
                 AgentLoop::new(self, run, ask, &toolsets)
                     .drive(&mut counting)
+                    .await
                     .map(|ending| ending.turned(run.run(), counting.spent))
             }
             Err(problem) => Err(problem),
         };
 
-        let finished = match (ran, self.toolset.dispose(&toolsets)) {
+        let finished = match (ran, self.toolset.dispose(&toolsets).await) {
             (Ok(result), Ok(())) => Ok(result),
             (Ok(_), Err(cleanup)) => Err(TurnError::Toolset(cleanup)),
             (Err(primary), Ok(())) => Err(primary),
@@ -1338,7 +1300,7 @@ impl Runner {
                 cleanup,
             }),
         };
-        combine_sandbox_audit(finished, self.flush_sandbox_audits(run.reporting()))
+        combine_sandbox_audit(finished, self.flush_sandbox_audits(run.reporting()).await)
     }
 
     /// Makes room, and says what the turn may do next.
@@ -1351,15 +1313,16 @@ impl Runner {
     ///
     /// # Errors
     ///
-    /// [`TurnError`] where the request for the recap itself failed.
-    fn made_room(
+    /// [`TurnError`] wherever [`Runner::compact`] fails, which says what each
+    /// failure leaves.
+    async fn made_room(
         &mut self,
         why: Compacting,
         run: &RunContext<'_>,
         fruitless: &mut u8,
         spent: &mut Spend,
     ) -> Result<After, TurnError> {
-        match self.compact(why, run, spent)? {
+        match self.compact(why, run, spent).await? {
             // Not counted against the goes this loop is allowed, because it was
             // not a go: nothing was replaced and nobody is going to ask again.
             Room::Stopped => return Ok(After::Stopped),
@@ -1405,7 +1368,8 @@ impl Runner {
     /// last one with nothing in between. Calls the model never finished asking
     /// for go no further, the same as when it stops early. What is recorded
     /// says the answer never reached an ending, which is what keeps the next
-    /// request and a later replay from reading it as one that did.
+    /// request and a later replay from reading it as one that did. The line is
+    /// awaited before the failure leaves, and the failure is what leaves.
     ///
     /// A stream that ends without saying why is that same failure: the socket
     /// went quiet, and quiet is what a finished response and a truncated one
@@ -1423,8 +1387,8 @@ impl Runner {
     /// they arrive, so re-asking after one would put an answer on screen twice
     /// and leave the transcript holding the half that was taken back.
     ///
-    /// [`ProviderError::transient`]: crucible_core::ProviderError::transient
-    fn listen(
+    /// [`ProviderError::transient`]: crucible_models::ProviderError::transient
+    async fn listen(
         &mut self,
         bounds: &TurnBounds,
         mut listening: Listening<'_>,
@@ -1439,7 +1403,7 @@ impl Runner {
                 listening.run.policy().bounds.response_bytes,
             );
 
-            let problem = match self.hearing(&mut answer, &mut listening) {
+            let problem = match self.hearing(&mut answer, &mut listening).await {
                 Ok(said) => return Ok((answer, said)),
                 Err(problem) => problem,
             };
@@ -1458,15 +1422,22 @@ impl Runner {
 
             let stop = answer.stop();
             let (text, _) = answer.finish();
-            self.record(
-                listening.run.ancestry(),
-                Message::Agent {
-                    continuation: None,
-                    text,
-                    calls: Vec::new(),
-                    stop,
-                },
-            )?;
+            // The transcript refuses only a continuation, which this message
+            // does not carry, and the session's line is awaited rather than
+            // refused, so recording it meets nothing. Were it to, that would be
+            // about the record rather than the request, and must not stand in
+            // for the failure being recorded.
+            let _recorded = self
+                .record(
+                    listening.run.ancestry(),
+                    Message::Agent {
+                        continuation: None,
+                        text,
+                        calls: Vec::new(),
+                        stop,
+                    },
+                )
+                .await;
 
             return Err(problem);
         }
@@ -1492,7 +1463,15 @@ impl Runner {
     /// Separate from [`Self::listen`] because what a failed response leaves in
     /// the transcript depends on whether it is going to be asked again, and that
     /// question is asked once rather than at each place the reading can fail.
-    fn hearing(
+    //
+    // The prompt-cache facts this records are journal writes, and a journal
+    // write is awaited since the port became asynchronous: each one costs the
+    // line rustfmt gives its own `.await`, which is what carries this one line
+    // past the ceiling. The allow covers this function and nothing else, and
+    // the awaits are what carry it: a pass that stopped awaiting the journal
+    // has no reason for it.
+    #[allow(clippy::too_many_lines)]
+    async fn hearing(
         &mut self,
         answer: &mut Answer,
         listening: &mut Listening<'_>,
@@ -1537,7 +1516,7 @@ impl Runner {
             // provider request borrows transcript/spec data. A helper borrowing
             // the whole runner would falsely make those owners overlap.
             let request = Request {
-                purpose: crucible_core::RequestPurpose::Turn,
+                purpose: crucible_models::RequestPurpose::Turn,
                 model: &self.agent.model().name,
                 transcript: &self.state.transcript,
                 tools: listening.advertised,
@@ -1555,7 +1534,7 @@ impl Runner {
             let authority = PermissionsSection::new(&self.permission)
                 .snapshot()
                 .to_string();
-            let workspace = self.context.workspace().to_string_lossy();
+            let workspace = self.context.workspace();
             let user = self.store.owner();
             let session = self.store.session_id();
             let scope = ScopeInputs {
@@ -1566,11 +1545,11 @@ impl Runner {
                 max_tokens: self.agent.model().max_tokens,
                 effort: self.agent.model().effort,
                 run: listening.run.run(),
-                session: session.as_ref().map(crucible_core::SessionId::as_str),
-                workspace: workspace.as_bytes(),
+                session: session.as_ref().map(crucible_types::SessionId::as_str),
+                workspace,
                 user: user
                     .as_ref()
-                    .map_or(&[], crucible_core::SessionOwner::as_bytes),
+                    .map_or(&[], crucible_storage::SessionOwner::as_bytes),
                 trust: b"local-workspace-authority-v1",
                 authority: authority.as_bytes(),
                 instructions: self.agent.instructions().unwrap_or_default().as_bytes(),
@@ -1582,23 +1561,27 @@ impl Runner {
                 self.provider.prompt_cache_resources(),
                 self.prompt_cache_store.as_deref_mut(),
             ) {
-                (Some(lifecycle), Some(store)) => prompt_cache::prepare_with_resource_facts(
-                    &request,
-                    capabilities,
-                    &scope,
-                    prompt_cache::ResourceInputs {
-                        store,
-                        lifecycle,
-                        cancel: listening.run.cancel(),
-                        now: unix_now(),
-                        deadline: std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
-                    },
-                    &mut resource_facts,
-                ),
-                _ => prompt_cache::prepare(&request, capabilities, &scope),
+                (Some(lifecycle), Some(store)) => {
+                    prompt_cache::prepare_with_resource_facts(
+                        &request,
+                        capabilities,
+                        &scope,
+                        prompt_cache::ResourceInputs {
+                            store,
+                            lifecycle,
+                            cancel: listening.run.cancel(),
+                            now: unix_now(),
+                            deadline: std::time::Instant::now() + PROMPT_CACHE_RESOURCE_DEADLINE,
+                        },
+                        &mut resource_facts,
+                    )
+                    .await
+                }
+                _ => prompt_cache::prepare(&request, capabilities, &scope).await,
             };
             for fact in resource_facts {
-                self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact));
+                self.report_prompt_cache(listening.run, PromptCacheFact::ResourceChanged(fact))
+                    .await;
             }
             let prepared = prepared?;
             let mut cache = prepared.request();
@@ -1616,7 +1599,8 @@ impl Runner {
             self.report_prompt_cache(
                 listening.run,
                 PromptCacheFact::Planned(Box::new(cache.planned())),
-            );
+            )
+            .await;
             let mut encoding = self.provider.prompt_cache_encoding(&Request {
                 prompt_cache: Some(&cache),
                 ..request
@@ -1637,14 +1621,16 @@ impl Runner {
                         encoding,
                         disposition: PromptCacheRequestDisposition::NotSent,
                     }),
-                );
+                )
+                .await;
                 cache = prepared
                     .fallback_request(reason)
                     .ok_or(PromptCachePreparationError::Encoding(reason))?;
                 self.report_prompt_cache(
                     listening.run,
                     PromptCacheFact::Planned(Box::new(cache.planned())),
-                );
+                )
+                .await;
                 encoding = self.provider.prompt_cache_encoding(&Request {
                     prompt_cache: Some(&cache),
                     ..request
@@ -1667,7 +1653,8 @@ impl Runner {
                 prompt_cache: Some(&cache),
                 ..request
             };
-            let streamed = self.provider.stream(request, listening.run.cancel());
+            let streamed = self.provider.stream(request, listening.run.cancel()).await;
+            // Recorded and reported before a failure ends the turn.
             let disposition = request_disposition(&streamed);
             if let Some(attempt) = self
                 .state
@@ -1684,7 +1671,8 @@ impl Runner {
                     encoding,
                     disposition,
                 }),
-            );
+            )
+            .await;
             (
                 streamed?,
                 CacheObservation {
@@ -1702,7 +1690,8 @@ impl Runner {
             )
         };
 
-        self.hear(stream.as_mut(), answer, listening, cache_observation)?;
+        self.hear(stream.as_mut(), answer, listening, cache_observation)
+            .await?;
         // EOF is itself a read. Cancellation can arrive during that read even
         // when the stream returns no final delta, so check the run's authority
         // again before making any native state or tool call replayable.
@@ -1746,7 +1735,7 @@ impl Runner {
     }
 
     /// Reads deltas into `answer` until the stream ends.
-    fn hear(
+    async fn hear(
         &mut self,
         stream: &mut dyn DeltaStream,
         answer: &mut Answer,
@@ -1762,7 +1751,7 @@ impl Runner {
         // that counts up as it goes come out the same.
         let before = counting.spent;
 
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = stream.next().await {
             match delta? {
                 Delta::Text(text) => {
                     let bytes = text.len();
@@ -1803,7 +1792,7 @@ impl Runner {
                         });
                     }
                     if let Some(tokens) = usage.input.total {
-                        let carried = crucible_core::Carried::new(tokens);
+                        let carried = crucible_types::Carried::new(tokens);
                         counting.load.carried(carried);
                         if counting
                             .window
@@ -1844,7 +1833,8 @@ impl Runner {
                             usage,
                             cost,
                         })),
-                    );
+                    )
+                    .await;
                     events.post(Event::Carried {
                         left: counting.left(),
                     });
@@ -1950,8 +1940,8 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-fn pricing_today() -> crucible_core::PricingDate {
-    crucible_core::PricingDate::from_unix_seconds(unix_now())
+fn pricing_today() -> crucible_types::PricingDate {
+    crucible_types::PricingDate::from_unix_seconds(unix_now())
 }
 
 /// Joins cumulative/partial usage fields belonging to one provider attempt.

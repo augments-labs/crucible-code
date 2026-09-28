@@ -18,8 +18,9 @@ mod settling;
 
 use std::sync::Arc;
 
-use crucible_core::{Compacting, Message, Room, Spend, StopReason, Transcript};
+use crucible_context::Room;
 use crucible_session::Session;
+use crucible_types::{Compacting, Message, Spend, StopReason, Transcript};
 use support::*;
 
 #[test]
@@ -75,13 +76,14 @@ fn every_new_model_replays_two_tool_passes_after_restart_and_compaction() {
         );
         assert_eq!(sample.approved(), 2);
 
-        let cancel = crucible_core::Cancel::new();
-        let steer = crucible_core::Steer::new();
-        let aside = crucible_core::Aside::new();
+        let cancel = crucible_runtime::Cancel::new();
+        let steer = crucible_runtime::Steer::new();
+        let aside = crucible_runtime::Aside::new();
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert!(
             matches!(
                 run.compact(Compacting::Asked, &context, &mut Spend::default())
+                    .awaited()
                     .unwrap(),
                 Room::Made(_)
             ),
@@ -336,12 +338,13 @@ fn cancelling_a_recap_at_eof_preserves_the_original_durable_history() {
             vendor.endpoint.clone(),
             response(model, None, &recap()),
         ));
-        let cancel = crucible_core::Cancel::new();
-        let steer = crucible_core::Steer::new();
-        let aside = crucible_core::Aside::new();
+        let cancel = crucible_runtime::Cancel::new();
+        let steer = crucible_runtime::Steer::new();
+        let aside = crucible_runtime::Aside::new();
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert_eq!(
             run.compact(Compacting::Asked, &context, &mut Spend::default())
+                .awaited()
                 .unwrap(),
             Room::Stopped,
             "{model}: cancelled recap committed"
@@ -377,12 +380,13 @@ fn a_late_recap_failure_never_replaces_the_original_session() {
         turn(&mut run, "first", &sample);
         turn(&mut run, "second", &sample);
         let before = run.transcript().clone();
-        let cancel = crucible_core::Cancel::new();
-        let steer = crucible_core::Steer::new();
-        let aside = crucible_core::Aside::new();
+        let cancel = crucible_runtime::Cancel::new();
+        let steer = crucible_runtime::Steer::new();
+        let aside = crucible_runtime::Aside::new();
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert!(
             run.compact(Compacting::Asked, &context, &mut Spend::default())
+                .awaited()
                 .is_err()
         );
         assert_eq!(run.transcript().messages(), before.messages());
@@ -499,13 +503,14 @@ fn pruning_native_tool_results_survives_restart_without_reexecution() {
             Session::start(&sample.logs(), &sample.workspace(), None).unwrap(),
         );
         turn(&mut run, "use three tools", &sample);
-        let cancel = crucible_core::Cancel::new();
-        let steer = crucible_core::Steer::new();
-        let aside = crucible_core::Aside::new();
+        let cancel = crucible_runtime::Cancel::new();
+        let steer = crucible_runtime::Steer::new();
+        let aside = crucible_runtime::Aside::new();
         let context = run.starting(&sample, &cancel, &steer, &aside);
         assert!(
             matches!(
                 run.compact(Compacting::Asked, &context, &mut Spend::default())
+                    .awaited()
                     .unwrap(),
                 Room::Made(_)
             ),

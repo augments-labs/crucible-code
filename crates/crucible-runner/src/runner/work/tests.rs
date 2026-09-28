@@ -3,14 +3,18 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
-use crucible_core::{
-    Ancestry, ArgumentTransform, CallResultAcceptance, CallResultKey, CallResultReceipt,
-    CallResultStoreError, Disposition, IdempotencyKey, InputGuard, InvocationState, JournalStore,
-    Mode, OutputGuard, RecoveryAction, Remember, Rules, SandboxCleanup, SandboxFactKind, SandboxId,
-    SandboxLifecycle, Sensitivity, SessionId, SessionOwner, SessionStore, Summary, Target, Tool,
-    ToolArgs, ToolDescriptor, ToolEffect, ToolExecutionMode, ToolHooks, ToolId, ToolProvenance,
-    ToolResourceKey, ToolSourceKind, Verdict,
+use crucible_runtime::BoxFuture;
+use crucible_sandbox::{SandboxCleanup, SandboxFactKind, SandboxLifecycle};
+use crucible_storage::{
+    CallResultKey, CallResultReceipt, CallResultStoreError, IdempotencyKey, InvocationState,
+    JournalStore, RecoveryAction, SessionOwner, SessionStore, ToolEffect,
 };
+use crucible_tools::{
+    ArgumentTransform, CallResultAcceptance, Disposition, InputGuard, Mode, OutputGuard, Remember,
+    Rules, Sensitivity, Summary, Target, Tool, ToolDescriptor, ToolExecutionMode, ToolHooks,
+    ToolProvenance, ToolResourceKey, ToolSourceKind, Verdict,
+};
+use crucible_types::{Ancestry, SandboxId, SessionId, ToolArgs, ToolId};
 
 use crucible_types::{
     Calibration, Compacted, ContextError, ContextPatch, ContextSnapshot, Message,
@@ -18,7 +22,7 @@ use crucible_types::{
 
 use super::*;
 use crate::Tools;
-use crate::fake::{Fixed, Says, changing};
+use crate::fake::{Awaited, Fixed, Says, changing};
 use crate::recording::Recording;
 
 use crate::{EventEnvelope, Post};
@@ -40,25 +44,45 @@ macro_rules! journal_only {
                 None
             }
 
-            fn append_message(&self, _message: &Message) {}
+            fn append_message<'a>(&'a self, _message: &'a Message) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
             fn context_snapshot(&self) -> Option<ContextSnapshot> {
                 None
             }
 
-            fn contextual(&self, _patch: &ContextPatch) -> Result<(), ContextError> {
-                Ok(())
+            fn contextual<'a>(
+                &'a self,
+                _patch: &'a ContextPatch,
+            ) -> BoxFuture<'a, Result<(), ContextError>> {
+                Box::pin(async move { Ok(()) })
             }
 
-            fn compacted(&self, _replaced: usize, _recap: &str) {}
+            fn compacted<'a>(&'a self, _replaced: usize, _recap: &'a str) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
-            fn display_compacted(&self, _compacted: Compacted, _pruned: bool) {}
+            fn display_compacted(&self, _compacted: Compacted, _pruned: bool) -> BoxFuture<'_, ()> {
+                Box::pin(async {})
+            }
 
-            fn pruned(&self, _freed: usize, _results: &[ToolId]) {}
+            fn pruned<'a>(&'a self, _freed: usize, _results: &'a [ToolId]) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
-            fn restricted(&self, _freed: usize, _results: &[ToolId], _notice: &str) {}
+            fn restricted<'a>(
+                &'a self,
+                _freed: usize,
+                _results: &'a [ToolId],
+                _notice: &'a str,
+            ) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
-            fn measured(&self, _calibration: &Calibration) {}
+            fn measured<'a>(&'a self, _calibration: &'a Calibration) -> BoxFuture<'a, ()> {
+                Box::pin(async {})
+            }
 
             fn calibrated(&self) -> Option<Calibration> {
                 None
@@ -73,8 +97,10 @@ struct KeepingJournal(Mutex<Vec<RunItem>>);
 journal_only!(KeepingJournal);
 
 impl JournalStore for KeepingJournal {
-    fn append_run_item(&self, item: &RunItem) {
-        self.0.lock().unwrap().push(item.clone());
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(item.clone());
+        })
     }
 }
 
@@ -87,21 +113,27 @@ struct ResultJournal {
 journal_only!(ResultJournal);
 
 impl JournalStore for ResultJournal {
-    fn append_run_item(&self, item: &RunItem) {
-        self.items.lock().unwrap().push(item.clone());
+    fn append_run_item<'a>(&'a self, item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.items.lock().unwrap().push(item.clone());
+        })
     }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         key: CallResultKey,
-        result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        self.results.lock().unwrap().push((key, result.clone()));
-        Ok(CallResultReceipt::from_digest([0x44; 32]))
+        result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async move {
+            self.results.lock().unwrap().push((key, result.clone()));
+            Ok(CallResultReceipt::from_digest([0x44; 32]))
+        })
     }
 }
 
+mod answers;
 mod sandbox_audit;
+mod waves;
 
 #[test]
 fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
@@ -200,10 +232,16 @@ impl Tool for PipelineTool {
         Summary::new("pipeline")
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        assert_eq!(approved.args().as_str(), "transformed");
-        marked(&self.trace, "execute");
-        Ok(ToolOutput::ok(self.answer.clone()))
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            assert_eq!(approved.args().as_str(), "transformed");
+            marked(&self.trace, "execute");
+            Ok(ToolOutput::ok(self.answer.clone()))
+        })
     }
 }
 
@@ -257,12 +295,17 @@ impl Drop for AcceptedResult {
 }
 
 impl CallResultAcceptance for AcceptedResult {
-    fn accept(
+    fn accept<'a>(
         self: Box<Self>,
         receipt: CallResultReceipt,
-    ) -> Result<(), crucible_core::SandboxError> {
-        *self.0.lock().unwrap() = Some(receipt);
-        Ok(())
+    ) -> BoxFuture<'a, Result<(), crucible_sandbox::SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            *self.0.lock().unwrap() = Some(receipt);
+            Ok(())
+        })
     }
 }
 
@@ -283,15 +326,21 @@ impl Tool for DeferredResultTool {
         Summary::new("deferred result")
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        context
-            .defer_call_result(Box::new(AcceptedResult(Arc::clone(&self.0))))
-            .map_err(|problem| ToolError::Io {
-                tool: "deferred".into(),
-                problem: "could not defer the final result".into(),
-                source: std::io::Error::other(problem),
-            })?;
-        Ok(ToolOutput::ok("raw executor output"))
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            context
+                .defer_call_result(Box::new(AcceptedResult(Arc::clone(&self.0))))
+                .map_err(|problem| ToolError::Io {
+                    tool: "deferred".into(),
+                    problem: "could not defer the final result".into(),
+                    source: std::io::Error::other(problem),
+                })?;
+            Ok(ToolOutput::ok("raw executor output"))
+        })
     }
 }
 
@@ -309,14 +358,16 @@ struct FailingResultJournal;
 journal_only!(FailingResultJournal);
 
 impl JournalStore for FailingResultJournal {
-    fn append_run_item(&self, _item: &RunItem) {}
+    fn append_run_item<'a>(&'a self, _item: &'a RunItem) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
-    fn put_call_result(
-        &self,
+    fn put_call_result<'a>(
+        &'a self,
         _key: CallResultKey,
-        _result: &ToolResult,
-    ) -> Result<CallResultReceipt, CallResultStoreError> {
-        Err(CallResultStoreError::Storage)
+        _result: &'a ToolResult,
+    ) -> BoxFuture<'a, Result<CallResultReceipt, CallResultStoreError>> {
+        Box::pin(async { Err(CallResultStoreError::Storage) })
     }
 }
 
@@ -363,9 +414,11 @@ fn deferred_results_commit_the_exact_guarded_runner_output() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
-    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX);
+    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX)
+    .awaited();
 
     assert!(matches!(went, Went::On));
     let result = results.first().expect("one result");
@@ -401,9 +454,11 @@ fn a_turn_output_refusal_reclaims_the_unaccepted_background_scope() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
-    .pass(&[call("deferred-call", "deferred")], 0, 40);
+    .pass(&[call("deferred-call", "deferred")], 0, 40)
+    .awaited();
 
     assert!(matches!(went, Went::OutputLimit));
     assert!(results.first().expect("one result").output.is_failed());
@@ -436,9 +491,11 @@ fn a_failed_durable_result_write_reclaims_the_background_scope() {
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
-    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX);
+    .pass(&[call("deferred-call", "deferred")], 0, usize::MAX)
+    .awaited();
 
     assert!(matches!(went, Went::On));
     let result = results.first().expect("one result");
@@ -453,10 +510,14 @@ fn a_failed_durable_result_write_reclaims_the_background_scope() {
 struct TracedAsk(Trace);
 
 impl Ask for TracedAsk {
-    fn ask(&mut self, call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
         assert_eq!(call.args.as_str(), "transformed");
         marked(&self.0, "approval");
-        (Verdict::Allow, Remember::Never)
+        Box::pin(async { (Verdict::Allow, Remember::Never) })
     }
 }
 
@@ -514,18 +575,29 @@ fn invoke_many(
     let snapshot = tools.snapshot().unwrap();
     let cancel = Cancel::new();
     let journal = Recording::nowhere();
-    let (results, went, _) = Work {
-        tools: &snapshot,
-        permission,
-        ask,
-        events: Reporter::new(ancestry, &keeping),
-        cancel: &cancel,
-        ancestry,
-        journal: &*journal,
-        audits: &SandboxAuditRegistry::new(),
-        concurrency,
-    }
-    .pass(calls, 0, maximum);
+    // A worker for each run a batch holds at once, so runs that block until
+    // each other arrive can all be running; the pass itself is polled on the
+    // test's own thread, as the application polls a turn on its own.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(TOOL_RUNS)
+        .enable_time()
+        .build()
+        .unwrap();
+    let (results, went, _) = runtime.block_on(
+        Work {
+            tools: &snapshot,
+            permission,
+            ask,
+            events: Reporter::new(ancestry, &keeping),
+            cancel: &cancel,
+            ancestry,
+            journal: &*journal,
+            audits: &SandboxAuditRegistry::new(),
+            worker: None,
+            concurrency,
+        }
+        .pass(calls, 0, maximum),
+    );
     drop(keeping);
     (results, went, seen.try_iter().collect())
 }
@@ -617,12 +689,12 @@ impl Tool for KeyedEffect {
         Summary::new("keyed effect")
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::ok("one effect"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move { Ok(ToolOutput::ok("one effect")) })
     }
 }
 
@@ -655,9 +727,11 @@ fn an_approved_effect_journals_one_stable_prepared_started_and_finished_invocati
         ancestry,
         journal: &journal,
         audits: &SandboxAuditRegistry::new(),
+        worker: None,
         concurrency: 1,
     }
-    .pass(&[call("keyed-call", "keyed")], 0, usize::MAX);
+    .pass(&[call("keyed-call", "keyed")], 0, usize::MAX)
+    .awaited();
 
     assert!(matches!(went, Went::On));
     assert_eq!(results.len(), 1);
@@ -759,12 +833,18 @@ impl Tool for TimesOut {
         Summary::new("timeout")
     }
 
-    fn run(&self, _approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        while !context.cancel().requested() {
-            thread::yield_now();
-        }
-        Err(ToolError::Cancelled("timeout".into()))
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            while !context.cancel().requested() {
+                thread::yield_now();
+            }
+            Err(ToolError::Cancelled("timeout".into()))
+        })
     }
 }
 
@@ -816,6 +896,94 @@ fn a_descriptor_timeout_finalizes_once_without_stopping_the_run() {
     )));
 }
 
+/// Waits until its call is asked to stop, then answers that it stopped, and
+/// says that it did.
+struct Waits(Arc<std::sync::atomic::AtomicBool>);
+
+impl Tool for Waits {
+    fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
+        Ok(())
+    }
+
+    fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
+        Sensitivity::ReadOnly {
+            target: Target::unresolved(),
+        }
+    }
+
+    fn summary(&self, _args: &ToolArgs) -> Summary {
+        Summary::new("waits")
+    }
+
+    fn run<'a>(
+        &'a self,
+        _approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let _ = context.cancel().race(std::future::pending::<()>()).await;
+            self.0.store(true, Ordering::Release);
+            Err(ToolError::Cancelled("waits".into()))
+        })
+    }
+}
+
+#[test]
+fn a_lone_run_still_waiting_at_its_deadline_is_asked_to_stop_there_and_timed_out() {
+    // The deadline raises the call's cancel rather than dropping its run: the
+    // run is waited for until it answers, and the call is answered as timed
+    // out, so nothing the run was doing is cut off unreported.
+    let answered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = Arc::clone(&answered);
+    let (told, answer) = channel();
+
+    // The pass runs on a thread of its own, so one that goes on waiting past
+    // the deadline fails this test instead of hanging it.
+    std::thread::spawn(move || {
+        let descriptor = ToolDescriptor::new(
+            "waits",
+            "{}",
+            ToolProvenance::new(ToolSourceKind::User, "test:waits", "waits test").unwrap(),
+        )
+        .unwrap()
+        .timing_out_after(Duration::from_millis(50))
+        .unwrap();
+        let mut tools = Tools::new();
+        tools.add(descriptor, Arc::new(Waits(seen))).unwrap();
+
+        let (results, went, events) = invoke(
+            &tools,
+            &mut Permission::new(),
+            &mut Says::new(Verdict::Allow),
+            call("waits-call", "waits"),
+        );
+        let timed_out = events.iter().any(|event| {
+            matches!(
+                event,
+                Event::ToolFinished {
+                    receipt: Some(receipt),
+                    ..
+                } if receipt.outcome() == ToolOutcome::TimedOut
+            )
+        });
+        let text = results
+            .first()
+            .map(|result| result.output.text().to_owned());
+        told.send((text, matches!(went, Went::On), timed_out)).ok();
+    });
+
+    let (text, went_on, timed_out) = answer
+        .recv_timeout(Duration::from_secs(2))
+        .expect("a lone run asked to stop at its 50 ms deadline had not answered 2 s later");
+    assert_eq!(text.as_deref(), Some("tool timed out"));
+    assert!(went_on, "a timed-out call stopped the run around it");
+    assert!(timed_out, "the call was not finished as timed out");
+    assert!(
+        answered.load(Ordering::Acquire),
+        "the call was answered without its run having answered"
+    );
+}
+
 #[derive(Default)]
 struct ScheduleState {
     active: AtomicUsize,
@@ -844,27 +1012,33 @@ impl Tool for Scheduled {
         Summary::new(args.as_str())
     }
 
-    fn run(&self, approved: Approved, _context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        assert!(
-            self.state.approvals.load(Ordering::SeqCst) >= self.approvals_before_effects,
-            "an effect began before its scheduler wave finished approval"
-        );
-        self.state.ran.fetch_add(1, Ordering::SeqCst);
-        let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
-        self.state.peak.fetch_max(active, Ordering::SeqCst);
-        if let Some(barrier) = &self.barrier {
-            barrier.wait();
-        }
-        if approved.args().as_str().contains("slow") {
-            thread::sleep(Duration::from_millis(20));
-        }
-        self.state
-            .completed
-            .lock()
-            .unwrap()
-            .push(approved.args().as_str().to_owned());
-        self.state.active.fetch_sub(1, Ordering::SeqCst);
-        Ok(ToolOutput::ok(approved.args().as_str()))
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            assert!(
+                self.state.approvals.load(Ordering::SeqCst) >= self.approvals_before_effects,
+                "an effect began before its scheduler wave finished approval"
+            );
+            self.state.ran.fetch_add(1, Ordering::SeqCst);
+            let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.state.peak.fetch_max(active, Ordering::SeqCst);
+            if let Some(barrier) = &self.barrier {
+                barrier.wait();
+            }
+            if approved.args().as_str().contains("slow") {
+                thread::sleep(Duration::from_millis(20));
+            }
+            self.state
+                .completed
+                .lock()
+                .unwrap()
+                .push(approved.args().as_str().to_owned());
+            self.state.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(ToolOutput::ok(approved.args().as_str()))
+        })
     }
 }
 
@@ -885,7 +1059,11 @@ impl CountedAsk {
 }
 
 impl Ask for CountedAsk {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
         self.state.approvals.fetch_add(1, Ordering::SeqCst);
         let answer = self
             .answers
@@ -894,7 +1072,7 @@ impl Ask for CountedAsk {
             .or_else(|| self.answers.last().copied())
             .unwrap_or(Verdict::Deny);
         self.at += 1;
-        (answer, Remember::Never)
+        Box::pin(async move { (answer, Remember::Never) })
     }
 }
 
@@ -1149,9 +1327,11 @@ impl Proof {
             ancestry: Ancestry::new(),
             journal: &*journal,
             audits: &SandboxAuditRegistry::new(),
+            worker: None,
             concurrency: 1,
         }
         .pass(calls, held, maximum)
+        .awaited()
     }
 }
 

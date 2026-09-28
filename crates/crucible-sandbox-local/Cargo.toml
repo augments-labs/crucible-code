@@ -10,7 +10,8 @@ repository.workspace = true
 authors.workspace = true
 
 # `crucible-sandbox` states what a backend must satisfy; everything here is one
-# machine's answer to it. The other three are what a launch is described in:
+# machine's answer to it, handed back in the future `crucible-runtime` names.
+# The other three are what a launch is described in:
 # the frame the broker binary is handed, the identities a call is attributed
 # by, and the receipt a background command's result is accepted against.
 #
@@ -20,6 +21,7 @@ authors.workspace = true
 # that header carries. `sha2` seals what a sandbox was admitted on, so a
 # resumed run can tell a frame apart from a frame edited under it.
 [dependencies]
+crucible-runtime.workspace = true
 crucible-sandbox.workspace = true
 crucible-sandbox-broker.workspace = true
 crucible-storage.workspace = true
@@ -30,12 +32,23 @@ http.workspace = true
 httparse.workspace = true
 sha2.workspace = true
 
+# Each command's status is watched by a task on the runtime the service is
+# handed: `rt` spawns and aborts it, and `time` is the pause between its looks.
+# Nothing here builds a runtime.
+tokio = { workspace = true, features = ["rt", "time"] }
+
 # `kill` on a process group, which is how a command's whole pipeline is stopped
 # rather than the shell at the head of it. `std` signals the one child it
 # spawned; the negated group id reaches the rest, and there is no call in `std`
 # that takes one. Unix targets only.
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }
+
+# A command's pipes, read and written asynchronously, are handed to the reactor
+# of the runtime polling them: `net` is the descriptor it watches and `rt` is
+# how an adapter polled off a runtime finds out and says so. Nothing here
+# builds a runtime.
+tokio = { workspace = true, features = ["net", "rt"] }
 
 [target.'cfg(windows)'.dependencies]
 # Windows sandbox scratch directories need the same protected owner-only DACL
@@ -44,16 +57,43 @@ crucible-privacy.workspace = true
 
 # Windows has no safe job-object API for containing descendants, cannot
 # discover the suspended primary thread that must be resumed after job
-# attachment, and cannot poll anonymous pipes through std. It also supplies the
-# attribute the broker image is refused for being a reparse point, which std can
-# read but cannot name. Those bindings stay inside this crate; all features and
-# the exact version are pinned once at the workspace root.
+# attachment, and cannot poll anonymous pipes through std or abandon a write
+# parked in one. It also supplies the attribute the broker image is refused for
+# being a reparse point, which std can read but cannot name. Those bindings stay
+# inside this crate; all features and the exact version are pinned once at the
+# workspace root.
 windows-sys.workspace = true
 
+# No runtime is told when an anonymous pipe becomes ready, so a pipe read or
+# written asynchronously is handed to a thread of its own, and `sync` is the
+# one-chunk channel between that thread and whoever is waiting on it.
+tokio = { workspace = true, features = ["sync"] }
+
 # A backend confines paths it is handed and never resolves one itself, so the
-# workspace type is reached only by the fixtures that build a tree to confine.
+# workspace type is reached only by the fixtures that build a tree to confine,
+# and `answered!` only by the fixtures that drive a lifecycle step by hand.
 [dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
 crucible-workspace.workspace = true
+
+# The runtime each test of an asynchronous pipe builds for itself: `rt` and
+# `time` for it and its deadlines, `net` for the reactor a Unix pipe is waited
+# on, and `sync` for the thread-owned pipes, which the tests exercise on every
+# platform. `rt-multi-thread` is the runtime the tests watch commands on, whose
+# own threads run each command's status task while the test's thread waits.
+tokio = { workspace = true, features = ["net", "rt", "rt-multi-thread", "sync", "time"] }
+
+# A Linux test build keeps its sandbox state in a directory named for the
+# checkout it was compiled from, so two checkouts testing at once never lock,
+# recover or change each other's; this crate's own unit tests do so without it.
+# Nothing in the workspace turns it on as a dependency; only
+# `[dev-dependencies]` do, which cargo does not resolve for a release build, and
+# the repository gate holds that. This crate does not take itself as a
+# dev-dependency, which the crate graph would count as an edge, so a narrow
+# `cargo test -p crucible-sandbox-local` asks for it with
+# `--features per-checkout-state`.
+[features]
+per-checkout-state = []
 
 [lints]
 workspace = true

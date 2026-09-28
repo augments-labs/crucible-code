@@ -76,12 +76,12 @@ fn answer(provider: &Anthropic, transcript: &Transcript) -> Message {
 }
 
 fn answer_with(provider: &Anthropic, request: Request<'_>) -> Message {
-    let mut stream = provider.stream(request, &Cancel::new()).unwrap();
+    let mut stream = crucible_runtime::answered!(provider.stream(request, &Cancel::new())).unwrap();
     let mut text = String::new();
     let mut calls: Vec<ToolCall> = Vec::new();
     let mut pending: Option<Continuation> = None;
     let mut stop = None;
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         match delta.unwrap() {
             Delta::Text(more) => text.push_str(&more),
             Delta::ToolStarted { id, name } => calls.push(ToolCall {
@@ -150,7 +150,7 @@ fn fable_51_does_not_assume_a_future_claude_model_has_compatible_signatures() {
         })
         .unwrap();
     history.push(answered()).unwrap();
-    provider.stream(request(&history), &Cancel::new()).unwrap();
+    crucible_runtime::answered!(provider.stream(request(&history), &Cancel::new())).unwrap();
     let sent = replay.sent();
     assert!(
         !sent.body.contains("private"),
@@ -173,11 +173,11 @@ fn fable_51_thinking_cannot_change_after_its_signature_has_started() {
         ]);
         let (provider, _) = provider(&payload);
         let transcript = Transcript::new();
-        let mut stream = provider
-            .stream(request(&transcript), &Cancel::new())
-            .unwrap();
+        let mut stream =
+            crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+                .unwrap();
         let mut error = None;
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             match delta {
                 Err(problem) => {
                     error = Some(problem);
@@ -203,9 +203,7 @@ fn fable_51_replays_signature_only_thinking_text_and_calls_in_original_order() {
     let agent = answer(&provider, &transcript);
     transcript.push(agent).unwrap();
     transcript.push(answered()).unwrap();
-    provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         sent.pointer("/messages/1/content"),
@@ -227,9 +225,7 @@ fn fable_51_compaction_removes_old_thinking_but_preserves_new_thinking() {
     transcript.push(answer(&provider, &transcript)).unwrap();
     transcript.push(answered()).unwrap();
     transcript.compacted(1, "recap");
-    provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     let kept: Vec<_> = blocks()
         .into_iter()
@@ -241,9 +237,7 @@ fn fable_51_compaction_removes_old_thinking_but_preserves_new_thinking() {
     );
     transcript.push(answer(&provider, &transcript)).unwrap();
     transcript.push(answered()).unwrap();
-    provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         sent.pointer("/messages/4/content"),
@@ -318,13 +312,14 @@ fn fable_51_transient_errors_are_retryable_without_echoing_private_payloads() {
     let payload = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"private-thinking-signature\"}}\n\n";
     let (provider, _) = provider(payload);
     let transcript = Transcript::new();
-    let mut stream = provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
-    let error = stream.next().unwrap().unwrap_err();
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
+    let error = crucible_runtime::answered!(stream.next())
+        .unwrap()
+        .unwrap_err();
     assert!(error.transient());
     assert!(!format!("{error:?} {error}").contains("private-thinking-signature"));
-    assert!(stream.next().is_none());
+    assert!(crucible_runtime::answered!(stream.next()).is_none());
 }
 
 #[test]
@@ -339,7 +334,9 @@ fn fable_51_http_refusal_keeps_status_but_not_echoed_signed_history() {
     );
     let provider = Anthropic::at(VENDOR, Box::new(credential), Box::new(replay));
     let transcript = Transcript::new();
-    let Err(error) = provider.stream(request(&transcript), &Cancel::new()) else {
+    let Err(error) =
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+    else {
         panic!("HTTP refusal must fail");
     };
     assert!(matches!(error, ProviderError::Refused { status: 400, .. }));
@@ -355,11 +352,10 @@ fn fable_51_dropped_thinking_reports_only_fixed_numeric_facts_and_replaces_fallb
     );
     let (provider, _) = provider(payload);
     let transcript = Transcript::new();
-    let mut stream = provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let mut reports = Vec::new();
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         let delta = delta.unwrap();
         assert!(!format!("{delta:?}").contains("private-thinking-signature"));
         if let Delta::Usage(usage) = delta {
@@ -397,12 +393,12 @@ fn fable_51_thinking_usage_is_an_output_subset_never_an_extra_charge() {
         );
         let (provider, _) = provider(&payload);
         let transcript = Transcript::new();
-        let mut stream = provider
-            .stream(request(&transcript), &Cancel::new())
-            .unwrap();
+        let mut stream =
+            crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+                .unwrap();
         let mut usage = None;
         let mut failed = false;
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             match delta {
                 Ok(Delta::Usage(report)) => usage = Some(report),
                 Err(_) => failed = true,
@@ -456,9 +452,7 @@ fn fable_51_fragmented_thinking_calls_and_document_citations_round_trip_together
     transcript.push(Message::said("read a")).unwrap();
     transcript.push(answer(&provider, &transcript)).unwrap();
     transcript.push(answered()).unwrap();
-    provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         sent.pointer("/messages/1/content"),
@@ -587,11 +581,10 @@ fn fable_51_explicit_cache_marker_falls_back_before_thinking_only_history() {
     let (provider, replay) = provider(payload);
     let mut transcript = Transcript::new();
     transcript.push(Message::said("earlier")).unwrap();
-    let mut stream = provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    let mut stream =
+        crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let mut pending = None;
-    while let Some(delta) = stream.next() {
+    while let Some(delta) = crucible_runtime::answered!(stream.next()) {
         if let Delta::Continuation(state) = delta.unwrap() {
             pending = Some(state);
         }
@@ -618,7 +611,7 @@ fn fable_51_explicit_cache_marker_falls_back_before_thinking_only_history() {
         provider.prompt_cache_encoding(&request),
         crucible_types::PromptCacheEncoding::BreakpointsEncoded(1)
     );
-    provider.stream(request, &Cancel::new()).unwrap();
+    crucible_runtime::answered!(provider.stream(request, &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         sent.pointer("/messages/0/content/0/cache_control"),
@@ -639,9 +632,7 @@ fn fable_51_empty_text_blocks_are_not_replayed_as_invalid_input_or_cache_targets
     transcript.push(Message::said("read a")).unwrap();
     transcript.push(answer(&provider, &transcript)).unwrap();
     transcript.push(answered()).unwrap();
-    provider
-        .stream(request(&transcript), &Cancel::new())
-        .unwrap();
+    crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new())).unwrap();
     let sent: Value = serde_json::from_str(&replay.sent().body).unwrap();
     assert_eq!(
         sent.pointer("/messages/1/content"),
@@ -725,11 +716,11 @@ fn fable_51_aggregate_text_and_argument_limits_accept_exactly_the_boundary() {
             .collect::<Vec<_>>();
         let (provider, _) = provider(&response(&arguments));
         let transcript = Transcript::new();
-        let mut stream = provider
-            .stream(request(&transcript), &Cancel::new())
-            .unwrap();
+        let mut stream =
+            crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+                .unwrap();
         let mut error = false;
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             if delta.is_err() {
                 error = true;
                 break;
@@ -745,11 +736,11 @@ fn fable_51_aggregate_text_and_argument_limits_accept_exactly_the_boundary() {
         events.push(json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}}));
         events.push(json!({"type":"message_stop"}));
         let (provider, _) = self::provider(&sse(&events));
-        let mut stream = provider
-            .stream(request(&transcript), &Cancel::new())
-            .unwrap();
+        let mut stream =
+            crucible_runtime::answered!(provider.stream(request(&transcript), &Cancel::new()))
+                .unwrap();
         let mut error = false;
-        while let Some(delta) = stream.next() {
+        while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             if delta.is_err() {
                 error = true;
                 break;

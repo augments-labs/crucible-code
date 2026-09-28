@@ -30,6 +30,20 @@ use crucible_sandbox_local::LocalSandbox;
 use crucible_types::{Ancestry, SandboxId, ToolId};
 use crucible_workspace::Workspace;
 
+/// The service these tests start commands with, watching each on a runtime of
+/// this test binary's own.
+fn service() -> LocalSandbox {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    let runtime = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("a runtime to watch commands on")
+    });
+    LocalSandbox::new().watching_on(runtime.handle().clone())
+}
+
 struct Fixture {
     parent: PathBuf,
     workspace: PathBuf,
@@ -98,10 +112,11 @@ fn command(program: &str, arguments: impl IntoIterator<Item = OsString>) -> Sand
 }
 
 fn start(request: SandboxRequest, command: SandboxCommand) -> Box<dyn SandboxProcess> {
-    let service = LocalSandbox::new();
-    let mut session = service.prepare(request).expect("prepared sandbox");
-    session.materialize().expect("materialized sandbox");
-    session.start(command).expect("started command")
+    let service = service();
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request)).expect("prepared sandbox");
+    crucible_runtime::answered!(session.materialize()).expect("materialized sandbox");
+    crucible_runtime::answered!(session.start(command)).expect("started command")
 }
 
 fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Vec<u8>, Vec<u8>) {
@@ -118,7 +133,7 @@ fn finish(mut process: Box<dyn SandboxProcess>) -> (std::process::ExitStatus, Ve
         assert!(Instant::now() < deadline, "sandbox command timed out");
         thread::sleep(Duration::from_millis(10));
     }
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     (status.expect("status"), output, errors)
 }
 

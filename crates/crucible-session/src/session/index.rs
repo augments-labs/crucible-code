@@ -17,7 +17,7 @@ use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 
-use crucible_core::SessionId;
+use crucible_types::SessionId;
 
 use super::SessionError;
 use super::beside::Beside;

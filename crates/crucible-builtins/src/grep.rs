@@ -19,7 +19,7 @@ use std::io;
 use std::str;
 use std::sync::{LazyLock, Mutex};
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{
     Approved, DescribeTool, Looking, Sensitivity, Summary, Tool, ToolContext, ToolEffect,
     ToolError, ToolOutput,
@@ -389,6 +389,19 @@ struct Found {
     stopped: bool,
 }
 
+impl Found {
+    /// What a search stopped before its first file found: nothing, and that
+    /// it was stopped.
+    fn stopped() -> Self {
+        Self {
+            hits: Vec::new(),
+            more: false,
+            partly: Partial::default(),
+            stopped: true,
+        }
+    }
+}
+
 /// A fixed-size account of files a search did not finish.
 ///
 /// The total is separate from the names because an unreadable tree is input,
@@ -732,50 +745,67 @@ impl Tool for Grep {
         Some(Looking::Pattern)
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = crate::args::Args::parse(NAME, approved.args())?;
-        let pattern = args.text(PATTERN)?;
-        let limit = args.count(LIMIT, MATCHES)?.min(CEILING);
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = crate::args::Args::parse(NAME, approved.args())?;
+            let pattern = args.text(PATTERN)?;
+            let limit = args.count(LIMIT, MATCHES)?.min(CEILING);
 
-        let matcher = RegexMatcherBuilder::new()
-            .case_insensitive(args.flag(IGNORE_CASE, false)?)
-            .fixed_strings(args.flag(FIXED, false)?)
-            .build(pattern);
-        let Ok(matcher) = matcher else {
-            return Ok(ToolOutput::failed(format!(
-                "{pattern} is not a valid regular expression"
-            )));
-        };
+            let matcher = RegexMatcherBuilder::new()
+                .case_insensitive(args.flag(IGNORE_CASE, false)?)
+                .fixed_strings(args.flag(FIXED, false)?)
+                .build(pattern);
+            let Ok(matcher) = matcher else {
+                return Ok(ToolOutput::failed(format!(
+                    "{pattern} is not a valid regular expression"
+                )));
+            };
 
-        let requested = args.optional_text(PATH)?.unwrap_or(".");
-        // A directory outside the workspace is walked only on the say-so the
-        // `Approved` in hand carries.
-        let from = match crate::target::opened(&self.workspace, &approved, requested) {
-            Ok(path) => path,
-            Err(problem) => return Ok(ToolOutput::failed(problem)),
-        };
+            let requested = args.optional_text(PATH)?.unwrap_or(".");
+            // A directory outside the workspace is walked only on the say-so the
+            // `Approved` in hand carries.
+            let from = match crate::target::opened(&self.workspace, &approved, requested) {
+                Ok(path) => path,
+                Err(problem) => return Ok(ToolOutput::failed(problem)),
+            };
 
-        let Ok(only) = self.only(args.optional_text(GLOB)?) else {
-            return Ok(ToolOutput::failed(format!(
-                "{} is not a valid glob",
-                args.optional_text(GLOB)?.unwrap_or_default()
-            )));
-        };
+            let Ok(only) = self.only(args.optional_text(GLOB)?) else {
+                return Ok(ToolOutput::failed(format!(
+                    "{} is not a valid glob",
+                    args.optional_text(GLOB)?.unwrap_or_default()
+                )));
+            };
 
-        let mode = match args.choice(MODE, CONTENT, &[CONTENT, FILES])? {
-            FILES => Mode::Files,
-            _ => Mode::Content,
-        };
+            let mode = match args.choice(MODE, CONTENT, &[CONTENT, FILES])? {
+                FILES => Mode::Files,
+                _ => Mode::Content,
+            };
 
-        let query = Query {
-            matcher,
-            only,
-            mode,
-            context: args.whole(CONTEXT, 0)?.min(REACH),
-            limit,
-        };
-        let found = self.hunt(&from, query, &approved, context.cancel());
-        Ok(report(&found, pattern, (mode, limit)))
+            let query = Query {
+                matcher,
+                only,
+                mode,
+                context: args.whole(CONTEXT, 0)?.min(REACH),
+                limit,
+            };
+
+            // The walk and the search are the one piece of this call with no
+            // asynchronous form, so they run where the call's blocking work
+            // runs, on a copy of this tool they own along with the approval
+            // they ask about each file.
+            let pattern = pattern.to_owned();
+            let workspace = self.workspace.clone();
+            let found = crate::blocking::run(NAME, context, move |cancel| {
+                Grep::new(workspace).hunt(&from, query, &approved, cancel)
+            })
+            .await?
+            .unwrap_or_else(Found::stopped);
+            Ok(report(&found, &pattern, (mode, limit)))
+        })
     }
 }
 

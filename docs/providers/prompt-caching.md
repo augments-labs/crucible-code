@@ -84,12 +84,10 @@ match or accepted request is not a hit.
 
 ## Shipped capability records
 
-Existing records were reviewed on 2026-08-31; the six new model records were
-reviewed on 2026-09-06. Their URLs and record versions are
-compiled into the adapters so ordinary startup never scrapes mutable
-documentation.
+Each record's official source and version are compiled into its adapter, so
+ordinary startup never scrapes mutable documentation.
 
-| Adapter and exact reviewed models | Mechanisms | Official source | Record version |
+| Adapter and exact models | Mechanisms | Official source | Record version |
 | --- | --- | --- | --- |
 | OpenAI Responses: `gpt-6-astra` | implicit caching and up to four explicit input-content breakpoints on the public API | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-09-06` |
 | Anthropic Messages: `claude-fable-5-1` | automatic control and up to four legal block breakpoints; 5-minute and 1-hour classes | [Anthropic preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) | `anthropic-prompt-cache-2026-09-06` |

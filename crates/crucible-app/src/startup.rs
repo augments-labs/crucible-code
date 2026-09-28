@@ -26,7 +26,7 @@ use crucible_credentials::{ApiKey, Credential, Header, HeaderKey};
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
-    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, Https, Moonshot, MoonshotWeb, OpenAi,
+    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, HttpTurns, Moonshot, MoonshotWeb, OpenAi,
     OpenAiWeb, Unavailable,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
@@ -38,6 +38,7 @@ use crucible_workspace::Workspace;
 
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
+use crate::services::Services;
 use crate::subscription::Subscriptions;
 use crate::{AppError, Conversation};
 
@@ -92,6 +93,11 @@ pub enum Resuming {
 /// let a startup be pointed somewhere disposable and failed either way it can
 /// fail, and eight of those in a row is a call nobody can read.
 pub struct Startup<'a> {
+    /// What the application owns for the length of the run, the runtime among
+    /// it. The one way a factory here reaches something owned once per run:
+    /// what such a thing needs is a field of this, never a parameter of its
+    /// own beside it.
+    pub services: &'a Services,
     /// The generation of the provider registry every name here was read
     /// against, and the one a model's limits are read out of. Taken by the
     /// caller rather than here, so the provider that was resolved and the
@@ -152,9 +158,9 @@ pub struct Startup<'a> {
     /// A redirected run has nobody, and a tool that can only ever answer "there
     /// is no one here" is a schema spent saying so.
     pub terminal: bool,
-    /// Reads the environment. A parameter because the real one cannot be
-    /// written from a test: writing to it is `unsafe` in edition 2024, which
-    /// this workspace forbids.
+    /// Reads the environment. A parameter so a test need not write the real one:
+    /// writing to it is `unsafe` in edition 2024, and this workspace denies
+    /// `unsafe` code.
     pub from: &'a dyn Fn(&str) -> Option<String>,
     /// What `/login` wrote down. Read once by the caller, because the same
     /// answer is what decided which provider this run is for.
@@ -189,7 +195,9 @@ impl fmt::Debug for Startup<'_> {
 /// # Errors
 ///
 /// [`AppError`] where no provider, server or session could be set up as
-/// asked; nothing is written to the disk for a startup that fails.
+/// asked, and [`AppError::Unstarted`] where the runtime the conversation's
+/// turns run on would not start; nothing is written to the disk for a startup
+/// that fails.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let Startup {
         settings,
@@ -212,6 +220,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
             stored: startup.stored,
             subscriptions: startup.subscriptions,
         },
+        startup.services.http(),
     )?;
 
     // Beside the provider, and for its reason: naming a server nobody wrote
@@ -229,6 +238,20 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // answers the same credential — a second, simpler lookup here would have
     // billed a plan session's searches to whatever key the shell carried.
     let reaching = web(startup, settings);
+
+    // Before the session, for the reason the provider is: the runtime every
+    // turn runs on, and every command the sandbox starts is watched on, is
+    // started here, the first thing in a run that asks for it, and a
+    // run whose runtime would not start writes no session.
+    let runtime = startup.services.runtime().handle()?;
+    // And the renewals every subscription login was built with run there too,
+    // from here on: a credential this run resolved renews on it, and a login
+    // `/login` starts sends its requests through it.
+    startup.services.renewals().runs_on(runtime.clone());
+    // And the one worker every tool call is lent for its blocking work, on
+    // that same runtime, so the work of every call in the run shares its
+    // bound.
+    let worker = startup.services.tool_worker()?.clone();
 
     let (session, earlier) = match &startup.resuming {
         Resuming::Newest => {
@@ -250,7 +273,11 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
 
     // Build the registry before the runner, because its exact immutable
     // generation is one of the typed facts the first pass assembles.
-    let sandbox: Arc<dyn crucible_sandbox::SandboxService> = Arc::new(LocalSandbox::new());
+    let sandbox: Arc<dyn crucible_sandbox::SandboxService> =
+        Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
+    // And every command left running is owned on the same runtime, by a task
+    // of its own, so the thread that draws never asks a process anything.
+    startup.leaving.watching_on(runtime.clone());
     let offering = tools(startup, settings, reaching, Arc::clone(&sandbox))?;
 
     // Operator-authored instructions are the stable request prefix. Everything
@@ -271,20 +298,23 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let permission = settings.permission(startup.mode);
     let serving = startup.provider.map(|one| one.name);
     let run_policy = policy(settings);
-    let conversation = Conversation::recording(Arc::new(session), serving, |session| {
+    let mut conversation = Conversation::recording(Arc::new(session), serving, |session| {
         let runner = if chosen.is_empty() {
             Runner::new(provider, offering, asking, context, session)
         } else {
             Runner::with_toolset(
                 provider,
-                Hosting::new(Arc::new(offering), sandbox, chosen),
+                // The same runtime the turns run on: each selected server's
+                // streams are read and written by tasks there.
+                Hosting::new(Arc::new(offering), sandbox, chosen, runtime.clone()),
                 asking,
                 context,
                 session,
             )
         }
         .permitting(permission)
-        .under(run_policy);
+        .under(run_policy)
+        .lending(worker);
         match earlier {
             Some(transcript) => {
                 planned(startup.plan, &transcript);
@@ -293,8 +323,41 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
             None => runner,
         }
     });
+    recorded(&mut conversation, &runtime);
 
     Ok(conversation)
+}
+
+/// Waits on `runtime` for what picking the session up owes it, before the
+/// conversation is handed over: a resumed transcript can hold results the
+/// vendor being asked may not be sent, and the lines clearing them are owed to
+/// the session.
+///
+/// Awaited from a thread of its own, because whoever assembles a run may be
+/// anywhere, and a runtime refuses to be waited on from inside one; and only
+/// when something is owed, so a run that owes nothing starts no thread. A
+/// thread that could not be started leaves the lines owed, and whatever next
+/// writes to the session — a turn, a compaction, a switch of vendor or
+/// account, a pick-up — writes them before anything of its own. A run that
+/// ends before any of those writes none, and says nothing of it: the results
+/// stay out of what this run sends either way, and the next pick-up of the
+/// session clears them from what it reads again and owes the same lines.
+fn recorded(conversation: &mut Conversation, runtime: &tokio::runtime::Handle) {
+    if !conversation.runner().owes_clearings() {
+        return;
+    }
+    std::thread::scope(|scope| {
+        let waiting = std::thread::Builder::new()
+            .name("clearing".into())
+            .spawn_scoped(scope, || {
+                runtime.block_on(conversation.clearings_recorded());
+            });
+        if let Ok(waiting) = waiting
+            && let Err(panicked) = waiting.join()
+        {
+            std::panic::resume_unwind(panicked);
+        }
+    });
 }
 
 /// Protects the user configuration before any value can be read from it.
@@ -449,6 +512,8 @@ pub struct Wiring<'a> {
     pub variable: &'a str,
     /// Where a setting says requests should go, where one does.
     pub sending: Option<Endpoint>,
+    /// The shared HTTP service the provider and web factories use.
+    pub http: &'a HttpTurns,
     /// The credential sources, as one boundary.
     pub auth: ProviderAuth<'a>,
 }
@@ -488,8 +553,8 @@ pub type Reach = fn(Wiring<'_>, &str) -> Reaching;
 /// sentence, resolved by the caller from the same credential set.
 ///
 /// `from` reads the environment. It is a parameter because the pairing below is
-/// worth a test and the real environment cannot be set from one: writing to it
-/// is `unsafe` in edition 2024, which this workspace forbids.
+/// worth a test. Setting the real environment from one is `unsafe` in edition
+/// 2024, and this workspace denies `unsafe` code.
 ///
 /// Which variable holds the key is configuration, so a file may name a
 /// different one — somebody with a work key and a personal key has two
@@ -511,21 +576,27 @@ pub fn provider(
     serving: Option<Served>,
     unasked: &'static str,
     auth: ProviderAuth<'_>,
+    http: &HttpTurns,
 ) -> Result<Box<dyn Provider>, AppError> {
     let Some(serving) = serving else {
         return Ok(Box::new(Unavailable::new(unasked)));
     };
 
-    (serving.build)(wiring(serving, auth)?)
+    (serving.build)(wiring(serving, auth, http)?)
 }
 
 /// The wiring one record's factories are handed, resolved from the settings.
-fn wiring(serving: Served, auth: ProviderAuth<'_>) -> Result<Wiring<'_>, AppError> {
+fn wiring<'a>(
+    serving: Served,
+    auth: ProviderAuth<'a>,
+    http: &'a HttpTurns,
+) -> Result<Wiring<'a>, AppError> {
     let named = serving.name;
     Ok(Wiring {
         named,
         variable: auth.settings.api_key_env(named).unwrap_or(serving.key),
         sending: sending_to(auth.settings, named)?,
+        http,
         auth,
     })
 }
@@ -548,7 +619,7 @@ pub fn anthropic(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
             wiring.auth.from,
             wiring.auth.stored.get(wiring.named),
         )?,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -578,7 +649,7 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(Moonshot::at(
         endpoint,
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -597,7 +668,7 @@ pub fn google(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
             wiring.auth.from,
             wiring.auth.stored.get(wiring.named),
         )?,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -620,7 +691,7 @@ pub fn openai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     Ok(Box::new(OpenAi::at(
         endpoint,
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -748,7 +819,7 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
         stored: startup.stored,
         subscriptions: startup.subscriptions,
     };
-    let Ok(wiring) = wiring(serving, auth) else {
+    let Ok(wiring) = wiring(serving, auth, startup.services.http()) else {
         return Reaching::nothing();
     };
 
@@ -769,7 +840,7 @@ pub fn anthropic_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     Reaching::both(Arc::new(AnthropicWeb::new(
         wiring.sending.unwrap_or(Anthropic::VENDOR),
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
         model,
     )))
 }
@@ -787,7 +858,7 @@ pub fn google_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     let web = Arc::new(GoogleWeb::new(
         wiring.sending.unwrap_or(Google::VENDOR),
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
         model,
     ));
     Reaching {
@@ -828,7 +899,7 @@ pub fn openai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
     Reaching::both(Arc::new(OpenAiWeb::new(
         endpoint,
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
         model,
     )))
 }
@@ -861,7 +932,7 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
 
     Reaching::both(Arc::new(MoonshotWeb::new(
         credential,
-        Box::new(Https::new()),
+        Box::new(wiring.http.clone()),
     )))
 }
 
@@ -957,10 +1028,11 @@ fn tools(
     tools.add_builtin(Edit::new(workspace.clone()))?;
     tools.add_builtin(Write::new(workspace.clone(), seen.clone()))?;
 
-    // The `env` block goes to the commands crucible runs and nowhere else.
-    // crucible cannot put a variable in its own environment — writing to one is
-    // `unsafe` in edition 2024 — and would not want to: what the block is for
-    // is what `cargo test` sees, not what this process sees.
+    // The whole `env` block goes to the commands crucible runs. crucible does
+    // not put a variable in its own environment, because writing to one is
+    // `unsafe` in a process with threads. It reads the `CRUCIBLE_CODE_`
+    // settings the block also holds as settings, and a variable of the same
+    // name in the environment crucible was started in wins over the block.
     // And the other end of the row under the box. The clone shares one registry
     // rather than copying it, which is what lets the caller show what is running
     // and stop one — and what makes the caller's copy the thing that ends them all.

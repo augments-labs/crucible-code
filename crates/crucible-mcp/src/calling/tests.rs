@@ -5,9 +5,10 @@ use std::{fmt::Write as _, io::Cursor};
 
 use serde_json::{Value, json};
 
-use super::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call};
+use super::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call, call_async};
 use crate::catalogue::{hello, tools};
 use crate::talking::Talking;
+use crate::testing::runtime;
 
 /// A server's side of the conversation, one frame per line.
 fn script(frames: &[Value]) -> String {
@@ -78,6 +79,25 @@ fn called(answer: Value, arguments: &Value) -> (Result<Answered, Unanswered>, Ve
             .expect("the catalogue carried a tool")
             .clone();
         call(&mut talking, &tool, arguments)
+    };
+    (answered, spoken(&said))
+}
+
+/// Greets a server and reads its catalogue as [`called`] does, and then calls
+/// the tool it offered, awaited.
+fn called_async(answer: Value, arguments: &Value) -> (Result<Answered, Unanswered>, Vec<Value>) {
+    let mut frames = opening().to_vec();
+    frames.push(answer);
+    let mut said = Vec::new();
+    let answered = {
+        let mut talking = Talking::new(Cursor::new(script(&frames)), &mut said);
+        let greeting = hello(&mut talking).expect("these scripts open agreeably");
+        let offered = tools(&mut talking, &greeting).expect("these scripts offer one tool");
+        let tool = offered
+            .first()
+            .expect("the catalogue carried a tool")
+            .clone();
+        runtime().block_on(call_async(&mut talking, &tool, arguments))
     };
     (answered, spoken(&said))
 }
@@ -287,5 +307,47 @@ fn a_result_that_says_it_failed_in_words_crucible_cannot_read_is_read_as_failed(
 
         let answered = answered.expect("the server answered");
         assert!(answered.failed(), "{said}");
+    }
+}
+
+#[test]
+fn an_awaited_call_comes_to_what_a_waited_one_does_on_every_answer() {
+    // What a result is bounded to, cut to and hidden in is the reading of an
+    // answer, not of the stream it came over.
+    let answers = [
+        produced(&json!([text("nothing matched")]), false),
+        produced(&json!([text("first"), text("second")]), false),
+        produced(&json!([text("no such file")]), true),
+        produced(&json!([{ "type": "image", "data": "AAAA" }]), false),
+        json!({ "jsonrpc": "2.0", "id": 3, "result": { "isError": false } }),
+        produced(&json!([text(&"x".repeat(RESULT_BYTES * 2))]), false),
+        produced(
+            &Value::Array((0..BLOCKS * 2).map(|_| text("block")).collect()),
+            false,
+        ),
+        produced(&json!([text(&"y".repeat(RESULT_BYTES))]), false),
+        json!({ "jsonrpc": "2.0", "id": 3, "result": { "content": [text("here")] } }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": { "content": [text("no such file")], "isError": "yes" },
+        }),
+        json!({ "jsonrpc": "2.0", "id": 3, "error": { "code": -32602, "message": "no" } }),
+        json!({ "jsonrpc": "2.0", "id": 7, "result": { "content": [] } }),
+    ];
+    for answer in answers {
+        let arguments = json!({ "query": "sandbox" });
+        let (waited, waited_said) = called(answer.clone(), &arguments);
+        let (awaited, awaited_said) = called_async(answer.clone(), &arguments);
+
+        assert_eq!(
+            format!("{awaited:?}"),
+            format!("{waited:?}"),
+            "what {answer} came to"
+        );
+        assert_eq!(
+            awaited_said, waited_said,
+            "what crucible said before {answer}"
+        );
     }
 }

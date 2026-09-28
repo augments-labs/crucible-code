@@ -8,9 +8,9 @@
 //! A closed set, deliberately. Adding an event must break every `match` that
 //! decides how to draw one.
 
-use crucible_core::{
-    Looking, ProviderError, Spend, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote,
-};
+use crucible_models::ProviderError;
+use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
+use crucible_types::Spend;
 use crucible_types::{
     Ancestry, Attachment, ContextError, RunId, StopReason, ToolCall, ToolId, TurnId,
 };
@@ -30,15 +30,15 @@ pub enum TurnError {
 
     /// The exact provider-facing stable prefix could not be described safely.
     #[error(transparent)]
-    PromptCacheProjection(#[from] crucible_core::PromptCacheProjectionError),
+    PromptCacheProjection(#[from] crucible_models::PromptCacheProjectionError),
 
     /// Prompt-cache policy required a control that could not be prepared.
     #[error(transparent)]
-    PromptCachePreparation(#[from] crucible_core::PromptCachePreparationError),
+    PromptCachePreparation(#[from] crucible_models::PromptCachePreparationError),
 
     /// An explicitly authorized persistent cache resource could not be prepared.
     #[error(transparent)]
-    PromptCacheResource(#[from] crucible_core::PromptCacheResourceError),
+    PromptCacheResource(#[from] crucible_types::PromptCacheResourceError),
 
     /// The provider failed.
     #[error(transparent)]
@@ -105,7 +105,7 @@ pub enum TurnError {
 
 /// Where a worker reports what happened.
 ///
-/// A trait for the same reason [`crucible_core::Ask`] is one: the runner drives it and
+/// A trait for the same reason [`crucible_tools::Ask`] is one: the runner drives it and
 /// must not name what is on the other end. The wiring decides that — a channel
 /// in the binary, a vector in a test — and what travels is an
 /// [`EventEnvelope`], so a destination that only draws can drop the attribution
@@ -238,7 +238,7 @@ pub enum Event {
     /// One bounded immutable prompt-cache preparation or provider fact.
     PromptCache {
         /// The typed fact; ancestry is supplied by the surrounding envelope.
-        fact: crucible_core::PromptCacheFact,
+        fact: crucible_types::PromptCacheFact,
     },
 
     /// One bounded sandbox lifecycle fact for a tool invocation.
@@ -246,7 +246,7 @@ pub enum Event {
         /// The fixed provider call identity that owns the sandbox.
         call: ToolId,
         /// Redacted typed fact; ancestry is supplied by the envelope.
-        fact: crucible_core::SandboxFact,
+        fact: crucible_sandbox::SandboxFact,
     },
 
     /// Prose arrived from the model.
@@ -345,7 +345,7 @@ pub enum Event {
     /// rather than sit still for the length of one request.
     Compacting {
         /// What asked for it.
-        why: crucible_core::Compacting,
+        why: crucible_types::Compacting,
         /// How much of the notes has been written, as a percentage of the room
         /// they were given.
         ///
@@ -360,7 +360,7 @@ pub enum Event {
     /// Room was made, and by how much.
     Compacted {
         /// What it took.
-        compacted: crucible_core::Compacted,
+        compacted: crucible_types::Compacted,
     },
 
     /// What the turn has spent so far, every response of it added up.
@@ -432,7 +432,7 @@ pub enum Event {
 
 /// By hand, because two variants carry conversation text of their own and they
 /// go opposite ways: a steered line is the reader's, redacted the way
-/// [`crucible_core::Message::User`] redacts the same words, while a delta's prose is
+/// [`crucible_types::Message::User`] redacts the same words, while a delta's prose is
 /// deliberately shown — it is the model's own prose on its way to the screen.
 /// Everything else delegates, and what needs redacting redacts itself.
 impl std::fmt::Debug for Event {
@@ -566,7 +566,7 @@ mod tests {
         let event = Event::Aged {
             files: Box::new([Attachment {
                 path: "/home/aged-debug-canary/holiday.png".into(),
-                modality: crucible_core::Modality::Image,
+                modality: crucible_types::Modality::Image,
                 media_type: "image/png".into(),
                 hash: [0; 32],
             }]),

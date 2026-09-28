@@ -12,16 +12,23 @@
 //! thought it was making. A far end that cannot frame what it says is not a far
 //! end crucible can keep talking to.
 //!
-//! Still no processes here. `R` and `W` are any reader and writer, so every way
-//! a conversation can end is reachable from a test with two byte buffers.
-
-use std::io::{BufRead, Write};
+//! Still no processes here. `R` and `W` are any reader and writer that can be
+//! awaited, so every way a conversation can end is reachable from a test with
+//! two byte buffers.
+//!
+//! Everything that waits here is awaited, and every wait can be given up on by
+//! dropping it. Giving up on a read loses nothing: what had arrived of a frame
+//! stays with the reader for the next turn. Giving up on a send is different,
+//! because a frame dropped partway leaves its first half on the wire for the
+//! next one to be joined to, so a conversation whose send was given up on is
+//! over, and says so to whatever is asked of it next.
 
 use serde_json::Value;
+use tokio::io::{AsyncBufRead, AsyncWrite};
 
-use crate::calls::CallError;
+use crate::calls::{Call, CallError, Generation};
 use crate::conversation::{Broken, Conversation, Next};
-use crate::spoken::{CallId, Outcome, Spoken, SpokenError};
+use crate::spoken::{Outcome, Spoken, SpokenError};
 use crucible_transport::{FrameError, Frames, Written};
 
 /// Why a conversation is over.
@@ -65,12 +72,14 @@ pub enum Over {
         source: FrameError,
     },
 
-    /// This conversation ended already, and the first ending said why.
+    /// This conversation ended already: the first ending said why, or it was
+    /// a frame crucible was sending when the send was given up on.
     ///
     /// Every other ending leaves the reader without a boundary it trusts or
-    /// the two ends disagreeing about which calls exist. Neither is something
-    /// the bytes after it can settle, so asking for another turn gets this
-    /// rather than whatever the extension went on to say.
+    /// the two ends disagreeing about which calls exist, and a send given up on
+    /// leaves the far end reading a frame that never finished. None of those is
+    /// something the bytes after it can settle, so asking for another turn gets
+    /// this rather than whatever the extension went on to say.
     #[error("this conversation is already over")]
     Finished,
 }
@@ -88,8 +97,8 @@ pub enum Turn<T> {
 
     /// The extension is asking for something and is owed one answer.
     Asked {
-        /// Which call to answer.
-        id: CallId,
+        /// Which call to answer, in this conversation's generation.
+        id: Call,
         /// What is being asked for.
         method: Box<str>,
         /// What rides with it, still unread.
@@ -114,20 +123,27 @@ pub struct Speaking<R, W, T> {
     to: Written<W>,
     /// Which calls are in flight.
     talk: Conversation<T>,
-    /// Whether an ending has already been reported.
+    /// Whether an ending has already been reported, or a send is unfinished.
     over: bool,
 }
 
-impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
-    /// Speaks to an extension that reads from `to` and writes to `from`.
+impl<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin, T> Speaking<R, W, T> {
+    /// Speaks to `generation` of an extension that reads from `to` and writes
+    /// to `from`.
     #[must_use]
-    pub const fn new(from: R, to: W) -> Self {
+    pub(crate) const fn new(from: R, to: W, generation: Generation) -> Self {
         Self {
             frames: Frames::new(from),
             to: Written::new(to),
-            talk: Conversation::new(),
+            talk: Conversation::new(generation),
             over: false,
         }
+    }
+
+    /// The reader underneath, for what only it can be asked: how long a wait
+    /// on it may be and where one exchange ends.
+    pub(crate) const fn heard_mut(&mut self) -> &mut R {
+        self.frames.stream_mut()
     }
 
     /// The next thing the extension said that the host has to act on.
@@ -142,12 +158,20 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
     /// extension stopped, because it said something unreadable, or because the
     /// two ends stopped agreeing about which calls exist. Whatever crucible was
     /// still waiting on is collected with [`Speaking::ended`].
-    pub fn turn(&mut self) -> Result<Turn<T>, Over> {
+    ///
+    /// # Cancel safety
+    ///
+    /// Dropped while it waits for the extension, it loses nothing, provided
+    /// `R` loses nothing when a fill is dropped: the next turn carries on from
+    /// whatever had arrived. Dropped while it sends a refusal, it leaves the
+    /// conversation over, because part of that frame may already be on the
+    /// wire.
+    pub async fn turn(&mut self) -> Result<Turn<T>, Over> {
         loop {
             if self.over {
                 return Err(Over::Finished);
             }
-            match self.next() {
+            match self.next().await {
                 // A refusal is crucible's own word about a call it declined,
                 // and a late answer is one it gave up on. Both go no further:
                 // there is nothing about a call crucible did not take on, or
@@ -163,10 +187,11 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
     }
 
     /// One frame, which is a turn, a refusal crucible has now sent, or an end.
-    fn next(&mut self) -> Result<Option<Turn<T>>, Over> {
+    async fn next(&mut self) -> Result<Option<Turn<T>>, Over> {
         let frame = self
             .frames
-            .next_frame()
+            .next_frame_async()
+            .await
             .ok_or(Over::Silent)?
             .map_err(|source| Over::Unreadable { source })?;
         let spoken = Spoken::read(&frame).map_err(|source| Over::Misspoken { source })?;
@@ -175,16 +200,26 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
             Next::Asked { id, method, params } => Ok(Some(Turn::Asked { id, method, params })),
             Next::Told { method, params } => Ok(Some(Turn::Told { method, params })),
             Next::Late { .. } => Ok(None),
-            Next::Refuse(refusal) => self.send(&refusal).map(|()| None),
+            Next::Refuse(refusal) => self.send(&refusal).await.map(|()| None),
             Next::Stop(source) => Err(Over::Broke { source }),
         }
     }
 
     /// Puts one thing crucible said on the wire.
-    fn send(&mut self, spoken: &Spoken) -> Result<(), Over> {
+    ///
+    /// The conversation counts as over until the whole frame has gone, so a
+    /// send dropped partway leaves it over rather than leaving the next frame
+    /// to be read as the end of this one. A frame that could not go out leaves
+    /// it over too: the far end is waiting on something it will never hear, so
+    /// there is no state in which carrying on is honest.
+    async fn send(&mut self, spoken: &Spoken) -> Result<(), Over> {
+        self.over = true;
         self.to
-            .send(&spoken.written())
-            .map_err(|source| Over::Unanswerable { source })
+            .send_async(&spoken.written())
+            .await
+            .map_err(|source| Over::Unanswerable { source })?;
+        self.over = false;
+        Ok(())
     }
 
     /// Starts a call of crucible's own and sends it.
@@ -193,12 +228,17 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
     ///
     /// [`CallError`] where crucible is already waiting on as many calls as it
     /// allows, and [`Over::Unanswerable`] where the frame could not be sent.
-    pub fn ask(
+    ///
+    /// # Cancel safety
+    ///
+    /// None. The call is taken on before it is sent, so one dropped partway
+    /// comes back from [`Speaking::ended`], and the conversation is over.
+    pub async fn ask(
         &mut self,
         method: impl Into<Box<str>>,
         params: Value,
         about: T,
-    ) -> Result<CallId, Asking> {
+    ) -> Result<Call, Asking> {
         if self.over {
             return Err(Asking::Over(Over::Finished));
         }
@@ -206,7 +246,7 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
             .talk
             .ask(method, params, about)
             .map_err(Asking::Refused)?;
-        self.said(&spoken)?;
+        self.send(&spoken).await.map_err(Asking::Over)?;
         Ok(id)
     }
 
@@ -216,12 +256,17 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
     ///
     /// [`CallError::Unknown`] where that is not a call crucible took on, and
     /// [`Over::Unanswerable`] where the frame could not be sent.
-    pub fn answer(&mut self, id: CallId, outcome: Outcome) -> Result<(), Asking> {
+    ///
+    /// # Cancel safety
+    ///
+    /// None. Dropped partway, the call counts as answered and the
+    /// conversation is over.
+    pub async fn answer(&mut self, call: Call, outcome: Outcome) -> Result<(), Asking> {
         if self.over {
             return Err(Asking::Over(Over::Finished));
         }
-        let spoken = self.talk.answer(id, outcome).map_err(Asking::Refused)?;
-        self.said(&spoken)
+        let spoken = self.talk.answer(call, outcome).map_err(Asking::Refused)?;
+        self.send(&spoken).await.map_err(Asking::Over)
     }
 
     /// Stops waiting on a call crucible made, handing back what it remembered.
@@ -236,26 +281,15 @@ impl<R: BufRead, W: Write, T> Speaking<R, W, T> {
     ///
     /// [`Asking::Refused`] where that is not a call crucible is waiting on,
     /// and [`Asking::Over`] once the conversation has ended.
-    pub fn give_up(&mut self, id: CallId) -> Result<T, Asking> {
+    pub fn give_up(&mut self, call: Call) -> Result<T, Asking> {
         if self.over {
             return Err(Asking::Over(Over::Finished));
         }
-        self.talk.give_up(id).map_err(Asking::Refused)
-    }
-
-    /// Sends what crucible owes, ending the conversation where it cannot.
-    ///
-    /// A frame that could not go out leaves the far end waiting on something it
-    /// will never hear, so there is no state in which carrying on is honest.
-    fn said(&mut self, spoken: &Spoken) -> Result<(), Asking> {
-        self.send(spoken).map_err(|over| {
-            self.over = true;
-            Asking::Over(over)
-        })
+        self.talk.give_up(call).map_err(Asking::Refused)
     }
 
     /// Everything crucible was still waiting on, now that nothing will answer.
-    pub fn ended(&mut self) -> Vec<(CallId, T)> {
+    pub fn ended(&mut self) -> Vec<(Call, T)> {
         self.talk.ended()
     }
 }

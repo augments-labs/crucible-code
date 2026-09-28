@@ -1,7 +1,8 @@
 //! What making room changes, preserves, and reports.
 
+use super::waiting::{Slow, Waits};
 use super::*;
-use crucible_core::TOOL_RESULT_BYTES;
+use crucible_types::TOOL_RESULT_BYTES;
 
 /// A response that reports it carried `carried` tokens and then calls a tool.
 fn carrying(carried: u64, id: &str) -> Vec<Delta> {
@@ -655,6 +656,90 @@ fn a_full_window_prunes_tool_output_from_the_active_turn_and_carries_on() {
 }
 
 #[test]
+fn a_pruning_the_session_waits_to_take_is_in_the_log_before_the_turn_asks_again() {
+    // The window of the test above, over a session that waits before it
+    // takes the pruning's line. The turn carries on once the log has it.
+    let script = Script::new(vec![
+        calling("a", "read", "{}"),
+        calling("b", "read", "{}"),
+        calling("c", "read", "{}"),
+        saying("asked once there was room"),
+    ]);
+    let output = "x".repeat(90_000);
+    let store = Recording::started("making room");
+    let mut scripted = Scripted::recording(
+        script,
+        tools([Fixed::new("read").answering(&output)]),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    scripted.runner.store = Arc::new(Slow {
+        recording: Arc::clone(&store),
+        waits: Waits::Pruned,
+    });
+    scripted.runner.state.window = Some(25_000);
+    scripted.runner.policy.compaction = Compaction {
+        reserve: Some(1),
+        ..Compaction::default()
+    };
+
+    let turned = scripted.turn("go");
+
+    assert_eq!(turned.unwrap(), StopReason::Yielded);
+    let kept = store.kept();
+    let pruned = kept
+        .iter()
+        .position(|one| matches!(one, Kept::Pruned { .. }));
+    let answered = kept.iter().position(
+        |one| matches!(one, Kept::Said(Message::Agent { text, .. }) if text.contains("asked once")),
+    );
+    assert!(
+        pruned.is_some() && pruned < answered,
+        "the pruning's line was not written before the answer it made room for: {kept:?}"
+    );
+}
+
+#[test]
+fn a_pruning_line_the_session_waits_to_take_while_stopping_is_still_written() {
+    // The pruning has cleared results from what the model is sent before the
+    // stop is heard, so its line is written whether or not the compaction
+    // goes on to a recap.
+    let script = Script::new(vec![
+        calling("a", "read", "{}"),
+        calling("b", "read", "{}"),
+        calling("c", "read", "{}"),
+        saying("done"),
+    ]);
+    let output = "x".repeat(90_000);
+    let store = Recording::started("making room");
+    let mut scripted = Scripted::recording(
+        script,
+        tools([Fixed::new("read").answering(&output)]),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    scripted
+        .turn("go")
+        .expect("a turn whose results a pruning can clear");
+    scripted.runner.store = Arc::new(Slow {
+        recording: Arc::clone(&store),
+        waits: Waits::Pruned,
+    });
+    scripted.cancel.request();
+
+    let compacted = scripted.compacting();
+
+    assert!(compacted.is_ok(), "{compacted:?}");
+    assert!(
+        store
+            .kept()
+            .iter()
+            .any(|one| matches!(one, Kept::Pruned { .. })),
+        "the pruning's line was not written"
+    );
+}
+
+#[test]
 fn a_full_window_recaps_a_complete_active_turn_when_pruning_cannot_help() {
     // Provider prose cannot be pruned. Once the response that produced it has
     // completed and the turn is between passes, recapping that complete active
@@ -1166,10 +1251,12 @@ fn a_pass_is_measured_against_the_room_its_own_run_holds() {
                     attachments: Box::new([]),
                 },
             )
+            .awaited()
             .expect("valid fixture transcript");
         scripted
             .runner
             .exchange(&mut scripted.says, &run)
+            .awaited()
             .expect("a turn");
     }
 
@@ -1242,6 +1329,7 @@ fn the_room_a_compaction_reports_is_read_off_the_run_that_asked() {
     scripted
         .runner
         .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .awaited()
         .expect("a structured recap");
 
     let reported = scripted
@@ -1306,6 +1394,7 @@ fn a_recap_is_held_to_the_output_ceiling_the_session_set() {
     scripted
         .runner
         .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .awaited()
         .expect("a structured recap");
 
     assert_eq!(
@@ -1345,6 +1434,7 @@ fn the_recap_boundary_is_chosen_by_the_keep_figure_the_run_asked_for() {
     let room = scripted
         .runner
         .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .awaited()
         .expect("a compaction");
 
     let Room::Made(compacted) = room else {
@@ -1392,6 +1482,7 @@ fn a_recap_is_held_to_the_output_ceiling_the_run_asked_for() {
     scripted
         .runner
         .compact(Compacting::Asked, &asking, &mut Spend::default())
+        .awaited()
         .expect("a structured recap");
 
     assert_eq!(
@@ -1512,6 +1603,7 @@ fn a_session_that_never_compacts_holds_nothing_back_from_its_window_reading() {
     scripted
         .runner
         .record(Ancestry::new(), Message::said("x".repeat(150_000)))
+        .awaited()
         .expect("valid fixture transcript");
 
     let never = scripted.runner.left();
@@ -1545,6 +1637,7 @@ fn a_session_told_something_longer_reads_its_window_as_fuller_at_once() {
     scripted
         .runner
         .record(Ancestry::new(), Message::said("x".repeat(150_000)))
+        .awaited()
         .expect("valid fixture transcript");
     scripted.runner.telling("mind the workspace");
 

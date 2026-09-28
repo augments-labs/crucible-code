@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.42.0"
+version = "0.43.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
@@ -43,9 +43,9 @@ crucible-builtins = { path = "crates/crucible-builtins" }
 crucible-client-api = { path = "crates/crucible-client-api" }
 crucible-config = { path = "crates/crucible-config" }
 crucible-context = { path = "crates/crucible-context" }
-crucible-core = { path = "crates/crucible-core" }
 crucible-credentials = { path = "crates/crucible-credentials" }
 crucible-extension = { path = "crates/crucible-extension" }
+crucible-http = { path = "crates/crucible-http" }
 crucible-mcp = { path = "crates/crucible-mcp" }
 crucible-models = { path = "crates/crucible-models" }
 crucible-privacy = { path = "crates/crucible-privacy" }
@@ -67,6 +67,7 @@ crucible-tools = { path = "crates/crucible-tools" }
 crucible-transport = { path = "crates/crucible-transport" }
 crucible-tui = { path = "crates/crucible-tui" }
 crucible-types = { path = "crates/crucible-types" }
+crucible-update = { path = "crates/crucible-update" }
 crucible-workspace = { path = "crates/crucible-workspace" }
 
 # The executor work in flight is owned by. `std` has threads but no way to own a
@@ -144,7 +145,7 @@ two-face = { version = "=0.5.2", default-features = false, features = [
 insta = "=1.48.0"
 
 # The terminal itself. One thing genuinely needs it: the ioctl that reports the
-# window size, which is an `unsafe` libc call this workspace forbids writing by
+# window size, which is an `unsafe` libc call this workspace denies writing by
 # hand. The escape sequences the renderer emits are plain ANSI, so `crossterm`
 # stays confined to one file behind the `Terminal` trait and swapping it out is
 # a day, not a rewrite. A full-screen renderer would also want its raw mode,
@@ -158,18 +159,43 @@ insta = "=1.48.0"
 crossterm = { version = "=0.29.0", default-features = false, features = ["events", "windows", "bracketed-paste"] }
 
 # The sandbox's host proxy parses bounded HTTP/1 headers and chunk framing with
-# caller-owned buffers; std has no HTTP parser. Already used by ureq-proto.
+# caller-owned buffers; std has no HTTP parser. Already in the tree under
+# `hyper`, which parses every request and response head it is handed.
 httparse = "=1.10.1"
 # URI authorities and header names at the proxy boundary need a complete HTTP
-# grammar, including bracketed IPv6 and absolute-form targets. Already in ureq.
+# grammar, including bracketed IPv6 and absolute-form targets. Already in the
+# tree under `hyper` and `http-body`.
 http = "=1.5.0"
 
-# HTTP. Blocking by design. Brings `rustls` rather than linking a system
-# OpenSSL, so a release binary is the same on every machine. Confined to one
-# file behind `Transport`. Default features minus `gzip`: a response here is an
-# event stream that is read as it arrives, and compressing one buys nothing for
-# the `flate2` it costs.
-ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+# HTTP, asynchronously: a client whose request waits on the runtime rather than
+# on a thread of its own. `hyper` is the
+# HTTP/1.1 framing, the response head's size limits and the close of a
+# connection whose request was dropped; `http1` alone, so no HTTP/2 is compiled.
+# `std` has sockets and no HTTP.
+hyper = { version = "=1.11.1", default-features = false, features = ["client", "http1"] }
+# The pooled client over `hyper`, and the connector that takes a custom
+# resolver: the seam where `crucible-http` applies a lookup's deadline and
+# bound. `client-legacy` is that client and connector, and the `CONNECT`
+# tunnel a proxy is reached through; the environment proxy matcher
+# (`client-proxy`) and the platform proxy discovery are not compiled, because
+# neither chooses a proxy the way the client before this one did. `tokio`
+# joins them to tokio's sockets.
+hyper-util = { version = "=0.1.20", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+# The trait a connector is written against, which the client above names in
+# its bounds. Already in its graph; named here so a connector can implement it.
+tower-service = "=0.3.3"
+# TLS. One stack, in Rust, over `ring` rather than the default `aws-lc-rs`, a C
+# library this tree does not build; TLS 1.2 is kept beside 1.3 as it was before.
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "tls12", "ring"] }
+# The same TLS over an asynchronous socket: the reads, writes, wakeups and
+# close-notify a handshake and its records need, which `rustls` leaves to its
+# caller. Default features off for the same reason as above.
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
+# The Mozilla root set a server's certificate is checked against, compiled in:
+# no system store, bundle or platform verifier is read, so a certificate is
+# trusted the same way on every machine. Named here for `crucible-http`, the one
+# crate that builds a client to verify a recipient.
+webpki-roots = "=1.0.9"
 
 # JWT claims are base64url without padding. OpenAI subscription login needs the
 # selected ChatGPT account id from that bounded claim set; this decoder is
@@ -177,7 +203,8 @@ ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 # the credential boundary. The three wire protocols need the same codec the
 # other way, because every one of them carries an attached file as base64 text,
 # and this encoder appends into the body being built rather than returning a
-# second copy of a request's worth of bytes.
+# second copy of a request's worth of bytes. A forward proxy's user information
+# is encoded with it too, and sent to the proxy as a `Basic` credential.
 base64 = "=0.23.1"
 
 # OAuth PKCE and stable installation identifiers need bytes from the operating
@@ -254,15 +281,21 @@ unicode-width = "=0.2.2"
 # that is `kill` on a negated process group id — which `std` has no call for
 # either. It is a separate feature, so the manifests turning it on are the list
 # of crates that may make that call.
-rustix = { version = "=1.1.4", features = ["fs"] }
+rustix = { version = "=1.1.5", features = ["fs"] }
 
 # Compiles the bounded Linux seccomp program without hand-maintained BPF or
 # syscall tables. The broker applies the prebuilt program only in the final
 # workload child, where bind/listen and io_uring network setup are forbidden.
 seccompiler = { version = "=0.5.0", default-features = false }
 
-# Supplies kernel syscall numbers seccompiler does not name on every supported
-# Linux architecture; the workspace already locks this exact libc.
+# Names the platform constants a `std` call takes as a raw integer and never
+# spells: the `O_NONBLOCK` open flag `std` carries but does not name, for
+# crucible-config, and the kernel syscall numbers seccompiler does not name on
+# every supported Linux architecture, for crucible-sandbox-broker. Neither
+# makes a call through it. The binary makes one: `mallopt`, fixing glibc's
+# threshold for handing a freed block back to the system, which `std` has no
+# way to reach. The same libc is already compiled for tokio, mio and the other
+# crates that reach the platform through it, so these uses add no build.
 libc = "=0.2.189"
 
 # Being told to stop from outside. A closed window or a `kill` arrives as a
@@ -275,17 +308,17 @@ libc = "=0.2.189"
 # call that afterwards ends the process the way the signal would have. Unix
 # only. Already in the tree under `crossterm` at this version with more turned
 # on than this, so nothing new is compiled.
-signal-hook = { version = "=0.3.18", default-features = false }
+signal-hook = { version = "=0.4.4", default-features = false }
 
 # Windows has no file mode, so the 0600 a session log is held at has to be
 # written as a DACL instead: one entry, for the account crucible is running as,
 # with the inheritance from the user profile switched off. Nothing in `std`
 # reaches that call and no safe wrapper is maintained — the one on crates.io was
 # last published in 2021, which is not what security-critical code should be
-# resting on. Already in the tree as a transitive dependency of `ureq` and
-# `ignore` for Windows targets, so it costs no crate that was not being compiled
-# already. Every call stays behind the target-gated boundary of the crate that
-# made it; the manifests naming this crate are the list of those boundaries.
+# resting on. Already in the tree for Windows targets under `hyper`, `tokio` and
+# `ignore`, so it costs no crate that was not being compiled already. Every call
+# stays behind the target-gated boundary of the crate that made it; the
+# manifests naming this crate are the list of those boundaries.
 # The WDK file-system surface contributes the one ntdll rename call whose
 # directory-relative contract the Win32 wrapper does not honor consistently;
 # JobObjects, ToolHelp and Pipes contain and poll spawned command descendants.
@@ -326,9 +359,9 @@ windows-sys = { version = "=0.61.2", features = [
 # `forbid` cannot be opted out of anywhere, so it would have moved that code
 # into a third-party crate rather than removed it, which is the same unsafe with
 # less review. `deny` keeps every file in this tree an error by default and
-# makes the one exception appear in the diff, spelled out, where it can be
-# argued with. Only the privacy, workspace-validation, atomic-file and Windows
-# process-boundary modules opt in.
+# makes each exception appear in the diff that introduces it, spelled out,
+# where it can be argued with. Each is written where it applies, with its
+# own stated `reason`.
 unsafe_code = "deny"
 missing_docs = "warn"
 missing_debug_implementations = "warn"
@@ -408,6 +441,18 @@ path = "src/main.rs"
 # drawn here or nowhere.
 [dependencies]
 arboard.workspace = true
+# Two unrelated features, one entry: `rt-multi-thread` and `time` are the
+# runtime the tools and grep probes build for themselves, shaped as the
+# application's — several threads and a clock. Each waits on it for the calls
+# it times, lends those calls a tool worker on it, and the tools probe watches
+# its sandbox command on it. `net` is the I/O driver that command's output is
+# read through on Unix, as the application's runtime has it. The command line
+# itself names none of that runtime; it reaches the application's own through
+# `crucible-app`. `sync` is the one-shot channel a pending permission question
+# or ask answers through: a human's reply is human-length, so the drawing
+# thread that holds the sending half must be able to hand it over without the
+# turn thread blocking inside a poll to receive it.
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync", "time"] }
 # The composition root: every concrete provider, tool, server and session a run
 # is assembled from, and the conversation the command line then drives. The
 # command line adapts it to a terminal and adds nothing to it.
@@ -421,10 +466,22 @@ crucible-auth.workspace = true
 crucible-builtins.workspace = true
 crucible-config.workspace = true
 crucible-context.workspace = true
-crucible-core.workspace = true
+# The values, contracts and path proofs the command line hands across and draws,
+# each named from the crate that owns it.
+crucible-models.workspace = true
+crucible-registry.workspace = true
+crucible-sandbox.workspace = true
+crucible-types.workspace = true
+crucible-workspace.workspace = true
 crucible-privacy.workspace = true
 crucible-provider.workspace = true
+# Release discovery and the cached release check, composed by the application
+# and read by the command line's opening path.
+crucible-update.workspace = true
 crucible-runner.workspace = true
+# The future an asynchronous contract hands back, which the command line and
+# its probes implement, and the controls a turn is stopped and steered by.
+crucible-runtime.workspace = true
 # The main binary exposes the explicit Windows administrator setup and removal
 # commands from the same audited crate that owns the native broker. Running the
 # already-selected Crucible image directly avoids elevating a mutable sibling
@@ -434,6 +491,11 @@ crucible-sandbox-broker.workspace = true
 # confinement to every tool that runs a command, so no tool has to name an
 # operating system.
 crucible-sandbox-local.workspace = true
+# What a tool call is, what may run one and how it is answered, which the
+# command line draws and asks about in this crate's words; and the tool worker
+# the tools and grep probes lend the calls they time, so what they time
+# includes handing the work to it.
+crucible-tools.workspace = true
 # The file a persistent prompt-cache resource is remembered in. Composition
 # hands the store to the runner, which keeps records through the contract and
 # never names the file.
@@ -453,10 +515,6 @@ sha2.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
-# The same session crate the runner re-exports, with the seam that lets a test
-# hand it a log which fails on every write. Cargo does not resolve
-# dev-dependencies for a build, so this turns the feature on for `cargo test`
-# and for nothing that ships.
 [dev-dependencies]
 # Named by the integration tests alone, which drive the seams these two own from
 # outside: what an extension sweep finds, and what hosting a server comes to.
@@ -464,8 +522,30 @@ thiserror.workspace = true
 # neither, which the repository gate holds it to.
 crucible-extension.workspace = true
 crucible-mcp.workspace = true
+# The credential values and stored records the tests build their fixtures
+# from, named from the crates that own them. Nothing that ships names
+# either.
+crucible-credentials.workspace = true
+crucible-storage.workspace = true
+# The same session crate the runner re-exports, with the seam that lets a test
+# hand it a log which fails on every write. Cargo does not resolve
+# dev-dependencies for a build, so this turns the feature on for `cargo test`
+# and for nothing that ships.
 crucible-session = { workspace = true, features = ["proof"] }
+# The macro a test answers a fake service's future with, for the tests that
+# drive one by hand.
+crucible-runtime = { workspace = true, features = ["proof"] }
+# The confinement the command line runs commands under, keeping its sandbox
+# state in a directory of this checkout's while the integration tests run it, so
+# another checkout's tests never lock, recover or change it. Named here as well
+# as through the application, because a narrow `cargo test -p crucible-code`
+# builds no other package's dev-dependencies.
+crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 insta.workspace = true
+# The runtimes a test waits for a turn on now that a turn is asynchronous: a
+# current-thread one to drive a runner a test holds, and a multi-thread one
+# standing where the application's own runtime stands for a conversation.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 # The Linux benchmark probes run the shipped binary behind a controlling pseudo
 # terminal and render into a bounded kernel pipe, and the one test that runs
@@ -487,6 +567,12 @@ rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
 [target.'cfg(unix)'.dependencies]
 signal-hook.workspace = true
 
+# Keeps glibc from holding on to large blocks once they are freed, which it
+# otherwise does across the threads a turn moves between. Only glibc has that
+# threshold, so only a glibc build names libc here.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc.workspace = true
+
 [lints]
 workspace = true
 
@@ -498,13 +584,14 @@ strip = "symbols"
 # Unwinding, left at the default and written down because the tempting change is
 # to abort: panics are denied by lint here, so the machinery reads as dead
 # weight. It is not. The lint reaches this workspace and not crossterm's reader,
-# ureq, or a failed allocation — and raw mode, mouse reporting and the tab title
-# are handed back by `Drop`, which an abort does not run. The transcript survives
-# either way, being an append-only log already on disk; the terminal does not,
-# and the user's remedy is `reset`, which most people do not know. Unwinding also
-# makes `Fatal::Lost` reachable, so a turn thread that dies becomes an exit code
-# from `main` rather than an abort in the middle of a frame. The price is about
-# 465 KB of landing pads on a 5 MB binary and nothing at run time.
+# hyper's, tokio's, or a failed allocation — and raw mode, mouse reporting and
+# the tab title are handed back by `Drop`, which an abort does not run. The
+# transcript survives either way, being an append-only log already on disk; the
+# terminal does not, and the user's remedy is `reset`, which most people do not
+# know. Unwinding also makes `Fatal::Lost` reachable, so a turn thread that dies
+# becomes an exit code from `main` rather than an abort in the middle of a
+# frame. The price is about 465 KB of landing pads on a 5 MB binary and nothing
+# at run time.
 #
 # `crucible-tui`'s guards refuse to compile against `panic = "abort"`, so this
 # cannot be quietly undone by a profile somewhere else.

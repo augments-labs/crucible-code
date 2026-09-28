@@ -1,6 +1,12 @@
 //! What is kept of a command's output, and what is said about the rest.
 
-use super::{CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, cut};
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crucible_sandbox::{SandboxOutput, SandboxRead};
+
+use super::{CAPTURE_HEAD, Expiry, FRESH, Finished, Kept, OUTPUT, PUBLICATION, Pipe, cut, settle};
 
 #[test]
 fn a_command_stopped_for_running_too_long_says_so_once() {
@@ -211,11 +217,30 @@ fn admitted(
         policy,
         SandboxManifest::empty(),
     );
-    let mut session = crucible_sandbox_local::LocalSandbox::new()
-        .prepare(request)
+    let mut session = crucible_runtime::answered!(crate::sample::sandbox().prepare(request))
         .expect("a prepared session");
-    session.materialize().expect("an empty manifest");
-    session.start(command).expect("the child started")
+    crucible_runtime::answered!(session.materialize()).expect("an empty manifest");
+    crucible_runtime::answered!(session.start(command)).expect("the child started")
+}
+
+#[cfg(unix)]
+#[test]
+fn dropping_a_waited_command_hands_off_before_its_stop_finishes() {
+    let sample = crate::sample::Sample::new("bash-waited-drop");
+    let process = admitted(&sample, "sleep 5", &[]);
+    let runtime = crate::bash::tests::alone();
+    let began = std::time::Instant::now();
+
+    runtime.block_on(async {
+        drop(super::Waited::new(process));
+    });
+
+    assert!(
+        began.elapsed() < std::time::Duration::from_millis(500),
+        "the dropping thread waited for process cleanup: {:?}",
+        began.elapsed()
+    );
+    crate::bash::tests::quiesced(&runtime, "the dropped wait handed off its process");
 }
 
 #[cfg(unix)]
@@ -229,7 +254,107 @@ fn a_live_child_is_never_reaped_with_an_unbounded_wait() {
 
     assert!(status.is_none());
     assert!(started.elapsed() < std::time::Duration::from_millis(500));
-    process.stop().unwrap();
+    crucible_runtime::answered!(process.stop()).unwrap();
+}
+
+/// A real command whose stop future panics when polled: only a stop run on
+/// the thread that holds it can end it.
+#[cfg(unix)]
+struct Unpolled(Box<dyn crucible_sandbox::SandboxProcess>);
+
+#[cfg(unix)]
+impl crucible_sandbox::SandboxProcess for Unpolled {
+    fn take_stdin(&mut self) -> Option<Box<dyn io::Write + Send>> {
+        self.0.take_stdin()
+    }
+
+    fn take_stdout(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stdout()
+    }
+
+    fn take_stderr(&mut self) -> Option<Box<dyn SandboxOutput>> {
+        self.0.take_stderr()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.0.try_wait()
+    }
+
+    fn ended(&mut self) -> bool {
+        self.0.ended()
+    }
+
+    fn stop(&mut self) -> crucible_runtime::BoxFuture<'_, io::Result<()>> {
+        Box::pin(async { panic!("the stop future was polled") })
+    }
+
+    fn stop_sync(&mut self) -> io::Result<()> {
+        self.0.stop_sync()
+    }
+
+    fn inspection(&self) -> &crucible_sandbox::SandboxInspection {
+        self.0.inspection()
+    }
+
+    fn usage(&self) -> crucible_sandbox::SandboxUsage {
+        self.0.usage()
+    }
+
+    fn violation(&self) -> Option<crucible_sandbox::SandboxViolation> {
+        self.0.violation()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_waited_command_is_stopped_without_its_stop_future_being_polled() {
+    let sample = crate::sample::Sample::new("bash-waited-stop");
+    let process = admitted(&sample, "sleep 5", &[]);
+    let runtime = crate::bash::tests::alone();
+    let mut waited = super::Waited::new(Box::new(Unpolled(process)));
+
+    let stopped = runtime
+        .block_on(waited.stop())
+        .expect("the command was stopped");
+
+    assert!(stopped.is_some(), "the stopped command was not reaped");
+}
+
+/// What a command left running when its shell returned is stopped by a stop
+/// run on the thread that holds it.
+#[cfg(unix)]
+#[test]
+fn what_an_exited_command_left_running_is_stopped_without_its_stop_future_being_polled() {
+    let sample = crate::sample::Sample::new("bash-waited-after-exit");
+    let base =
+        std::env::temp_dir().join(format!("crucible-bash-after-exit-{}", std::process::id()));
+    let forked = base.with_extension("forked");
+    let _ = std::fs::remove_file(&base);
+    let _ = std::fs::remove_file(&forked);
+    let mut process = admitted(
+        &sample,
+        "(sleep 0.3; printf x > \"$MARKER\") & printf f > \"$FORKED\"",
+        &[("MARKER", base.as_os_str()), ("FORKED", forked.as_os_str())],
+    );
+    let waiting = std::time::Instant::now();
+    while !forked.exists() || process.try_wait().expect("the shell's status").is_none() {
+        assert!(
+            waiting.elapsed() < std::time::Duration::from_secs(5),
+            "the shell never returned after forking a descendant"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let runtime = crate::bash::tests::alone();
+    let mut waited = super::Waited::new(Box::new(Unpolled(process)));
+
+    let finished = runtime.block_on(waited.finish_after_exit());
+    std::thread::sleep(std::time::Duration::from_millis(450));
+
+    let survived = base.exists();
+    let _ = std::fs::remove_file(&base);
+    let _ = std::fs::remove_file(&forked);
+    finished.expect("what the command left running was stopped");
+    assert!(!survived, "a descendant survived its shell's stop");
 }
 
 /// What a command leaves running does not outlive the command.
@@ -332,4 +457,90 @@ fn nothing_arriving_hands_nothing_over() {
         kept.hand_over().is_empty(),
         "the same bytes were handed twice"
     );
+}
+
+/// A standard output with nothing to read until `over` says the command is,
+/// telling `parked` each time its reader finds nothing and waits.
+struct Quiet {
+    over: Arc<AtomicBool>,
+    parked: std::sync::mpsc::Sender<()>,
+}
+
+impl SandboxOutput for Quiet {
+    fn read_ready(&mut self, _buffer: &mut [u8]) -> io::Result<SandboxRead> {
+        if self.over.load(Ordering::Relaxed) {
+            return Ok(SandboxRead::End);
+        }
+        let _ = self.parked.send(());
+        Ok(SandboxRead::Pending)
+    }
+}
+
+#[test]
+fn a_reader_waiting_on_a_quiet_pipe_is_at_its_end_once_the_pipe_ends() {
+    // A reader waits on its pipe, not out a tick of its own, so the pipe
+    // ending is what finds it: the wait for the readers sees the end rather
+    // than running out, and nothing had to wake the reader for that. Nothing
+    // here is measured against a clock beyond `settle`'s own bound: either the
+    // reader got there or it did not.
+    let over = Arc::new(AtomicBool::new(false));
+    let (parked, parking) = std::sync::mpsc::channel();
+    let quiet = Quiet {
+        over: Arc::clone(&over),
+        parked,
+    };
+
+    let ended = crate::bash::tests::awaited(async {
+        let on = tokio::runtime::Handle::current();
+        let out = Pipe::drain(Some(Box::new(quiet)), &on);
+        let err = Pipe::drain(None, &on);
+        parking
+            .recv_timeout(PUBLICATION)
+            .expect("the reader looked at the pipe once");
+        over.store(true, Ordering::Relaxed);
+        settle(&out, &err).await
+    });
+
+    assert!(ended, "the reader was not at the end of a pipe that ended");
+}
+
+#[test]
+fn a_reader_given_up_on_is_gone_from_its_runtime() {
+    // A pipe held open by something nothing here can end never shows its
+    // end, and its reader would wait on it for as long as the holder lives.
+    // The call gives up on such a reader once the command is over, and an
+    // error path drops it: either way nothing of it may stay on the runtime,
+    // and a reader told to stop is not a reader that failed.
+    let runtime = crate::bash::tests::alone();
+    let (parked, parking) = std::sync::mpsc::channel();
+    let held = Quiet {
+        over: Arc::new(AtomicBool::new(false)),
+        parked,
+    };
+    let (dropped, _dropping) = std::sync::mpsc::channel();
+    let also_held = Quiet {
+        over: Arc::new(AtomicBool::new(false)),
+        parked: dropped,
+    };
+
+    let (ended, closed) = runtime.block_on(async {
+        let on = tokio::runtime::Handle::current();
+        let mut out = Pipe::drain(Some(Box::new(held)), &on);
+        let err = Pipe::drain(Some(Box::new(also_held)), &on);
+        // The one thread is the readers' too, so it is handed to them here
+        // rather than blocked on waiting for them.
+        while parking.try_recv().is_err() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        let ended = settle(&out, &err).await;
+        drop(err);
+        (ended, out.close().await)
+    });
+
+    assert!(!ended, "a pipe that never ends was read to its end");
+    assert!(
+        closed.is_ok(),
+        "a reader told to stop was reported as failing: {closed:?}"
+    );
+    crate::bash::tests::quiesced(&runtime, "its readers were given up on");
 }

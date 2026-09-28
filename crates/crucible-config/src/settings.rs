@@ -10,7 +10,9 @@
 
 use std::fmt;
 
-use crucible_core::{Effort, PromptCachePolicy, Rules};
+use crucible_models::Effort;
+use crucible_tools::Rules;
+use crucible_types::PromptCachePolicy;
 use serde_json::{Map, Value};
 
 use crate::document::Document;
@@ -19,7 +21,7 @@ use crate::shape::{DOCUMENT, Shape};
 
 mod compaction;
 mod input;
-mod layers;
+pub(crate) mod layers;
 pub(crate) mod mcp;
 mod output;
 mod permissions;
@@ -161,7 +163,7 @@ impl Settings {
     /// How hard to think, for every turn sent to this provider.
     ///
     /// A rung rather than the word it was written as, because the word is only
-    /// ever one of five and the type that holds them is [`crucible_core`]'s.
+    /// ever one of five and the type that holds them is [`Effort`]'s.
     /// Nothing under `settings/` owns this one: there is no meaning here beyond
     /// the rung, and the shape is what refuses anything that is not one.
     ///
@@ -194,12 +196,13 @@ impl Settings {
 
     /// The variables the commands crucible runs are started with.
     ///
-    /// Crucible's own environment is not touched and cannot be: writing to it
-    /// is `unsafe` in edition 2024 and this workspace forbids that. So this
-    /// block says what `cargo test` or `git` sees, not what crucible sees —
-    /// crucible's own settings have keys of their own, and the one variable it
-    /// reads before opening a file is refused here outright rather than left to
-    /// look applied.
+    /// Crucible's own environment is not touched: writing to it is `unsafe` in
+    /// edition 2024 and this workspace denies that. So this block says what
+    /// `cargo test` or `git` sees, and crucible reads its own `CRUCIBLE_CODE_`
+    /// settings out of it as settings, below the environment it was started
+    /// in, as [`Self::scroll_speed`] does. The one variable it reads before
+    /// opening a file is refused here outright rather than left to look
+    /// applied.
     pub fn env(&self) -> impl Iterator<Item = (&str, &str)> {
         self.value
             .get("env")

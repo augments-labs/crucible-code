@@ -19,10 +19,10 @@
 
 use std::time::SystemTime;
 
-use crucible_core::Compacting;
 use crucible_runner::Runner;
 use crucible_session::Session;
 use crucible_tui::{Offered, Panel, Renderer, Terminal};
+use crucible_types::Compacting;
 
 use crate::cli::Fatal;
 use crate::cli::draw::{self, when};

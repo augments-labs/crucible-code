@@ -53,15 +53,16 @@ use std::fmt;
 use std::path::Path;
 
 use crucible_builtins::Ended;
-use crucible_core::{
-    Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
-    RecordedToolOutput, Sensitivity, StopReason, Summary, ToolCall, ToolId, ToolOutput, Workspace,
-    written,
-};
 use crucible_runner::{Event, Turned};
+use crucible_tools::{Sensitivity, Summary, ToolOutput};
 use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
+use crucible_types::{
+    Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
+    RecordedToolOutput, StopReason, ToolCall, ToolId,
+};
+use crucible_workspace::{Workspace, written};
 
 use super::converse::Parting;
 use super::kept::Kept;
@@ -549,6 +550,28 @@ pub(crate) fn trouble<T: Terminal>(
         "! this session has stopped being recorded: {}",
         flattened(problem)
     ))
+}
+
+/// Says what panicked on another thread, a line each, and how many more
+/// were not kept.
+///
+/// Worth interrupting for, as a log that stopped recording is: something
+/// stopped while the session went on, and the screen is the one place the
+/// reader will see it.
+pub(crate) fn panicked<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    said: &[String],
+    unkept: usize,
+) -> Result<(), TerminalError> {
+    for one in said {
+        renderer.settle()?;
+        renderer.commit(&format!("! {}", flattened(one)))?;
+    }
+    if unkept > 0 {
+        renderer.settle()?;
+        renderer.commit(&format!("! and {unkept} more panics"))?;
+    }
+    Ok(())
 }
 
 /// Says how to come back, on the screen the session did not run on.

@@ -24,16 +24,31 @@ grep-regex.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
 serde_json.workspace = true
+# Each command left running is owned by a task on the application's runtime,
+# handed in: `rt` is the handle it is spawned onto and the join handle the
+# registry keeps, and `time` is the pause between the task's looks. Nothing here
+# builds a runtime.
+tokio = { workspace = true, features = ["rt", "time"] }
 
 [dev-dependencies]
 # The confinement a command is actually run under. Tools name the service
 # contract and never a machine, so the tests take one machine's answer to it
-# to have anything to run a command through.
-crucible-sandbox-local.workspace = true
+# to have anything to run a command through, in the sandbox state directory of
+# this checkout rather than the one every checkout of this user would share.
+crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 
 # SHA-256 of a finished test result, so its receipt is identified by what it
 # contains rather than by when it was put there.
 sha2.workspace = true
+# `answered!`, which the tests ask a tool's future once with.
+crucible-runtime = { workspace = true, features = ["proof"] }
+
+# The runtime the tests' sandbox watches each command it starts on: several
+# threads of its own, so a command's status task runs while a test waits on
+# it, and the clock that task pauses on. `net` is the I/O driver a command's
+# output is read through on Unix, which a test awaiting a command builds its
+# runtime with, as the application builds its own.
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "time"] }
 
 [target.'cfg(windows)'.dependencies]
 # Windows refuses std::fs::rename over an existing file. Those bindings stay

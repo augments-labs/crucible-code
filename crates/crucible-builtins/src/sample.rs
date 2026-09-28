@@ -6,17 +6,129 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use crucible_runtime::Cancel;
 use crucible_tools::{
     Approved, Ask, CallResultReceipt, DescribeTool, Disposition, InvocationId, Permission,
-    Remember, Rules, Sensitivity, Settled, Tool, ToolContext, ToolOutput, Unwatched, Verdict,
-    Watch,
+    Remember, Rules, Sensitivity, Settled, Tool, ToolContext, ToolOutput, ToolWorker, Unwatched,
+    Verdict, Watch,
 };
 use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId, ToolResult};
 use crucible_workspace::Workspace;
 use sha2::{Digest as _, Sha256};
+
+/// A runtime of this test binary's own, whose threads run a command's status
+/// task, read its output and own a command left running, while a test waits
+/// on the command, and on whose blocking threads a tool worker's jobs run.
+/// Built with the I/O driver a command's pipes are waited on with on Unix,
+/// as the application's is.
+pub(crate) fn runtime() -> tokio::runtime::Handle {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("a runtime for the tests")
+        })
+        .handle()
+        .clone()
+}
+
+/// This machine's confinement, watching each command it starts on the test
+/// binary's runtime.
+pub(crate) fn sandbox() -> crucible_sandbox_local::LocalSandbox {
+    crucible_sandbox_local::LocalSandbox::new().watching_on(runtime())
+}
+
+/// A registry of commands left running, owning each on the test binary's
+/// runtime.
+pub(crate) fn background() -> crate::Background {
+    let left = crate::Background::new();
+    left.watching_on(runtime());
+    left
+}
+
+/// How long a test waits for something the code under test should do
+/// promptly, before deciding it never will. Far longer than the worker's
+/// [`crucible_runtime::NOTICED`], so a pass is a fact about the code rather
+/// than about how busy the machine is.
+pub(crate) const PATIENCE: Duration = Duration::from_secs(10);
+
+/// The longest a job holding a place on a worker runs, whether or not it is
+/// let go, so that one nobody lets go of does not hold a blocking thread of
+/// the tests' runtime for the rest of the run.
+const LIFETIME: Duration = Duration::from_secs(30);
+
+mod waiting_tests;
+
+pub(crate) use waiting_tests::{asked_once, waited};
+
+/// A tool worker of the test's own, whose places no other test takes.
+pub(crate) fn worker() -> ToolWorker {
+    ToolWorker::new(runtime())
+}
+
+/// A direct-test context stopped by `cancel` and lent `worker`.
+pub(crate) fn lent<'a>(worker: &'a ToolWorker, cancel: &Cancel) -> ToolContext<'a> {
+    cancelled_by(cancel).with_worker(worker)
+}
+
+/// Every place on a worker, each held by a job that runs until this is
+/// dropped.
+pub(crate) struct Occupied(Cancel);
+
+impl Drop for Occupied {
+    fn drop(&mut self) {
+        self.0.request();
+    }
+}
+
+/// Takes every place on `worker`, and answers once every one is taken.
+///
+/// Only a worker with every place free answers at all: a place still held by
+/// a job — one whose call was dropped, say — keeps one of these from starting
+/// until that job returns, and the test fails once [`PATIENCE`] has passed.
+pub(crate) fn occupied(worker: &ToolWorker) -> Occupied {
+    let gate = Cancel::new();
+    let started = Arc::new(AtomicUsize::new(0));
+    for _ in 0..ToolWorker::CAPACITY {
+        let worker = worker.clone();
+        let gate = gate.clone();
+        let started = Arc::clone(&started);
+        runtime().spawn(async move {
+            worker
+                .run(&Cancel::new(), move |_| {
+                    started.fetch_add(1, Ordering::AcqRel);
+                    let began = Instant::now();
+                    while !gate.requested() && began.elapsed() < LIFETIME {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                })
+                .await
+        });
+    }
+    let began = Instant::now();
+    while started.load(Ordering::Acquire) < ToolWorker::CAPACITY {
+        assert!(
+            began.elapsed() < PATIENCE,
+            "a place on the worker was never free to take"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Occupied(gate)
+}
+
+/// Answers once every place on `worker` is free, which is once every job
+/// handed to it has returned.
+pub(crate) fn idle(worker: &ToolWorker) {
+    drop(occupied(worker));
+}
 
 /// A fresh run context for a direct tool test that watches nothing.
 pub(crate) fn context() -> ToolContext<'static> {
@@ -39,7 +151,11 @@ pub(crate) fn finalize_call_result(context: &ToolContext<'_>, output: &ToolOutpu
     digest.update(result.output.text().as_bytes());
     digest.update([u8::from(result.output.is_failed())]);
     let receipt = CallResultReceipt::from_digest(digest.finalize().into());
-    pending.accept(receipt).expect("test result acceptance");
+    // Accepted where a runtime is running, as the runner accepts a result: one
+    // asked where none is, is refused.
+    let runtime = runtime();
+    let _entered = runtime.enter();
+    crucible_runtime::answered!(pending.accept(receipt)).expect("test result acceptance");
 }
 
 /// The variable a continuous-integration job sets so that a test needing the
@@ -75,7 +191,7 @@ pub(crate) fn enforcing(
     let guard = ENFORCING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    match crucible_sandbox::SandboxService::probe(service) {
+    match crucible_runtime::answered!(crucible_sandbox::SandboxService::probe(service)) {
         Ok(_) => Some(guard),
         Err(problem) => {
             assert!(
@@ -273,8 +389,12 @@ where
     struct Yes;
 
     impl Ask for Yes {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Allow, Remember::Never)
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+            Box::pin(async { (Verdict::Allow, Remember::Never) })
         }
     }
 
@@ -290,10 +410,12 @@ where
     };
 
     let sensitivity = tool.sensitivity(&call.args);
-    match Permission::with(crucible_tools::Mode::default(), rules).decide(
-        &call,
-        &sensitivity,
-        &mut Yes,
+    match crucible_runtime::answered!(
+        Permission::with(crucible_tools::Mode::default(), rules).decide(
+            &call,
+            &sensitivity,
+            &mut Yes,
+        )
     ) {
         Settled::Approved(approved) => approved,
         Settled::Forbidden | Settled::Refused => {

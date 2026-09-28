@@ -1,20 +1,25 @@
 use std::fs;
 use std::sync::{Arc, mpsc};
 
-use crucible_core::{
-    AgentId, Aside, Ask, Cancel, CredentialScopeId, Delta, DeltaStream, Message, Modalities,
-    Modality, PromptCacheCapabilities, PromptCacheEncoding, PromptCacheRoute, Provider,
-    ProviderError, Remember, Request, Sensitivity, Steer, StopReason, ToolCall, Transcript,
-    Verdict, Workspace, written,
+use crucible_models::{
+    Delta, DeltaStream, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError, Request,
 };
 use crucible_runner::EventEnvelope;
 use crucible_runner::{Agent, Model, Runner, Tools};
+use crucible_runtime::BoxFuture;
+use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_session::{Pruned, Session};
+use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
+use crucible_types::{
+    AgentId, CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding, StopReason,
+    ToolCall, Transcript,
+};
+use crucible_workspace::{Workspace, written};
 
 use crucible_tui::{Glyphs, Recording, Renderer};
 
 use crate::cli::draw;
-use crate::cli::fake::Script;
+use crate::cli::fake::{Awaited, Script};
 use crate::cli::kept::Kept;
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
@@ -68,11 +73,11 @@ impl Provider for Spelling {
         PromptCacheEncoding::NoControlIntended
     }
 
-    fn stream(
-        &self,
-        _request: Request<'_>,
-        _cancel: &Cancel,
-    ) -> Result<Box<dyn DeltaStream>, ProviderError> {
+    fn stream<'a>(
+        &'a self,
+        _request: Request<'a>,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         panic!("nothing here sends a request")
     }
 }
@@ -631,8 +636,12 @@ fn answering() -> (Runner, mpsc::Sender<EventEnvelope>) {
 struct Nobody;
 
 impl Ask for Nobody {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Deny, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
 
@@ -661,6 +670,7 @@ fn what_the_prompt_attached_reaches_the_transcript() {
     let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
         .turn(prompt, attachments, &mut Nobody, &run)
+        .awaited()
         .expect("the turn to finish");
 
     let Some(Message::User { text, attachments }) = runner.transcript().messages().first() else {
@@ -700,6 +710,7 @@ fn a_prompt_naming_no_file_records_the_message_it_always_did() {
     let run = runner.starting(&events, &cancel, &steer, &aside);
     runner
         .turn(prompt, attachments, &mut Nobody, &run)
+        .awaited()
         .expect("the turn to finish");
 
     assert_eq!(

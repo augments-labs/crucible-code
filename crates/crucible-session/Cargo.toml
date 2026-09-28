@@ -10,16 +10,25 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-# Domain messages, identifiers and workspaces.
-crucible-core.workspace = true
 # The recent-session index is replaced whole: an exclusively-created sibling,
 # synced, then renamed over it. That durable replacement is the privacy
 # crate's, already reviewed for the configuration and auth stores.
 crucible-privacy.workspace = true
+# The future a store's waiting methods hand back.
+crucible-runtime.workspace = true
+# What a confined process was allowed to do, recorded in the journal so a
+# resume can tell a live backend from a weaker one.
+crucible-sandbox.workspace = true
 # The contract a persistent prompt-cache resource is remembered under, and the
 # record it keeps; the file that keeps it is this crate's.
 crucible-storage.workspace = true
+# `Approved` and `Verdict`, which is what a recorded pending action and the
+# decision that settled it are written as.
+crucible-tools.workspace = true
 crucible-types.workspace = true
+# `Workspace`, which the paths a recorded attachment and a session sidecar name
+# are proved against.
+crucible-workspace.workspace = true
 # A session log is JSON, one object per line, read back by a build that may
 # not be the one that wrote it. Hand-rolling that parser would be a second
 # place for a malformed line to become a panic.
@@ -29,11 +38,21 @@ serde_json.workspace = true
 sha2.workspace = true
 # `SessionError`, which the wiring turns into something the user reads.
 thiserror.workspace = true
+# The one-shot the writer thread acknowledges a line through, and the notice of
+# room in its queue a waiting write is woken by, so that a write the runner
+# awaits waits without holding the thread it is polled on (`sync`).
+tokio = { workspace = true, features = ["sync"] }
 
 # The DACL that holds a session log private on Windows. Unix does the same job
 # with a file mode and needs nothing.
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
+
+# `answered!`, which the tests ask a store's future once with.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
+# The runtime a test waits on a store's write with, as a turn is waited for.
+tokio = { workspace = true, features = ["rt"] }
 
 # A log that has stopped working cannot be made from outside this crate: every
 # public way in ends at a real file, and a real file on a real disk does not

@@ -20,6 +20,7 @@
 
 use std::sync::{Arc, LazyLock};
 
+use crucible_runtime::BoxFuture;
 use crucible_tools::{
     Approved, DescribeTool, Fetch, Host, Looking, Search, Sensitivity, Summary, Tool, ToolContext,
     ToolEffect, ToolError, ToolOutput,
@@ -174,26 +175,33 @@ impl Tool for WebSearch {
         Some(Looking::WebSearch)
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        // Settled before the source is asked, so a source whose terms cannot be
-        // carried by a result is never asked: its answer would leave here saying
-        // less than the vendor's terms require.
-        let Ok(provenance) =
-            ResultProvenance::answered(self.source.name(), self.source.restricts())
-        else {
-            return Ok(ToolOutput::failed(format!(
-                "{SEARCH}: the search source's terms do not fit what a result can carry"
-            )));
-        };
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            // Settled before the source is asked, so a source whose terms cannot be
+            // carried by a result is never asked: its answer would leave here saying
+            // less than the vendor's terms require.
+            let Ok(provenance) =
+                ResultProvenance::answered(self.source.name(), self.source.restricts())
+            else {
+                return Ok(ToolOutput::failed(format!(
+                    "{SEARCH}: the search source's terms do not fit what a result can carry"
+                )));
+            };
 
-        self.answer(&approved, context)
-            .map(|output| output.answered_by(provenance))
+            self.answer(&approved, context)
+                .await
+                .map(|output| output.answered_by(provenance))
+        })
     }
 }
 
 impl WebSearch {
     /// What the source answered, before it is marked with who answered it.
-    fn answer(
+    async fn answer(
         &self,
         approved: &Approved,
         context: &ToolContext<'_>,
@@ -202,7 +210,7 @@ impl WebSearch {
         let query = args.text(QUERY)?;
         let limit = args.count(LIMIT, RESULTS)?.min(CEILING);
 
-        let response = match self.source.search(query, context.cancel()) {
+        let response = match self.source.search(query, context.cancel()).await {
             Ok(response) => response,
             Err(problem) => return failed(SEARCH, &problem),
         };
@@ -340,69 +348,76 @@ impl Tool for WebFetch {
         Some(Looking::WebPage)
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(FETCH, approved.args())?;
-        let url = args.text(URL)?;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(FETCH, approved.args())?;
+            let url = args.text(URL)?;
 
-        let page = match self.source.fetch(url, context.cancel()) {
-            Ok(page) => page,
-            Err(problem) => return failed(FETCH, &problem),
-        };
+            let page = match self.source.fetch(url, context.cancel()).await {
+                Ok(page) => page,
+                Err(problem) => return failed(FETCH, &problem),
+            };
 
-        // A verdict was reached about the host in the address that was asked
-        // for, and a redirect can land somewhere else entirely. Nothing has
-        // asked about *that* host, so the page does not come back: a rule
-        // saying `docs.rs` would otherwise carry content from wherever
-        // `docs.rs` chose to send the request, which is not what anyone
-        // allowed. Named rather than swallowed, so the model can ask for the
-        // address it actually reached and get its own verdict for it.
-        // The hosts, not the whole values: a `Host` carries the address it was
-        // read from, so two pages of one site would compare unequal and every
-        // ordinary redirect would be refused. Spelled out rather than compared
-        // through `Display`, and anything that is not two readable hosts is
-        // treated as a move — an address that cannot be read is one nobody can
-        // have allowed.
-        let asked = self.source.reaches(url);
-        let arrived = self.source.reaches(&page.url);
-        let same = match (&asked, &arrived) {
-            (Host::Named { host: from, .. }, Host::Named { host: to, .. }) => from == to,
-            _ => false,
-        };
+            // A verdict was reached about the host in the address that was asked
+            // for, and a redirect can land somewhere else entirely. Nothing has
+            // asked about *that* host, so the page does not come back: a rule
+            // saying `docs.rs` would otherwise carry content from wherever
+            // `docs.rs` chose to send the request, which is not what anyone
+            // allowed. Named rather than swallowed, so the model can ask for the
+            // address it actually reached and get its own verdict for it.
+            // The hosts, not the whole values: a `Host` carries the address it was
+            // read from, so two pages of one site would compare unequal and every
+            // ordinary redirect would be refused. Spelled out rather than compared
+            // through `Display`, and anything that is not two readable hosts is
+            // treated as a move — an address that cannot be read is one nobody can
+            // have allowed.
+            let asked = self.source.reaches(url);
+            let arrived = self.source.reaches(&page.url);
+            let same = match (&asked, &arrived) {
+                (Host::Named { host: from, .. }, Host::Named { host: to, .. }) => from == to,
+                _ => false,
+            };
 
-        if !same {
-            return Ok(ToolOutput::failed(format!(
-                "{url} redirected to {}, which is a different host. \
-                 Nobody has allowed that one. Call web_fetch with {} to ask about it.",
-                page.url, page.url,
-            )));
-        }
-
-        // The address the source ended at, which is not always the one that was
-        // asked for. A redirect is exactly the case where the model needs to be
-        // told, because everything it does next with this page — including
-        // fetching another URL off it — depends on where it actually came from.
-        let mut said = match &page.title {
-            Some(title) => format!("{title}\n{}\n\n", page.url),
-            None => format!("{}\n\n", page.url),
-        };
-
-        // Line by line, because `within` keeps whole items: handing it the page
-        // as one item meant any page over the bound came back with *nothing* in
-        // it, which is most pages worth fetching. Cut at a line boundary and
-        // say what was left, the way every other bounded answer here does.
-        let (kept, left) = bound::within(page.text.lines().map(|line| format!("{line}\n")));
-
-        if kept.is_empty() {
-            said.push_str("The first line of this page is longer than one tool call may return.");
-        } else {
-            said.push_str(&kept);
-            if left > 0 {
-                use std::fmt::Write as _;
-                let _ = write!(said, "\n[{left} more lines not shown.]");
+            if !same {
+                return Ok(ToolOutput::failed(format!(
+                    "{url} redirected to {}, which is a different host. \
+                     Nobody has allowed that one. Call web_fetch with {} to ask about it.",
+                    page.url, page.url,
+                )));
             }
-        }
 
-        Ok(ToolOutput::ok(said))
+            // The address the source ended at, which is not always the one that was
+            // asked for. A redirect is exactly the case where the model needs to be
+            // told, because everything it does next with this page — including
+            // fetching another URL off it — depends on where it actually came from.
+            let mut said = match &page.title {
+                Some(title) => format!("{title}\n{}\n\n", page.url),
+                None => format!("{}\n\n", page.url),
+            };
+
+            // Line by line, because `within` keeps whole items: handing it the page
+            // as one item meant any page over the bound came back with *nothing* in
+            // it, which is most pages worth fetching. Cut at a line boundary and
+            // say what was left, the way every other bounded answer here does.
+            let (kept, left) = bound::within(page.text.lines().map(|line| format!("{line}\n")));
+
+            if kept.is_empty() {
+                said.push_str(
+                    "The first line of this page is longer than one tool call may return.",
+                );
+            } else {
+                said.push_str(&kept);
+                if left > 0 {
+                    said.push_str(&left_out(left));
+                }
+            }
+
+            Ok(ToolOutput::ok(said))
+        })
     }
 }
 
@@ -419,31 +434,93 @@ fn failed(
     match problem {
         crucible_tools::SourceError::Cancelled(_) => Err(ToolError::Cancelled(tool.into())),
 
-        // Bounded like any other answer. A refusal carries the service's own
-        // reply, which is somebody else's bytes and can be a whole error page —
-        // and what a tool returns goes into the next request whole, so an
-        // unbounded failure grows the transcript that rule 6 budgets.
+        // Bounded like any other answer, and said to have been. A refusal
+        // carries the service's own reply, which is somebody else's bytes and
+        // can be a whole error page — and what a tool returns goes into the
+        // next request whole, so an unbounded failure grows the transcript that
+        // rule 6 budgets.
         problem => {
             // The concrete service is useful diagnostic context, but it is not
             // the provider or model answering the conversation. Say which role
             // the name has before saying the name, so `moonshot` here cannot
             // read as a silent model switch.
-            let explained = format!("web source error: {problem}");
-            let (said, _) = bound::within(explained.lines().map(|line| format!("{line}\n")));
-            Ok(ToolOutput::failed(if said.is_empty() {
-                format!("{tool} could not answer.")
-            } else {
-                said
-            }))
+            Ok(ToolOutput::failed(as_much_as_fits(&format!(
+                "web source error: {problem}"
+            ))))
         }
     }
 }
 
+/// The ending of an answer whose whole lines kept nothing, which cannot count
+/// what it left.
+const CUT: &str = "\n[The rest of this reply was cut: it is longer than one tool call may return.]";
+
+/// As much of an explanation as fits, saying when it left something out.
+///
+/// Whole lines, the way every other bounded answer here is cut. One whose
+/// lines all fit comes back whole; one that does not is cut to whole lines,
+/// with room kept for an ending saying how many it left — a cut result reads
+/// to the model as a complete one, and a refusal it thinks it has all of is a
+/// refusal it works around on half of what the service said.
+///
+/// A first line that will not fit in what that room leaves, with the newline
+/// whole lines add, is the case whole lines cannot serve: a minified error
+/// body would keep none of itself and come back naming neither the vendor nor
+/// the status. So that answer keeps characters while they fit instead, which
+/// keeps the head the vendor and the status are in, and cuts inside the line,
+/// at a character boundary, only a line longer than what the room leaves.
+fn as_much_as_fits(explained: &str) -> String {
+    if let (whole, 0) = bound::within(explained.lines().map(|line| format!("{line}\n"))) {
+        return whole;
+    }
+
+    // Counted before the cut answer keeps anything, so it and the sentence
+    // under it are inside `OUTPUT` together. Whichever ending this takes, no
+    // count of lines left out is wider than the count of lines it was drawn
+    // from.
+    let room = CUT.len().max(left_out(explained.lines().count()).len());
+    let budget = OUTPUT.saturating_sub(room);
+
+    let mut kept = String::new();
+    let mut left = 0;
+
+    for line in explained.lines() {
+        if left > 0 || kept.len() + line.len() + 1 > budget {
+            left += 1;
+        } else {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+
+    if kept.is_empty() {
+        let mut head = String::new();
+        for letter in explained.chars() {
+            if head.len() + letter.len_utf8() > budget {
+                break;
+            }
+            head.push(letter);
+        }
+        head.push_str(CUT);
+        return head;
+    }
+
+    kept.push_str(&left_out(left));
+    kept
+}
+
+/// The line under a cut answer saying how many whole lines it left out.
+fn left_out(lines: usize) -> String {
+    let noun = if lines == 1 { "line" } else { "lines" };
+    format!("\n[{lines} more {noun} not shown.]")
+}
+
 /// The line under a list saying what it did not include.
 fn said_of(found: usize, left: usize) -> String {
+    let noun = if found == 1 { "result" } else { "results" };
     if left == 0 {
-        format!("{found} results.")
+        format!("{found} {noun}.")
     } else {
-        format!("{found} results, {left} not shown.")
+        format!("{found} {noun}, {left} not shown.")
     }
 }

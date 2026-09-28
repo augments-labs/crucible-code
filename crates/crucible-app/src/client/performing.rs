@@ -1,4 +1,4 @@
-//! The commands answered at once, on the thread that holds the conversation.
+//! The commands answered at once, by whoever holds the conversation.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -105,7 +105,7 @@ pub enum Performed {
         /// What was asked for.
         enabled: bool,
         /// Why nothing changed, where nothing did.
-        unchanged: Option<String>,
+        unchanged: Option<crate::sandbox::Unchanged>,
     },
     /// `/theme`: written down for the next run, or why not.
     Theme(Result<(), RememberError>),
@@ -125,27 +125,36 @@ pub enum Performed {
 /// nothing is done: a decision that arrives as a command of its own finds
 /// nothing pending, whatever identity it names, and is refused as stale —
 /// here and at every other door, so a client reads one answer to it.
-pub fn perform(conversation: &mut Conversation, request: &Request, desk: &Desk<'_>) -> Performed {
+pub async fn perform(
+    conversation: &mut Conversation,
+    request: &Request,
+    desk: &Desk<'_>,
+) -> Performed {
     match request.command() {
         Command::Prompt(_) | Command::Compact | Command::Cancel => {
             Performed::Refused(ErrorCode::Busy.into())
         }
         // No turn is stopped here, so there is no action this could be about.
         Command::Decide(_) => Performed::Refused(ErrorCode::StaleDecision.into()),
-        Command::Clear => Performed::Cleared(clear(conversation, desk)),
-        Command::Resume(id) => Performed::Resumed(resume(conversation, desk, id)),
+        Command::Clear => Performed::Cleared(clear(conversation, desk).await),
+        Command::Resume(id) => Performed::Resumed(resume(conversation, desk, id).await),
         Command::SelectModel {
             provider,
             model,
             effort,
-        } => served(desk, provider.as_str()).map_or_else(Performed::Refused, |selected| {
-            Performed::Model(conversation.ask_for(
-                selected,
-                model.as_str(),
-                effort.map(reading::effort),
-                &desk.switching,
-            ))
-        }),
+        } => match served(desk, provider.as_str()) {
+            Ok(selected) => Performed::Model(
+                conversation
+                    .ask_for(
+                        selected,
+                        model.as_str(),
+                        effort.map(reading::effort),
+                        &desk.switching,
+                    )
+                    .await,
+            ),
+            Err(refused) => Performed::Refused(refused),
+        },
         Command::SetEffort(rung) => {
             Performed::Effort(conversation.think(reading::effort(*rung), &desk.switching))
         }
@@ -155,16 +164,18 @@ pub fn perform(conversation: &mut Conversation, request: &Request, desk: &Desk<'
             Performed::Mode(mode)
         }
         Command::CycleMode => Performed::Mode(conversation.cycle()),
-        Command::Login { provider } => served(desk, provider.as_str())
-            .map_or_else(Performed::Refused, |named| {
-                Performed::Login(conversation.logged_in(named, &desk.switching))
-            }),
-        Command::Logout { provider } => served(desk, provider.as_str())
-            .map_or_else(Performed::Refused, |named| {
-                Performed::Logout(conversation.log_out(named, &desk.switching))
-            }),
-        Command::InspectCache => Performed::Cache(conversation.prompt_cache_resources()),
-        Command::CleanCache => Performed::Cleaned(conversation.clean_prompt_cache(&Cancel::new())),
+        Command::Login { provider } => match served(desk, provider.as_str()) {
+            Ok(named) => Performed::Login(conversation.logged_in(named, &desk.switching).await),
+            Err(refused) => Performed::Refused(refused),
+        },
+        Command::Logout { provider } => match served(desk, provider.as_str()) {
+            Ok(named) => Performed::Logout(conversation.log_out(named, &desk.switching).await),
+            Err(refused) => Performed::Refused(refused),
+        },
+        Command::InspectCache => Performed::Cache(conversation.prompt_cache_resources().await),
+        Command::CleanCache => {
+            Performed::Cleaned(conversation.clean_prompt_cache(&Cancel::new()).await)
+        }
         Command::Sandbox { enabled } => Performed::Sandbox {
             enabled: *enabled,
             unchanged: crate::sandbox::choosing(
@@ -173,6 +184,7 @@ pub fn perform(conversation: &mut Conversation, request: &Request, desk: &Desk<'
                 desk.switching.choosing,
                 *enabled,
             )
+            .await
             .err(),
         },
         Command::Theme(_) => keep(request, desk),
@@ -233,7 +245,7 @@ fn served(desk: &Desk<'_>, name: &str) -> Result<Served, Refusal> {
         .ok_or_else(|| ErrorCode::UnknownProvider.into())
 }
 
-fn clear(conversation: &mut Conversation, desk: &Desk<'_>) -> Cleared {
+async fn clear(conversation: &mut Conversation, desk: &Desk<'_>) -> Cleared {
     // A session that has said nothing is already the empty one this would go
     // and open, and a second log would leave two files for a session that
     // never happened.
@@ -244,7 +256,10 @@ fn clear(conversation: &mut Conversation, desk: &Desk<'_>) -> Cleared {
     // Read now rather than carried from startup, because a conversation can
     // outlive a checkout: the session starting records where the person is.
     let branch = crate::branching::current(desk.workspace.root());
-    match conversation.clear(desk.sessions, desk.workspace, branch.as_deref()) {
+    match conversation
+        .clear(desk.sessions, desk.workspace, branch.as_deref())
+        .await
+    {
         Ok(left) => Cleared::Started {
             unclosed: closed(&left),
         },
@@ -252,14 +267,14 @@ fn clear(conversation: &mut Conversation, desk: &Desk<'_>) -> Cleared {
     }
 }
 
-fn resume(conversation: &mut Conversation, desk: &Desk<'_>, id: &SessionId) -> Resumed {
+async fn resume(conversation: &mut Conversation, desk: &Desk<'_>, id: &SessionId) -> Resumed {
     // Answered before the log is opened. This session's own claim is on that
     // file, so reopening it would come back as held by another crucible.
     if conversation.session().id() == Some(id) {
         return Resumed::Same;
     }
 
-    match conversation.resume(desk.sessions, desk.workspace, id) {
+    match conversation.resume(desk.sessions, desk.workspace, id).await {
         Ok(left) => Resumed::Picked {
             unclosed: closed(&left),
         },

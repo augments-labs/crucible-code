@@ -7,14 +7,14 @@
 //! replayable as typed state.
 
 use crucible_context::{Live, assemble};
-use crucible_core::{Ancestry, Message};
+use crucible_types::{Ancestry, Message};
 
 use super::Runner;
 
 use crate::TurnError;
 impl Runner {
     /// Reconciles and records every section for the exact pass about to send.
-    pub(super) fn assemble_context(&mut self, ancestry: Ancestry) -> Result<(), TurnError> {
+    pub(super) async fn assemble_context(&mut self, ancestry: Ancestry) -> Result<(), TurnError> {
         // Taken whole rather than borrowed: the snapshot is typed state a
         // store reconstructs, and holding a borrow into it across the records
         // below would be this run reading its own store while it writes to it.
@@ -34,10 +34,10 @@ impl Runner {
         // Words first, state second. A crash between them replays as Unknown;
         // the opposite order could claim the model saw words never retained.
         for fragment in assembled.fragments {
-            self.record(ancestry, Message::Context(fragment))?;
+            self.record(ancestry, Message::Context(fragment)).await?;
         }
         if let Some(patch) = assembled.patch {
-            self.store.contextual(&patch)?;
+            self.store.contextual(&patch).await?;
         }
 
         Ok(())

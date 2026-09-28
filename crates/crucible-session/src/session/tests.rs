@@ -6,13 +6,16 @@ use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Ancestry, Calibration, CallResultKey, CallResultStoreError, Carried, ContextPatch,
-    ContextSnapshot, CustomEntry, Fragment, InvocationId, JournalEntryId, JournalStore, Message,
-    RecordedToolOutput, RunItem, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId,
-    ToolResult, Transcript,
+use crucible_storage::{
+    CallResultKey, CallResultStoreError, CustomEntry, InvocationId, JournalEntryId, JournalStore,
+    RunItem,
 };
 use crucible_types::ResultProvenance;
+use crucible_types::{
+    Ancestry, Calibration, Carried, ContextPatch, ContextSnapshot, Fragment, Message,
+    RecordedToolOutput, SessionId, Spend, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
+    Transcript,
+};
 use serde_json::Value;
 
 use super::claim::{Claimed, claim};
@@ -68,7 +71,7 @@ fn record(sample: &Sample, messages: &[Message]) -> PathBuf {
 
 #[test]
 fn appending_continuation_to_an_old_log_requires_a_new_reader() {
-    use crucible_core::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
+    use crucible_types::{Continuation, ContinuationData, ContinuationPart, ContinuationScope};
     let sample = Sample::new("continuation-old-format");
     let id = "0198abcd-0000-7000-8000-000000000001";
     let path = sample.plant(
@@ -162,7 +165,7 @@ fn a_newer_required_reader_is_refused_without_truncating_even_at_eof() {
 
 #[test]
 fn replay_enforces_the_aggregate_private_history_limit_without_truncating() {
-    use crucible_core::{
+    use crucible_types::{
         CONTINUATION_BYTES, Continuation, ContinuationData, ContinuationPart, ContinuationScope,
     };
     let sample = Sample::new("continuation-replay-cap");
@@ -217,8 +220,8 @@ fn durable_call_results_are_idempotent_and_content_bound() {
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
 
-    let first = session.put_call_result(key, &result).unwrap();
-    let repeated = session.put_call_result(key, &result).unwrap();
+    let first = crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
+    let repeated = crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     assert_eq!(first, repeated);
 
     let conflict = ToolResult {
@@ -226,7 +229,7 @@ fn durable_call_results_are_idempotent_and_content_bound() {
         output: RecordedToolOutput::failed("different"),
     };
     assert_eq!(
-        session.put_call_result(key, &conflict),
+        crucible_runtime::answered!(session.put_call_result(key, &conflict)),
         Err(CallResultStoreError::Conflict)
     );
 
@@ -249,10 +252,10 @@ fn ordinary_tool_results_settle_accepted_sidecars_after_the_log_barrier() {
         id: ToolId::new("call-1"),
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
-    session.put_call_result(key, &result).unwrap();
+    crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     session.append(&Message::ToolResults(vec![result.clone()]));
 
-    session.settle_call_results();
+    crucible_runtime::answered!(session.settle_call_results());
 
     assert!(
         !path.with_extension("results").exists(),
@@ -278,7 +281,7 @@ fn resume_commits_an_accepted_result_before_removing_its_sidecar() {
         id: ToolId::new("call-1"),
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
-    session.put_call_result(key, &result).unwrap();
+    crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     drop(session);
 
     let (resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
@@ -328,7 +331,7 @@ fn recovery_settles_every_call_when_only_one_result_reached_acceptance() {
         output: RecordedToolOutput::ok("background job #1 accepted"),
     };
     let key = CallResultKey::derive(Ancestry::new(), InvocationId::new(), &result.id);
-    session.put_call_result(key, &result).unwrap();
+    crucible_runtime::answered!(session.put_call_result(key, &result)).unwrap();
     drop(session);
 
     let (_resumed, transcript) = Session::resume(&sample.logs(), &sample.workspace()).unwrap();
@@ -352,7 +355,7 @@ fn a_non_recording_session_cannot_accept_a_durable_result() {
     };
 
     assert_eq!(
-        session.put_call_result(key, &result),
+        crucible_runtime::answered!(session.put_call_result(key, &result)),
         Err(CallResultStoreError::Unavailable)
     );
 }
@@ -1417,6 +1420,9 @@ fn a_session_that_records_nothing_is_still_a_session() {
 /// ordinary run reaches any of it, and what it guards is somebody else's log.
 mod colliding;
 
+/// What a write through the store contract waits for before it answers.
+mod acknowledged;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {
@@ -1516,7 +1522,7 @@ fn sessions_kept_in_one_place_answer_one_owner_and_another_place_another() {
     // records under another's identity, so it has to name somebody: an owner
     // that could be empty would make every store with nothing to say the same
     // principal as any other.
-    use crucible_core::SessionStore;
+    use crucible_storage::SessionStore;
 
     let here = Sample::new("owner-here");
     let there = Sample::new("owner-there");
@@ -1529,8 +1535,42 @@ fn sessions_kept_in_one_place_answer_one_owner_and_another_place_another() {
     assert_eq!(Some(&owner), SessionStore::owner(&second).as_ref());
     assert_ne!(Some(&owner), SessionStore::owner(&other).as_ref());
     assert_eq!(
-        crucible_core::SessionOwner::new(""),
+        crucible_storage::SessionOwner::new(""),
         None,
         "nobody was accepted as an owner"
     );
+}
+
+/// Linux alone, because it is where the checks run on a filesystem that keeps
+/// a name that is not text. macOS refuses to make such a directory and other
+/// Unix filesystems keep one; not every Linux mount does either, which is why
+/// a refusal below ends the test rather than failing it.
+#[cfg(target_os = "linux")]
+#[test]
+fn two_places_whose_names_are_not_text_are_two_owners() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    use crucible_storage::SessionStore;
+
+    // Spelt as text, with what is not text replaced, both of these are the
+    // same one character, and one reader's cache scope was the other's.
+    let sample = Sample::new("owner-not-text");
+    let one = sample.logs().join(OsStr::from_bytes(b"\xff"));
+    let two = sample.logs().join(OsStr::from_bytes(b"\xfe"));
+
+    // The directory above them is made first, so that what can still refuse
+    // either of these is the name, and a filesystem that will not hold such a
+    // name has no two owners to tell apart.
+    std::fs::create_dir_all(sample.logs()).expect("the logs directory is made");
+    if std::fs::create_dir(&one).is_err() || std::fs::create_dir(&two).is_err() {
+        return;
+    }
+
+    let first = Session::start(&one, &sample.workspace(), None).expect("a new session");
+    let second = Session::start(&two, &sample.workspace(), None).expect("a new session");
+
+    let first = SessionStore::owner(&first).expect("a session on disk is somebody's");
+    let second = SessionStore::owner(&second).expect("a session on disk is somebody's");
+    assert_ne!(first, second, "two directories answered one owner");
 }

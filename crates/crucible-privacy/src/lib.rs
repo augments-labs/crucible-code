@@ -60,7 +60,9 @@ pub fn append(path: &Path) -> Result<File, PrivacyError> {
 ///
 /// Symbolic links, reparse points, non-files and files with another hard name
 /// are refused. The validation is made on the returned handle rather than on a
-/// pathname inspected before it was opened.
+/// pathname inspected before it was opened. On Unix the open itself is
+/// non-blocking, so reaching that refusal does not wait on a writer who is not
+/// coming; other platforms reach the same refusal, having waited.
 ///
 /// # Errors
 ///
@@ -155,7 +157,10 @@ pub fn lock(path: &Path) -> Result<File, PrivacyError> {
 /// Tightens an existing file and reports whether its Unix mode changed.
 ///
 /// Windows writes the protected list without a second FFI call to compare it,
-/// so a successful operation reports `false` there.
+/// so a successful operation reports `false` there. On Unix the name is opened
+/// without waiting for a peer, so a name that is not one ordinary file is
+/// refused without blocking on a writer who is not coming; Windows refuses a
+/// reparse point by name and makes no such open.
 ///
 /// # Errors
 ///

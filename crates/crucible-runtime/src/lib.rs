@@ -24,18 +24,36 @@
 //! dropped, because a reader shown a truncated stream that does not say it was
 //! truncated has been told something false.
 //!
+//! [`BoxFuture`] is the one shape every service contract hands back, and every
+//! caller awaits it.
+//!
 //! Nothing here starts a runtime. A library that built its own would decide
 //! for the application how many threads it gets; [`Group`] runs on the runtime
 //! of whoever called it.
+//!
+//! [`not_worker`] answers one narrower question: whether the code calling it
+//! is polled as a spawned task right now, which [`Handle::try_current`] cannot
+//! tell apart from a thread that entered a runtime or waits on one. A step not yet
+//! built to run on a worker checks it and refuses itself with [`OnWorker`]
+//! rather than running where it is not safe to.
+//!
+//! [`Handle::try_current`]: tokio::runtime::Handle::try_current
 
 mod aside;
 mod cancel;
+mod future;
 mod group;
 mod progress;
 mod steer;
+mod worker;
 
 pub use aside::Aside;
-pub use cancel::Cancel;
+pub use cancel::{Cancel, NOTICED};
+#[cfg(feature = "proof")]
+#[doc(hidden)]
+pub use future::__answered;
+pub use future::BoxFuture;
 pub use group::{Ended, Full, Group};
 pub use progress::{Progress, Told};
 pub use steer::Steer;
+pub use worker::{OnWorker, not_worker};

@@ -25,13 +25,28 @@ crucible-attachments.workspace = true
 # assembled and records the result; which facts become which words is not its
 # decision.
 crucible-context.workspace = true
-crucible-core.workspace = true
 # The contract a provider answers to, including what may be sent where once a
 # vendor restricts what it produced; the runner applies that decision and never
 # makes it from a vendor's or a tool's name.
 crucible-models.workspace = true
+# The provenance a recorded agent and tool generation is written down under, and
+# the registry the roster of a resumed run is read back from.
+crucible-registry.workspace = true
+# `BoxFuture`, the shape the provider, the tools, the cache and the session
+# answer the turn loop in, and the controls a turn is stopped and steered by.
+crucible-runtime.workspace = true
+# What a confined process was allowed to do and what it did, which the turn
+# records against its own.
+crucible-sandbox.workspace = true
+# The journal, checkpoints and pending actions a turn is resumed from, and the
+# prompt-cache resources it remembers what under.
+crucible-storage.workspace = true
+# What a tool is, what may run one, and the proof that it may.
+crucible-tools.workspace = true
 # Who answered a recorded result, which is what the transfer decision reads.
 crucible-types.workspace = true
+# `Workspace`, which a tool's path arguments are proved against.
+crucible-workspace.workspace = true
 # The prompt-cache scope is named by a domain-separated digest of what it
 # covers, so a resumed run reuses a cache entry only where the same inputs
 # produced it.
@@ -39,6 +54,17 @@ sha2.workspace = true
 # Writes the turn failure enum, which holds each collaborator's own typed error
 # with `#[from]` rather than erasing it into a sentence.
 thiserror.workspace = true
+
+# `answered!`, which the tests ask a fake's future once with.
+[dev-dependencies]
+crucible-runtime = { workspace = true, features = ["proof"] }
+# The current-thread runtime a test drives a turn to its end on, now that a
+# turn is asynchronous, and the timer a tool's deadline is timed on while its
+# run waits (`time`). The fakes that wait wake themselves, so no test needs a
+# socket. A wave whose runs block until each other arrive needs a worker for
+# each run it holds at once, which only a multi-thread runtime has
+# (`rt-multi-thread`).
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
 
 [lints]
 workspace = true

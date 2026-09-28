@@ -7,12 +7,11 @@
 
 use std::time::SystemTime;
 
-use crucible_core::Workspace;
+use crate::cli::style::Style;
 use crucible_session::Recorded;
 use crucible_tui::{Notice, Recent, Renderer, Row, Slot, Terminal, TerminalError, Welcome, fold};
-
-use crate::cli::release::Newer;
-use crate::cli::style::Style;
+use crucible_update::Newer;
+use crucible_workspace::Workspace;
 
 use super::when;
 
@@ -222,8 +221,8 @@ pub(crate) fn opening<T: Terminal>(
 mod tests {
     use std::path::PathBuf;
 
-    use crucible_core::Message;
     use crucible_session::Session;
+    use crucible_types::Message;
 
     use crucible_app::providers::NOTHING_TO_ASK;
     use crucible_tui::Recording;

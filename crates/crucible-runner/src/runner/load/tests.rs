@@ -1,4 +1,5 @@
-use crucible_core::{Change, Changed, Diff, Line, RecordedToolOutput, ToolOutput, ToolResult};
+use crucible_tools::ToolOutput;
+use crucible_types::{Change, Changed, Diff, Line, RecordedToolOutput, ToolResult};
 
 use super::*;
 
@@ -10,9 +11,9 @@ use super::*;
 fn attaching(bytes: usize) -> Message {
     Message::User {
         text: "x".repeat(bytes).into(),
-        attachments: vec![crucible_core::Attachment {
+        attachments: vec![crucible_types::Attachment {
             path: "/holiday.png".into(),
-            modality: crucible_core::Modality::Image,
+            modality: crucible_types::Modality::Image,
             media_type: "image/png".into(),
             hash: [0; 32],
         }]
@@ -23,7 +24,7 @@ fn attaching(bytes: usize) -> Message {
 /// A tool result of `bytes` bytes, for filling a transcript.
 fn results(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
-        id: crucible_core::ToolId::new("call-1"),
+        id: crucible_types::ToolId::new("call-1"),
         output: RecordedToolOutput::ok("x".repeat(bytes)),
     }])
 }
@@ -598,7 +599,7 @@ fn an_attachment_aged_out_of_the_request_stops_being_charged() {
 /// The same result, with the change a reader was shown beside it.
 fn results_showing(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
-        id: crucible_core::ToolId::new("call-1"),
+        id: crucible_types::ToolId::new("call-1"),
         output: ToolOutput::ok("x".repeat(bytes))
             .showing(Diff::new([Line::new(1, Change::Added, "x".repeat(bytes))]))
             .into_recorded(),
@@ -613,7 +614,7 @@ fn results_showing(bytes: usize) -> Message {
 /// written to charge for, and the counts are what it would meet.
 fn results_counting(bytes: usize) -> Message {
     Message::ToolResults(vec![ToolResult {
-        id: crucible_core::ToolId::new("call-1"),
+        id: crucible_types::ToolId::new("call-1"),
         output: RecordedToolOutput::ok("x".repeat(bytes)).counting(Changed::new(2, 1)),
     }])
 }

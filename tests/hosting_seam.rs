@@ -21,18 +21,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crucible_core::{
-    Ancestry, Approved, Cancel, Revealed, SandboxBackendId, SandboxBackendIdentity,
-    SandboxBackendProvenance, SandboxCapabilities, SandboxCommand, SandboxEnvironment,
-    SandboxError, SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule,
-    SandboxId, SandboxInspection, SandboxLaunch, SandboxManifest, SandboxNetworkPolicy,
-    SandboxOutput, SandboxPolicy, SandboxProcess, SandboxRead, SandboxRequest,
-    SandboxResourceLimits, SandboxService, SandboxSession, SandboxUsage, SandboxViolation,
-    Sensitivity, Summary, Target, Tool, ToolArgs, ToolContext, ToolDescriptor, ToolError, ToolId,
-    ToolOutput, ToolProvenance, Toolset, ToolsetContext,
-};
 use crucible_mcp::{Chosen, Hosting};
 use crucible_runner::Tools;
+use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
+use crucible_sandbox::{
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCommand, SandboxEnvironment, SandboxError, SandboxFilesystemAccess,
+    SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection, SandboxLaunch,
+    SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService, SandboxSession,
+    SandboxUsage, SandboxViolation, unconfined_inspection,
+};
+use crucible_tools::{
+    Approved, Revealed, Sensitivity, Summary, Target, Tool, ToolContext, ToolDescriptor, ToolError,
+    ToolOutput, ToolProvenance, Toolset, ToolsetContext,
+};
+use crucible_types::{Ancestry, SandboxId, ToolArgs, ToolId};
 use serde_json::{Value, json};
 
 /// How long a test lets one silence run before it gives up on a server.
@@ -98,7 +103,7 @@ fn inspection() -> SandboxInspection {
         None,
     )
     .expect("a backend identity");
-    SandboxInspection::unconfined_for_request(
+    unconfined_inspection(
         backend,
         SandboxCapabilities::none(),
         &request,
@@ -225,9 +230,11 @@ impl SandboxProcess for Fake {
         self.watched.closed.load(Ordering::Relaxed)
     }
 
-    fn stop(&mut self) -> io::Result<()> {
-        self.watched.closed.store(true, Ordering::Relaxed);
-        Ok(())
+    fn stop(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            self.watched.closed.store(true, Ordering::Relaxed);
+            Ok(())
+        })
     }
 
     fn inspection(&self) -> &SandboxInspection {
@@ -255,12 +262,17 @@ impl SandboxLaunch for Held {
         &self.inspection
     }
 
-    fn release(self: Box<Self>) -> Result<Box<dyn SandboxProcess>, SandboxError> {
-        Ok(Box::new(Fake {
-            stdout: Some(Says(self.frames.into_iter().collect())),
-            watched: self.watched,
-            inspection: self.inspection,
-        }))
+    fn release<'a>(self: Box<Self>) -> BoxFuture<'a, Result<Box<dyn SandboxProcess>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Fake {
+                stdout: Some(Says(self.frames.into_iter().collect())),
+                watched: self.watched,
+                inspection: self.inspection,
+            }) as Box<dyn SandboxProcess>)
+        })
     }
 }
 
@@ -276,19 +288,24 @@ impl SandboxSession for Prepared {
         &self.inspection
     }
 
-    fn materialize(&mut self) -> Result<(), SandboxError> {
-        Ok(())
+    fn materialize(&mut self) -> BoxFuture<'_, Result<(), SandboxError>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    fn stage(
+    fn stage<'a>(
         self: Box<Self>,
         _command: SandboxCommand,
-    ) -> Result<Box<dyn SandboxLaunch>, SandboxError> {
-        Ok(Box::new(Held {
-            frames: self.frames,
-            watched: self.watched,
-            inspection: self.inspection,
-        }))
+    ) -> BoxFuture<'a, Result<Box<dyn SandboxLaunch>, SandboxError>>
+    where
+        Self: 'a,
+    {
+        Box::pin(async move {
+            Ok(Box::new(Held {
+                frames: self.frames,
+                watched: self.watched,
+                inspection: self.inspection,
+            }) as Box<dyn SandboxLaunch>)
+        })
     }
 }
 
@@ -309,33 +326,42 @@ impl Pretend {
 }
 
 impl SandboxService for Pretend {
-    fn probe(&self) -> Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError> {
-        Ok((
-            SandboxBackendIdentity::new(
-                SandboxBackendId::new("test").expect("a backend name"),
-                "1",
-                SandboxBackendProvenance::Compatibility,
-                None,
-            )
-            .expect("a backend identity"),
-            SandboxCapabilities::none(),
-        ))
+    fn probe(
+        &self,
+    ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
+        Box::pin(async move {
+            Ok((
+                SandboxBackendIdentity::new(
+                    SandboxBackendId::new("test").expect("a backend name"),
+                    "1",
+                    SandboxBackendProvenance::Compatibility,
+                    None,
+                )
+                .expect("a backend identity"),
+                SandboxCapabilities::none(),
+            ))
+        })
     }
 
-    fn prepare(&self, _request: SandboxRequest) -> Result<Box<dyn SandboxSession>, SandboxError> {
-        let said = self
-            .says
-            .lock()
-            .expect("the script this test wrote")
-            .take()
-            .ok_or_else(|| {
-                SandboxError::Lifecycle(io::Error::other("only one server was scripted"))
-            })?;
-        Ok(Box::new(Prepared {
-            frames: said.iter().map(ToString::to_string).collect(),
-            watched: Arc::clone(&self.watched),
-            inspection: inspection(),
-        }))
+    fn prepare(
+        &self,
+        _request: SandboxRequest,
+    ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
+        Box::pin(async move {
+            let said = self
+                .says
+                .lock()
+                .expect("the script this test wrote")
+                .take()
+                .ok_or_else(|| {
+                    SandboxError::Lifecycle(io::Error::other("only one server was scripted"))
+                })?;
+            Ok(Box::new(Prepared {
+                frames: said.iter().map(ToString::to_string).collect(),
+                watched: Arc::clone(&self.watched),
+                inspection: inspection(),
+            }) as Box<dyn SandboxSession>)
+        })
     }
 }
 
@@ -357,12 +383,12 @@ impl Tool for Quiet {
         Summary::new(self.0)
     }
 
-    fn run(
-        &self,
+    fn run<'a>(
+        &'a self,
         _approved: Approved,
-        _context: &ToolContext<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::ok("nothing"))
+        _context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move { Ok(ToolOutput::ok("nothing")) })
     }
 }
 
@@ -411,46 +437,68 @@ fn roster(revealed: &Revealed) -> Tools {
 /// what decides it.
 #[test]
 fn a_revealed_builtin_moves_the_generation_the_hosted_server_was_merged_into() {
-    let revealed = Revealed::new();
-    let sandbox = Pretend::saying(opening("docs", &json!([offers("search")])));
-    let hosting = Hosting::new(
-        Arc::new(roster(&revealed)),
-        Arc::clone(&sandbox) as Arc<dyn SandboxService>,
-        vec![chosen("docs")],
-    );
-    let context = lifecycle();
-    hosting.prepare(&context).expect("the server started");
+    // On the application's own runtime, as a run hosts a server: the
+    // server's streams are read and written by tasks there.
+    let ((), shutdown) = crucible_app::services::serving(|services| {
+        let runtime = services
+            .runtime()
+            .handle()
+            .expect("the application's runtime");
+        let revealed = Revealed::new();
+        let sandbox = Pretend::saying(opening("docs", &json!([offers("search")])));
+        let hosting = Hosting::new(
+            Arc::new(roster(&revealed)),
+            Arc::clone(&sandbox) as Arc<dyn SandboxService>,
+            vec![chosen("docs")],
+            runtime.clone(),
+        );
+        let context = lifecycle();
+        runtime
+            .block_on(hosting.prepare(&context))
+            .expect("the server started");
 
-    let first = hosting.snapshot(&context).expect("one generation");
-    let before = first.find("mcp:docs/search").expect("the server's tool");
-    let source = before.descriptor().provenance().id().to_owned();
-    let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
-    let read = sandbox.watched.frames();
+        let first = runtime
+            .block_on(hosting.snapshot(&context))
+            .expect("one generation");
+        let before = first.find("mcp:docs/search").expect("the server's tool");
+        let source = before.descriptor().provenance().id().to_owned();
+        let approval = before.tool().sensitivity(&ToolArgs::new("{}"));
+        let read = sandbox.watched.frames();
 
-    // What `tool_search` does mid-turn: the built-in roster grows, so the
-    // merged generation has to be rebuilt around it.
-    revealed.reveal("grep");
-    let second = hosting.refresh(&context).expect("the generation after");
+        // What `tool_search` does mid-turn: the built-in roster grows, so the
+        // merged generation has to be rebuilt around it.
+        revealed.reveal("grep");
+        let second = runtime
+            .block_on(hosting.refresh(&context))
+            .expect("the generation after");
 
-    assert_ne!(
-        first.generation().context_id(),
-        second.generation().context_id(),
-        "a roster that moved is a new generation"
-    );
-    assert!(second.find("grep").is_some(), "the revealed tool arrived");
-    let after = second
-        .find("mcp:docs/search")
-        .expect("the server's tool survived the swap");
-    assert_eq!(after.descriptor().provenance().id(), source);
+        assert_ne!(
+            first.generation().context_id(),
+            second.generation().context_id(),
+            "a roster that moved is a new generation"
+        );
+        assert!(second.find("grep").is_some(), "the revealed tool arrived");
+        let after = second
+            .find("mcp:docs/search")
+            .expect("the server's tool survived the swap");
+        assert_eq!(after.descriptor().provenance().id(), source);
+        assert_eq!(
+            after.tool().sensitivity(&ToolArgs::new("{}")),
+            approval,
+            "a swap must not change what a call is approved as"
+        );
+        assert_eq!(
+            sandbox.watched.frames(),
+            read,
+            "and must not go back to the server for a catalogue it already read"
+        );
+        runtime
+            .block_on(hosting.dispose(&context))
+            .expect("the server stopped");
+    });
     assert_eq!(
-        after.tool().sensitivity(&ToolArgs::new("{}")),
-        approval,
-        "a swap must not change what a call is approved as"
+        shutdown,
+        Ok(()),
+        "every task the server's streams had was over by the end"
     );
-    assert_eq!(
-        sandbox.watched.frames(),
-        read,
-        "and must not go back to the server for a catalogue it already read"
-    );
-    hosting.dispose(&context).expect("the server stopped");
 }

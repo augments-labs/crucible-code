@@ -80,15 +80,15 @@ If nothing was ever recorded for this directory, crucible says so and stops
 rather than silently starting a new session.
 
 Closing the terminal window, or sending crucible a `kill`, while an answer is
-arriving does not lose it. On Linux and macOS the hang-up or termination stops
-the turn first, the way Escape would: what the model had said so far is written
-to the log, the terminal is handed back, and then the process ends by that
-signal. `--continue` picks the session up with that much of the answer in it.
-Between turns there is nothing in flight and the signal ends crucible at once,
-as it does while a permission question is waiting for a key. A `kill -9` cannot
-be caught by anything, and on Windows a closing console window is not caught
-either; both end the process where it stands, which is the case the next
-paragraph is about.
+arriving does not lose it. On Linux, macOS and FreeBSD the hang-up or
+termination stops the turn first, the way Escape would: what the model had said
+so far is written to the log, the terminal is handed back, and then the process
+ends by that signal. `--continue` picks the session up with that much of the
+answer in it. Between turns there is nothing in flight and the signal ends
+crucible at once, as it does while a permission question is waiting for a key.
+A `kill -9` cannot be caught by anything, and on Windows a closing console
+window is not caught either; both end the process where it stands, which is the
+case the next paragraph is about.
 
 A log the process was killed part-way through writing costs the line it was on
 and nothing more — the turns before it are still a transcript, and `--continue`
@@ -310,8 +310,8 @@ every request carries — the system instructions and the tool schemas — is
 outside it too, so a session that has said nothing begins at `100%`, and
 automatic compaction begins at `0%` while that reserve remains available.
 
-Where crucible does not know how much the model accepts, the prompt says `window
-unknown` rather than inventing a percentage. While room is being made, the last
+Where crucible does not know how much the model accepts, the prompt shows no
+reading rather than inventing a percentage. While room is being made, the last
 reading remains until the compacted transcript replaces it.
 
 When there is no longer room for another exchange, crucible **makes room in the
@@ -509,7 +509,7 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":12,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
+{"format":13,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
 ```
 
 Then one line per message — what you typed, what the model said and asked to

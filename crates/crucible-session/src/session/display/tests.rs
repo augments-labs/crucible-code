@@ -3,9 +3,10 @@
 use super::*;
 use crate::Session;
 use crate::sample::Sample;
-use crucible_core::{
-    Ancestry, Changed, InvocationRecord, RecordedToolOutput, RunItem, StopReason, ToolArgs,
-    ToolCall, ToolEffect, ToolOutcome, ToolOutput, ToolResult,
+use crucible_storage::{InvocationRecord, RunItem, ToolEffect};
+use crucible_tools::{ToolOutcome, ToolOutput};
+use crucible_types::{
+    Ancestry, Changed, RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolResult,
 };
 
 fn conversation(session: &Session) -> (ToolCall, Diff) {

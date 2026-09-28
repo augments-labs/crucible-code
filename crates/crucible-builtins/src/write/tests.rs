@@ -4,10 +4,14 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
+use crucible_runtime::Cancel;
+use crucible_tools::ToolError;
 use crucible_types::Change;
 
 use super::{Ledger, Sensitivity, Tool, ToolArgs, ToolOutput, Write};
-use crate::sample::{Sample, allowed, symlink};
+use crate::sample::{
+    Sample, allowed, asked_once, cancelled_by, idle, lent, occupied, symlink, waited,
+};
 
 /// A call about a file nobody has read, which is what most of these are: a path
 /// that is not there yet, or one the refusal is the subject of.
@@ -18,8 +22,7 @@ fn write(sample: &Sample, args: &str) -> ToolOutput {
 /// A call against a record somebody else has already told about a file.
 fn writing(sample: &Sample, args: &str, seen: &Ledger) -> ToolOutput {
     let tool = Write::new(sample.workspace(), seen.clone());
-    tool.run(allowed(&tool, args), &crate::sample::context())
-        .unwrap()
+    crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context())).unwrap()
 }
 
 /// Says a file was read, the way `read` does when it shows one.
@@ -81,12 +84,11 @@ fn a_file_the_read_tool_showed_may_be_replaced() {
     let seen = crate::Ledger::new();
 
     let reader = crate::Read::new(sample.workspace(), seen.clone());
-    let shown = reader
-        .run(
-            allowed(&reader, r#"{"path":"one.txt"}"#),
-            &crate::sample::context(),
-        )
-        .unwrap();
+    let shown = crucible_runtime::answered!(reader.run(
+        allowed(&reader, r#"{"path":"one.txt"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap();
     assert!(!shown.is_failed(), "{}", shown.text());
 
     let output = writing(&sample, r#"{"path":"one.txt","content":"new\n"}"#, &seen);
@@ -213,15 +215,14 @@ fn a_file_is_written_into_a_directory_the_workspace_reaches() {
     let beside = sample.beside("notes");
 
     let tool = Write::new(sample.reaching(&beside), Ledger::new());
-    let output = tool
-        .run(
-            allowed(
-                &tool,
-                &format!(r#"{{"path":"{beside}/todo.md","content":"buy milk\n"}}"#),
-            ),
-            &crate::sample::context(),
-        )
-        .unwrap();
+    let output = crucible_runtime::answered!(tool.run(
+        allowed(
+            &tool,
+            &format!(r#"{{"path":"{beside}/todo.md","content":"buy milk\n"}}"#),
+        ),
+        &crate::sample::context(),
+    ))
+    .unwrap();
 
     assert!(!output.is_failed(), "{}", output.text());
     assert_eq!(
@@ -323,9 +324,9 @@ fn a_link_planted_while_the_question_was_on_screen_is_still_refused() {
     );
     symlink(&outside, sample.root().join("notes.txt"));
 
-    let output = tool
-        .run(allowed(&tool, args), &crate::sample::context())
-        .unwrap();
+    let output =
+        crucible_runtime::answered!(tool.run(allowed(&tool, args), &crate::sample::context()))
+            .unwrap();
 
     assert!(output.is_failed(), "{}", output.text());
     assert_eq!(fs::read_to_string(&outside).unwrap(), "original\n");
@@ -347,12 +348,11 @@ fn a_call_with_no_content_says_what_is_missing() {
     let sample = Sample::new("write-nocontent");
 
     let tool = Write::new(sample.workspace(), Ledger::new());
-    let problem = tool
-        .run(
-            allowed(&tool, r#"{"path":"one.txt"}"#),
-            &crate::sample::context(),
-        )
-        .unwrap_err();
+    let problem = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"path":"one.txt"}"#),
+        &crate::sample::context(),
+    ))
+    .unwrap_err();
 
     assert_eq!(problem.to_string(), "write: content is required");
 }
@@ -470,4 +470,177 @@ fn a_file_nobody_can_read_back_is_replaced_with_no_block_rather_than_a_wrong_one
     assert!(over.diff().is_none());
     assert_eq!(binary.text(), "replaced raw.bin, 1 lines");
     assert!(binary.diff().is_none());
+}
+
+/// Whether `answered` is `write`'s cancellation, and nothing else.
+fn cancelled(answered: &Result<ToolOutput, ToolError>) -> bool {
+    matches!(answered, Err(ToolError::Cancelled(tool)) if &**tool == "write")
+}
+
+#[test]
+fn a_write_lent_a_busy_worker_waits_for_room_and_touches_nothing_meanwhile() {
+    // The file work is the worker's, not the polling thread's: while every
+    // place is taken the call waits, and the file is what it was.
+    let sample = Sample::new("write-waits");
+    sample.write("one.txt", "old\n");
+    let tool = Write::new(sample.workspace(), looked_at(&sample, "one.txt"));
+    let worker = crate::sample::worker();
+    let busy = occupied(&worker);
+    let context = lent(&worker, &Cancel::new());
+    let mut running = std::pin::pin!(tool.run(
+        allowed(&tool, r#"{"path":"one.txt","content":"new\n"}"#),
+        &context,
+    ));
+
+    assert!(
+        asked_once(running.as_mut()).is_pending(),
+        "the write answered without waiting for room on the worker"
+    );
+    assert_eq!(read(&sample, "one.txt"), "old\n");
+
+    drop(busy);
+    let output = waited(running).unwrap();
+
+    assert_eq!(output.text(), "replaced one.txt, 1 lines");
+    assert_eq!(read(&sample, "one.txt"), "new\n");
+}
+
+#[test]
+fn a_write_cancelled_while_it_waits_for_the_worker_leaves_the_file_as_it_was() {
+    let sample = Sample::new("write-cancelled-waiting");
+    sample.write("one.txt", "kept\n");
+    let tool = Write::new(sample.workspace(), looked_at(&sample, "one.txt"));
+    let worker = crate::sample::worker();
+    let busy = occupied(&worker);
+    let cancel = Cancel::new();
+    let context = lent(&worker, &cancel);
+    let mut running = std::pin::pin!(tool.run(
+        allowed(&tool, r#"{"path":"one.txt","content":"lost\n"}"#),
+        &context,
+    ));
+
+    assert!(
+        asked_once(running.as_mut()).is_pending(),
+        "the write answered without waiting for room on the worker"
+    );
+    cancel.request();
+    let answered = waited(running);
+    drop(busy);
+
+    assert!(cancelled(&answered), "{answered:?}");
+    assert_eq!(read(&sample, "one.txt"), "kept\n");
+}
+
+#[test]
+fn a_cancelled_write_does_not_replace_the_file() {
+    // A job cannot be stopped from outside, so it looks at its token itself
+    // before the one step here whose effect outlives the process.
+    let sample = Sample::new("write-cancelled");
+    sample.write("one.txt", "kept\n");
+    let tool = Write::new(sample.workspace(), looked_at(&sample, "one.txt"));
+    let cancel = Cancel::new();
+    cancel.request();
+
+    let answered = crucible_runtime::answered!(tool.run(
+        allowed(&tool, r#"{"path":"one.txt","content":"lost\n"}"#),
+        &cancelled_by(&cancel),
+    ));
+
+    assert!(cancelled(&answered), "{answered:?}");
+    assert_eq!(read(&sample, "one.txt"), "kept\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cancelled_write_makes_no_directory() {
+    let sample = Sample::new("write-cancelled-directories");
+    let tool = Write::new(sample.workspace(), Ledger::new());
+    let cancel = Cancel::new();
+    cancel.request();
+
+    let answered = crucible_runtime::answered!(tool.run(
+        allowed(
+            &tool,
+            r#"{"path":"src/cli/parse.rs","content":"fn main() {}\n"}"#
+        ),
+        &cancelled_by(&cancel),
+    ));
+
+    assert!(cancelled(&answered), "{answered:?}");
+    assert!(!sample.root().join("src").exists(), "a directory was made");
+}
+
+#[test]
+fn a_write_whose_call_is_dropped_while_its_job_runs_replaces_nothing_and_gives_its_place_back() {
+    // A job cannot be stopped from outside, so a call dropped while its job
+    // runs only raises the job's token and leaves. What stands between that
+    // and a replaced file is the job looking before it renames.
+    let sample = Sample::new("write-dropped");
+    sample.write("one.txt", "kept\n");
+    let seen = Ledger::new();
+    let tool = Write::new(sample.workspace(), seen.clone());
+    let worker = crate::sample::worker();
+    let context = lent(&worker, &Cancel::new());
+    let approved = allowed(&tool, r#"{"path":"one.txt","content":"lost\n"}"#);
+    let one = sample.workspace().existing("one.txt").unwrap();
+
+    // Held, so that the job, once it runs, stops where it asks whether the
+    // file was read — after it has started, and before it can replace
+    // anything — until the call is gone.
+    let mut record = seen.held();
+    record.push_back(one.as_path().to_path_buf());
+    {
+        let mut running = Box::pin(tool.run(approved, &context));
+        assert!(
+            asked_once(running.as_mut()).is_pending(),
+            "the write answered while the record it asks was held"
+        );
+    }
+    drop(record);
+
+    idle(&worker);
+    assert_eq!(read(&sample, "one.txt"), "kept\n");
+    let names: Vec<_> = fs::read_dir(sample.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        names,
+        [std::ffi::OsString::from("one.txt")],
+        "a residue was left"
+    );
+}
+
+#[test]
+fn a_write_on_a_worker_that_has_stopped_is_an_error_and_changes_nothing() {
+    // The worker would not start the job, which is a breakdown of the
+    // mechanism rather than an answer about the file: the call says so, with
+    // why carried inside the error, and the file is what it was.
+    let stopped = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("a runtime to stop");
+    let worker = crucible_tools::ToolWorker::new(stopped.handle().clone());
+    stopped.shutdown_background();
+    let sample = Sample::new("write-stopped-worker");
+    sample.write("one.txt", "kept\n");
+    let tool = Write::new(sample.workspace(), looked_at(&sample, "one.txt"));
+    let context = lent(&worker, &Cancel::new());
+
+    let answered = waited(tool.run(
+        allowed(&tool, r#"{"path":"one.txt","content":"lost\n"}"#),
+        &context,
+    ));
+
+    let Err(ToolError::Io { tool, source, .. }) = &answered else {
+        panic!("a write on a stopped worker was not a breakdown: {answered:?}");
+    };
+    assert_eq!(&**tool, "write");
+    assert_eq!(
+        source
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<crucible_tools::Unrun>()),
+        Some(&crucible_tools::Unrun::Stopped)
+    );
+    assert_eq!(read(&sample, "one.txt"), "kept\n");
 }

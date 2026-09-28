@@ -23,7 +23,7 @@ use crucible_app::providers::Providers;
 use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Theme,
 };
-use crucible_core::Cancel;
+use crucible_runtime::Cancel;
 
 use super::converse::Terms;
 
@@ -119,10 +119,15 @@ impl Client {
 impl Terms {
     /// Asks the application for `command`, against the providers in force as
     /// it is asked, and hands back what came of it for the caller to draw.
+    ///
+    /// Waited for here, on the runtime the turns run on: the drawing thread
+    /// asks, and is never inside that runtime, so it can wait on it.
     pub(crate) fn perform(&self, conversation: &mut Conversation, command: Command) -> Performed {
         let request = self.client.asking(command);
         let providers = self.providers.snapshot();
-        let performed = perform(conversation, &request, &self.desk(&providers));
+        let performed =
+            self.runtime
+                .block_on(perform(conversation, &request, &self.desk(&providers)));
 
         self.client
             .answered(&request, conversation, || performed.outcome());

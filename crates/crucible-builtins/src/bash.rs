@@ -38,6 +38,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use background::{Background, Ended, MOST, Standing};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxCommand, SandboxEnablement, SandboxEnvironment, SandboxManifest, SandboxPolicy,
     SandboxRequest, SandboxResourceLimits, SandboxService,
@@ -147,13 +148,17 @@ static PACED: LazyLock<String> = LazyLock::new(|| {
 /// The root `description` is the tool's own; everything below it describes the
 /// arguments.
 ///
-/// Two of those arguments are not for this tool. The account fields declared
-/// last are never read here — they are drawn on the panel where somebody
-/// decides whether this call may run, and the reason they arrive with the call
-/// rather than being asked for when the panel opens is that the thread holding
-/// the terminal has no provider to ask. So they are declared here, at the one
+/// Two of those arguments are not for deciding what this tool does. The
+/// account fields declared last are drawn on the panel where somebody decides
+/// whether this call may run, and the reason they arrive with the call rather
+/// than being asked for when the panel opens is that the thread holding the
+/// terminal has no provider to ask. So they are declared here, at the one
 /// place a model is told what it may send, and read a layer up by
-/// [`crate::account`].
+/// [`fn@crate::account`] for that panel. This tool reads the description back
+/// out of them too: once a command is left running, it is kept beside the
+/// command because the row reporting that command's end is drawn long after
+/// the starting turn has scrolled away, and a reader who allowed it is owed
+/// that description back rather than just the command it ran.
 ///
 /// Neither is required, and that is the whole of what keeps them optional in
 /// practice too: a call that says nothing about itself gets the panel it would
@@ -387,7 +392,7 @@ impl Bash {
     ///
     /// Handed to each child rather than set in this process, which is not a
     /// workaround: writing to the environment is `unsafe` in edition 2024 and
-    /// this workspace forbids it, and the narrower thing is the right thing
+    /// this workspace denies it, and the narrower thing is the right thing
     /// anyway. The model's commands get these; nothing else does, and a thread
     /// reading the environment while another one writes it cannot happen.
     ///
@@ -406,12 +411,11 @@ impl Bash {
         self
     }
 
-    fn keep_running(
+    async fn keep_running(
         &self,
         approved: &Approved,
         context: &ToolContext<'_>,
         mut taking: background::Taking,
-        mut ownership: Option<background::Lease>,
     ) -> Result<ToolOutput, ToolError> {
         let args = Args::parse(NAME, approved.args())?;
         let command = args.text(COMMAND)?;
@@ -427,7 +431,8 @@ impl Bash {
         // starting turn has scrolled away, so keep the caller's description.
         let said = crate::account::of(approved.args());
 
-        let number = ownership
+        let number = taking
+            .lease
             .as_ref()
             .map(background::Lease::number)
             .ok_or_else(|| {
@@ -436,30 +441,65 @@ impl Bash {
                     std::io::Error::other("reserved background identity is unavailable"),
                 )
             })?;
+        let text = &printed.text;
         let accepted = ToolOutput::ok(match why {
             output::Why::Asked => {
-                format!("{printed}\n\n[left running as #{number}; {LEFT_RUNNING}]")
+                format!("{text}\n\n[left running as #{number}; {LEFT_RUNNING}]")
             }
             output::Why::Pressed => {
-                format!("{printed}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]")
+                format!("{text}\n\n[left running as #{number}; {PRESSED}; {LEFT_RUNNING}]")
             }
-        });
+        })
+        .with_capture_elision(printed.original, printed.omitted);
         let key = context.call_result_key().ok_or_else(|| {
             io(
                 "cannot finalize a background command without durable result storage",
                 std::io::Error::other("durable call-result identity is unavailable"),
             )
         })?;
-        taking
-            .process
-            .begin_background_acceptance(key)
-            .map_err(|error| sandbox_io("could not begin background result acceptance", error))?;
+        let began = match taking.process.as_mut() {
+            Some(process) => {
+                match background::bounded(
+                    process.begin_background_acceptance(key),
+                    background::ACCEPTANCE,
+                )
+                .await
+                {
+                    Ok(began) => began,
+                    Err(()) => Err(crucible_sandbox::SandboxError::Lifecycle(
+                        std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "background result acceptance did not begin within its bound",
+                        ),
+                    )),
+                }
+            }
+            None => Err(crucible_sandbox::SandboxError::Lifecycle(
+                std::io::Error::other("background process ownership is unavailable"),
+            )),
+        };
+        if let Err(error) = began {
+            // The lifecycle future was refused before the registry handoff.
+            // Give the process to the same owner anyway; a refusal is not a
+            // confirmed stop, and the entry must remain retryable.
+            let _ = left.keep(
+                taking,
+                background::Keep {
+                    called: command,
+                    said: said.description(),
+                    accepting: false,
+                },
+            );
+            return Err(sandbox_io(
+                "could not begin background result acceptance",
+                error,
+            ));
+        }
         let Some(kept) = left.keep(
             taking,
             background::Keep {
                 called: command,
                 said: said.description(),
-                lease: ownership.take(),
                 accepting: true,
             },
         ) else {
@@ -559,188 +599,197 @@ impl Tool for Bash {
         reporting::only(args.text(COMMAND).ok()?).then_some(Looking::Command)
     }
 
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let args = Args::parse(NAME, approved.args())?;
-        let command = args.text(COMMAND)?;
-        let seconds = args.count(TIMEOUT, SECONDS)?;
-        let background = args.flag(crate::account::LEFT, false)?;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let args = Args::parse(NAME, approved.args())?;
+            let command = args.text(COMMAND)?;
+            let seconds = args.count(TIMEOUT, SECONDS)?;
+            let background = args.flag(crate::account::LEFT, false)?;
 
-        if seconds > CEILING {
-            return Ok(ToolOutput::failed(format!(
-                "timeout must be {CEILING} seconds or less"
-            )));
-        }
+            if seconds > CEILING {
+                return Ok(ToolOutput::failed(format!(
+                    "timeout must be {CEILING} seconds or less"
+                )));
+            }
 
-        // Refused rather than one of them ignored. A command left running has no
-        // deadline — that is what it is for — so a call that sent both asked for
-        // two different things, and answering it with either would be answering a
-        // question nobody put.
-        if background && args.holds(TIMEOUT) {
-            return Ok(ToolOutput::failed(
-                "timeout does not apply to a command left running: send one or the other",
-            ));
-        }
-
-        if context.cancel().requested() {
-            return Err(ToolError::Cancelled(NAME.into()));
-        }
-
-        let mut ownership = match (background, self.leaving.as_ref()) {
-            (true, None) => {
+            // Refused rather than one of them ignored. A command left running has no
+            // deadline — that is what it is for — so a call that sent both asked for
+            // two different things, and answering it with either would be answering a
+            // question nobody put.
+            if background && args.holds(TIMEOUT) {
                 return Ok(ToolOutput::failed(
-                    "this run cannot leave a command running",
+                    "timeout does not apply to a command left running: send one or the other",
                 ));
             }
-            (true, Some(left)) => match left.reserve() {
-                Some(lease) => Some(lease),
-                None => {
-                    return Ok(ToolOutput::failed(format!(
-                        "{MOST} commands are already running; stop one before leaving another"
-                    )));
+
+            if context.cancel().requested() {
+                return Err(ToolError::Cancelled(NAME.into()));
+            }
+
+            let mut ownership = match (background, self.leaving.as_ref()) {
+                (true, None) => {
+                    return Ok(ToolOutput::failed(
+                        "this run cannot leave a command running",
+                    ));
                 }
-            },
-            (false, Some(left)) if context.call_result_key().is_some() => left.reserve(),
-            (false, _) => None,
-        };
-        let invocation = if background {
-            crucible_sandbox::SandboxInvocationMode::Background
-        } else if ownership.is_some() {
-            crucible_sandbox::SandboxInvocationMode::Detachable
-        } else {
-            crucible_sandbox::SandboxInvocationMode::Foreground
-        };
-        let leaving = match invocation {
-            crucible_sandbox::SandboxInvocationMode::Background => {
-                self.leaving.as_ref().map(|left| output::Leaving {
-                    left,
-                    after: Some(Duration::ZERO),
-                })
-            }
-            crucible_sandbox::SandboxInvocationMode::Detachable => self
-                .leaving
-                .as_ref()
-                .map(|left| output::Leaving { left, after: None }),
-            crucible_sandbox::SandboxInvocationMode::Foreground => None,
-        };
-
-        let shell = self.shell.as_ref().ok_or_else(|| {
-            io(
-                "no POSIX shell to run it with",
-                std::io::Error::new(std::io::ErrorKind::NotFound, shell::ABSENT),
-            )
-        })?;
-
-        // `count` already refused anything but a positive number, and the
-        // ceiling above bounds it, so the fallback is unreachable arithmetic
-        // rather than a decision.
-        let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
-
-        let environment = SandboxEnvironment::new(
-            self.env
-                .iter()
-                .map(|(name, value)| (name.as_ref(), value.as_os_str())),
-        )
-        .map_err(|error| sandbox_io("could not prepare the command environment", error))?;
-        let sandbox_command = SandboxCommand::new(
-            shell,
-            [OsString::from("-c"), OsString::from(command)],
-            environment,
-        )
-        .map_err(|error| sandbox_io("could not prepare the sandbox command", error))?;
-        let base = self.policy.as_ref().map_err(|problem| {
-            io(
-                "could not resolve the sandbox policy",
-                std::io::Error::other(problem.to_string()),
-            )
-        })?;
-        let sampled = self
-            .enablement
-            .as_ref()
-            .map(|control| base.clone().with_enabled(control.enabled()));
-        let base = sampled.as_ref().unwrap_or(base);
-        // Foreground callers may shorten the host's deadline. Background
-        // commands keep the configured ceiling even though they have no
-        // foreground timeout. Output and concurrency are host policy, not
-        // values a tool request may overwrite.
-        let inherited = base.limits();
-        let limits = SandboxResourceLimits {
-            command_time: if background {
-                inherited.command_time
+                (true, Some(left)) => match left.reserve() {
+                    Some(lease) => Some(lease),
+                    None => {
+                        return Ok(ToolOutput::failed(format!(
+                            "{MOST} commands are already running; stop one before leaving another"
+                        )));
+                    }
+                },
+                (false, Some(left)) if context.call_result_key().is_some() => left.reserve(),
+                (false, _) => None,
+            };
+            let invocation = if background {
+                crucible_sandbox::SandboxInvocationMode::Background
+            } else if ownership.is_some() {
+                crucible_sandbox::SandboxInvocationMode::Detachable
             } else {
-                Some(
-                    inherited
-                        .command_time
-                        .map_or(allowed, |ceiling| ceiling.min(allowed)),
-                )
-            },
-            output_bytes: inherited.output_bytes.or(Some(PROCESS_OUTPUT_BYTES)),
-            concurrent_commands: inherited.concurrent_commands.or(Some(16)),
-            ..inherited
-        };
-        let policy = base.clone().with_limits(limits).map_err(|error| {
-            io(
-                "could not resolve command limits",
-                std::io::Error::other(error),
-            )
-        })?;
-        let sandbox = crucible_types::SandboxId::new();
-        let audit = context.sandbox_audit();
-        let request = SandboxRequest::new(
-            sandbox,
-            context.ancestry(),
-            context.call().clone(),
-            policy,
-            SandboxManifest::empty(),
-        )
-        .with_invocation_mode(invocation);
-        let request = if invocation == crucible_sandbox::SandboxInvocationMode::Foreground {
-            request
-        } else {
-            let key = context.call_result_key().ok_or_else(|| {
+                crucible_sandbox::SandboxInvocationMode::Foreground
+            };
+            let leaving = match invocation {
+                crucible_sandbox::SandboxInvocationMode::Background => {
+                    self.leaving.as_ref().map(|left| output::Leaving {
+                        left,
+                        after: Some(Duration::ZERO),
+                    })
+                }
+                crucible_sandbox::SandboxInvocationMode::Detachable => self
+                    .leaving
+                    .as_ref()
+                    .map(|left| output::Leaving { left, after: None }),
+                crucible_sandbox::SandboxInvocationMode::Foreground => None,
+            };
+
+            let shell = self.shell.as_ref().ok_or_else(|| {
                 io(
-                    "cannot detach a command without durable result storage",
-                    std::io::Error::other("durable call-result identity is unavailable"),
+                    "no POSIX shell to run it with",
+                    std::io::Error::new(std::io::ErrorKind::NotFound, shell::ABSENT),
                 )
             })?;
-            request.with_call_result_key(key)
-        }
-        .with_audit(audit.clone())
-        .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;
-        let mut session = self
-            .sandbox
-            .prepare(request)
-            .map_err(|error| sandbox_io("could not prepare operating-system confinement", error))?;
-        session
-            .materialize()
-            .map_err(|error| sandbox_io("could not materialize the sandbox", error))?;
-        let mut launch = session
-            .stage(sandbox_command)
-            .map_err(|error| sandbox_io("could not stage the confined shell", error))?;
-        if ownership.is_some() {
-            launch.transfer_owner().map_err(|error| {
-                sandbox_io("could not transfer background cleanup ownership", error)
+
+            // `count` already refused anything but a positive number, and the
+            // ceiling above bounds it, so the fallback is unreachable arithmetic
+            // rather than a decision.
+            let allowed = Duration::from_secs(u64::try_from(seconds).unwrap_or(60));
+
+            let environment = SandboxEnvironment::new(
+                self.env
+                    .iter()
+                    .map(|(name, value)| (name.as_ref(), value.as_os_str())),
+            )
+            .map_err(|error| sandbox_io("could not prepare the command environment", error))?;
+            let sandbox_command = SandboxCommand::new(
+                shell,
+                [OsString::from("-c"), OsString::from(command)],
+                environment,
+            )
+            .map_err(|error| sandbox_io("could not prepare the sandbox command", error))?;
+            let base = self.policy.as_ref().map_err(|problem| {
+                io(
+                    "could not resolve the sandbox policy",
+                    std::io::Error::other(problem.to_string()),
+                )
             })?;
-        }
-        let process = launch
-            .release()
-            .map_err(|error| sandbox_io("could not start the confined shell", error))?;
-
-        let waiting = output::Waiting {
-            allowed,
-            cancel: context.cancel(),
-            watch: context,
-            leaving,
-        };
-
-        match output::collect(process, &waiting)? {
-            output::Left::Answered(output) => Ok(output),
-
-            // Kept, or refused and ended — the registry owns both, because it
-            // knows the cap and is the owner that can end the command later.
-            output::Left::Running(taking) => {
-                self.keep_running(&approved, context, taking, ownership.take())
+            let sampled = self
+                .enablement
+                .as_ref()
+                .map(|control| base.clone().with_enabled(control.enabled()));
+            let base = sampled.as_ref().unwrap_or(base);
+            // Foreground callers may shorten the host's deadline. Background
+            // commands keep the configured ceiling even though they have no
+            // foreground timeout. Output and concurrency are host policy, not
+            // values a tool request may overwrite.
+            let inherited = base.limits();
+            let limits = SandboxResourceLimits {
+                command_time: if background {
+                    inherited.command_time
+                } else {
+                    Some(
+                        inherited
+                            .command_time
+                            .map_or(allowed, |ceiling| ceiling.min(allowed)),
+                    )
+                },
+                output_bytes: inherited.output_bytes.or(Some(PROCESS_OUTPUT_BYTES)),
+                concurrent_commands: inherited.concurrent_commands.or(Some(16)),
+                ..inherited
+            };
+            let policy = base.clone().with_limits(limits).map_err(|error| {
+                io(
+                    "could not resolve command limits",
+                    std::io::Error::other(error),
+                )
+            })?;
+            let sandbox = crucible_types::SandboxId::new();
+            let audit = context.sandbox_audit();
+            let request = SandboxRequest::new(
+                sandbox,
+                context.ancestry(),
+                context.call().clone(),
+                policy,
+                SandboxManifest::empty(),
+            )
+            .with_invocation_mode(invocation);
+            let request = if invocation == crucible_sandbox::SandboxInvocationMode::Foreground {
+                request
+            } else {
+                let key = context.call_result_key().ok_or_else(|| {
+                    io(
+                        "cannot detach a command without durable result storage",
+                        std::io::Error::other("durable call-result identity is unavailable"),
+                    )
+                })?;
+                request.with_call_result_key(key)
             }
-        }
+            .with_audit(audit.clone())
+            .map_err(|error| sandbox_io("could not bind sandbox audit attribution", error))?;
+            let mut session = self.sandbox.prepare(request).await.map_err(|error| {
+                sandbox_io("could not prepare operating-system confinement", error)
+            })?;
+            session
+                .materialize()
+                .await
+                .map_err(|error| sandbox_io("could not materialize the sandbox", error))?;
+            let mut launch = session
+                .stage(sandbox_command)
+                .await
+                .map_err(|error| sandbox_io("could not stage the confined shell", error))?;
+            if ownership.is_some() {
+                launch.transfer_owner().map_err(|error| {
+                    sandbox_io("could not transfer background cleanup ownership", error)
+                })?;
+            }
+            let process = launch
+                .release()
+                .await
+                .map_err(|error| sandbox_io("could not start the confined shell", error))?;
+
+            let waiting = output::Waiting {
+                allowed,
+                cancel: context.cancel(),
+                watch: context,
+                leaving,
+            };
+
+            match output::collect(process, &waiting).await? {
+                output::Left::Answered(output) => Ok(output),
+
+                // Kept, or refused and ended — the registry owns both, because it
+                // knows the cap and is the owner that can end the command later.
+                output::Left::Running(mut taking) => {
+                    taking.lease = ownership.take();
+                    self.keep_running(&approved, context, taking).await
+                }
+            }
+        })
     }
 }
 

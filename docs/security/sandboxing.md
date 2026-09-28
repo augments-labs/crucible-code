@@ -38,7 +38,9 @@ namespace starts. It is accepted only when it and every directory
 above it belong to root or to the user running Crucible and are writable by
 neither group nor others; a copy under `/tmp`, in another user's directory or
 below a group-writable directory is ignored, and `chmod g-w` on the offending
-directory is the remedy.
+directory is the remedy. When no copy qualifies, the error names each path it
+looked at and what turned it down, so a broker that was never built reads
+differently from one below a directory others can rewrite.
 
 The Linux view starts from an empty temporary root. It exposes only the minimal
 read-only runtime needed to execute the selected absolute program, the exact
@@ -94,9 +96,7 @@ foreign process when the existing signing policy allowed that metadata. The
 target's executable bytes and signing flags did not change, and the caller did
 not acquire its task port, credentials, entitlements, filesystem access, or
 network access. Crucible treats that validation bookkeeping as a trusted-OS
-effect rather than guest authority. The bounded TG2, TG3, and TG5 authority and
-effect checks remain a Phase 4B release gate on both supported macOS
-architectures; daemon resource-stress testing is outside that gate.
+effect rather than guest authority.
 
 ## Windows setup maintenance
 
@@ -186,8 +186,10 @@ IPv4 loopback port. Direct connections remain denied; enabling local binding
 or selected Unix sockets adds only those separately declared operations.
 Proxy credentials are unique to a command, replace inherited proxy settings,
 and are masked in captured stdout and stderr without changing byte counts or
-MCP framing. Listener and relay cleanup belongs to the command lifecycle;
-failed cleanup retains its resources and admission slot for recovery.
+MCP framing. Output cut by the output limit, or from a command crucible
+stopped, also masks any last few bytes that could begin the credential.
+Listener and relay cleanup belongs to the command lifecycle; failed cleanup
+retains its resources and admission slot for recovery.
 
 ## Platform support
 
@@ -290,11 +292,17 @@ rather than keeps to itself:
 ```rust
 use crucible_sandbox_local::conformance::{Conformance, SandboxClaim};
 
-let audited = Conformance::audit(&backend, workspace_root)?;
+let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()?;
+let audited = runtime.block_on(Conformance::audit(&backend, workspace_root))?;
 assert!(audited.faults().next().is_none());
 assert!(audited.holds(SandboxClaim::Isolation));
 println!("{}", audited.report());
 ```
+
+The audit is `async` and never bounds the wait itself, so the harness drives
+it on its own runtime and bounds an unanswering backend there.
 
 For every feature a policy can name, the suite writes the smallest policy that
 requires exactly that feature and offers it to the backend, in the mode that
@@ -384,7 +392,20 @@ provenance alongside the host-resolved value. Handles and values are redacted
 from debugging, inspection, audit, JSONL and diagnostics. Credential variables
 share the ordinary environment count, name, uniqueness, NUL and aggregate-byte
 bounds; a credential cannot silently replace a literal variable with the same
-name.
+name. Every non-empty credential value is masked the way proxy credentials
+are, one `*` per byte wherever its exact bytes appear, without changing byte
+counts: in captured stdout and stderr of an ordinary command, and in stderr
+alone of a command crucible speaks a protocol to, such as an MCP server. On
+that command's stdout no credential value is masked, so no frame is rewritten
+by one; only crucible's own proxy credential is masked there, when the command
+has network domains. The MCP client hides each value in the words of every
+reply it keeps after decoding it, which also finds a value the reply escaped;
+a number it keeps, such as an error code, is shown as sent. A value the
+command re-encodes, splits or transforms before printing it is not matched. On
+Windows the output masker matches a value's bytes as crucible holds them, which
+are UTF-8 for any valid Unicode value, so a value printed in UTF-16 or an ANSI
+code page is not matched there; the decoded hiding in MCP replies applies on
+every platform.
 
 ## Lifecycle and inspection
 
@@ -568,6 +589,19 @@ accounted for. That evidence records the root as its own transaction last saw
 it, and another command may have published into the root since, so compare it
 with the root's current content before restoring anything from it. The next
 preparation recovers any transaction an earlier process abandoned.
+
+The state directory's shipped name,
+`/var/tmp/crucible-code-sandbox-<uid>-v1` where `<uid>` is the user's numeric
+id, is predictable, so another local user can create it first, whether a
+directory, a symlink or a plain file. crucible refuses to use what it finds
+there and reports that the sandbox backend is unavailable, naming which of
+those it is without the path or the other user's numeric id; removing it,
+which may need an administrator, is what lets the sandbox be used. The
+directory can instead already be this user's own but carry the wrong group or
+permissions, for example after running crucible under a different group;
+crucible refuses that too, but says to restore its group and mode instead of
+removing it, since the directory holds this user's own unrecovered
+transaction journals and quarantine evidence.
 
 Commands that can write run side by side, including a command left running in
 the background and a confined MCP server, and none of them holds up another

@@ -190,7 +190,7 @@ fn a_remembered_provider_without_any_credential_does_not_stop_startup() {
             &settings,
             &|_| None,
             &sample.store().read(),
-            &Subscriptions::production(),
+            &Subscriptions::production(&crucible_auth::Renewals::new()),
         ),
     )
     .expect("an unavailable remembered provider is an interactive setup state");
@@ -240,6 +240,112 @@ fn resume_and_continue_cannot_be_asked_for_together() {
     assert!(said.contains("cannot be used with"), "{said}");
 }
 
+/// The application's runtime is made only by [`run`], through
+/// `crucible_app::services::serving`, and only when something there asks for
+/// it. `--help` and `--version` are answered by the parser itself, before
+/// [`start`] reaches its dispatch, so neither can come near it.
+#[test]
+fn help_and_version_are_answered_while_the_arguments_are_parsed() {
+    for (flag, kind) in [
+        ("--help", clap::error::ErrorKind::DisplayHelp),
+        ("--version", clap::error::ErrorKind::DisplayVersion),
+    ] {
+        let answered = Cli::try_parse_from(["crucible", flag]).expect_err("an answer, not a run");
+
+        assert_eq!(answered.kind(), kind, "{flag} was parsed into a run");
+    }
+}
+
+/// Stands for the registry of commands left running, once ending a command is
+/// work the runtime owns: dropped, it hands its stop to the runtime and says
+/// whether the stop ran. The real registry's drop cannot be watched from here,
+/// so this is what [`leaving_first`] is handed in its place.
+struct Registry {
+    stop: std::sync::OnceLock<Box<dyn Fn() -> bool + Send + Sync>>,
+    landed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Registry {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.get() {
+            self.landed
+                .store(stop(), std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+#[test]
+fn the_registry_of_commands_left_running_ends_before_the_runtime_is_shut_down() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock, mpsc};
+    use std::time::Duration;
+
+    let landed = Arc::new(AtomicBool::new(false));
+    let made = Arc::clone(&landed);
+
+    let (armed, stopped) = leaving_first(
+        move || Registry {
+            stop: OnceLock::new(),
+            landed: made,
+        },
+        |services, leaving| {
+            let runtime = services.runtime().handle()?;
+            let _ = leaving.stop.set(Box::new(move || {
+                let (ran, heard) = mpsc::channel();
+                let _stop = runtime.spawn(async move {
+                    let _ = ran.send(());
+                });
+                heard.recv_timeout(Duration::from_secs(2)).is_ok()
+            }));
+            Ok::<_, crucible_app::runtime::Unstarted>(())
+        },
+    );
+
+    assert!(armed.is_ok(), "the runtime could not be started: {armed:?}");
+    assert_eq!(stopped, Ok(()));
+    assert!(
+        landed.load(Ordering::Acquire),
+        "the registry of commands left running handed its stop to a runtime already shut down"
+    );
+}
+
+#[test]
+fn a_sandbox_report_is_written_even_when_the_shutdown_after_it_ran_out_of_time() {
+    // The report is the answer the flag was asked for, and a cleanup that
+    // failed once it had been made does not make it untrue. The run still ends
+    // on the cleanup's failure, so the exit status says it.
+    let mut out = Vec::new();
+
+    let ended = reported(
+        Ok("confined\n".to_owned()),
+        Err(Fatal::Providerless),
+        &mut out,
+    );
+
+    assert_eq!(String::from_utf8_lossy(&out), "confined\n");
+    assert!(matches!(ended, Err(Fatal::Providerless)), "{ended:?}");
+}
+
+#[test]
+fn a_sandbox_report_that_was_never_made_writes_nothing_and_ends_on_its_own_failure() {
+    let mut out = Vec::new();
+
+    let ended = reported(Err(Fatal::Here(io::Error::other("gone"))), Ok(()), &mut out);
+
+    assert!(out.is_empty(), "{out:?}");
+    assert!(matches!(ended, Err(Fatal::Here(_))), "{ended:?}");
+}
+
+#[test]
+fn a_sandbox_report_after_a_clean_shutdown_is_written_whole() {
+    let mut out = Vec::new();
+
+    let ended = reported(Ok("confined\n".to_owned()), Ok(()), &mut out);
+
+    assert_eq!(String::from_utf8_lossy(&out), "confined\n");
+    assert!(ended.is_ok(), "{ended:?}");
+}
+
 #[test]
 fn windows_sandbox_maintenance_is_an_exclusive_early_action() {
     let setup = Cli::try_parse_from(["crucible", "sandbox", "setup", "--owner", r"MACHINE\person"])
@@ -270,7 +376,7 @@ fn resume_round_trip() {
         Session::start(&sample.logs(), &workspace, None).expect("a new session to record");
     let id = session.id().expect("a recorded session has a name").clone();
     let path = session.path().to_owned();
-    session.append(&crucible_core::Message::said("keep this turn"));
+    session.append(&crucible_types::Message::said("keep this turn"));
     drop(session);
 
     // The parting message names the command that comes back to this session.
@@ -294,11 +400,42 @@ fn resume_round_trip() {
     drop(reopened);
 
     // An id nothing here answers to is told so in one sentence.
-    let stranger = crucible_core::SessionId::new();
+    let stranger = crucible_types::SessionId::new();
     let refused = startup::reopening(&sample.logs(), &workspace, &stranger)
         .expect_err("a session nobody recorded");
     assert_eq!(
         refused.to_string(),
         format!("no session {} in this workspace", stranger.as_str())
     );
+}
+
+#[test]
+fn config_check_is_a_read_only_early_action_with_an_optional_json_report() {
+    // `crucible config check [--json]`: one spelling, human by default.
+    let human = Cli::try_parse_from(["crucible", "config", "check"]).expect("the human report");
+    assert!(matches!(
+        human.command,
+        Some(Command::Config {
+            action: ConfigAction::Check { json: false }
+        })
+    ));
+
+    let machine =
+        Cli::try_parse_from(["crucible", "config", "check", "--json"]).expect("the JSON report");
+    assert!(matches!(
+        machine.command,
+        Some(Command::Config {
+            action: ConfigAction::Check { json: true }
+        })
+    ));
+
+    // Anything else under `config` is usage, answered by the parser before
+    // anything is opened: a bare `config` with no verb, and a verb nobody
+    // shipped.
+    for invalid in [
+        vec!["crucible", "config"],
+        vec!["crucible", "config", "bogus"],
+    ] {
+        assert!(Cli::try_parse_from(invalid).is_err());
+    }
 }

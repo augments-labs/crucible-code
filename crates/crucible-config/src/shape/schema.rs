@@ -31,7 +31,7 @@ const DIALECT: &str = "http://json-schema.org/draft-07/schema#";
 ///
 /// `www` rather than `json`: both hostnames resolve, and the registry requires
 /// the `$id` of a schema it hosts to be `https://www.schemastore.org/<file>`.
-const ID: &str = "https://www.schemastore.org/crucible-code-schema.json";
+pub(crate) const ID: &str = "https://www.schemastore.org/crucible-code-schema.json";
 
 /// The keys of the standard's own that a document may carry at any level.
 ///
@@ -514,25 +514,143 @@ mod tests {
         assert_eq!(sandbox.get("additionalProperties"), Some(&json!(false)));
     }
 
+    /// Brings the checked-in schema back into step with `generated`, and says
+    /// what the developer has to do about it.
+    ///
+    /// `Ok` when the file already is what this generates. Otherwise the message
+    /// is the whole of what the failure says, and the file has been written
+    /// only where the message says so.
+    ///
+    /// A file that is not there is not a stale one, and the directory it
+    /// belongs in is never created. Both cases were one before: a binary older
+    /// than the checkout running it resolves this path into the tree it was
+    /// built in, and recreating that tree turns one gate failure into a tracked
+    /// file planted where nobody will look at it again.
+    ///
+    /// Nor is a file that could not be read reported as one: a copy crucible
+    /// may write but not read can hold exactly what this generates, so it is
+    /// rewritten and reported with the read's own error instead.
+    fn refresh(path: &std::path::Path, generated: &str) -> Result<(), String> {
+        settle(path, std::fs::read_to_string(path), generated)
+    }
+
+    /// What `refresh` does once it has read `path`, given that read.
+    ///
+    /// Kept apart from the read so a test can hand it a failure other than
+    /// absence, which a file mode cannot produce reliably: a test running as
+    /// root reads a file whatever its mode says.
+    fn settle(
+        path: &std::path::Path,
+        read: std::io::Result<String>,
+        generated: &str,
+    ) -> Result<(), String> {
+        match read {
+            Ok(checked_in) if checked_in == generated => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !path.parent().is_some_and(std::path::Path::is_dir) {
+                    return Err(format!(
+                        "{} is not there, and neither is the directory it \
+                         belongs in, so nothing was written",
+                        path.display()
+                    ));
+                }
+
+                std::fs::write(path, generated).unwrap();
+                Err(
+                    "schema/crucible-code-schema.json was missing and has been written — commit it"
+                        .into(),
+                )
+            }
+            Ok(_) => {
+                std::fs::write(path, generated).unwrap();
+                Err(
+                    "schema/crucible-code-schema.json was stale and has been rewritten — commit it"
+                        .into(),
+                )
+            }
+            // Unreadable for any reason but absence. Such a read may learn
+            // nothing of the contents (a copy crucible may write but not read
+            // can already be exactly this), so it is not called stale, and its
+            // error is the account of what went wrong.
+            Err(error) => {
+                std::fs::write(path, generated).unwrap();
+                Err(format!(
+                    "schema/crucible-code-schema.json could not be read ({error}) and has been \
+                     rewritten — commit it if it changed"
+                ))
+            }
+        }
+    }
+
     #[test]
     fn the_checked_in_schema_is_what_this_generates() {
         // The gate that makes the checked-in file output rather than a second
         // copy to maintain. It rewrites and then fails, so the fix is to run
         // the tests again and commit — but the failure is what CI sees, so a
         // stale schema cannot be shipped to the editors that fetch it.
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../schema/crucible-code-schema.json");
+        let path =
+            crate::compiled::manifest_directory().join("../../schema/crucible-code-schema.json");
 
-        let generated = schema();
-        if std::fs::read_to_string(&path).is_ok_and(|checked_in| checked_in == generated) {
-            return;
+        if let Err(reason) = refresh(&path, &schema()) {
+            panic!("{reason}");
         }
+    }
 
-        if let Some(directory) = path.parent() {
-            std::fs::create_dir_all(directory).unwrap();
-        }
+    #[test]
+    fn a_schema_that_is_not_there_is_never_a_stale_one() {
+        let scratch = crate::sample::Scratch::new("schema-refresh");
+        let generated = "{}";
+
+        // Not a checkout at all: the path resolved into a tree that is gone.
+        // Recreating it plants a tracked file where nobody will ever look.
+        let orphaned = scratch.at("removed/schema/crucible-code-schema.json");
+        let reason = refresh(&orphaned, generated).expect_err("nowhere to write");
+        assert!(
+            !scratch.at("removed").exists(),
+            "a directory was created outside any checkout"
+        );
+        assert!(!orphaned.exists(), "{} was written", orphaned.display());
+        assert!(reason.contains(&orphaned.display().to_string()), "{reason}");
+        assert!(reason.contains("nothing was written"), "{reason}");
+
+        // A checkout whose schema was deleted: written back, and reported as
+        // missing rather than as stale, which is a different thing to fix.
+        let path = scratch.make("schema").join("crucible-code-schema.json");
+        let reason = refresh(&path, generated).expect_err("a schema to write");
+        assert!(
+            reason.contains("was missing and has been written"),
+            "{reason}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), generated);
+
+        // A checkout whose schema is out of step: rewritten, and reported so.
+        std::fs::write(&path, "stale").unwrap();
+        let reason = refresh(&path, generated).expect_err("a stale schema");
+        assert!(
+            reason.contains("was stale and has been rewritten"),
+            "{reason}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), generated);
+
+        assert!(refresh(&path, generated).is_ok());
+    }
+
+    #[test]
+    fn a_schema_that_could_not_be_read_is_never_a_stale_one() {
+        let scratch = crate::sample::Scratch::new("schema-unread");
+        let generated = "{}";
+        let path = scratch.make("schema").join("crucible-code-schema.json");
         std::fs::write(&path, generated).unwrap();
-        panic!("schema/crucible-code-schema.json was stale and has been rewritten — commit it");
+
+        // The file may hold exactly what this generates: a refused read says
+        // nothing about its contents, and its own error is the one clue left.
+        let refused = std::io::Error::other("the read was refused");
+        let reason = settle(&path, Err(refused), generated).expect_err("an unread schema");
+        assert!(!reason.contains("stale"), "{reason}");
+        assert!(reason.contains("could not be read"), "{reason}");
+        assert!(reason.contains("the read was refused"), "{reason}");
+        assert!(reason.contains("commit it if it changed"), "{reason}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), generated);
     }
 
     #[test]

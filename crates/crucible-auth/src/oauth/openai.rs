@@ -3,25 +3,30 @@
 //! Browser PKCE is the ordinary local login. Device authorization is a
 //! separate method for remote and headless use, matching the choice exposed by
 //! the official Codex client. Both methods produce the same stored credential
-//! and share one bounded worker slot.
+//! and share one login slot, running as a task on the runtime [`Renewals`]
+//! was given.
+//!
+//! Every request goes through the client [`Renewals`] owns, within 30 s end
+//! to end. A credential's renewal is a rotation that owner runs for the
+//! account's scope; the credential only awaits it.
 
 mod callback;
 
 pub(super) use callback::PORTS;
 
 use std::fmt;
-use std::io::Read as _;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use crucible_core::{Cancel, Credential, CredentialError, CredentialScopeId, Outgoing};
+use crucible_credentials::{Authorization, Credential, CredentialError, Outgoing};
+use crucible_types::CredentialScopeId;
 use sha2::{Digest as _, Sha256};
+use tokio::sync::mpsc::Receiver;
 
 use super::{
-    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, OAuthError, SubscriptionLogin, Tokens,
-    credential_scope,
+    LoginAttempt, LoginMethod, LoginSlot, LoginUpdate, LoginUpdates, OAuthError, Renewals,
+    SubscriptionLogin, Tokens, credential_scope, held, renewal::Due,
 };
 use crate::{Store, StoredCredentials};
 
@@ -30,10 +35,8 @@ pub(super) const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub(super) const VERIFY: &str = "https://auth.openai.com/codex/device";
 const DEVICE_REDIRECT: &str = "https://auth.openai.com/deviceauth/callback";
 const SCOPE: &str = "openid profile email offline_access api.connectors.read api.connectors.invoke";
-const MAX_BODY: usize = 64 * 1024;
 const LOGIN_LIFETIME: Duration = Duration::from_mins(15);
 const REQUEST_LIFETIME: Duration = Duration::from_secs(30);
-const CANCEL_POLL: Duration = Duration::from_millis(50);
 const REFRESH_AFTER: u64 = 8 * 24 * 60 * 60;
 const EXPIRY_SKEW: u64 = 5 * 60;
 const ACCOUNT: &str = "account_id";
@@ -55,12 +58,12 @@ impl OpenAiOAuth {
     /// Device authorization for remote or headless terminals.
     pub const DEVICE: LoginMethod = LoginMethod::new("device");
 
-    /// Production `ChatGPT` login methods.
+    /// Production `ChatGPT` login methods, renewing through `renewals`.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(renewals: Renewals) -> Self {
         Self {
             shared: Arc::new(Shared {
-                flow: Flow::production(),
+                flow: Flow::production(renewals),
                 worker: LoginSlot::new(),
             }),
         }
@@ -81,20 +84,18 @@ impl OpenAiOAuth {
             return Err(OAuthError::Method);
         }
         let flow = self.shared.flow.clone();
-        self.shared.worker.start_with_input(
-            "crucible-openai-login",
-            move |cancel, updates, input| {
-                let active = ActiveLogin {
-                    store: &store,
-                    cancel: &cancel,
-                    updates: &updates,
-                    input: &input,
-                };
-                if let Err(problem) = flow.login(method, &active) {
+        let runtime = flow
+            .renewals
+            .runtime()
+            .ok_or(OAuthError::NotStarted)?
+            .clone();
+        self.shared
+            .worker
+            .start_with_input(&runtime, move |updates, mut input| async move {
+                if let Err(problem) = flow.login(method, &store, &updates, &mut input).await {
                     let _ = updates.send(Err(problem));
                 }
-            },
-        )
+            })
     }
 
     fn stored_credential(&self, stored: &StoredCredentials) -> Option<Box<dyn Credential>> {
@@ -104,12 +105,6 @@ impl OpenAiOAuth {
             tokens,
             self.shared.flow.clone(),
         )))
-    }
-}
-
-impl Default for OpenAiOAuth {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -160,31 +155,58 @@ impl Credential for OpenAiCredential {
         self.scope
     }
 
-    fn authorize(&self, request: &mut Outgoing) -> Result<(), CredentialError> {
-        let mut tokens = self
-            .tokens
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if needs_refresh(&tokens, now()) {
-            *tokens = self
-                .store
-                .refresh_subscription("openai", needs_refresh, |current| {
-                    let refreshed = self.flow.refresh(current)?;
-                    if self.identity_bound
-                        && credential_scope(b"openai-account", refreshed.detail(ACCOUNT))
-                            != Some(self.scope)
-                    {
-                        return Err(OAuthError::Invalid {
-                            step: "refreshed account identity",
-                        });
-                    }
-                    Ok(refreshed)
-                })
-                .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
-        }
+    fn authorize<'a>(&'a self, request: &'a mut Outgoing) -> Authorization<'a> {
+        Box::pin(async move {
+            {
+                let mut tokens = held(&self.tokens);
+                if needs_refresh(&tokens, now())
+                    && let Some(latest) = self.flow.renewals.latest("openai", self.scope)
+                    && !needs_refresh(&latest, now())
+                {
+                    *tokens = latest;
+                }
+                if !needs_refresh(&tokens, now()) {
+                    apply(&tokens, request);
+                    return Ok(());
+                }
+            }
 
-        apply(&tokens, request);
-        Ok(())
+            // Awaited with nothing held: the rotation is the owner's task, and
+            // this future only waits for it, so dropping it stops the wait and
+            // not the rotation.
+            let flow = self.flow.clone();
+            let (scope, bound) = (self.scope, self.identity_bound);
+            let fresh = self
+                .flow
+                .renewals
+                .renew(Due {
+                    scope,
+                    provider: "openai",
+                    store: self.store.clone(),
+                    needs_refresh,
+                    refresh: Box::new(move |current| {
+                        Box::pin(async move {
+                            let refreshed = flow.refresh(&current).await?;
+                            if bound
+                                && credential_scope(b"openai-account", refreshed.detail(ACCOUNT))
+                                    != Some(scope)
+                            {
+                                return Err(OAuthError::Invalid {
+                                    step: "refreshed account identity",
+                                });
+                            }
+                            Ok(refreshed)
+                        })
+                    }),
+                })
+                .await
+                .map_err(|problem| CredentialError::NotRenewed(problem.to_string().into()))?;
+
+            let mut tokens = held(&self.tokens);
+            *tokens = fresh;
+            apply(&tokens, request);
+            Ok(())
+        })
     }
 }
 
@@ -212,7 +234,12 @@ fn needs_refresh(tokens: &Tokens, at: u64) -> bool {
 
 #[derive(Clone)]
 pub(crate) struct Flow {
-    agent: ureq::Agent,
+    /// The owner of this account's renewals, whose client every request goes
+    /// through and whose runtime a login runs on.
+    renewals: Renewals,
+    /// How long one request may take, from waiting for a connection to the
+    /// last byte of its answer.
+    request_lifetime: Duration,
     issuer: Box<str>,
     device_code: Box<str>,
     device_token: Box<str>,
@@ -223,22 +250,11 @@ pub(crate) struct Flow {
     callback_ports: &'static [u16],
 }
 
-struct ActiveLogin<'a> {
-    store: &'a Store,
-    cancel: &'a Cancel,
-    updates: &'a mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-    input: &'a mpsc::Receiver<Box<str>>,
-}
-
 impl Flow {
-    pub(super) fn production() -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(REQUEST_LIFETIME))
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .build();
+    pub(super) fn production(renewals: Renewals) -> Self {
         Self {
-            agent: ureq::Agent::new_with_config(config),
+            renewals,
+            request_lifetime: REQUEST_LIFETIME,
             issuer: ISSUER.into(),
             device_code: format!("{ISSUER}/api/accounts/deviceauth/usercode").into(),
             device_token: format!("{ISSUER}/api/accounts/deviceauth/token").into(),
@@ -250,14 +266,20 @@ impl Flow {
     }
 
     #[cfg(test)]
-    pub(super) fn testing(base: &str) -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(crate::oauth::PATIENCE))
-            .max_redirects(0)
-            .http_status_as_error(false)
-            .build();
+    pub(super) fn testing(base: &str, renewals: &Renewals) -> Self {
+        Self::testing_within(base, renewals, crate::oauth::PATIENCE)
+    }
+
+    /// A test flow whose requests are each given `request_lifetime`.
+    #[cfg(test)]
+    pub(super) fn testing_within(
+        base: &str,
+        renewals: &Renewals,
+        request_lifetime: Duration,
+    ) -> Self {
         Self {
-            agent: ureq::Agent::new_with_config(config),
+            renewals: renewals.clone(),
+            request_lifetime,
             issuer: base.into(),
             device_code: format!("{base}/api/accounts/deviceauth/usercode").into(),
             device_token: format!("{base}/api/accounts/deviceauth/token").into(),
@@ -276,80 +298,74 @@ impl Flow {
         self.callback_ports
     }
 
-    fn login(&self, method: LoginMethod, active: &ActiveLogin<'_>) -> Result<(), OAuthError> {
-        let ActiveLogin {
-            store,
-            cancel,
-            updates,
-            input,
-        } = *active;
+    async fn login(
+        &self,
+        method: LoginMethod,
+        store: &Store,
+        updates: &LoginUpdates,
+        input: &mut Receiver<Box<str>>,
+    ) -> Result<(), OAuthError> {
         let tokens = if method == OpenAiOAuth::BROWSER {
-            self.browser(cancel, updates, input)?
+            self.browser(updates, input).await?
         } else if method == OpenAiOAuth::DEVICE {
-            self.device(cancel, updates)?
+            self.device(updates).await?
         } else {
             return Err(OAuthError::Method);
         };
-        store.keep_subscription("openai", tokens)?;
-        updates
-            .send(Ok(LoginUpdate::Complete))
-            .map_err(|_| OAuthError::Cancelled)
+        let store = store.clone();
+        self.renewals
+            .login_store(move || store.keep_subscription("openai", tokens))
+            .await?;
+        updates.send(Ok(LoginUpdate::Complete))
     }
 
-    fn browser(
+    async fn browser(
         &self,
-        cancel: &Cancel,
-        updates: &mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-        input: &mpsc::Receiver<Box<str>>,
+        updates: &LoginUpdates,
+        input: &mut Receiver<Box<str>>,
     ) -> Result<Tokens, OAuthError> {
         let pkce = Pkce::new()?;
         let state = random_urlsafe::<32>()?;
         let callback = callback::Server::bind(self.callback_ports, self.login_lifetime)?;
         let redirect = callback.redirect_uri();
         let authorization = authorization_uri(&self.issuer, &redirect, &pkce.challenge, &state);
-        updates
-            .send(Ok(LoginUpdate::Authorize {
-                browser_uri: authorization.clone().into(),
-                shown_uri: callback.launch_uri().into(),
-                user_code: None,
-                manual: true,
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
-        let code = callback.wait(&authorization, &state, cancel, input)?;
-        updates
-            .send(Ok(LoginUpdate::Progress {
-                message: "finishing browser authorization…",
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
-        self.exchange(&code, &pkce.verifier, &redirect)
+        updates.send(Ok(LoginUpdate::Authorize {
+            browser_uri: authorization.clone().into(),
+            shown_uri: callback.launch_uri().into(),
+            user_code: None,
+            manual: true,
+        }))?;
+        let code = callback.wait(&authorization, &state, input).await?;
+        updates.send(Ok(LoginUpdate::Progress {
+            message: "finishing browser authorization…",
+        }))?;
+        self.renewals
+            .login_request(self.exchange(&code, &pkce.verifier, &redirect))
+            .await
     }
 
-    fn device(
-        &self,
-        cancel: &Cancel,
-        updates: &mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
-    ) -> Result<Tokens, OAuthError> {
-        let device = self.request_device()?;
-        updates
-            .send(Ok(LoginUpdate::Authorize {
-                browser_uri: VERIFY.into(),
-                shown_uri: VERIFY.into(),
-                user_code: Some(device.user_code.clone()),
-                manual: false,
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
-        let authorized = self.poll(&device, cancel)?;
-        updates
-            .send(Ok(LoginUpdate::Progress {
-                message: "finishing device authorization…",
-            }))
-            .map_err(|_| OAuthError::Cancelled)?;
-        self.exchange(&authorized.code, &authorized.verifier, DEVICE_REDIRECT)
+    async fn device(&self, updates: &LoginUpdates) -> Result<Tokens, OAuthError> {
+        let device = self.renewals.login_request(self.request_device()).await?;
+        updates.send(Ok(LoginUpdate::Authorize {
+            browser_uri: VERIFY.into(),
+            shown_uri: VERIFY.into(),
+            user_code: Some(device.user_code.clone()),
+            manual: false,
+        }))?;
+        let authorized = self.poll(&device).await?;
+        updates.send(Ok(LoginUpdate::Progress {
+            message: "finishing device authorization…",
+        }))?;
+        self.renewals
+            .login_request(self.exchange(&authorized.code, &authorized.verifier, DEVICE_REDIRECT))
+            .await
     }
 
-    fn request_device(&self) -> Result<Device, OAuthError> {
+    async fn request_device(&self) -> Result<Device, OAuthError> {
         let body = serde_json::json!({ "client_id": CLIENT_ID }).to_string();
-        let (status, response) = self.post(&self.device_code, "application/json", body)?;
+        let (status, response) = self
+            .post(&self.device_code, "application/json", body)
+            .await?;
         if status != 200 {
             return Err(OAuthError::Refused { status });
         }
@@ -364,12 +380,9 @@ impl Flow {
         })
     }
 
-    fn poll(&self, device: &Device, cancel: &Cancel) -> Result<Authorized, OAuthError> {
+    async fn poll(&self, device: &Device) -> Result<Authorized, OAuthError> {
         let started = Instant::now();
         loop {
-            if cancel.requested() {
-                return Err(OAuthError::Cancelled);
-            }
             if started.elapsed() >= self.login_lifetime {
                 return Err(OAuthError::Expired);
             }
@@ -378,7 +391,10 @@ impl Flow {
                 "user_code": &device.user_code,
             })
             .to_string();
-            let (status, response) = self.post(&self.device_token, "application/json", body)?;
+            let (status, response) = self
+                .renewals
+                .login_request(self.post(&self.device_token, "application/json", body))
+                .await?;
             if status == 200 {
                 let value: serde_json::Value =
                     serde_json::from_str(&response).map_err(|_| OAuthError::Invalid {
@@ -392,11 +408,16 @@ impl Flow {
             if !matches!(status, 403 | 404) {
                 return Err(OAuthError::Refused { status });
             }
-            pause(device.interval, cancel)?;
+            tokio::time::sleep(device.interval).await;
         }
     }
 
-    fn exchange(&self, code: &str, verifier: &str, redirect: &str) -> Result<Tokens, OAuthError> {
+    async fn exchange(
+        &self,
+        code: &str,
+        verifier: &str,
+        redirect: &str,
+    ) -> Result<Tokens, OAuthError> {
         let body = form(&[
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -404,55 +425,43 @@ impl Flow {
             ("client_id", CLIENT_ID),
             ("code_verifier", verifier),
         ]);
-        let (status, response) =
-            self.post(&self.token, "application/x-www-form-urlencoded", body)?;
+        let (status, response) = self
+            .post(&self.token, "application/x-www-form-urlencoded", body)
+            .await?;
         if status != 200 {
             return Err(OAuthError::Refused { status });
         }
         token_response(&response, None)
     }
 
-    pub(crate) fn refresh(&self, previous: &Tokens) -> Result<Tokens, OAuthError> {
+    pub(crate) async fn refresh(&self, previous: &Tokens) -> Result<Tokens, OAuthError> {
         let body = serde_json::json!({
             "client_id": CLIENT_ID,
             "grant_type": "refresh_token",
             "refresh_token": previous.refresh(),
         })
         .to_string();
-        let (status, response) = self.post(&self.token, "application/json", body)?;
+        let (status, response) = self.post(&self.token, "application/json", body).await?;
         if status != 200 {
             return Err(OAuthError::Refused { status });
         }
         token_response(&response, Some(previous))
     }
 
-    fn post(
+    /// One request, with the two headers every one of them carries. Nothing
+    /// names a user agent, so the client's default is sent, as before.
+    async fn post(
         &self,
         url: &str,
-        content_type: &str,
+        content_type: &'static str,
         body: String,
     ) -> Result<(u16, String), OAuthError> {
-        let response = self
-            .agent
-            .post(url)
-            .header("content-type", content_type)
-            .header("accept", "application/json")
-            .send(body)
-            .map_err(|_| OAuthError::Unreachable)?;
-        let status = response.status().as_u16();
-        let mut text = String::new();
-        response
-            .into_body()
-            .into_reader()
-            .take((MAX_BODY + 1) as u64)
-            .read_to_string(&mut text)
-            .map_err(|_| OAuthError::Unreachable)?;
-        if text.len() > MAX_BODY {
-            return Err(OAuthError::Invalid {
-                step: "oversized authorization",
-            });
-        }
-        Ok((status, text))
+        let mut headers = Outgoing::new();
+        headers.set_header("content-type", content_type);
+        headers.set_header("accept", "application/json");
+        self.renewals
+            .post(url, headers, body, self.request_lifetime)
+            .await
     }
 }
 
@@ -561,17 +570,6 @@ fn interval(value: &serde_json::Value) -> Duration {
         .unwrap_or(5)
         .clamp(1, 60);
     Duration::from_secs(seconds)
-}
-
-fn pause(duration: Duration, cancel: &Cancel) -> Result<(), OAuthError> {
-    let until = Instant::now() + duration;
-    while Instant::now() < until {
-        if cancel.requested() {
-            return Err(OAuthError::Cancelled);
-        }
-        std::thread::sleep(CANCEL_POLL.min(until.saturating_duration_since(Instant::now())));
-    }
-    Ok(())
 }
 
 fn account(jwt: &str) -> Option<String> {

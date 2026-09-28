@@ -11,16 +11,22 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crucible_core::{
-    ActionId, ActionResolution, Ancestry, ApprovalDecision, CacheCheckpoint, CheckpointId,
-    CheckpointStore, ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId,
-    InvocationRecord, InvocationState, MAX_HUMAN_INPUT_BYTES, Modality, PendingAction,
-    PendingActions, PendingApproval, PendingExternalTool, PendingHumanInput,
-    PromptCacheFingerprint, PromptCacheResourceId, PromptCacheScopeDigest, ProviderAttemptId,
-    RecordedToolOutput, ResumeDigest, ResumeScope, RunId, SandboxBackendId, SandboxBackendIdentity,
-    SandboxBackendProvenance, SandboxCapabilities, SandboxCapability, SandboxCheckpoint,
-    SandboxFeature, SandboxId, SandboxNetworkInspection, TOOL_RESULT_BYTES, ToolArgs, ToolCall,
-    ToolEffect, ToolId, ToolOutcome,
+use crucible_runtime::BoxFuture;
+use crucible_sandbox::{
+    SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
+    SandboxCapability, SandboxCheckpoint, SandboxFeature, SandboxNetworkInspection,
+};
+use crucible_storage::{
+    ActionId, ActionResolution, ApprovalDecision, CheckpointId, CheckpointStore,
+    ExecutionCheckpoint, IdempotencyKey, InterruptionError, InvocationId, InvocationRecord,
+    InvocationState, MAX_HUMAN_INPUT_BYTES, PendingAction, PendingActions, PendingApproval,
+    PendingExternalTool, PendingHumanInput, ResumeDigest, ResumeScope, ToolEffect,
+};
+use crucible_tools::ToolOutcome;
+use crucible_types::{
+    Ancestry, CacheCheckpoint, Modality, PromptCacheFingerprint, PromptCacheResourceId,
+    PromptCacheScopeDigest, ProviderAttemptId, RecordedToolOutput, RunId, SandboxId,
+    TOOL_RESULT_BYTES, ToolArgs, ToolCall, ToolId,
 };
 use serde_json::{Value, json};
 
@@ -82,7 +88,31 @@ impl FileCheckpointStore {
 impl CheckpointStore for FileCheckpointStore {
     type Error = CheckpointError;
 
-    fn save(&mut self, checkpoint: &ExecutionCheckpoint) -> Result<(), Self::Error> {
+    fn save<'a>(
+        &'a mut self,
+        checkpoint: &'a ExecutionCheckpoint,
+    ) -> BoxFuture<'a, Result<(), Self::Error>> {
+        Box::pin(async move { self.replaced(checkpoint) })
+    }
+
+    fn load(
+        &self,
+        id: CheckpointId,
+    ) -> BoxFuture<'_, Result<Option<ExecutionCheckpoint>, Self::Error>> {
+        Box::pin(async move { self.read(id) })
+    }
+
+    fn remove(&mut self, id: CheckpointId) -> BoxFuture<'_, Result<(), Self::Error>> {
+        Box::pin(async move { self.removed(id) })
+    }
+}
+
+// The work each method above answers with, kept beside the trait impl so the
+// three bodies are the ones they were: the port changed what a write hands
+// back, and nothing about what a write does.
+impl FileCheckpointStore {
+    /// Encodes, writes, syncs and renames one replacement into place.
+    fn replaced(&mut self, checkpoint: &ExecutionCheckpoint) -> Result<(), CheckpointError> {
         self.private_directory()?;
         let bytes = encode(checkpoint)?;
         if bytes.len() > MAX_CHECKPOINT_BYTES {
@@ -102,7 +132,8 @@ impl CheckpointStore for FileCheckpointStore {
         Ok(())
     }
 
-    fn load(&self, id: CheckpointId) -> Result<Option<ExecutionCheckpoint>, Self::Error> {
+    /// The typed checkpoint under `id`, or `None` where there is none.
+    fn read(&self, id: CheckpointId) -> Result<Option<ExecutionCheckpoint>, CheckpointError> {
         let path = self.path(id);
         match fs::metadata(&self.directory) {
             Ok(_) => self.private_directory()?,
@@ -132,7 +163,9 @@ impl CheckpointStore for FileCheckpointStore {
         Ok(Some(checkpoint))
     }
 
-    fn remove(&mut self, id: CheckpointId) -> Result<(), Self::Error> {
+    /// Removes the finished checkpoint under `id`, or answers where there is
+    /// none, which is what repeating a removal has to do.
+    fn removed(&self, id: CheckpointId) -> Result<(), CheckpointError> {
         match fs::metadata(&self.directory) {
             Ok(_) => self.private_directory()?,
             Err(problem) if problem.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -663,7 +696,7 @@ fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
         return Err(CheckpointError::TooLarge);
     }
     if let Some(changed) = nullable(value, "changed")? {
-        output = output.counting(crucible_core::Changed::new(
+        output = output.counting(crucible_types::Changed::new(
             usize::try_from(number(changed, "added")?).map_err(|_| CheckpointError::Unreadable)?,
             usize::try_from(number(changed, "removed")?)
                 .map_err(|_| CheckpointError::Unreadable)?,
@@ -672,7 +705,7 @@ fn decode_output(value: &Value) -> Result<RecordedToolOutput, CheckpointError> {
     let attachments = array(value, "attachments")?
         .iter()
         .map(|attachment| {
-            Ok(crucible_core::Attachment {
+            Ok(crucible_types::Attachment {
                 path: text(attachment, "path")?.into(),
                 modality: Modality::from_str(text(attachment, "modality")?)
                     .map_err(|_| CheckpointError::Unreadable)?,
@@ -763,7 +796,10 @@ fn decode_cache(value: &Value) -> Result<CacheCheckpoint, CheckpointError> {
         nullable_number(value, "expires_at")?,
         boolean(value, "reconcile")?,
     )
-    .map_err(Into::into)
+    // The value that carries no record lives in `crucible-types` and cannot
+    // name this crate's error, so the refusal it names is the same
+    // `InvalidField` the checkpoint has always reported.
+    .map_err(|error| CheckpointError::Invalid(InterruptionError::InvalidField(error.field())))
 }
 
 fn effect(effect: ToolEffect) -> &'static str {

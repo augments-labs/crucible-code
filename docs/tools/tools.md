@@ -1,7 +1,8 @@
 # Tools
 
-Twelve tools, advertised in the order a model tends to reach for them. Eight are
-always in the list. The rest are **held back**: they exist and they work, and the
+Twelve tools, advertised in the order a model tends to reach for them. Nine are
+in the list from the start, and eight when nobody is at a keyboard for
+`ask_user` to ask. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.
@@ -72,10 +73,12 @@ What a tool returns goes into the next request to the model whole, so an
 unbounded answer is an unbounded bill and a window spent on a log file
 somebody `cat`'d by accident. Every tool here stops at 30000 bytes.
 
-`todo_write` is the one that never arrives there. Its answer is the plan it just
-wrote, and a plan is bounded before it is written rather than after it is read —
-so the fullest one anybody can put down is a fifth of that figure, and no answer
-it gives was ever going to be cut.
+`todo_write` is the one that does not arrive there with an ordinary plan. Its
+answer is the plan it just wrote, and a plan is bounded before it is written
+rather than after it is read — sixty-four tasks of at most 256 bytes each, a
+little over half that figure. Only a plan spelled mostly in quotes, backslashes
+or control characters, which the answer has to escape, can reach the cut, and
+it says so like any other.
 
 A cut answer says so, in the answer:
 

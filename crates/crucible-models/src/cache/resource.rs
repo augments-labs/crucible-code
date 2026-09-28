@@ -5,7 +5,7 @@
 //! where that record is kept is `crucible-storage`.
 
 use crate::Request;
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
     PromptCacheResourceBinding, PromptCacheResourceError, PromptCacheResourceHandle,
     PromptCacheResourceId, PromptCacheResourceRecord, PromptCacheResourceState,
@@ -48,7 +48,7 @@ impl fmt::Debug for PromptCacheResourceReference<'_> {
     }
 }
 
-/// One absolute deadline for a blocking lifecycle operation.
+/// One absolute deadline for a lifecycle operation.
 #[derive(Debug, Clone, Copy)]
 pub struct PromptCacheResourceDeadline(Instant);
 
@@ -72,7 +72,8 @@ impl PromptCacheResourceDeadline {
     }
 }
 
-/// Borrowed creation input. Prompt bytes live only for the blocking call.
+/// Borrowed creation input. Prompt bytes live only as long as the future the
+/// call hands back.
 #[derive(Clone, Copy)]
 pub struct PromptCacheResourceCreate<'a> {
     /// Local idempotency identity minted before the call.
@@ -119,10 +120,12 @@ pub struct PromptCacheResourceRemote {
     pub expires_at: Option<u64>,
 }
 
-/// Blocking provider lifecycle for persistent cached-content resources.
+/// Provider lifecycle for persistent cached-content resources.
 ///
-/// Implementations use the supplied cancellation token and absolute deadline;
-/// they retain neither the request nor any prompt bytes after returning.
+/// Every call waits on the provider, so each hands back a [`BoxFuture`]
+/// borrowing no more than the call was given. Implementations use the supplied
+/// cancellation token and absolute deadline; they retain neither the request
+/// nor any prompt bytes once the future completes.
 pub trait PromptCacheResourceLifecycle: Send + Sync {
     /// Creates one resource under the local idempotency identity.
     ///
@@ -130,11 +133,11 @@ pub trait PromptCacheResourceLifecycle: Send + Sync {
     ///
     /// Returns a typed lifecycle error when the bounded operation is rejected,
     /// cancelled, times out, or has an ambiguous remote outcome.
-    fn create(
-        &self,
-        request: PromptCacheResourceCreate<'_>,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceCreated, PromptCacheResourceError>;
+    fn create<'a>(
+        &'a self,
+        request: PromptCacheResourceCreate<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceCreated, PromptCacheResourceError>>;
 
     /// Resolves and validates an existing record before reuse.
     ///
@@ -142,12 +145,12 @@ pub trait PromptCacheResourceLifecycle: Send + Sync {
     ///
     /// Returns a typed lifecycle error when the bounded operation cannot
     /// establish the remote resource's state.
-    fn resolve(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn resolve<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError>;
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>>;
 
     /// Renews one resource no later than the supplied policy ceiling.
     ///
@@ -155,13 +158,13 @@ pub trait PromptCacheResourceLifecycle: Send + Sync {
     ///
     /// Returns a typed lifecycle error when renewal is rejected, cancelled,
     /// times out, or has an ambiguous remote outcome.
-    fn renew(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn renew<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
         retention: PromptCacheRetention,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError>;
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>>;
 
     /// Deletes one provider resource idempotently.
     ///
@@ -169,12 +172,12 @@ pub trait PromptCacheResourceLifecycle: Send + Sync {
     ///
     /// Returns a typed lifecycle error when deletion is rejected, cancelled,
     /// times out, or has an ambiguous remote outcome.
-    fn delete(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn delete<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError>;
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>>;
 
     /// Reconciles an ambiguous create, renew, or delete.
     ///
@@ -182,12 +185,12 @@ pub trait PromptCacheResourceLifecycle: Send + Sync {
     ///
     /// Returns a typed lifecycle error when the remote outcome still cannot be
     /// established safely.
-    fn reconcile(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn reconcile<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError>;
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>>;
 
     /// Inspects current remote state without changing it.
     ///
@@ -195,10 +198,10 @@ pub trait PromptCacheResourceLifecycle: Send + Sync {
     ///
     /// Returns a typed lifecycle error when inspection is rejected, cancelled,
     /// times out, or remains ambiguous.
-    fn inspect(
-        &self,
-        record: &PromptCacheResourceRecord,
+    fn inspect<'a>(
+        &'a self,
+        record: &'a PromptCacheResourceRecord,
         deadline: PromptCacheResourceDeadline,
-        cancel: &Cancel,
-    ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError>;
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>>;
 }

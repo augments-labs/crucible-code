@@ -4,7 +4,9 @@ use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::policy::{MAX_SANDBOX_PATH_BYTES, SandboxFilesystemAccess, SandboxFilesystemProvenance};
+use crucible_storage::{SandboxFilesystemAccess, SandboxFilesystemProvenance};
+
+use super::policy::MAX_SANDBOX_PATH_BYTES;
 
 /// Maximum entries materialized for one sandbox.
 pub const MAX_SANDBOX_MANIFEST_ENTRIES: usize = 256;
@@ -473,8 +475,8 @@ mod tests {
         assert!(SandboxManifest::new([directory, child]).is_ok());
     }
 
-    // The mount fixtures are POSIX absolute paths, which no Windows path type
-    // accepts.
+    // The mount source is a POSIX absolute path; Windows does not accept it as
+    // absolute, so `validate_source` rejects it on Windows.
     #[cfg(unix)]
     #[test]
     fn manifest_debug_never_contains_inline_bytes_or_mount_sources() {

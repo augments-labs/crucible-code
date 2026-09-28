@@ -28,6 +28,7 @@ fn attributed(scripted: &mut Scripted, prompt: &str) -> Vec<EventEnvelope> {
     scripted
         .runner
         .turn(prompt, Box::new([]), &mut scripted.says, &run)
+        .awaited()
         .expect("a finished turn");
 
     drop(events);
@@ -138,6 +139,7 @@ fn refused(scripted: &mut Scripted, prompt: &str) -> Vec<EventEnvelope> {
     if let Err(problem) = scripted
         .runner
         .turn(prompt, Box::new([]), &mut scripted.says, &run)
+        .awaited()
     {
         run.reporting().post(Event::Failed { error: problem });
     }

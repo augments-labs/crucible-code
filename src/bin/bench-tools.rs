@@ -6,9 +6,14 @@
 //! only the call: fixture construction happens outside the measured region.
 //! The budget is the slowest median rather than the sum, with every operation
 //! retained as numeric evidence in the performance artifact.
+//!
+//! Each call is lent a tool worker, on a runtime this probe builds shaped as
+//! the application's, so a tool that hands its blocking work over is timed
+//! doing so; the probe waits on that runtime for the answer.
 
 use std::fmt::Write as _;
 use std::fs;
+use std::future::Future;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -16,11 +21,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crucible_builtins::{Bash, Edit, Glob, Ledger, Read, Write};
-use crucible_core::{
-    Ancestry, Ask, Cancel, Mode, Permission, Remember, Sensitivity, Settled, Tool, ToolArgs,
-    ToolCall, ToolContext, ToolError, ToolId, ToolOutput, Unwatched, Verdict, Workspace,
-};
+use crucible_runtime::Cancel;
 use crucible_sandbox_local::LocalSandbox;
+use crucible_tools::ToolWorker;
+use crucible_tools::{
+    Ask, Mode, Permission, Remember, Sensitivity, Settled, Tool, ToolContext, ToolError,
+    ToolOutput, Unwatched, Verdict,
+};
+use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId};
+use crucible_workspace::Workspace;
+use tokio::runtime::{Builder, Runtime};
 
 /// Median invocations retained for each operation.
 const RUNS: usize = 31;
@@ -32,7 +42,7 @@ enum ProbeError {
     #[error("bench-tools: {0}")]
     Io(#[from] io::Error),
     #[error("bench-tools: {0}")]
-    Workspace(#[from] crucible_core::PathError),
+    Workspace(#[from] crucible_workspace::PathError),
     #[error("bench-tools: {0}")]
     Tool(#[from] ToolError),
     #[error("bench-tools: permission did not approve {0}")]
@@ -47,8 +57,43 @@ enum ProbeError {
 struct Unasked;
 
 impl Ask for Unasked {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Deny, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
+    }
+}
+
+/// The runtime each call is waited on, and the tool worker it is lent.
+///
+/// Shaped as the application's in what these calls reach: four workers, a
+/// clock for the worker's wait for room and a command's limits, the I/O
+/// driver a sandboxed command's output is read through on Unix, and at most
+/// eight blocking threads. Built before the measured calls, as the
+/// application builds its own before a turn. A sandboxed command's status is
+/// watched on it too, and its output read on it.
+struct Driver {
+    runtime: Runtime,
+    worker: ToolWorker,
+}
+
+impl Driver {
+    fn new() -> Result<Self, ProbeError> {
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(4)
+            .max_blocking_threads(8)
+            .enable_io()
+            .enable_time()
+            .build()?;
+        let worker = ToolWorker::new(runtime.handle().clone());
+        Ok(Self { runtime, worker })
+    }
+
+    /// Waits on the probe's own thread for `future` to answer.
+    fn answer<F: Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
     }
 }
 
@@ -82,6 +127,7 @@ impl Drop for Scratch {
 }
 
 fn invoke(
+    driver: &Driver,
     tool: &dyn Tool,
     name: &'static str,
     args: String,
@@ -93,15 +139,18 @@ fn invoke(
     };
     tool.validate(&call.args)?;
     let sensitivity = tool.sensitivity(&call.args);
-    let mut permission = Permission::with(Mode::FullAccess, crucible_core::Rules::new());
-    let Settled::Approved(approved) = permission.decide(&call, &sensitivity, &mut Unasked) else {
+    let mut permission = Permission::with(Mode::FullAccess, crucible_tools::Rules::new());
+    let Settled::Approved(approved) =
+        driver.answer(permission.decide(&call, &sensitivity, &mut Unasked))
+    else {
         return Err(ProbeError::Permission(name.into()));
     };
     let cancel = Cancel::new();
-    let context = ToolContext::new(Ancestry::new(), call.id, &cancel, None, &Unwatched);
+    let context = ToolContext::new(Ancestry::new(), call.id, &cancel, None, &Unwatched)
+        .with_worker(&driver.worker);
 
     let started = Instant::now();
-    let output = tool.run(approved, &context)?;
+    let output = driver.answer(tool.run(approved, &context))?;
     let elapsed = started.elapsed();
     if output.is_failed() {
         return Err(ProbeError::Failed(name, output.into_text()));
@@ -117,11 +166,11 @@ fn median(mut readings: Vec<Duration>) -> Result<f64, ProbeError> {
         .ok_or_else(|| ProbeError::Wrong("an operation produced no readings".into()))
 }
 
-fn read_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> {
+fn read_latency(driver: &Driver, scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> {
     let tool = Read::new(scratch.workspace.clone(), ledger.clone());
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
-        let (output, elapsed) = invoke(&tool, "read", r#"{"path":"read.txt"}"#.to_owned())?;
+        let (output, elapsed) = invoke(driver, &tool, "read", r#"{"path":"read.txt"}"#.to_owned())?;
         if !output.text().contains("     2\tbeta") {
             return Err(ProbeError::Wrong("read omitted the planted line".into()));
         }
@@ -130,11 +179,12 @@ fn read_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> {
     median(readings)
 }
 
-fn glob_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
+fn glob_latency(driver: &Driver, scratch: &Scratch) -> Result<f64, ProbeError> {
     let tool = Glob::new(scratch.workspace.clone());
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let (output, elapsed) = invoke(
+            driver,
             &tool,
             "glob",
             r#"{"pattern":"tree/**/*.txt","limit":300}"#.to_owned(),
@@ -147,15 +197,15 @@ fn glob_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
     median(readings)
 }
 
-fn edit_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
+fn edit_latency(driver: &Driver, scratch: &Scratch) -> Result<f64, ProbeError> {
     let tool = Edit::new(scratch.workspace.clone());
     let mut readings = Vec::with_capacity(RUNS);
     for number in 0..RUNS {
         let path = format!("edit-{number:02}.txt");
         fs::write(scratch.base.join(&path), "before\n")?;
         let args = format!(r#"{{"path":"{path}","find":"before","replace":"after"}}"#);
-        let (output, elapsed) = invoke(&tool, "edit", args)?;
-        if output.diff().is_none_or(crucible_core::Diff::is_empty)
+        let (output, elapsed) = invoke(driver, &tool, "edit", args)?;
+        if output.diff().is_none_or(crucible_types::Diff::is_empty)
             || fs::read_to_string(scratch.base.join(path))? != "after\n"
         {
             return Err(ProbeError::Wrong(
@@ -167,14 +217,14 @@ fn edit_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
     median(readings)
 }
 
-fn write_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> {
+fn write_latency(driver: &Driver, scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> {
     let tool = Write::new(scratch.workspace.clone(), ledger.clone());
     let mut readings = Vec::with_capacity(RUNS);
     for number in 0..RUNS {
         let path = format!("write-{number:02}.txt");
         let args = format!(r#"{{"path":"{path}","content":"written {number}\\n"}}"#);
-        let (output, elapsed) = invoke(&tool, "write", args)?;
-        if output.diff().is_none_or(crucible_core::Diff::is_empty)
+        let (output, elapsed) = invoke(driver, &tool, "write", args)?;
+        if output.diff().is_none_or(crucible_types::Diff::is_empty)
             || !scratch.base.join(path).is_file()
         {
             return Err(ProbeError::Wrong(
@@ -186,12 +236,13 @@ fn write_latency(scratch: &Scratch, ledger: &Ledger) -> Result<f64, ProbeError> 
     median(readings)
 }
 
-fn sandbox_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
-    let tool =
-        Bash::new(scratch.workspace.clone(), Arc::new(LocalSandbox::new())).sandboxing(false);
+fn sandbox_latency(driver: &Driver, scratch: &Scratch) -> Result<f64, ProbeError> {
+    let sandbox = LocalSandbox::new().watching_on(driver.runtime.handle().clone());
+    let tool = Bash::new(scratch.workspace.clone(), Arc::new(sandbox)).sandboxing(false);
     let mut readings = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let (output, elapsed) = invoke(
+            driver,
             &tool,
             "bash",
             r#"{"command":"printf sandbox-ready"}"#.to_owned(),
@@ -209,12 +260,13 @@ fn sandbox_latency(scratch: &Scratch) -> Result<f64, ProbeError> {
 fn measure() -> Result<[f64; 5], ProbeError> {
     let scratch = Scratch::new()?;
     let ledger = Ledger::new();
+    let driver = Driver::new()?;
     Ok([
-        read_latency(&scratch, &ledger)?,
-        glob_latency(&scratch)?,
-        edit_latency(&scratch)?,
-        write_latency(&scratch, &ledger)?,
-        sandbox_latency(&scratch)?,
+        read_latency(&driver, &scratch, &ledger)?,
+        glob_latency(&driver, &scratch)?,
+        edit_latency(&driver, &scratch)?,
+        write_latency(&driver, &scratch, &ledger)?,
+        sandbox_latency(&driver, &scratch)?,
     ])
 }
 

@@ -35,14 +35,17 @@ use std::time::{Duration, Instant};
 use crucible_app::Conversation;
 use crucible_builtins::{Background, Ended};
 use crucible_client_api::Command;
-use crucible_core::{Aside, Cancel, Effort, Mode};
+use crucible_models::Effort;
 use crucible_runner::Runner;
+use crucible_runtime::{Aside, Cancel};
+use crucible_tools::Mode;
 use crucible_tui::{
     Caret, Editor, Glyphs, Key, Listed, Menu, Pressed, Prompt, Recalled, Renderer, Row, Slot,
     Terminal, Typed, characters, pressed,
 };
 
 use crate::cli::Fatal;
+use crate::cli::ending::Ending;
 use crate::cli::kept::Kept;
 use crate::cli::standing;
 use crate::cli::style::Style;
@@ -261,7 +264,7 @@ fn mark_image(editor: &mut Editor, images: &mut Vec<Box<str>>, path: String) -> 
 
 /// Reads one image and inserts its marker.
 fn paste_image(
-    store: Option<(&std::path::Path, &crucible_core::SessionId)>,
+    store: Option<(&std::path::Path, &crucible_types::SessionId)>,
     board: &mut arboard::Clipboard,
     editor: &mut Editor,
     images: &mut Vec<Box<str>>,
@@ -319,7 +322,7 @@ pub(crate) struct Between<'a> {
     /// Where clipboard images are durably imported, as [`During`] takes it:
     /// the application's session says where that is, because the runner records
     /// into a contract and never learns what is behind it.
-    pub(crate) attachment_store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
+    pub(crate) attachment_store: Option<(&'a std::path::Path, &'a crucible_types::SessionId)>,
     /// The line being written, which still holds whatever was typed while the
     /// last turn ran.
     pub(crate) editor: &'a mut Editor,
@@ -370,8 +373,9 @@ fn stood<T: Terminal>(
     style: Style,
     listing: &mut Leaving,
     left: &Background,
+    ending: &Ending,
 ) -> Result<bool, Fatal> {
-    listing.stand(renderer, style, left)?;
+    listing.stand(renderer, style, left, ending)?;
     Ok(true)
 }
 
@@ -550,7 +554,7 @@ pub(crate) fn ask<T: Terminal>(
         // a key that moved nothing costs no frame, and the arms that end the
         // call leave through their own `return` without drawing at all.
         let moved = match arrived {
-            Pressed::Background => stood(renderer, style, &mut listing, left)?,
+            Pressed::Background => stood(renderer, style, &mut listing, left, &terms.ending)?,
             // Redrawn rather than re-wrapped: the box was laid out for a width
             // the window no longer has, and the rows it left on screen are the
             // renderer's to take back before the new ones go down.
@@ -632,7 +636,7 @@ pub(crate) fn ask<T: Terminal>(
                     Landed::Record(at) => return Ok(Asked::Clicked(at)),
                     Landed::Line => true,
 
-                    Landed::Counted => stood(renderer, style, &mut listing, left)?,
+                    Landed::Counted => stood(renderer, style, &mut listing, left, &terms.ending)?,
                     Landed::Nothing => offered.is_some(),
                 }
             }
@@ -1246,7 +1250,9 @@ pub(super) fn during<T: Terminal>(
                 // is between turns: the key cannot open the list here — it
                 // means backgrounding the command the turn is waiting on — so
                 // the click is the way the list is reached while a turn runs.
-                Landed::Counted => moved |= stood(renderer, style, listing, background)?,
+                Landed::Counted => {
+                    moved |= stood(renderer, style, listing, background, &terms.ending)?;
+                }
                 Landed::Nothing => {}
             },
 
@@ -1379,7 +1385,7 @@ pub(super) enum Meanwhile {
 /// Everything one Ctrl+V during a turn reads or may change.
 struct PasteImageDuring<'a> {
     commands: &'a command::Commands,
-    store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
+    store: Option<(&'a std::path::Path, &'a crucible_types::SessionId)>,
     board: &'a mut Option<arboard::Clipboard>,
     editor: &'a mut Editor,
     images: &'a mut Vec<Box<str>>,
@@ -1393,7 +1399,7 @@ struct PasteImageDuring<'a> {
 #[allow(clippy::too_many_arguments)]
 fn pasted_during<'a>(
     commands: &'a command::Commands,
-    store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
+    store: Option<(&'a std::path::Path, &'a crucible_types::SessionId)>,
     board: &'a mut Option<arboard::Clipboard>,
     editor: &'a mut Editor,
     images: &'a mut Vec<Box<str>>,
@@ -1606,7 +1612,7 @@ pub(super) struct During<'a> {
     pub(super) images: &'a mut Vec<Box<str>>,
     pub(super) clipboard: &'a mut Option<arboard::Clipboard>,
     /// Where clipboard images are durably imported while the runner is away.
-    pub(super) attachment_store: Option<(&'a std::path::Path, &'a crucible_core::SessionId)>,
+    pub(super) attachment_store: Option<(&'a std::path::Path, &'a crucible_types::SessionId)>,
     pub(super) queued: &'a mut Prompts,
     /// The row above the box, which is the one thing on screen that changes
     /// without anybody pressing anything.
@@ -1666,7 +1672,7 @@ pub(super) struct During<'a> {
     /// steering is the agent adjusting course at once, not a reason the question
     /// stops being one. The two are what a mid-turn Enter means, and this is the
     /// half the turn in front of it reads.
-    pub(super) steer: &'a crucible_core::Steer,
+    pub(super) steer: &'a crucible_runtime::Steer,
     /// Where a mode stepped to mid-turn is held until the runner is back.
     ///
     /// The runner holding the mode is on the worker for the turn's length, so

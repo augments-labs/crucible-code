@@ -7,12 +7,19 @@
 //! that owns them parses them. That keeps this crate free of every tool's
 //! argument shape, and it means an argument is validated exactly once, by the
 //! code that knows what it means.
+//!
+//! Running a call waits on the world, so [`Tool::run`] hands back a
+//! [`BoxFuture`] that borrows the call's context for as long as it runs and no
+//! longer. Accepting a background result hands back a future too, because it
+//! waits on its durable record, but one that owns the acceptance and borrows
+//! nothing. Validating, classifying and summarizing a call describe it, and
+//! stay synchronous.
 
 use std::fmt;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_sandbox::{SandboxAudit, SandboxAuditError, SandboxAuditRecord, SandboxError};
 use crucible_storage::{
     CallResultKey, CallResultReceipt, CallResultStoreError, IdempotencyKey, InvocationId,
@@ -24,6 +31,7 @@ use crucible_types::{
 };
 
 use crate::permissions::{Approved, Sensitivity};
+use crate::worker::ToolWorker;
 
 /// Why a tool call did not produce a result.
 ///
@@ -45,14 +53,16 @@ pub enum ToolError {
         problem: Box<str>,
     },
 
-    /// The operating system refused.
+    /// The operating system refused, or the tool worker would not start the
+    /// tool's work because its runtime was shutting down.
     #[error("{tool}: {problem}")]
     Io {
         /// Which tool was running.
         tool: Box<str>,
         /// What failed, without the underlying path if it is sensitive.
         problem: Box<str>,
-        /// What the operating system reported.
+        /// What the operating system reported, or the tool worker's
+        /// [`Unrun`](crate::Unrun).
         source: std::io::Error,
     },
 
@@ -208,8 +218,10 @@ impl fmt::Debug for Remembered {
 /// The panel a call waits behind is drawn by a thread with no provider behind
 /// it: it sends the question and blocks on the answer, so it cannot go back and
 /// ask what the command was for. What the model says about a call therefore
-/// arrives *with* the call, as an argument the schema invites and the tool
-/// itself never reads.
+/// arrives *with* the call, as an argument the schema invites: it does not
+/// steer what the tool does with the call, though a tool may read it back as
+/// it runs and keep it for what it reports once the operation that call
+/// started is over.
 ///
 /// Empty is the ordinary case and not a failure. A tool whose schema invites no
 /// account, and a call that declined to give one, both come through here, and
@@ -218,7 +230,8 @@ impl fmt::Debug for Remembered {
 /// A [`Summary`] is the neighbouring type and answers a different question:
 /// that one is *what* the call is, taken out of the arguments the tool acts on,
 /// and it goes in the transcript. This is what the model says *about* the call,
-/// in its own words, and it is shown only while somebody is deciding.
+/// in its own words, written for the panel — where the `explanation` is shown
+/// and nowhere else.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Account {
     description: Box<str>,
@@ -352,13 +365,51 @@ impl Watch for Unwatched {
 /// A background executor registers this only after an application registry owns
 /// its cleanup scope. The runner calls it after output hooks and both encoded
 /// output bounds have selected the exact result written to durable storage.
+///
+/// Dropping one that was never accepted, or dropping the future
+/// [`accept`](Self::accept) returned before it answered, hands its scope back
+/// to the registry that owns the scope's cleanup, which stops it or keeps it
+/// until it can: nothing is left running that nobody owns. The runner relies
+/// on this wherever it does not accept one: when the call ends without a
+/// result it stores (it failed, was cancelled, timed out, was refused by a
+/// hook, or panicked), and when storing the result failed or the turn's
+/// output limit replaced it.
+///
+/// That is also why no first-poll requirement belongs here, though the journal
+/// port carries one. A waiting acceptance has to stay droppable, because the
+/// turn that would wait for it is the thing being torn down; asking it to
+/// answer the first time it is asked would trade a documented handback for a
+/// process scope left running that nobody owns. The cost is the window
+/// [`accept`](Self::accept) names, and it is paid for at the source instead:
+/// an implementation that can wait bounds the wait, as the built-in background
+/// acceptance does, so the window closes on a timer rather than waiting for
+/// the turn to be dropped.
 pub trait CallResultAcceptance: Send {
     /// Binds the durable result receipt into the executor's lifecycle record.
     ///
+    /// The runner awaits this between the two writes that make a tool call
+    /// final: the durable result, and the invocation record that says the call
+    /// finished. An acceptance that answers `Pending` there and is dropped
+    /// leaves the first of the two written and the second not, so a later
+    /// replay finds a call whose result is durable and whose outcome was never
+    /// journaled. The session reading recovers the call's answer from the
+    /// durable result and settles it; the journal's own record of the call is
+    /// left un-finished. That seam is a different port from the one whose
+    /// first-poll requirement the runner relies on, so satisfying that
+    /// requirement narrows this window and does not close it.
+    ///
     /// # Errors
     ///
-    /// The executor could not durably close its acceptance transition.
-    fn accept(self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError>;
+    /// The executor could not durably close its acceptance transition. A step
+    /// of closing it that would have had to wait and was dropped is such a
+    /// failure too, reported as [`SandboxError::Lifecycle`] holding the
+    /// refusal, and whether the transition closed is then not known.
+    fn accept<'a>(
+        self: Box<Self>,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'a, Result<(), SandboxError>>
+    where
+        Self: 'a;
 }
 
 /// One source-qualified result waiting for runner-owned finalization.
@@ -378,8 +429,13 @@ impl PendingCallResult {
     ///
     /// # Errors
     ///
-    /// The executor could not durably close its acceptance transition.
-    pub fn accept(self, receipt: CallResultReceipt) -> Result<(), SandboxError> {
+    /// The executor could not durably close its acceptance transition, a step
+    /// that would have had to wait and was dropped among the reasons, as
+    /// [`CallResultAcceptance::accept`] says.
+    pub fn accept(
+        self,
+        receipt: CallResultReceipt,
+    ) -> BoxFuture<'static, Result<(), SandboxError>> {
         self.acceptance.accept(receipt)
     }
 }
@@ -396,21 +452,61 @@ impl fmt::Debug for PendingCallResult {
 /// The run-scoped capabilities one admitted tool call receives.
 ///
 /// Narrow by design: a tool can identify its run and call, observe its own
-/// child cancellation/deadline, and stream output under that call. It cannot
-/// emit arbitrary events, mint approval, steer the agent, or reach a session.
+/// child cancellation/deadline, stream output under that call, and hand
+/// blocking work to the [`ToolWorker`] its caller lent, where one was lent. It
+/// cannot emit arbitrary events, mint approval, steer the agent, or reach a
+/// session.
+///
+/// A call's run borrows its context, so the work it started cannot outlive
+/// the context it was lent — the error code is what this fails with today and
+/// not a gate, since `compile_fail` accepts any compile error:
+///
+/// ```compile_fail,E0597
+/// use crucible_runtime::Cancel;
+/// use crucible_tools::{Approved, Tool, ToolContext, Unwatched};
+/// use crucible_types::{Ancestry, ToolId};
+///
+/// fn kept(tool: &dyn Tool, approved: Approved, ancestry: Ancestry, call: ToolId) {
+///     let parent = Cancel::new();
+///     let running = {
+///         let context = ToolContext::new(ancestry, call, &parent, None, &Unwatched);
+///         tool.run(approved, &context)
+///     };
+///     drop(running);
+/// }
+/// ```
+///
+/// Its twin differs only in the context being made where the future is
+/// kept, so that it lives as long, and compiles:
+///
+/// ```
+/// use crucible_runtime::Cancel;
+/// use crucible_tools::{Approved, Tool, ToolContext, Unwatched};
+/// use crucible_types::{Ancestry, ToolId};
+///
+/// fn kept(tool: &dyn Tool, approved: Approved, ancestry: Ancestry, call: ToolId) {
+///     let parent = Cancel::new();
+///     let context = ToolContext::new(ancestry, call, &parent, None, &Unwatched);
+///     let running = {
+///         tool.run(approved, &context)
+///     };
+///     drop(running);
+/// }
+/// ```
 pub struct ToolContext<'a> {
     ancestry: Ancestry,
     call: ToolId,
     cancel: Cancel,
     deadline: Option<Instant>,
     watch: &'a dyn Watch,
+    worker: Option<&'a ToolWorker>,
     sandbox: SandboxAudit,
     call_result: Option<CallResultKey>,
     pending_result: Mutex<Option<PendingCallResult>>,
 }
 
 impl<'a> ToolContext<'a> {
-    /// Builds a per-call context under `parent` cancellation.
+    /// Builds a per-call context under `parent` cancellation, lent no worker.
     #[must_use]
     pub fn new(
         ancestry: Ancestry,
@@ -426,10 +522,21 @@ impl<'a> ToolContext<'a> {
             cancel: parent.child_until(deadline),
             deadline,
             watch,
+            worker: None,
             sandbox,
             call_result: None,
             pending_result: Mutex::new(None),
         }
+    }
+
+    /// Lends this call `worker` for its blocking work.
+    ///
+    /// Work the call hands it is bounded together with the work of every
+    /// other call the same worker is lent to.
+    #[must_use]
+    pub fn with_worker(mut self, worker: &'a ToolWorker) -> Self {
+        self.worker = Some(worker);
+        self
     }
 
     /// Binds the source-qualified identity this call's durable result is kept under.
@@ -528,6 +635,17 @@ impl<'a> ToolContext<'a> {
     pub fn timed_out(&self) -> bool {
         self.deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    /// The worker this call's blocking work runs on, where its caller lent
+    /// one.
+    ///
+    /// Work handed to it is bounded with every other call's the same worker
+    /// was lent to, and is stopped by this call's [`ToolContext::cancel`] when
+    /// that is what it is handed.
+    #[must_use]
+    pub const fn worker(&self) -> Option<&'a ToolWorker> {
+        self.worker
     }
 
     /// Reports incremental output under this call's identity.
@@ -959,12 +1077,19 @@ pub trait Tool: Send + Sync {
     /// sink this executor may use. Most tools report nothing while running;
     /// commands are the reason the sink is present.
     ///
+    /// The future borrows `context` for as long as it runs and no longer, which
+    /// [`ToolContext`] shows cannot be got around.
+    ///
     /// # Errors
     ///
     /// [`ToolError`] when the call could not be carried out at all. A result
     /// the model should see, including a failure, comes back as a failed
     /// [`ToolOutput`].
-    fn run(&self, approved: Approved, context: &ToolContext<'_>) -> Result<ToolOutput, ToolError>;
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        context: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>>;
 }
 
 impl fmt::Debug for dyn Tool {
@@ -987,8 +1112,12 @@ mod tests {
     struct Unasked;
 
     impl Ask for Unasked {
-        fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-            (Verdict::Deny, Remember::Never)
+        fn ask<'a>(
+            &'a mut self,
+            _call: &'a ToolCall,
+            _sensitivity: &'a Sensitivity,
+        ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+            Box::pin(async { (Verdict::Deny, Remember::Never) })
         }
     }
 
@@ -999,13 +1128,13 @@ mod tests {
             name: "read".into(),
             args: ToolArgs::new("{}"),
         };
-        let settled = Permission::new().decide(
+        let settled = crucible_runtime::answered!(Permission::new().decide(
             &call,
             &Sensitivity::ReadOnly {
                 target: Target::at("/w/pictures/holiday.png", Some("pictures/holiday.png")),
             },
             &mut Unasked,
-        );
+        ));
 
         let Settled::Approved(approved) = settled else {
             panic!("a read is allowed without a question")
@@ -1053,12 +1182,54 @@ mod tests {
         assert!(!parent.requested());
     }
 
+    #[test]
+    fn a_tool_context_lends_the_worker_its_caller_gave_it_and_no_other() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let worker = crate::ToolWorker::new(runtime.handle().clone());
+        let parent = Cancel::new();
+
+        let lent = ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("call-lent"),
+            &parent,
+            None,
+            &Unwatched,
+        )
+        .with_worker(&worker);
+        let unlent = ToolContext::new(
+            Ancestry::new(),
+            ToolId::new("call-unlent"),
+            &parent,
+            None,
+            &Unwatched,
+        );
+
+        assert!(
+            lent.worker()
+                .is_some_and(|lent| std::ptr::eq(lent, &raw const worker)),
+            "the context did not lend the worker it was built with"
+        );
+        assert!(
+            unlent.worker().is_none(),
+            "a context lent no worker lent one"
+        );
+    }
+
     struct Accepted(Arc<Mutex<Option<CallResultReceipt>>>);
 
     impl CallResultAcceptance for Accepted {
-        fn accept(self: Box<Self>, receipt: CallResultReceipt) -> Result<(), SandboxError> {
+        fn accept<'a>(
+            self: Box<Self>,
+            receipt: CallResultReceipt,
+        ) -> BoxFuture<'a, Result<(), SandboxError>>
+        where
+            Self: 'a,
+        {
             *self.0.lock().unwrap() = Some(receipt);
-            Ok(())
+            Box::pin(std::future::ready(Ok(())))
         }
     }
 
@@ -1105,7 +1276,7 @@ mod tests {
 
         let pending = context.take_call_result().unwrap().expect("pending result");
         let receipt = CallResultReceipt::from_digest([0x5a; 32]);
-        pending.accept(receipt).unwrap();
+        crucible_runtime::answered!(pending.accept(receipt)).unwrap();
 
         assert_eq!(*accepted.lock().unwrap(), Some(receipt));
         assert!(context.take_call_result().unwrap().is_none());

@@ -1,6 +1,9 @@
 //! Which key is read, and what a startup that fails leaves behind.
 
 use std::cell::RefCell;
+use std::future::Future;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
 
 use crucible_credentials::Outgoing;
 use crucible_runtime::{Aside, Cancel, Steer};
@@ -14,17 +17,37 @@ use super::*;
 use crate::providers::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
 use crate::sample::{Sample, WRITTEN};
 
+/// Drives a future to its answer on a current-thread runtime of its own, the
+/// way a test takes a turn on a runner it holds.
+trait Awaited: std::future::Future + Sized {
+    fn awaited(self) -> Self::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a test runtime")
+            .block_on(self)
+    }
+}
+
+impl<F: std::future::Future> Awaited for F {}
+
 struct Nobody;
 
 impl Ask for Nobody {
-    fn ask(&mut self, _call: &ToolCall, _sensitivity: &Sensitivity) -> (Verdict, Remember) {
-        (Verdict::Deny, Remember::Never)
+    fn ask<'a>(
+        &'a mut self,
+        _call: &'a ToolCall,
+        _sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
+        Box::pin(async { (Verdict::Deny, Remember::Never) })
     }
 }
 
 impl Put for Nobody {
-    fn put(&self, _questions: &[Question]) -> Option<Vec<Answered>> {
-        None
+    fn put<'a>(
+        &'a self,
+        _questions: &'a [Question],
+    ) -> crucible_runtime::BoxFuture<'a, Option<Vec<Answered>>> {
+        Box::pin(async { None })
     }
 }
 
@@ -49,7 +72,8 @@ fn built(
     from: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Box<dyn Provider>, AppError> {
     let stored = StoredCredentials::default();
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let http = HttpTurns::unavailable();
     provider(
         serving,
         NOTHING_TO_ASK,
@@ -59,7 +83,42 @@ fn built(
             stored: &stored,
             subscriptions: &subscriptions,
         },
+        &http,
     )
+}
+
+#[test]
+fn wiring_keeps_the_services_http_reference() {
+    let stored = StoredCredentials::default();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let settings = Settings::default();
+    let from = |_: &str| None;
+    let http = HttpTurns::unavailable();
+    let auth = ProviderAuth {
+        settings: &settings,
+        from: &from,
+        stored: &stored,
+        subscriptions: &subscriptions,
+    };
+
+    let provider = wiring(serving("anthropic"), auth, &http).unwrap();
+    let web = wiring(serving("openai"), auth, &http).unwrap();
+
+    assert!(std::ptr::eq(provider.http, &raw const http));
+    assert!(std::ptr::eq(web.http, &raw const http));
+}
+
+/// Polls `authorizing` once and panics if it was not ready: every credential
+/// built by this crate's own wiring answers at its first poll.
+fn authorized<T>(authorizing: impl Future<Output = T>) -> T {
+    let mut authorizing = pin!(authorizing);
+    match authorizing
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(answer) => answer,
+        Poll::Pending => panic!("a credential built here would have had to wait"),
+    }
 }
 
 /// What a credential writes into the header it signs with.
@@ -70,9 +129,7 @@ fn built(
 /// used has to look.
 fn signing(credential: &dyn Credential) -> String {
     let mut request = Outgoing::new();
-    credential
-        .authorize(&mut request)
-        .expect("a key is applied rather than renewed");
+    authorized(credential.authorize(&mut request)).expect("a key is applied rather than renewed");
 
     request
         .headers()
@@ -207,7 +264,7 @@ fn an_openai_subscription_uses_its_fixed_audience() {
     // answer rather than as halves a call site could recombine.
     let sample = Sample::new("subscription-endpoint");
     let keys = sample.subscribed("openai");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -235,7 +292,7 @@ fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
     // shell was what it was. The deliberate credential signs the request.
     let sample = Sample::new("subscription-over-environment");
     let keys = sample.subscribed("openai");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -260,7 +317,7 @@ fn a_deliberate_subscription_login_wins_over_an_inherited_api_key() {
 fn a_kimi_subscription_uses_the_managed_coding_audience() {
     let sample = Sample::new("kimi-subscription-endpoint");
     let keys = sample.subscribed("moonshot");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -289,7 +346,7 @@ fn an_exported_api_key_still_selects_a_configured_address_over_a_subscription() 
     let keys = sample.subscribed("openai");
     let settings =
         sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
     let (endpoint, _) = credential(
         ApiAudience {
@@ -320,8 +377,9 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
     let keys = sample.subscribed("openai");
     let settings =
         sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
 
+    let http = HttpTurns::unavailable();
     let problem = provider(
         Some(serving("openai")),
         NO_MODEL_CHOSEN,
@@ -331,6 +389,7 @@ fn a_subscription_token_never_follows_a_configured_api_key_address() {
             stored: &keys,
             subscriptions: &subscriptions,
         },
+        &http,
     )
     .expect_err("a subscription sent to an API-key gateway");
 
@@ -461,6 +520,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         resuming: Resuming::No,
         mode: Mode::Ask,
         leaving: &crucible_builtins::Background::new(),
+        services: &Services::new(),
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
@@ -472,7 +532,7 @@ fn a_startup_with_nothing_to_authenticate_with_leaves_no_session_behind() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     }) else {
         panic!("a startup with no key was accepted");
     };
@@ -500,6 +560,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         resuming: Resuming::No,
         mode: Mode::Ask,
         leaving: &crucible_builtins::Background::new(),
+        services: &Services::new(),
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
@@ -511,7 +572,7 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     })
     .expect("a session with nothing set up still starts");
 
@@ -541,6 +602,7 @@ fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &st
         resuming: Resuming::No,
         mode: Mode::Ask,
         leaving: &crucible_builtins::Background::new(),
+        services: &Services::new(),
         settings,
         sessions: &logs,
         workspace: &workspace,
@@ -552,7 +614,7 @@ fn specified(model: &str, effort: Option<Effort>, settings: &Settings, told: &st
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     };
 
     coding(&startup, "anthropic", model, told)
@@ -682,6 +744,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             resuming: Resuming::No,
             mode: Mode::Ask,
             leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
             settings: &Settings::default(),
             sessions: &logs,
             workspace: &workspace,
@@ -693,7 +756,7 @@ fn reaching_for(named: &str, model: Option<&'static str>) -> Reaching {
             terminal: true,
             from: &|_| Some("sk-test".to_owned()),
             stored: &StoredCredentials::default(),
-            subscriptions: &Subscriptions::production(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         },
         &Settings::default(),
     )
@@ -722,7 +785,7 @@ fn google_serves_both_halves_from_interactions() {
 fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
     let sample = Sample::new("google-web-authority");
     let stored = sample.subscribed("google");
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
     let defaults = Settings::default();
     let absent = |_: &str| None;
     let auth = ProviderAuth {
@@ -731,7 +794,11 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
         stored: &stored,
         subscriptions: &subscriptions,
     };
-    let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
+    let http = HttpTurns::unavailable();
+    let reaching = google_web(
+        wiring(serving("google"), auth, &http).unwrap(),
+        "gemini-3.8-flash",
+    );
     assert!(reaching.searching.is_none());
     assert!(reaching.fetching.is_none());
 
@@ -743,7 +810,10 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
         stored: &stored,
         subscriptions: &subscriptions,
     };
-    let reaching = google_web(wiring(serving("google"), auth).unwrap(), "gemini-3.8-flash");
+    let reaching = google_web(
+        wiring(serving("google"), auth, &http).unwrap(),
+        "gemini-3.8-flash",
+    );
     assert_eq!(
         reaching.searching.unwrap().reaches(),
         crucible_tools::Host::Named {
@@ -763,7 +833,8 @@ fn google_web_authority_is_api_key_only_and_uses_the_checked_recipient() {
                 from: &from,
                 stored: &stored,
                 subscriptions: &subscriptions
-            }
+            },
+            &http,
         )
         .is_err()
     );
@@ -816,6 +887,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             resuming: Resuming::No,
             mode: Mode::Ask,
             leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
             settings: &Settings::default(),
             sessions: &logs,
             workspace: &workspace,
@@ -827,7 +899,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             terminal,
             from: &|_| None,
             stored: &StoredCredentials::default(),
-            subscriptions: &Subscriptions::production(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         },
         &Settings::default(),
         Reaching {
@@ -987,6 +1059,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         resuming: Resuming::No,
         mode: Mode::Ask,
         leaving: &crucible_builtins::Background::new(),
+        services: &Services::new(),
         settings: &configured,
         sessions: &logs,
         workspace: &workspace,
@@ -998,7 +1071,7 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     })
     .expect("a session to assemble");
     let runner = &mut conversation.runner;
@@ -1012,7 +1085,9 @@ fn a_session_is_assembled_with_stable_instructions_and_workspace_context() {
     let (events, _seen) = std::sync::mpsc::channel();
     let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
     let run = runner.starting(&events, &cancel, &steer, &aside);
-    let _ = runner.turn("probe", Box::new([]), &mut Nobody, &run);
+    let _ = runner
+        .turn("probe", Box::new([]), &mut Nobody, &run)
+        .awaited();
     let workspace_fact = runner
         .transcript()
         .messages()
@@ -1121,6 +1196,7 @@ fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
         resuming: Resuming::No,
         mode: Mode::Ask,
         leaving: &crucible_builtins::Background::new(),
+        services: &Services::new(),
         settings: &Settings::default(),
         sessions: &logs,
         workspace: &workspace,
@@ -1132,7 +1208,7 @@ fn naming_a_server_nobody_wrote_down_fails_before_a_session_file_exists() {
         terminal: true,
         from: &|_| None,
         stored: &StoredCredentials::default(),
-        subscriptions: &Subscriptions::production(),
+        subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
     }) else {
         panic!("a run naming a server nothing wrote down was accepted");
     };
@@ -1170,6 +1246,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
             resuming: Resuming::No,
             mode: Mode::Ask,
             leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
             settings: &settings,
             sessions: &logs,
             workspace: &workspace,
@@ -1181,7 +1258,7 @@ fn a_run_that_named_a_server_reaches_the_runner_as_a_live_toolset() {
             terminal: true,
             from: &|name| (name == "PATH").then(|| path.clone()),
             stored: &StoredCredentials::default(),
-            subscriptions: &Subscriptions::production(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         })
         .expect("a run this test wrote the record for")
     };
@@ -1228,3 +1305,6 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
         0o600
     );
 }
+
+mod conformance;
+mod lending;

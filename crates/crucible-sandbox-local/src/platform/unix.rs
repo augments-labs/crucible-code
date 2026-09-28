@@ -1,11 +1,18 @@
-//! Unix process groups and non-blocking pipe reads.
+//! Unix process groups, non-blocking pipe reads, and pipes the runtime waits
+//! on.
 
-use std::io::{self, Read};
-use std::os::fd::AsFd;
-use std::process::{Child, Command, ExitStatus};
+use std::io::{self, Read, Write};
+use std::os::fd::{AsFd, AsRawFd};
+use std::process::{Child, ChildStdin, Command, ExitStatus};
+use std::thread;
+use std::time::{Duration, Instant};
 
+use crucible_runtime::BoxFuture;
+use crucible_sandbox::SandboxInput;
 use rustix::fs::OFlags;
 use rustix::io::Errno;
+use tokio::io::Interest;
+use tokio::io::unix::AsyncFd;
 
 use super::ReadState;
 
@@ -13,10 +20,12 @@ use super::ReadState;
 #[derive(Debug)]
 pub(crate) struct Scope;
 
-/// Copyable process-group authority borrowed by a supervisor thread.
+/// Copyable process-group authority borrowed by a command's status task and
+/// the thread a violation's cancel runs on.
 ///
-/// The owning process handle remains unreaped until the supervisor is joined,
-/// so the numeric group leader cannot be reused while this value is live.
+/// Each of them signals with it only under the lock the leader is reaped
+/// under, and only while the leader is unreaped, so the numeric group leader
+/// cannot have been reused by the time a signal is sent.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Terminator(rustix::process::Pid);
 
@@ -39,6 +48,10 @@ impl Scope {
 
     /// Observes leader exit without first releasing its numeric group identity,
     /// then stops descendants before the standard child handle reaps it.
+    ///
+    /// Where a fork under way can outlive the kill, a kill that still reached
+    /// something running leaves the leader unreaped for the next look to kill
+    /// the group again, so its output closes before its status is known.
     #[allow(clippy::unused_self)]
     pub(crate) fn try_wait(
         &self,
@@ -55,25 +68,48 @@ impl Scope {
         if rustix::process::waitid(WaitId::Pid(pid), options)?.is_none() {
             return Ok(None);
         }
-        terminator.stop()?;
+        if terminator.signalled()? && FORK_OUTLIVES_KILL {
+            return Ok(None);
+        }
         child.try_wait()
     }
 
     /// Stops the shell and every descendant still in its inherited group.
+    ///
+    /// Where a fork under way can outlive the kill, the group is killed again
+    /// until nothing in it is left running, before the caller reaps the leader.
     pub(crate) fn stop(child: &mut Child) -> io::Result<()> {
-        let group_result = i32::try_from(child.id())
+        let group = i32::try_from(child.id())
             .ok()
             .and_then(rustix::process::Pid::from_raw)
-            .map_or(Ok(()), |group| Terminator(group).stop());
+            .map(Terminator);
+        let group_result = group.map_or(Ok(()), Terminator::stop);
         let child_result = child.kill().or_else(|problem| {
             (problem.kind() == io::ErrorKind::InvalidInput)
                 .then_some(())
                 .ok_or(problem)
         });
 
-        group_result.and(child_result)
+        group_result.and(child_result)?;
+        match group {
+            Some(group) if FORK_OUTLIVES_KILL => group.emptied(),
+            _ => Ok(()),
+        }
     }
 }
+
+/// Whether a fork under way when its process group is killed can finish, and
+/// leave a child in the group that the kill never reached.
+///
+/// XNU completes the fork, and the child lives on holding the command's
+/// output. Linux abandons a fork when a group signal arrives during it, so
+/// one kill reaches everything there; it also counts an unreaped leader as
+/// reached, so it could not tell when a group was empty anyway.
+const FORK_OUTLIVES_KILL: bool = cfg!(target_os = "macos");
+
+/// How long a stop keeps killing a group before it reports a member that
+/// outlived every kill.
+const EMPTIED: Duration = Duration::from_millis(250);
 
 impl Terminator {
     /// Sends an uncatchable signal to every process still in the command group.
@@ -84,9 +120,34 @@ impl Terminator {
     /// cannot tell that case from a live member the caller may not signal, and
     /// a command group here holds only the user's own descendants.
     pub(crate) fn stop(self) -> io::Result<()> {
-        rustix::process::kill_process_group(self.0, rustix::process::Signal::KILL)
-            .or_else(|problem| already_stopped(problem).then_some(()).ok_or(problem))
-            .map_err(io::Error::from)
+        self.signalled().map(drop)
+    }
+
+    /// Sends the group kill, and whether it reached anything. On macOS that
+    /// is something still running; elsewhere an unreaped leader counts too.
+    fn signalled(self) -> io::Result<bool> {
+        match rustix::process::kill_process_group(self.0, rustix::process::Signal::KILL) {
+            Ok(()) => Ok(true),
+            Err(problem) if already_stopped(problem) => Ok(false),
+            Err(problem) => Err(problem.into()),
+        }
+    }
+
+    /// Kills the group until a kill reaches nothing still running in it,
+    /// which a caller holding the leader unreaped can trust the group's number
+    /// for, or reports it still running after [`EMPTIED`].
+    fn emptied(self) -> io::Result<()> {
+        let deadline = Instant::now() + EMPTIED;
+        while self.signalled()? {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "sandbox process group was still running after termination",
+                ));
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        Ok(())
     }
 }
 
@@ -111,3 +172,147 @@ pub(super) fn read(pipe: &mut impl Read, buffer: &mut [u8]) -> io::Result<ReadSt
         Err(problem) => Err(problem),
     }
 }
+
+/// An output pipe read without waiting until it is first waited on, when it
+/// moves into the reactor of the runtime polling that read, and stays there:
+/// a later waiting read is polled on that runtime, which needs its I/O driver
+/// (Tokio panics on one without it).
+pub(super) struct Waited<P: AsRawFd> {
+    plain: Option<P>,
+    registered: Option<AsyncFd<P>>,
+}
+
+impl<P: super::Pipe> Waited<P> {
+    pub(super) const fn new(pipe: P) -> Self {
+        Self {
+            plain: Some(pipe),
+            registered: None,
+        }
+    }
+}
+
+impl<P: super::Pipe> super::Stream for Waited<P> {
+    fn read_ready(&mut self, buffer: &mut [u8]) -> io::Result<ReadState> {
+        if let Some(pipe) = &mut self.registered {
+            return pipe.get_mut().read_ready(buffer);
+        }
+        self.plain.as_mut().ok_or_else(lost)?.read_ready(buffer)
+    }
+
+    fn read<'a>(&'a mut self, buffer: &'a mut [u8]) -> BoxFuture<'a, io::Result<ReadState>> {
+        Box::pin(async move {
+            if buffer.is_empty() {
+                return Ok(ReadState::Bytes(0));
+            }
+            let pipe = registered(&mut self.plain, &mut self.registered, Interest::READABLE)?;
+            loop {
+                let mut ready = pipe.readable_mut().await?;
+                // A read that would block clears the readiness the reactor
+                // reported, and the loop waits for the next.
+                if let Ok(read) = ready.try_io(|pipe| pipe.get_mut().read(buffer)) {
+                    return Ok(match read? {
+                        0 => ReadState::End,
+                        count => ReadState::Bytes(count),
+                    });
+                }
+            }
+        })
+    }
+}
+
+/// The writing end of a command's standard input, made non-blocking and
+/// moved into the reactor of the runtime polling its first write.
+struct Input {
+    plain: Option<ChildStdin>,
+    registered: Option<AsyncFd<ChildStdin>>,
+}
+
+/// What a command holds for its asynchronous input: nothing, because the
+/// reactor waits on the pipe and no thread is started for it. Its end is the
+/// same call a platform with such a thread makes.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InputThread {
+    _none: (),
+}
+
+impl InputThread {
+    /// Ends nothing: no thread writes a command's input here.
+    #[allow(
+        clippy::unnecessary_wraps,
+        clippy::unused_self,
+        reason = "the same call as the platform whose input is written on a thread"
+    )]
+    pub(crate) fn end(&self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Hands `pipe` back as something written asynchronously.
+///
+/// Nothing changes about the pipe until the first write, which is what finds
+/// the runtime that waits on it. No thread is started, so `_thread` is left
+/// as it is.
+pub(crate) fn input(pipe: ChildStdin, _thread: &InputThread) -> Box<dyn SandboxInput> {
+    Box::new(Input {
+        plain: Some(pipe),
+        registered: None,
+    })
+}
+
+/// A write takes what the pipe has room for when the reactor says it has
+/// some, so a write dropped before it answers has delivered nothing.
+impl SandboxInput for Input {
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+        Box::pin(async move {
+            if bytes.is_empty() {
+                return Ok(0);
+            }
+            if let Some(pipe) = &self.plain {
+                prepare(pipe)?;
+            }
+            let pipe = registered(&mut self.plain, &mut self.registered, Interest::WRITABLE)?;
+            loop {
+                let mut ready = pipe.writable_mut().await?;
+                if let Ok(written) = ready.try_io(|pipe| pipe.get_mut().write(bytes)) {
+                    return written;
+                }
+            }
+        })
+    }
+}
+
+/// The pipe in `registered`, moving it there from `plain` first if it has
+/// not been waited on before.
+///
+/// # Errors
+///
+/// No Tokio runtime is polling this, or the reactor refused the descriptor;
+/// the pipe then stays as it was. A runtime without its I/O driver enabled
+/// panics inside Tokio instead, which is why every caller documents needing
+/// one.
+fn registered<'a, P: AsRawFd>(
+    plain: &mut Option<P>,
+    registered: &'a mut Option<AsyncFd<P>>,
+    interest: Interest,
+) -> io::Result<&'a mut AsyncFd<P>> {
+    if registered.is_none() {
+        tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
+        let pipe = plain.take().ok_or_else(lost)?;
+        match AsyncFd::try_with_interest(pipe, interest) {
+            Ok(pipe) => *registered = Some(pipe),
+            Err(refused) => {
+                let (pipe, problem) = refused.into_parts();
+                *plain = Some(pipe);
+                return Err(problem);
+            }
+        }
+    }
+    registered.as_mut().ok_or_else(lost)
+}
+
+fn lost() -> io::Error {
+    io::Error::other("the command's pipe is no longer held here")
+}
+
+#[cfg(test)]
+mod tests;

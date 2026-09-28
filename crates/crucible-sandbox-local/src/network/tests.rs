@@ -169,6 +169,38 @@ fn the_private_unix_transport_enforces_the_same_authenticated_policy() {
 }
 
 #[test]
+fn a_hung_mediator_is_stopped_within_its_bound_and_reports_failed_cleanup() {
+    use std::time::{Duration, Instant};
+
+    // A listener that never finishes must be given up on within the stop's
+    // bound, not joined without end.
+    const MARGIN: Duration = Duration::from_secs(10);
+
+    let mut proxy = Mediator::tcp(policy(false), SandboxId::new(), None).unwrap();
+    proxy.hang_listener();
+    let started = Instant::now();
+    let stopped = proxy.stop();
+    let took = started.elapsed();
+
+    assert!(
+        stopped.is_err(),
+        "a mediator whose listener never finished was reported as cleaned"
+    );
+    assert!(
+        took >= super::STOP,
+        "a hung listener was given up on after {took:?} without waiting its bound"
+    );
+    assert!(
+        took < super::STOP + MARGIN,
+        "stopping a hung mediator took {took:?}"
+    );
+    assert!(
+        proxy.stop().is_err(),
+        "a recorded listener timeout was erased by a second stop"
+    );
+}
+
+#[test]
 fn listener_failure_cannot_be_erased_by_a_second_stop() {
     let mut proxy = Mediator::tcp(
         policy(false),

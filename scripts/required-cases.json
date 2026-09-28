@@ -4,13 +4,13 @@
       "id": "CASE-TURN-PROJECTION-ANSWERED",
       "family": "turn",
       "obligation": "Every provider call is answered exactly once before the projection is handed on.",
-      "package": "crucible-core",
+      "package": "crucible-storage",
       "target": {
         "kind": "test",
         "name": "journal_interruption"
       },
       "case": "provider_projection_refuses_an_unanswered_or_twice_answered_call",
-      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "source": "crates/crucible-storage/tests/journal_interruption.rs",
       "body_sha256": "42bbc97a37673839a5f8affb53fdf5c35c465ac9748a7da193ae11d2cc0d0eb6",
       "platforms": [
         "linux",
@@ -137,7 +137,7 @@
       },
       "case": "tools::tests::an_admission_is_reachable_only_through_the_generation_that_minted_it",
       "source": "crates/crucible-runner/src/tools.rs",
-      "body_sha256": "b21453dc28272750943e961eba6017ed1ed8d8ce846c0f52fab9ade07581289e",
+      "body_sha256": "2fc915c3f2e657868c35d835434a68732be708b47d9300fcc7c75fb4d33fa70d",
       "platforms": [
         "linux",
         "macos",
@@ -317,7 +317,7 @@
       },
       "case": "runner::work::tests::an_approved_effect_journals_one_stable_prepared_started_and_finished_invocation",
       "source": "crates/crucible-runner/src/runner/work/tests.rs",
-      "body_sha256": "b893e14edf62c5b238ec3253787ad72e37c178ceb4286a1c9fed56f5687815e1",
+      "body_sha256": "f9bee9e01482c69d2900f0ca00161b5ff80ac1662e304bcc6d748483cf679371",
       "platforms": [
         "linux",
         "macos",
@@ -353,7 +353,7 @@
       },
       "case": "simultaneous_preparations_cannot_oversubscribe_the_requested_ceiling",
       "source": "crates/crucible-sandbox-local/tests/sandbox_admission.rs",
-      "body_sha256": "3d1a24febf534ae7bc60ac4ab9d0d6b37139ca1ed4b8ddce2d920a9757f4952c",
+      "body_sha256": "0abb29a233b3156606a1bf7aa4c491c46f7518259f960820eca1371f1c790f10",
       "platforms": [
         "linux",
         "macos",
@@ -389,7 +389,7 @@
       },
       "case": "runner::tests::lifecycle::repeated_disposal_reuses_the_first_cleanup_outcome_without_repeating_effects",
       "source": "crates/crucible-runner/src/runner/tests/lifecycle.rs",
-      "body_sha256": "400ba8bca6e8c78453d80dc82395dbe2a2714b34c5f6af21d1b2d2de15345b43",
+      "body_sha256": "bb9f2962eece73dbbc8c2b5f82327c8cf9b8ef1472ce1c2bff6f46752f00c660",
       "platforms": [
         "linux",
         "macos",
@@ -442,7 +442,7 @@
       },
       "case": "oauth::tests::an_expired_rotation_is_refreshed_and_rewritten_before_use",
       "source": "crates/crucible-auth/src/oauth/tests.rs",
-      "body_sha256": "7067e0b58e8ec1d0ed705b87f38689d786cf2e021a3a6f1dcd93e1f0d78905c6",
+      "body_sha256": "7e881034c1b1105f84d09b0bd78833514808c83f89f96a9a4d9492fd2b78381d",
       "platforms": [
         "linux",
         "macos",
@@ -460,7 +460,7 @@
       },
       "case": "oauth::tests::a_refresh_cannot_move_a_live_credential_scope_to_another_account",
       "source": "crates/crucible-auth/src/oauth/tests.rs",
-      "body_sha256": "5759ebeb8ec43685e25017921783a7fb275ea8b99e9fca0c18dfd2e00265813b",
+      "body_sha256": "dbc83367ee664d0a3dff4e338520f37d650c4e7364efec53603276f309ddfc8d",
       "platforms": [
         "linux",
         "macos",
@@ -550,7 +550,7 @@
       },
       "case": "read::tests::a_link_retargeted_after_the_verdict_leads_outside_and_is_refused",
       "source": "crates/crucible-builtins/src/read.rs",
-      "body_sha256": "d4fc8b5c4fc5cba62dc8a4a15f0009f08f59e786c95f4c21b88d6a528e3d1695",
+      "body_sha256": "f3ab41cc32f69d85481d15ba64ff101022ad6f74b86ac99ad1742f2b31525490",
       "platforms": [
         "linux",
         "macos",
@@ -584,7 +584,7 @@
       },
       "case": "linux::guardrail_tests::a_denied_program_reached_through_a_shell_is_bounded_by_confinement_instead",
       "source": "crates/crucible-sandbox-local/src/linux/guardrail_tests.rs",
-      "body_sha256": "2a2b170ace7ada880e7e034090cde2eae0eeed30506c3758021e74f26b6c09c7",
+      "body_sha256": "7cc46a749fbd603dc5b95e42b84d26c240403a00ff38da553693ea2852e56e14",
       "platforms": [
         "linux"
       ]
@@ -627,13 +627,13 @@
       "id": "CASE-RECOVERY-CRASH-WINDOWS",
       "family": "recovery",
       "obligation": "Invocation recovery distinguishes all three crash windows.",
-      "package": "crucible-core",
+      "package": "crucible-storage",
       "target": {
         "kind": "test",
         "name": "journal_interruption"
       },
       "case": "invocation_recovery_distinguishes_all_three_crash_windows",
-      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "source": "crates/crucible-storage/tests/journal_interruption.rs",
       "body_sha256": "ec2a3c87289fc0d032610ad203280d2b08200586764968af94982b83a4234986",
       "platforms": [
         "linux",
@@ -645,13 +645,13 @@
       "id": "CASE-RECOVERY-EXPIRED-APPROVAL",
       "family": "recovery",
       "obligation": "Resume refuses an expired approval that has not executed.",
-      "package": "crucible-core",
+      "package": "crucible-storage",
       "target": {
         "kind": "test",
         "name": "journal_interruption"
       },
       "case": "checkpoint_resume_refuses_an_expired_approval_that_has_not_executed",
-      "source": "crates/crucible-core/tests/journal_interruption.rs",
+      "source": "crates/crucible-storage/tests/journal_interruption.rs",
       "body_sha256": "700924dc7e93971d7bc9b481955fc655bb14658ad410a4021d23366abe8fe256",
       "platforms": [
         "linux",
@@ -670,7 +670,7 @@
       },
       "case": "obsolete_checkpoint_formats_are_rejected_without_compatibility_aliases",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "b03cd66c9d078c87cf0aa431cc5d11c5c910df1aabfec7071f74bccc5433799f",
+      "body_sha256": "9ba98530ac3180330626b60973110c2ca4c4b68a46d05e9df7c6c4368f8b3cda",
       "platforms": [
         "linux",
         "macos",
@@ -688,7 +688,7 @@
       },
       "case": "sandbox_identity_round_trips_and_resume_refuses_a_weaker_live_backend",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "c75e5370a48d4a695095f3b8621e9fc5b1b5603aa98f1c25b8d41c57934718f8",
+      "body_sha256": "03ab440c80c489091d11d7023bd9299d78fe0642226f30d5189c87110320e038",
       "platforms": [
         "linux",
         "macos",
@@ -706,7 +706,7 @@
       },
       "case": "every_pending_outcome_survives_stop_and_resume_with_one_provider_result",
       "source": "crates/crucible-session/tests/checkpoint_store.rs",
-      "body_sha256": "3aca02f53a9bd70e62c9ef00bf0aa300e6b71bd90d8a1b4be68fe21cfa769094",
+      "body_sha256": "7c1ba3c1ad1f03d1c9f5cbe47891db11f38fc8af4a74f90ee117f69c98a54767",
       "platforms": [
         "linux",
         "macos",
@@ -826,7 +826,7 @@
       },
       "case": "every_built_in_tool_advertises_what_it_did",
       "source": "tests/differential.rs",
-      "body_sha256": "b5ad8a2a25382c22ed226fdff89ef62df4581732bf69c65400224126396a1876",
+      "body_sha256": "29299d770bebce4def8662eb6aa784604677274577393df666ae9021f9e8a350",
       "platforms": [
         "linux",
         "macos",

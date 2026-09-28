@@ -16,8 +16,10 @@
 //! either lose it or refuse it -- and the payload is JSON, where a lost byte is
 //! a silently wrong answer.
 
-use std::io::{self, BufRead};
+use std::io;
 use std::string::FromUtf8Error;
+
+use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
 /// The most bytes one event -- or one line of it -- may accumulate.
 ///
@@ -91,7 +93,7 @@ pub(crate) struct Events<R> {
     data: Vec<u8>,
 }
 
-impl<R: BufRead> Events<R> {
+impl<R: AsyncBufRead + Unpin> Events<R> {
     /// Frames whatever `reader` produces.
     pub(crate) fn new(reader: R) -> Self {
         Self {
@@ -108,9 +110,9 @@ impl<R: BufRead> Events<R> {
     /// A stream that ends part-way through an event delivers nothing for it.
     /// That is not silent: every protocol here ends with an event of its own,
     /// so the caller notices the one that never came.
-    pub(crate) fn next(&mut self) -> Option<Result<Framed, SseError>> {
+    pub(crate) async fn next(&mut self) -> Option<Result<Framed, SseError>> {
         loop {
-            match self.read_line() {
+            match self.read_line().await {
                 Err(problem) => return Some(Err(problem)),
                 Ok(Line::Quiet) => return Some(Ok(Framed::Quiet)),
                 Ok(Line::Ended) => return None,
@@ -142,9 +144,9 @@ impl<R: BufRead> Events<R> {
     ///
     /// Reads through the buffer rather than with `read_line`, which would take
     /// an unbounded line from a peer that never sent an ending.
-    fn read_line(&mut self) -> Result<Line, SseError> {
+    async fn read_line(&mut self) -> Result<Line, SseError> {
         loop {
-            let available = match self.reader.fill_buf() {
+            let available = match self.reader.fill_buf().await {
                 Ok(available) => available,
                 // A wait that expired, not a stream that broke. The transport
                 // spells it this way on purpose; see [`Framed::Quiet`].
@@ -245,8 +247,8 @@ mod tests {
     use super::*;
 
     /// Frames a whole stream, so a test reads as one call.
-    fn events(stream: &str) -> Vec<SseEvent> {
-        framed(Events::new(stream.as_bytes())).0
+    async fn events(stream: &str) -> Vec<SseEvent> {
+        framed(Events::new(stream.as_bytes())).await.0
     }
 
     /// The same, delivered the way a socket delivers one.
@@ -254,17 +256,18 @@ mod tests {
     /// `at_a_time` bytes per read, because that is what a buffer of that size
     /// gives the framing: nothing arrives whole, and every field, line ending
     /// and event boundary falls across a read.
-    fn dripped(stream: &str, at_a_time: usize) -> Vec<SseEvent> {
-        let reader = io::BufReader::with_capacity(at_a_time, io::Cursor::new(stream.as_bytes()));
-        framed(Events::new(reader)).0
+    async fn dripped(stream: &str, at_a_time: usize) -> Vec<SseEvent> {
+        let reader =
+            tokio::io::BufReader::with_capacity(at_a_time, io::Cursor::new(stream.as_bytes()));
+        framed(Events::new(reader)).await.0
     }
 
     /// Everything a reader framed, and how many times it went quiet doing it.
-    fn framed<R: BufRead>(mut events: Events<R>) -> (Vec<SseEvent>, usize) {
+    async fn framed<R: AsyncBufRead + Unpin>(mut events: Events<R>) -> (Vec<SseEvent>, usize) {
         let mut out = Vec::new();
         let mut quiet = 0;
 
-        while let Some(next) = events.next() {
+        while let Some(next) = events.next().await {
             match next.unwrap() {
                 Framed::Event(event) => out.push(event),
                 Framed::Quiet => quiet += 1,
@@ -274,18 +277,18 @@ mod tests {
         (out, quiet)
     }
 
-    #[test]
-    fn an_event_carries_its_name_and_its_payload() {
-        let out = events("event: ping\ndata: {\"ok\":true}\n\n");
+    #[tokio::test]
+    async fn an_event_carries_its_name_and_its_payload() {
+        let out = events("event: ping\ndata: {\"ok\":true}\n\n").await;
 
         assert_eq!(out.len(), 1);
         assert_eq!(out.first().unwrap().name, "ping");
         assert_eq!(out.first().unwrap().data, "{\"ok\":true}");
     }
 
-    #[test]
-    fn a_blank_line_ends_an_event_and_the_next_one_starts_clean() {
-        let out = events("event: one\ndata: a\n\nevent: two\ndata: b\n\n");
+    #[tokio::test]
+    async fn a_blank_line_ends_an_event_and_the_next_one_starts_clean() {
+        let out = events("event: one\ndata: a\n\nevent: two\ndata: b\n\n").await;
 
         assert_eq!(out.len(), 2);
         assert_eq!(out.first().unwrap().name, "one");
@@ -293,84 +296,84 @@ mod tests {
         assert_eq!(out.last().unwrap().data, "b");
     }
 
-    #[test]
-    fn several_data_lines_join_with_newlines() {
-        let out = events("event: e\ndata: one\ndata: two\n\n");
+    #[tokio::test]
+    async fn several_data_lines_join_with_newlines() {
+        let out = events("event: e\ndata: one\ndata: two\n\n").await;
 
         assert_eq!(out.first().unwrap().data, "one\ntwo");
     }
 
-    #[test]
-    fn only_the_first_space_after_the_colon_is_framing() {
+    #[tokio::test]
+    async fn only_the_first_space_after_the_colon_is_framing() {
         // The rest belongs to the payload, and JSON can begin with a space.
-        let out = events("data:  spaced\n\n");
+        let out = events("data:  spaced\n\n").await;
 
         assert_eq!(out.first().unwrap().data, " spaced");
     }
 
-    #[test]
-    fn a_comment_is_not_an_event() {
+    #[tokio::test]
+    async fn a_comment_is_not_an_event() {
         // Proxies send a bare colon to hold the connection open.
-        let out = events(":\n:keep-alive\n\nevent: real\ndata: x\n\n");
+        let out = events(":\n:keep-alive\n\nevent: real\ndata: x\n\n").await;
 
         assert_eq!(out.len(), 1);
         assert_eq!(out.first().unwrap().name, "real");
     }
 
-    #[test]
-    fn carriage_returns_frame_the_same_as_bare_newlines() {
-        let out = events("event: e\r\ndata: payload\r\n\r\n");
+    #[tokio::test]
+    async fn carriage_returns_frame_the_same_as_bare_newlines() {
+        let out = events("event: e\r\ndata: payload\r\n\r\n").await;
 
         assert_eq!(out.first().unwrap().name, "e");
         assert_eq!(out.first().unwrap().data, "payload");
     }
 
-    #[test]
-    fn reconnection_fields_are_ignored() {
-        let out = events("id: 7\nretry: 3000\nevent: e\ndata: x\n\n");
+    #[tokio::test]
+    async fn reconnection_fields_are_ignored() {
+        let out = events("id: 7\nretry: 3000\nevent: e\ndata: x\n\n").await;
 
         assert_eq!(out.len(), 1);
         assert_eq!(out.first().unwrap().name, "e");
         assert_eq!(out.first().unwrap().data, "x");
     }
 
-    #[test]
-    fn a_stream_that_ends_mid_event_delivers_nothing_for_it() {
+    #[tokio::test]
+    async fn a_stream_that_ends_mid_event_delivers_nothing_for_it() {
         // No blank line, so the event never dispatched. Delivering a truncated
         // payload would hand a provider half a JSON object to parse.
-        let out = events("event: e\ndata: {\"half\":");
+        let out = events("event: e\ndata: {\"half\":").await;
 
         assert!(out.is_empty(), "a truncated event was delivered: {out:?}");
     }
 
-    #[test]
-    fn a_last_event_with_no_trailing_newline_still_arrives() {
-        let out = events("event: e\ndata: x\n\n");
+    #[tokio::test]
+    async fn a_last_event_with_no_trailing_newline_still_arrives() {
+        let out = events("event: e\ndata: x\n\n").await;
 
         assert_eq!(out.len(), 1);
     }
 
-    #[test]
-    fn a_stream_arriving_one_byte_at_a_time_frames_the_same_as_one_that_arrives_whole() {
+    #[tokio::test]
+    async fn a_stream_arriving_one_byte_at_a_time_frames_the_same_as_one_that_arrives_whole() {
         // What a socket delivers per read has nothing to do with where the
         // peer put its line endings, so a parser that is only right for whole
         // events is a parser that is right until the network is busy.
         let stream = "event: one\r\ndata: {\"a\":1}\r\n\r\n:keep-alive\n\nevent: two\ndata: line\ndata: and another\n\n";
 
-        let out = dripped(stream, 1);
+        let out = dripped(stream, 1).await;
 
         assert_eq!(out.len(), 2, "a read boundary swallowed an event: {out:?}");
-        assert_eq!(out, events(stream));
+        assert_eq!(out, events(stream).await);
     }
 
-    #[test]
-    fn a_character_split_across_reads_is_put_back_together() {
+    #[tokio::test]
+    async fn a_character_split_across_reads_is_put_back_together() {
         // The reason the framing works in bytes and converts once per event.
         // Two of these characters are three bytes each, so read one byte at a
         // time every one of them spans three reads.
         let stream = "data: {\"text\":\"héllo — wörld\"}\n\n";
 
-        let out = dripped(stream, 1);
+        let out = dripped(stream, 1).await;
 
         assert_eq!(out.len(), 1);
         assert_eq!(
@@ -380,44 +383,46 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_event_far_larger_than_one_read_still_arrives_whole() {
+    #[tokio::test]
+    async fn an_event_far_larger_than_one_read_still_arrives_whole() {
         // A tool call's arguments are one event, and a model writing a file
         // puts the whole file in it. Under the ceiling, length is not a reason
         // to refuse or to truncate.
         let payload = "x".repeat(256 * 1024);
         let stream = format!("event: big\ndata: {payload}\n\n");
 
-        let out = dripped(&stream, 7);
+        let out = dripped(&stream, 7).await;
 
         assert_eq!(out.len(), 1);
         assert_eq!(out.first().unwrap().data.len(), payload.len());
         assert_eq!(out.first().unwrap().data, payload);
     }
 
-    #[test]
-    fn a_pause_anywhere_in_a_stream_frames_the_same_as_one_that_arrives_whole() {
+    #[tokio::test]
+    async fn a_pause_anywhere_in_a_stream_frames_the_same_as_one_that_arrives_whole() {
         // What a model thinking mid-sentence does to the socket, and it can
         // fall anywhere: the half of a line that had arrived has to survive the
         // pause. The pause reaching the caller is the other half of this — it
         // is waited out there, where the cancel is, and not in here.
         let stream = "event: one\r\ndata: {\"a\":1}\r\n\r\n:keep-alive\n\nevent: two\ndata: line\ndata: and another\n\n";
-        let paused = io::BufReader::new(crate::transport::Paused::dawdling(stream, 3));
+        let paused = tokio::io::BufReader::new(crate::transport::SyncReader::new(
+            crate::transport::Paused::dawdling(stream, 3),
+        ));
 
-        let (out, quiet) = framed(Events::new(paused));
+        let (out, quiet) = framed(Events::new(paused)).await;
 
         assert!(quiet > 0, "the framing waited the pauses out itself");
-        assert_eq!(out, events(stream));
+        assert_eq!(out, events(stream).await);
     }
 
-    #[test]
-    fn a_peer_that_never_sends_a_line_ending_cannot_exhaust_memory() {
+    #[tokio::test]
+    async fn a_peer_that_never_sends_a_line_ending_cannot_exhaust_memory() {
         // The reason lines are read through the buffer instead of by
         // `read_line`: this reader is infinite and never sends one.
-        let endless = io::BufReader::new(io::repeat(b'x'));
+        let endless = tokio::io::BufReader::new(tokio::io::repeat(b'x'));
         let mut framed = Events::new(endless);
 
-        let problem = framed.next().unwrap().unwrap_err();
+        let problem = framed.next().await.unwrap().unwrap_err();
 
         assert!(
             matches!(problem, SseError::TooLarge),
@@ -425,23 +430,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_event_over_the_bound_is_refused_before_it_is_dispatched() {
+    #[tokio::test]
+    async fn an_event_over_the_bound_is_refused_before_it_is_dispatched() {
         let payload = "x".repeat(MAX_EVENT + 1);
         let stream = format!("data: {payload}\n\n");
         let mut framed = Events::new(io::Cursor::new(stream));
 
-        let problem = framed.next().unwrap().unwrap_err();
+        let problem = framed.next().await.unwrap().unwrap_err();
 
         assert!(matches!(problem, SseError::TooLarge));
     }
 
-    #[test]
-    fn a_payload_that_is_not_text_is_refused_rather_than_mangled() {
+    #[tokio::test]
+    async fn a_payload_that_is_not_text_is_refused_rather_than_mangled() {
         // Losing a byte from JSON is a silently wrong answer.
         let mut framed = Events::new(&b"data: \xff\xfe\n\n"[..]);
 
-        let problem = framed.next().unwrap().unwrap_err();
+        let problem = framed.next().await.unwrap().unwrap_err();
 
         assert!(
             matches!(problem, SseError::NotUtf8(_)),

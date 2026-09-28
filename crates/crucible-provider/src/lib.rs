@@ -28,12 +28,15 @@ mod transport;
 mod unavailable;
 mod web;
 
+#[cfg(test)]
+mod renewing_tests;
+
 pub use anthropic::Anthropic;
 pub use endpoint::{Endpoint, EndpointError};
 pub use google::Google;
 pub use moonshot::Moonshot;
 pub use openai::OpenAi;
-pub use transport::http::Https;
-pub use transport::{Response, Transport, TransportError};
+pub use transport::http::HttpTurns;
+pub use transport::{PostResponse, Transport, TransportError};
 pub use unavailable::Unavailable;
 pub use web::{AnthropicWeb, GoogleWeb, MoonshotWeb, OpenAiWeb};

@@ -35,6 +35,10 @@ crucible-models.workspace = true
 # The owner-only boundary the user configuration is held behind before it is
 # read.
 crucible-privacy.workspace = true
+# The shared asynchronous HTTP service the provider and web factories inject.
+crucible-http.workspace = true
+# The release owner whose cached answer and bounded check are composed here.
+crucible-update.workspace = true
 # Every provider this build serves: the one place a name becomes a type.
 crucible-provider.workspace = true
 # The bounded registry the providers are held in.
@@ -62,10 +66,27 @@ crucible-workspace.workspace = true
 serde_json.workspace = true
 # `AppError`, which the command line turns into the sentence a user reads.
 thiserror.workspace = true
+# The one runtime the application owns and lends a handle to. `rt-multi-thread`
+# because a synchronous caller waiting on a future does not drive a runtime's
+# drivers, so the runtime has to have workers of its own that do; `time` for
+# the timer; `net` for the I/O driver, which is what a hosted program's pipes
+# are waited on through on Unix by the tasks that read and write them there,
+# and what the sockets of account requests register with.
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
 # The guardrail a headless turn is refused by.
 crucible-agents.workspace = true
+# `answered!`, which drives a fake `Ask`/`Front`'s future by hand in a test:
+# every fake here answers the moment it is asked, so a test fails at the line
+# that asked rather than hanging where one would have had to wait.
+crucible-runtime = { workspace = true, features = ["proof"] }
+# The same confinement the application composes, keeping its sandbox state in a
+# directory of this checkout's while it is tested, so another checkout's tests
+# never lock, recover or change it. Cargo does not resolve dev-dependencies for
+# a build, so this turns the feature on for `cargo test` and for nothing that
+# ships.
+crucible-sandbox-local = { workspace = true, features = ["per-checkout-state"] }
 
 [lints]
 workspace = true

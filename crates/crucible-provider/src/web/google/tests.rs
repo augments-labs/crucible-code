@@ -5,7 +5,30 @@ use crate::{Google, transport::Replay};
 use crucible_credentials::{ApiKey, Header, HeaderKey};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
+use std::io::{self, Read};
 use std::sync::Arc;
+use std::time::Duration;
+
+use crate::web::tests::awaited;
+
+/// A search awaited to its answer, under its own name so a fixture keeps the
+/// synchronous call shape it has always had.
+trait Answered: Search {
+    fn answered_search(&self, query: &str, cancel: &Cancel) -> Result<SearchResponse, SourceError> {
+        awaited(Search::search(self, query, cancel))
+    }
+}
+
+impl<T: Search + ?Sized> Answered for T {}
+
+/// The `Fetch` twin of [`Answered`].
+trait Fetched: Fetch {
+    fn answered_fetch(&self, url: &str, cancel: &Cancel) -> Result<Page, SourceError> {
+        awaited(Fetch::fetch(self, url, cancel))
+    }
+}
+
+impl<T: Fetch + ?Sized> Fetched for T {}
 
 fn answer(steps: &[Value]) -> String {
     let mut body = String::new();
@@ -43,19 +66,22 @@ fn source_body(status: u16, body: String) -> (GoogleWeb, Arc<Replay>) {
 }
 
 #[test]
-fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
+fn google_web_cancellation_before_response_is_not_a_failed_tool_result() {
     #[derive(Debug)]
     struct DuringSetup;
     impl Transport for DuringSetup {
-        fn post(
-            &self,
-            _: &str,
-            _: Outgoing,
+        fn post<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a mut Outgoing,
             _: String,
-            cancel: &Cancel,
-        ) -> Result<crate::Response, crate::TransportError> {
-            cancel.request();
-            Err(crate::TransportError::Cancelled)
+            cancel: &'a Cancel,
+        ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, crate::TransportError>>
+        {
+            Box::pin(async move {
+                cancel.request();
+                Err(crate::TransportError::Cancelled)
+            })
         }
     }
     let source = GoogleWeb::new(
@@ -68,7 +94,7 @@ fn google_web_cancellation_during_request_setup_is_not_a_failed_tool_result() {
         "gemini-3.8-flash",
     );
     let cancel = Cancel::new();
-    let result = source.fetch("https://example.com/", &cancel);
+    let result = source.answered_fetch("https://example.com/", &cancel);
     assert!(
         matches!(result, Err(SourceError::Cancelled("google"))),
         "{result:?}"
@@ -83,7 +109,7 @@ fn google_fetch_requires_the_requested_retrieval_and_enables_no_search() {
         json!({"type":"url_context_result","call_id":"fetch","result":[{"url":url,"status":"success"}]}),
         json!({"type":"model_output","content":[{"type":"text","text":"Page text","annotations":[{"type":"url_citation","url":url,"title":"A page","start_index":0,"end_index":9}]}]}),
     ]);
-    let page = source.fetch(url, &Cancel::new()).unwrap();
+    let page = source.answered_fetch(url, &Cancel::new()).unwrap();
     assert_eq!(
         page,
         Page {
@@ -101,10 +127,14 @@ fn google_fetch_requires_the_requested_retrieval_and_enables_no_search() {
     );
     assert!(
         source
-            .fetch("https://other.example/", &Cancel::new())
+            .answered_fetch("https://other.example/", &Cancel::new())
             .is_err()
     );
-    assert!(source.fetch("file:///secret", &Cancel::new()).is_err());
+    assert!(
+        source
+            .answered_fetch("file:///secret", &Cancel::new())
+            .is_err()
+    );
 }
 
 fn fetched(url: &str) -> Vec<Value> {
@@ -121,7 +151,7 @@ fn google_fetch_refuses_error_results_even_with_successful_url_metadata() {
     let mut steps = fetched(url);
     *steps.get_mut(1).unwrap().get_mut("is_error").unwrap() = json!(true);
     let (source, _) = source(&steps);
-    assert!(source.fetch(url, &Cancel::new()).is_err());
+    assert!(source.answered_fetch(url, &Cancel::new()).is_err());
 }
 
 #[test]
@@ -140,7 +170,82 @@ fn google_fetch_bounds_the_whole_stream_even_after_a_complete_answer() {
         Box::new(replay),
         "gemini-3.8-flash",
     );
-    assert!(source.fetch(url, &Cancel::new()).is_err());
+    assert!(source.answered_fetch(url, &Cancel::new()).is_err());
+}
+
+/// A body that hands its whole content over in one read, then sleeps past
+/// `wait` before confirming the clean end that closed it.
+///
+/// Modeled on `web/tests.rs`'s `WholeThenLateEnd` (the #695 sibling this fix
+/// follows) and `refusal.rs`'s fixture of the same name: the answer already
+/// sits whole in the parser's buffer, complete with the event that says the
+/// model is done, and only the read confirming there is nothing further
+/// arrives once the wait has already run out. A read that hands over more
+/// content instead would need a further attempt to confirm the stream's
+/// end, and that attempt is rightly bound by the same wait — it is the
+/// clean end itself, not a content chunk, that this proves is kept.
+struct WholeThenLateEnd {
+    body: Option<Vec<u8>>,
+    wait: Duration,
+}
+
+impl Read for WholeThenLateEnd {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        let Some(body) = self.body.take() else {
+            std::thread::sleep(self.wait.saturating_add(Duration::from_millis(20)));
+            return Ok(0);
+        };
+        let took = body.len().min(into.len());
+        into.get_mut(..took)
+            .unwrap_or_default()
+            .copy_from_slice(body.get(..took).unwrap_or_default());
+        Ok(took)
+    }
+}
+
+#[tokio::test]
+async fn a_fetched_page_read_whole_is_delivered_when_its_close_arrives_late() {
+    // Proves the fix through the same pipeline `GoogleWeb::ask` builds —
+    // `Limited` wrapped by the Interactions SSE wire that parses its
+    // events — rather than against `Limited` alone: the bug replaced a page
+    // whose close confirmed right as the wait ran out with "Google web
+    // response exceeded its deadline" instead of the retrieved text, even
+    // though the whole answer, including the event saying the model was
+    // done, had already arrived.
+    let url = "https://example.com/page";
+    let body = answer(&fetched(url)).into_bytes();
+    let wait = Duration::from_millis(5);
+
+    let reading = WholeThenLateEnd {
+        body: Some(body),
+        wait,
+    };
+    let limited =
+        super::read::Limited::new(Box::new(reading), Cancel::new(), super::super::MOST, wait);
+    let wire = crate::google::wire::Interactions::new(
+        "gemini-3.8-flash",
+        crucible_types::ContinuationScope::from_digest([7; 32]),
+    )
+    .unwrap();
+    let mut stream = crate::stream::Response::with_wire(
+        Box::new(crate::transport::SyncReader::new(limited)),
+        Cancel::new(),
+        crucible_credentials::Redactions::default(),
+        wire,
+    );
+
+    let mut text = String::new();
+    let mut stop = None;
+    while let Some(delta) = stream.next_delta().await {
+        match delta.expect("a page read whole must not fail when its close arrives late") {
+            Delta::Text(part) => text.push_str(&part),
+            Delta::Stopped(reason) => stop = Some(reason),
+            _ => {}
+        }
+    }
+
+    assert_eq!(text, "é page");
+    assert_eq!(stop, Some(StopReason::Yielded));
 }
 
 #[test]
@@ -153,7 +258,10 @@ fn google_fetch_accepts_documented_optional_citation_offsets() {
         .pointer_mut("/content/0/annotations/0")
         .unwrap() = json!({"type":"url_citation","url":url});
     let (source, _) = source(&steps);
-    assert_eq!(&*source.fetch(url, &Cancel::new()).unwrap().text, "é page");
+    assert_eq!(
+        &*source.answered_fetch(url, &Cancel::new()).unwrap().text,
+        "é page"
+    );
 }
 
 #[test]
@@ -177,7 +285,10 @@ fn google_fetch_rejects_wrong_calls_destinations_ranges_and_native_tools() {
         let mut steps = json!(fetched(url));
         *steps.pointer_mut(pointer).unwrap() = replacement;
         let (source, _) = source(steps.as_array().unwrap());
-        assert!(source.fetch(url, &Cancel::new()).is_err(), "{pointer}");
+        assert!(
+            source.answered_fetch(url, &Cancel::new()).is_err(),
+            "{pointer}"
+        );
     }
 }
 
@@ -185,7 +296,10 @@ fn google_fetch_rejects_wrong_calls_destinations_ranges_and_native_tools() {
 fn google_fetch_uses_key_only_and_does_not_replay_a_remote_interaction() {
     let url = "https://example.com/page";
     let (source, replay) = source(&fetched(url));
-    assert_eq!(&*source.fetch(url, &Cancel::new()).unwrap().text, "é page");
+    assert_eq!(
+        &*source.answered_fetch(url, &Cancel::new()).unwrap().text,
+        "é page"
+    );
     let sent = replay.sent();
     assert_eq!(
         sent.url,
@@ -235,7 +349,7 @@ fn google_fetch_never_returns_partial_or_failed_streams_or_echoes_private_errors
         (403, "private-signature-canary web-key-canary".into()),
     ] {
         let (source, _) = source_body(status, body);
-        let error = source.fetch(url, &Cancel::new()).unwrap_err();
+        let error = source.answered_fetch(url, &Cancel::new()).unwrap_err();
         let shown = format!("{error} {error:?}");
         assert!(!shown.contains("private-signature-canary"));
         assert!(!shown.contains("web-key-canary"));
@@ -251,12 +365,12 @@ fn google_fetch_invalid_urls_and_prior_cancellation_never_post() {
         "https://example.com/\nhttps://other.example/",
         "relative",
     ] {
-        assert!(source.fetch(url, &Cancel::new()).is_err());
+        assert!(source.answered_fetch(url, &Cancel::new()).is_err());
     }
     let cancel = Cancel::new();
     cancel.request();
     assert!(matches!(
-        source.fetch("https://example.com/page", &cancel),
+        source.answered_fetch("https://example.com/page", &cancel),
         Err(SourceError::Cancelled("google"))
     ));
     assert!(replay.sent().url.is_empty());
@@ -264,26 +378,25 @@ fn google_fetch_invalid_urls_and_prior_cancellation_never_post() {
 
 #[test]
 fn google_fetch_cancellation_during_a_quiet_read_discards_even_completed_text() {
-    use crate::transport::{Paused, Response, Said, TransportError};
+    use crate::transport::{Paused, Said, SyncReader, TransportError};
     #[derive(Debug)]
     struct Cancelling;
     impl Transport for Cancelling {
-        fn post(
-            &self,
-            _: &str,
-            _: Outgoing,
+        fn post<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a mut Outgoing,
             _: String,
-            cancel: &Cancel,
-        ) -> Result<Response, TransportError> {
+            cancel: &'a Cancel,
+        ) -> crucible_runtime::BoxFuture<'a, Result<crate::PostResponse, TransportError>> {
             let cancel = cancel.clone();
-            let body = Paused::saying([
-                Said::Bytes(answer(&fetched("https://example.com/page")).into_bytes()),
-                Said::Nothing,
-            ])
-            .meanwhile(move || cancel.request());
-            Ok(Response {
-                status: 200,
-                body: Box::new(body),
+            Box::pin(async move {
+                let body = Paused::saying([
+                    Said::Bytes(answer(&fetched("https://example.com/page")).into_bytes()),
+                    Said::Nothing,
+                ])
+                .meanwhile(move || cancel.request());
+                Ok(crate::PostResponse::recorded(200, SyncReader::new(body)))
             })
         }
     }
@@ -298,7 +411,7 @@ fn google_fetch_cancellation_during_a_quiet_read_discards_even_completed_text() 
         "gemini-3.8-flash",
     );
     assert!(matches!(
-        source.fetch("https://example.com/page", &Cancel::new()),
+        source.answered_fetch("https://example.com/page", &Cancel::new()),
         Err(SourceError::Cancelled("google"))
     ));
 }
@@ -347,7 +460,7 @@ fn google_search_success_with_grounded_answer_citations_and_suggestions() {
 
     let (source, replay) = source(&searched(query, answer_text, suggestions_html, url, title));
     let response = source
-        .search(query, &Cancel::new())
+        .answered_search(query, &Cancel::new())
         .expect("google search should succeed");
 
     assert_eq!(response.answer.as_deref(), Some(answer_text));
@@ -398,7 +511,7 @@ fn google_search_missing_suggestions_is_refused() {
         });
     }
     let (source, _) = source(&steps);
-    let error = source.search("query", &Cancel::new()).unwrap_err();
+    let error = source.answered_search("query", &Cancel::new()).unwrap_err();
     assert!(
         format!("{error}").contains("missing Google search suggestions"),
         "{error}"
@@ -426,7 +539,7 @@ fn google_search_missing_citations_is_refused() {
         });
     }
     let (source, _) = source(&steps);
-    let error = source.search("query", &Cancel::new()).unwrap_err();
+    let error = source.answered_search("query", &Cancel::new()).unwrap_err();
     assert!(
         format!("{error}").contains("Google search response carried no citations"),
         "{error}"
@@ -451,7 +564,7 @@ fn google_search_error_payload_is_refused() {
         });
     }
     let (source, _) = source(&steps);
-    let error = source.search("query", &Cancel::new()).unwrap_err();
+    let error = source.answered_search("query", &Cancel::new()).unwrap_err();
     assert!(
         format!("{error}").contains("Google search returned an error"),
         "{error}"
@@ -469,7 +582,7 @@ fn google_search_prior_cancellation_never_posts() {
     ));
     let cancel = Cancel::new();
     cancel.request();
-    let error = source.search("query", &cancel).unwrap_err();
+    let error = source.answered_search("query", &cancel).unwrap_err();
     assert!(matches!(error, SourceError::Cancelled("google")));
     assert!(replay.sent().url.is_empty());
 }

@@ -1,8 +1,9 @@
 //! The live turn footing, its calls, output, queue, and plan.
 
-use crucible_core::{Spend, StopReason, Summary, ToolArgs, ToolCall, ToolId, ToolOutput, TurnId};
 use crucible_runner::TurnError;
+use crucible_tools::{Summary, ToolOutput};
 use crucible_tui::Glyphs;
+use crucible_types::{Spend, StopReason, ToolArgs, ToolCall, ToolId, TurnId};
 
 use super::*;
 
@@ -406,7 +407,7 @@ fn a_turn_asked_to_stop_keeps_factual_window_and_compaction_state_current() {
     assert_eq!(turning.left(), Some(70));
 
     turning.saw(&Event::Compacted {
-        compacted: crucible_core::Compacted {
+        compacted: crucible_types::Compacted {
             why: Compacting::Asked,
             replaced: 3,
             before: 80,
@@ -426,7 +427,7 @@ fn completed_compaction_stays_full_long_enough_to_be_seen() {
         part: 64,
     });
     turning.saw(&Event::Compacted {
-        compacted: crucible_core::Compacted {
+        compacted: crucible_types::Compacted {
             why: Compacting::Asked,
             replaced: 3,
             before: 80,
@@ -564,7 +565,7 @@ fn another_compaction_before_the_completed_frame_keeps_the_new_progress() {
         part: 64,
     });
     turning.saw(&Event::Compacted {
-        compacted: crucible_core::Compacted {
+        compacted: crucible_types::Compacted {
             why: Compacting::Asked,
             replaced: 3,
             before: 80,
@@ -700,7 +701,7 @@ fn a_call_stands_over_the_row_for_as_long_as_its_tool_is_out() {
 fn printed(text: &str) -> Event {
     Event::Wrote {
         call: ToolId::new("a"),
-        text: crucible_core::Wrote::new(text),
+        text: crucible_tools::Wrote::new(text),
     }
 }
 

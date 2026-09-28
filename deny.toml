@@ -111,9 +111,9 @@ allow-wildcard-paths = true
 # the exact version so a new duplicate of the same crate still fails.
 skip = [
     # `plist` reads a syntax theme a reader supplied and still wants base64 0.22;
-    # everything crucible writes itself, and `ureq`, are on 0.23. The older copy
-    # is reachable only through `syntect`'s theme loading, and it goes away when
-    # `plist` moves — not before, and not by anything this repository can do.
+    # everything crucible writes itself is on 0.23. The older copy is reachable
+    # only through `syntect`'s theme loading, and it goes away when `plist`
+    # moves — not before, and not by anything this repository can do.
     { crate = "base64:0.22.1", reason = "syntect's theme reader pins the older line" },
 
     # `ring` — the cryptography under rustls — is on getrandom 0.2, and rustls
@@ -128,6 +128,15 @@ skip = [
     # path crucible calls; they are the hash tables inside two libraries that
     # happen to disagree about a release.
     { crate = "hashbrown:0.15.5", reason = "petgraph pins the older line under arboard" },
+
+    # `signal-hook` registers the handlers a terminal program needs, and
+    # `crossterm` 0.29 is built against the 0.3 line, so moving crucible's own
+    # pin to 0.4 adds the second copy rather than replacing the first. Both
+    # lines are the same thin wrapper over the operating system's own signal
+    # calls, and only one of them is ever linked in: `crossterm` is the only
+    # path that reaches either, and it reaches 0.3. The duplicate goes away when
+    # `crossterm` moves, not before, and not by anything this repository can do.
+    { crate = "signal-hook:0.3.18", reason = "crossterm pins the older line" },
 
     # `syn` is the Rust parser that procedural macros are written against. Both
     # copies are build-time only — neither is linked into the binary — and a

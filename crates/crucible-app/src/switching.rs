@@ -173,7 +173,7 @@ impl Conversation {
     /// model has to serve. Only Gemini's ladder is held to this: a rung the
     /// table does not list is elsewhere left for the vendor to refuse, but its
     /// encoder would carry an unsupported one into every later request.
-    pub fn ask_for(
+    pub async fn ask_for(
         &mut self,
         selected: Served,
         name: &str,
@@ -193,7 +193,7 @@ impl Conversation {
             if self.runner.model() == name {
                 Retained::default()
             } else {
-                match self.retire() {
+                match self.retire().await {
                     Ok(retained) => retained,
                     Err(problem) => return Switched::CacheHeld(problem),
                 }
@@ -205,11 +205,12 @@ impl Conversation {
                 Ok(set) => set,
                 Err(problem) => return Switched::Unreachable(problem),
             };
-            let retained = match self.retire() {
+            let retained = match self.retire().await {
                 Ok(retained) => retained,
                 Err(problem) => return Switched::CacheHeld(problem),
             };
             self.runner.serve(set.provider);
+            self.clearings_recorded().await;
             self.serving = Some(provider);
             retained
         };
@@ -261,7 +262,7 @@ impl Conversation {
     /// A credential never chooses a model or a rung. Where nobody was being
     /// asked, any model name left over from before is retired with the
     /// provider it belonged to, and the conversation is left asking for none.
-    pub fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
+    pub async fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
         let set = match (with.serving)(named, &with.logins.read()) {
             Ok(set) => set,
             Err(problem) => return LoggedIn::Unusable(problem),
@@ -271,11 +272,12 @@ impl Conversation {
         }
 
         let changed = self.serving != Some(named.name);
-        let retained = match self.retire() {
+        let retained = match self.retire().await {
             Ok(retained) => retained,
             Err(problem) => return LoggedIn::CacheHeld(problem),
         };
         self.runner.serve(set.provider);
+        self.clearings_recorded().await;
         self.serving = Some(named.name);
 
         let unwritten = remember::asking(with.choosing, named.name).err();
@@ -295,10 +297,10 @@ impl Conversation {
     /// The cache is retired first and the store changed second: a resource
     /// made with a credential is deleted with it, and once the credential is
     /// gone there is nothing left to delete it with.
-    pub fn log_out(&mut self, named: Served, with: &Switching<'_>) -> LoggedOut {
+    pub async fn log_out(&mut self, named: Served, with: &Switching<'_>) -> LoggedOut {
         let answering = self.serving == Some(named.name);
         let retained = if answering {
-            match self.retire() {
+            match self.retire().await {
                 Ok(retained) => retained,
                 Err(problem) => return LoggedOut::CacheHeld(problem),
             }
@@ -319,6 +321,7 @@ impl Conversation {
         let stored = with.logins.read();
         if let Ok(remaining) = (with.serving)(named, &stored) {
             self.runner.serve(remaining.provider);
+            self.clearings_recorded().await;
             return LoggedOut::StillServed {
                 retained,
                 source: remaining.source,
@@ -333,15 +336,16 @@ impl Conversation {
         };
         self.runner.ask("", UNKNOWN_CEILING, None, None);
         self.runner.serve(Box::new(Unavailable::new(warning)));
+        self.clearings_recorded().await;
         self.serving = None;
         LoggedOut::SignedOut { retained }
     }
 
     /// Retires the persistent cache resources only this conversation's
     /// identity owns, ahead of that identity changing.
-    fn retire(&mut self) -> Result<Retained, PromptCacheResourceError> {
-        self.runner
-            .retire_prompt_cache(&Cancel::new())
+    async fn retire(&mut self) -> Result<Retained, PromptCacheResourceError> {
+        self.retire_prompt_cache(&Cancel::new())
+            .await
             .map(|result| Retained {
                 ambiguous: result.ambiguous,
                 orphaned: result.orphaned,

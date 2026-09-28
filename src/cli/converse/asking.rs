@@ -34,8 +34,9 @@
 //! whichever way it went, and it is the shape it has when nothing was asked at
 //! all.
 
-use crucible_core::{Account, Remember, Sensitivity, ToolCall, Verdict};
+use crucible_tools::{Account, Remember, Sensitivity, Verdict};
 use crucible_tui::{Key, Pressed, Question, Renderer, Terminal};
+use crucible_types::ToolCall;
 
 use crate::cli::Fatal;
 use crate::cli::draw::{flattened, pascal};

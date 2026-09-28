@@ -23,6 +23,7 @@ mod network;
 mod network;
 mod platform;
 pub(crate) mod process;
+mod redaction;
 
 pub mod conformance;
 

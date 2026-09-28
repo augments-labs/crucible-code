@@ -41,11 +41,28 @@ pub enum Remember {
 ///
 /// Implemented above this crate, because asking is a matter of whatever is on
 /// screen and this crate knows nothing about that.
-pub trait Ask {
-    /// Puts one call to the user and waits for the answer.
+///
+/// `Sync` as well as `Send`: a turn lends its asker by shared reference to the
+/// steps it waits on, and a runtime that took the turn as a task may carry
+/// those steps to another worker at any wait.
+pub trait Ask: Send + Sync {
+    /// Puts one call to the user and awaits the answer.
+    ///
+    /// A permission question's wait is human-length too, so this hands back a
+    /// future rather than blocking inside a ready one: an implementation
+    /// answers `Pending` the moment it is asked and wakes its waker once
+    /// somebody has decided, so the thread polling it is never held for the
+    /// wait.
     ///
     /// There is no way to say "I could not ask". An implementation with nobody
     /// to ask answers [`Verdict::Deny`], which is what makes a piped
     /// invocation refuse rather than hang on a question no one will see.
-    fn ask(&mut self, call: &ToolCall, sensitivity: &Sensitivity) -> (Verdict, Remember);
+    fn ask<'a>(
+        &'a mut self,
+        call: &'a ToolCall,
+        sensitivity: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)>;
 }
+
+#[cfg(test)]
+mod tests;

@@ -2,12 +2,16 @@
 
 use std::sync::Arc;
 
-use crucible_core::{
-    AgentId, Cancel, Effort, Fetch, Host, Page, RecordedToolOutput, Search, SearchResponse,
-    SourceError, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript, Workspace,
-};
+use crucible_models::Effort;
 use crucible_runner::{Agent, Model, Tools};
+use crucible_runtime::BoxFuture;
+use crucible_runtime::Cancel;
+use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SourceError};
 use crucible_tui::Picture;
+use crucible_types::{
+    AgentId, RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult, Transcript,
+};
+use crucible_workspace::Workspace;
 
 use crate::cli::fake::Script;
 use crate::cli::kept::Whole;
@@ -40,8 +44,12 @@ impl Search for Nowhere {
         }
     }
 
-    fn search(&self, _: &str, _: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(SearchResponse::results(Vec::new()))
+    fn search<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move { Ok(SearchResponse::results(Vec::new())) })
     }
 }
 
@@ -55,11 +63,17 @@ impl Fetch for Nowhere {
             host: "example.com".into(),
         }
     }
-    fn fetch(&self, url: &str, _: &Cancel) -> Result<Page, SourceError> {
-        Ok(Page {
-            url: url.into(),
-            title: None,
-            text: "page".into(),
+    fn fetch<'a>(
+        &'a self,
+        url: &'a str,
+        _: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move {
+            Ok(Page {
+                url: url.into(),
+                title: None,
+                text: "page".into(),
+            })
         })
     }
 }

@@ -40,6 +40,7 @@ fn a_finished_run_reports_the_run_it_was_given_and_what_it_spent() {
     let result = scripted
         .runner
         .exchange(&mut scripted.says, &run)
+        .awaited()
         .expect("a finished run");
     let result = result.result().expect("a run no check refused");
 
@@ -61,6 +62,7 @@ fn a_stopped_run_says_a_person_ended_it_rather_than_that_it_finished() {
     let result = scripted
         .runner
         .exchange(&mut scripted.says, &run)
+        .awaited()
         .expect("a stopped run is not a failure");
     let result = result.result().expect("a run no check refused");
 

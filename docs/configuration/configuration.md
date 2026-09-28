@@ -43,9 +43,10 @@ cannot silently lose one another's settings.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so — silently skipping it would turn a permissions mistake
-into settings that mysteriously stopped applying. Each file is limited to 1
-MiB before JSON parsing, so a checkout cannot choose an unbounded startup
-allocation.
+into settings that mysteriously stopped applying. Anything there that is not an
+ordinary file, such as a pipe, is refused with the file named rather than
+waited on. Each file is limited to 1 MiB before JSON parsing, so a checkout
+cannot choose an unbounded startup allocation.
 
 ## What you can set
 
@@ -68,7 +69,7 @@ repository's choice to make for everyone who clones it.
 
 ### `providers`
 
-Keyed by provider name — `anthropic`, `moonshot`, `openai`.
+Keyed by provider name — `anthropic`, `google`, `moonshot`, `openai`.
 
 | Key | Means |
 | --- | --- |
@@ -93,10 +94,11 @@ all. Choosing an arbitrary inherited secret is authority, so `apiKeyEnv` is
 read only from the configuration file in your home directory.
 
 `baseUrl` is for a gateway or a proxy speaking the same protocol. It must be
-`https`, or `http` on `localhost` — the key travels in a header on every
-request, so the address decides who receives it, and plain `http` to anywhere
-else is that key on somebody's network in the clear. For the same reason it is
-one of the keys [workspace files](#the-workspace-files) may not set.
+`https`, or `http` on `localhost`, `127.0.0.1` or `[::1]` — the key travels in a
+header on every request, so the address decides who receives it, and plain
+`http` to anywhere else is that key on somebody's network in the clear. For the
+same reason it is one of the keys [workspace files](#the-workspace-files) may
+not set.
 
 ```json
 { "providers": { "openai": { "model": "gpt-5.6-terra" } } }
@@ -117,10 +119,10 @@ describe the model you had just left:
 ```
 
 Without either setting, the session's context window is 200,000 tokens for
-Anthropic, 272,000 for OpenAI, and 262,144 for Moonshot. A known model with a
-smaller native limit keeps the smaller figure, and an unknown model of a known
-provider gets that provider's default. Native 1M support therefore does not make
-1M the session default.
+Anthropic and Google, 272,000 for OpenAI, and 262,144 for Moonshot. A known
+model with a smaller native limit keeps the smaller figure, and an unknown model
+of a known provider gets that provider's default. Native 1M support therefore
+does not make 1M the session default.
 
 Use `contextWindow` to opt a named model into a larger window, or
 `defaultContextWindow` for every otherwise-unnamed model of one provider. Neither
@@ -535,7 +537,7 @@ crucible draws comes out of the same set as the border:
 | The mark a line is typed after | `›` | `>` |
 | One character of a key being pasted | `•` | `*` |
 | The mark a tool call opens with | `●` | `*` |
-| The corner its result hangs under | `└` | `+` |
+| The corner its result hangs under | `⎿` | `+` |
 | A call that failed | `✗` | `x` |
 | A line that was cut | `…` | `...` |
 | The keys that walk the effort ladder | `←` `→` | `<` `>` |
@@ -566,22 +568,26 @@ this one.
 { "updates": { "check": "never" } }
 ```
 
-`auto` is the default and is the only thing crucible reaches the network for
-besides a turn. At most once a day, on a thread of its own, it asks GitHub which
-release is newest and writes the answer to `~/.crucible/release`; nothing waits
-for it, so the answer is drawn under the welcome the *next* time you start. No
-part of your session, your directory or your configuration is sent — the request
-is a plain GET for the repository's latest release, carrying a user agent that
-names crucible and its version.
+`auto` is the default. A turn, `/login` and `/compact` all reach the network
+because you asked; this is the only time crucible decides to on its own. At most
+once a day, on a thread of its own, it asks GitHub which release is newest and
+writes the answer to `~/.crucible/release`; nothing waits for it, so the answer
+is drawn under the welcome the *next* time you start. No part of your session,
+your directory or your configuration is sent — the request is a plain GET for
+the repository's latest release, carrying a user agent that names crucible and
+its version.
 
 `never` stops the asking. crucible then never contacts GitHub, and never says
 anything about releases.
 
 ### `env`
 
-Environment variables for the commands crucible runs — the bash tool's children,
-and nothing else. crucible cannot put a variable in its own environment: writing
-to one is `unsafe` in a process with threads, and crucible forbids unsafe code.
+Environment variables for the commands crucible runs — the bash tool's children
+— and the place crucible's own settings are written, under names that begin
+with `CRUCIBLE_CODE_`. crucible does not put a variable in its own environment,
+because writing to it is `unsafe` in a process with threads. It reads its own
+names from the block as settings, and one set in the shell you start crucible in
+still wins.
 
 ```json
 { "env": { "RUST_LOG": "warn", "PAGER": "cat" } }
@@ -625,8 +631,9 @@ crucible refuses an arbitrary `env` variable in both:
 ```
 crucible: /home/you/api/.crucible/config.json: env cannot set TOKEN at line 3,
 column 5 — crucible cannot tell a file you wrote from one that arrived with the
-checkout, so no file under the working directory sets a variable for commands.
-Only crucible's own settings, which start with CRUCIBLE_CODE_, are read from
+checkout, so no file under the working directory sets a variable for the
+commands crucible runs — PATH alone decides which program each of those
+commands is. Only crucible's own settings, which start with CRUCIBLE_CODE_, are read from
 one. Put this in the configuration file in your home directory, or set it in
 the shell you start crucible in
 ```
@@ -930,12 +937,36 @@ was itself started with in `MY_DOCS_TOKEN`. The token never appears in a
 document, a session file or a log line, which is the same bargain `apiKeyEnv`
 makes for provider keys.
 
+What the server says back does not carry the value either. Crucible shows every
+occurrence of it, overlapping ones included, as `*`, one per byte, in what the
+server writes on standard error and in the words of every reply it decodes from
+standard output and keeps: tool results, error messages, and the names,
+descriptions and schemas of the tools it offers. A reply is decoded first, so
+an echo the server's JSON escaped is found too, and the protocol around the
+words is read as it was sent — no frame is rewritten, and every number crucible
+reads, such as a call's `id`, is read as sent whatever the value is. The one
+number kept as words, the spelling of an `id` crucible could not have issued,
+is hidden like the rest of the words it keeps. A number crucible keeps is shown
+as sent too — an error's code, a number in a tool's schema, the `id` of an
+answer to a call it was not waiting on — so a value a server repeats as a
+number reaches the model there, which is one more reason such a value belongs
+in `env`. A server whose tool schema would have two member names of one object
+alike once the value is hidden in them is refused, as a server offering two
+tools under one name is. Not caught: an echo cut short or split into pieces,
+except a value split across two blocks of one result where it has a line break;
+a value the server transforms before saying it; and anything it writes into a
+file under a writable root. A short or ordinary value still belongs in `env`,
+since an `envFrom` value of `1` shows every `1` in the server's own words as
+`*`. Each `envFrom` entry also counts its credential handle, 5 to 7 bytes,
+toward the 128 KiB limit on the server's environment, as every credential
+handed to a sandboxed command does.
+
 The rest of the record is the timing and failure behaviour, and every one of
 them has an answer already:
 
 | Key | Default | What it decides |
 | --- | --- | --- |
-| `handshakeSeconds` | `10` | How long to wait for the server to agree a protocol version |
+| `handshakeSeconds` | `10` | How long to wait for the server to agree a protocol version, and for each step of starting its sandbox |
 | `requestSeconds` | `60` | How long to wait for one request |
 | `shutdownSeconds` | `5` | How long the server is given to stop before it is killed |
 | `restarts` | `0` | How many times it may be started again after it ends |
@@ -1159,3 +1190,28 @@ Where a key appears more than once in the file, the position is left off rather
 than pointing at one of them, which would send you to a line that is correct.
 
 An error may name an environment variable. It never quotes the value beside it.
+
+### Checking without starting
+
+`crucible config check` reads the three files the way a startup would, resolves
+them the way it would, and stops. It opens no credential, starts no session,
+and launches or dials nothing, so it is safe to run when one of those is the
+suspect:
+
+```
+$ crucible config check
+configuration invalid
+  user config /home/you/.crucible/config.json: valid
+  project config /home/you/api/.crucible/config.json: invalid
+  project-local config /home/you/api/.crucible/config.local.json: absent
+  /home/you/api/.crucible/config.json: output.color does not accept beige at
+  line 3, column 5 — accepted here: auto, always, never
+  schema: https://www.schemastore.org/crucible-code-schema.json
+```
+
+Each file is `valid`, `invalid` or `absent`, and each error is the one a
+startup would stop on, including two layers whose rules contradict each other.
+It exits 0 when everything holds and 1 otherwise, repeating the first error on
+standard error. `--json` prints one JSON document instead, with the same
+`status`, `files`, `failures` and `schema`. Neither report carries a secret; a
+path, a rule or a rejected value an error quotes appears as it does above.

@@ -152,7 +152,7 @@ pub(crate) enum StartupError {
 
     /// The benchmark workspace could not be resolved.
     #[error("{0}")]
-    Workspace(#[from] crucible_core::PathError),
+    Workspace(#[from] crucible_workspace::PathError),
 
     /// A production-shaped benchmark session could not be started.
     #[error("{0}")]
@@ -657,8 +657,8 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
         .join("elsewhere");
     fs::create_dir_all(&elsewhere)?;
 
-    let here = crucible_core::Workspace::open(std::env::current_dir()?)?;
-    let away = crucible_core::Workspace::open(elsewhere)?;
+    let here = crucible_workspace::Workspace::open(std::env::current_dir()?)?;
+    let away = crucible_workspace::Workspace::open(elsewhere)?;
 
     let mut planted = HashSet::with_capacity(LOGS);
 
@@ -674,7 +674,7 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
         if let Some(id) = name.as_ref() {
             planted.insert(OsString::from(format!("{}.jsonl", id.as_str())));
         }
-        session.append(&crucible_core::Message::said(TITLE));
+        session.append(&crucible_types::Message::said(TITLE));
         if nth == DEEPEST {
             worked(&session);
         }
@@ -698,7 +698,7 @@ fn worked_in(sessions: &Path) -> Result<HashSet<OsString>, StartupError> {
 /// log of prose alone would measure the cheapest of them. The last word is
 /// [`ENDED`], which is what a probe waits to see.
 fn worked(session: &crucible_session::Session) {
-    use crucible_core::{
+    use crucible_types::{
         Message, RecordedToolOutput, StopReason, ToolArgs, ToolCall, ToolId, ToolResult,
     };
 
@@ -737,8 +737,8 @@ fn worked(session: &crucible_session::Session) {
 /// stops standing for one the day the bound moves.
 fn deep_enough(
     sessions: &Path,
-    workspace: &crucible_core::Workspace,
-    id: &crucible_core::SessionId,
+    workspace: &crucible_workspace::Workspace,
+    id: &crucible_types::SessionId,
 ) -> Result<(), StartupError> {
     if crucible_session::glimpse(sessions, workspace, id)?.cut() {
         return Ok(());
@@ -965,9 +965,10 @@ mod tests {
     #[test]
     fn the_fixture_exercises_four_current_format_titles() {
         let home = Scratch::new("current-format").expect("a benchmark home");
-        let workspace =
-            crucible_core::Workspace::open(std::env::current_dir().expect("the current directory"))
-                .expect("a workspace");
+        let workspace = crucible_workspace::Workspace::open(
+            std::env::current_dir().expect("the current directory"),
+        )
+        .expect("a workspace");
 
         let recent =
             crucible_session::recent(&home.path().join("sessions"), &workspace, USABLE.len());

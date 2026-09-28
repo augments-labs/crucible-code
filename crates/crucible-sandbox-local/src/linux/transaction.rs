@@ -1,6 +1,8 @@
 //! The host's publication lock, durable transaction journals and the closed command
 //! lifecycle grammar.
 
+mod state_directory;
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::os::unix::ffi::OsStrExt as _;
@@ -13,6 +15,10 @@ use crucible_storage::CallResultKey;
 use crucible_types::SandboxId;
 use rustix::fs::{FlockOperation, Mode, OFlags};
 use sha2::{Digest as _, Sha256};
+use state_directory::{
+    StateDirectoryFound, StateDirectoryOwner, StateDirectoryProblem, private_directory_problem,
+    refuse_state_directory, registry_admission_reason,
+};
 
 const WAL_MAGIC: &[u8; 8] = b"CRSBWAL1";
 const WAL_VERSION: u16 = 2;
@@ -1042,8 +1048,18 @@ pub(super) struct RegistryLease {
 impl RegistryLease {
     pub(super) fn acquire(request: &SandboxRequest) -> Result<Self, SandboxError> {
         let state = state_directory(request)?;
-        Self::acquire_at(&state).map_err(|_| SandboxError::BackendUnavailable {
-            reason: "sandbox lifecycle registry admission is unavailable".into(),
+        Self::acquire_at_classified(&state)
+    }
+
+    /// [`Self::acquire_at`], mapped to [`SandboxError::BackendUnavailable`]'s
+    /// classified, model-visible reason. [`Self::acquire`] is a thin wrapper
+    /// around this with the path it resolved, so a test that wants to prove
+    /// the classified reason actually reaches a caller — not just that
+    /// `registry_admission_reason` computes it — calls this, the same
+    /// function `acquire` does, instead of reimplementing its mapping.
+    fn acquire_at_classified(path: &Path) -> Result<Self, SandboxError> {
+        Self::acquire_at(path).map_err(|error| SandboxError::BackendUnavailable {
+            reason: registry_admission_reason(&error),
         })
     }
 
@@ -1138,8 +1154,9 @@ impl Lease {
     /// Not waited for here, because the one asking polls: a process that has
     /// ended is asked again on the next look, and nothing that asks from the
     /// thread that draws is kept waiting on somebody else's publication. A copy
-    /// of the descriptor that a forked child has not yet let go of looks held
-    /// the same way, and is gone by a later look.
+    /// of the descriptor that a forked child has not yet let go of can make the
+    /// publication lock look held; it is still unavailable, and is gone by a
+    /// later look.
     pub(super) fn try_acquire_in(state: &Path) -> io::Result<Option<Self>> {
         #[cfg(test)]
         let _reading = TestStateChange::read();
@@ -1284,10 +1301,32 @@ static TEST_STATE_USE: std::sync::LazyLock<(std::sync::Mutex<StateUse>, std::syn
     std::sync::LazyLock::new(Default::default);
 
 #[cfg(test)]
+thread_local! {
+    /// The thread whose change a reading on this one reads through, where it
+    /// is not this thread's own.
+    static READING_FOR: std::cell::Cell<Option<std::thread::ThreadId>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Under test, makes this thread's readings of this user's state directory
+/// those of `thread`: a command's ending, written on a thread of its own, reads
+/// through a change held by the thread that handed it over, as it did when it
+/// was written on that thread.
+#[cfg(test)]
+pub(super) fn read_for(thread: std::thread::ThreadId) {
+    READING_FOR.with(|reading| reading.set(Some(thread)));
+}
+
+#[cfg(test)]
 impl TestStateChange {
     /// A reading, once no other thread holds the change.
+    ///
+    /// Taken for the thread this one reads for, where it reads for another;
+    /// see [`read_for`].
     pub(super) fn read() -> Self {
-        let current = std::thread::current().id();
+        let current = READING_FOR
+            .with(std::cell::Cell::get)
+            .unwrap_or_else(|| std::thread::current().id());
         let (state, settled) = &*TEST_STATE_USE;
         let mut state = state
             .lock()
@@ -1362,22 +1401,40 @@ fn create_state_directory(path: &Path) -> io::Result<()> {
 }
 
 fn open_state_directory(path: &Path) -> io::Result<File> {
-    let descriptor = rustix::fs::open(
+    let descriptor = match rustix::fs::open(
         path,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
-    )?;
+    ) {
+        Ok(descriptor) => descriptor,
+        Err(rustix::io::Errno::NOTDIR) => {
+            // `O_DIRECTORY | O_NOFOLLOW` refuses to open anything but a
+            // directory at the final path component, including a symlink to
+            // one, with `ENOTDIR` either way; an `lstat` (which does not
+            // follow one) tells the two apart for the message.
+            let problem = if fs::symlink_metadata(path).is_ok_and(|found| found.is_symlink()) {
+                StateDirectoryProblem::Symlink
+            } else {
+                StateDirectoryProblem::NotADirectory
+            };
+            return Err(refuse_state_directory(problem, path));
+        }
+        Err(problem) => return Err(problem.into()),
+    };
     let state = File::from(descriptor);
     let metadata = state.metadata()?;
-    if !metadata.is_dir()
-        || metadata.uid() != rustix::process::getuid().as_raw()
-        || metadata.gid() != rustix::process::getgid().as_raw()
-        || metadata.mode() & 0o7777 != 0o700
-    {
-        return Err(io::Error::other(format!(
-            "sandbox state directory {} is not this user's private directory",
-            path.display()
-        )));
+    let found = StateDirectoryFound {
+        is_dir: metadata.is_dir(),
+        uid: metadata.uid(),
+        gid: metadata.gid(),
+        mode: metadata.mode(),
+    };
+    let owner = StateDirectoryOwner {
+        uid: rustix::process::getuid().as_raw(),
+        gid: rustix::process::getgid().as_raw(),
+    };
+    if let Some(problem) = private_directory_problem(found, owner) {
+        return Err(refuse_state_directory(problem, path));
     }
     state.sync_all()?;
     Ok(state)
@@ -1445,8 +1502,8 @@ fn validate_lock(state_path: &Path, name: &str, lock: &File) -> io::Result<()> {
     Ok(())
 }
 
-/// Reconciles every stale stage of this user, which all live in the private
-/// state directory the registry lease has already validated.
+/// Reconciles every stale stage in this build's state directory, the private
+/// one the registry lease has already validated.
 pub(super) fn reconcile_host_transactions() -> io::Result<()> {
     let Ok(state) = state_base() else {
         return Ok(());
@@ -1816,17 +1873,60 @@ fn discard_recovered_staging(candidate: &Path, recovered: &mut Recovered) -> io:
 
 /// This user's private transaction state directory, which also holds every
 /// writable projection stage.
+///
+/// The user id in its name is read at run time; the rest is fixed when this
+/// crate is compiled. A build that ships uses
+/// `/var/tmp/crucible-code-sandbox-{uid}-v1`. A test build — this crate's own
+/// unit tests, or any build with the `per-checkout-state` feature, which only
+/// dev-dependency lines turn on — adds a token of the directory this crate was
+/// compiled from, a path the compiler writes in. Two checkouts testing at once
+/// then each lock, recover and change a directory of their own: a test that
+/// leaves its directory in a mode no command accepts, or a recovery that
+/// removes the stages it finds, reaches no other checkout's.
+///
+/// Only test builds are kept apart this way. A build without the feature, such
+/// as a narrow run of this crate's integration tests that did not ask for it,
+/// uses the shipped directory, and shares it with whichever crucible this user
+/// is running. A `crucible` binary that `cargo test` left in a checkout's
+/// `target`, until a plain `cargo build` replaces it, is a test build as well:
+/// it uses that checkout's directory, so it does not share a publication lock
+/// with a crucible that is not a test build working on the same roots.
 fn state_base() -> Result<PathBuf, SandboxError> {
+    let name = format!(
+        "crucible-code-sandbox-{}-v1",
+        rustix::process::getuid().as_raw()
+    );
+    #[cfg(any(test, feature = "per-checkout-state"))]
+    let name = checkout_state_name(&name, env!("CARGO_MANIFEST_DIR"));
+    state_base_named(&name)
+}
+
+/// `shipped` followed by a fixed-width token of `checkout`: the first eight
+/// bytes of its SHA-256, in hexadecimal, so a path of any length or spelling
+/// makes a name of one length and one alphabet.
+#[cfg(any(test, feature = "per-checkout-state"))]
+fn checkout_state_name(shipped: &str, checkout: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut name = format!("{shipped}-");
+    for byte in Sha256::digest(checkout.as_bytes()).iter().take(8) {
+        // Writing to a string cannot fail, and a name that lost a byte would
+        // be another checkout's.
+        let _ = write!(name, "{byte:02x}");
+    }
+    name
+}
+
+/// The directory `name` under `/var/tmp`, refused unless `/var/tmp` resolves to
+/// itself.
+fn state_base_named(name: &str) -> Result<PathBuf, SandboxError> {
     let base = Path::new("/var/tmp");
     if base.canonicalize().ok().as_deref() != Some(base) {
         return Err(SandboxError::BackendUnavailable {
             reason: "canonical host transaction state base is unavailable".into(),
         });
     }
-    Ok(base.join(format!(
-        "crucible-code-sandbox-{}-v1",
-        rustix::process::getuid().as_raw()
-    )))
+    Ok(base.join(name))
 }
 
 /// The state directory for `request`, refused when it overlaps the requested
@@ -1856,4 +1956,4 @@ fn invalid(problem: &'static str) -> io::Error {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

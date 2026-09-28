@@ -1,6 +1,6 @@
 //! What the two web tools answer with, over sources that answer from memory.
 
-use crucible_runtime::Cancel;
+use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{Fetch, Host, Page, Search, SearchResponse, SearchResult, SourceError, Tool};
 use crucible_types::{ResultProvenance, ToolArgs};
 
@@ -22,8 +22,12 @@ impl Search for Answers {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(self.0.clone().into())
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move { Ok(self.0.clone().into()) })
     }
 }
 
@@ -46,12 +50,18 @@ impl Search for GroundedAnswers {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(SearchResponse::grounded(
-            self.answer,
-            self.results.clone(),
-            self.suggestions,
-        ))
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Ok(SearchResponse::grounded(
+                self.answer,
+                self.results.clone(),
+                self.suggestions,
+            ))
+        })
     }
 }
 
@@ -74,16 +84,22 @@ impl Search for Kept {
         Some("[cleared — kept to the vendor that answered it]")
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Ok(SearchResponse::grounded(
-            "an answer",
-            vec![SearchResult {
-                title: "A page".into(),
-                url: "https://example.com".into(),
-                extract: "what it says".into(),
-            }],
-            "",
-        ))
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Ok(SearchResponse::grounded(
+                "an answer",
+                vec![SearchResult {
+                    title: "A page".into(),
+                    url: "https://example.com".into(),
+                    extract: "what it says".into(),
+                }],
+                "",
+            ))
+        })
     }
 }
 
@@ -110,9 +126,15 @@ impl Search for Oversized {
         Some(self.notice)
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
-        Ok(SearchResponse::results(Vec::new()))
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(SearchResponse::results(Vec::new()))
+        })
     }
 }
 
@@ -131,15 +153,51 @@ impl Search for Breaks {
         }
     }
 
-    fn search(&self, _query: &str, _cancel: &Cancel) -> Result<SearchResponse, SourceError> {
-        Err(if self.0 {
-            SourceError::Cancelled("fake")
-        } else {
-            SourceError::Refused {
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Err(if self.0 {
+                SourceError::Cancelled("fake")
+            } else {
+                SourceError::Refused {
+                    named: "fake",
+                    status: 503,
+                    message: "busy".into(),
+                }
+            })
+        })
+    }
+}
+
+/// A source that refuses with a reply of the test's own making.
+struct Refuses(String);
+
+impl Search for Refuses {
+    fn name(&self) -> &'static str {
+        "fake"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Named {
+            sent: "https://search.example/".into(),
+            host: "search.example".into(),
+        }
+    }
+
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async move {
+            Err(SourceError::Refused {
                 named: "fake",
-                status: 503,
-                message: "busy".into(),
-            }
+                status: 400,
+                message: self.0.as_str().into(),
+            })
         })
     }
 }
@@ -167,8 +225,12 @@ impl Fetch for Pages {
         }
     }
 
-    fn fetch(&self, _url: &str, _cancel: &Cancel) -> Result<Page, SourceError> {
-        Ok(self.0.clone())
+    fn fetch<'a>(
+        &'a self,
+        _url: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async move { Ok(self.0.clone()) })
     }
 }
 
@@ -184,6 +246,12 @@ fn searching(results: Vec<SearchResult>) -> WebSearch {
     WebSearch::new(Arc::new(Answers(results)))
 }
 
+/// The head of an answer, for a failure message that must not print a reply
+/// the size of the bound.
+fn head(said: &str) -> String {
+    said.chars().take(80).collect()
+}
+
 fn fetching(url: &str, title: Option<&str>, text: &str) -> WebFetch {
     WebFetch::new(Arc::new(Pages(Page {
         url: url.into(),
@@ -195,12 +263,11 @@ fn fetching(url: &str, title: Option<&str>, text: &str) -> WebFetch {
 #[test]
 fn a_result_carries_its_title_its_address_and_its_extract() {
     let tool = searching(vec![result("Serde", "https://serde.rs", "A framework.")]);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"serde"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(said.contains("Serde"), "{said}");
@@ -214,12 +281,11 @@ fn a_search_that_found_nothing_says_so_rather_than_answering_with_nothing() {
     // An empty answer and a failed one are different facts, and a model that
     // cannot tell them apart searches again for something that is not there.
     let tool = searching(Vec::new());
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"nothing"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"nothing"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(!output.is_failed());
     assert!(output.text().contains("No results"), "{}", output.text());
@@ -231,17 +297,46 @@ fn a_limit_keeps_that_many_and_counts_what_it_left() {
         .map(|at| result(&format!("Page {at}"), "https://example.com", "..."))
         .collect();
     let tool = searching(many);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"x","limit":2}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x","limit":2}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(said.contains("Page 0") && said.contains("Page 1"), "{said}");
     assert!(!said.contains("Page 2"), "{said}");
     assert!(said.contains("3 not shown"), "{said}");
+}
+
+#[test]
+fn a_search_that_found_one_result_says_result_not_results() {
+    let tool = searching(vec![result("Serde", "https://serde.rs", "A framework.")]);
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(said.ends_with("1 result."), "{said}");
+    assert!(!said.contains("1 results"), "{said}");
+}
+
+#[test]
+fn a_search_that_found_two_results_still_says_results() {
+    let tool = searching(vec![
+        result("Serde", "https://serde.rs", "A framework."),
+        result("Tokio", "https://tokio.rs", "An async runtime."),
+    ]);
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"async rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(said.ends_with("2 results."), "{said}");
 }
 
 #[test]
@@ -315,12 +410,11 @@ fn a_redirect_to_another_host_does_not_come_back_under_the_first_one_s_verdict()
     // with its content would let one allowed host carry any other.
     let tool = fetching("https://evil.example/landed", None, "a page nobody allowed");
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(output.is_failed());
     assert!(
@@ -335,12 +429,11 @@ fn a_redirect_to_another_host_does_not_come_back_under_the_first_one_s_verdict()
 fn a_redirect_inside_one_host_is_still_that_host_and_comes_back() {
     let tool = fetching("https://docs.rs/serde/latest/", Some("Serde"), "the body");
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://docs.rs/serde"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(!output.is_failed(), "{}", output.text());
     assert!(output.text().contains("the body"), "{}", output.text());
@@ -352,12 +445,11 @@ fn a_page_says_where_it_actually_came_from() {
     // depends on where it ended up, a redirect being the case that matters.
     let tool = fetching("https://example.com/moved-here", Some("Moved"), "the body");
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://example.com/asked-for"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/asked-for"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(said.contains("https://example.com/moved-here"), "{said}");
@@ -369,26 +461,242 @@ fn a_source_that_could_not_answer_is_a_failed_result_and_not_a_broken_tool() {
     // The turn carries on and the model is told, the same as a file that is not
     // there. A source being down is not a breakdown of the mechanism.
     let tool = WebSearch::new(Arc::new(Breaks(false)));
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"x"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source failure to reach the model rather than the runner");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
 
     assert!(output.is_failed());
     assert_eq!(output.text(), "web source error: fake: HTTP 503: busy\n");
 }
 
 #[test]
+fn a_refusal_longer_than_the_bound_says_what_it_left_out() {
+    // A refusal carries the service's whole reply, which can be a whole error
+    // page. Cut with nothing saying so, it reads to the model as everything the
+    // service said — so the model works around a problem it was told half of.
+    let line = "the service explained itself at length\n";
+    let lines = 2_000;
+    let tool = WebSearch::new(Arc::new(Refuses(line.repeat(lines))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        said.starts_with(&format!("web source error: fake: HTTP 400: {line}")),
+        "the refusal lost the source, the status and the head of the reply: {:?}",
+        head(said),
+    );
+    // `CUT` is the widest ending this answer can earn, so everything in front
+    // of it is room the head had, and a head that took it stops one line short.
+    assert!(
+        said.len() > bound::OUTPUT - super::CUT.len() - line.len(),
+        "the answer stopped a whole line short of the room it had: {} bytes",
+        said.len(),
+    );
+    // Every line of the answer but its ending came from the reply, so the count
+    // the ending owes is the reply's lines less the ones that survived.
+    let shown = said.matches(line.trim_end()).count();
+    let ending = format!("[{} more lines not shown.]", lines - shown);
+    assert_eq!(
+        said.lines().next_back(),
+        Some(ending.as_str()),
+        "the ending does not name the lines the answer left out",
+    );
+    assert!(
+        said.len() <= bound::OUTPUT,
+        "the bound did not hold: {}",
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_of_one_line_over_the_bound_still_names_the_source_and_the_status() {
+    // A minified error body is one line, and a bound that keeps whole lines
+    // kept none of it: what came back was that the tool could not answer, with
+    // neither the vendor nor the status the service refused with in it.
+    let tool = WebSearch::new(Arc::new(Refuses("x".repeat(bound::OUTPUT * 2))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    let kept = said
+        .strip_suffix(super::CUT)
+        .expect("a reply twice the bound to end by saying it was cut");
+    assert!(
+        kept.starts_with("web source error: fake: HTTP 400: x"),
+        "the refusal lost the source and the status: {:?}",
+        head(said),
+    );
+    // One line earns the widest ending this answer has, and the head is
+    // entitled to everything in front of it.
+    assert_eq!(
+        kept.len(),
+        bound::OUTPUT - super::CUT.len(),
+        "the head did not fill the room its ending left it",
+    );
+    assert!(
+        said.len() <= bound::OUTPUT,
+        "the bound did not hold: {}",
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_cut_inside_a_line_is_cut_between_characters() {
+    // The bound is a count of bytes and a reply is somebody else's text, so
+    // the byte the cut lands on is not a character boundary: behind this
+    // thirty-four byte prefix, three-byte characters put a continuation byte
+    // there. Cut on the byte and the answer is a panic, or nothing at all.
+    let letter = "€";
+    let body = letter.repeat(bound::OUTPUT);
+    let tool = WebSearch::new(Arc::new(Refuses(body.clone())));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    let reply = format!("web source error: fake: HTTP 400: {body}");
+    let kept = said
+        .strip_suffix(super::CUT)
+        .expect("a reply three times the bound to end by saying it was cut");
+    assert!(
+        reply.starts_with(kept),
+        "the answer is not the head of the reply: {:?}",
+        head(said),
+    );
+    assert!(
+        kept.len() + letter.len() > bound::OUTPUT - super::CUT.len(),
+        "the head stopped {} bytes short of the room its ending left it",
+        bound::OUTPUT - super::CUT.len() - kept.len(),
+    );
+    assert!(
+        said.len() <= bound::OUTPUT,
+        "the bound did not hold: {}",
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_that_fills_the_room_exactly_does_not_claim_a_cut() {
+    // A reply of one line filling the room an ending leaves to the byte fits
+    // the bound whole, newline and all. A sentence saying the rest was cut is
+    // then about nothing, and the model is told it is missing what it is
+    // holding.
+    let prefix = "web source error: fake: HTTP 400: ";
+    let body = "x".repeat(bound::OUTPUT - super::CUT.len() - prefix.len());
+    let tool = WebSearch::new(Arc::new(Refuses(body.clone())));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        !said.ends_with(super::CUT),
+        "the answer claimed a cut it did not make: {} bytes",
+        said.len(),
+    );
+    assert!(
+        said == format!("{prefix}{body}\n"),
+        "a reply that fits whole did not come back whole: {:?}, {} bytes",
+        head(said),
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_whose_whole_lines_fit_the_bound_comes_back_whole() {
+    // Room for an ending is owed only to an answer that leaves something out.
+    // Kept back from one that fits, it cuts a reply the bound would have
+    // carried and then tells the model the reply was too long.
+    let prefix = "web source error: fake: HTTP 400: ";
+    let first = "A".repeat(bound::OUTPUT - super::CUT.len() - prefix.len());
+    let tool = WebSearch::new(Arc::new(Refuses(format!("{first}\nB"))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        !said.ends_with(super::CUT) && !said.ends_with("more lines not shown.]"),
+        "a reply inside the bound was said to have been cut: {} bytes",
+        said.len(),
+    );
+    assert!(
+        said == format!("{prefix}{first}\nB\n"),
+        "a reply inside the bound did not come back whole: {:?}, {} bytes",
+        head(said),
+        said.len(),
+    );
+}
+
+#[test]
+fn a_refusal_of_lines_inside_the_bound_is_not_cut_for_an_ending_it_does_not_need() {
+    // Two lines taking, newlines included, the bound less half the widest
+    // ending: past what is left once an ending's room is kept, inside the
+    // bound itself.
+    let each = (bound::OUTPUT - super::CUT.len() / 2) / 2;
+    assert!(
+        2 * each > bound::OUTPUT - super::CUT.len() && 2 * each <= bound::OUTPUT,
+        "the reply no longer lands between the ending's room and the bound",
+    );
+    let prefix = "web source error: fake: HTTP 400: ";
+    let first = "A".repeat(each - 1 - prefix.len());
+    let second = "B".repeat(each - 1);
+    let tool = WebSearch::new(Arc::new(Refuses(format!("{first}\n{second}"))));
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source failure to reach the model rather than the runner");
+
+    assert!(output.is_failed());
+    let said = output.text();
+    assert!(
+        !said.ends_with(super::CUT) && !said.ends_with("more lines not shown.]"),
+        "a reply inside the bound was said to have been cut: {} bytes",
+        said.len(),
+    );
+    assert!(
+        said == format!("{prefix}{first}\n{second}\n"),
+        "a reply inside the bound did not come back whole: {:?}, {} bytes",
+        head(said),
+        said.len(),
+    );
+}
+
+#[test]
 fn a_cancelled_search_ends_the_call_rather_than_answering_it() {
     let tool = WebSearch::new(Arc::new(Breaks(true)));
-    let problem = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"x"}"#),
-            &crate::sample::context(),
-        )
-        .expect_err("cancellation not to come back as an answer");
+    let problem = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"x"}"#),
+        &crate::sample::context(),
+    ))
+    .expect_err("cancellation not to come back as an answer");
 
     assert!(matches!(problem, ToolError::Cancelled(ref tool) if &**tool == "web_search"));
 }
@@ -402,12 +710,11 @@ fn a_page_over_the_bound_comes_back_cut_rather_than_empty() {
     let long = "a line of some length that repeats\n".repeat(2_000);
     let tool = fetching("https://example.com/long", Some("Long"), &long);
 
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"url":"https://example.com/long"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/long"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     let said = output.text();
     assert!(!output.is_failed(), "{said}");
@@ -424,6 +731,63 @@ fn a_page_over_the_bound_comes_back_cut_rather_than_empty() {
 }
 
 #[test]
+fn a_page_leaving_exactly_one_line_out_says_line_not_lines() {
+    // 301 lines of 100 bytes each (the trailing newline `within` adds back
+    // included): the first 300 fill `bound::OUTPUT` exactly, so the 301st is
+    // the one line left out.
+    let long = "x".repeat(99) + "\n";
+    let tool = fetching(
+        "https://example.com/one-over",
+        Some("One over"),
+        &long.repeat(301),
+    );
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/one-over"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(
+        !output.is_failed(),
+        "a source that answers to have not failed"
+    );
+    assert!(
+        said.ends_with("[1 more line not shown.]"),
+        "{:?}",
+        &said[said.len().saturating_sub(60)..],
+    );
+}
+
+#[test]
+fn a_page_leaving_two_lines_out_still_says_lines() {
+    let long = "x".repeat(99) + "\n";
+    let tool = fetching(
+        "https://example.com/two-over",
+        Some("Two over"),
+        &long.repeat(302),
+    );
+
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"url":"https://example.com/two-over"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
+
+    let said = output.text();
+    assert!(
+        !output.is_failed(),
+        "a source that answers to have not failed"
+    );
+    assert!(
+        said.ends_with("[2 more lines not shown.]"),
+        "{:?}",
+        &said[said.len().saturating_sub(60)..],
+    );
+}
+
+#[test]
 fn a_grounded_search_shows_answer_citations_and_suggestions_together() {
     let source = Arc::new(GroundedAnswers {
         answer: "Rust is a systems programming language focusing on safety and speed.",
@@ -435,12 +799,11 @@ fn a_grounded_search_shows_answer_citations_and_suggestions_together() {
         suggestions: "- [learn rust](https://www.google.com/search?q=learn+rust)",
     });
     let tool = WebSearch::new(source);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"rust language"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"rust language"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
 
     assert!(!output.is_failed());
     let said = output.text();
@@ -490,12 +853,11 @@ fn a_search_result_says_which_vendor_answered_it_and_what_its_terms_keep() {
     // with no term is still named: an answer an older build wrote says nothing,
     // and nothing is how that answer is told apart from this one.
     let kept = WebSearch::new(Arc::new(Kept));
-    let output = kept
-        .run(
-            sample::allowed(&kept, r#"{"query":"rust"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(kept.run(
+        sample::allowed(&kept, r#"{"query":"rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
     assert_eq!(
         output.provenance(),
         &ResultProvenance::answered(
@@ -506,12 +868,11 @@ fn a_search_result_says_which_vendor_answered_it_and_what_its_terms_keep() {
     );
 
     let open = WebSearch::new(Arc::new(Answers(Vec::new())));
-    let output = open
-        .run(
-            sample::allowed(&open, r#"{"query":"rust"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a source that answers");
+    let output = crucible_runtime::answered!(open.run(
+        sample::allowed(&open, r#"{"query":"rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a source that answers");
     assert_eq!(
         output.into_recorded().provenance(),
         &ResultProvenance::answered("fake", None).expect("a bounded vendor")
@@ -531,12 +892,11 @@ fn a_source_whose_terms_do_not_fit_a_result_is_never_asked() {
         asked: std::sync::atomic::AtomicBool::new(false),
     });
     let tool = WebSearch::new(Arc::clone(&source) as Arc<dyn Search>);
-    let output = tool
-        .run(
-            sample::allowed(&tool, r#"{"query":"rust"}"#),
-            &crate::sample::context(),
-        )
-        .expect("a refusal is an answer, not an error");
+    let output = crucible_runtime::answered!(tool.run(
+        sample::allowed(&tool, r#"{"query":"rust"}"#),
+        &crate::sample::context(),
+    ))
+    .expect("a refusal is an answer, not an error");
 
     assert!(output.is_failed(), "{}", output.text());
     assert!(output.text().contains("do not fit"), "{}", output.text());

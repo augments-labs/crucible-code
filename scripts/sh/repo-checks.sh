@@ -468,8 +468,8 @@ section "the path that is described, not opened"
 # `Workspace::intended` hands back a plain path instead of a proof, and it
 # resolves through the nearest *existing* ancestor — the one shape that must
 # never be opened by name. The permission engine needs exactly that, because it
-# describes a call rather than making one. Splitting the workspace out of core
-# turned the call `pub`, and Cargo cannot say "public to one caller", so the pin
+# describes a call rather than making one. The workspace being a crate of its
+# own makes the call `pub`, and Cargo cannot say "public to one caller", so the pin
 # says it here. The owning crate defines and tests it, as the pins above leave
 # their owners.
 asker="crates/crucible-tools/src/permissions/sensitivity.rs"
@@ -552,44 +552,72 @@ elif [[ -z "$edges" ]]; then
     failed=1
 fi
 
-# `core` names the twelve crates its old names now come from. Those edges are
-# the compatibility facade and go away with the crate that holds them.
-#
-# Edges past the facade are listed here as they are taken. `attachments` is
-# named directly because the two types a file's bytes are read through are
-# withheld from the facade; the sandbox crates are named directly because a
-# backend and the contract it answers are what this split gave their own names;
-# `tools` and `builtins` name their owners directly because neither may reach
-# back into core.
+# Every crate names each type it uses from its owner, or from the crate that
+# hands it out; there is no facade that re-exports other crates' names
+# wholesale, so an edge here is a dependency on a crate that owns or hands out
+# what is named.
 #
 # `app` is where a run is composed, so it is the one crate that names concrete
 # providers, tools, storage and sandboxes together. It names their owners
-# directly and never the facade, and never the broker, which is the command
+# directly, and never the broker, which is the command
 # line's to install. `code extension` and `code mcp` are test-only edges: the
 # integration tests drive those two crates, and nothing that ships names them,
-# which the next section holds.
+# which the next section holds. `code tools` ships: the command line draws and
+# asks about tool calls in that crate's words, and `bench-grep` and
+# `bench-tools` lend the calls they time its tool worker, which the probe list
+# below writes down.
 #
 # `client-api` is what a front end and the application say to each other, so it
 # has one owner below it -- `types`, for the identity a session is resumed by --
 # and two crates above it: `app`, which carries a request out, and the command
 # line, which is one front end. The check after the list holds both ends.
+#
+# `runtime` is named by each crate whose contract hands back its future, each
+# that implements one, and each that is stopped or steered by its controls.
+# `extension runtime` is a test-only edge: a stand-in process in its tests
+# implements `SandboxProcess`, whose stop hands back a `BoxFuture`.
+# `storage` hands back the same type spelled out, because it names no workspace
+# crate but `types`, and so it names no runtime.
+# `auth` names it for `BoxFuture`, the shape a renewal's request is handed to
+# the owner of renewals in.
+#
+# `http` is an HTTP client built for outgoing requests to share. It sends the
+# headers a credential was applied to and hands its connector's work back as a
+# runtime future, and it names nothing else in the workspace. `auth` sends
+# every account login and renewal request through it.
+#
+# `provider` names `tools` for the source contract its web adapters answer;
+# `runner` names `tools`, `storage` and `sandbox` for what a tool is, what a turn
+# is resumed from and what a confined process was allowed to do; `session` names
+# `sandbox` for the records a resume reads a live backend out of.
+# `code credentials` and `code storage` are test-only edges: the tests build
+# fixtures from those values, and the command line names neither.
 allowed='code app
 code attachments
 code auth
 code client-api
 code config
 code context
-code core
+code credentials
 code extension
 code mcp
+code models
 code privacy
 code provider
+code registry
+code update
 code runner
+code runtime
+code sandbox
 code session
 code builtins
 code sandbox-broker
 code sandbox-local
+code storage
+code tools
 code tui
+code types
+code workspace
 app agents
 app auth
 app builtins
@@ -598,6 +626,7 @@ app config
 app context
 app credentials
 app extension
+app http
 app mcp
 app models
 app privacy
@@ -610,6 +639,7 @@ app sandbox-local
 app session
 app tools
 app types
+app update
 app workspace
 agents models
 agents tools
@@ -617,58 +647,66 @@ agents types
 attachments types
 attachments workspace
 client-api types
-auth core
+auth credentials
+auth http
 auth privacy
-config core
+auth runtime
+auth types
 config models
+config sandbox
+config tools
+config types
+config workspace
 context models
 context tools
 context types
 context workspace
-core attachments
-core context
-core credentials
-core models
-core registry
-core runtime
-core sandbox
-core storage
-core tools
-core transport
-core types
-core workspace
 credentials types
 models credentials
 models runtime
 models types
 extension registry
+extension runtime
 extension sandbox
 extension transport
 extension types
+http credentials
+http runtime
 mcp runtime
 mcp sandbox
 mcp tools
 mcp transport
 mcp types
-provider core
 provider credentials
+provider http
 provider models
 provider runtime
+provider tools
 provider types
 runner agents
 runner attachments
 runner context
-runner core
 runner models
+runner registry
+runner runtime
+runner sandbox
+runner storage
+runner tools
 runner types
-session core
+runner workspace
 session privacy
+session runtime
+session sandbox
 session storage
+session tools
 session types
+session workspace
+sandbox runtime
 sandbox storage
 sandbox types
 sandbox workspace
 sandbox-local privacy
+sandbox-local runtime
 sandbox-local sandbox
 sandbox-local sandbox-broker
 sandbox-local storage
@@ -684,20 +722,76 @@ tools workspace
 transport runtime
 transport sandbox
 transport types
+update http
+update privacy
+update runtime
+update types
 builtins attachments
 builtins runtime
 builtins sandbox
-builtins sandbox-local
 builtins tools
 builtins types
 builtins workspace'
+# Test-support edges are kept apart from the list above. The test-only edges in
+# that list are ones the layering would let shipped code take as well; an edge
+# here is one it would not, because a test's need is never permission for code
+# that ships. `builtins sandbox-local` is how the tools' tests get one machine's
+# confinement to run a command under; the check at the end of this section
+# holds each of these out of every table a build that ships resolves, reading
+# the manifest under `crates/`, so each names a member crate, not the root.
+test_support='builtins sandbox-local'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
-    if ! grep -Fxq "$edge" <<<"$allowed"; then
+    if ! grep -Fxq "$edge" <<<"$allowed" && ! grep -Fxq "$edge" <<<"$test_support"; then
         printf '    FAIL dependency edge %s is outside the workspace layering\n' "$edge"
         failed=1
     fi
 done <<<"$edges"
+# The list is a layering only while no crate can reach itself through it.
+# Cargo refuses a cycle among the edges declared today, not one the list would
+# let a later manifest complete.
+if ! python3 -c '
+import sys
+
+taken = {}
+for line in sys.stdin.read().splitlines():
+    words = line.split()
+    if len(words) != 2:
+        print("    FAIL the allowed list has a line that is not one edge: %r" % line)
+        sys.exit(1)
+    taken.setdefault(words[0], []).append(words[1])
+
+state = {}
+
+def visit(crate, path):
+    state[crate] = "open"
+    for dependency in taken.get(crate, []):
+        if state.get(dependency) == "open":
+            loop = path[path.index(dependency):] + [dependency]
+            print("    FAIL the allowed list lets crucible-%s reach itself: %s" % (dependency, " -> ".join(loop)))
+            sys.exit(1)
+        if dependency not in state:
+            visit(dependency, path + [dependency])
+    state[crate] = "closed"
+
+for crate in list(taken):
+    if crate not in state:
+        visit(crate, [crate])
+' <<<"$allowed"; then
+    failed=1
+fi
+# `crucible-core` was the facade other crates reached names through. Its names
+# now live with the crates that own them, and a package by that name is the
+# facade coming back.
+if ! packages=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c 'import json, sys; print("\n".join(p["name"] for p in json.load(sys.stdin)["packages"]))') ||
+    [[ -z "$packages" ]]; then
+    printf '    FAIL cargo named no workspace package; this check measured nothing\n'
+    failed=1
+elif grep -Fxq crucible-core <<<"$packages"; then
+    printf '    FAIL the workspace has a crucible-core package; each name lives with the crate that owns it\n'
+    failed=1
+fi
 # Tighter than the allowed-edge list above for these crates, and for
 # crucible-runtime tighter than the architecture's maximum: giving one of them
 # a workspace dependency is a decision to take here rather than a line to add.
@@ -731,30 +825,143 @@ if ! grep -Fxq 'client-api types' <<<"$edges" || ! grep -Fxq 'app client-api' <<
     failed=1
 fi
 
-# `builtins sandbox-local` above is a test-support edge, and a test-support edge
-# never justifies a shipped one. A tool names the sandbox service contract;
-# naming one machine's answer to it in a table that ships is how that
-# distinction would quietly disappear. Every such table counts, not only
-# `[dependencies]`: a build script that pulls a backend in ships it too. Cargo
-# answers which tables those are, so this section runs `cargo`, and it asks
-# manifests whose answer is known as well as the one that matters. Only 3 is a
-# clean answer, because 1 is also what a crashed reader exits with.
+# A test-support edge never justifies a shipped one. A tool names the sandbox
+# service contract; naming one machine's answer to it in a table that ships is
+# how that distinction would quietly disappear. Every such table counts, not
+# only `[dependencies]`: a build script that pulls a backend in ships it too.
+# Cargo answers which tables those are, so this section runs `cargo`, and it
+# asks manifests whose answer is known as well as the one that matters. Only 3
+# is a clean answer, because 1 is also what a crashed reader exits with.
 if ! python3 scripts/python/shipped-edge.py --self-test; then
     printf '    FAIL the shipped-edge check failed its self-test\n'
     failed=1
 fi
-python3 scripts/python/shipped-edge.py crates/crucible-builtins/Cargo.toml crucible-sandbox-local
-case $? in
-    0)
-        printf '    FAIL crucible-builtins must reach crucible-sandbox-local only as a dev-dependency\n'
+while read -r crate dependency; do
+    [[ -z "$crate" ]] && continue
+    python3 scripts/python/shipped-edge.py "crates/crucible-$crate/Cargo.toml" "crucible-$dependency"
+    case $? in
+        0)
+            printf '    FAIL crucible-%s must reach crucible-%s only as a dev-dependency\n' "$crate" "$dependency"
+            failed=1
+            ;;
+        3) ;;
+        *)
+            printf '    FAIL the shipped-edge check gave no answer for crates/crucible-%s/Cargo.toml\n' "$crate"
+            failed=1
+            ;;
+    esac
+done <<<"$test_support"
+
+section "a test build's sandbox state stays out of a release"
+# `per-checkout-state` names the Linux sandbox's state directory after the
+# checkout a test build was compiled from, so that two checkouts testing at once
+# keep apart. What ships uses the directory the security documentation names,
+# and a build that turned the feature on would move every user's state. This
+# holds the manifests to that: no table Cargo resolves for a build that ships
+# may turn the feature on. A release command that asks for it itself, with
+# `--features`, flags or configuration, is not something a manifest says, and
+# is not read here.
+#
+# Resolver 2 and later resolve dev-dependencies only for tests, benches and
+# examples; resolver 1 folds their features into every build. So the root
+# manifest must name its resolver, and name 2 or later. The feature may then be
+# turned on by a dev-dependency and nothing else: not by a normal or build
+# dependency, under any target, not by the workspace table a member inherits
+# from, and not by a feature of any package, the crate's own `default` included.
+# Cargo is asked for the manifests as it reads them, with every inherited line
+# folded in; the resolver, which it does not describe, is read from the root
+# manifest it names. Every package that takes the crate turns the feature on
+# for its own tests, because a narrow `cargo test -p` of it builds no other
+# package's dev-dependencies. A narrow run of the crate's own integration tests
+# cannot, since a crate that took itself would be an edge, and passes
+# `--features per-checkout-state` instead.
+sandbox_state=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c '
+import json, os, sys, tomllib
+
+OWNER, FEATURE = "crucible-sandbox-local", "per-checkout-state"
+described = json.load(sys.stdin)
+packages = described["packages"]
+with open(os.path.join(described["workspace_root"], "Cargo.toml"), "rb") as source:
+    root = tomllib.load(source)
+resolvers = [table["resolver"] for table in (root.get("workspace", {}), root.get("package", {})) if "resolver" in table]
+if not resolvers:
+    print(f"the root Cargo.toml names no resolver, so nothing says a release build leaves out {FEATURE}")
+for resolver in resolvers:
+    if not (isinstance(resolver, str) and resolver.isdigit() and int(resolver) >= 2):
+        print(f"the workspace resolver is {resolver!r}; before 2, a release build takes the {FEATURE} a dev-dependency turns on")
+owner = [package for package in packages if package["name"] == OWNER]
+if len(owner) != 1 or FEATURE not in owner[0]["features"]:
+    sys.exit(0)
+tested = 0
+for package in packages:
+    name = package["name"]
+    keys, testing = set(), False
+    for dependency in package["dependencies"]:
+        if dependency["name"] != OWNER:
+            continue
+        keys.add(dependency.get("rename") or dependency["name"])
+        if FEATURE not in dependency["features"]:
+            continue
+        kind = dependency["kind"] or "normal"
+        if kind == "dev":
+            testing = True
+        else:
+            print(f"{name} turns on {FEATURE} in a {kind} dependency, which a release build resolves")
+    for feature, enables in package["features"].items():
+        if name == OWNER:
+            named = feature != FEATURE and FEATURE in enables
+        else:
+            named = any(f"{key}{joint}{FEATURE}" in enables for key in keys for joint in ("/", "?/"))
+        if named:
+            print(f"{name} turns on {FEATURE} through its feature {feature}, which a release build can ask for")
+    if keys and name != OWNER:
+        if testing:
+            tested += 1
+        else:
+            print(f"{name} takes {OWNER} and its tests do not turn on {FEATURE}; they would share the state of every checkout")
+if tested:
+    print("measured")
+')
+if ! grep -Fxq measured <<<"$sandbox_state"; then
+    printf '    FAIL crucible-sandbox-local was not found declaring per-checkout-state and a package turning it on for its tests; this check measured nothing\n'
+    failed=1
+fi
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == measured ]] && continue
+    printf '    FAIL %s\n' "$line"
+    failed=1
+done <<<"$sandbox_state"
+
+section "no spawned thread in the hosted crates"
+# No shipped source in the transport, MCP, or extension crates starts its own
+# thread: a `thread::spawn` in any of the three fails, which is also what keeps
+# a detached pipe thread from coming back. Sync calls remain —
+# `Frames::next_frame`/`Written::send` and `Hosted::greet`/`catalogue`/`call` —
+# so this checks threads, not all blocking. Files that
+# compile only under test are left out, by the same path rule the shipping
+# source boundary uses: a `tests.rs`, anything under a `tests/` directory, and
+# a `testing.rs` never ship.
+shipped=()
+while IFS= read -r file; do
+    shipped+=("$file")
+done < <(
+    find crates/crucible-transport/src crates/crucible-mcp/src crates/crucible-extension/src \
+        -name '*.rs' -type f \
+        -not -name 'tests.rs' -not -name 'testing.rs' -not -path '*/tests/*' |
+        LC_ALL=C sort
+)
+if ((${#shipped[@]} == 0)); then
+    printf '    FAIL no shipped sources found in the hosted crates; this check measured nothing\n'
+    failed=1
+else
+    spawned=$(grep -Hn 'thread::spawn' -- "${shipped[@]}" || true)
+    if [[ -n "$spawned" ]]; then
+        printf '%s\n' "$spawned"
+        printf '    FAIL the lines above start a thread in shipped source of the hosted crates\n'
         failed=1
-        ;;
-    3) ;;
-    *)
-        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-builtins/Cargo.toml\n'
-        failed=1
-        ;;
-esac
+    fi
+fi
 
 section "shipping source boundary"
 # The crate graph above is about packages, and the root package is three things
@@ -831,8 +1038,6 @@ src/cli/converse/resuming.rs crucible_session
 src/cli/converse/typing.rs crucible_builtins
 src/cli/draw.rs crucible_builtins
 src/cli/draw/opening.rs crucible_session
-src/cli/release.rs crucible_privacy
-src/cli/release.rs crucible_provider
 src/cli/standing.rs crucible_builtins'
 concrete=$(grep -E ' crucible_(auth|builtins|privacy|provider|sandbox_broker|sandbox_local|session)$' <<<"$named")
 while IFS= read -r line; do
@@ -905,19 +1110,29 @@ fi
 # A probe measures one owner and imports it directly: routed through the
 # application it would measure the composition instead, and a budget would move
 # for a reason the probe cannot see. What each probe names is written down
-# whole, so a new import is a decision taken here. `generate-models` imports
-# `crucible_core` alone; `crucible_types` is in the text of the table it writes,
-# which is compiled where the table is kept and not where it is generated.
+# whole, so a new import is a decision taken here. `generate-models` names
+# `crucible_types` for the modalities it reads, and again in the text of the
+# table it writes, which is compiled where the table is kept.
+# `bench-grep` and `bench-tools` name `crucible_tools` for the tool worker they
+# lend the calls they time, so what they time includes handing the work to it,
+# `crucible_runtime` for the future their permission prompts answer with, and
+# `crucible_types` and `crucible_workspace` for the call they build and the
+# directory it reaches.
 probes='src/bin/bench-grep.rs crucible_builtins
-src/bin/bench-grep.rs crucible_core
+src/bin/bench-grep.rs crucible_runtime
+src/bin/bench-grep.rs crucible_tools
+src/bin/bench-grep.rs crucible_types
+src/bin/bench-grep.rs crucible_workspace
 src/bin/bench-live-burst.rs crucible_tui
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
 src/bin/bench-tools.rs crucible_builtins
-src/bin/bench-tools.rs crucible_core
+src/bin/bench-tools.rs crucible_runtime
 src/bin/bench-tools.rs crucible_sandbox_local
-src/bin/generate-models.rs crucible_core
+src/bin/bench-tools.rs crucible_tools
+src/bin/bench-tools.rs crucible_types
+src/bin/bench-tools.rs crucible_workspace
 src/bin/generate-models.rs crucible_types'
 probe_sources=(src/bin/*.rs)
 if ((${#probe_sources[@]} == 0)); then

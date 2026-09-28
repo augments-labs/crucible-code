@@ -4,8 +4,8 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::switching::Retained;
 use crucible_client_api::Command;
-use crucible_core::PromptCacheResourceError;
 use crucible_tui::{Renderer, Terminal};
+use crucible_types::PromptCacheResourceError;
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;
@@ -184,7 +184,7 @@ fn number(value: Option<u64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crucible_core::PromptCacheResourceState;
+    use crucible_types::PromptCacheResourceState;
 
     #[test]
     fn unknown_numbers_are_not_rendered_as_zero() {

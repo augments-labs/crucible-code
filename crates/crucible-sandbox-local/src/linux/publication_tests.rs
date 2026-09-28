@@ -15,14 +15,17 @@ use std::time::{Duration, Instant};
 
 use crucible_sandbox::{
     SandboxCleanup, SandboxFilesystemAccess, SandboxFilesystemRule, SandboxLifecycle,
-    SandboxManifest, SandboxNetworkPolicy, SandboxPolicy, SandboxProcess, SandboxRequest,
-    SandboxResourceLimits, SandboxService,
+    SandboxManifest, SandboxNetworkPolicy, SandboxOutput, SandboxPolicy, SandboxProcess,
+    SandboxRead, SandboxRequest, SandboxResourceLimits, SandboxService,
 };
 use crucible_types::{Ancestry, SandboxId, ToolId};
 
 use super::tests::{command, finish, lifecycles, request};
-use crate::LocalSandbox;
 use crate::sample::{Sample, skipped_without_enforcement};
+
+/// How long a command here gets to end before it counts as hung: a hang
+/// detector, which no test reads as a claim about speed.
+const HUNG: Duration = Duration::from_secs(30);
 
 /// This user's publication lock, held the way a publication in progress holds it.
 ///
@@ -53,7 +56,8 @@ fn let_go(process: &mut dyn SandboxProcess) {
 }
 
 /// Waits until `process` reads as ended, so that what is done next happens
-/// after every fact its ending has recorded and before it publishes.
+/// after the command or its handed-off ending is observed. The ending may still
+/// be waiting for a worker slot, writing its scan, publishing, or discarding.
 fn once_ended(process: &mut dyn SandboxProcess, patience: Duration) {
     let deadline = Instant::now() + patience;
     while !process.ended() {
@@ -75,6 +79,34 @@ fn nothing_left_of(sandbox: SandboxId) {
     );
 }
 
+struct ScanGateGuard {
+    sandbox: SandboxId,
+    release: Option<std::sync::mpsc::SyncSender<()>>,
+}
+
+impl Drop for ScanGateGuard {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        super::projection::clear_scan_gate(self.sandbox);
+    }
+}
+
+struct FinalCheckGateGuard {
+    sandbox: SandboxId,
+    release: Option<std::sync::mpsc::SyncSender<()>>,
+}
+
+impl Drop for FinalCheckGateGuard {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        super::projection::bounded::clear_final_check_gate(self.sandbox);
+    }
+}
+
 /// How `process` ended, once it has, within `patience`.
 fn ended_within(process: &mut dyn SandboxProcess, patience: Duration) -> ExitStatus {
     let deadline = Instant::now() + patience;
@@ -92,29 +124,54 @@ fn ended_within(process: &mut dyn SandboxProcess, patience: Duration) -> ExitSta
     }
 }
 
+/// What `process` answers once it answers more than `None`, within `patience`.
+///
+/// A command that reads as ended may still be having its terminal scan read,
+/// which is answered `None` without waiting; this looks again until the answer
+/// is its ending, or how that went wrong.
+fn settled_within(
+    process: &mut dyn SandboxProcess,
+    patience: Duration,
+) -> std::io::Result<ExitStatus> {
+    let deadline = Instant::now() + patience;
+    loop {
+        match process.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(problem) => return Err(problem),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the command did not settle within {patience:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn a_writer_left_running_does_not_keep_another_from_writing() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let running = Sample::new("sandbox-writer-left-running");
     let beside = Sample::new("sandbox-writer-beside-it");
-    let mut first = service
-        .prepare(request(&running, SandboxManifest::empty()))
-        .expect("first writer");
-    first.materialize().expect("first writer materialized");
-    let mut held = first
-        .start(command("sleep 30"))
+    let mut first =
+        crucible_runtime::answered!(service.prepare(request(&running, SandboxManifest::empty())))
+            .expect("first writer");
+    crucible_runtime::answered!(first.materialize()).expect("first writer materialized");
+    // Far longer than `finish` waits for the second, so the first is still
+    // running when the second has published however slow the host, and a
+    // second that waited on it would be caught as hung.
+    let mut held = crucible_runtime::answered!(first.start(command("sleep 300")))
         .expect("first writer running");
 
-    let mut second = service
-        .prepare(request(&beside, SandboxManifest::empty()))
-        .expect("a second writer is prepared while the first runs");
-    second.materialize().expect("second writer materialized");
+    let mut second =
+        crucible_runtime::answered!(service.prepare(request(&beside, SandboxManifest::empty())))
+            .expect("a second writer is prepared while the first runs");
+    crucible_runtime::answered!(second.materialize()).expect("second writer materialized");
     let (status, _, _) = finish(
-        second
-            .start(command("printf 'beside\\n' > beside.txt"))
+        crucible_runtime::answered!(second.start(command("printf 'beside\\n' > beside.txt")))
             .expect("second writer started"),
     );
 
@@ -127,24 +184,25 @@ fn a_writer_left_running_does_not_keep_another_from_writing() {
         held.try_wait().expect("first writer").is_none(),
         "the first writer ended before the second published"
     );
-    held.stop().expect("first writer cleanup");
+    crucible_runtime::answered!(held.stop()).expect("first writer cleanup");
 }
 
 #[test]
 fn a_writer_that_ends_while_another_publishes_waits_its_turn() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-writer-waits-its-turn");
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'after\\n' > after.txt").spoken_to())
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
     // Held once the writer has started, the way another command's publication
     // would be: a writer is only ever prepared between publications.
     let publishing = held_publication(&sample);
@@ -171,7 +229,7 @@ fn a_writer_that_ends_while_another_publishes_waits_its_turn() {
         );
         thread::sleep(Duration::from_millis(10));
     };
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     assert!(status.success(), "{status}");
     assert_eq!(
         std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
@@ -181,25 +239,26 @@ fn a_writer_that_ends_while_another_publishes_waits_its_turn() {
 
 #[test]
 fn of_two_writers_into_one_root_the_one_that_ends_later_publishes_nothing() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-writers-into-one-root");
     let slower_request = request(&sample, SandboxManifest::empty());
     let audit = slower_request.audit().clone();
-    let mut slower = service.prepare(slower_request).expect("a slower writer");
-    slower.materialize().expect("slower writer materialized");
-    let mut late = slower
-        .start(command("read go; printf 'late\\n' > late.txt").spoken_to())
-        .expect("slower writer started");
-    let mut faster = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a faster writer into the same root");
-    faster.materialize().expect("faster writer materialized");
+    let mut slower =
+        crucible_runtime::answered!(service.prepare(slower_request)).expect("a slower writer");
+    crucible_runtime::answered!(slower.materialize()).expect("slower writer materialized");
+    let mut late = crucible_runtime::answered!(
+        slower.start(command("read go; printf 'late\\n' > late.txt").spoken_to())
+    )
+    .expect("slower writer started");
+    let mut faster =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a faster writer into the same root");
+    crucible_runtime::answered!(faster.materialize()).expect("faster writer materialized");
     let (status, _, _) = finish(
-        faster
-            .start(command("printf 'early\\n' > early.txt"))
+        crucible_runtime::answered!(faster.start(command("printf 'early\\n' > early.txt")))
             .expect("faster writer started"),
     );
     assert!(status.success(), "{status}");
@@ -232,8 +291,8 @@ fn of_two_writers_into_one_root_the_one_that_ends_later_publishes_nothing() {
         Err(refused.to_string()),
         "a refused ending answered differently when asked again"
     );
-    late.stop()
-        .expect("a refused writer's cleanup is confirmed");
+    let stopped = crucible_runtime::answered!(late.stop());
+    assert!(stopped.is_err(), "a refused ending was swallowed by stop");
     assert_eq!(late.inspection().cleanup(), SandboxCleanup::Complete);
     let lifecycles = lifecycles(&audit);
     assert!(
@@ -253,19 +312,20 @@ fn of_two_writers_into_one_root_the_one_that_ends_later_publishes_nothing() {
 
 #[test]
 fn a_writer_that_ended_while_another_publishes_reads_as_ended_until_it_publishes() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-writer-ended-beside-a-publication");
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'after\\n' > after.txt").spoken_to())
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
     let publishing = held_publication(&sample);
     let_go(process.as_mut());
 
@@ -285,7 +345,7 @@ fn a_writer_that_ended_while_another_publishes_reads_as_ended_until_it_publishes
 
     drop(publishing);
     let status = ended_within(process.as_mut(), Duration::from_secs(3));
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     assert!(status.success(), "{status}");
     assert_eq!(
         std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
@@ -295,7 +355,7 @@ fn a_writer_that_ended_while_another_publishes_reads_as_ended_until_it_publishes
 
 #[test]
 fn stopping_a_writer_that_ended_while_another_publishes_discards_it_cleanly() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -303,11 +363,12 @@ fn stopping_a_writer_that_ended_while_another_publishes_discards_it_cleanly() {
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
     let writer = request(&sample, SandboxManifest::empty());
     let audit = writer.audit().clone();
-    let mut session = service.prepare(writer).expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'after\\n' > after.txt").spoken_to())
-        .expect("started command");
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
     let publishing = held_publication(&sample);
     let_go(process.as_mut());
     // The moment it takes to end. How long does not matter, only that it has.
@@ -316,7 +377,7 @@ fn stopping_a_writer_that_ended_while_another_publishes_discards_it_cleanly() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    let stopped = process.stop();
+    let stopped = crucible_runtime::answered!(process.stop());
     drop(publishing);
 
     stopped.expect("a writer stopped after it ended confirms its cleanup");
@@ -338,19 +399,21 @@ fn stopping_a_writer_that_ended_while_another_publishes_discards_it_cleanly() {
 
 #[test]
 fn a_writer_killed_while_another_publishes_ends_without_waiting_for_it() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-writer-killed-beside-a-publication");
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'killed\\n' > killed.txt; kill -KILL $$").spoken_to())
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session
+            .start(command("read go; printf 'killed\\n' > killed.txt; kill -KILL $$").spoken_to())
+    )
+    .expect("started command");
     let publishing = held_publication(&sample);
     let_go(process.as_mut());
 
@@ -360,7 +423,7 @@ fn a_writer_killed_while_another_publishes_ends_without_waiting_for_it() {
     drop(publishing);
 
     let status = ended.expect("a writer with nothing to publish waited for another's publication");
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     assert!(!status.success(), "{status}");
     assert!(
         !sample.root().join("killed.txt").exists(),
@@ -370,18 +433,19 @@ fn a_writer_killed_while_another_publishes_ends_without_waiting_for_it() {
 
 #[test]
 fn a_writer_stopped_while_it_ran_still_answers_how_it_ended() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-writer-stopped-while-running");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session.start(command("sleep 30")).expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process =
+        crucible_runtime::answered!(session.start(command("sleep 30"))).expect("started command");
 
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
 
     let status = process
         .try_wait()
@@ -392,24 +456,24 @@ fn a_writer_stopped_while_it_ran_still_answers_how_it_ended() {
 
 #[test]
 fn a_writer_that_wrote_nothing_ends_cleanly_after_another_published_into_its_root() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-idle-writer-beside-a-publication");
-    let mut idle_session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer that will write nothing");
-    idle_session.materialize().expect("materialized workspace");
-    let mut idle = idle_session
-        .start(command("read go; true").spoken_to())
-        .expect("started command");
-    let mut busy = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer into the same root");
-    busy.materialize().expect("materialized workspace");
+    let mut idle_session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer that will write nothing");
+    crucible_runtime::answered!(idle_session.materialize()).expect("materialized workspace");
+    let mut idle =
+        crucible_runtime::answered!(idle_session.start(command("read go; true").spoken_to()))
+            .expect("started command");
+    let mut busy =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer into the same root");
+    crucible_runtime::answered!(busy.materialize()).expect("materialized workspace");
     let (status, _, _) = finish(
-        busy.start(command("printf 'beside\\n' > beside.txt"))
+        crucible_runtime::answered!(busy.start(command("printf 'beside\\n' > beside.txt")))
             .expect("started command"),
     );
     assert!(status.success(), "{status}");
@@ -417,7 +481,7 @@ fn a_writer_that_wrote_nothing_ends_cleanly_after_another_published_into_its_roo
     let_go(idle.as_mut());
     let status = ended_within(idle.as_mut(), Duration::from_secs(5));
 
-    idle.stop().expect("cleanup");
+    crucible_runtime::answered!(idle.stop()).expect("cleanup");
     assert!(status.success(), "{status}");
     assert_eq!(
         std::fs::read_to_string(sample.root().join("beside.txt")).expect("the other publication"),
@@ -427,7 +491,7 @@ fn a_writer_that_wrote_nothing_ends_cleanly_after_another_published_into_its_roo
 
 #[test]
 fn a_writer_prepared_while_another_publishes_takes_its_baseline_after_that_publication() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -463,15 +527,15 @@ fn a_writer_prepared_while_another_publishes_takes_its_baseline_after_that_publi
     });
     lock_held.recv().expect("the lock is held");
 
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer prepared while another publishes");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("printf 'mine\\n' > mine.txt"))
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer prepared while another publishes");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process =
+        crucible_runtime::answered!(session.start(command("printf 'mine\\n' > mine.txt")))
+            .expect("started command");
     let ended = ended_within(process.as_mut(), Duration::from_secs(5));
-    process.stop().expect("cleanup");
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
     publishing.join().expect("the publication finished");
 
     assert!(ended.success(), "{ended}");
@@ -488,7 +552,7 @@ fn a_writer_prepared_while_another_publishes_takes_its_baseline_after_that_publi
 
 #[test]
 fn a_read_only_command_ends_while_another_publishes() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -524,13 +588,11 @@ fn a_read_only_command_ends_while_another_publishes() {
     let publishing = held_publication(&sample);
 
     let finished = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut session = service
-            .prepare(reader)
+        let mut session = crucible_runtime::answered!(service.prepare(reader))
             .expect("a reader prepared while another publishes");
-        session.materialize().expect("materialized workspace");
+        crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
         finish(
-            session
-                .start(command("cat seen.txt"))
+            crucible_runtime::answered!(session.start(command("cat seen.txt")))
                 .expect("started command"),
         )
     }));
@@ -557,7 +619,7 @@ fn fill_audit(audit: &crucible_sandbox::SandboxAudit, wanted: usize) {
 
 #[test]
 fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_waiting() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -566,14 +628,15 @@ fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_wai
     // Held for longer than a preparation may wait, the way another crucible of
     // this user, holding it for a whole run, would hold it.
     let publishing = held_publication(&sample);
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
     let (told, hears) = std::sync::mpsc::channel();
     let writer = thread::spawn(move || {
-        let outcome = session.start(command("printf 'after\\n' > after.txt"));
+        let outcome =
+            crucible_runtime::answered!(session.start(command("printf 'after\\n' > after.txt")));
         told.send(outcome.err().map(|problem| problem.to_string()))
             .expect("the test hears how the writer went");
     });
@@ -590,7 +653,7 @@ fn a_writer_prepared_while_a_publication_will_not_end_is_refused_rather_than_wai
 
 #[test]
 fn a_publication_that_cannot_record_its_fact_still_says_what_the_command_did() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -599,11 +662,12 @@ fn a_publication_that_cannot_record_its_fact_still_says_what_the_command_did() {
     let writer = request(&sample, SandboxManifest::empty());
     let sandbox = writer.id();
     let audit = writer.audit().clone();
-    let mut session = service.prepare(writer).expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'after\\n' > after.txt").spoken_to())
-        .expect("started command");
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
     let_go(process.as_mut());
     // Filled once the command has ended, so that one slot is left at the
     // publication: its start takes that, and the fact that it finished finds the
@@ -613,7 +677,7 @@ fn a_publication_that_cannot_record_its_fact_still_says_what_the_command_did() {
 
     let status = ended_within(process.as_mut(), Duration::from_secs(5));
 
-    let stopped = process.stop();
+    let stopped = crucible_runtime::answered!(process.stop());
     assert!(status.success(), "{status}");
     assert_eq!(
         std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
@@ -634,7 +698,7 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
     // other publication rolled back, or because what it wrote was written over
     // again — the baseline check sees nothing wrong, and the difference the scan
     // carries is published as this command's own work.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -655,22 +719,22 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
     )
     .expect("a publication before this command");
     drop(held);
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
-        .expect("started command");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
+    )
+    .expect("started command");
 
     // Another command publishes into the same root while the first one runs.
-    let mut other = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("another writer into the same root");
-    other.materialize().expect("the other writer materialized");
+    let mut other =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("another writer into the same root");
+    crucible_runtime::answered!(other.materialize()).expect("the other writer materialized");
     let (status, _, _) = finish(
-        other
-            .start(command("printf 'theirs\n' > shared.txt"))
+        crucible_runtime::answered!(other.start(command("printf 'theirs\n' > shared.txt")))
             .expect("the other writer started"),
     );
     assert!(status.success(), "{status}");
@@ -702,9 +766,13 @@ fn a_writer_publishes_nothing_of_a_root_another_publication_touched_while_it_ran
         "another command's content was published as this one's"
     );
     assert!(!sample.root().join("mine.txt").exists());
+    let stopped = crucible_runtime::answered!(process.stop());
+    assert!(stopped.is_err(), "a failed ending was swallowed by stop");
+    nothing_left_of(sandbox);
 }
 
-/// A file in this user's shared state directory, removed however a test ends.
+/// A file in the state directory this checkout's test builds share, removed
+/// however a test ends.
 struct TakenAway(std::path::PathBuf);
 
 impl Drop for TakenAway {
@@ -713,10 +781,11 @@ impl Drop for TakenAway {
     }
 }
 
-/// A mode in this user's shared state directory, put back however a test ends.
+/// A mode in the state directory this checkout's test builds share, put back
+/// however a test ends.
 ///
-/// Every command of this user reads that directory; one left as a test made it
-/// would refuse them all.
+/// Every sandboxed command a test build of this checkout runs reads that
+/// directory; one left as a test made it would refuse them all.
 struct ModeRestored(std::path::PathBuf, std::fs::Permissions);
 
 impl Drop for ModeRestored {
@@ -744,7 +813,7 @@ fn a_command_with_nothing_to_publish_leaves_the_generations_alone() {
     // it has nothing to publish into. Anything it writes to the file it writes
     // with nothing held, and a copy taken before somebody else's publication
     // moved the counter would put that publication's witness back.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -805,11 +874,10 @@ fn a_command_with_nothing_to_publish_leaves_the_generations_alone() {
     let attempts = 5;
     for attempt in 1..=attempts {
         let before = generations_as_they_stand(&state);
-        let mut session = service.prepare(reader()).expect("a reader");
-        session.materialize().expect("materialized workspace");
+        let mut session = crucible_runtime::answered!(service.prepare(reader())).expect("a reader");
+        crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
         let (status, _, _) = finish(
-            session
-                .start(command("cat seen.txt"))
+            crucible_runtime::answered!(session.start(command("cat seen.txt")))
                 .expect("started command"),
         );
         let after = generations_as_they_stand(&state);
@@ -840,7 +908,7 @@ fn a_writer_publishes_nothing_when_the_generations_cannot_be_read() {
     // A line this cannot read is not an absence. Read as one, it says no
     // publication has touched the root, which is the one answer that lets a
     // command through.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -854,14 +922,14 @@ fn a_writer_publishes_nothing_when_the_generations_cannot_be_read() {
     // none of them can read would fail all of them.
     let poisoned = TakenAway(state.join(super::generations::FILE));
     std::fs::write(&poisoned.0, "this is not a generation\n").expect("a file nothing can read");
-    let mut session = service.prepare(writer).expect("a writer");
-    session.materialize().expect("materialized workspace");
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
 
-    let refused = session
-        .start(command("printf 'mine\\n' > mine.txt"))
-        .err()
-        .map(|problem| problem.to_string())
-        .unwrap_or_default();
+    let refused =
+        crucible_runtime::answered!(session.start(command("printf 'mine\\n' > mine.txt")))
+            .err()
+            .map(|problem| problem.to_string())
+            .unwrap_or_default();
 
     drop(poisoned);
     assert!(
@@ -881,7 +949,7 @@ fn a_root_is_remembered_by_where_it_is_rather_than_by_what_it_is_called() {
     // writable authority above it — but it is remembered under its own path,
     // which is not the one this looks for. What this looks for can only have
     // come from the mount.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -899,14 +967,14 @@ fn a_root_is_remembered_by_where_it_is_rather_than_by_what_it_is_called() {
     .expect("a manifest of one mount");
     let writer = request(&sample, manifest);
     let state = super::transaction::state_directory(&writer).expect("transaction state");
-    let mut session = service.prepare(writer).expect("a writer through a mount");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(writer)).expect("a writer through a mount");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, errors) = finish(
-        session
-            .start(command(
-                "printf 'mine\n' > /crucible/manifest/data/mine.txt",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "printf 'mine\n' > /crucible/manifest/data/mine.txt",
+        )))
+        .expect("started command"),
     );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
@@ -930,7 +998,7 @@ fn a_writer_through_a_mount_publishes_nothing_when_a_publication_touched_what_it
     // agree — the command and the publication would read different names, this
     // one would find its own unmoved, and what it wrote over that publication
     // would be published.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -948,10 +1016,13 @@ fn a_writer_through_a_mount_publishes_nothing_when_a_publication_touched_what_it
     .expect("a manifest of one mount");
     let writer = request(&sample, manifest);
     let state = super::transaction::state_directory(&writer).expect("transaction state");
-    let mut session = service.prepare(writer).expect("a writer through a mount");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'mine\n' > /crucible/manifest/data/mine.txt").spoken_to())
+    let mut session =
+        crucible_runtime::answered!(service.prepare(writer)).expect("a writer through a mount");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process =
+        crucible_runtime::answered!(session.start(
+            command("read go; printf 'mine\n' > /crucible/manifest/data/mine.txt").spoken_to()
+        ))
         .expect("started command");
 
     let held = held_publication(&sample);
@@ -990,7 +1061,7 @@ fn a_writer_through_a_mount_publishes_over_one_whose_publications_all_happened_b
     // publication moves is the host's — so the second command through any mount
     // that has ever been published into would be refused for a publication that
     // happened before it existed.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1009,31 +1080,25 @@ fn a_writer_through_a_mount_publishes_over_one_whose_publications_all_happened_b
         .expect("a manifest of one mount")
     };
 
-    let mut earlier = service
-        .prepare(request(&sample, mount("data")))
+    let mut earlier = crucible_runtime::answered!(service.prepare(request(&sample, mount("data"))))
         .expect("an earlier writer through the mount");
-    earlier
-        .materialize()
-        .expect("the earlier writer materialized");
+    crucible_runtime::answered!(earlier.materialize()).expect("the earlier writer materialized");
     let (status, _, errors) = finish(
-        earlier
-            .start(command(
-                "printf 'first\n' > /crucible/manifest/data/first.txt",
-            ))
-            .expect("the earlier writer started"),
+        crucible_runtime::answered!(earlier.start(command(
+            "printf 'first\n' > /crucible/manifest/data/first.txt",
+        )))
+        .expect("the earlier writer started"),
     );
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
 
-    let mut session = service
-        .prepare(request(&sample, mount("data")))
+    let mut session = crucible_runtime::answered!(service.prepare(request(&sample, mount("data"))))
         .expect("a writer after it");
-    session.materialize().expect("materialized workspace");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, errors) = finish(
-        session
-            .start(command(
-                "printf 'second\n' > /crucible/manifest/data/second.txt",
-            ))
-            .expect("started command"),
+        crucible_runtime::answered!(session.start(command(
+            "printf 'second\n' > /crucible/manifest/data/second.txt",
+        )))
+        .expect("started command"),
     );
 
     assert!(status.success(), "{}", String::from_utf8_lossy(&errors));
@@ -1048,32 +1113,28 @@ fn a_writer_publishes_over_a_root_whose_publications_all_happened_before_it() {
     // The generation says when, not whether. A root this user has published into
     // before is ordinary; what matters is that nothing moved between the
     // baseline and the publication.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-root-with-a-history");
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
-    let mut earlier = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("an earlier writer");
-    earlier
-        .materialize()
-        .expect("the earlier writer materialized");
+    let mut earlier =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("an earlier writer");
+    crucible_runtime::answered!(earlier.materialize()).expect("the earlier writer materialized");
     let (status, _, _) = finish(
-        earlier
-            .start(command("printf 'first\n' > first.txt"))
+        crucible_runtime::answered!(earlier.start(command("printf 'first\n' > first.txt")))
             .expect("the earlier writer started"),
     );
     assert!(status.success(), "{status}");
 
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer after it");
-    session.materialize().expect("materialized workspace");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer after it");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
     let (status, _, _) = finish(
-        session
-            .start(command("printf 'second\n' > second.txt"))
+        crucible_runtime::answered!(session.start(command("printf 'second\n' > second.txt")))
             .expect("started command"),
     );
 
@@ -1089,7 +1150,7 @@ fn a_writer_publishes_nothing_when_a_publication_touched_a_root_it_knew_before()
     // The same as the fresh-root case, but where the root already carried a
     // generation: what refuses this command is that the generation moved, not
     // merely that one appeared.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1103,13 +1164,14 @@ fn a_writer_publishes_nothing_when_a_publication_touched_a_root_it_knew_before()
         .expect("the root has a history");
     drop(held);
 
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
+    )
+    .expect("started command");
     let held = held_publication(&sample);
     super::generations::advance(&state, std::slice::from_ref(&key))
         .expect("another publication touches it");
@@ -1140,19 +1202,20 @@ fn a_writer_publishes_nothing_when_a_publication_touched_its_root_as_it_ran() {
     // its generation while the command ran, so what the command was scanned as
     // holding may be that publication's work rather than its own — however the
     // root looks now.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
     let sample = Sample::new("sandbox-root-generation-moved");
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
-    let mut session = service
-        .prepare(request(&sample, SandboxManifest::empty()))
-        .expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
-        .expect("started command");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'mine\n' > mine.txt").spoken_to())
+    )
+    .expect("started command");
 
     let state = super::transaction::state_directory(&request(&sample, SandboxManifest::empty()))
         .expect("transaction state");
@@ -1188,7 +1251,7 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
     // comes back is the refusal itself rather than the cleanup's own failure.
     // That refusal reaches the model, and where this user's state directory is
     // belongs in the audit instead.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1196,11 +1259,12 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
     let writer = request(&sample, SandboxManifest::empty());
     let state = super::transaction::state_directory(&writer).expect("transaction state");
-    let mut session = service.prepare(writer).expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'after\n' > after.txt").spoken_to())
-        .expect("started command");
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
     let_go(process.as_mut());
     once_ended(process.as_mut(), Duration::from_secs(5));
     // The directory rather than the lock inside it. Failing to open a lock is a
@@ -1218,8 +1282,7 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o750))
         .expect("a state directory that is not this user's own");
 
-    let refused = process
-        .try_wait()
+    let refused = settled_within(process.as_mut(), Duration::from_secs(5))
         .expect_err("an admission nobody can ask for is an ending that went wrong");
 
     drop(restore);
@@ -1239,7 +1302,7 @@ fn a_refusal_the_model_reads_names_a_kind_and_not_a_path() {
 fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1247,11 +1310,12 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
     let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
     let writer = request(&sample, SandboxManifest::empty());
     let audit = writer.audit().clone();
-    let mut session = service.prepare(writer).expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'after\n' > after.txt").spoken_to())
-        .expect("started command");
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
     let_go(process.as_mut());
     once_ended(process.as_mut(), Duration::from_secs(5));
     // Neither held nor free: a lock that cannot be opened at all is the one
@@ -1267,8 +1331,7 @@ fn a_publication_that_cannot_ask_for_admission_says_the_same_thing_twice() {
         .expect("an unopenable lock");
     fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
 
-    let first = process
-        .try_wait()
+    let first = settled_within(process.as_mut(), Duration::from_secs(5))
         .expect_err("an admission nobody can ask for is an ending that went wrong");
     let again = process.try_wait();
 
@@ -1303,7 +1366,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
     // read that directory, so a lease asked for from another thread while the
     // change stood was refused for a change that was not its own: two unrelated
     // tests of this crate failed that way now and then.
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1359,8 +1422,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
         let ready = std::sync::Arc::clone(&ready);
         move || {
             ready.wait();
-            LocalSandbox::new()
-                .prepare(reader)
+            crucible_runtime::answered!(crate::sample::service().prepare(reader))
                 .map(drop)
                 .map_err(|problem| problem.to_string())
         }
@@ -1369,8 +1431,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
         let ready = std::sync::Arc::clone(&ready);
         move || {
             ready.wait();
-            LocalSandbox::new()
-                .prepare(writer)
+            crucible_runtime::answered!(crate::sample::service().prepare(writer))
                 .map(drop)
                 .map_err(|problem| problem.to_string())
         }
@@ -1412,7 +1473,7 @@ fn a_preparation_waits_out_a_test_that_changed_this_users_state_directory() {
 
 #[test]
 fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote() {
-    let service = LocalSandbox::new();
+    let service = crate::sample::service();
     if skipped_without_enforcement(&service) {
         return;
     }
@@ -1421,11 +1482,12 @@ fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote(
     let writer = request(&sample, SandboxManifest::empty());
     let sandbox = writer.id();
     let audit = writer.audit().clone();
-    let mut session = service.prepare(writer).expect("a writer");
-    session.materialize().expect("materialized workspace");
-    let mut process = session
-        .start(command("read go; printf 'after\\n' > after.txt").spoken_to())
-        .expect("started command");
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
     let_go(process.as_mut());
     // Filled once the command has ended, so that the publication's own start is
     // the fact that finds the collector full.
@@ -1454,5 +1516,452 @@ fn a_publication_whose_start_cannot_be_recorded_discards_what_the_command_wrote(
     );
     assert!(!sample.root().join("after.txt").exists());
     drop(process);
+    nothing_left_of(sandbox);
+}
+
+/// What a writer that publishes one file into its one root journals, record by
+/// record: what recovery reads after a crash anywhere in its ending.
+const PUBLISHED: [super::transaction::Record; 17] = {
+    use super::transaction::{InvocationMode, Record};
+    [
+        Record::Initialized(InvocationMode::Foreground),
+        Record::Prepared,
+        Record::ReleaseIntent,
+        Record::GoSentOrAmbiguous,
+        Record::CommandExited,
+        Record::WorkloadReapIntent,
+        Record::WorkloadReaped,
+        Record::ScanIntent,
+        Record::ScanTransferred,
+        Record::StageIntent(0),
+        Record::Staged(0),
+        Record::PublicationStaged,
+        Record::ScopeReapIntent,
+        Record::ScopeReapProved,
+        Record::ApplyIntent(0),
+        Record::Applied(0),
+        Record::Committed,
+    ]
+};
+
+#[test]
+fn a_publication_journals_its_ending_record_for_record_as_it_did_on_the_thread_that_asked() {
+    // Recovery's lifecycle decision is driven by the journal, while its cleanup
+    // also inspects staged publication files. A crash at any point of an ending
+    // recovers as it always has only while the ending journals what it always
+    // journaled, in the same order, wherever it runs.
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-publication-journal");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process =
+        crucible_runtime::answered!(session.start(command("printf 'after\\n' > after.txt")))
+            .expect("started command");
+
+    let status = ended_within(process.as_mut(), HUNG);
+    let journaled = super::transaction::tests::journaled(
+        &super::transaction::stage_root(sandbox).expect("the stage path"),
+    );
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
+
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
+        "after\n"
+    );
+    assert_eq!(journaled.expect("the journal"), PUBLISHED);
+}
+
+#[test]
+fn a_crash_at_any_point_of_a_publication_recovers_as_it_always_has() {
+    use super::transaction::Record;
+
+    // Each point is one record journaled and the next not yet: an owner killed
+    // there leaves exactly that journal. Before anything is applied, recovery
+    // rolls back and removes the stage; once an apply may have begun, it
+    // quarantines the stage and keeps it for review; after the commit, it
+    // removes a publication that is complete. Up to the release, the command
+    // never ran and is refused.
+    let sample = Sample::new("sandbox-publication-kill-points");
+    for killed_after in 1..=PUBLISHED.len() {
+        let journaled: Vec<Record> = PUBLISHED.iter().copied().take(killed_after).collect();
+        let base = sample.root().join(killed_after.to_string());
+        std::fs::create_dir(&base).expect("a recovery root of its own");
+        std::fs::set_permissions(&base, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .expect("a private recovery root");
+        let expected = match journaled.last() {
+            Some(Record::Initialized(_) | Record::Prepared | Record::ReleaseIntent) => {
+                (Some(Record::Refused), true)
+            }
+            Some(Record::ApplyIntent(_) | Record::Applied(_)) => (Some(Record::Quarantined), false),
+            Some(Record::Committed) => (Some(Record::Committed), true),
+            _ => (Some(Record::RolledBack), true),
+        };
+
+        let recovered =
+            super::transaction::tests::after_a_crash(&base, &journaled).expect("a crashed journal");
+
+        assert_eq!(recovered, expected, "killed after {:?}", journaled.last());
+    }
+}
+
+#[test]
+fn a_failed_joined_ending_is_not_reported_as_a_successful_stop() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-stop-joined-ending-failed");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let audit = writer.audit().clone();
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), HUNG);
+    fill_audit(&audit, crucible_sandbox::MAX_SANDBOX_AUDIT_FACTS);
+
+    let deadline = Instant::now() + HUNG;
+    loop {
+        match process.try_wait() {
+            Err(_) => break,
+            Ok(None) => {}
+            Ok(Some(status)) => panic!("a refused publication answered as {status}"),
+        }
+        assert!(Instant::now() < deadline, "the worker did not fail");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let stopped = crucible_runtime::answered!(process.stop());
+    assert!(
+        stopped.is_err(),
+        "a failed ending was swallowed by a successful stop"
+    );
+}
+
+#[test]
+fn a_writer_that_ends_while_every_slot_is_taken_waits_for_one_and_then_publishes() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-writer-waits-for-a-slot");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let mut session =
+        crucible_runtime::answered!(service.prepare(request(&sample, SandboxManifest::empty())))
+            .expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
+    let held = service.publications().hold_every_slot();
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), HUNG);
+
+    // Asked over and over while all sixteen publication slots are held: a count
+    // of looks rather than a length of time, since no look may wait for a slot.
+    for _ in 0..50 {
+        assert!(
+            process.try_wait().expect("wait").is_none(),
+            "a writer published while every slot was taken"
+        );
+        assert!(
+            process.ended(),
+            "a writer waiting for a slot did not read as ended"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!sample.root().join("after.txt").exists());
+
+    drop(held);
+    let status = ended_within(process.as_mut(), HUNG);
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
+    assert!(status.success(), "{status}");
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
+        "after\n"
+    );
+}
+
+#[test]
+fn stopping_a_writer_that_waits_for_a_slot_leaves_nothing_of_its_publication() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-writer-stopped-waiting-for-a-slot");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let audit = writer.audit().clone();
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
+    let held = service.publications().hold_every_slot();
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), HUNG);
+    assert!(
+        process.try_wait().expect("wait").is_none(),
+        "a writer published while every slot was taken"
+    );
+
+    let stopped = crucible_runtime::answered!(process.stop());
+    drop(held);
+
+    stopped.expect("a writer stopped while it waited confirms its cleanup");
+    assert_eq!(process.inspection().cleanup(), SandboxCleanup::Complete);
+    assert!(
+        !sample.root().join("after.txt").exists(),
+        "a writer stopped before its turn published"
+    );
+    let lifecycles = lifecycles(&audit);
+    assert!(
+        lifecycles.contains(&SandboxLifecycle::RolledBack),
+        "{lifecycles:?}"
+    );
+    for never in [
+        SandboxLifecycle::PublicationStarted,
+        SandboxLifecycle::Published,
+        SandboxLifecycle::Quarantined,
+    ] {
+        assert!(!lifecycles.contains(&never), "{lifecycles:?}");
+    }
+    nothing_left_of(sandbox);
+}
+
+#[test]
+fn a_waiter_stop_that_cannot_clean_the_stage_leaves_a_terminal_rollback() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-waiter-cleanup-failure");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
+    let held = service.publications().hold_every_slot();
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), HUNG);
+    assert!(process.try_wait().expect("wait").is_none());
+
+    let stage = super::transaction::stage_root(sandbox).expect("the stage path");
+    let original = std::fs::metadata(&stage)
+        .expect("stage metadata")
+        .permissions();
+    // Every admission first recovers the stages it finds, and refuses one that
+    // is not private as tampered with. Holding the registry keeps another
+    // test's admission out while this one is not; stopping does not take it.
+    let admissions =
+        super::transaction::RegistryLease::acquire(&request(&sample, SandboxManifest::empty()))
+            .expect("admissions kept out while the stage is changed");
+    std::fs::set_permissions(
+        &stage,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o500),
+    )
+    .expect("a stage that cannot be cleaned");
+    let stopped = crucible_runtime::answered!(process.stop());
+    std::fs::set_permissions(&stage, original).expect("stage permissions restored");
+    drop(admissions);
+
+    assert!(stopped.is_err(), "cleanup failure was reported as complete");
+    let journal = super::transaction::tests::journaled(&stage).expect("the retained journal");
+    assert_eq!(
+        journal.last(),
+        Some(&super::transaction::Record::RolledBack),
+        "the rollback was not terminal before cleanup: {journal:?}"
+    );
+    assert!(!sample.root().join("after.txt").exists());
+    drop(held);
+    drop(process);
+    nothing_left_of(sandbox);
+}
+
+#[test]
+fn a_writer_stopped_while_its_ending_is_written_keeps_that_ending_whole() {
+    // The scan gate makes the handoff explicit: the look answers before the
+    // worker is released, and the stop then joins the ending rather than
+    // cutting it short. What comes back is a publication made in full and
+    // recorded, with nothing of the command left behind, rather than a stop
+    // that returns while files are still being written into the root.
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-writer-stopped-while-it-publishes");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let writer = request(&sample, SandboxManifest::empty());
+    let sandbox = writer.id();
+    let audit = writer.audit().clone();
+    let (reached, reached_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::sync_channel(1);
+    let _gate = ScanGateGuard {
+        sandbox,
+        release: Some(release.clone()),
+    };
+    super::projection::install_scan_gate(sandbox, reached, release_rx);
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(
+        session.start(command("read go; printf 'after\\n' > after.txt").spoken_to())
+    )
+    .expect("started command");
+    let_go(process.as_mut());
+    once_ended(process.as_mut(), HUNG);
+    let handoff = Instant::now() + HUNG;
+    while !super::projection::scan_gate_taken() {
+        match process.try_wait() {
+            Ok(Some(status)) => panic!("the ending settled before the scan gate: {status}"),
+            Ok(None) => {}
+            Err(problem) => panic!("the ending failed before the scan gate: {problem}"),
+        }
+        assert!(Instant::now() < handoff, "the ending was not handed off");
+        thread::sleep(Duration::from_millis(1));
+    }
+    reached_rx
+        .recv_timeout(HUNG)
+        .expect("the ending did not reach its scan gate");
+    release
+        .send(())
+        .expect("the ending was released from its scan gate");
+
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
+
+    assert_eq!(process.inspection().cleanup(), SandboxCleanup::Complete);
+    assert_eq!(
+        std::fs::read_to_string(sample.root().join("after.txt")).expect("published file"),
+        "after\n"
+    );
+    let lifecycles = lifecycles(&audit);
+    assert!(
+        lifecycles.contains(&SandboxLifecycle::Published),
+        "{lifecycles:?}"
+    );
+    assert!(
+        !lifecycles.contains(&SandboxLifecycle::RolledBack),
+        "{lifecycles:?}"
+    );
+    nothing_left_of(sandbox);
+}
+
+#[test]
+fn a_limit_seen_after_the_final_check_rolls_back_before_publication() {
+    let service = crate::sample::service();
+    if skipped_without_enforcement(&service) {
+        return;
+    }
+    let sample = Sample::new("sandbox-late-output-limit");
+    let _serial = super::transaction::TestSerialLease::acquire().expect("test writer coordination");
+    let standard = SandboxPolicy::standard(&sample.workspace()).expect("policy");
+    let limits = standard.limits();
+    let policy = standard
+        .with_limits(SandboxResourceLimits {
+            output_bytes: Some(1),
+            ..limits
+        })
+        .expect("a one-byte output ceiling");
+    let writer = SandboxRequest::new(
+        SandboxId::new(),
+        Ancestry::new(),
+        ToolId::new("late-limit"),
+        policy,
+        SandboxManifest::empty(),
+    );
+    let sandbox = writer.id();
+    let (reached, reached_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::sync_channel(1);
+    let _gate = FinalCheckGateGuard {
+        sandbox,
+        release: Some(release.clone()),
+    };
+    super::projection::bounded::install_final_check_gate(sandbox, reached, release_rx);
+    let audit = writer.audit().clone();
+    let mut session = crucible_runtime::answered!(service.prepare(writer)).expect("a writer");
+    crucible_runtime::answered!(session.materialize()).expect("materialized workspace");
+    let mut process = crucible_runtime::answered!(session.start(
+        command("read go; printf 'after\\n' > after.txt; printf 'late output\\n'").spoken_to(),
+    ))
+    .expect("started command");
+    let mut stdout = process.take_stdout().expect("stdout");
+    let_go(process.as_mut());
+    let handoff = Instant::now() + HUNG;
+    while !super::projection::bounded::final_check_gate_taken() {
+        assert!(Instant::now() < handoff, "the ending was not handed off");
+        match process.try_wait() {
+            Ok(Some(status)) => panic!("the ending settled before its final check: {status}"),
+            Ok(None) => {}
+            Err(problem) => panic!("the ending failed before its final check: {problem}"),
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    reached_rx
+        .recv_timeout(HUNG)
+        .expect("the worker did not reach its final check");
+    assert!(
+        process.violation().is_none(),
+        "the output limit was observed before the final check"
+    );
+    let finished = Instant::now() + HUNG;
+    while !lifecycles(&audit).contains(&SandboxLifecycle::CommandFinished) {
+        assert!(Instant::now() < finished, "the command never finished");
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    // The worker has passed the deciding violation check and is held before
+    // the publication seal. This reader crosses the output ceiling in that
+    // interval; the seal must observe the same accounting before any
+    // publication mutation can begin.
+    let deadline = Instant::now() + HUNG;
+    while process.violation().is_none() {
+        let mut buffer = [0_u8; 128];
+        match stdout.read_ready(&mut buffer).expect("read output") {
+            SandboxRead::Bytes(_) | SandboxRead::Limited { .. } => {}
+            SandboxRead::Pending => thread::sleep(Duration::from_millis(1)),
+            SandboxRead::End => panic!("the command ended before its output limit was observed"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the output limit was never observed"
+        );
+    }
+
+    release
+        .send(())
+        .expect("the worker was released from its final check");
+    let status = ended_within(process.as_mut(), HUNG);
+    crucible_runtime::answered!(process.stop()).expect("cleanup");
+    assert!(status.success(), "{status}");
+    assert!(
+        !sample.root().join("after.txt").exists(),
+        "a late output limit published a private write"
+    );
+    let lifecycles = lifecycles(&audit);
+    assert!(
+        lifecycles.contains(&SandboxLifecycle::RolledBack),
+        "{lifecycles:?}"
+    );
+    assert!(
+        !lifecycles.contains(&SandboxLifecycle::Published),
+        "{lifecycles:?}"
+    );
     nothing_left_of(sandbox);
 }

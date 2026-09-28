@@ -24,7 +24,11 @@
 //! that have to pass it are not all in this repository. A container, a remote
 //! executor or another operating system's adapter can depend on this crate,
 //! run [`Conformance::audit`] over a directory it owns, and get the same
-//! verdicts against the same table.
+//! verdicts against the same table, provided each probe and preparation
+//! answers: [the audit](Conformance::audit) awaits each step on the caller's
+//! task, and one that never answers never completes the audit. The harness
+//! bounds that wait on its own runtime rather than joining the application's,
+//! so a backend that answered nothing can hold no family by never refusing.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -239,8 +243,13 @@ impl Conformance {
     ///
     /// The probe's own failure is returned as it stands. There is no backend to
     /// report on, and an empty matrix would read as one that holds nothing.
-    pub fn audit(service: &dyn SandboxService, at: &Path) -> Result<Self, SandboxError> {
-        let (backend, capabilities) = service.probe()?;
+    ///
+    /// The audit awaits each step on the caller's task: a probe or a
+    /// preparation that never answers never completes the audit, and no
+    /// verdict is recorded for an offer that was never answered. The harness
+    /// drives the audit on its own runtime and bounds that wait there.
+    pub async fn audit(service: &dyn SandboxService, at: &Path) -> Result<Self, SandboxError> {
+        let (backend, capabilities) = service.probe().await?;
         // Each offer selects the backend that was just probed. An enabled
         // offer reaches the enforcing backend; a disabled offer reaches
         // compatibility. Mixing them would test another backend's claims.
@@ -248,7 +257,7 @@ impl Conformance {
         // One offer covers the whole isolation family, because no policy field
         // names a PID namespace on its own; requiring confinement is the only
         // way to ask for any of them, and it asks for all of them at once.
-        let confinement = offered(service, at, SandboxFeature::Filesystem, enabled);
+        let confinement = offered(service, at, SandboxFeature::Filesystem, enabled).await;
 
         let mut findings = Vec::with_capacity(SandboxFeature::COUNT);
         for feature in SandboxFeature::ALL {
@@ -258,7 +267,7 @@ impl Conformance {
             let answered = if claim == SandboxClaim::Isolation {
                 confinement.as_ref()
             } else {
-                alone = offered(service, at, feature, enabled);
+                alone = offered(service, at, feature, enabled).await;
                 alone.as_ref()
             };
             // A confining offer carries the whole isolation family whatever
@@ -426,7 +435,11 @@ fn judge(
 /// rather than a policy requires, and — because every fixture here is built
 /// from constants — a bug in this module, which surfaces as an untested claim
 /// rather than as a verdict nothing earned.
-fn offered(
+///
+/// The offer is awaited like the probe is. An offer that never answers never
+/// completes the audit; judged as an answer it would read as unreached, and
+/// a backend that answered nothing would hold every family.
+async fn offered(
     service: &dyn SandboxService,
     at: &Path,
     feature: SandboxFeature,
@@ -440,7 +453,7 @@ fn offered(
         policy,
         manifest,
     );
-    Some(service.prepare(request).map(drop))
+    Some(service.prepare(request).await.map(drop))
 }
 
 /// The smallest policy and manifest that require `feature` of a backend.

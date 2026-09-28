@@ -136,4 +136,15 @@ pub enum AppError {
         /// The provider that could not be authenticated.
         provider: Box<str>,
     },
+
+    /// The run is over, and some of the work the application owned for it
+    /// had not finished within its bound: renewals still in flight, or
+    /// threads its work ran on. A cleanup that failed.
+    #[error(transparent)]
+    Unfinished(#[from] crate::services::Unfinished),
+
+    /// The runtime a conversation waits for its turns on could not be
+    /// started, so no conversation was assembled.
+    #[error(transparent)]
+    Unstarted(#[from] crate::runtime::Unstarted),
 }

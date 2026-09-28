@@ -21,9 +21,10 @@ mod draw;
 mod ending;
 #[cfg(test)]
 mod fake;
+mod freed;
 mod gathering;
 mod kept;
-mod release;
+mod panicked;
 #[cfg(test)]
 mod sample;
 mod seen;
@@ -40,15 +41,20 @@ use crucible_app::AppError;
 use crucible_app::providers::{
     Providers, Served, available, chosen, opening_unasked, providers, re_serving,
 };
+use crucible_app::services::{Services, Unfinished};
 use crucible_app::startup::{self, Startup, assemble, served};
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_config::{Home, Settings};
-use crucible_core::{Cancel, Effort, Revealed, SessionId, Workspace};
+use crucible_models::Effort;
+use crucible_runtime::Cancel;
+use crucible_tools::Revealed;
 use crucible_tui::{
     RawError, Renderer, ScreenError, SystemTerminal, TerminalError, Title, TitleError, Welcome,
 };
+use crucible_types::SessionId;
+use crucible_workspace::Workspace;
 
 use crate::cli::choice::Choice;
 use crate::cli::converse::Terms;
@@ -203,6 +209,21 @@ enum Command {
         #[command(subcommand)]
         action: SandboxMaintenance,
     },
+    /// Parse and validate the effective configuration, and stop.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// Parse and validate the effective configuration, and stop.
+    Check {
+        /// Print one JSON document to stdout instead of the human report.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -279,11 +300,7 @@ pub(crate) enum Fatal {
     #[error("what you typed is longer than 1 MiB; no prompt was accepted")]
     InputTooLong,
 
-    /// The operating system could not create the thread that takes a turn.
-    #[error("the turn could not start: {0}")]
-    Worker(io::Error),
-
-    /// The thread running the turn ended without returning it.
+    /// The task running the turn ended without returning it.
     #[error("the turn ended unexpectedly")]
     Lost,
 
@@ -311,19 +328,23 @@ macro_rules! through_the_application {
 }
 
 through_the_application!(
-    crucible_core::PathError,
+    crucible_workspace::PathError,
     crucible_config::ConfigError,
-    crucible_core::RegistryError,
+    crucible_registry::RegistryError,
     crucible_session::SessionError,
     crucible_app::providers::ArmError,
 );
 
 /// Reads the command line and does what it says.
 pub(crate) fn start() -> ExitCode {
+    freed::handed_back();
     let cli = Cli::parse();
 
     let done = match (&cli.command, cli.extensions, cli.sandbox) {
         (Some(Command::Sandbox { action }), _, _) => maintain_sandbox(action),
+        (Some(Command::Config { action }), _, _) => match action {
+            ConfigAction::Check { json } => checked(*json),
+        },
         (None, true, _) => listed(),
         (None, _, true) => confined(),
         (None, _, _) => run(&cli),
@@ -362,6 +383,34 @@ fn maintain_sandbox(_action: &SandboxMaintenance) -> Result<(), Fatal> {
     )))
 }
 
+/// Writes whether the effective configuration holds, and stops.
+///
+/// Answered here rather than inside [`run`] so that it is answered before
+/// anything is built: the command exists so somebody can ask whether their
+/// files parse before a session is started on them, and a check that had
+/// opened a credential, started a session or launched a provider, an
+/// extension or a server on the way would be a poor thing to reach for when
+/// one of those is the suspect. The three files are read the way a startup
+/// would read them and resolved the way it would resolve them; nothing else
+/// is opened, written, launched or dialled.
+///
+/// A write that fails is dropped for the reason [`listed`] drops one. Where
+/// the files do not hold, the first refusal leaves as the process's failure;
+/// a command line that does not parse never reaches here, and the parser
+/// answers those with its own usage exit.
+fn checked(json: bool) -> Result<(), Fatal> {
+    let here = std::env::current_dir().map_err(Fatal::Here)?;
+    let workspace = Workspace::open(here)?;
+    let home = Home::find(&|name| std::env::var_os(name))?;
+    let report = crucible_config::check(&home, workspace.root());
+
+    let said = if json { report.json() } else { report.human() };
+    let _ = io::stdout().write_all(said.as_bytes());
+
+    report.into_result()?;
+    Ok(())
+}
+
 /// Writes what is installed to standard output, and stops.
 ///
 /// Answered here rather than inside [`run`] so that it is answered before
@@ -384,15 +433,49 @@ fn listed() -> Result<(), Fatal> {
 /// Writes the confinement a command here would run under, and stops.
 ///
 /// What the report is made of, and why a backend's refusal is an answer rather
-/// than a failure, is [`crucible_app::sandbox::confinement`]'s to say. A write
-/// that fails is dropped for the reason [`listed`] drops one.
+/// than a failure, is [`crucible_app::sandbox::confinement`]'s to say. The
+/// backend is asked on the application's runtime, and what a shutdown of it
+/// that ran out of time does to the answer is [`reported`]'s to say.
 fn confined() -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let home = Home::find(&|name| std::env::var_os(name))?;
-    let said = crucible_app::sandbox::confinement(&here, &home)?;
+    let (said, stopped) = crucible_app::services::serving(|services| {
+        let runtime = services.runtime().handle().map_err(AppError::from)?;
+        runtime.block_on(crucible_app::sandbox::confinement(&here, &home))
+    });
+    reported(
+        said.map_err(Fatal::from),
+        stopped.map_err(|unstopped| AppError::from(unstopped).into()),
+        &mut io::stdout(),
+    )
+}
 
-    let _ = io::stdout().write_all(said.as_bytes());
-    Ok(())
+/// Writes a report to `out` where one was made, and answers with how the run
+/// ends once its services have been shut down.
+///
+/// A report that was made is written whether or not the shutdown after it
+/// finished: it is the answer the flag was asked for, and a cleanup that failed
+/// once it existed does not make it untrue. The run still ends on that
+/// failure, so the exit status says it. Where no report was made, the report's
+/// own failure is the one the run ends with, and a cleanup that failed as well
+/// is said first, the way [`run`] says one. A write that fails is dropped for
+/// the reason [`listed`] drops one.
+fn reported(
+    said: Result<String, Fatal>,
+    stopped: Result<(), Fatal>,
+    out: &mut impl io::Write,
+) -> Result<(), Fatal> {
+    match (said, stopped) {
+        (Ok(said), stopped) => {
+            let _ = out.write_all(said.as_bytes());
+            stopped
+        }
+        (Err(first), Ok(())) => Err(first),
+        (Err(first), Err(unstopped)) => {
+            let _ = fail(&unstopped);
+            Err(first)
+        }
+    }
 }
 
 /// What the terminal says its background is, where the answer would be used.
@@ -440,8 +523,50 @@ fn sends(settings: &crucible_config::Settings) -> crucible_tui::Sending {
     }
 }
 
-/// Builds everything, then hands over to the loop.
+/// Runs a session on the application's services, then shuts them down.
+///
+/// The session is [`running`], handed the registry of commands left running
+/// by [`leaving_first`], which is what orders that registry's end before the
+/// services'. A shutdown that ran out of time is a failed cleanup, said
+/// whether or not the session failed first; where it did, the session's
+/// failure is still the one the run ends with.
 fn run(cli: &Cli) -> Result<(), Fatal> {
+    let (ran, stopped) = leaving_first(Background::new, |services, leaving| {
+        running(cli, services, leaving)
+    });
+    match (ran, stopped) {
+        (ran, Ok(())) => ran,
+        (Ok(()), Err(unstopped)) => Err(AppError::from(unstopped).into()),
+        (Err(first), Err(unstopped)) => {
+            let _ = fail(&AppError::from(unstopped).into());
+            Err(first)
+        }
+    }
+}
+
+/// Runs `session` on the application's services with the registry of commands
+/// left running that `registry` makes, then shuts the services down.
+///
+/// The registry is what ends every command left running, and it ends them by
+/// being dropped. It is made here, inside the services' lifetime, and lent
+/// rather than given, so this function holds it until the session has returned
+/// and drops it before the services are shut down: a command it ends by
+/// handing work to the runtime finds the runtime still running. What this
+/// orders is the registry's own end. A clone the session kept past its return,
+/// on a thread it left running, would outlive the shutdown, and this cannot
+/// see one.
+fn leaving_first<L, T>(
+    registry: impl FnOnce() -> L,
+    session: impl FnOnce(&Services, &L) -> T,
+) -> (T, Result<(), Unfinished>) {
+    crucible_app::services::serving(|services| {
+        let leaving = registry();
+        session(services, &leaving)
+    })
+}
+
+/// Builds everything, then hands over to the loop.
+fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), Fatal> {
     let here = std::env::current_dir().map_err(Fatal::Here)?;
     let workspace = Workspace::open(here)?;
     let cancel = Cancel::new();
@@ -456,12 +581,6 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // one holder, the panel above the box is a second, and `/clear` is the
     // third.
     let plan = Plan::new();
-
-    // Made here for a fourth reason on top of theirs: this is what ends every
-    // command left running, and it ends them by being dropped. Held by the
-    // outermost scope there is, so the last thing that happens in this process is
-    // the processes it started going with it.
-    let leaving = Background::new();
 
     // The other end of the panel a model's questions stand in. One value shared
     // rather than copied, so a question put on the worker thread is one the
@@ -483,7 +602,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // ever an alternative to an exported variable must not be what ends a run
     // that never needed it.
     let keys = Store::in_home(home.path()).read();
-    let subscriptions = Subscriptions::production();
+    let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
     // `.crucible/config.json` is looked for in the directory crucible was
@@ -561,12 +680,15 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
+        // The runtime the conversation was assembled on, which its turns run
+        // on too.
+        runtime: services.runtime().handle().map_err(AppError::from)?,
         // Installed here, on the way into a session, and not where the
         // command line is read: a run that prints help, a version or a listing
         // has nothing a signal could interrupt half-written.
         ending: ending::Ending::listening(renderer.is_terminal()),
-        steer: crucible_core::Steer::new(),
-        aside: crucible_core::Aside::new(),
+        steer: crucible_runtime::Steer::new(),
+        aside: crucible_runtime::Aside::new(),
         ledger: ledger.clone(),
         revealed: revealed.clone(),
         plan: plan.clone(),
@@ -591,6 +713,7 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
             settings.clone(),
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
+            services.http().clone(),
         ),
 
         // The two `/resume` reads a directory of logs with. Both are settled
@@ -639,13 +762,15 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     let sessions = crucible_session::recent(home.sessions(), &workspace, Welcome::WANTED);
 
     // Off the disk, so no socket is opened on the path the first frame is
-    // measured on. Asking again happens after the frame is drawn, on a thread
-    // nobody waits for, and what it finds is what the next run says. Nothing
-    // said is asking: a release check is the sort of thing somebody turns off,
-    // and one that has to be turned *on* is one nobody has.
+    // measured on. Nothing said is asking: a release check is the sort of thing
+    // somebody turns off, and one that has to be turned *on* is one nobody has.
     let asking = settings.updates().unwrap_or_default().wanted();
     let update = asking
-        .then(|| release::newer(home.path(), env!("CARGO_PKG_VERSION")))
+        .then(|| {
+            services
+                .release()
+                .cached(home.path(), env!("CARGO_PKG_VERSION"))
+        })
         .flatten();
 
     let opening = draw::opening(
@@ -661,9 +786,26 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         },
     )?;
 
-    if asking {
-        release::refresh(home.path());
-    }
+    // What asking again costs is put off until the frame is on the screen: a
+    // question asked before it opens a socket, and leaves a proxy's copy of the
+    // request, ahead of the opening the reader is waiting for.
+    //
+    // Built here and armed there, because this is the last point at which the
+    // services can be reached: they move into the run below, and what the
+    // conversation is handed is the closure rather than the owner. The owner it
+    // holds is the same one the shutdown joins the check through, because a
+    // clone shares the one task slot, the one client and the one cancellation.
+    let arming: Option<Box<dyn FnOnce()>> = if asking {
+        let runtime = services.runtime().handle().map_err(AppError::from)?;
+        let release = services.release().clone();
+        let home = home.path().to_owned();
+        Some(Box::new(move || {
+            release.runs_on(runtime);
+            release.refresh(&home);
+        }))
+    } else {
+        None
+    };
 
     // The generation the launch above read its provider out of, taken once so
     // the arm that was resolved and the model record its limits come from are
@@ -671,7 +813,8 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
     // next reader to see, not for a runner already built.
     let catalogue = terms.providers.snapshot();
     let conversation = assemble(&Startup {
-        leaving: &leaving,
+        services,
+        leaving,
         providers: &catalogue,
         provider: launch.serving,
         unasked: launch.unasked,
@@ -697,7 +840,10 @@ fn run(cli: &Cli) -> Result<(), Fatal> {
         conversation,
         &mut renderer,
         &terms,
-        &opening,
+        converse::First {
+            card: &opening,
+            arming,
+        },
         &mut io::stdin().lock(),
     );
 

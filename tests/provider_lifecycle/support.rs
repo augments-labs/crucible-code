@@ -10,16 +10,40 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crucible_context::ContextInputs;
-use crucible_core::{
-    AgentId, ApiKey, Approved, Aside, Ask, Cancel, DescribeTool, Effort, Header, HeaderKey, Host,
-    JournalStore, Provider, Remember, Sensitivity, SessionId, Steer, StopReason, Summary, Tool,
-    ToolArgs, ToolCall, ToolContext, ToolError, ToolOutput, Verdict, Workspace,
-};
-use crucible_provider::{Anthropic, Endpoint, Google, Https, OpenAi};
+use crucible_credentials::{ApiKey, Header, HeaderKey};
+use crucible_models::{Effort, Provider};
+use crucible_provider::{Anthropic, Endpoint, Google, HttpTurns, OpenAi, PostResponse};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_runner::{EventEnvelope, Post, TurnError};
+use crucible_runtime::BoxFuture;
+use crucible_runtime::{Aside, Cancel, Steer};
+use crucible_storage::JournalStore;
+use crucible_tools::{
+    Approved, Ask, DescribeTool, Host, Remember, Sensitivity, Summary, Tool, ToolContext,
+    ToolError, ToolOutput, Verdict,
+};
+use crucible_types::{AgentId, SessionId, StopReason, ToolArgs, ToolCall};
+use crucible_workspace::Workspace;
+use tokio::io::{AsyncRead, ReadBuf};
+
 use crucible_session::Session;
 use serde_json::{Value, json};
+
+/// Drives a future to its answer on a current-thread runtime of its own, the
+/// way a test takes a turn on a runner it holds.
+pub(crate) trait Awaited: std::future::Future + Sized {
+    /// The future's answer, once it has one.
+    fn awaited(self) -> Self::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("a test runtime")
+            .block_on(self)
+    }
+}
+
+impl<F: std::future::Future> Awaited for F {}
 
 pub(crate) const MODELS: [&str; 6] = [
     "gemini-3.8-flash",
@@ -133,9 +157,13 @@ impl Post for Sample {
 }
 struct Permit<'a>(&'a Sample);
 impl Ask for Permit<'_> {
-    fn ask(&mut self, _: &ToolCall, _: &Sensitivity) -> (Verdict, Remember) {
+    fn ask<'a>(
+        &'a mut self,
+        _: &'a ToolCall,
+        _: &'a Sensitivity,
+    ) -> crucible_runtime::BoxFuture<'a, (Verdict, Remember)> {
         self.0.approved.fetch_add(1, Ordering::SeqCst);
-        (Verdict::Allow, Remember::Never)
+        Box::pin(async { (Verdict::Allow, Remember::Never) })
     }
 }
 struct Count(Arc<Mutex<Vec<String>>>, usize);
@@ -161,18 +189,25 @@ impl Tool for Count {
     fn summary(&self, args: &ToolArgs) -> Summary {
         Summary::new(args.as_str())
     }
-    fn run(&self, approved: Approved, _: &ToolContext<'_>) -> Result<ToolOutput, ToolError> {
-        let parsed: Value = serde_json::from_str(approved.args().as_str()).expect("valid fixture");
-        let step = parsed
-            .get("step")
-            .expect("valid fixture")
-            .as_str()
-            .expect("valid fixture");
-        self.0.lock().expect("valid fixture").push(step.into());
-        Ok(ToolOutput::ok(format!(
-            "fixture-result-{step}{}",
-            "x".repeat(self.1)
-        )))
+    fn run<'a>(
+        &'a self,
+        approved: Approved,
+        _: &'a ToolContext<'_>,
+    ) -> BoxFuture<'a, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            let parsed: Value =
+                serde_json::from_str(approved.args().as_str()).expect("valid fixture");
+            let step = parsed
+                .get("step")
+                .expect("valid fixture")
+                .as_str()
+                .expect("valid fixture");
+            self.0.lock().expect("valid fixture").push(step.into());
+            Ok(ToolOutput::ok(format!(
+                "fixture-result-{step}{}",
+                "x".repeat(self.1)
+            )))
+        })
     }
 }
 
@@ -186,6 +221,7 @@ pub(crate) fn try_turn(
     let aside = Aside::new();
     let context = run.starting(sample, &cancel, &steer, &aside);
     run.turn(prompt, Box::new([]), &mut Permit(sample), &context)
+        .awaited()
         .map(|turned| {
             turned
                 .result()
@@ -197,8 +233,26 @@ pub(crate) fn turn(run: &mut Runner, prompt: &str, sample: &Sample) -> StopReaso
     try_turn(run, prompt, sample).expect("valid fixture")
 }
 
+pub(crate) fn http_turns() -> HttpTurns {
+    let (http, stopped) = crucible_app::services::serving(|services| services.http().clone());
+    assert!(
+        stopped.is_ok(),
+        "the fixture HTTP service did not shut down"
+    );
+    http
+}
+
 pub(crate) fn provider(model: &str, endpoint: Endpoint, key: &str) -> Box<dyn Provider> {
-    through(model, endpoint, key, Box::new(Https::new()))
+    provider_with(model, endpoint, key, http_turns())
+}
+
+pub(crate) fn provider_with(
+    model: &str,
+    endpoint: Endpoint,
+    key: &str,
+    transport: HttpTurns,
+) -> Box<dyn Provider> {
+    through(model, endpoint, key, Box::new(transport))
 }
 
 fn through(
@@ -232,30 +286,37 @@ pub(crate) fn cancelling(model: &str, endpoint: Endpoint, body: String) -> Box<d
         bytes: std::io::Cursor<Vec<u8>>,
         cancel: Cancel,
     }
-    impl std::io::Read for Body {
-        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-            let count = self.bytes.read(out)?;
+    impl AsyncRead for Body {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            into: &mut ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let mut bytes = [0_u8; 8 * 1024];
+            let wanted = into.remaining().min(bytes.len());
+            let count = self
+                .bytes
+                .read(bytes.get_mut(..wanted).unwrap_or_default())?;
             if count == 0 {
                 self.cancel.request();
             }
-            Ok(count)
+            into.put_slice(bytes.get(..count).unwrap_or_default());
+            std::task::Poll::Ready(Ok(()))
         }
     }
     impl crucible_provider::Transport for AtEof {
-        fn post(
-            &self,
-            _: &str,
-            _: crucible_core::Outgoing,
+        fn post<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a mut crucible_credentials::Outgoing,
             _: String,
-            cancel: &Cancel,
-        ) -> Result<crucible_provider::Response, crucible_provider::TransportError> {
-            Ok(crucible_provider::Response {
-                status: 200,
-                body: Box::new(Body {
-                    bytes: std::io::Cursor::new(self.0.as_bytes().to_vec()),
-                    cancel: cancel.clone(),
-                }),
-            })
+            cancel: &'a Cancel,
+        ) -> BoxFuture<'a, Result<PostResponse, crucible_provider::TransportError>> {
+            let body = Body {
+                bytes: std::io::Cursor::new(self.0.as_bytes().to_vec()),
+                cancel: cancel.clone(),
+            };
+            Box::pin(async move { Ok(PostResponse::recorded(200, body)) })
         }
     }
     through(model, endpoint, KEY, Box::new(AtEof(body)))

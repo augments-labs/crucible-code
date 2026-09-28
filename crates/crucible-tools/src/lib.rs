@@ -11,6 +11,7 @@ mod revealed;
 mod source;
 mod tool;
 mod toolset;
+mod worker;
 
 pub use ask::Put;
 // Public because this crate's public surface is written in them:
@@ -37,3 +38,4 @@ pub use toolset::{
     ToolGeneration, ToolHooks, ToolOutcome, ToolProvenance, ToolReceipt, ToolResourceKey,
     ToolSnapshot, ToolSourceKind, ToolSourceReceipt, Toolset, ToolsetContext, ToolsetError,
 };
+pub use worker::{ToolWorker, Unrun};

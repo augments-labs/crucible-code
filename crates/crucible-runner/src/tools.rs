@@ -8,11 +8,15 @@
 
 use std::sync::{Arc, Mutex};
 
-use crucible_core::{
-    Collision, DescribeTool, Provenance, Registered, Registry, RegistryGeneration,
-    RegistrySnapshot, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance,
-    ToolSchema, ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
+use crucible_registry::{
+    Collision, Provenance, Registered, Registry, RegistryGeneration, RegistrySnapshot,
 };
+use crucible_runtime::BoxFuture;
+use crucible_tools::{
+    DescribeTool, Revealed, Tool, ToolDescriptor, ToolEntry, ToolHooks, ToolProvenance,
+    ToolSnapshot, Toolset, ToolsetContext, ToolsetError,
+};
+use crucible_types::ToolSchema;
 
 /// Every tool the model may call.
 ///
@@ -317,20 +321,32 @@ impl Tools {
 }
 
 impl Toolset for Tools {
-    fn prepare(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        Ok(())
+    fn prepare<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    fn snapshot(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        Self::snapshot(self)
+    fn snapshot<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move { Self::snapshot(self) })
     }
 
-    fn refresh(&self, _context: &ToolsetContext) -> Result<ToolSnapshot, ToolsetError> {
-        Self::snapshot(self)
+    fn refresh<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<ToolSnapshot, ToolsetError>> {
+        Box::pin(async move { Self::snapshot(self) })
     }
 
-    fn dispose(&self, _context: &ToolsetContext) -> Result<(), ToolsetError> {
-        Ok(())
+    fn dispose<'a>(
+        &'a self,
+        _context: &'a ToolsetContext,
+    ) -> BoxFuture<'a, Result<(), ToolsetError>> {
+        Box::pin(async move { Ok(()) })
     }
 
     fn registered(&self, name: &str) -> Option<ToolEntry> {
@@ -342,10 +358,12 @@ impl Toolset for Tools {
 mod tests {
     use std::sync::Arc;
 
-    use crucible_core::{
-        Ancestry, Cancel, Permission, Settled, ToolArgs, ToolCall, ToolContext, ToolDescriptor,
-        ToolId, ToolProvenance, ToolSourceKind, Toolset, ToolsetContext, Unwatched, Verdict,
+    use crucible_runtime::Cancel;
+    use crucible_tools::{
+        Permission, Settled, ToolContext, ToolDescriptor, ToolProvenance, ToolSourceKind, Toolset,
+        ToolsetContext, Unwatched, Verdict,
     };
+    use crucible_types::{Ancestry, ToolArgs, ToolCall, ToolId};
 
     use super::*;
     use crate::fake::{Fixed, Says, changing};
@@ -362,11 +380,11 @@ mod tests {
             .collect();
         let context = ToolsetContext::new(Ancestry::new(), Cancel::new(), None);
 
-        Toolset::prepare(&tools, &context).unwrap();
-        let before = Toolset::snapshot(&tools, &context).unwrap();
-        let refreshed = Toolset::refresh(&tools, &context).unwrap();
-        Toolset::dispose(&tools, &context).unwrap();
-        Toolset::dispose(&tools, &context).unwrap();
+        crucible_runtime::answered!(Toolset::prepare(&tools, &context)).unwrap();
+        let before = crucible_runtime::answered!(Toolset::snapshot(&tools, &context)).unwrap();
+        let refreshed = crucible_runtime::answered!(Toolset::refresh(&tools, &context)).unwrap();
+        crucible_runtime::answered!(Toolset::dispose(&tools, &context)).unwrap();
+        crucible_runtime::answered!(Toolset::dispose(&tools, &context)).unwrap();
 
         let advertised = |snapshot: &ToolSnapshot| {
             snapshot
@@ -420,13 +438,15 @@ mod tests {
         let sensitivity = entry.tool().sensitivity(&call.args);
         let mut permission = Permission::new();
         let mut ask = Says::new(Verdict::Allow);
-        let Settled::Approved(approved) = permission.decide(&call, &sensitivity, &mut ask) else {
+        let Settled::Approved(approved) =
+            crucible_runtime::answered!(permission.decide(&call, &sensitivity, &mut ask))
+        else {
             panic!("the read-only fixture was not approved");
         };
 
         let cancel = Cancel::new();
         let context = ToolContext::new(Ancestry::new(), call.id.clone(), &cancel, None, &Unwatched);
-        let output = entry.tool().run(approved, &context).unwrap();
+        let output = crucible_runtime::answered!(entry.tool().run(approved, &context)).unwrap();
         assert_eq!(output.text(), "done");
     }
 
@@ -564,9 +584,11 @@ mod tests {
         let sensitivity = entry.tool().sensitivity(&call.args);
         let mut permission = Permission::new();
         let mut ask = Says::new(Verdict::Allow);
-        let Settled::Approved(approved) =
-            permission.decide_admitted(&admission, &sensitivity, &mut ask)
-        else {
+        let Settled::Approved(approved) = crucible_runtime::answered!(permission.decide_admitted(
+            &admission,
+            &sensitivity,
+            &mut ask
+        )) else {
             panic!("the admitted read-only fixture was not approved");
         };
         revealed.forget();

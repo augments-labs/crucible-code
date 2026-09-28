@@ -6,7 +6,7 @@
 //! is on the list at each point of typing one.
 
 use super::*;
-use crucible_core::RegistryRow;
+use crucible_registry::RegistryRow;
 
 /// The built-in registry, as a session starts with it.
 fn commands() -> Commands {
@@ -366,7 +366,7 @@ fn what_is_said_back_folds_short_of_the_mark_it_will_hang_under() {
 
 #[test]
 fn the_sandbox_menu_tracks_the_choice_without_rebuilding_the_registry() {
-    let control = std::sync::Arc::new(crucible_core::SandboxEnablement::default());
+    let control = std::sync::Arc::new(crucible_sandbox::SandboxEnablement::default());
     let commands = builtins(&control).unwrap().snapshot();
     let shown = filtering(&commands, "/sandbox", Glyphs::Ascii);
     assert_eq!(shown.len(), 1);

@@ -12,6 +12,8 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::{Notify, oneshot};
+
 use super::SessionError;
 
 /// Where the first write that failed is left for the main thread to find.
@@ -21,15 +23,26 @@ pub(super) type Trouble = Arc<Mutex<Option<Box<str>>>>;
 pub(super) enum Request {
     /// Append one complete JSON line.
     Line(Box<str>),
+    /// Append one complete JSON line, flush, and then say so: by the time the
+    /// sender hears back, the line is with the operating system, or the
+    /// failure that stopped it is the session's trouble.
+    Acknowledged(Box<str>, oneshot::Sender<()>),
     /// Flush every earlier line before acknowledging the caller.
     Barrier(SyncSender<()>),
 }
 
-/// Appends every line that arrives until the session is dropped.
+/// Appends every line that arrives until the session is dropped, telling
+/// `room` each time one is taken off the queue.
 ///
-/// A failure is recorded once and the loop goes on, because the senders are
-/// not waiting for an answer: stopping here would fill the queue and block the
-/// turn instead of losing a log nobody can write anyway.
+/// However this ends — the session dropped, or the sink coming apart and
+/// unwinding through here — the queue is closed before `room` is told once
+/// more, so a write still waiting for room wakes to a queue that is gone and
+/// answers as unacknowledged rather than waiting for a line nobody will take.
+///
+/// A failure is recorded once and the loop goes on, because the senders that
+/// do not wait are not waiting for an answer: stopping here would fill the
+/// queue and block them instead of losing a log nobody can write anyway. A
+/// sender that does wait hears back after the failure is recorded.
 ///
 /// Going on is why every write counts its bytes: what a failure leaves in the
 /// file decides what may follow it, and there are three answers. A write that
@@ -42,47 +55,99 @@ pub(super) enum Request {
 /// fragment onward nothing more is written: the file ends at the fragment,
 /// which the replay reads as a log torn at the tail, whole up to its last
 /// line.
-pub(super) fn write<W: io::Write>(mut sink: W, lines: &Receiver<Request>, trouble: &Trouble) {
-    // A line that landed whole and is still owed the newline that ends it.
-    let mut torn = false;
-    // A fragment landed mid-line, and the file must end where it ends.
-    let mut dead = false;
+pub(super) fn write<W: io::Write>(
+    mut sink: W,
+    lines: Receiver<Request>,
+    trouble: &Trouble,
+    room: Arc<Notify>,
+) {
+    let queue = Closing {
+        lines: Some(lines),
+        room,
+    };
+    let Some(lines) = queue.lines.as_ref() else {
+        return;
+    };
+    let mut tail = Tail::default();
 
     for request in lines {
-        let Request::Line(line) = request else {
-            if let Err(problem) = sink.flush() {
-                record(trouble, &problem);
+        queue.room.notify_waiters();
+        match request {
+            Request::Line(line) => tail.append(&mut sink, &line, trouble),
+            Request::Acknowledged(line, taken) => {
+                tail.append(&mut sink, &line, trouble);
+                flushed(&mut sink, trouble);
+                // A sender that stopped waiting has nobody to tell.
+                let _ = taken.send(());
             }
-            if let Request::Barrier(done) = request {
+            Request::Barrier(done) => {
+                flushed(&mut sink, trouble);
                 let _ = done.send(());
             }
-            continue;
-        };
-        if dead {
-            continue;
+        }
+    }
+}
+
+/// The writer's end of the queue, which closes it and wakes every write
+/// waiting for room as it goes, on whatever path the writer leaves by.
+struct Closing {
+    lines: Option<Receiver<Request>>,
+    room: Arc<Notify>,
+}
+
+impl Drop for Closing {
+    fn drop(&mut self) {
+        // Closed first, so a waiter the notice wakes finds it closed.
+        drop(self.lines.take());
+        self.room.notify_waiters();
+    }
+}
+
+/// What the failures so far have left at the end of the file.
+#[derive(Default)]
+struct Tail {
+    /// A line that landed whole and is still owed the newline that ends it.
+    torn: bool,
+    /// A fragment landed mid-line, and the file must end where it ends.
+    dead: bool,
+}
+
+impl Tail {
+    /// Appends `line` and the newline that ends it, as far as what earlier
+    /// failures left allows.
+    fn append<W: io::Write>(&mut self, sink: &mut W, line: &str, trouble: &Trouble) {
+        if self.dead {
+            return;
         }
 
-        if torn {
-            if let (_, Some(problem)) = append(&mut sink, b"\n") {
+        if self.torn {
+            if let (_, Some(problem)) = append(sink, b"\n") {
                 record(trouble, &problem);
-                continue;
+                return;
             }
-            torn = false;
+            self.torn = false;
         }
 
-        match append(&mut sink, line.as_bytes()) {
+        match append(sink, line.as_bytes()) {
             (_, None) => {
-                if let (_, Some(problem)) = append(&mut sink, b"\n") {
-                    torn = true;
+                if let (_, Some(problem)) = append(sink, b"\n") {
+                    self.torn = true;
                     record(trouble, &problem);
                 }
             }
             (0, Some(problem)) => record(trouble, &problem),
             (_, Some(problem)) => {
-                dead = true;
+                self.dead = true;
                 record(trouble, &problem);
             }
         }
+    }
+}
+
+/// Flushes `sink`, keeping a failure as trouble.
+fn flushed<W: io::Write>(sink: &mut W, trouble: &Trouble) {
+    if let Err(problem) = sink.flush() {
+        record(trouble, &problem);
     }
 }
 
@@ -110,7 +175,7 @@ fn append<W: io::Write>(sink: &mut W, bytes: &[u8]) -> (usize, Option<io::Error>
 
 /// Keeps the first failure for the main thread to find; later ones tell it
 /// nothing it can act on.
-fn record(trouble: &Trouble, problem: &io::Error) {
+pub(super) fn record(trouble: &Trouble, problem: &io::Error) {
     if let Ok(mut held) = trouble.lock() {
         held.get_or_insert_with(|| problem.to_string().into());
     }

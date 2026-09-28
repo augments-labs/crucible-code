@@ -7,22 +7,28 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crucible_core::{
-    AgentId, Approved, Aside, Attachment, Carried, Change, DescribeTool, Diff, InputTokenUsage,
-    JournalStore, Line, Modalities, Modality, PromptCacheFact, PromptCacheFingerprint,
-    PromptCacheIsolation, PromptCachePersistentMode, PromptCachePolicy, PromptCachePolicyDigest,
+use crucible_models::{ProviderError, ProviderLimit};
+use crucible_runtime::Aside;
+use crucible_runtime::BoxFuture;
+use crucible_storage::{JournalStore, PromptCacheResourceStore, RunItem, SessionStore};
+use crucible_tools::{
+    Approved, DescribeTool, Sensitivity, Summary, Target, Tool, ToolContext, ToolError, ToolOutput,
+    Verdict,
+};
+use crucible_types::{
+    AgentId, Ancestry, Attachment, Carried, Change, Diff, InputTokenUsage, Line, Modalities,
+    Modality, PromptCacheFact, PromptCacheFingerprint, PromptCacheIsolation,
+    PromptCachePersistentMode, PromptCachePolicy, PromptCachePolicyDigest,
     PromptCacheResourceBinding, PromptCacheResourceError, PromptCacheResourceHandle,
     PromptCacheResourceId, PromptCacheResourceOperation, PromptCacheResourceOwner,
-    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheResourceStore,
-    PromptCacheScopeDigest, ProviderError, ProviderLimit, ProviderUsage, RunItem, Sensitivity,
-    SessionStore, Spend, Summary, Target, Tool, ToolArgs, ToolContext, ToolError, ToolId,
-    ToolOutput, ToolResult, Verdict,
+    PromptCacheResourceRecord, PromptCacheResourceState, PromptCacheScopeDigest, ProviderUsage,
+    Spend, ToolArgs, ToolId, ToolResult,
 };
 
 use sha2::{Digest as _, Sha256};
 
 use super::*;
-use crate::fake::{Fixed, Says, Script, Sent, Typing, changing};
+use crate::fake::{Awaited, Fixed, Says, Script, Sent, Typing, changing};
 use crate::outcome::RunStatus;
 use crate::policy::{Bounds, Retry};
 use crate::recording::{Kept, Recording};
@@ -52,7 +58,8 @@ fn conversation(transcript: &Transcript) -> Vec<Message> {
         .collect()
 }
 
-/// The one tool result a restricted-result test is about.
+/// The first tool result in the transcript: the one a test about a single
+/// call's result reads.
 fn only_result(scripted: &Scripted) -> &ToolResult {
     scripted
         .runner
@@ -63,7 +70,7 @@ fn only_result(scripted: &Scripted) -> &ToolResult {
             Message::ToolResults(results) => results.first(),
             _ => None,
         })
-        .expect("the search result the turn produced")
+        .expect("a tool result in the transcript")
 }
 
 /// The sentence a vendor that restricts its results leaves in their place.
@@ -82,6 +89,7 @@ mod aiming;
 mod attachments;
 mod attribution;
 mod beside;
+mod cache_operations;
 mod compaction;
 mod context;
 mod continuation;
@@ -95,6 +103,8 @@ mod preserved;
 mod reporting;
 mod spending;
 mod storage;
+mod unanswered;
+mod waiting;
 
 /// A destination that keeps the event and lets the attribution go.
 ///
@@ -113,47 +123,61 @@ impl Post for Watching {
 struct SharedStore(Arc<Mutex<Vec<PromptCacheResourceRecord>>>);
 
 impl PromptCacheResourceStore for SharedStore {
-    fn matching(
-        &mut self,
-        binding: &PromptCacheResourceBinding,
-    ) -> Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|record| record.binding() == binding)
-            .cloned())
+    fn matching<'a>(
+        &'a mut self,
+        binding: &'a PromptCacheResourceBinding,
+    ) -> BoxFuture<'a, Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError>> {
+        Box::pin(async move {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|record| record.binding() == binding)
+                .cloned())
+        })
     }
 
-    fn put(&mut self, record: &PromptCacheResourceRecord) -> Result<(), PromptCacheResourceError> {
-        let mut records = self.0.lock().unwrap();
-        if let Some(found) = records.iter_mut().find(|found| found.id() == record.id()) {
-            *found = record.clone();
-        } else {
-            records.push(record.clone());
-        }
-        Ok(())
+    fn put<'a>(
+        &'a mut self,
+        record: &'a PromptCacheResourceRecord,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+        Box::pin(async move {
+            let mut records = self.0.lock().unwrap();
+            if let Some(found) = records.iter_mut().find(|found| found.id() == record.id()) {
+                *found = record.clone();
+            } else {
+                records.push(record.clone());
+            }
+            Ok(())
+        })
     }
 
-    fn remove(&mut self, id: &PromptCacheResourceId) -> Result<(), PromptCacheResourceError> {
-        self.0.lock().unwrap().retain(|record| record.id() != id);
-        Ok(())
+    fn remove<'a>(
+        &'a mut self,
+        id: &'a PromptCacheResourceId,
+    ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().retain(|record| record.id() != id);
+            Ok(())
+        })
     }
 
     fn inspect(
         &mut self,
         maximum: usize,
-    ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .take(maximum)
-            .cloned()
-            .collect())
+    ) -> BoxFuture<'_, Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>> {
+        Box::pin(async move {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .take(maximum)
+                .cloned()
+                .collect())
+        })
     }
 }
 
@@ -292,6 +316,7 @@ impl Scripted {
 
         self.runner
             .compact(Compacting::Asked, &run, &mut Spend::default())
+            .awaited()
     }
 
     /// The same, for a prompt that named files.
@@ -306,6 +331,7 @@ impl Scripted {
 
         self.runner
             .turn(prompt, attachments, &mut self.says, &run)
+            .awaited()
             .map(ran)
     }
 
@@ -321,6 +347,7 @@ impl Scripted {
 
         self.runner
             .turn(prompt, Box::new([]), &mut self.says, &run)
+            .awaited()
             .map(ran)
     }
 
@@ -335,7 +362,9 @@ impl Scripted {
             .runner
             .starting(&self.events, &self.cancel, &self.steer, &self.aside);
 
-        self.runner.turn(prompt, Box::new([]), &mut self.says, &run)
+        self.runner
+            .turn(prompt, Box::new([]), &mut self.says, &run)
+            .awaited()
     }
 
     /// The files each request went out without, one entry per request that
@@ -683,6 +712,7 @@ impl Steering {
 
         self.runner
             .turn(prompt, Box::new([]), &mut self.says, &run)
+            .awaited()
             .map(ran)
     }
 
@@ -967,7 +997,7 @@ fn partial_usage_readings_merge_on_one_attempt_instead_of_erasing_input() {
     assert_eq!(complete.usage.total, Some(112));
     assert_eq!(
         complete.outcome,
-        crucible_core::PromptCacheOutcome::ReadAndWrite
+        crucible_types::PromptCacheOutcome::ReadAndWrite
     );
     assert!(complete.cost.total.is_some());
 }
@@ -997,7 +1027,7 @@ fn cancellation_after_usage_keeps_the_provider_fact_on_its_attempt() {
         .as_ref()
         .expect("an attempt");
     assert_eq!(attempt.usage.as_ref(), Some(&usage));
-    assert_eq!(attempt.outcome, crucible_core::PromptCacheOutcome::Read);
+    assert_eq!(attempt.outcome, crucible_types::PromptCacheOutcome::Read);
     assert_eq!(
         scripted
             .events()
@@ -1048,7 +1078,7 @@ fn prefer_records_an_adapter_encoding_failure_then_sends_the_unchanged_request()
         encodings,
         [
             PromptCacheEncoding::Failed(
-                crucible_core::PromptCacheIneligibleReason::UnsupportedBoundary,
+                crucible_types::PromptCacheIneligibleReason::UnsupportedBoundary,
             ),
             PromptCacheEncoding::NoControlIntended,
         ]
@@ -1063,312 +1093,17 @@ fn require_fails_before_send_when_the_adapter_cannot_lower_the_selected_control(
         .runner
         .redefine(|agent| agent.telling("stable fixture instructions"));
     scripted.runner.policy.prompt_cache =
-        PromptCachePolicy::default().with_mode(crucible_core::PromptCacheMode::Require);
+        PromptCachePolicy::default().with_mode(crucible_types::PromptCacheMode::Require);
 
     let problem = scripted.turn("go").unwrap_err();
 
     assert!(matches!(
         problem,
         TurnError::PromptCachePreparation(PromptCachePreparationError::Encoding(
-            crucible_core::PromptCacheIneligibleReason::UnsupportedBoundary
+            crucible_types::PromptCacheIneligibleReason::UnsupportedBoundary
         ))
     ));
     assert!(scripted.sent.lock().unwrap().is_empty());
-}
-
-#[test]
-fn persistent_resources_are_ready_before_wire_reference_and_explicit_cleanup_deletes_them() {
-    let script = Script::new(vec![saying("done")]).persistent();
-    let store = SharedStore::default();
-    let records = Arc::clone(&store.0);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny).storing(store);
-    scripted
-        .runner
-        .redefine(|agent| agent.telling("stable fixture instructions"));
-    scripted.runner.policy.prompt_cache = scripted
-        .runner
-        .policy
-        .prompt_cache
-        .with_persistent_resources(PromptCachePersistentMode::Create);
-
-    scripted.turn("go").expect("the turn to finish");
-
-    let sent_guard = scripted.sent.lock().unwrap();
-    let [sent] = sent_guard.as_slice() else {
-        panic!("persistent fixture must send exactly one request");
-    };
-    assert!(sent.cache_resource, "{:?}", sent.cache_selection);
-    drop(sent_guard);
-    let held = records.lock().unwrap();
-    let [record] = held.as_slice() else {
-        panic!("persistent fixture must retain one resource");
-    };
-    assert_eq!(record.state(), PromptCacheResourceState::Ready);
-    drop(held);
-    assert_eq!(
-        scripted
-            .runner
-            .prompt_cache_attempt()
-            .expect("an attempt")
-            .encoding,
-        PromptCacheEncoding::PersistentResourceReferenced
-    );
-    let lifecycle_states: Vec<_> = scripted
-        .events()
-        .into_iter()
-        .filter_map(|event| match event {
-            Event::PromptCache {
-                fact: PromptCacheFact::ResourceChanged(fact),
-            } => Some((fact.operation, fact.state)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        lifecycle_states,
-        [
-            (
-                Some(PromptCacheResourceOperation::Create),
-                PromptCacheResourceState::Creating,
-            ),
-            (
-                Some(PromptCacheResourceOperation::Create),
-                PromptCacheResourceState::Ready,
-            ),
-        ]
-    );
-
-    let cleaned = scripted
-        .runner
-        .clean_prompt_cache(&Cancel::new())
-        .expect("bounded cleanup");
-    assert_eq!(cleaned.deleted, 1);
-    assert!(records.lock().unwrap().is_empty());
-}
-
-#[test]
-fn retirement_deletes_only_the_current_exclusive_owner_scope() {
-    let script = Script::new(vec![saying("done")]).persistent();
-    let store = SharedStore::default();
-    let records = Arc::clone(&store.0);
-    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny).storing(store);
-    scripted
-        .runner
-        .redefine(|agent| agent.telling("stable fixture instructions"));
-    scripted.runner.policy.prompt_cache = scripted
-        .runner
-        .policy
-        .prompt_cache
-        .with_persistent_resources(PromptCachePersistentMode::Create);
-
-    scripted.turn("go").expect("the turn to finish");
-
-    let current = records
-        .lock()
-        .unwrap()
-        .first()
-        .cloned()
-        .expect("the current owner resource");
-    let binding = PromptCacheResourceBinding::new(
-        PromptCacheScopeDigest::new([91; 32]),
-        current.binding().provider_scope(),
-        PromptCacheScopeDigest::new([92; 32]),
-        PromptCacheFingerprint::new([93; 32]),
-        PromptCachePolicyDigest::new([94; 32]),
-        PromptCacheResourceOwner::new(PromptCacheIsolation::Session, true),
-        current.binding().protocol(),
-        "other-session-model",
-        Some("script-revision-v1"),
-    )
-    .unwrap();
-    let mut other_owner =
-        PromptCacheResourceRecord::creating(PromptCacheResourceId::new(), binding, 100);
-    other_owner.ready(
-        PromptCacheResourceHandle::new("other-owner-handle").unwrap(),
-        u64::MAX,
-        110,
-    );
-    records.lock().unwrap().push(other_owner.clone());
-
-    let retired = scripted
-        .runner
-        .retire_prompt_cache(&Cancel::new())
-        .expect("bounded retirement");
-
-    assert_eq!(retired.inspected, 1);
-    assert_eq!(retired.deleted, 1);
-    let remaining = records.lock().unwrap();
-    let [record] = remaining.as_slice() else {
-        panic!("another owner scope must remain untouched");
-    };
-    assert_eq!(record.id(), other_owner.id());
-}
-
-fn ready_resource(
-    protocol: &str,
-    provider_scope: PromptCacheScopeDigest,
-    seed: u8,
-) -> PromptCacheResourceRecord {
-    let binding = PromptCacheResourceBinding::new(
-        PromptCacheScopeDigest::new([seed; 32]),
-        provider_scope,
-        PromptCacheScopeDigest::new([seed.saturating_add(3); 32]),
-        PromptCacheFingerprint::new([seed.saturating_add(1); 32]),
-        PromptCachePolicyDigest::new([seed.saturating_add(2); 32]),
-        PromptCacheResourceOwner::new(PromptCacheIsolation::Session, true),
-        protocol,
-        "claude-test",
-        Some("script-revision-v1"),
-    )
-    .unwrap();
-    let mut record =
-        PromptCacheResourceRecord::creating(PromptCacheResourceId::new(), binding, 100);
-    record.ready(
-        PromptCacheResourceHandle::new(format!("provider-handle-{seed}")).unwrap(),
-        u64::MAX,
-        110,
-    );
-    record
-}
-
-#[test]
-fn cleanup_without_the_current_provider_lifecycle_fails_without_relabelling_records() {
-    let store = SharedStore::default();
-    let records = Arc::clone(&store.0);
-    let mut scripted =
-        Scripted::new(Script::new(Vec::new()), Tools::new(), Verdict::Deny).storing(store);
-    let provider_scope =
-        prompt_cache::provider_scope(scripted.runner.provider.prompt_cache_route());
-    records
-        .lock()
-        .unwrap()
-        .push(ready_resource("script", provider_scope, 1));
-
-    let problem = scripted
-        .runner
-        .clean_prompt_cache(&Cancel::new())
-        .unwrap_err();
-
-    assert!(matches!(problem, PromptCacheResourceError::Unsupported));
-    let held = records.lock().unwrap();
-    let [record] = held.as_slice() else {
-        panic!("unsupported cleanup must retain one resource");
-    };
-    assert_eq!(record.state(), PromptCacheResourceState::Ready);
-}
-
-#[test]
-fn cleanup_is_provider_scoped_and_marks_a_conclusive_survivor_orphaned() {
-    let store = SharedStore::default();
-    let records = Arc::clone(&store.0);
-    let mut scripted = Scripted::new(
-        Script::new(Vec::new()).surviving_delete(),
-        Tools::new(),
-        Verdict::Deny,
-    )
-    .storing(store);
-    let provider_scope =
-        prompt_cache::provider_scope(scripted.runner.provider.prompt_cache_route());
-    records.lock().unwrap().extend([
-        ready_resource("script", provider_scope, 1),
-        ready_resource(
-            "another-protocol",
-            PromptCacheScopeDigest::new([90; 32]),
-            10,
-        ),
-    ]);
-
-    let cleaned = scripted.runner.clean_prompt_cache(&Cancel::new()).unwrap();
-
-    assert_eq!(cleaned.inspected, 1);
-    assert_eq!(cleaned.orphaned, 1);
-    let records = records.lock().unwrap();
-    let [owned, other] = records.as_slice() else {
-        panic!("protocol-scoped cleanup must retain both fixture records");
-    };
-    assert_eq!(owned.state(), PromptCacheResourceState::Orphaned);
-    assert_eq!(other.state(), PromptCacheResourceState::Ready);
-}
-
-#[test]
-fn ambiguous_delete_is_retained_for_reconciliation_and_pre_cancel_changes_nothing() {
-    let store = SharedStore::default();
-    let resumed_store = store.clone();
-    let records = Arc::clone(&store.0);
-    let mut scripted = Scripted::new(
-        Script::new(Vec::new()).ambiguous_delete(),
-        Tools::new(),
-        Verdict::Deny,
-    )
-    .storing(store);
-    let provider_scope =
-        prompt_cache::provider_scope(scripted.runner.provider.prompt_cache_route());
-    records
-        .lock()
-        .unwrap()
-        .push(ready_resource("script", provider_scope, 1));
-    let cancelled = Cancel::new();
-    cancelled.request();
-
-    assert!(matches!(
-        scripted.runner.clean_prompt_cache(&cancelled),
-        Err(PromptCacheResourceError::Cancelled)
-    ));
-    let held = records.lock().unwrap();
-    let [record] = held.as_slice() else {
-        panic!("pre-cancelled cleanup must retain one resource");
-    };
-    assert_eq!(record.state(), PromptCacheResourceState::Ready);
-    drop(held);
-
-    let cleaned = scripted.runner.clean_prompt_cache(&Cancel::new()).unwrap();
-    assert_eq!(cleaned.ambiguous, 1);
-    assert_eq!(
-        cleaned
-            .changes()
-            .iter()
-            .map(|change| change.state)
-            .collect::<Vec<_>>(),
-        [
-            PromptCacheResourceState::Deleting,
-            PromptCacheResourceState::Ambiguous,
-        ]
-    );
-    let held = records.lock().unwrap();
-    let [record] = held.as_slice() else {
-        panic!("ambiguous cleanup must retain one resource");
-    };
-    assert_eq!(record.state(), PromptCacheResourceState::Ambiguous);
-    assert_eq!(record.pending(), Some(PromptCacheResourceOperation::Delete));
-    drop(held);
-
-    let credential_scope = scripted
-        .runner
-        .provider
-        .prompt_cache_route()
-        .credential_scope;
-    let mut resumed = Scripted::new(
-        Script::new(Vec::new())
-            .with_credential_scope(credential_scope)
-            .persistent(),
-        Tools::new(),
-        Verdict::Deny,
-    )
-    .storing(resumed_store);
-    let reconciled = resumed.runner.clean_prompt_cache(&Cancel::new()).unwrap();
-
-    assert_eq!(reconciled.deleted, 1);
-    assert_eq!(
-        reconciled
-            .changes()
-            .iter()
-            .map(|change| (change.operation, change.state))
-            .collect::<Vec<_>>(),
-        [(
-            Some(PromptCacheResourceOperation::Delete),
-            PromptCacheResourceState::Deleted,
-        )]
-    );
-    assert!(records.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -1491,6 +1226,7 @@ fn tool_results_past_the_retained_boundary_end_the_turn() {
     let problem = scripted
         .runner
         .exchange(&mut scripted.says, &run)
+        .awaited()
         .unwrap_err();
 
     assert!(matches!(problem, TurnError::ToolOutputBytes { maximum: 8 }));

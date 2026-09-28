@@ -8,6 +8,478 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-09-28
+
+**Turns, tool calls, logins and the pipes of hosted servers now run as tasks
+on one runtime the application owns.** Esc therefore stops a web search or
+fetch, a login, or a turn waiting on a token renewal at once, and the renewal
+itself still finishes and is saved. `crucible config check` is new: it checks
+the effective configuration without starting anything. There is no managed
+installer or self-update in this release: install and upgrade with the same
+`install.sh` as 0.42.0.
+
+### Removed
+
+- **`crucible-core` is gone.** It had become a crate of re-exports, and every
+  name it carried is now imported from the crate that owns or hands it out,
+  which the workspace map in `AGENTS.md` lists. Nothing a person runs changes.
+- **The old blocking HTTP client is gone.** Every outgoing request now goes
+  through `crucible-http`, so a turn, a web search or fetch and the release
+  check share one TLS configuration and one hostname-lookup owner. Turns and
+  web share a single connection pool; the release check keeps its own pool so a
+  background check cannot hold a connection the run is using, and it makes its
+  trust and proxy decisions from the same configuration rather than its own.
+  The `Https` type and its `Response` return are removed with it, along with the
+  third-party crate and its pin.
+
+### Added
+
+- **An HTTP client for outgoing requests to share, as its own crate.**
+  `crucible-http` is an asynchronous HTTP/1.1 client with rustls over the
+  compiled-in roots, `http://` and `https://` proxies chosen from the
+  environment as before and reached through `CONNECT`, redirects handed back
+  rather than followed, bounded hostname lookups with an optional 5 s
+  deadline, a minute each for sending a request's body and awaiting the
+  response head, and a bounded response head.
+  A proxy's credential is registered for redaction on the headers a request is
+  sent with, so `Http::send` takes them mutably. Provider turns, web posts,
+  account requests and release discovery all use it, over one pool for turns
+  and web.
+- **Release discovery is owned work with a cached startup answer.**
+  `crucible-update` reads the existing `release` cache without opening a socket
+  and moves the post-frame discovery request onto the application's runtime. It
+  keeps the same GitHub answer, 24-hour freshness rule, 10-second lifetime,
+  256 KiB body ceiling and atomic cache replacement, while a separate pool and
+  a bounded shutdown keep the check from outliving the run.
+- **One runtime the application owns.** `crucible-app` lends a multi-thread
+  runtime of 4 workers and at most 18 blocking threads, with a timer and an
+  I/O driver, through `services::Services`. It is built only when first asked
+  for and shut down within 2 s once a run ends.
+- **A sandboxed command's pipes can be read and written asynchronously.**
+  `SandboxOutput` gains a waiting `read`, and `SandboxProcess` gains
+  `take_async_stdin`, which hands back a `SandboxInput`; both have defaults
+  built on the synchronous methods, so a backend written before them compiles
+  unchanged. The local backend waits on a pipe through the caller's Tokio
+  runtime on Unix and through a thread each pipe owns on Windows. Nothing uses
+  them yet, so nothing a user runs behaves differently.
+- **A hosted program's frames can be read and sent asynchronously, and its
+  finish awaited.** In `crucible-transport`, `Frames::next_frame_async` and
+  `Written::send_async` work over Tokio's readers and writers with the same
+  1 MiB ceiling and the same refusals as the blocking pair, and
+  `Finish::after_async` waits up to 10 s for a stop that yields to the runtime
+  before reporting it as unconfirmed cleanup, while a stop that does its work in
+  its first poll runs to completion. Nothing uses them yet, so nothing a user
+  runs behaves differently.
+- **Response bodies read within bounds, and a cancelled request closed.**
+  `crucible-http` reads a body as it arrives with a tick every 250 ms of
+  quiet, whole within a caller's limit and deadline, or as a refusal's first
+  8 KiB within 10 s, each reading one byte past its limit so a cut body is
+  reported as cut; dropping a request or a body's reader closes its
+  connection, and a client makes at most four connections at once. Provider
+  turns, web posts and release discovery use these readers.
+- **A bounded worker for a tool's blocking work.** `ToolWorker` runs at most 4
+  jobs at once on the application runtime's blocking threads, and a call
+  cancelled while it waits for room leaves without starting its job, while one
+  cancelled or dropped once its job runs asks the job to stop through a child
+  of its `Cancel` and gives the place back only when the job returns.
+  `ToolContext::with_worker` lends a call one and `Services::tool_worker`
+  builds the run's worker when first asked for.
+- **A future can stop waiting the moment its cancel is raised.**
+  `Cancel::race` awaits a future and hands back `None` instead, dropping it,
+  once the token, an ancestor of it or a deadline on either is requested. A
+  request wakes the race as it is made, and a deadline is timed on the timer
+  of the runtime the race is polled in.
+- **An attachment read that can be told to stop.** `Opened::taken_until` is
+  the same bounded read as `Opened::taken`, done 64 KiB at a time with a stop
+  asked before each chunk, and answers `AttachmentError::Stopped` without the
+  bytes once the stop says yes. Nothing calls it yet, so nothing a user runs
+  behaves differently.
+- **An MCP conversation can be awaited.** In `crucible-mcp`,
+  `Talking::ask_async`, `Talking::tell_async` and `call_async` speak to a
+  server over asynchronous streams with the same numbering, the same bound of
+  64 frames read past while waiting and the same errors as the blocking calls,
+  and an answer to a call given up on is refused rather than taken for the
+  next. Nothing uses them yet, so nothing a user runs behaves differently.
+- **Check the effective configuration without starting anything.**
+  `crucible config check [--json]` reads the three configuration files the way
+  a startup would and resolves them the way it would, then reports each file's
+  provenance with the schema identity and the bounded failures that made it
+  invalid, leaving 0 where everything holds and 1 where a file is invalid or
+  unreadable. Nothing is written, launched or dialled on the way, and no secret
+  or credential value reaches either the human report or the JSON one;
+  non-secret values a failure sentence quotes — a path, a rule's text, a
+  rejected choice — reach both by design.
+
+### Changed
+
+- **A turn can run as a runtime task.** `Runner::turn` now returns a `Send`
+  future, so a caller can spawn it onto a multi-thread runtime rather than
+  wait for it on a thread of its own. `Ask`, `Front` and
+  `PromptCacheResourceStore` now require `Sync` as well as `Send`; nothing a
+  user runs behaves differently.
+- **The redacted sandbox records a journal and a checkpoint keep are owned by
+  `crucible-storage`.** `SandboxFact`, `SandboxInspection`, the negotiated
+  capability matrix and the rest of that vocabulary now live beside the ports
+  that store them, together with `RunItem`, `RunHistory`,
+  `ExecutionCheckpoint` and the values a resume is validated against, so a store
+  compiles and reads a session back with no sandbox in the build;
+  `crucible-sandbox` re-exports the records it still hands out, so a consumer
+  keeps one import. An inspection is now built by `inspection`,
+  `confined_inspection` or `unconfined_inspection` instead of a method on
+  `SandboxInspection`, and `CacheCheckpoint::new` reports a
+  `CacheCheckpointError` rather than `InterruptionError`; session files and
+  checkpoints are written and read exactly as before.
+- **A guardrail's name and reason are kept to a ceiling.** A refusal, a check
+  that could not decide and a refused duplicate name keep at most 256 bytes of
+  the name and 4 KiB of the reason, ending in ` [cut]` where there was more;
+  names are compared as kept. A refusal and an undecided check reach a client
+  marked truncated where they were cut; no shipped agent declares a guardrail,
+  so only a build that adds one sees any of it.
+- **The provider, tool, sandbox and storage contracts hand back futures.** A
+  provider's stream and its prompt-cache resource lifecycle, a tool's run, a
+  toolset's lifecycle, a sandbox backend's probe and each sandbox lifecycle
+  step, and the session and prompt-cache store operations now return a boxed
+  `Send` future that borrows no more than the call was given, while names and
+  classifications stay synchronous, so an adapter built against these crates
+  adopts the new signatures. Every caller awaits the future it is handed. Any
+  `CallResultAcceptance` dropped unaccepted, or whose `accept` future is
+  dropped before it answers, must hand its scope back to the registry that
+  owns the scope's cleanup.
+- **A turn is a task on the application's runtime, and waits for the model, a
+  lone tool call and its toolset.** `Runner::turn` and `Runner::compact` are
+  now `async`, so a provider stream, the run of a call that runs alone, or a
+  toolset's preparation or disposal that has to wait is waited for rather than
+  refused, and `TurnError::ToolsetCleanupUnready` is gone. `Conversation`'s
+  turn, compaction, clear, resume and account switches, and `client::turn` and
+  `client::perform`, are `async` too, and the terminal spawns each turn onto
+  the application's runtime, so a turn held up by a slow terminal leaves its
+  worker to other tasks.
+- **Prompt-cache resources now wait for their stores and provider.** A turn,
+  recap, `/cache` inspection or cleanup, and a model, provider, or credential
+  switch await each prompt-cache step on the application runtime; an operation
+  whose outcome remains uncertain is still recorded as ambiguous, and
+  `TurnCache` is gone.
+- **Applying a credential and running a web search or fetch now return a
+  future.** `Credential::authorize`, `Search::search` and `Fetch::fetch`
+  return a boxed `Send` future instead of an immediate result, so an adapter
+  built against these traits adopts the new signatures. A credential holding a
+  key or a token still good answers the first time its future is polled, one
+  whose token is due is renewed as the entry on account tokens below says, and
+  how a web search or fetch now waits is the entry on Esc and web searches
+  below.
+- **A sandboxed command's status no longer waits behind the cancel of a limit
+  it broke, and stopping it is bounded.** Each command the local sandbox starts
+  is watched by a task of its own on the runtime `startup::assemble` starts,
+  whose workers now also run its time and output limit kills, and a status
+  asked for while a broken limit's cancel runs, which can take up to 5 s on
+  Linux, now answers at once; a stop kills the command itself and gives that
+  cancel 250 ms before reporting its cleanup as failed. `LocalSandbox` takes
+  that runtime through `watching_on`, and one given none prepares but starts
+  no command.
+- **Esc stops a web search or fetch at once.** Every shipped web source awaits
+  its request on the caller's runtime, and the call ends as soon as it is
+  cancelled, even while the request is still connecting or reading; dropping
+  the future closes the shared HTTP request instead of leaving a worker behind.
+  A lone tool call still waiting when its deadline passes is now answered as
+  timed out there, rather than once its run returns.
+- **A hosted program's pipes are read and written by tasks the conversation
+  owns, and can be awaited.** `crucible-transport`'s `Pipes::taken`,
+  `Heard::new`, `Said::new` and `Muttered::draining`, and the MCP and extension
+  hosts built on them, take the Tokio runtime handle their reader, writer and
+  standard-error drain run on as tasks that end when the value holding them is
+  dropped, and `Heard` and `Said` are also `AsyncBufRead` and `AsyncWrite` over
+  those same tasks. The application's runtime gains an I/O driver, and the
+  default `SandboxProcess::take_async_stdin` now writes on the runtime's
+  blocking threads rather than the thread polling it; what a server is sent
+  and answers with is unchanged.
+- **A question, a permission ask and the panel front end hand back futures.**
+  `Put::put`, which a tool puts its questions to whoever is at the keyboard
+  through, the permission engine's `Ask::ask`, and `crucible_app::client`'s
+  `Front::put` (now `Front: Send + Sync`) return a boxed `Send` future rather than
+  blocking inside a ready one; `client::questions` is now `async`, awaiting
+  `Front::put` in turn, so a human-length wait for an answer never occupies
+  the thread polling it. `Permission::decide`, `decide_admitted` and
+  `decide_admitted_guarded` are now `async` to match. An implementer of any
+  of these traits adopts the new signatures; nothing a user runs behaves
+  differently.
+- **An account's tokens are renewed once, as work of their own, and Esc no
+  longer waits for one.** ChatGPT and Kimi logins and renewals now go through
+  crucible's shared HTTP client, each request within 30 s, and a cancelled
+  login stops waiting for its request in flight at once. A renewal runs as a
+  task every credential for the account waits on, so a turn or web call
+  cancelled while it runs returns at once, and the renewal still finishes and
+  is written down. The login implementations and `Subscriptions::production`
+  take the run's `Renewals`, and `services::serving` reports a renewal still
+  unfinished 5 s after the run.
+- **An extension host is awaited, and never settles a call another process
+  was asked.** `crucible-extension`'s `Hosted` is spoken to only by awaiting
+  it and gains `replace`; its calls are a `Call` carrying a generation no other
+  hosted process shares, in place of a bare `CallId`, and one from any other
+  process is refused with `CallError::Elsewhere` rather than answered by its
+  number. `Speaking` is no longer driven synchronously, `Speaking`'s and
+  `Conversation`'s constructors are crate-private, and `Conversation` no
+  longer implements `Default`; nothing in crucible hosts an extension yet.
+- **A command left running no longer holds up the screen.** Each one is owned
+  by a task of its own that asks its process everything on the application
+  runtime's blocking threads, four of the thirteen that fit in the fourteen
+  the runtime has — the release check's cache write among them — leaving one
+  spare, so neither drawing nor a sandbox's limit kills wait on a process;
+  `Background` takes that runtime through `watching_on`, and one given none
+  ends a command rather than keeping it. Pressing <kbd>x</kbd> asks for the
+  stop and returns at once, the row going or `Stop failed; x retries`
+  appearing on a later frame, and the list of commands left running now
+  closes by itself once its last command has ended, however it ended; the end
+  of a run waits at most 7 s for its commands to be ended before ending what
+  their owners did not reach.
+- **On Linux, a sandboxed command's status no longer waits for what it wrote
+  to be reported back.** Once the command has exited, a status asked for while
+  the sandbox is still sending its scan of the writable roots answers `None`
+  at once, with `SandboxProcess::ended` answering `true`, and settles on a
+  later look; a stop takes no more of that scan than has already been sent,
+  rather than waiting for the rest.
+- **`glob`, `grep` and `tool_search` hand their work to a lent tool worker.**
+  A call lent a `ToolWorker` searches on it, waiting there for room, and stops
+  and gives its place back when the call is cancelled or dropped; a call lent
+  none searches on the thread polling it, as before, with the same answer, and
+  a search that comes apart is contained as a panic either way. The benchmark
+  probes build their own runtime and lend the calls they time a worker, so
+  `Bridge::Probes` is gone.
+- **MCP servers are started, greeted and called asynchronously.** A call to an
+  MCP tool no longer holds a thread while its server thinks, and a sandbox step
+  of a server's start that waits is given up on at its `handshakeSeconds`, or
+  sooner when the turn is cancelled, holding the server as unconfirmed cleanup
+  as a refused step was. A call or a
+  start given up on part way leaves its server asked nothing further and
+  stopped by the next call to it, the next preparation or disposal;
+  `Bridge::McpHosting` is gone, and `crucible-mcp` gains `hello_async`,
+  `tools_async` and `Hosted`'s `greet_async`, `catalogue_async` and
+  `call_async`.
+- **`read`, `write` and `edit` can run on a lent tool worker, and `write` and
+  picture reads now stop when cancelled.** A call lent a `ToolWorker` through
+  `ToolContext::with_worker` opens, reads and replaces its file on the
+  worker's blocking threads, and a job that panics there is recorded as a
+  panicked call, as it is when it runs in place. Once cancelled, `write` stops
+  at its next check, before each directory it makes and before renaming its
+  replacement into place, leaving the file as it was though directories it
+  already made may remain; a picture `read` stops between chunks and answers
+  cancelled rather than opening the file again as text. A file counts as seen
+  only once the call that touched it has its answer.
+- **The synchronous transport is gone, and stopping a hosted server no longer
+  blocks.** `Finish::after`, the blocking wait for a confined process, is
+  deleted in favor of the awaited `Finish::after_async`; `Pipes::taken` and
+  `crucible-mcp`'s `Hosted::over`, `Hosted::withholding` and `Hosted::stop` are
+  now `async`, with a stop that never answers given up on after 10 s as
+  unconfirmed cleanup. The `TransportProcess` bridge crossing is retired with
+  them, and a repository check fails a `thread::spawn` in shipped source of
+  the transport, MCP or extension crates.
+- **The runner awaits every session write, and a session answers once its
+  writer has the line.** A turn's, a compaction's and a clearing's writes
+  through `SessionStore` are now awaited rather than asked once, so a store
+  whose writes wait is waited for instead of ending the turn, and
+  `TurnError::RecordUnready` is gone; `Session`'s writes answer once its writer
+  thread has handed the line to the operating system or kept why not as
+  `Session::trouble`. `Runner::pick_up`, `serve` and `resuming` owe the session
+  their clearing lines until the new `Runner::record_clearings`, or the next
+  turn or compaction, writes them, and `Conversation` awaits it after each.
+  Nothing a user runs behaves differently.
+
+- **An account login is a task its attempt owns, and leaving it closes its
+  callback.** A ChatGPT or Kimi login now runs on the application's runtime
+  rather than a thread of its own, and Esc, or dropping its `LoginAttempt`
+  off the runtime, aborts it and waits up to 1 s for it to stop, so the browser
+  callback's port is closed and the next `/login` starts rather than answering
+  that one is still stopping; dropped on a runtime thread, it aborts without
+  waiting, is never resumed, and frees its port and slot once a worker
+  carries the abort out. `LoginSlot::start` and `start_with_input` take the
+  runtime and a method that returns a future, reporting through
+  `LoginUpdates`, whose sends never wait, and handed pasted input on a Tokio
+  channel, while `OAuthError::Worker`, `OAuthError::Unwaited` and
+  `Bridge::AccountLogin` are gone and `OAuthError::NotStarted` refuses a login
+  begun with no runtime.
+- **A turn's tool calls run as tasks on the application's runtime, and each
+  is waited for.** `Runner::turn` spawns every call's run onto the runtime it
+  is polled in, so it panics at its first tool call when polled outside one,
+  runs at most `crucible_runner::TOOL_RUNS` of a wave at once, and awaits each
+  run, a background result's acceptance and the toolset's listing and
+  refreshing, so `Bridge::TurnTools` is gone; a call's deadline is now
+  cooperative, never dropping a run, and a call is answered with what its run
+  answered even after a stop. `Runner::lending` lends every call a
+  `ToolWorker`, and `startup::assemble` lends the run's own.
+- **A bash call's output is read by tasks the call awaits.** `Bash` reads a
+  command's output through the sandbox's waiting reads, in tasks on the Tokio
+  runtime polling the call, and waits between its looks at the command on that
+  runtime's clock, so the thread polling the call is free while the command
+  runs. Its run is therefore awaited on a runtime with a timer and, for the
+  local sandbox on Unix, an I/O driver, as the application's is; what a
+  command is answered with, its bounds and its redaction are unchanged.
+- **On Linux, a sandboxed command's status no longer waits for what it wrote
+  to be published.** Journaling a command's ending and publishing or
+  discarding what it wrote run on a thread of their own, at most 16 at once for
+  one `LocalSandbox`, while the status answers `None` with `ended` answering
+  `true`; a stop that lands while that is under way waits for it and keeps
+  what it published.
+- **The sandbox network mediator stops within a bound, and the local
+  backend's synchronous crossings are retired.** The proxy listener's thread
+  is joined for at most five seconds; one still running is detached and the
+  stop is reported as failed cleanup, never a silent success. `Conformance::audit`
+  is now `async` and awaits each probe and preparation on the caller's task,
+  and stops made while dropping a process or cleaning a failed start call the
+  new synchronous `SandboxProcess::stop_sync` directly; the `LocalBackend`
+  bridge is gone.
+- **`--sandbox`, the `/sandbox` panel and a sandbox choice wait for the
+  backend.** A backend that answers only after waiting is now heard rather than
+  reported as not ready. `crucible_app::sandbox::confinement` and `choosing`
+  are `async`, and `AppError::Unready`, `Unchanged::Unready` and the
+  `SandboxReport` and `SandboxPanel` bridges are gone.
+
+- **Model turns and web posts share the application's HTTP client.** Provider
+  requests and `Search`/`Fetch` posts now await one bounded asynchronous
+  service, keeping their existing status, refusal, redaction, retry and
+  cancellation behavior.
+
+### Fixed
+
+- **On macOS, a command's background process can no longer outlive the
+  command.** A process the command was starting as it ended or was stopped
+  escaped the kill, kept running, and held the output open, so the command read
+  as still printing. Crucible now repeats the kill until nothing in the
+  command's process group is left running.
+- **A `kill` no longer waits for a key while the list of running commands is
+  open over a turn.** A termination, or the terminal closing, did nothing there
+  until a key was pressed, because nothing read the signal while the list had
+  the keyboard. The list now closes, and the turn ends and saves as it does for
+  a signal anywhere else.
+- **A panic on another thread no longer writes over the session's screen.**
+  While a session holds the terminal, a panic on any thread but the one that
+  draws, such as a task on the application's runtime, is said in the
+  transcript at the next prompt instead of being written to standard error in
+  the middle of a frame. One the session never said is written to standard
+  error once the screen is handed back.
+- **A pipe left where a configuration file is read no longer holds the first
+  frame.** The three settings layers are read before anything is drawn, and each
+  name was opened in a way that waits for a writer, so anything able to write in
+  the home or project directory could leave a pipe at one of them and stop
+  crucible with no bound. Each layer is now opened without waiting, and what
+  comes back is refused, with the file named in the error, unless it is an
+  ordinary file. A settings file reached through a symbolic link is still read:
+  a run refuses one at the home path only because it opens that file as private
+  state first, which `--extensions` and `--sandbox` do not do.
+- **What a command left running printed no longer reads as complete when
+  reading it failed.** When a read of its output failed part-way, the note
+  telling the model the command had ended carried what had arrived as though it
+  were all of it. What that command printed now ends, in the note, with
+  `[output is incomplete: reading it failed before the end]`; a command whose
+  output was read without a failure is reported as before.
+- **A background command's output no longer reads as complete when crucible
+  stopped reading it before the end.** A command that ended while nobody
+  waited, one of whose pipes had not reached its end, was reported with what
+  had arrived as though it were the whole. What that command printed now ends,
+  in that case, with `[output is incomplete: it had not been read to the end
+  when the command was reported]`; a command whose readers reached the end is
+  reported as before.
+- **A background command's output now says how many of its bytes were
+  omitted.** When a command's output passed what crucible keeps, the model was
+  told of a cut that counted a read's own ceiling or the encoded result, not
+  what the process printed, and the background panel joined the kept head and
+  tail with no mark. What the model reads of a command left running, one that
+  ended while nobody waited and `bash_output` now names how many bytes the
+  process printed and how many were omitted, even where the 30,000-byte result
+  limit cuts it again, and the panel marks where each stream lost bytes.
+  Output small enough to keep whole is unaffected.
+- **Two session directories, or two workspaces, whose names are not valid
+  UTF-8 are no longer one prompt cache scope.** The directory a session is kept
+  in and the workspace each separate one reader's prompt cache resources from
+  another's, and both were compared as text with every invalid byte replaced,
+  so two such directories could share a scope. They are now compared byte for
+  byte; a directory whose name is text is unaffected.
+- **A web source's refusal says when its reply was cut.** `web_search` and
+  `web_fetch` hold what a refusing service replied to the 30 000 bytes a tool
+  may answer with, and a longer reply was cut with nothing saying so — or, where
+  it was one long line, replaced altogether by `web_search could not answer.`,
+  losing the vendor and the HTTP status with it. A cut refusal now keeps the
+  head of the reply, where the source and the status are, and ends with
+  `[N more lines not shown.]` or a line saying the rest of it was cut.
+- **A count of one no longer reads as plural.** `web_search` said "1
+  results." for a single result, and a cut `web_fetch` page or refusal said
+  "[1 more lines not shown.]" for one line left out; both now say "result"
+  and "line" for a count of one, matching how every other count in crucible
+  is said.
+- **A refusal whose last bytes arrived as the ten-second read wait ran out is
+  no longer thrown away.** The wait was checked right after a read returned,
+  before looking at what it had handed over, so a reply that finished exactly
+  then came back as "the response could not be read" instead of the reply
+  itself, or shorter than what was actually read. What a read hands over is
+  now kept, and a clean end it reports is honoured, whatever the wait says by
+  then.
+- **A `web_search` or `web_fetch` answer that finished as the two-minute wait
+  ran out failed instead of being used.** The reader checked that wait right
+  after its closing read, before looking at what the read returned, so an
+  answer already complete in hand was reported as though it had stopped
+  part-way through. What that read reports — a clean end or its own failure
+  — is now used as it stands, so a real read error landing there is shown as
+  itself instead of the generic timeout that used to replace it.
+- **A Google web search or fetch answer that had already arrived whole is no
+  longer thrown away because its closing read came in as the wait ran out.**
+  Google reads its answers through a reader of its own, separate from the
+  shared one other web sources use, and it checked the wait right after a
+  read returned, before looking at what the read had handed back, so a page
+  or search result whose content was complete, but whose confirming
+  end-of-stream read landed exactly as the wait expired, came back as "Google
+  web response exceeded its deadline" instead of the answer. That confirming
+  read's clean end is now honoured, not replaced by the deadline error.
+- **A launch the system Bubblewrap refuses says what Bubblewrap said.** Since
+  0.35.0 such an error was meant to quote Bubblewrap's message, but a `bash`
+  command or a hosted MCP server on Linux reported only `sandbox lifecycle
+  failed`. It now reports `sandbox launch refused:` followed by Bubblewrap's
+  own words, on one line and cut at 512 bytes, so an option it does not know
+  is named.
+- **A busy account store is reported after five seconds on macOS too.** A
+  wait for another crucible's lock on the store — shared by logins, keys and
+  renewals — was documented and reported after five seconds, but macOS
+  stretched it to about twenty because the wait counted a fixed number of
+  pauses rather than the clock. It now ends after five seconds on every
+  platform.
+- **A sandbox state directory crucible refuses now says why.** On Linux, a
+  squat on the sandbox's private state path — another local user's directory,
+  a symlink, or a plain file — and this user's own directory left with the
+  wrong group or permissions both used to fail every confined run with the
+  same opaque `sandbox lifecycle registry admission is unavailable`,
+  indistinguishable from any other cause. The reason now names which was
+  found, without the path or another user's numeric id: removing it, which
+  may need an administrator, is the fix for a squat; restoring this user's own
+  group and mode 0700 is the fix for their own directory, so its unrecovered
+  transaction journals and quarantine evidence are kept rather than deleted.
+
+### Security
+
+- **A refusal cut at its byte bound no longer ends in the start of a
+  credential, and says it was cut.** Only whole values were redacted, so a
+  gateway that echoed an API key or an access token across the 8 KiB boundary
+  crucible reads left the part in front of it at the end of the message — on
+  the terminal, in a redirected standard output and in every client. What is
+  kept of a cut reply now loses its end wherever that end begins a protected
+  value, and where crucible shows what a service said — everywhere but Google,
+  Fable 5.1 and Astra, which answer with a sentence of crucible's own — the
+  message says so instead of stopping mid-word: ` [cut: the reply was longer
+  than crucible reads]` where more of it arrived and the reading then ended,
+  and ` [cut: crucible stopped reading here]` where the bound filled and the
+  reading then failed, which names no length because crucible usually cannot
+  know one.
+- **A proxy credential crucible cut short is masked.** Crucible masks a
+  command's exact proxy password and its base64 userinfo in captured stdout and
+  stderr. Output cut by the output limit, or output of a command crucible
+  stopped, now shows as `*` any last few bytes that could begin the credential,
+  such as a final `Y`. Output that ended on its own is unchanged.
+- **An MCP server that echoes its `envFrom` secret no longer hands it to the
+  model.** A server that repeated the token it was given, in a tool result or
+  an error, had it copied into the tool output, the session file and the next
+  provider request. Every occurrence of an `envFrom` value now shows as `*` in
+  the server's stderr and in the results, errors and tool catalogue crucible
+  keeps from its replies, JSON-escaped echoes included; an echo cut short or
+  transformed, a value repeated as a number such as an error code, and files
+  the server writes are not caught. Each `envFrom` entry now counts a 5–7 byte
+  handle toward the 128 KiB server environment limit.
+
 ## [0.42.0] - 2026-09-20
 
 ### Changed
@@ -35,9 +507,10 @@ change in any release with no deprecation period.
   `crucible-runner` no longer depends on `crucible-session`: `Runner::new`,
   `Runner::with_toolset` and `Runner::pick_up` take an `Arc<dyn JournalStore>`,
   which now requires `crucible_storage::SessionStore`; that trait grew from
-  `append_message` alone to everything the runner records and reads, so an
-  implementation must add those methods. `Event`, `EventEnvelope`, `Post`,
-  `Reporter` and `TurnError` move from `crucible-core` to `crucible-runner`.
+  `append_message` alone to everything the runner records and reads of a
+  conversation, so an implementation must add those methods. `Event`,
+  `EventEnvelope`, `Post`, `Reporter` and `TurnError` move from `crucible-core`
+  to `crucible-runner`.
   The session names the runner used to re-export are imported from
   `crucible-session`, and `Session::finish` now takes a shared session, because
   the application and the runner hold the same one.
@@ -77,14 +550,14 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **Closing the window mid-answer no longer loses the answer.** On Linux and
-  macOS a hang-up or a `kill` that arrives while a turn runs now stops the
-  turn, writes what had been said to the session log, hands the terminal back
-  and only then ends the process by that signal, so `--continue` picks up what
-  you watched arrive; before, the process died where it stood and the log
-  stopped at your prompt. Between turns, and while a question waits for a key,
-  a signal still ends crucible at once, and on Windows a closing console is
-  not yet caught.
+- **Closing the window mid-answer no longer loses the answer.** On Linux,
+  macOS and FreeBSD a hang-up or a `kill` that arrives while a turn runs now
+  stops the turn, writes what had been said to the session log, hands the
+  terminal back and only then ends the process by that signal, so `--continue`
+  picks up what you watched arrive; before, the process died where it stood and
+  the log stopped at your prompt. Between turns, and while a question waits
+  for a key, a signal still ends crucible at once, and on Windows a closing
+  console is not yet caught.
 - **An MCP server that will not be restarted is no longer called an
   extension.** The refusal read "the extension has used all 2 of the restarts it
   is allowed" about a server nobody had installed as one; it now says "the
@@ -3948,7 +4421,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/augments-labs/crucible-code/compare/v0.40.1...v0.41.0

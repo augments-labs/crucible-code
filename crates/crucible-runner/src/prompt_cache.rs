@@ -1,23 +1,28 @@
 //! Scope-safe prompt-cache identity derivation for provider attempts.
 //!
 //! The provider-visible prefix has its own canonical fingerprint in
-//! `crucible-core`. This module binds that fingerprint to the live owners the
+//! `crucible-types`. This module binds that fingerprint to the live owners the
 //! runner can see: route, credential instance, model, selected sharing scope,
 //! authority, instructions, and tool generation. Only the final opaque digest
 //! can leave this boundary as a provider routing key.
 
+use std::path::Path;
 use std::time::Instant;
 
-use crucible_core::{
-    Effort, PromptCacheCapabilities, PromptCacheFingerprint, PromptCacheIdentity,
-    PromptCacheIneligibleReason, PromptCacheIsolation, PromptCacheKey, PromptCacheMechanism,
-    PromptCacheMode, PromptCachePersistentMode, PromptCachePlan, PromptCachePolicy,
-    PromptCachePolicyDigest, PromptCachePolicySource, PromptCacheProjection, PromptCacheRequest,
-    PromptCacheResourceBinding, PromptCacheResourceCreate, PromptCacheResourceDeadline,
-    PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceLifecycle,
-    PromptCacheResourceOperation, PromptCacheResourceOwner, PromptCacheResourceRecord,
-    PromptCacheResourceReference, PromptCacheResourceState, PromptCacheResourceStore,
-    PromptCacheRoute, PromptCacheSelection, ProviderAttemptId, Request, RunId,
+use crucible_models::{
+    Effort, PromptCacheCapabilities, PromptCacheIdentity, PromptCacheKey, PromptCachePlan,
+    PromptCacheProjection, PromptCacheRequest, PromptCacheResourceCreate,
+    PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceReference,
+    PromptCacheRoute, PromptCacheSelection, Request,
+};
+use crucible_storage::PromptCacheResourceStore;
+use crucible_types::{
+    PromptCacheFingerprint, PromptCacheIneligibleReason, PromptCacheIsolation,
+    PromptCacheMechanism, PromptCacheMode, PromptCachePersistentMode, PromptCachePolicy,
+    PromptCachePolicyDigest, PromptCachePolicySource, PromptCacheResourceBinding,
+    PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceOperation,
+    PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheResourceState,
+    ProviderAttemptId, RunId,
 };
 use sha2::{Digest, Sha256};
 
@@ -32,7 +37,7 @@ pub(super) struct ScopeInputs<'a> {
     pub effort: Option<Effort>,
     pub run: RunId,
     pub session: Option<&'a str>,
-    pub workspace: &'a [u8],
+    pub workspace: &'a Path,
     pub user: &'a [u8],
     pub trust: &'a [u8],
     pub authority: &'a [u8],
@@ -54,17 +59,17 @@ pub(super) struct Prepared {
 pub(super) struct ResourceInputs<'a> {
     pub store: &'a mut dyn PromptCacheResourceStore,
     pub lifecycle: &'a dyn PromptCacheResourceLifecycle,
-    pub cancel: &'a crucible_core::Cancel,
+    pub cancel: &'a crucible_runtime::Cancel,
     pub now: u64,
     pub deadline: Instant,
 }
 
-pub(super) fn prepare(
+pub(super) async fn prepare(
     request: &Request<'_>,
     capabilities: PromptCacheCapabilities,
     inputs: &ScopeInputs<'_>,
 ) -> Result<Prepared, TurnError> {
-    prepare_inner(request, capabilities, inputs, None)
+    prepare_inner(request, capabilities, inputs, None).await
 }
 
 #[cfg(test)]
@@ -74,11 +79,13 @@ pub(super) fn prepare_with_resources(
     inputs: &ScopeInputs<'_>,
     resources: ResourceInputs<'_>,
 ) -> Result<Prepared, TurnError> {
+    use crate::fake::Awaited;
+
     let mut ignored = Vec::new();
-    prepare_with_resource_facts(request, capabilities, inputs, resources, &mut ignored)
+    prepare_with_resource_facts(request, capabilities, inputs, resources, &mut ignored).awaited()
 }
 
-pub(super) fn prepare_with_resource_facts(
+pub(super) async fn prepare_with_resource_facts(
     request: &Request<'_>,
     capabilities: PromptCacheCapabilities,
     inputs: &ScopeInputs<'_>,
@@ -86,10 +93,10 @@ pub(super) fn prepare_with_resource_facts(
     facts: &mut Vec<PromptCacheResourceFact>,
 ) -> Result<Prepared, TurnError> {
     facts.clear();
-    prepare_inner(request, capabilities, inputs, Some((resources, facts)))
+    prepare_inner(request, capabilities, inputs, Some((resources, facts))).await
 }
 
-fn prepare_inner(
+async fn prepare_inner(
     request: &Request<'_>,
     capabilities: PromptCacheCapabilities,
     inputs: &ScopeInputs<'_>,
@@ -130,11 +137,11 @@ fn prepare_inner(
             inputs.model_revision,
         )
         .map_err(|_| PromptCacheResourceError::InvalidMetadata)?;
-        let prepared = resources
-            .ok_or(PromptCacheResourceError::Unsupported)
-            .and_then(|(resources, facts)| {
-                prepare_resource(request, inputs.policy, &binding, resources, attempt, facts)
-            });
+        let prepared = if let Some((resources, facts)) = resources {
+            prepare_resource(request, inputs.policy, &binding, resources, attempt, facts).await
+        } else {
+            Err(PromptCacheResourceError::Unsupported)
+        };
         match prepared {
             Ok(Some(record)) => (ready_selection?, Some(record)),
             Ok(None) => {
@@ -230,7 +237,7 @@ impl Prepared {
 // Request, policy, binding, lifecycle inputs, attempt identity, and fact sink
 // are independent boundaries for one state-machine transition.
 #[allow(clippy::too_many_arguments)]
-fn prepare_resource(
+async fn prepare_resource(
     request: &Request<'_>,
     policy: PromptCachePolicy,
     binding: &PromptCacheResourceBinding,
@@ -253,26 +260,26 @@ fn prepare_resource(
         return Err(PromptCacheResourceError::Deadline);
     }
 
-    if let Some(mut record) = store.matching(binding)? {
+    if let Some(mut record) = store.matching(binding).await? {
         let newly_expired = record.state() == PromptCacheResourceState::Ready
             && record.expires_at().is_some_and(|expiry| now >= expiry);
         if newly_expired || record.state() == PromptCacheResourceState::Expired {
             if newly_expired {
                 record.set_state(PromptCacheResourceState::Expired, now);
-                store.put(&record)?;
+                store.put(&record).await?;
                 push_resource_fact(facts, attempt, &record, None);
             }
 
             if record.binding().owner().exclusive() {
                 record.set_state(PromptCacheResourceState::Deleting, now);
-                store.put(&record)?;
+                store.put(&record).await?;
                 push_resource_fact(
                     facts,
                     attempt,
                     &record,
                     Some(PromptCacheResourceOperation::Delete),
                 );
-                match lifecycle.delete(&record, deadline, cancel) {
+                match lifecycle.delete(&record, deadline, cancel).await {
                     Ok(remote) if remote.state == PromptCacheResourceState::Deleted => {
                         record.set_state(PromptCacheResourceState::Deleted, now);
                         push_resource_fact(
@@ -281,7 +288,7 @@ fn prepare_resource(
                             &record,
                             Some(PromptCacheResourceOperation::Delete),
                         );
-                        store.remove(record.id())?;
+                        store.remove(record.id()).await?;
                     }
                     Err(
                         problem @ (PromptCacheResourceError::Ambiguous(_)
@@ -289,7 +296,7 @@ fn prepare_resource(
                         | PromptCacheResourceError::Deadline),
                     ) => {
                         record.ambiguous(PromptCacheResourceOperation::Delete, now);
-                        store.put(&record)?;
+                        store.put(&record).await?;
                         push_resource_fact(
                             facts,
                             attempt,
@@ -300,7 +307,7 @@ fn prepare_resource(
                     }
                     Ok(_) | Err(_) => {
                         record.set_state(PromptCacheResourceState::Orphaned, now);
-                        store.put(&record)?;
+                        store.put(&record).await?;
                         push_resource_fact(
                             facts,
                             attempt,
@@ -313,12 +320,13 @@ fn prepare_resource(
                 // A shared resource cannot be deleted on behalf of one local
                 // reference. Once its provider expiry has passed, dropping
                 // only this stale local reference is safe.
-                store.remove(record.id())?;
+                store.remove(record.id()).await?;
             }
 
             return create_if_authorized(
                 request, policy, binding, store, lifecycle, cancel, now, deadline, attempt, facts,
-            );
+            )
+            .await;
         }
 
         let may_mutate = matches!(
@@ -342,7 +350,8 @@ fn prepare_resource(
                 return create_if_authorized(
                     request, policy, binding, store, lifecycle, cancel, now, deadline, attempt,
                     facts,
-                );
+                )
+                .await;
             }
         };
 
@@ -352,11 +361,15 @@ fn prepare_resource(
             let before = resource_fact_state(&record);
             let operation = action.operation();
             let observed = match action {
-                ResourceAction::Resolve => lifecycle.resolve(&record, deadline, cancel),
+                ResourceAction::Resolve => lifecycle.resolve(&record, deadline, cancel).await,
                 ResourceAction::Renew => {
-                    lifecycle.renew(&record, policy.retention(), deadline, cancel)
+                    lifecycle
+                        .renew(&record, policy.retention(), deadline, cancel)
+                        .await
                 }
-                ResourceAction::Reconcile(_) => lifecycle.reconcile(&record, deadline, cancel),
+                ResourceAction::Reconcile(_) => {
+                    lifecycle.reconcile(&record, deadline, cancel).await
+                }
             };
 
             match observed {
@@ -365,40 +378,39 @@ fn prepare_resource(
                         // `apply_remote` deliberately turns a remotely accepted
                         // but over-ceiling resource into an orphan. That state
                         // must survive restart so cleanup can recover it.
-                        store.put(&record)?;
+                        store.put(&record).await?;
                         push_resource_fact_if_changed(facts, attempt, &record, operation, before);
                         return Err(problem);
                     }
                     match record.state() {
-                        PromptCacheResourceState::Deleted | PromptCacheResourceState::Expired => {
+                        PromptCacheResourceState::Deleted
+                        | PromptCacheResourceState::Expired
+                        | PromptCacheResourceState::Orphaned => {
+                            let orphaned = record.state() == PromptCacheResourceState::Orphaned;
+                            if orphaned {
+                                store.put(&record).await?;
+                            }
                             push_resource_fact_if_changed(
                                 facts, attempt, &record, operation, before,
                             );
-                            store.remove(record.id())?;
+                            if !orphaned {
+                                store.remove(record.id()).await?;
+                            }
                             return create_if_authorized(
                                 request, policy, binding, store, lifecycle, cancel, now, deadline,
                                 attempt, facts,
-                            );
-                        }
-                        PromptCacheResourceState::Orphaned => {
-                            store.put(&record)?;
-                            push_resource_fact_if_changed(
-                                facts, attempt, &record, operation, before,
-                            );
-                            return create_if_authorized(
-                                request, policy, binding, store, lifecycle, cancel, now, deadline,
-                                attempt, facts,
-                            );
+                            )
+                            .await;
                         }
                         PromptCacheResourceState::Expiring if may_mutate => {
-                            store.put(&record)?;
+                            store.put(&record).await?;
                             push_resource_fact_if_changed(
                                 facts, attempt, &record, operation, before,
                             );
                             action = ResourceAction::Renew;
                         }
                         PromptCacheResourceState::Ready => {
-                            store.put(&record)?;
+                            store.put(&record).await?;
                             push_resource_fact_if_changed(
                                 facts, attempt, &record, operation, before,
                             );
@@ -408,7 +420,7 @@ fn prepare_resource(
                         | PromptCacheResourceState::Expiring
                         | PromptCacheResourceState::Deleting
                         | PromptCacheResourceState::Ambiguous => {
-                            store.put(&record)?;
+                            store.put(&record).await?;
                             push_resource_fact_if_changed(
                                 facts, attempt, &record, operation, before,
                             );
@@ -426,7 +438,7 @@ fn prepare_resource(
                     // state needs durable reconciliation.
                     if let Some(operation) = action.operation() {
                         record.ambiguous(operation, now);
-                        store.put(&record)?;
+                        store.put(&record).await?;
                         push_resource_fact_if_changed(
                             facts,
                             attempt,
@@ -441,23 +453,24 @@ fn prepare_resource(
             }
         }
 
-        store.put(&record)?;
+        store.put(&record).await?;
         return Ok(None);
     }
 
     create_if_authorized(
         request, policy, binding, store, lifecycle, cancel, now, deadline, attempt, facts,
     )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
-fn create_if_authorized(
+async fn create_if_authorized(
     request: &Request<'_>,
     policy: PromptCachePolicy,
     binding: &PromptCacheResourceBinding,
     store: &mut dyn PromptCacheResourceStore,
     lifecycle: &dyn PromptCacheResourceLifecycle,
-    cancel: &crucible_core::Cancel,
+    cancel: &crucible_runtime::Cancel,
     now: u64,
     deadline: PromptCacheResourceDeadline,
     attempt: ProviderAttemptId,
@@ -470,33 +483,35 @@ fn create_if_authorized(
         return Ok(None);
     }
     let mut record = PromptCacheResourceRecord::creating(
-        crucible_core::PromptCacheResourceId::new(),
+        crucible_types::PromptCacheResourceId::new(),
         binding.clone(),
         now,
     );
-    store.put(&record)?;
+    store.put(&record).await?;
     push_resource_fact(
         facts,
         attempt,
         &record,
         Some(PromptCacheResourceOperation::Create),
     );
-    let created = lifecycle.create(
-        PromptCacheResourceCreate {
-            id: record.id(),
-            request,
-            binding,
-            retention: policy.retention(),
-            deadline,
-        },
-        cancel,
-    );
+    let created = lifecycle
+        .create(
+            PromptCacheResourceCreate {
+                id: record.id(),
+                request,
+                binding,
+                retention: policy.retention(),
+                deadline,
+            },
+            cancel,
+        )
+        .await;
     match created {
         Ok(created) => {
             if !expiry_allowed(policy, now, created.expires_at) {
                 record.ready(created.handle, created.expires_at, now);
                 record.set_state(PromptCacheResourceState::Orphaned, now);
-                store.put(&record)?;
+                store.put(&record).await?;
                 push_resource_fact(
                     facts,
                     attempt,
@@ -506,7 +521,7 @@ fn create_if_authorized(
                 return Err(PromptCacheResourceError::Rejected);
             }
             record.ready(created.handle, created.expires_at, now);
-            store.put(&record)?;
+            store.put(&record).await?;
             push_resource_fact(
                 facts,
                 attempt,
@@ -521,7 +536,7 @@ fn create_if_authorized(
             | PromptCacheResourceError::Deadline),
         ) => {
             record.ambiguous(PromptCacheResourceOperation::Create, now);
-            store.put(&record)?;
+            store.put(&record).await?;
             push_resource_fact(
                 facts,
                 attempt,
@@ -531,7 +546,7 @@ fn create_if_authorized(
             Err(problem)
         }
         Err(problem) => {
-            store.remove(record.id())?;
+            store.remove(record.id()).await?;
             Err(problem)
         }
     }
@@ -577,7 +592,7 @@ fn push_resource_fact_if_changed(
 
 pub(super) fn apply_remote(
     record: &mut PromptCacheResourceRecord,
-    remote: crucible_core::PromptCacheResourceRemote,
+    remote: crucible_models::PromptCacheResourceRemote,
     policy: PromptCachePolicy,
     now: u64,
 ) -> Result<(), PromptCacheResourceError> {
@@ -657,7 +672,7 @@ pub(super) fn identity(
                 field(&mut hash, 30, inputs.run.to_string().as_bytes());
             }
         }
-        PromptCacheIsolation::Workspace => field(&mut hash, 32, inputs.workspace),
+        PromptCacheIsolation::Workspace => field(&mut hash, 32, named(inputs.workspace)),
         PromptCacheIsolation::User => field(&mut hash, 33, inputs.user),
     }
 
@@ -667,14 +682,16 @@ pub(super) fn identity(
     field(&mut hash, 37, inputs.tool_generation.as_bytes());
 
     PromptCacheIdentity::new(
-        crucible_core::PromptCacheScopeDigest::new(hash.finalize().into()),
+        crucible_types::PromptCacheScopeDigest::new(hash.finalize().into()),
         prefix,
         inputs.route.request_shape_version,
     )
 }
 
 /// Route and credential identity that bounds lifecycle authority.
-pub(super) fn provider_scope(route: PromptCacheRoute<'_>) -> crucible_core::PromptCacheScopeDigest {
+pub(super) fn provider_scope(
+    route: PromptCacheRoute<'_>,
+) -> crucible_types::PromptCacheScopeDigest {
     let mut hash = Sha256::new();
     field(&mut hash, 0, b"crucible.prompt-cache.provider-scope.v1");
     field(&mut hash, 1, route.protocol.as_bytes());
@@ -683,11 +700,23 @@ pub(super) fn provider_scope(route: PromptCacheRoute<'_>) -> crucible_core::Prom
     field(&mut hash, 4, &route.credential_scope.bytes());
     optional(&mut hash, 5, route.account);
     optional(&mut hash, 6, route.project);
-    crucible_core::PromptCacheScopeDigest::new(hash.finalize().into())
+    crucible_types::PromptCacheScopeDigest::new(hash.finalize().into())
+}
+
+/// What a workspace is told apart by: the bytes of its path as the platform
+/// spells them, which no two paths share.
+///
+/// Not the path made into text, which replaces every byte that is not text
+/// with one character and so gives two such workspaces one scope. A path that
+/// is text has the bytes its text has, so it digests as it always did; one
+/// that is not moves to a scope of its own once, and what it kept under the
+/// old one is still reached by the provider-scope cleanup.
+fn named(path: &Path) -> &[u8] {
+    path.as_os_str().as_encoded_bytes()
 }
 
 /// Exact owner allowed to retire an exclusive persistent resource.
-pub(super) fn owner_scope(inputs: &ScopeInputs<'_>) -> crucible_core::PromptCacheScopeDigest {
+pub(super) fn owner_scope(inputs: &ScopeInputs<'_>) -> crucible_types::PromptCacheScopeDigest {
     let mut hash = Sha256::new();
     field(&mut hash, 0, b"crucible.prompt-cache.owner-scope.v1");
     field(&mut hash, 1, &provider_scope(inputs.route).bytes());
@@ -705,12 +734,12 @@ pub(super) fn owner_scope(inputs: &ScopeInputs<'_>) -> crucible_core::PromptCach
                 field(&mut hash, 10, inputs.run.to_string().as_bytes());
             }
         }
-        PromptCacheIsolation::Workspace => field(&mut hash, 12, inputs.workspace),
+        PromptCacheIsolation::Workspace => field(&mut hash, 12, named(inputs.workspace)),
         PromptCacheIsolation::User => field(&mut hash, 13, inputs.user),
     }
     field(&mut hash, 14, inputs.trust);
     field(&mut hash, 15, inputs.authority);
-    crucible_core::PromptCacheScopeDigest::new(hash.finalize().into())
+    crucible_types::PromptCacheScopeDigest::new(hash.finalize().into())
 }
 
 pub(super) fn routing_key(identity: PromptCacheIdentity, maximum: usize) -> PromptCacheKey {
@@ -798,13 +827,18 @@ fn field(hash: &mut Sha256, tag: u8, value: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crucible_core::{
-        CredentialScopeId, Message, PromptCacheContent, PromptCacheIsolation,
-        PromptCacheMechanismCapability, PromptCachePersistentMode, PromptCacheProvenance,
+    use crate::fake::Awaited;
+    use crucible_models::{
+        PromptCacheContent, PromptCacheMechanismCapability, PromptCacheProvenance,
         PromptCacheResourceCreate, PromptCacheResourceCreated, PromptCacheResourceDeadline,
-        PromptCacheResourceError, PromptCacheResourceLifecycle, PromptCacheResourceRecord,
-        PromptCacheResourceRemote, PromptCacheResourceState, PromptCacheResourceStore,
-        PromptCacheUsageReporting, StatefulTransportCapability, Transcript,
+        PromptCacheResourceLifecycle, PromptCacheResourceRemote, StatefulTransportCapability,
+    };
+    use crucible_runtime::BoxFuture;
+    use crucible_storage::PromptCacheResourceStore;
+    use crucible_types::{
+        CredentialScopeId, Message, PromptCacheIsolation, PromptCachePersistentMode,
+        PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheResourceState,
+        PromptCacheUsageReporting, Transcript,
     };
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
@@ -827,7 +861,7 @@ mod tests {
             effort: Some(Effort::High),
             run: RunId::new(),
             session,
-            workspace: b"workspace-a",
+            workspace: Path::new("workspace-a"),
             user: b"user-a",
             trust: b"trusted",
             authority: b"authority-a",
@@ -868,8 +902,34 @@ mod tests {
         changed(&base, |one| {
             one.policy = one
                 .policy
-                .with_namespace(crucible_core::PromptCacheNamespace::new("separate").unwrap());
+                .with_namespace(crucible_types::PromptCacheNamespace::new("separate").unwrap());
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspaces_whose_names_are_not_text_are_told_apart_by_their_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // Made into text, both names are `/work/` and one replacement
+        // character, and the two workspaces would be one cache scope.
+        let one = Path::new(std::ffi::OsStr::from_bytes(b"/work/\xff"));
+        let another = Path::new(std::ffi::OsStr::from_bytes(b"/work/\xfe"));
+
+        let mut here = inputs(Some("session-a"));
+        here.policy = here.policy.with_isolation(PromptCacheIsolation::Workspace);
+        here.workspace = one;
+        let mut there = here;
+        there.workspace = another;
+
+        let prefix = PromptCacheFingerprint::new([0x42; 32]);
+        assert_ne!(identity(&here, prefix), identity(&there, prefix));
+        assert_ne!(owner_scope(&here), owner_scope(&there));
+
+        // A name that is text is the bytes of its text, as it was when the
+        // path was made into text first, so what it cached is still its own.
+        let text = "/home/somebody/wörk";
+        assert_eq!(named(Path::new(text)), text.as_bytes());
     }
 
     #[test]
@@ -890,7 +950,7 @@ mod tests {
         workspace.policy = workspace
             .policy
             .with_isolation(PromptCacheIsolation::Workspace);
-        changed(&workspace, |one| one.workspace = b"workspace-b");
+        changed(&workspace, |one| one.workspace = Path::new("workspace-b"));
 
         let mut user = session;
         user.policy = user.policy.with_isolation(PromptCacheIsolation::User);
@@ -922,7 +982,7 @@ mod tests {
             .push(Message::said("hello"))
             .expect("valid fixture transcript");
         let request = Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "model-a",
             transcript: &transcript,
             tools: &[],
@@ -950,13 +1010,17 @@ mod tests {
             PromptCacheUsageReporting::ReadTokens,
         );
 
-        let prepared = prepare(&request, capabilities.clone(), &inputs(Some("session-a"))).unwrap();
+        let prepared = prepare(&request, capabilities.clone(), &inputs(Some("session-a")))
+            .awaited()
+            .unwrap();
 
         let mut explicit = inputs(Some("session-a"));
         explicit.policy = explicit
             .policy
-            .with_namespace(crucible_core::PromptCacheNamespace::new("shared-agent").unwrap());
-        let explicitly_scoped = prepare(&request, capabilities, &explicit).unwrap();
+            .with_namespace(crucible_types::PromptCacheNamespace::new("shared-agent").unwrap());
+        let explicitly_scoped = prepare(&request, capabilities, &explicit)
+            .awaited()
+            .unwrap();
 
         let Some(default_key) = prepared.routing_key else {
             panic!("default session isolation should derive an opaque routing key");
@@ -978,116 +1042,131 @@ mod tests {
     }
 
     impl PromptCacheResourceStore for MemoryStore {
-        fn matching(
-            &mut self,
-            binding: &crucible_core::PromptCacheResourceBinding,
-        ) -> Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError> {
-            Ok(self
-                .0
-                .iter()
-                .rev()
-                .find(|record| record.binding() == binding)
-                .cloned())
+        fn matching<'a>(
+            &'a mut self,
+            binding: &'a crucible_types::PromptCacheResourceBinding,
+        ) -> BoxFuture<'a, Result<Option<PromptCacheResourceRecord>, PromptCacheResourceError>>
+        {
+            Box::pin(async move {
+                Ok(self
+                    .0
+                    .iter()
+                    .rev()
+                    .find(|record| record.binding() == binding)
+                    .cloned())
+            })
         }
 
-        fn put(
-            &mut self,
-            record: &PromptCacheResourceRecord,
-        ) -> Result<(), PromptCacheResourceError> {
-            if let Some(found) = self.0.iter_mut().find(|found| found.id() == record.id()) {
-                *found = record.clone();
-            } else {
-                self.0.push(record.clone());
-            }
-            Ok(())
+        fn put<'a>(
+            &'a mut self,
+            record: &'a PromptCacheResourceRecord,
+        ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+            Box::pin(async move {
+                if let Some(found) = self.0.iter_mut().find(|found| found.id() == record.id()) {
+                    *found = record.clone();
+                } else {
+                    self.0.push(record.clone());
+                }
+                Ok(())
+            })
         }
 
-        fn remove(
-            &mut self,
-            id: &crucible_core::PromptCacheResourceId,
-        ) -> Result<(), PromptCacheResourceError> {
-            self.0.retain(|record| record.id() != id);
-            Ok(())
+        fn remove<'a>(
+            &'a mut self,
+            id: &'a crucible_types::PromptCacheResourceId,
+        ) -> BoxFuture<'a, Result<(), PromptCacheResourceError>> {
+            Box::pin(async move {
+                self.0.retain(|record| record.id() != id);
+                Ok(())
+            })
         }
 
         fn inspect(
             &mut self,
             maximum: usize,
-        ) -> Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError> {
-            Ok(self.0.iter().take(maximum).cloned().collect())
+        ) -> BoxFuture<'_, Result<Vec<PromptCacheResourceRecord>, PromptCacheResourceError>>
+        {
+            Box::pin(async move { Ok(self.0.iter().take(maximum).cloned().collect()) })
         }
     }
 
     struct PersistentFixture;
 
     impl PromptCacheResourceLifecycle for PersistentFixture {
-        fn create(
-            &self,
-            request: PromptCacheResourceCreate<'_>,
-            cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceCreated, PromptCacheResourceError> {
-            if cancel.requested() {
-                return Err(PromptCacheResourceError::Cancelled);
-            }
-            assert!(!request.deadline.expired());
-            Ok(PromptCacheResourceCreated {
-                handle: crucible_core::PromptCacheResourceHandle::new("remote-fixture").unwrap(),
-                expires_at: 1_600,
+        fn create<'a>(
+            &'a self,
+            request: PromptCacheResourceCreate<'a>,
+            cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceCreated, PromptCacheResourceError>> {
+            Box::pin(async move {
+                if cancel.requested() {
+                    return Err(PromptCacheResourceError::Cancelled);
+                }
+                assert!(!request.deadline.expired());
+                Ok(PromptCacheResourceCreated {
+                    handle: crucible_types::PromptCacheResourceHandle::new("remote-fixture")
+                        .unwrap(),
+                    expires_at: 1_600,
+                })
             })
         }
 
-        fn resolve(
-            &self,
-            record: &PromptCacheResourceRecord,
+        fn resolve<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
             _deadline: PromptCacheResourceDeadline,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            Ok(PromptCacheResourceRemote {
-                handle: record.handle().cloned(),
-                state: PromptCacheResourceState::Ready,
-                expires_at: record.expires_at(),
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move {
+                Ok(PromptCacheResourceRemote {
+                    handle: record.handle().cloned(),
+                    state: PromptCacheResourceState::Ready,
+                    expires_at: record.expires_at(),
+                })
             })
         }
 
-        fn renew(
-            &self,
-            record: &PromptCacheResourceRecord,
-            _retention: crucible_core::PromptCacheRetention,
+        fn renew<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
+            _retention: crucible_types::PromptCacheRetention,
             deadline: PromptCacheResourceDeadline,
-            cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            self.resolve(record, deadline, cancel)
+            cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move { self.resolve(record, deadline, cancel).await })
         }
 
-        fn delete(
-            &self,
-            _record: &PromptCacheResourceRecord,
+        fn delete<'a>(
+            &'a self,
+            _record: &'a PromptCacheResourceRecord,
             _deadline: PromptCacheResourceDeadline,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            Ok(PromptCacheResourceRemote {
-                handle: None,
-                state: PromptCacheResourceState::Deleted,
-                expires_at: None,
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move {
+                Ok(PromptCacheResourceRemote {
+                    handle: None,
+                    state: PromptCacheResourceState::Deleted,
+                    expires_at: None,
+                })
             })
         }
 
-        fn reconcile(
-            &self,
-            record: &PromptCacheResourceRecord,
+        fn reconcile<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
             deadline: PromptCacheResourceDeadline,
-            cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            self.resolve(record, deadline, cancel)
+            cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move { self.resolve(record, deadline, cancel).await })
         }
 
-        fn inspect(
-            &self,
-            record: &PromptCacheResourceRecord,
+        fn inspect<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
             deadline: PromptCacheResourceDeadline,
-            cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            self.resolve(record, deadline, cancel)
+            cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move { self.resolve(record, deadline, cancel).await })
         }
     }
 
@@ -1098,7 +1177,7 @@ mod tests {
             .push(Message::said("a stable prefix long enough"))
             .expect("valid fixture transcript");
         let request = Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "model-a",
             transcript: &transcript,
             tools: &[],
@@ -1128,7 +1207,7 @@ mod tests {
             .policy
             .with_persistent_resources(PromptCachePersistentMode::Create);
         let mut store = MemoryStore::default();
-        let cancel = crucible_core::Cancel::new();
+        let cancel = crucible_runtime::Cancel::new();
 
         let prepared = prepare_with_resources(
             &request,
@@ -1148,7 +1227,7 @@ mod tests {
             prepared
                 .selection
                 .selected()
-                .map(crucible_core::PromptCacheSelected::mechanism),
+                .map(crucible_types::PromptCacheSelected::mechanism),
             Some(PromptCacheMechanism::PersistentContent)
         );
         assert!(prepared.request().resource.is_some());
@@ -1208,7 +1287,7 @@ mod tests {
                 RemoteReply::Ready(expires_at) => Ok(PromptCacheResourceRemote {
                     handle: record.handle().cloned().or_else(|| {
                         Some(
-                            crucible_core::PromptCacheResourceHandle::new("reconciled-fixture")
+                            crucible_types::PromptCacheResourceHandle::new("reconciled-fixture")
                                 .unwrap(),
                         )
                     }),
@@ -1231,81 +1310,89 @@ mod tests {
     }
 
     impl PromptCacheResourceLifecycle for LifecycleFixture {
-        fn create(
-            &self,
-            _request: PromptCacheResourceCreate<'_>,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceCreated, PromptCacheResourceError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(PromptCacheResourceOperation::Create);
-            match self.create {
-                CreateReply::Ready(expires_at) => Ok(PromptCacheResourceCreated {
-                    handle: crucible_core::PromptCacheResourceHandle::new("created-fixture")
-                        .unwrap(),
-                    expires_at,
-                }),
-                CreateReply::Rejected => Err(PromptCacheResourceError::Rejected),
-                CreateReply::Cancelled => Err(PromptCacheResourceError::Cancelled),
-            }
+        fn create<'a>(
+            &'a self,
+            _request: PromptCacheResourceCreate<'a>,
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceCreated, PromptCacheResourceError>> {
+            Box::pin(async move {
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push(PromptCacheResourceOperation::Create);
+                match self.create {
+                    CreateReply::Ready(expires_at) => Ok(PromptCacheResourceCreated {
+                        handle: crucible_types::PromptCacheResourceHandle::new("created-fixture")
+                            .unwrap(),
+                        expires_at,
+                    }),
+                    CreateReply::Rejected => Err(PromptCacheResourceError::Rejected),
+                    CreateReply::Cancelled => Err(PromptCacheResourceError::Cancelled),
+                }
+            })
         }
 
-        fn resolve(
-            &self,
-            record: &PromptCacheResourceRecord,
+        fn resolve<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
             _deadline: PromptCacheResourceDeadline,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            Self::remote(self.resolve, record)
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move { Self::remote(self.resolve, record) })
         }
 
-        fn renew(
-            &self,
-            record: &PromptCacheResourceRecord,
-            _retention: crucible_core::PromptCacheRetention,
+        fn renew<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
+            _retention: crucible_types::PromptCacheRetention,
             _deadline: PromptCacheResourceDeadline,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(PromptCacheResourceOperation::Renew);
-            Self::remote(self.renew, record)
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move {
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push(PromptCacheResourceOperation::Renew);
+                Self::remote(self.renew, record)
+            })
         }
 
-        fn delete(
-            &self,
-            record: &PromptCacheResourceRecord,
+        fn delete<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
             _deadline: PromptCacheResourceDeadline,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(PromptCacheResourceOperation::Delete);
-            Self::remote(RemoteReply::Deleted, record)
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move {
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push(PromptCacheResourceOperation::Delete);
+                Self::remote(RemoteReply::Deleted, record)
+            })
         }
 
-        fn reconcile(
-            &self,
-            record: &PromptCacheResourceRecord,
+        fn reconcile<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
             _deadline: PromptCacheResourceDeadline,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            if let Some(operation) = record.pending() {
-                self.calls.lock().unwrap().push(operation);
-            }
-            Self::remote(self.reconcile, record)
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move {
+                if let Some(operation) = record.pending() {
+                    self.calls.lock().unwrap().push(operation);
+                }
+                Self::remote(self.reconcile, record)
+            })
         }
 
-        fn inspect(
-            &self,
-            record: &PromptCacheResourceRecord,
+        fn inspect<'a>(
+            &'a self,
+            record: &'a PromptCacheResourceRecord,
             _deadline: PromptCacheResourceDeadline,
-            _cancel: &crucible_core::Cancel,
-        ) -> Result<PromptCacheResourceRemote, PromptCacheResourceError> {
-            Self::remote(self.resolve, record)
+            _cancel: &'a crucible_runtime::Cancel,
+        ) -> BoxFuture<'a, Result<PromptCacheResourceRemote, PromptCacheResourceError>> {
+            Box::pin(async move { Self::remote(self.resolve, record) })
         }
     }
 
@@ -1315,7 +1402,7 @@ mod tests {
             .push(Message::said("a stable prefix long enough"))
             .expect("valid fixture transcript");
         let request = Request {
-            purpose: crucible_core::RequestPurpose::Turn,
+            purpose: crucible_models::RequestPurpose::Turn,
             model: "model-a",
             transcript: &transcript,
             tools: &[],
@@ -1368,7 +1455,7 @@ mod tests {
             ResourceInputs {
                 store,
                 lifecycle,
-                cancel: &crucible_core::Cancel::new(),
+                cancel: &crucible_runtime::Cancel::new(),
                 now,
                 deadline: Instant::now() + Duration::from_secs(1),
             },
@@ -1537,7 +1624,7 @@ mod tests {
             let mut scope = creating_scope(Some("session-a"));
             scope.policy = scope
                 .policy
-                .with_retention(crucible_core::PromptCacheRetention::extended(300).unwrap());
+                .with_retention(crucible_types::PromptCacheRetention::extended(300).unwrap());
             let lifecycle = LifecycleFixture::new(
                 CreateReply::Ready(1_250),
                 RemoteReply::Expiring(1_200),
@@ -1563,7 +1650,7 @@ mod tests {
             let mut scope = creating_scope(Some("session-a"));
             scope.policy = scope
                 .policy
-                .with_retention(crucible_core::PromptCacheRetention::extended(300).unwrap());
+                .with_retention(crucible_types::PromptCacheRetention::extended(300).unwrap());
             let first = LifecycleFixture::new(
                 CreateReply::Ready(1_250),
                 RemoteReply::Expiring(1_200),

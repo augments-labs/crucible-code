@@ -23,14 +23,18 @@ mod catalogue;
 mod hosted;
 mod hosting;
 mod talking;
+#[cfg(test)]
+mod testing;
 mod wire;
+mod withheld;
 
-pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call};
+pub use calling::{Answered, BLOCKS, CUT, RESULT_BYTES, Unanswered, call, call_async};
 pub use catalogue::{
     ABOUT_BYTES, CURSOR_BYTES, Greeting, NAME_BYTES, Offered, PAGES, Rebuffed, SCHEMA_BYTES, TOOLS,
-    VERSIONS, hello, tools,
+    VERSIONS, hello, hello_async, tools, tools_async,
 };
 pub use hosted::{Ended, Hosted, Unstarted};
 pub use hosting::{Chosen, Hosting};
 pub use talking::{ASIDES, Talking, Trouble};
 pub use wire::{Call, Garbled, Heard, NO_SUCH_METHOD, RPC, Reply, SAID_BYTES, Sent};
+pub use withheld::{Indistinct, Withheld};
