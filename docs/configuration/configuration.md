@@ -281,7 +281,7 @@ macOS uses the built-in Seatbelt framework through the fixed system
 `/usr/bin/sandbox-exec` launcher. Native Windows uses a dedicated account,
 path-capability ACLs, WFP network denial, a restricted token, private desktop,
 exact inherited handles and a Job Object after one explicit Administrator
-setup. See the [setup and platform details](../security/sandboxing.md#windows-setup-maintenance).
+setup. See [turning it on](../security/sandboxing.md#turning-it-on) for each platform.
 
 `enabled` controls OS confinement. An unavailable backend or an unsupported
 requested boundary prevents the command from starting.
