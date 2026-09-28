@@ -15,6 +15,13 @@ change in any release with no deprecation period.
   toolset generation, even when no tool had been added or removed. The model is
   now told about its tools again only when their names differ from what it last
   heard.
+- **A confined command's allowed connections now go through your `http://`
+  proxy.** The per-command proxy connected straight to each allowed host, so
+  behind a proxy that is the only way out, allowed hosts were unreachable from
+  inside the sandbox. It now follows `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`
+  and `NO_PROXY` as crucible's own requests do: it goes past a SOCKS proxy they
+  go past, and under an `https://` proxy or one they refuse it fails those
+  connections with `502` instead of going around it.
 
 ## [0.43.1] - 2026-09-28
 

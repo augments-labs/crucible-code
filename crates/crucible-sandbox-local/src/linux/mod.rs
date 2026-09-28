@@ -28,6 +28,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use crucible_http::ProxyEnv;
 use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendIdentity, SandboxCapabilities, SandboxCleanup, SandboxCommand,
@@ -59,6 +60,7 @@ pub(super) fn prepare(
     active: Arc<AtomicUsize>,
     runtime: Option<tokio::runtime::Handle>,
     publications: BoundedPublication,
+    upstream: Arc<ProxyEnv>,
 ) -> Result<Box<dyn SandboxSession>, SandboxError> {
     let excluded: Vec<_> = request
         .policy()
@@ -139,6 +141,7 @@ pub(super) fn prepare(
         materialization: None,
         materialized: false,
         transferred: false,
+        upstream,
         #[cfg(test)]
         serial,
     }))
@@ -158,6 +161,8 @@ struct LinuxSession {
     materialization: Option<materialize::Materialization>,
     materialized: bool,
     transferred: bool,
+    /// The proxy settings each command's allowed traffic is routed by.
+    upstream: Arc<ProxyEnv>,
     #[cfg(test)]
     serial: Option<transaction::TestSerialLease>,
 }
@@ -278,6 +283,7 @@ impl SandboxSession for LinuxSession {
                         policy.clone(),
                         self.request.id(),
                         self.request.policy().limits().command_time,
+                        Arc::clone(&self.upstream),
                     ) {
                         Ok(mediator) => Some(mediator),
                         Err(source) => {

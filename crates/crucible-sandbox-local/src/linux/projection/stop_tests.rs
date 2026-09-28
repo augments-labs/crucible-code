@@ -12,7 +12,9 @@ fn a_stop_hung_in_its_mediator_is_failed_cleanup_not_silent_success() {
 
     let policy =
         SandboxDomainPolicy::new([], [], false, [], SandboxNetworkProvenance::User).unwrap();
-    let mut proxy = crate::network::Mediator::tcp(policy, SandboxId::new(), None).unwrap();
+    let mut proxy =
+        crate::network::Mediator::tcp(policy, SandboxId::new(), None, std::sync::Arc::default())
+            .unwrap();
     proxy.hang_listener();
     let mut command = std::process::Command::new("/bin/sh");
     command.args(["-c", "exit 0"]);
