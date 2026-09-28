@@ -7,18 +7,43 @@
 #   2. the drill fails (exit 1, falsification held) when a fixture is
 #      corrupted in a way the previous binary must refuse.
 #
-# The previous binary is built once here, from the local v0.43.2 tag in a
-# scratch worktree, and handed to both runs — so this also exercises the
-# drill's --prior-binary path. The drill's own default path (building the tag
-# itself) is covered by running the drill directly. Everything the drill or
-# the binaries touch lives under scratch directories; real session or
-# credential files are never read.
+# The previous binary is built once here, from the local tag the drill names,
+# in a scratch worktree, and handed to both runs, so this also exercises the
+# drill's --prior-binary path. --prior-binary names one already built from that
+# tag instead, as CI does, so a cell builds the release once rather than twice.
+# The drill's own default path (building the tag itself) is covered by running
+# the drill directly. Everything the drill or the binaries touch lives under
+# scratch directories; real session or credential files are never read.
+#
+#     scripts/sh/rollback-drill-selftest.sh
+#     scripts/sh/rollback-drill-selftest.sh --prior-binary /path/to/crucible
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
 readonly DRILL=$PWD/scripts/sh/rollback-drill.sh
-readonly PRIOR_TAG=v0.43.2
+# The drill names the release it rolls back to; this builds the same one.
+PRIOR_TAG=$(sed -n 's/^readonly PRIOR_TAG=//p' "$DRILL")
+readonly PRIOR_TAG
+[[ -n $PRIOR_TAG ]] || {
+    printf 'FAIL %s names no PRIOR_TAG\n' "$DRILL" >&2
+    exit 2
+}
+
+prior=
+while (($#)); do
+    case "$1" in
+    --prior-binary)
+        shift
+        prior=${1:?'rollback-drill-selftest: --prior-binary needs a path'}
+        ;;
+    *)
+        echo "rollback-drill-selftest: unknown option $1" >&2
+        exit 2
+        ;;
+    esac
+    shift
+done
 
 failed=0
 say() {
@@ -48,21 +73,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# One previous-binary build for both runs. The tag is local; nothing is
-# fetched, and the scratch worktree is removed on the way out.
-git rev-parse --verify "$PRIOR_TAG^{commit}" >/dev/null || {
-    printf 'FAIL the local tag %s is missing; the drill fetches nothing\n' "$PRIOR_TAG" >&2
-    exit 2
-}
-git worktree add --detach "$scratch/prior-src" "$PRIOR_TAG" >/dev/null
-(cd "$scratch/prior-src" && cargo build --locked --bin crucible) >/dev/null 2>&1
-prior=$scratch/prior-src/target/debug/crucible
-[[ -x $prior ]] || prior=$scratch/prior-src/target/debug/crucible.exe
-[[ -x $prior ]] || {
-    printf 'FAIL the prior build left no binary\n' >&2
-    exit 2
-}
-say "the previous binary builds from the local tag"
+if [[ -n $prior ]]; then
+    [[ -f $prior && -x $prior ]] || {
+        printf 'FAIL the previous binary %s is not an executable file\n' "$prior" >&2
+        exit 2
+    }
+    say "the previous binary is the one given"
+else
+    # One previous-binary build for both runs. The tag is local; nothing is
+    # fetched, and the scratch worktree is removed on the way out.
+    git rev-parse --verify "$PRIOR_TAG^{commit}" >/dev/null || {
+        printf 'FAIL the local tag %s is missing; the drill fetches nothing\n' "$PRIOR_TAG" >&2
+        exit 2
+    }
+    git worktree add --detach "$scratch/prior-src" "$PRIOR_TAG" >/dev/null
+    (cd "$scratch/prior-src" && cargo build --locked --bin crucible) >/dev/null 2>&1
+    prior=$scratch/prior-src/target/debug/crucible
+    [[ -x $prior ]] || prior=$scratch/prior-src/target/debug/crucible.exe
+    [[ -x $prior ]] || {
+        printf 'FAIL the prior build left no binary\n' >&2
+        exit 2
+    }
+    say "the previous binary builds from the local tag"
+fi
 
 # Gate 1: clean fixtures pass.
 if "$DRILL" --prior-binary "$prior" >"$scratch/clean.log" 2>&1; then
