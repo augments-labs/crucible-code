@@ -28,7 +28,7 @@ provider for `meta/llama-4`.
 
 A credential says a provider **can be reached**, and never which to ask. Which
 variable your shell happens to carry is a fact about that shell, and a turn sent
-to the wrong vendor is billed there and leaves your prompt behind — so no
+to the wrong vendor is billed there and leaves your prompt behind, so no
 credential outranks another, and no order between vendors is written down
 anywhere in crucible.
 
@@ -44,7 +44,7 @@ Warning: No provider selected. Use /model to select a provider and model.
 ```
 
 A model written under a provider does not answer it. `providers.openai.model`
-says what to ask OpenAI *for* — it is not a way of saying to ask OpenAI, and
+says what to ask OpenAI *for*. It is not a way of saying to ask OpenAI, and
 reading it as one is how a machine holding two keys used to end up at whichever
 vendor a model had been chosen for weeks earlier.
 
@@ -73,9 +73,9 @@ There is **no model built in**, and none of these rungs is a guess:
 1. `--model`, where it names one.
 2. `providers.<name>.model` in your
    [configuration](../configuration/configuration.md), for the provider being
-   asked. A provider and a bare slash — `--model openai/` — is how you reach
+   asked. A provider and a bare slash (`--model openai/`) is how you reach
    this rung with the flag present.
-3. Nothing. crucible starts anyway and says so under the welcome — naming
+3. Nothing. crucible starts anyway and says so under the welcome, naming
    whichever half of setting it up is still missing:
 
 ```
@@ -102,7 +102,7 @@ tried. `/model` on its own stands a shelf over
 the whole shell: a search line across the top, every provider this build serves
 in one pane beside the models in the other, and the rungs the marked model takes
 on a strip underneath, under the name of the one being asked now. Typing narrows
-both panes at once, against a model's name or a provider's — somebody who types
+both panes at once, against a model's name or a provider's: somebody who types
 `openai` wants everything that vendor serves, somebody who types `sonnet` wants
 the one model, and neither should have to say which kind of name they just
 typed. Tab crosses between the panes, the up and down arrows walk whichever one
@@ -110,24 +110,24 @@ the mark is in, the left and right arrows walk the rungs, Enter takes the model
 and the rung under it together, and Escape leaves everything as it was. A mouse
 lights the row it is over, across the whole width of that pane; passing over a
 row chooses nothing, and clicking one puts the mark on it. Clicking a model the
-mark is already on takes it, so a double click picks one outright — and a
-provider is never taken that way, because it narrows the models beside it rather
-than being an answer itself. The rung stays on the arrow keys, which is what
+mark is already on takes it, so a double click picks one outright. A provider
+is never taken that way, because it narrows the models beside it rather than
+being an answer itself. The rung stays on the arrow keys, which is what
 keeps taking the model and saying how hard it should think one visit. Down a
 pipe, where nobody can walk a shelf, it writes the models out as the line that
 asks for each.
 
-Taking a row off the models pane moves the session to whoever serves it first —
+Taking a row off the models pane moves the session to whoever serves it first:
 a model belongs to the vendor that serves it, and the two change together. The
 rung goes with them, because a rung is asked of a model: choosing one and then
 being sent somewhere else to say how hard it should think is the same question
 put twice. A model whose vendor serves no rung is taken with the rung left
 exactly as it was, and its row says so. A model the shelf does not carry is
-still named — what is offered is a shortcut past the vendor's documentation, and
+still named. What is offered is a shortcut past the vendor's documentation, and
 the vendor remains the authority on what it serves.
 
 A model belongs to the provider serving it. crucible never writes a name under
-one provider and sends it to another — the pairing is settled once, by
+one provider and sends it to another. The pairing is settled once, by
 [Which provider](#which-provider), and the model rungs above are all read for
 that same provider.
 
@@ -169,8 +169,8 @@ the same thing whichever provider a session is on:
 crucible --effort max
 ```
 
-The bottom rung is not a default in disguise. Which rungs a model serves — and
-whether it takes one at all — is decided by its vendor and differs between
+The bottom rung is not a default in disguise. Which rungs a model serves, and
+whether it takes one at all, is decided by its vendor and differs between
 models of the same vendor, so a rung crucible chose on your behalf would reach
 models that refuse the field outright. Naming one for a model that does not take
 it is refused by the vendor rather than dropped here, the same bargain a model
@@ -197,7 +197,7 @@ without touching the model. It is stood over a
 model by name and asks which model is being asked first, since a rung is one
 word in one request and what it buys is that model's to say. Either way it applies from the next turn on and is written to
 `~/.crucible/config.json` beside the model, so the next run here asks for the
-same. There is no way back to asking for nothing from inside a session — a rung
+same. There is no way back to asking for nothing from inside a session. A rung
 you can see on the screen cannot be un-seen by being handed a default this
 program is never told the name of. Remove the key from the file for that.
 
@@ -213,13 +213,13 @@ crucible, asking claude-opus-5 at max effort.
 ```
 
 Neither is something a model can find out for itself. Its own name it would
-answer from training — which is whatever was true when it was trained, and is
-wrong the moment `/model` changes it — and the rung is a field on a request it
+answer from training, which is whatever was true when it was trained, and is
+wrong the moment `/model` changes it. The rung is a field on a request it
 never sees. Both are read off the session again before each turn rather than
 written down once, so the answer keeps up with `/model` and `/effort` instead of
 describing the session the first turn was taken in.
 
-Where no rung was named, what is said is that the vendor's own default applies —
+Where no rung was named, what is said is that the vendor's own default applies.
 crucible is never told which rung that is, and neither is the model.
 
 ### The ladder holds what the model serves
@@ -228,14 +228,14 @@ Which rungs a model takes is written down beside its name in the shelf `/model`
 stands, so the ladder is the model's rather than crucible's: `moonshot/k3` gets
 three rungs, `openai/gpt-5.5` gets four, and a model whose vendor serves none is
 told so instead of being offered a ladder that cannot be answered. A rung that
-is missing is missing rather than drawn and greyed — a row the arrows have to
+is missing is missing rather than drawn and greyed: a row the arrows have to
 step over is a row worth not drawing.
 
 That list is read off each vendor's documentation and goes stale between
 releases, so nothing is narrowed except the offer. `--effort` and
 `/effort <rung>` go to the vendor whatever this build has written down, and a
-model it has never heard of — one released since, or one typed rather than
-picked — is offered all five. What a stale entry costs is a missing row in a
+model it has never heard of (one released since, or one typed rather than
+picked) is offered all five. What a stale entry costs is a missing row in a
 panel, never a refusal from the program that is not the one serving the model.
 
 Google is the encoder-level exception: its Interactions requests support
@@ -347,15 +347,15 @@ authentication is established by the next request; a rejected key stays stored
 until `/logout <provider>` removes it.
 
 The session is then set up with that provider from the next turn on, without
-restarting — unless another provider is already answering, in which case the
+restarting, unless another provider is already answering, in which case the
 session keeps the provider and model it has and the line points at `/model`,
 where switching is chosen rather than implied. Authentication selects neither
 [model](#which-model) nor [effort](#how-hard-to-think); where neither was
 already chosen, `/model` is the next explicit step.
 
 Where the login is what set the session up, `provider` is written down for it
-too, because a credential says a vendor can be reached and never which to ask —
-logging in is somebody saying which, and the next run here should not have to
+too, because a credential says a vendor can be reached and never which to ask.
+Logging in is somebody saying which, and the next run here should not have to
 be asked again. That still selects neither a model nor an effort.
 
 Where no variable above is set and that file names nobody, the warning under the
@@ -363,7 +363,7 @@ welcome names this command, and the prompt is there underneath it as usual.
 
 `/logout <provider>` removes that provider's stored account or API key, and
 `/logout` on its own offers every stored credential crucible can remove.
-Editing the file by hand works too — crucible only reads what is there, and a
+Editing the file by hand works too: crucible only reads what is there, and a
 name under `keys` that this build does not serve is left alone rather than
 offered for removal.
 
@@ -377,8 +377,8 @@ login removes its stored API key. Other providers’ credentials are unaffected.
 The login menu offers available methods, not multiple active methods at once.
 
 For API-key authentication, **the variable wins over a stored API key**. It is
-the key chosen for this process — a second account, a work key, one rotated an
-hour ago — while the stored key is the standing answer underneath it, so
+the key chosen for this process (a second account, a work key, one rotated an
+hour ago), while the stored key is the standing answer underneath it, so
 `OPENAI_API_KEY=` turns off the *variable* and leaves the file's key doing its
 job. A deliberately authorized subscription account wins instead, at that
 provider's fixed account endpoint, so an inherited key cannot silently switch
@@ -390,16 +390,16 @@ a plan's token to a gateway.
 `/logout` reaches the protected store only. A child process cannot unset a
 variable in its parent shell, so after removing a stored credential crucible
 resolves the provider again and names any environment variable that remains
-active — unset it in the launching shell if that one is meant to go too.
+active. Unset it in the launching shell if that one is meant to go too.
 
-A file crucible cannot read is a sentence under the welcome — `! auth.json could
-not be read: …` — and not the end of the run: nobody is logged in for that run,
+A file crucible cannot read is a sentence under the welcome (`! auth.json could
+not be read: …`) and not the end of the run: nobody is logged in for that run,
 which leaves the environment, and ending it would take away the session the file
 gets fixed from.
 
 ## Authentication is a separate axis
 
-A provider is a wire protocol — how a request is shaped and how a response is
+A provider is a wire protocol: how a request is shaped and how a response is
 read. How you prove who you are is a different question, and crucible keeps them
 apart: a provider is handed an already-resolved credential and never learns what
 kind it was.
@@ -470,14 +470,14 @@ Two consequences you can see:
 A connection can close between the request and the first word of the answer. The
 usual reason is time: a turn that runs tools holds its connection open while they
 work, and a socket the provider closed in the meantime returns nothing at all. A
-failure about the moment rather than the request reads the same way from here —
+failure about the moment rather than the request reads the same way from here:
 HTTP 429 or 408, or a 5xx from the service or from a gateway in front of it.
 
 crucible asks again, twice at most, pausing a quarter of a second before the
 first and half a second before the second. The row above the box says `retrying`
 while it does, and <kbd>Esc</kbd> ends the wait. An attempt that failed leaves
 nothing in the transcript, and nothing is asked again once a word of the answer
-has arrived — those words are on screen already, and a second answer would be
+has arrived. Those words are on screen already, and a second answer would be
 written underneath the half of the first one you have read. A failure that
 outlives both goes is reported as itself.
 
@@ -511,7 +511,7 @@ The two consoles also spell their models differently. What `/model` offers is
 the coding console's spelling, that being the one crucible asks: `k3`,
 `k3-256k`, `kimi-for-coding` and `kimi-for-coding-highspeed`. The open platform
 serves `kimi-k3`, `kimi-k2.7-code` and `kimi-k2.7-code-highspeed`, and does not
-serve a 256k K3 at all — so a key from there is a `baseUrl` and a typed name.
+serve a 256k K3 at all, so a key from there is a `baseUrl` and a typed name.
 
 Requests to this provider identify crucible by name in the `user-agent` header.
 MoonshotAI's terms require a client to say truthfully what it is, and treat a
