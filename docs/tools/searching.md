@@ -6,7 +6,7 @@ directory it is pointed at lies outside the workspace.
 
 ## What both of them skip
 
-One place decides which files exist, so the two can never disagree — an agent
+One place decides which files exist, so the two can never disagree: an agent
 told a file is not there by one tool and shown it by the other has no way to
 tell which answer to believe. Both skip hidden files, anything a `.gitignore` or
 `.ignore` excludes, and anything the global git excludes list does. Neither
@@ -41,7 +41,7 @@ skip what `rg` skips and read what it reads.
 anything copied out of a file: `[dependencies]` is a character class to an
 expression and matches every line holding one of those letters, and
 `unwrap_or(` is not an expression at all. Escaping such a pattern by hand costs
-a turn whichever way it goes wrong — a refused call, or an answer about
+a turn whichever way it goes wrong: a refused call, or an answer about
 something else with nothing in it saying so.
 
 `content` is the default answer and gives a line per match, `path:line:text`:
@@ -51,7 +51,7 @@ src/client.rs:42:    pub fn timeout(&self) -> Duration {
 src/server.rs:118:        let timeout = settings.timeout.unwrap_or(DEFAULT);
 ```
 
-A matching line longer than 400 characters is cut there — a match inside a
+A matching line longer than 400 characters is cut there. A match inside a
 minified bundle is worth reporting and the bundle is not worth sending.
 
 `context` asks for the lines around each match, the way `grep -C` does. They
@@ -67,7 +67,7 @@ src/client.rs-43-        self.timeout
 Two matches close enough to share lines share them: a line is reported once,
 whichever match it belongs to. `limit` counts matches and never the lines around
 them, so a search asking for three either side comes back with as many matches as
-it would without — and a match the limit cut takes its own context with it,
+it would without, and a match the limit cut takes its own context with it,
 rather than leaving lines standing beside nothing. `files` is a list of names,
 which has nowhere to put a line, so it ignores the argument.
 
@@ -98,8 +98,8 @@ named, so the model knows where to go and look itself:
 [stopped partway through vendor/bundle.min.js: a match below that point is not here]
 ```
 
-Nothing matching is a failure rather than an empty answer —
-`nothing matched TODO` — because a model handed an empty result reads it as a
+Nothing matching is a failure rather than an empty answer
+(`nothing matched TODO`), because a model handed an empty result reads it as a
 successful search of nothing.
 
 ## `glob`
@@ -116,15 +116,15 @@ The answer is one path per line, and a walk that matched more says so:
 
 `sort` decides the order and therefore which paths a `limit` keeps, which is the
 part worth knowing. The listing is bounded while the tree is still being walked,
-not afterwards — so `sort: "modified"` with a limit of 20 returns the twenty
+not afterwards, so `sort: "modified"` with a limit of 20 returns the twenty
 newest files in the tree, where sorting a capped alphabetical answer afterwards
 would return the twenty lowest paths rearranged. `modified` is what finds what a
 project has been working on; `path` is what you want the rest of the time, and
 it reads no modification times at all, so the second order's cost is paid only
 by the calls that ask for it.
 
-A file whose modification time cannot be read — one that vanished mid-walk, one
-on a filesystem that keeps no times — sorts last rather than being dropped.
+A file whose modification time cannot be read (one that vanished mid-walk, one
+on a filesystem that keeps no times) sorts last rather than being dropped.
 Putting it at the top of an answer about recent work would be the wrong claim;
 leaving it out would be a file the model is told does not exist.
 
@@ -132,7 +132,7 @@ leaving it out would be a file the model is told does not exist.
 
 <kbd>Esc</kbd> during a search or a walk answers with what it had rather than
 failing. Half a tree searched is half a tree searched, and the lines it found
-are what the turn was spent on — but an answer that stopped early looks exactly
+are what the turn was spent on. But an answer that stopped early looks exactly
 like one that finished, so the difference is written into it:
 
 ```

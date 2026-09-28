@@ -29,11 +29,11 @@ that is [Permissions](../permissions/index.md).
 in some sessions: a run whose output is not a terminal has nobody to ask, so it
 is neither advertised nor held back. It is not deferred anywhere, because a
 model that cannot see it will not look it up at the moment it realises it should
-ask — and that moment is the only thing it is for.
+ask, and that moment is the only thing it is for.
 
 `todo_write`, `web_search` and `web_fetch` are held back. You will see the agent
 call `tool_search` before it uses one, which costs a round trip the first time
-and nothing after — the tool stays in its list for the rest of the session, and
+and nothing after: the tool stays in its list for the rest of the session, and
 `/clear` empties that along with everything else the conversation knew. The two
 web tools are additionally absent where your provider has nothing to answer
 them, which [Reaching the web](web.md) sets out.
@@ -41,7 +41,7 @@ them, which [Reaching the web](web.md) sets out.
 ## Everything but `bash` stays in the working directory
 
 The directory you start crucible in is the workspace root. `read`, `grep`,
-`glob`, `edit` and `write` resolve every path against it — including through a
+`glob`, `edit` and `write` resolve every path against it, including through a
 symbolic link, and including a link planted between the moment the path was
 checked and the moment the file was opened. The tools that change a file
 refuse a path that leads outside; the tools that only look put it to you and
@@ -55,8 +55,8 @@ reach, so what bounds it is the question you are asked, which names the command
 rather than a directory.
 
 `bash_output` and `todo_write` name no path, because they reach no file. What
-each one touches is a value inside crucible — the output crucible is already
-holding for a command it started, and the plan above the prompt — which is the
+each one touches is a value inside crucible (the output crucible is already
+holding for a command it started, and the plan above the prompt), which is the
 whole of why nobody is asked about either: there is no target for a rule to be
 written about. [Writing down the plan](planning.md) and [Running a
 command](commands.md) are the rest of them.
@@ -75,7 +75,7 @@ somebody `cat`'d by accident. Every tool here stops at 30000 bytes.
 
 `todo_write` is the one that does not arrive there with an ordinary plan. Its
 answer is the plan it just wrote, and a plan is bounded before it is written
-rather than after it is read — sixty-four tasks of at most 256 bytes each, a
+rather than after it is read: sixty-four tasks of at most 256 bytes each, a
 little over half that figure. The answer is measured escaped, though: a quote,
 backslash, tab, newline or carriage return counts twice, and most other control
 characters six times. A full plan with about four-fifths of its text in the
@@ -95,7 +95,7 @@ The notes are addressed to the model rather than to you, and they are the
 difference between a model that asks for the next page and one that reads a
 prefix as the whole file. The two halves of the bound are not the same promise:
 `limit` says how many results to look for, and the bytes say how much text comes
-back. Where they disagree the bytes win — which is why a note about a full
+back. Where they disagree the bytes win, which is why a note about a full
 answer says to narrow the pattern rather than to raise the limit.
 
 ## A failed tool is not a failed turn
@@ -122,9 +122,9 @@ again.
 A model writes a tool call after reading files in your project, so the arguments
 are as trustworthy as those files are. They are checked accordingly. A `limit`
 past a tool's ceiling is clamped to it, and a `timeout` past `bash`'s is refused
-outright — the first is a request for more than an answer holds, the second is a
-request to let something run for a day. A word outside the set an
-argument accepts — `mode`, `sort` — is refused rather than quietly read as the
-default, because a call that asked for one thing and silently got another is an
-answer nobody can act on. A path is resolved before it is used, and the
-resolution is what the workspace check sees.
+outright: the first is a request for more than an answer holds, the second is a
+request to let something run for a day. A word outside the set an argument
+accepts (`mode`, `sort`) is refused rather than quietly read as the default,
+because a call that asked for one thing and silently got another is an answer
+nobody can act on. A path is resolved before it is used, and the resolution is
+what the workspace check sees.

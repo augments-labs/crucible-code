@@ -23,19 +23,19 @@ writes them:
 ```
 
 The numbers are the file's own, so an `offset` of 500 answers with line 500
-numbered 500 — which is what lets the model quote a line to `edit` and talk
+numbered 500, which is what lets the model quote a line to `edit` and talk
 about it to you.
 
 Three things end an answer early, and each says so. A `limit` reached leaves
 `[more follows: call read again with offset 501]`. The 30000-byte bound does the
 same, at whatever line filled it. And a single line longer than 2000 characters
-is cut there and marked `[line cut at 2000 characters]` — one minified bundle on
-one line would otherwise be the whole answer.
+is cut there and marked `[line cut at 2000 characters]`, because one minified
+bundle on one line would otherwise be the whole answer.
 
 An `offset` past the end of the file is not a failure: the answer is
 `one.txt has no line 900`, which tells the model it walked off the end rather
 than that something is wrong. A file that is not text says so too, rather than
-putting its bytes in the transcript — and where its name says what it is, the
+putting its bytes in the transcript. Where its name says what it is, the
 refusal says what would turn it into something readable.
 
 ### A picture is looked at rather than read
@@ -53,7 +53,7 @@ The picture goes with the answer and the model sees it. Nothing is asked first:
 Two things still stop it. A picture larger than the 4 MB one request carries is
 refused, because that is more than a request could carry whatever else it holds.
 And a model that does not read pictures gets the answer without the file and a
-row naming what stayed behind — [what a model can
+row naming what stayed behind; [what a model can
 read](../providers/reading.md) is the table that decides.
 
 A file named `.png` whose bytes are not a PNG is read as text, and gets whatever
@@ -61,7 +61,7 @@ the text reader makes of it. The name is what somebody meant by it; the bytes
 are what is there, and where they disagree the bytes win.
 
 A PDF is the exception, and deliberately: it is not handed back this way even on
-a model that reads one. What it gets is the refusal below, naming a converter —
+a model that reads one. What it gets is the refusal below, naming a converter:
 an answer that works on every model crucible offers, where an attachment works
 on two of the three.
 
@@ -90,24 +90,24 @@ converter it knows about, best first, and names the first one you have:
 | `.pdf` | `pdftotext`, then `soffice` |
 
 The order is what survives, not what is likeliest. `pandoc` writes Markdown and
-keeps headings, lists and tables; the others flatten a document into prose — a
+keeps headings, lists and tables; the others flatten a document into prose: a
 heading becomes a line like any other, and a table becomes tab-separated rows.
 
 `--extract-media` is there because a picture is the one thing no converter turns
 into text. `pandoc` without it writes the *reference* and not the file, leaving
 a link to something that was never saved; with it the pictures come out beside
-the Markdown as ordinary files — and an ordinary file is one `read` hands back
+the Markdown as ordinary files, and an ordinary file is one `read` hands back
 to be looked at, or that you can
 [name in the prompt](../getting-started/getting-started.md#naming-a-file-in-the-prompt).
 That is the second half of reading a document: the words come out of the
 converter, and the diagram goes back in as a picture.
 
 Only `pandoc` is described that way, because only `pandoc` does it. The rest
-keep a picture's description, where it has one, and nothing else — so their
+keep a picture's description, where it has one, and nothing else, so their
 refusals promise nothing about files that will not be there.
 
 LibreOffice's command line is `soffice`, and its installer puts it on the `PATH`
-on Linux only — so on macOS and Windows crucible also looks where the installer
+on Linux only, so on macOS and Windows crucible also looks where the installer
 writes, and names the absolute path it found. Where you have none of the
 converters for a file, the answer says so, and which to install:
 
@@ -117,12 +117,12 @@ here converts one — soffice or xlsx2csv would.
 ```
 
 Nothing is converted for you and nothing is installed for you. The command is a
-suggestion, run — if you allow it — by [`bash`](commands.md) like any other. A
+suggestion, run (if you allow it) by [`bash`](commands.md) like any other. A
 file whose name says nothing about it gets the plain refusal, because a
 suggestion that does not fit is worse than none.
 
 What comes back is the text of the document, and only the text. Cell formatting
-and layout do not survive a conversion, and neither does a picture — except
+and layout do not survive a conversion, and neither does a picture, except
 under `pandoc`, where it survives as a file beside the text rather than as part
 of it. A slide deck or a spreadsheet whose content *is* a diagram still converts
 to very little.
@@ -130,8 +130,8 @@ to very little.
 ### A video is read as the frames pulled out of it
 
 Nothing crucible speaks to reads a video, and everything it speaks to reads a
-picture. So a video is refused in the same shape as a document — turn it into
-something a model takes in, then hand that over — with a different second half:
+picture. So a video is refused in the same shape as a document (turn it into
+something a model takes in, then hand that over), with a different second half:
 
 ```
 clip.mp4 is not a text file. It is a video — nothing here reads one and
@@ -145,13 +145,13 @@ long recording sparsely rather than sampling the start of it.
 `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi` and `.m4v`, all by `ffmpeg`. `ffprobe`
 is named beside it because a rate chosen without a duration is chosen blind:
 one frame a second is thirty frames of a clip and seven thousand of a two-hour
-recording. It ships with `ffmpeg`, so there is one thing to install — which is
+recording. It ships with `ffmpeg`, so there is one thing to install, which is
 why the answer for a machine that has neither names only `ffmpeg`.
 
 Neither is looked for on the `PATH` alone. `ffmpeg` publishes an archive rather
 than an installer on macOS and Windows, so it usually arrives through a package
 manager, and crucible also looks in the directories those managers document
-their shims into — Homebrew's and MacPorts' prefixes, and winget's,
+their shims into: Homebrew's and MacPorts' prefixes, and winget's,
 Chocolatey's and Scoop's. It is the same lookup that finds LibreOffice where
 its installer puts it, held to the same line: a directory is looked in because
 an installer is known to write there, never because a program is often found
@@ -168,16 +168,16 @@ Three things are lost, and knowing which is what makes the frames readable:
   full-size frames is already about that. That is why the suggested command
   carries a rate and a cap rather than extracting everything: a minute of
   thirty-frames-a-second video is 1 800 files, and a suggestion that fills a
-  directory is worse than none. Smaller pictures buy more of them —
+  directory is worse than none. Smaller pictures buy more of them:
   `-vf fps=1,scale=1280:-1` is the same command with the frames scaled down.
 
 crucible extracts nothing and chooses no frames. The commands are suggestions,
-run — if you allow it — by [`bash`](commands.md), and the pictures that come out
+run (if you allow it) by [`bash`](commands.md), and the pictures that come out
 are read like any other.
 
 Reading inside the workspace is not asked about: it is allowed, or refused by
 a `deny` [rule](../permissions/rules.md), and the question is answered without
-being put to you. A path that leads outside the workspace is the exception —
+being put to you. A path that leads outside the workspace is the exception;
 that read is put to you the way a command is, and runs only on your yes.
 
 ## `edit`
@@ -188,11 +188,11 @@ that read is put to you the way a command is, and runs only on your yes.
 | `find` | The exact text to replace, indentation included. Required unless `edits` is sent. |
 | `replace` | What to put in its place. Empty deletes. Required unless `edits` is sent. |
 | `all` | Replace every occurrence instead of requiring exactly one. |
-| `edits` | Several changes — `find`, `replace` and `all` each — instead of one. |
+| `edits` | Several changes (`find`, `replace` and `all` each) instead of one. |
 | `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question). Optional, and the tool never reads it. |
 | `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 
-Exact text in, exact text out — no patch format and no line numbers. A model
+Exact text in, exact text out: no patch format and no line numbers. A model
 that has just read a file can quote from it, and quoting is the one thing it can
 do without counting.
 
@@ -247,7 +247,7 @@ written itself. Anything else comes back as
 notes.md has not been read, so replacing it would discard what is in it: read it first
 ```
 
-and the turn continues — the model reads the file and writes it again, which
+and the turn continues. The model reads the file and writes it again, which
 costs one call and is the whole remedy.
 
 This is the case a permission question cannot cover. A `write` you approve is
@@ -259,7 +259,7 @@ than about the write, which is why it is decided before anything is opened.
 What counts as having looked:
 
 - A `read` call that showed at least one line of that file. A call that
-  answered `has no line 900` showed nothing, so it is not one — otherwise a
+  answered `has no line 900` showed nothing, so it is not one; otherwise a
   single offset past the end would be a way past this.
 - A `write` call that created or replaced it. What the agent just put down it
   has by definition seen, so correcting it does not cost a round trip spent
