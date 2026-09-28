@@ -5,3 +5,4 @@ directory of your own.
 
 - [Install, a key, a first session](getting-started.md)
 - [How a turn runs, from the prompt to the answer](how-crucible-works.md)
+- [When something goes wrong, looked up by what you saw](troubleshooting.md)
