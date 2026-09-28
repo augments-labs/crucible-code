@@ -9,16 +9,19 @@
 //! **Built on first use.** [`RuntimeOwner::handle`] builds the runtime the
 //! first time it is called and hands back the same runtime's handle every time
 //! after. A path that never asks — `--help` and `--version`, which end while
-//! the arguments are parsed, and the listings that print and stop — starts no
-//! thread for it. Assembling a conversation asks, because its turns run on
-//! it, every command its sandbox starts is watched there, including the kill
-//! of one that breaks its time or output limit, and an account's tokens are
-//! renewed there.
+//! the arguments are parsed, and the extension listing and configuration
+//! check, which print and stop — starts no thread for it. `--sandbox` asks,
+//! because the backend it reports on is awaited there. Assembling a
+//! conversation asks, because its turns run on it, every command its sandbox
+//! starts is watched there, including the kill of one that breaks its time or
+//! output limit, and an account's tokens are renewed there.
 //!
 //! **Multi-thread, because a waiting caller does not drive the runtime.** A
 //! turn is a task spawned here, run while the drawing thread goes on drawing,
-//! and a synchronous caller — the drawing thread answering a command, or
-//! joining a turn that has ended — waits for a future with `Handle::block_on`.
+//! and a synchronous caller — `--sandbox` asking the backend it reports on,
+//! the drawing thread answering a command, asking the backend the sandbox
+//! panel shows, or joining a turn that has ended — waits for a future with
+//! `Handle::block_on`.
 //! Tokio's own documentation of that method, at `src/runtime/handle.rs:248-253`
 //! in the pinned 1.53.1 source, says that on a `current_thread` runtime only
 //! `Runtime::block_on` can drive the IO and timer drivers and

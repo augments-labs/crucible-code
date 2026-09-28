@@ -8,7 +8,6 @@
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_client_api::Command;
-use crucible_runtime::Bridge;
 use crucible_sandbox::SandboxService;
 use crucible_sandbox_local::LocalSandbox;
 use crucible_tui::{Key, Offered, Pressed, Renderer, SandboxPanel, SandboxTab, Terminal};
@@ -176,7 +175,7 @@ impl Standing {
             selected: [usize::from(!settings.enabled()), 0],
             summary: format!("Sandbox {state} · {source}"),
             settings: choices,
-            dependencies: dependencies(),
+            dependencies: dependencies(terms),
         }
     }
 
@@ -197,15 +196,16 @@ impl Standing {
     }
 }
 
-fn dependencies() -> Vec<(String, String)> {
-    let status = match Bridge::SandboxPanel.cross(LocalSandbox::new().probe()) {
-        Ok(Ok((identity, _))) => format!(
+/// What this machine's backend says of itself, asked on the runtime the turns
+/// run on, which the drawing thread is never inside and so can wait on.
+fn dependencies(terms: &Terms) -> Vec<(String, String)> {
+    let status = match terms.runtime.block_on(LocalSandbox::new().probe()) {
+        Ok((identity, _)) => format!(
             "available: {} {}",
             identity.id().as_str(),
             identity.version()
         ),
-        Ok(Err(problem)) => format!("unavailable: {problem}"),
-        Err(unready) => format!("unavailable: {unready}"),
+        Err(problem) => format!("unavailable: {problem}"),
     };
     let (backend, setup) = platform();
     vec![(backend.into(), status), ("Setup".into(), setup.into())]

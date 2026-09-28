@@ -116,21 +116,6 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// poll covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bridge {
-    /// What `--sandbox` prints and what `/sandbox enable` checks: probing the
-    /// local backend and preparing a session only to read it.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each probe and each preparation.
-    /// - Owner: `crucible-app`
-    /// - Retired: when the application runs on one runtime.
-    SandboxReport,
-    /// The `/sandbox` panel asking the local backend whether it is available.
-    ///
-    /// - Crossing: polls once.
-    /// - Bound: one poll for each probe.
-    /// - Owner: `crucible-code`
-    /// - Retired: when the application runs on one runtime.
-    SandboxPanel,
     /// A kept command's stop, asked from the one blocking step its owner holds:
     /// a foreground guard ending the command it was left holding, and a kept
     /// command's owner ending one that was stopped, abandoned, left running, or
@@ -193,8 +178,6 @@ impl Bridge {
     /// What is crossed, in words a reader of an error can follow.
     const fn crossing(self) -> &'static str {
         match self {
-            Self::SandboxReport => "asking the sandbox what it can enforce",
-            Self::SandboxPanel => "asking the sandbox whether it is available",
             Self::CommandStop => "a kept command's stop",
             Self::CommandAcceptance => "a kept command's result acceptance",
         }
@@ -304,25 +287,24 @@ mod tests {
     fn a_future_that_answers_at_once_is_handed_back_its_answer() {
         let answered: BoxFuture<'_, u32> = Box::pin(async { 7 });
 
-        assert_eq!(Bridge::SandboxReport.cross(answered), Ok(7));
+        assert_eq!(Bridge::CommandStop.cross(answered), Ok(7));
     }
 
     #[test]
     fn a_future_that_would_wait_is_refused_naming_the_bridge() {
-        let refused = Bridge::SandboxReport.cross(std::future::pending::<()>());
+        let refused = Bridge::CommandStop.cross(std::future::pending::<()>());
 
         assert_eq!(
             refused,
             Err(Unready {
-                bridge: Bridge::SandboxReport
+                bridge: Bridge::CommandStop
             })
         );
         assert_eq!(
             refused.map_err(|unready| unready.to_string()),
             Err(
-                "asking the sandbox what it can enforce would have had to wait, and the caller \
-                 cannot; the waiting step was dropped before it answered, so whatever that step \
-                 began is unconfirmed"
+                "a kept command's stop would have had to wait, and the caller cannot; the waiting \
+                 step was dropped before it answered, so whatever that step began is unconfirmed"
                     .to_owned()
             )
         );
@@ -337,7 +319,7 @@ mod tests {
             std::future::pending::<()>().await;
         });
 
-        let crossed = Bridge::SandboxReport.cross(waiting);
+        let crossed = Bridge::CommandStop.cross(waiting);
 
         assert!(crossed.is_err(), "a future that waits was answered");
         assert!(
@@ -376,8 +358,8 @@ mod tests {
     async fn a_crossing_made_on_a_runtime_worker_answers_rather_than_blocking() {
         let crossed = tokio::spawn(async move {
             (
-                Bridge::SandboxReport.cross(WakesItself { asked: false }),
-                Bridge::SandboxReport.cross(async { "ready" }),
+                Bridge::CommandStop.cross(WakesItself { asked: false }),
+                Bridge::CommandStop.cross(async { "ready" }),
             )
         })
         .await
@@ -387,7 +369,7 @@ mod tests {
             crossed,
             Ok((
                 Err(Unready {
-                    bridge: Bridge::SandboxReport
+                    bridge: Bridge::CommandStop
                 }),
                 Ok("ready")
             )),
@@ -405,7 +387,7 @@ mod tests {
     #[test]
     fn a_future_coming_apart_unwinds_into_the_caller_as_a_crossing_always_has() {
         let crossed =
-            std::panic::catch_unwind(|| Bridge::SandboxReport.cross(async { comes_apart() }));
+            std::panic::catch_unwind(|| Bridge::CommandStop.cross(async { comes_apart() }));
 
         assert_eq!(
             crossed

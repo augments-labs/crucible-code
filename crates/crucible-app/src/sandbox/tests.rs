@@ -1,6 +1,6 @@
 //! What the confinement report says, and what it must never say.
 
-use crucible_runtime::{BoxFuture, Bridge};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxCapability, SandboxCleanup, SandboxEnablement, SandboxError, SandboxFeature,
@@ -40,6 +40,14 @@ fn backend() -> SandboxBackendIdentity {
         Some([0x5a; 32]),
     )
     .expect("an identity")
+}
+
+/// What `future` answers, waited for on a runtime of its own.
+fn awaited<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a test runtime")
+        .block_on(future)
 }
 
 /// One report over `policy`, as the flag would have written it.
@@ -277,16 +285,16 @@ fn disabled_confinement_is_reported_as_an_explicit_choice() {
 fn an_unavailable_backend_cannot_change_the_choice() {
     let control = SandboxEnablement::new(false, false);
     assert!(
-        choose(
+        awaited(choose(
             &control,
             true,
-            || Err(Unchanged::Stopped("native boundary unavailable".into())),
+            async { Err(Unchanged::Stopped("native boundary unavailable".into())) },
             || panic!("an unavailable boundary cannot be saved")
-        )
+        ))
         .is_err()
     );
     assert!(!control.enabled());
-    choose(&control, true, || Ok(()), || Ok(())).unwrap();
+    awaited(choose(&control, true, async { Ok(()) }, || Ok(()))).unwrap();
     assert!(control.enabled());
 }
 
@@ -294,60 +302,78 @@ fn an_unavailable_backend_cannot_change_the_choice() {
 fn a_project_requirement_survives_interactive_disabling() {
     let control = SandboxEnablement::new(true, true);
     assert!(
-        choose(
+        awaited(choose(
             &control,
             false,
-            || panic!("disabling must not probe"),
+            async { panic!("disabling must not probe") },
             || panic!("a required boundary cannot be disabled")
-        )
+        ))
         .is_err()
     );
     assert!(control.enabled());
     let optional = SandboxEnablement::new(true, false);
-    choose(
+    awaited(choose(
         &optional,
         false,
-        || panic!("disabling needs no enforcing backend"),
+        async { panic!("disabling needs no enforcing backend") },
         || Ok(()),
-    )
+    ))
     .unwrap();
     assert!(!optional.enabled());
 }
 
-/// A backend that would have to wait for every answer it is asked for.
-struct Waiting;
+/// A backend that answers every question only after it has once had to wait,
+/// the way one reached over a pipe or a socket does.
+struct Late;
 
-impl SandboxService for Waiting {
+/// Pending once, with the waker told to poll again, then ready.
+async fn later() {
+    let mut waited = false;
+    std::future::poll_fn(|context| {
+        if waited {
+            return std::task::Poll::Ready(());
+        }
+        waited = true;
+        context.waker().wake_by_ref();
+        std::task::Poll::Pending
+    })
+    .await;
+}
+
+impl SandboxService for Late {
     fn probe(
         &self,
     ) -> BoxFuture<'_, Result<(SandboxBackendIdentity, SandboxCapabilities), SandboxError>> {
-        Box::pin(std::future::pending())
+        Box::pin(async {
+            later().await;
+            Ok((backend(), holding()))
+        })
     }
 
     fn prepare(
         &self,
         _request: SandboxRequest,
     ) -> BoxFuture<'_, Result<Box<dyn SandboxSession>, SandboxError>> {
-        Box::pin(std::future::pending())
+        Box::pin(async {
+            later().await;
+            Err(SandboxError::BackendUnavailable {
+                reason: "the late backend's own words".into(),
+            })
+        })
     }
 }
 
 #[test]
-fn a_backend_that_would_wait_is_told_apart_from_one_that_refused() {
-    let sample = Sample::new("sandbox-choice-waiting");
+fn a_backend_that_answers_late_is_heard_rather_than_taken_for_unready() {
+    let sample = Sample::new("sandbox-choice-late");
     let policy = SandboxPolicy::standard(&sample.workspace()).expect("policy");
 
-    let answered = admitted(&Waiting, policy);
+    let answered = awaited(admitted(&Late, policy));
     assert!(
         matches!(
             &answered,
-            Err(Unchanged::Unready(unready)) if unready.bridge() == Bridge::SandboxReport
+            Err(Unchanged::Stopped(said)) if said.contains("the late backend's own words")
         ),
         "{answered:?}"
     );
-    // Said as the bridge says it, which is what followed "sandbox unchanged:".
-    let said = Bridge::SandboxReport
-        .cross(std::future::pending::<()>())
-        .expect_err("a pending future waits");
-    assert_eq!(answered.expect_err("refused").to_string(), said.to_string());
 }
