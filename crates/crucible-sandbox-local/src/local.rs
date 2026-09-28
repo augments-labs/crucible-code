@@ -100,14 +100,19 @@ impl LocalSandbox {
     /// refused rather than made directly. Windows confines no traffic by
     /// domain, so there it changes nothing.
     #[must_use]
-    pub fn through(mut self, upstream: ProxyEnv) -> Self {
+    pub fn through(self, upstream: ProxyEnv) -> Self {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            self.upstream = Arc::new(upstream);
+            Self {
+                upstream: Arc::new(upstream),
+                ..self
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let _ = upstream;
-        self
+        {
+            drop(upstream);
+            self
+        }
     }
 
     /// Under test, where this service writes its commands' endings.
