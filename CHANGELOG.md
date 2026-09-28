@@ -339,6 +339,11 @@ change in any release with no deprecation period.
   escaped the kill, kept running, and held the output open, so the command read
   as still printing. Crucible now repeats the kill until nothing in the
   command's process group is left running.
+- **A `kill` no longer waits for a key while the list of running commands is
+  open over a turn.** A termination, or the terminal closing, did nothing there
+  until a key was pressed, because nothing read the signal while the list had
+  the keyboard. The list now closes, and the turn ends and saves as it does for
+  a signal anywhere else.
 - **A panic on another thread no longer writes over the session's screen.**
   While a session holds the terminal, a panic on any thread but the one that
   draws, such as a task on the application's runtime, is said in the

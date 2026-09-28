@@ -30,6 +30,10 @@
 //! Once one signal has been read, the next is obeyed at once too, so a turn
 //! that will not stop cannot hold the process.
 //!
+//! The list of running commands is the one panel a turn can stand that is not
+//! such a stretch: it already wakes on a beat to follow the commands in it, so
+//! it reads the note there and closes, and the turn behind it ends as above.
+//!
 //! The handler cannot see which stretch it is in without being told, so the
 //! one flag that says is stored by this thread and read by the handler, either
 //! side of the number being stored: whichever order the two threads interleave

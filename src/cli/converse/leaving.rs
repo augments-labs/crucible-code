@@ -21,6 +21,12 @@
 //! on a beat while it stands, so the stop's outcome arrives on a later frame —
 //! the row gone, the list with it where it was the last, or the row marked as
 //! refused where the stop failed.
+//!
+//! At exit it goes in a fixed order with the rest. The list is one of the
+//! things the session holds between turns, and those go as the loop returns.
+//! The registry it is drawn from goes after them, when the command line lets
+//! go of it, and ends every command still in it on the runtime. The runtime is
+//! shut down last, so whatever either hands it finds it still running.
 
 use crucible_builtins::{Background, Standing};
 use crucible_tui::{
@@ -29,6 +35,7 @@ use crucible_tui::{
 
 use crate::cli::Fatal;
 use crate::cli::draw;
+use crate::cli::ending::Ending;
 use crate::cli::style::Style;
 
 use super::region::{self, Ended, Moved};
@@ -77,6 +84,7 @@ impl Leaving {
         renderer: &mut Renderer<T>,
         style: Style,
         left: &Background,
+        ending: &Ending,
     ) -> Result<Ended, Fatal> {
         // Taken once per frame rather than once per press: a command ending while
         // the list is open is a row that has to go, and the list is the one place
@@ -88,7 +96,7 @@ impl Leaving {
             |leaving, columns, rows| (leaving.rows(left, columns, rows, style.glyphs()), None),
             |arrived, leaving| leaving.against(arrived, left),
             BEAT,
-            |leaving| leaving.watched(left),
+            |leaving| leaving.watched(left, ending),
         )
     }
 
@@ -98,7 +106,17 @@ impl Leaving {
     /// A list with nothing left in it goes, since there is nothing to stand. The
     /// output of one command standing over the list is left as it is until a
     /// key moves it.
-    fn watched(&mut self, left: &Background) -> Moved {
+    ///
+    /// Before either, the list goes, output and all, where a signal has been
+    /// noted. A turn can stand this list, and the loop that would read the note
+    /// is the turn's own, waiting behind it: its worker stops once the queue to
+    /// this thread is full, and without this a `kill` would do nothing until
+    /// somebody pressed a key. Between turns no signal is ever noted, since one
+    /// is obeyed where it lands there.
+    fn watched(&mut self, left: &Background, ending: &Ending) -> Moved {
+        if ending.told().is_some() {
+            return Moved::Left;
+        }
         if self.shown.is_some() {
             return Moved::Still;
         }

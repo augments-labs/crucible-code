@@ -45,20 +45,17 @@ pub(super) fn stalling() -> (Arc<dyn SandboxService>, Arc<AtomicBool>) {
 }
 
 /// This machine's confinement watching on `runtime`, whose stops never fail,
-/// and a count of the stops that ran on a thread of a runtime.
+/// counting in `on_runtime` the stops that ran on a thread of a runtime.
 pub(super) fn counting_on(
     runtime: tokio::runtime::Handle,
-) -> (Arc<dyn SandboxService>, Arc<AtomicUsize>) {
-    let on_runtime = Arc::new(AtomicUsize::new(0));
-    (
-        Arc::new(Fallible {
-            inner: Box::new(LocalSandbox::new().watching_on(runtime)),
-            denied: Arc::new(AtomicBool::new(false)),
-            on_runtime: Arc::clone(&on_runtime),
-            stalled: Arc::default(),
-        }),
-        on_runtime,
-    )
+    on_runtime: &Arc<AtomicUsize>,
+) -> Arc<dyn SandboxService> {
+    Arc::new(Fallible {
+        inner: Box::new(LocalSandbox::new().watching_on(runtime)),
+        denied: Arc::new(AtomicBool::new(false)),
+        on_runtime: Arc::clone(on_runtime),
+        stalled: Arc::default(),
+    })
 }
 
 struct Fallible<T: ?Sized> {
@@ -249,7 +246,12 @@ fn capture(glyphs: crucible_config::Glyphs) {
         &|_| None,
     );
     let ended = super::Leaving::default()
-        .stand(&mut renderer, style, &left)
+        .stand(
+            &mut renderer,
+            style,
+            &left,
+            &crate::cli::ending::Ending::deaf(),
+        )
         .expect("interactive cleanup panel");
     assert_eq!(ended, super::Ended::Left);
     assert_eq!(
