@@ -426,6 +426,67 @@ fn a_full_window_is_answered_by_making_room_and_the_turn_carries_on() {
 }
 
 #[test]
+fn a_line_queued_in_the_pass_that_makes_room_starts_the_tail_kept_word_for_word() {
+    // The keep boundary counts turns from the latest message on the user's
+    // side, as the configuration page says, so a line queued while the turn
+    // ran begins a turn of its own. What this pins is where the kept tail
+    // begins. Typed while the tool call is out, the line is taken at the top
+    // of the next pass, and that same pass finds the window full, so the tail
+    // starts at the line: it reaches the model word for word, and the prompt
+    // before it, with the pass it started, goes into the recap.
+    let queued = "use the second file instead";
+    let steer = Steer::new();
+    let mut offered = Tools::new();
+    offered
+        .add_builtin(Typing::new("type", steer.clone(), queued))
+        .unwrap();
+    let script = Script::new(vec![
+        vec![
+            Delta::Text("x".repeat(15_000).into()),
+            Delta::Stopped(StopReason::Yielded),
+        ],
+        vec![
+            Delta::Carried(Carried::new(12_000)),
+            Delta::ToolStarted {
+                id: ToolId::new("a"),
+                name: "type".into(),
+            },
+            Delta::ToolArgs("{}".into()),
+            Delta::Stopped(StopReason::WantsTools),
+        ],
+        recap("notes to self"),
+        saying("carried on"),
+    ]);
+    let mut scripted = Scripted::new(script, offered, Verdict::Allow);
+    scripted.steer = steer;
+    scripted.runner.state.window = Some(20_000);
+    scripted.runner.policy.compaction = keeping_one();
+    scripted.turn("first").expect("a turn to compact from");
+
+    let stop = scripted
+        .turn("go")
+        .expect("the turn ended instead of making room");
+
+    assert_eq!(stop, StopReason::Yielded);
+    let kept = conversation(scripted.runner.state.transcript());
+    let [
+        Message::User { text: notes, .. },
+        line,
+        Message::Agent { text: answer, .. },
+    ] = kept.as_slice()
+    else {
+        panic!("not the recap, the queued line and the answer after it: {kept:#?}")
+    };
+    assert!(notes.contains("notes to self"), "no recap stands first");
+    assert_eq!(
+        line,
+        &Message::said(queued),
+        "the queued line was not kept word for word"
+    );
+    assert_eq!(answer.as_ref(), "carried on");
+}
+
+#[test]
 fn an_answer_cut_off_by_the_window_is_recorded_before_room_is_made() {
     // The provider streamed half an answer and then ran out of room. Making
     // room and asking again is the remedy, but the half that arrived was

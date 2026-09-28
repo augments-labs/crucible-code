@@ -235,6 +235,47 @@ fn told_after_a_pick_up(before: Tools, after: Tools) -> Vec<Fragment> {
         .collect()
 }
 
+/// The context the first request of a session picked up from `store` adds to
+/// what the session already told.
+fn resumed_context(store: &Recording) -> Vec<Fragment> {
+    let (picked, transcript) = store.reopened();
+    let already = contexts(&transcript).len();
+    let started = Scripted::recording(
+        Script::new(vec![saying("continued")]),
+        Tools::new(),
+        Verdict::Allow,
+        picked,
+    );
+    let mut resumed = Scripted {
+        runner: started.runner.resuming(transcript),
+        ..started
+    };
+
+    resumed.turn("continue").expect("the first resumed turn");
+
+    let sent = resumed.sent.lock().unwrap();
+    sent.first()
+        .expect("the first resumed request")
+        .context
+        .iter()
+        .skip(already)
+        .cloned()
+        .collect()
+}
+
+/// The words a session's context was told before record `at`, in order.
+fn told_before(store: &Recording, at: usize) -> Vec<Fragment> {
+    store
+        .kept()
+        .into_iter()
+        .take(at)
+        .filter_map(|one| match one {
+            Kept::Said(Message::Context(fragment)) => Some(fragment),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn a_session_picked_up_with_the_same_tools_is_not_told_its_tools_again() {
     let told = told_after_a_pick_up(
@@ -271,6 +312,55 @@ fn a_session_picked_up_with_other_tools_is_told_what_changed() {
             .text()
             .contains("Tools no longer advertised: edit."),
         "{fragment:?}"
+    );
+}
+
+#[test]
+fn a_first_telling_whose_state_was_never_written_is_restated_whole_on_resume() {
+    // The words are recorded before the state they establish. A crash between
+    // the two the first time the sections are told leaves their words in the
+    // log with nothing recorded to say what they were, so the session picked
+    // up from it restates every section whole, opening with the line that
+    // tells the model it supersedes every earlier version.
+    let store = Recording::started("a session cut short");
+    let mut scripted = Scripted::recording(
+        Script::new(vec![saying("first")]),
+        Tools::new(),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    scripted.turn("first").expect("a first turn");
+    let lost = store
+        .kept()
+        .iter()
+        .position(|one| matches!(one, Kept::Contextual(_)))
+        .expect("the first telling's state was recorded");
+    assert_eq!(
+        told_before(&store, lost).len(),
+        6,
+        "the first telling's words were not recorded before its state"
+    );
+
+    let sent = resumed_context(&store.cut_short(lost));
+
+    let texts = sent.iter().map(Fragment::text).collect::<Vec<_>>();
+    assert_eq!(sent.len(), 6, "{texts:?}");
+    for fragment in &sent {
+        let id = fragment.section();
+        assert!(
+            fragment.text().starts_with(&format!(
+                "This {id} context supersedes every earlier {id} context fragment.\n\n"
+            )),
+            "a section whose state was lost was not restated defensively: {texts:?}"
+        );
+    }
+    let intact = resumed_context(&store);
+    assert!(
+        !intact
+            .iter()
+            .any(|fragment| fragment.text().contains("supersedes")),
+        "the same session with its state intact restated its context: {:?}",
+        intact.iter().map(Fragment::text).collect::<Vec<_>>()
     );
 }
 
