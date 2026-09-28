@@ -325,11 +325,22 @@ fn a_status_task_gone_before_its_command_is_a_failure_no_status_hides() -> io::R
     let process = fixture.process()?;
     // What a runtime shut down under the task, or a panic in it, leaves: the
     // task dropped before its command ended, with no stop begun.
-    process
+    let watch = process
         .watch
         .as_ref()
-        .ok_or_else(|| io::Error::other("fixture has no status task"))?
-        .abort();
+        .ok_or_else(|| io::Error::other("fixture has no status task"))?;
+    watch.abort();
+    // An abort only asks: the task is gone once a runtime worker has dropped
+    // it, and with every worker busy the command could otherwise end first.
+    let dropped = Instant::now() + Duration::from_secs(10);
+    while !watch.is_finished() {
+        if Instant::now() >= dropped {
+            return Err(io::Error::other(
+                "the aborted status task was never dropped",
+            ));
+        }
+        thread::sleep(SUPERVISE);
+    }
     // EOF ends the real shell's read builtin without an injected wait result.
     process.stdin.take();
     let deadline = Instant::now() + REAP;
