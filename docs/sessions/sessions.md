@@ -323,9 +323,11 @@ reading remains until the compacted transcript replaces it.
 
 When there is no longer room for another exchange, crucible **makes room in the
 middle of the turn and the turn carries on**. It asks the model to write down
-what is worth keeping in a fixed Goal/Constraints/Progress/Decisions/Next
-Steps/Critical Context checkpoint, and that recap stands where the messages it
-replaced were. The most recent turns stay word for word — bounded in tokens
+what is worth keeping under fixed headings: Goal, Constraints & Preferences,
+Progress (as Done, In Progress and Blocked), Decisions, Next Steps and Critical
+Context. crucible itself adds the files the replaced messages read or modified,
+so that list survives a second compaction. That recap stands where the messages
+it replaced were. The most recent turns stay word for word, bounded in tokens
 rather than counted in turns, so a turn that is mostly tool output cannot carry
 the tail past the window on its own. Old bulky tool output is pruned first; if a
 completed active tool pass still cannot fit, automatic recovery may recap that
@@ -340,6 +342,10 @@ The result is reported in place:
 ────────────────────────────────────────────────────────────────────────────────
 ```
 
+Where there was no middle to recap and clearing old tool output freed some
+room, the second line says `old tool output was cleared` instead of counting
+messages.
+
 Nothing is deleted. What is replaced is what the **model** is sent; the session
 log keeps every message of it, which is what `--continue` reads and what you
 can go back and look at.
@@ -349,11 +355,14 @@ moment. A session with nothing behind it says so instead of spending a request.
 
 Nothing is frozen while the notes are being written. The box takes what you type
 throughout, and a line finished there is sent as the next turn once there is
-room. Escape stops the notes, and the session is left exactly as it was:
+room. Escape stops the notes and nothing is replaced:
 
 ```text
 ! stopped
 ```
+
+Old tool output cleared to make room before the notes began stays cleared from
+what the model is sent; the session log still has it.
 
 Half a recap is not a session's memory, and standing it in place of the messages
 it was meant to replace would lose the rest of them for good. So a cancelled,
@@ -361,11 +370,14 @@ malformed, filtered, silently ended, or token-truncated recap replaces nothing,
 and a turn that was making room for itself ends there rather than asking for the
 notes again.
 
-If a provider refuses a request for want of room — because crucible had the
-window wrong, or was never told it — the same thing happens and the question
-goes back once the session is smaller. A compaction that frees nothing is not
-tried twice; the turn stops and says so, and `/clear` or a model with a larger
-window is what gets past it.
+If a provider refuses a request for want of room, because crucible had the
+window wrong or was never told it, the same thing happens and the question goes
+back once the session is smaller. A compaction that frees nothing gets one more
+go; when that frees nothing either, the turn stops with `there is no room left
+in the model's window, and compacting it freed none`. Where the provider
+refused the request outright rather than cutting its answer short, it stops
+with the provider's own `<provider>: the request did not fit the model's
+window` instead. `/clear` or a model with a larger window is what gets past it.
 
 [Configuration](../configuration/configuration.md#compaction) has the keys.
 
