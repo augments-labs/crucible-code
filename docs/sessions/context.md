@@ -8,13 +8,13 @@ facts that changed are sent again. The request for notes a
 
 ## Instructions
 
-The instructions are crucible's own: how to hold a task, read before changing
-and say where the work stands, in the tone you chose. `append` adds to them and
-`custom` puts your own in their place; all three are
-[`systemPrompt`](../configuration/configuration.md#systemprompt) keys. They are
-fixed when crucible starts and go in the provider's system field. Nothing about
-the session enters them, so a new model, a new tool or the date rolling over
-never rewrites them.
+The instructions are crucible's own, in the tone you chose: how to hold a task,
+read before changing and say where the work stands. Three
+[`systemPrompt`](../configuration/configuration.md#systemprompt) keys shape
+them: `tone` picks that tone, `append` adds to them and `custom` puts your own
+in their place. They are fixed when crucible starts and go in the provider's
+system field. Nothing about the session enters them, so a new model, a new tool
+or the date rolling over never rewrites them.
 
 ## Facts
 
@@ -78,7 +78,7 @@ what the model already knows rather than starting over. The tools section is
 always sent again, as a short change note: each run of crucible builds its
 tools afresh under a new generation, and the note names it along with any tool
 added or removed. Any other section is sent only if it changed, as when the
-date moved on or you resume under another model. The mode and any
+date has moved on or you resume under another model. The mode and any
 session-long allow
 [are not carried over](../permissions/modes.md#--continue-resumes-the-transcript-not-the-mode),
 so the model is told when they differ from what it last heard.
