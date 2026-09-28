@@ -118,8 +118,8 @@ being sent to the start of the answer, whatever it spent waiting; the three
 minutes end when the answer starts, not when it finishes. A web tool's answer
 then has two minutes to arrive in full. Each request made while you sign in,
 or while an account's token is renewed, has 30 seconds from start to finish.
-When the provider refuses a request, its reply is read for at most ten seconds
-([keys](providers.md#keys) says more).
+When the provider refuses a turn's request, its reply is read for at most ten
+seconds ([keys](providers.md#keys) says more).
 
 Connecting directly, a provider's hostname is given five seconds to resolve.
 The operating system's lookup cannot be cancelled, so once one has taken
