@@ -732,11 +732,13 @@ builtins sandbox
 builtins tools
 builtins types
 builtins workspace'
-# Test-support edges are kept apart from the list above, because a test's need
-# is never permission for code that ships. `builtins sandbox-local` is how the
-# tools' tests get one machine's confinement to run a command under; the check
-# at the end of this section holds each of these out of every table a build
-# that ships resolves.
+# Test-support edges are kept apart from the list above. The test-only edges in
+# that list are ones the layering would let shipped code take as well; an edge
+# here is one it would not, because a test's need is never permission for code
+# that ships. `builtins sandbox-local` is how the tools' tests get one machine's
+# confinement to run a command under; the check at the end of this section
+# holds each of these out of every table a build that ships resolves, reading
+# the manifest under `crates/`, so each names a member crate, not the root.
 test_support='builtins sandbox-local'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
