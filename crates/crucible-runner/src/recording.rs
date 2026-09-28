@@ -180,12 +180,13 @@ impl Recording {
         (Arc::new(picked), transcript)
     }
 
-    /// The same session as a crash leaves it: the record at `at`, in the order
-    /// [`Recording::kept`] reads, and every record after it never reached the
+    /// The same session as a crash leaves it: the records from position `at`
+    /// on, counted in the order [`Recording::kept`] reads, never reached the
     /// log.
     ///
-    /// What a run picking it up would be asked with is read off the copy
-    /// through [`Recording::reopened`], as it is for any other session.
+    /// The copy holds no call results and no carried calibration. What a run
+    /// picking it up would be asked with is read off it through
+    /// [`Recording::reopened`], as it is for any other session.
     pub(crate) fn cut_short(&self, at: usize) -> Arc<Self> {
         let mut kept = self.kept();
         kept.truncate(at);

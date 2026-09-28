@@ -429,9 +429,10 @@ fn a_full_window_is_answered_by_making_room_and_the_turn_carries_on() {
 fn a_line_queued_in_the_pass_that_makes_room_starts_the_tail_kept_word_for_word() {
     // The keep boundary counts turns from the latest message on the user's
     // side, as the configuration page says, so a line queued while the turn
-    // ran begins a turn of its own. Typed while the first call is out, it is
-    // taken at the top of the next pass, and that same pass finds the window
-    // full. The line has to reach the model as it was typed, and the prompt
+    // ran begins a turn of its own. What this pins is where the kept tail
+    // begins. Typed while the tool call is out, the line is taken at the top
+    // of the next pass, and that same pass finds the window full, so the tail
+    // starts at the line: it reaches the model word for word, and the prompt
     // before it, with the pass it started, goes into the recap.
     let queued = "use the second file instead";
     let steer = Steer::new();
