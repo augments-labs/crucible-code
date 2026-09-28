@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The rollback drill checks 0.43.0, the release you would now roll back
+  to.** It still ran 0.42.0 after 0.43.0 was published, so nothing proved
+  0.43.0 reads what the next release writes. `RELEASING.md` now moves it to
+  each release as soon as that release is published.
+
 ## [0.43.0] - 2026-09-28
 
 **Turns, tool calls, logins and the pipes of hosted servers now run as tasks
