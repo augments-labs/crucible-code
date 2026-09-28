@@ -76,9 +76,11 @@ somebody `cat`'d by accident. Every tool here stops at 30000 bytes.
 `todo_write` is the one that does not arrive there with an ordinary plan. Its
 answer is the plan it just wrote, and a plan is bounded before it is written
 rather than after it is read — sixty-four tasks of at most 256 bytes each, a
-little over half that figure. Only a plan spelled mostly in quotes, backslashes
-or control characters, which the answer has to escape, can reach the cut, and
-it says so like any other.
+little over half that figure. The answer is measured escaped, though: a quote,
+backslash, tab, newline or carriage return counts twice, and most other control
+characters six times. A full plan with about four-fifths of its text in the
+first kind, or a sixth in the second, can reach the cut, and it says so like
+any other.
 
 A cut answer says so, in the answer:
 
@@ -104,11 +106,16 @@ decides what to do about it: read the file it was told to read first, widen the
 text it could not find, correct a path. In the transcript that call is marked
 `✗`.
 
-A turn ends on something narrower: a tool that is unusable rather than
-unsuccessful. Arguments that are not the shape the tool takes are one. Your `no`
-at a [question](../permissions/permissions.md#the-question) is the other — and a
-`deny` rule's no is deliberately not, because a rule is standing policy and a
-retry hits the same wall without asking you again.
+Arguments that are not the shape the tool takes come back the same way. They
+are checked before you are asked about the call, the tool says what is wrong
+with them, and the call is marked `✗`. The model can then send it again with the
+arguments corrected. A call to a tool that does not exist is answered like that
+too.
+
+Your `no` at a [question](../permissions/permissions.md#the-question) is
+different: it ends the turn. A `deny` rule's no deliberately does not, because
+a rule is standing policy and a retry hits the same wall without asking you
+again.
 
 ## The arguments arrive from the model
 

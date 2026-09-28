@@ -27,7 +27,8 @@ continued later.
   file changes, commands and reads outside it are decided by rules and the
   active permission mode. OS sandboxing is opt-in with `sandbox.enabled: true`;
   configure filesystem, network and command limits or inspect them with `/sandbox`.
-  See [sandbox setup and platform support](docs/security/sandboxing.md).
+  See [turning it on](docs/security/sandboxing.md#turning-it-on) and
+  [platform support](docs/security/sandboxing.md#platform-support).
 - **A responsive terminal UI.** Prompts remain editable while a turn runs, tool
   output streams in place, and compact tool summaries open into full details.
   Redirected output stays plain text.
@@ -84,8 +85,8 @@ remains available. See [sessions and compaction](docs/sessions/sessions.md).
 
 Choose a permission mode with `/mode`, inspect optional OS isolation with
 `/sandbox`, and configure filesystem, network and command limits. Crucible can
-search local files and the web, edit code, run tests, and use configured MCP tools
-and skills.
+search local files and the web, edit code, run tests, and use configured MCP
+tools.
 
 Press **Ctrl+B** to leave a running command in the background. Completion is
 reported automatically, so independent work can continue. Long tool results open

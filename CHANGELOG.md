@@ -8,6 +8,33 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-09-28
+
+**A session picked up after crucible died mid-turn now tells the model what its
+finished tool calls did.** The pick-up used to drop the whole pass, which left
+the model free to run a finished command or edit again. The release page is now
+a short summary with a link to every change. The documentation now says how to
+turn confinement on for each platform, how compaction runs, what the model is
+told with each request and what crucible connects to.
+
+### Changed
+
+- **A release page is now the release's summary and a link to every change.**
+  It used to repeat the version's whole changelog section, which for 0.43.0 ran
+  to 471 lines. The full list stays in `CHANGELOG.md`, linked from the page.
+
+### Fixed
+
+- **A session picked up after crucible died mid-turn keeps the tool calls that
+  had already finished.** The pick-up used to drop the whole pass, so the model
+  could run a finished command or edit a second time; it now gets each finished
+  call's recorded result. A call in that pass that had not finished is answered
+  as interrupted, and a pass where no call finished is still dropped.
+- **The rollback drill checks 0.43.0, the release you would now roll back
+  to.** It still ran 0.42.0 after 0.43.0 was published, so nothing proved
+  0.43.0 reads what the next release writes. `RELEASING.md` now moves it to
+  each release as soon as that release is published.
+
 ## [0.43.0] - 2026-09-28
 
 **Turns, tool calls, logins and the pipes of hosted servers now run as tasks
@@ -4421,7 +4448,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...v0.41.1

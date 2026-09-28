@@ -15,9 +15,8 @@
 //! reaches the other, the runtime's workers are free whenever the vendor
 //! looks, and every task the turn started has ended before the application's
 //! services shut down. A process that dies is held to its log instead: the
-//! call is answered there once, and the pick-up after it, which drops the pass
-//! that died, may carry that call not at all but never twice, and never runs
-//! it again.
+//! call is answered there once, and the pick-up after it carries that call
+//! with its recorded result once and never runs it again.
 
 // Test-only helpers fail the owning case when its controlled fixture is invalid.
 #![allow(clippy::expect_used, clippy::panic)]
@@ -645,10 +644,9 @@ fn a_stop_at_each_record_of_a_call_accounts_for_it_once() {
 
 /// A turn whose process dies after a call's result is recorded, and before
 /// the result reaches the transcript, leaves the result in its log once, and
-/// is picked up with no call left hanging and without running the call again.
-/// The pick-up drops the pass that died, so the request after it may carry the
-/// call and its result not at all; what it may not do is carry one without the
-/// other, or either of them twice.
+/// is picked up with the call answered by that recorded result: the request
+/// after it carries the call and its result once each, and the call is not
+/// run again.
 #[test]
 fn a_turn_that_dies_after_its_call_is_picked_up_without_running_it_again() {
     let scratch = Scratch::new();
@@ -683,13 +681,13 @@ fn a_turn_that_dies_after_its_call_is_picked_up_without_running_it_again() {
         );
 
         let picked = carried_on(&scratch, &stamp, &runtime, &http);
-        let (asked, answered) = historical(&picked.sent, "call-1");
-        assert!(
-            asked <= 1 && asked == answered,
-            "the resumed request carries the call {asked} times and its result {answered}: {}",
+        assert_eq!(picked.calls, ["call-1"], "the call picked up");
+        assert_eq!(
+            historical(&picked.sent, "call-1"),
+            (1, 1),
+            "the resumed request did not carry the call once, with its result: {}",
             picked.sent
         );
-        assert_eq!(asked, picked.calls.len(), "{:?}", picked.calls);
         assert_eq!(
             stamps.load(Ordering::SeqCst),
             1,

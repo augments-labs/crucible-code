@@ -163,7 +163,8 @@ paragraph should not mean restating the prompt you wanted to keep, and putting
 your own prompt in should not silently concatenate it with the one you were
 replacing. Neither reaches the workspace root, the tool list or the model's own
 name: those are what the session found out rather than something crucible has an
-opinion about.
+opinion about, and they are [sent as facts](../sessions/context.md) of their
+own.
 
 `custom` is one of the keys [workspace files](#the-workspace-files) may not set.
 What it replaces includes the lines about reading a file before changing it and
@@ -196,8 +197,14 @@ recovering.
 
 `keep` is in tokens rather than turns because a turn can be enormous: the kept
 tail has to fit the window beside the recap, and only a figure in the window's
-own unit can promise that. The turn you are in is always kept whole, whatever
-it has cost so far; the budget bounds the turns before it. Left unset, crucible
+own unit can promise that. The turn you are in is kept whole, whatever it has
+cost so far; the budget bounds the turns before it. Here, a turn begins at the
+latest message on your side of the conversation, so a line you queued while it
+ran begins a new one, and so does the note crucible adds when a background
+command finishes. The exception is automatic recovery with nothing older to
+recap. Once this turn has finished a tool call, if the turns before it already
+fit the budget and the window is still full after old tool output is cleared,
+the whole conversation is recapped, this turn included. Left unset, crucible
 keeps the most recent 20,000 tokens.
 
 `recap` is a ceiling rather than a requested length. Left unset, a structured
@@ -281,7 +288,7 @@ macOS uses the built-in Seatbelt framework through the fixed system
 `/usr/bin/sandbox-exec` launcher. Native Windows uses a dedicated account,
 path-capability ACLs, WFP network denial, a restricted token, private desktop,
 exact inherited handles and a Job Object after one explicit Administrator
-setup. See the [setup and platform details](../security/sandboxing.md#windows-setup-maintenance).
+setup. See [turning it on](../security/sandboxing.md#turning-it-on) for each platform.
 
 `enabled` controls OS confinement. An unavailable backend or an unsupported
 requested boundary prevents the command from starting.

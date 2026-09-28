@@ -74,6 +74,11 @@ same way afterwards.
 4. **The changelog is real.** Move everything under `Unreleased` into a new
    version section with today's date, and add the comparison link. Written for
    someone deciding whether to upgrade, not generated from commit subjects.
+   Open the section with a summary above its first `###` list: a bold lead and
+   at most three sentences saying what the release changes for that person.
+   The release page shows that summary, the comparison link and a link to the
+   changelog, and
+   `scripts/python/release-notes.py <version>` prints it as it will appear.
 5. **The install path works from scratch** — advisory for now: the release
    workflow still runs its smoke job but no longer waits for it before
    publishing, and this local run is
@@ -192,7 +197,8 @@ dependency workflow.
 
 Pushing the tag is the trigger. The release workflow builds every artifact,
 checksums and attests them, and opens the GitHub Release with the changelog
-section as its body.
+section's summary, its comparison link and a link to the full changelog as its
+body.
 
 ## Artifacts
 
@@ -307,7 +313,13 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
    the authority.
 3. Open a fresh `Unreleased` section in the changelog, on `dev`, once the
    merge back has landed.
-4. If a **published** release is broken, do not delete or move the tag. Fix
+4. Point the rollback drill at the release just published, on `dev`: the tag
+   in `scripts/sh/rollback-drill.sh`, `scripts/sh/rollback-drill-selftest.sh`,
+   the two steps in `.github/workflows/rust-ci.yml` that fetch and build it, and
+   the sentence in `docs/building/building.md` that names it. The drill proves
+   the previous release reads what `dev` writes, and until it moves, the
+   release a user would roll back to is the one it never runs.
+5. If a **published** release is broken, do not delete or move the tag. Fix
    forward with a patch release: a tag that changes meaning breaks every
    checksum anyone recorded against it. The `release tags` ruleset refuses the
    move, so that is the remedy whether or not anybody remembered this

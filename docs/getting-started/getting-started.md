@@ -374,26 +374,28 @@ is why the ones you are still going over are kept out of it. Closing the view
 gives the whole batch up at once — edited and untouched alike — and the turn
 works them in at its next pass.
 
-While room is being made, a second line under the word says why it is happening
-and how far the notes have got:
+While room is being made, a second line under the word says how far the notes
+have got:
 
 ```
 ✳ compacting (18s · esc to interrupt)
-  ■■■■■■■■■■■□□□□□□□□□□□□□□□□□  39%  the window was full
+  ■■■■■■■■■■□□□□□□□□□□□□□□□□□□  39%
 ```
 
-The reason is one of three — the window filled, the model would not take another
-request this size, or you asked. The bar measures how far the notes have run
-rather than how much is left of them, because nobody knows where they end until
-the model stops, and it appears with the first of them: until then the line is
-the reason alone, since the model is still reading the session it is about to
-write down.
+The bar measures how far the notes have run rather than how much is left of
+them, because nobody knows where they end until the model stops. It appears with
+the first of them; until then there is no second line, since the model is still
+reading the session it is about to write down. Why room was made is said when
+it is done, in [the record that joins the
+transcript](../sessions/sessions.md#when-the-window-fills): the window was
+full, the model would not take another request this size, you asked, or you
+chose notes over carrying a picked-up session whole.
 
 The box under it is a box throughout. What you type reaches it, <kbd>Enter</kbd>
-queues the line, and it is sent as the next turn once there is room — against
+queues the line, and it is sent as the next turn once there is room, against
 the session that has just been made smaller, which is why it waits rather than
-going first. <kbd>Esc</kbd> stops the notes and leaves the session exactly as it
-was.
+going first. <kbd>Esc</kbd> stops the notes and nothing is replaced, though old
+tool output cleared to make room before they began stays cleared.
 
 Under everything the turn says, and over the box, is the plan — when the agent
 has written one:

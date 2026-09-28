@@ -789,6 +789,7 @@ impl DeltaStream for Recited {
 pub(crate) struct Fixed {
     name: &'static str,
     answer: Box<str>,
+    invalid: Option<Box<str>>,
     problem: Option<Box<str>>,
     cancels: bool,
     sensitivity: Sensitivity,
@@ -804,6 +805,7 @@ impl Fixed {
         Self {
             name,
             answer: "done".into(),
+            invalid: None,
             problem: None,
             cancels: false,
             sensitivity: Sensitivity::ReadOnly {
@@ -831,6 +833,13 @@ impl Fixed {
     /// What it produces when it succeeds.
     pub(crate) fn answering(mut self, text: &str) -> Self {
         self.answer = text.into();
+        self
+    }
+
+    /// Makes it refuse the arguments of every call, before anything is asked
+    /// or run.
+    pub(crate) fn refusing(mut self, problem: &str) -> Self {
+        self.invalid = Some(problem.into());
         self
     }
 
@@ -878,7 +887,13 @@ impl DescribeTool for Fixed {
 
 impl Tool for Fixed {
     fn validate(&self, _args: &ToolArgs) -> Result<(), ToolError> {
-        Ok(())
+        match &self.invalid {
+            Some(problem) => Err(ToolError::Arguments {
+                tool: self.name.into(),
+                problem: problem.clone(),
+            }),
+            None => Ok(()),
+        }
     }
 
     fn sensitivity(&self, _args: &ToolArgs) -> Sensitivity {
