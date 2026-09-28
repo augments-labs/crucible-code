@@ -201,54 +201,107 @@ fn a_glob_cancelled_while_it_waits_for_room_on_the_worker_lists_nothing() {
     assert_eq!(output.text(), GLOB_STOPPED);
 }
 
-/// A tree far larger than a walk gets through in the moment between handing
-/// it to the worker and the call being cancelled.
-fn wide(name: &str) -> Sample {
-    let sample = Sample::new(name);
-    for directory in 0..40 {
-        for file in 0..25 {
-            sample.write(
-                &format!("d{directory:02}/f{file:02}.rs"),
-                "fn main() {}\nlet needle = 1;\n",
-            );
-        }
+/// A runtime with exactly as many blocking threads as a worker has places:
+/// enough to show every place free, and few enough that a test holding all of
+/// them decides when a job the worker has handed on may start.
+fn narrow() -> Runtime {
+    Builder::new_current_thread()
+        .enable_time()
+        .max_blocking_threads(ToolWorker::CAPACITY)
+        .build()
+        .expect("a runtime for the test")
+}
+
+/// Takes every blocking thread of the [`narrow`] runtime it is polled in with
+/// a job that runs until `gate` is raised, and waits until every one of them
+/// has started. The jobs run outside any worker, so every place on a worker
+/// stays free, while a job the worker hands on waits for the gate.
+async fn hold_every_thread(gate: &Cancel) -> Vec<JoinHandle<()>> {
+    let started = Arc::new(AtomicUsize::new(0));
+    let holding = (0..ToolWorker::CAPACITY)
+        .map(|_| {
+            let gate = gate.clone();
+            let started = Arc::clone(&started);
+            tokio::task::spawn_blocking(move || {
+                started.fetch_add(1, Ordering::AcqRel);
+                held_until(&gate);
+            })
+        })
+        .collect();
+    until("every blocking thread being held", || {
+        started.load(Ordering::Acquire) == ToolWorker::CAPACITY
+    })
+    .await;
+    holding
+}
+
+/// Raises `gate` and waits for every thread [`hold_every_thread`] held.
+async fn let_every_thread_go(gate: &Cancel, holding: Vec<JoinHandle<()>>) {
+    gate.request();
+    for held in holding {
+        let ended = tokio::time::timeout(PATIENCE, held).await;
+        assert!(
+            matches!(ended, Ok(Ok(()))),
+            "a held thread did not end: {ended:?}"
+        );
     }
-    sample
 }
 
 #[test]
-fn a_search_cancelled_while_it_walks_on_the_worker_stops_answers_and_gives_its_place_back() {
-    let sample = wide("blocking-running");
+fn a_search_cancelled_once_it_holds_a_place_on_the_worker_stops_answers_and_gives_its_place_back() {
+    let sample = tree("blocking-running");
     let grep = Grep::new(sample.workspace());
     let glob = Glob::new(sample.workspace());
-    let runtime = runtime();
+    let runtime = narrow();
     let worker = ToolWorker::new(runtime.handle().clone());
 
-    for (tool, args) in [
-        (&grep as &dyn Searching, r#"{"pattern":"needle"}"#),
-        (&glob as &dyn Searching, r#"{"pattern":"**/*.rs"}"#),
+    for (tool, args, stopped) in [
+        (
+            &grep as &dyn Searching,
+            r#"{"pattern":"needle"}"#,
+            GREP_STOPPED,
+        ),
+        (
+            &glob as &dyn Searching,
+            r#"{"pattern":"**/*.rs"}"#,
+            GLOB_STOPPED,
+        ),
     ] {
         let cancel = Cancel::new();
         let context = lent(&cancel, &worker);
         runtime.block_on(async {
-            let mut running = tool.run(allowed(tool, args), &context);
-            // The first poll finds room and hands the walk to the worker.
-            let first = poll_fn(|asked| Poll::Ready(running.as_mut().poll(asked))).await;
-            cancel.request();
+            // No thread can run the walk until the call has been cancelled, so
+            // the cancel comes first however long this thread waits for a CPU.
+            // Left to the order of the lines below, a walk on a busy machine
+            // could finish before its cancel landed.
+            let gate = Cancel::new();
+            let holding = hold_every_thread(&gate).await;
 
-            let answered = match first {
-                Poll::Ready(answered) => Ok(answered),
-                Poll::Pending => tokio::time::timeout(PATIENCE, running).await,
-            };
-            let output = answered
+            let mut running = tool.run(allowed(tool, args), &context);
+            // The first poll finds room and hands the walk to the worker,
+            // where it waits for a thread.
+            let first = poll_fn(|asked| Poll::Ready(running.as_mut().poll(asked))).await;
+            assert!(
+                first.is_pending(),
+                "{args}: answered before its walk had a thread to run on"
+            );
+            assert!(
+                format!("{worker:?}").contains("available: 3"),
+                "{args}: the worker did not give the walk a place: {worker:?}"
+            );
+            cancel.request();
+            let_every_thread_go(&gate, holding).await;
+
+            let output = tokio::time::timeout(PATIENCE, running)
+                .await
                 .unwrap_or_else(|_| panic!("{args}: the cancelled search did not answer"))
                 .unwrap_or_else(|problem| panic!("{args}: the cancelled search failed: {problem}"));
             // The walk heard its call's cancel through the token the worker
             // handed it, and said that it stopped rather than finishing.
-            assert!(
-                output.text().contains("[stopped before the walk finished"),
-                "{args}: the walk went on after its call was cancelled: {}",
-                output.text()
+            assert_eq!(
+                output.text(),
+                stopped,
+                "{args}: the walk went on after its call was cancelled"
             );
             every_place_free(&worker).await;
         });
