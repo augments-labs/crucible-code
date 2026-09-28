@@ -32,6 +32,15 @@
 //! for one target is a pure function of it, so every choice can be tested
 //! against a table without touching the process environment.
 //!
+//! A program that relays another's connections, rather than sending requests
+//! of its own, asks [`ProxyEnv::relay`] instead. `NO_PROXY` is matched the
+//! same way, and a SOCKS proxy a request connects past is connected past
+//! ([`Relay::Direct`]), but only an `http://` proxy is one it can be sent
+//! through: an `https://` proxy's own TLS, a SOCKS proxy a request refuses,
+//! and an address that cannot be used all make it [`Relay::Unsupported`], so
+//! that a proxy crucible's own requests go through is never connected
+//! around instead.
+//!
 //! Here the credential is kept only in a header value marked sensitive, and
 //! its encoding in the redactions of each request sent through the proxy
 //! (so that text shown afterwards can have it taken out). The address a
@@ -65,8 +74,9 @@ const NO_PROXY_VARIABLES: [&str; 2] = ["NO_PROXY", "no_proxy"];
 /// The proxy settings of an environment, read once.
 ///
 /// Its `Debug` says what kind of proxy was chosen and how many `NO_PROXY`
-/// entries there are, and nothing of the proxy's address or credential.
-#[derive(Clone)]
+/// entries there are, and nothing of the proxy's address or credential. The
+/// default is the settings of an environment that names no proxy.
+#[derive(Clone, Default)]
 pub struct ProxyEnv {
     proxy: Option<Proxy>,
     no_proxy: Option<Vec<Bypass>>,
@@ -89,9 +99,10 @@ enum Proxy {
 /// A proxy spoken to with `CONNECT`, as a request would be sent to it.
 ///
 /// Its fields are its own, set together by its parser, so an address and the
-/// way its connection is spoken always agree.
+/// way its connection is spoken always agree. Its `Debug` shows neither its
+/// address nor its credential.
 #[derive(Clone)]
-pub(crate) struct ConnectProxy {
+pub struct ConnectProxy {
     /// Scheme `http` or `https`, agreeing with `leg`; the host and any port
     /// as given, path `/`, and no user information.
     uri: Uri,
@@ -121,6 +132,19 @@ enum Bypass {
     Suffix(String),
 }
 
+/// How a relayed connection to one host leaves this machine.
+#[derive(Clone, Copy, Debug)]
+pub enum Relay<'e> {
+    /// Straight to the host: no proxy is named, `NO_PROXY` names the host, or
+    /// the proxy is a SOCKS one a request connects past.
+    Direct,
+    /// Through this `http://` proxy, with a `CONNECT` to the host.
+    Through(&'e ConnectProxy),
+    /// Through a proxy a relay cannot speak through, and a request would not
+    /// connect past, so not at all.
+    Unsupported,
+}
+
 /// How a connection to one target is made.
 pub(crate) enum Route<'e> {
     Direct,
@@ -137,7 +161,7 @@ impl ProxyEnv {
     }
 
     /// The proxy settings `var` answers with, `None` being unset.
-    pub(crate) fn read(var: impl Fn(&str) -> Option<String>) -> Self {
+    pub fn read(var: impl Fn(&str) -> Option<String>) -> Self {
         let proxy = PROXY_VARIABLES
             .iter()
             .find_map(|name| var(name).and_then(|value| Proxy::parse(&value)));
@@ -146,6 +170,39 @@ impl ProxyEnv {
             .find_map(|name| var(name))
             .map(|list| list.split(',').map(Bypass::parse).collect());
         Self { proxy, no_proxy }
+    }
+
+    /// How a relayed connection to `host` leaves this machine.
+    ///
+    /// `host` is a name or an address, an IPv6 one with or without its
+    /// brackets. It is matched against `NO_PROXY` as a request's host is,
+    /// which is to say bracketed when it is an IPv6 address, so one entry
+    /// sends both the same way.
+    #[must_use]
+    pub fn relay(&self, host: &str) -> Relay<'_> {
+        let Some(proxy) = &self.proxy else {
+            return Relay::Direct;
+        };
+        let bracketed;
+        let named = if host.contains(':') && !host.starts_with('[') {
+            bracketed = format!("[{host}]");
+            bracketed.as_str()
+        } else {
+            host
+        };
+        match proxy {
+            _ if self.bypasses(named) => Relay::Direct,
+            Proxy::Connect(to) if matches!(to.leg, Leg::Plain) => Relay::Through(to),
+            Proxy::Past => Relay::Direct,
+            Proxy::Connect(_) | Proxy::Refused => Relay::Unsupported,
+        }
+    }
+
+    /// Whether `NO_PROXY` names `host`, spelled as a URI spells its host.
+    fn bypasses(&self, host: &str) -> bool {
+        self.no_proxy
+            .as_ref()
+            .is_some_and(|list| list.iter().any(|entry| entry.matches(host)))
     }
 }
 
@@ -184,6 +241,24 @@ impl ConnectProxy {
     /// How the connection to the proxy itself is spoken.
     pub(crate) fn leg(&self) -> &Leg {
         &self.leg
+    }
+
+    /// The proxy's host, an IPv6 address without its brackets.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        let host = self.uri.host().unwrap_or_default();
+        host.strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(host)
+    }
+
+    /// The proxy's port: the one its address gives, or its scheme's.
+    #[must_use]
+    pub fn port(&self) -> u16 {
+        self.uri.port_u16().unwrap_or(match self.leg {
+            Leg::Plain => 80,
+            Leg::Tls(_) => 443,
+        })
     }
 
     /// The proxy at `authority`, over TLS when `secure`; `None` when its
@@ -235,7 +310,8 @@ impl ConnectProxy {
     ///
     /// `hyper-util` writes them lower-case in the map's order, where the
     /// previous client wrote the same fields title-cased in this order.
-    pub(crate) fn headers(&self) -> HeaderMap {
+    #[must_use]
+    pub fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(DEFAULT_USER_AGENT));
         headers.insert("proxy-connection", HeaderValue::from_static("Keep-Alive"));
@@ -299,11 +375,7 @@ pub(crate) fn select<'e>(env: &'e ProxyEnv, target: &Uri) -> Route<'e> {
     let Some(proxy) = &env.proxy else {
         return Route::Direct;
     };
-    let bypassed = env
-        .no_proxy
-        .as_ref()
-        .zip(target.host())
-        .is_some_and(|(list, host)| list.iter().any(|entry| entry.matches(host)));
+    let bypassed = target.host().is_some_and(|host| env.bypasses(host));
     match proxy {
         _ if bypassed => Route::Direct,
         Proxy::Connect(to) => Route::Tunnel(to),
@@ -318,6 +390,15 @@ impl fmt::Debug for ProxyEnv {
             .field("proxy", &self.proxy.as_ref().map(Proxy::kind))
             .field("bypasses", &self.no_proxy.as_ref().map(Vec::len))
             .finish()
+    }
+}
+
+impl fmt::Debug for ConnectProxy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectProxy")
+            .field("tls", &matches!(self.leg, Leg::Tls(_)))
+            .field("credential", &self.authorization.is_some())
+            .finish_non_exhaustive()
     }
 }
 

@@ -23,6 +23,7 @@ use crucible_builtins::{
 use crucible_config::{Home, Settings};
 use crucible_context::{ContextInputs, SystemPrompt};
 use crucible_credentials::{ApiKey, Credential, Header, HeaderKey};
+use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
@@ -273,8 +274,13 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
 
     // Build the registry before the runner, because its exact immutable
     // generation is one of the typed facts the first pass assembles.
-    let sandbox: Arc<dyn crucible_sandbox::SandboxService> =
-        Arc::new(LocalSandbox::new().watching_on(runtime.clone()));
+    // A command's allowed traffic leaves through the proxy crucible's own
+    // requests do, read from the same environment.
+    let sandbox: Arc<dyn crucible_sandbox::SandboxService> = Arc::new(
+        LocalSandbox::new()
+            .watching_on(runtime.clone())
+            .through(ProxyEnv::read(startup.from)),
+    );
     // And every command left running is owned on the same runtime, by a task
     // of its own, so the thread that draws never asks a process anything.
     startup.leaving.watching_on(runtime.clone());

@@ -31,8 +31,11 @@ impl Runner {
             },
         )?;
 
-        // Words first, state second. A crash between them replays as Unknown;
-        // the opposite order could claim the model saw words never retained.
+        // Words first, state second; the opposite order could claim the model
+        // saw words never retained. A crash between them replays against the
+        // state recorded before them: a section told for the first time comes
+        // back Unknown and is restated whole, and a later change comes back
+        // Known at the state before it, which the next pass compares against.
         for fragment in assembled.fragments {
             self.record(ancestry, Message::Context(fragment)).await?;
         }

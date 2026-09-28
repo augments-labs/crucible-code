@@ -77,8 +77,14 @@ pub struct Compaction {
     ///
     /// In tokens rather than in turns because a turn can be enormous: the kept
     /// tail has to fit the window beside the recap, and only a figure in the
-    /// window's own unit can promise that. The newest turn is always kept whole
-    /// whatever it has cost; this bounds the turns before it.
+    /// window's own unit can promise that. The newest turn is kept whole
+    /// whatever it has cost, and this bounds the turns before it. The newest
+    /// turn begins at the latest message on the user's side, so a line queued
+    /// while a turn ran begins one, as does the note a finished background
+    /// command leaves. Automatic recovery is the exception. Once the newest
+    /// turn has finished a tool call, if the turns before it already fit this
+    /// budget and the window is still full after old tool output is cleared,
+    /// the whole conversation is recapped, the newest turn included.
     pub keep: Option<u64>,
     /// Maximum output tokens for the structured recap, where a layer said.
     ///

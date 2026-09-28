@@ -28,7 +28,7 @@ transcript is not in the terminal's scrollback and never was.
 What crucible writes on its way out is two lines: how to come back, and the
 `crucible --resume` command naming this exact session. That command still works
 after another session has been started in the same directory, and the id in it
-is the one thing about the session the screen never said — everything else it
+is the one thing about the session the screen never said. Everything else it
 drew is in the scrollback the shell has just been handed back. Where the log
 stopped being written part-way through, a line above them says so and names the
 file, because that was reported on a screen which no longer exists and a
@@ -65,7 +65,7 @@ crucible --continue
 ```
 
 This picks up the most recent session **started in the current directory**. Run
-it somewhere else and you get that directory's most recent session instead —
+it somewhere else and you get that directory's most recent session instead,
 which is the point. Two projects open in two terminals are two sessions.
 
 `--continue` replays the transcript so the model has the earlier turns, and
@@ -91,7 +91,7 @@ window is not caught either; both end the process where it stands, which is the
 case the next paragraph is about.
 
 A log the process was killed part-way through writing costs the line it was on
-and nothing more — the turns before it are still a transcript, and `--continue`
+and nothing more: the turns before it are still a transcript, and `--continue`
 hands them back. The half-written line is dropped from the file as the session
 is continued, before anything new is appended: the next turn would otherwise be
 written onto the end of it, which turns a lost line into a log that cannot be
@@ -202,14 +202,14 @@ reads, this does with the log it names.
 
 ## Switching without restarting
 
-`/resume` stands this directory's sessions over the shell — a search line, the
-sessions beside a preview of the marked one — and taking one changes which
+`/resume` stands this directory's sessions over the shell (a search line, the
+sessions beside a preview of the marked one), and taking one changes which
 session the crucible you are in is recording to. `/resume <id>` takes that
 session without standing anything. Either way it reads a log the way
 `--continue` reads one, and everything above applies to it: the transcript comes
 back, the file is cut to what was replayed before anything new is appended, a
 log this build cannot read is refused rather than half-understood, and a session
-another crucible has open is not available — the picker says so on the marked
+another crucible has open is not available. The picker says so on the marked
 session's own line rather than waiting for Enter to find out.
 
 The preview reads a bounded message tail and uses the live transcript's message
@@ -220,16 +220,16 @@ for the first words of the session.
 
 What is different is the session being left. It is finished here rather than
 when the process ends, so its log is complete and can be continued from
-somewhere else immediately. Its session-long permission answers end with it —
+somewhere else immediately. Its session-long permission answers end with it:
 "for the rest of this session" was answered about that session, and the new one
 is asked again. The mode carries over, and so do the rules in your configuration
 files, which were never held in a session to begin with.
 
 The screen is different too. The session picked up replaces what was on it
 rather than following it: the transcript is emptied first, so what you scroll
-back through is one conversation, with the welcome card at the top of it —
+back through is one conversation, with the welcome card at the top of it,
 exactly the screen starting crucible on that session would have drawn. What was
-on screen before is not recoverable from inside crucible — the session it
+on screen before is not recoverable from inside crucible. The session it
 belonged to is still on disk, and picking it back up is how you read it again.
 
 The one session `/resume` will not pick up is the one you are in. It says so,
@@ -247,13 +247,13 @@ A session put back on the screen is drawn by the code that drew it live, so it
 is the same session rather than a rendering of one. A result too long for its
 row still says how much it left over, still stands out from the rows with
 nothing behind them, and still opens on
-[<kbd>Ctrl+O</kbd> or a click](../getting-started/getting-started.md) — the
+[<kbd>Ctrl+O</kbd> or a click](../getting-started/getting-started.md). The
 lines are read back out of the log rather than out of the run that produced
 them.
 
 How much of the window is left comes back with it. A log records what each
 request carried, so a session picked up says so straight away rather than
-waiting for its next answer to measure it — unless it is picked up under
+waiting for its next answer to measure it, unless it is picked up under
 different instructions or a different set of tools, or picking it up took out
 results the provider now in use may not be sent, where the reading is about a
 request this run would not send and the row waits, as it always did.
@@ -284,9 +284,9 @@ Continuing a session cuts its log back to what was replayed, so without this the
 second crucible would delete the turns the first had already written and still
 believes are there, and both would append to one file from then on.
 
-Starting a session is refused only if it cannot find itself a free name — eight
+Starting a session is refused only if it cannot find itself a free name: eight
 tries, each a millisecond and seventy-four bits of randomness. Two crucibles in
-one directory are two sessions, each recording a log of its own — it is only
+one directory are two sessions, each recording a log of its own. It is only
 continuing that has to pick one, and only continuing that can be told no.
 
 The claim is the operating system's, taken on a `.lock` file beside the log and
@@ -295,8 +295,8 @@ stuck as busy. The file it was taken on stays where it is and is never mistaken
 for a session. Some network filesystems have no locks to take at all; there,
 `--continue` goes ahead without the check rather than refusing everything.
 
-A `.lock` file that cannot be made at all — something already in its place, a
-directory gone read-only — is a third answer and not that one. Nothing was asked
+A `.lock` file that cannot be made at all (something already in its place, a
+directory gone read-only) is a third answer and not that one. Nothing was asked
 about the log, so nothing is assumed about it: `--continue` stops with
 `could not claim the session log …` and the reason the operating system gave,
 having read nothing and changed nothing.
@@ -312,8 +312,8 @@ it. crucible shows how much is left against the end of the row a turn runs on:
 
 The percentage measures the part of the window the transcript may still use.
 Room reserved for the answer and its tool results is outside it, so `0%` is the
-safe compaction boundary — not the model's literal last token. The fixed cost
-every request carries — the system instructions and the tool schemas — is
+safe compaction boundary, not the model's literal last token. The fixed cost
+every request carries (the system instructions and the tool schemas) is
 outside it too, so a session that has said nothing begins at `100%`, and
 automatic compaction begins at `0%` while that reserve remains available.
 
@@ -384,7 +384,7 @@ window` instead. `/clear` or a model with a larger window is what gets past it.
 ## Picking up a large one
 
 A session that ran for hours is worth what it cost to build, and carrying all of
-it back is what that costs again — on the next request and on every request
+it back is what that costs again, on the next request and on every request
 after. The panel appears only in an interactive session whose carried context
 reaches `compaction.askOnResume` (60000 tokens by default), with that setting
 enabled. Smaller sessions resume directly. A large one asks:
@@ -409,19 +409,19 @@ They do not remove the original conversation or compaction markers from visible
 history. “Carry all of it” keeps the current context whole; it does not undo an
 earlier compaction.
 
-Nothing is decided for you. The one case where carrying it whole is right — you
-are about to ask about something said two hours ago — is the case crucible
+Nothing is decided for you. The one case where carrying it whole is right (you
+are about to ask about something said two hours ago) is the case crucible
 cannot see from here.
 
-Escape carries it whole, which is the answer that changes nothing — and it means
-the same thing once the notes have started, where it stops them and leaves the
-session as it was. *Stop asking* writes `compaction.askOnResume` down as `0`;
-set it to a number of tokens instead to move the point where the question
-appears.
+Escape carries it whole, which is the answer that changes nothing. Pressed once
+the notes have started, it stops them and nothing is replaced, though old tool
+output cleared before the notes began stays cleared. *Stop asking* writes
+`compaction.askOnResume` down as `0`; set it to a number of tokens instead to
+move the point where the question appears.
 
 ## When recording stops
 
-A write to the log can fail — a full disk, most often — and the turn does not
+A write to the log can fail (a full disk, most often), and the turn does not
 stop with it. One line says so, after the turn it happened in:
 
 ```
@@ -435,7 +435,7 @@ line of its own so that a write which stopped part-way cannot have the next one
 welded onto it.
 
 What that leaves is read back under the rules above. An attempt that got nothing
-down costs nothing at all — the empty line it leaves is not a message and is not
+down costs nothing at all: the empty line it leaves is not a message and is not
 damage, and the replay reads past it. One that stopped in the middle of a line
 is damage where it sits.
 
@@ -452,12 +452,12 @@ for you is in one place you can back up, inspect or delete as a unit.
 
 `CRUCIBLE_CODE_HOME` moves the whole directory. It is taken as the home itself,
 not as somewhere to put a `.crucible` inside, and only when it is an absolute
-path — a relative one is ignored rather than resolved against wherever you
+path. A relative one is ignored rather than resolved against wherever you
 happened to start crucible, which would scatter a home directory across every
 repository you work in. `HOME` is read the same way, and if neither is absolute
 crucible says so and stops instead of guessing.
 
-When you set it, everything is under it and nowhere else is consulted — which
+When you set it, everything is under it and nowhere else is consulted, which
 is what makes it usable for a container or a throwaway run that must not write
 into your real home directory.
 
@@ -510,7 +510,7 @@ replay back to the model as though you had typed it.
 
 On Unix that is a mode: `0600` on a log and `0700` on the directory. On Windows
 it is an access control list naming the account crucible is running as and
-nothing else, with the inheritance from your user profile switched off — so what
+nothing else, with the inheritance from your user profile switched off, so what
 that profile hands Administrators and SYSTEM does not reach a transcript merely
 by sitting above it. An administrator can still take ownership and read it, which
 is the same escape by a longer route and the honest limit of what a file
@@ -518,7 +518,7 @@ permission promises on either system.
 
 Both are set on every start and every `--continue`, not only when they are
 created, because a directory made by an earlier build or by hand keeps whatever
-it was made with — and `--continue` is the run that goes looking in it. A path
+it was made with, and `--continue` is the run that goes looking in it. A path
 that cannot be set stops the run and says so, rather than carrying on and writing
 a transcript somewhere the whole machine can read.
 
@@ -531,7 +531,7 @@ the file is and where it belongs:
 {"format":13,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
 ```
 
-Then one line per message — what you typed, what the model said and asked to
+Then one line per message: what you typed, what the model said and asked to
 run, and what the tools returned. Supplemental journal records retain bounded
 private diff previews and completed compaction notices for display replay.
 Compaction changes model context without deleting earlier conversation records.

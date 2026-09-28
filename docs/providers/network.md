@@ -25,8 +25,9 @@ crucible makes requests of its own for three things, and nothing else:
 MCP servers and extensions are programs crucible starts and talks to over their
 standard input and output. crucible opens no connection for them, and any they
 open are their own. A command's connections are its own too, except that with
-confinement on, crucible's per-command proxy makes them on its behalf (see
-[commands connect on their own](#commands-connect-on-their-own)).
+confinement on, crucible's per-command proxy makes them on its behalf, through
+your proxy when you set one (see [commands connect on
+their own](#commands-connect-on-their-own)).
 
 ## Through a proxy
 
@@ -53,12 +54,12 @@ operating system's own network settings are not read.
 
 What happens next depends on the scheme:
 
-| Proxy | What crucible does |
-| --- | --- |
-| `http://` | Asks it for a tunnel with `CONNECT` and speaks TLS to the provider through it, unless the provider's address is `http`. The request to the proxy is plain text. |
-| `https://` | The same, over TLS to the proxy, checked against the same certificates as any other host. |
-| `socks://`, `socks4://`, `socks5://` | Ignores it and connects straight to the host. |
-| `socks4a://`, `socks5h://` | Refuses to connect: every request fails unless its host skips the proxy. |
+| Proxy | What crucible does | What a confined command's allowed connections do |
+| --- | --- | --- |
+| `http://` | Asks it for a tunnel with `CONNECT` and speaks TLS to the provider through it, unless the provider's address is `http`. The request to the proxy is plain text. | Go through it the same way, in a tunnel to the address crucible checked. |
+| `https://` | The same, over TLS to the proxy, checked against the same certificates as any other host. | Fail with `502`: they cannot be sent through it and are not sent around it. |
+| `socks://`, `socks4://`, `socks5://` | Ignores it and connects straight to the host. | Go straight to the host, as crucible's requests do. |
+| `socks4a://`, `socks5h://` | Refuses to connect: every request fails unless its host skips the proxy. | Fail with `502`, as crucible's requests fail. |
 
 A user name and password in the address, as in
 `http://name:secret@proxy.example:3128`, are sent to the proxy as `Basic`
@@ -150,10 +151,35 @@ reports any of these.
 ## Commands connect on their own
 
 A command the `bash` tool runs is not a crucible request, and nothing above
-applies to it. Its environment is built for it rather than copied from yours
-([environment and
+applies to it except where this section says so. Its environment is built for
+it rather than copied from yours ([environment and
 credentials](../security/sandboxing.md#environment-and-credentials)). With
 confinement on under Linux or macOS and network domains allowed, its proxy
-variables name crucible's own per-command proxy, which connects straight to
-each allowed host rather than through a proxy your environment or the `env`
-block names ([`sandbox`](../configuration/configuration.md#sandbox)).
+variables name crucible's own per-command proxy, which checks each connection
+against the domains you allowed
+([`sandbox`](../configuration/configuration.md#sandbox)). A proxy the `env`
+block names is replaced and never used.
+
+An allowed connection then leaves the way crucible's own request to that host
+would: straight to the host when no proxy is set, `NO_PROXY` names the host,
+or the proxy is a SOCKS kind crucible connects past, and otherwise through the
+proxy crucible [took from your environment](#through-a-proxy). crucible
+looks the host up itself and checks the address it finds before the proxy
+hears of the connection. It then asks the proxy for a `CONNECT` tunnel to that
+address and the port the command asked for, with the name and password from
+the proxy's address. A plain `http` request travels inside such a tunnel
+too. So the machine crucible runs
+on must be able to resolve the host, and the proxy must accept a tunnel to an
+address and to that port. A host that is not allowed gets `403 Forbidden` and
+never reaches the proxy, and the command never sees the proxy's address or
+password.
+
+Only an `http://` proxy can carry a command's connections. Under an
+`https://` proxy they fail rather than go around it, though crucible's own
+requests go through it. Under a SOCKS proxy they do what crucible's own
+requests do: a `socks://`, `socks4://` or `socks5://` one is passed by, and a
+`socks4a://` or `socks5h://` one fails them. `NO_PROXY` sends a host straight
+there under any of these. A connection also fails when the proxy cannot be
+reached, refuses the tunnel, or has not opened it within five seconds of the
+command connecting. Each failure gets `502 Bad Gateway`, with one line saying
+which.

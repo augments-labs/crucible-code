@@ -1594,6 +1594,7 @@ pub(crate) mod tests {
             policy,
             SandboxId::new(),
             Some(std::time::Duration::from_secs(5)),
+            std::sync::Arc::default(),
         )
         .unwrap();
         let mut command = std::process::Command::new("/bin/sh");
@@ -1652,6 +1653,7 @@ pub(crate) mod tests {
             policy,
             SandboxId::new(),
             Some(std::time::Duration::from_secs(5)),
+            std::sync::Arc::default(),
         )
         .unwrap();
         let address = proxy.address();

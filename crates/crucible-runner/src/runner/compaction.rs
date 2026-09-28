@@ -27,11 +27,15 @@
 //! log, with a line written where it happened so a continued session clears it
 //! again.
 //!
-//! **A stop replaces nothing.** The transcript is rebuilt once the notes are
-//! whole, so a recap somebody stopped part way through — or one a failed
-//! request never finished — leaves the session exactly as it was. Half a
-//! session's memory is not one, and standing it in place of the messages it
-//! was meant to replace would lose the rest of them for good.
+//! **A stop replaces nothing.** The transcript is rebuilt only once the notes
+//! are whole, so a recap somebody stopped part way through, or one a failed
+//! request never finished, leaves every message it was meant to replace in
+//! what the model is sent. Half a session's memory is not one, and standing it
+//! in place of the messages it was meant to replace would lose the rest of
+//! them for good. What was done before the notes began is not undone: old tool
+//! output the pruning cleared stays cleared, with its line in the log, and the
+//! log also keeps any line a pick-up or vendor change still owed it and the
+//! prompt-cache steps the recap request took.
 
 use crucible_context::compaction::{
     RECAP_REQUEST, TrackedFiles, append_files, carried, is_structured,

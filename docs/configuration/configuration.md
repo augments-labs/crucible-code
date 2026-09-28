@@ -1,6 +1,6 @@
 # Configuration
 
-crucible reads JSON. Every file is optional — most machines have none of them
+crucible reads JSON. Every file is optional: most machines have none of them
 and crucible runs the same way.
 
 ```json
@@ -25,8 +25,8 @@ Three, read in this order. Nearer to the work wins.
 | File | Holds | Checked in? |
 | --- | --- | --- |
 | `~/.crucible/config.json` | what you want everywhere | no, it is yours |
-| `.crucible/config.json` | what this project needs | yes — everyone who clones gets it |
-| `.crucible/config.local.json` | non-authority overrides for this checkout | by convention only — [gitignore it](#the-workspace-files) |
+| `.crucible/config.json` | what this project needs | yes; everyone who clones gets it |
+| `.crucible/config.local.json` | non-authority overrides for this checkout | by convention only; [gitignore it](#the-workspace-files) |
 
 The two project files are looked for in the directory you started crucible in,
 which is what makes a project's settings a property of the checkout rather than
@@ -42,7 +42,7 @@ spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
 
 A file that is not there is not an error. A file that *is* there and will not
-open is, and says so — silently skipping it would turn a permissions mistake
+open is, and says so. Silently skipping it would turn a permissions mistake
 into settings that mysteriously stopped applying. Anything there that is not an
 ordinary file, such as a pipe, is refused with the file named rather than
 waited on. Each file is limited to 1 MiB before JSON parsing, so a checkout
@@ -69,7 +69,7 @@ repository's choice to make for everyone who clones it.
 
 ### `providers`
 
-Keyed by provider name — `anthropic`, `google`, `moonshot`, `openai`.
+Keyed by provider name: `anthropic`, `google`, `moonshot`, `openai`.
 
 | Key | Means |
 | --- | --- |
@@ -81,7 +81,7 @@ Keyed by provider name — `anthropic`, `google`, `moonshot`, `openai`.
 | `defaultContextWindow` | The same, for any model of this provider not named above. |
 
 `effort` is one of `low`, `medium`, `high`, `xhigh` or `max`, and it is set per
-provider because which rungs exist is the vendor's business — a rung chosen for
+provider because which rungs exist is the vendor's business. A rung chosen for
 the one serving it says nothing about the one that would refuse it. Left out,
 crucible asks for no rung at all and the vendor's own default for that model
 applies. See [Providers and models](../providers/providers.md).
@@ -94,7 +94,7 @@ all. Choosing an arbitrary inherited secret is authority, so `apiKeyEnv` is
 read only from the configuration file in your home directory.
 
 `baseUrl` is for a gateway or a proxy speaking the same protocol. It must be
-`https`, or `http` on `localhost`, `127.0.0.1` or `[::1]` — the key travels in a
+`https`, or `http` on `localhost`, `127.0.0.1` or `[::1]`. The key travels in a
 header on every request, so the address decides who receives it, and plain
 `http` to anywhere else is that key on somebody's network in the clear. For the
 same reason it is one of the keys [workspace files](#the-workspace-files) may
@@ -191,8 +191,8 @@ What happens when the model's window fills up. See
 ```
 
 Left alone, crucible makes room when it has to and stops a turn for nothing
-else. `never` does not disable `/compact` — that is you asking rather than
-crucible deciding — it means a turn that runs out of room fails instead of
+else. `never` does not disable `/compact` (that is you asking rather than
+crucible deciding); it means a turn that runs out of room fails instead of
 recovering.
 
 `keep` is in tokens rather than turns because a turn can be enormous: the kept
@@ -215,11 +215,11 @@ token ceiling or omits a required section replaces nothing.
 `reserve` is worked out from the model if you do not set it: enough for one
 answer of the length crucible asks for, plus the tool results a pass carries
 back. **Raising what an answer may be raises the reserve**, because a request
-and its answer have to fit the window together — so a larger answer ceiling
+and its answer have to fit the window together, so a larger answer ceiling
 means compacting sooner, not later. The reserve is never more than half the
 window, so a small model still has half of itself to work in.
 
-`askOnResume` is a number of tokens, and `0` means never ask — which is what
+`askOnResume` is a number of tokens, and `0` means never ask, which is what
 the *stop asking* answer writes down. See
 [Sessions](../sessions/sessions.md#picking-up-a-large-one).
 
@@ -367,7 +367,9 @@ UDP and application DNS do not acquire that grant. The host resolves permitted
 names, checks the resulting addresses before connecting, and evaluates each
 new proxy request independently. Private, loopback and metadata addresses need
 an explicit IP-literal grant; a wildcard or a public hostname resolving to a
-private address does not grant access by itself.
+private address does not grant access by itself. A permitted connection goes
+through the `http://` proxy crucible's own environment names, if any ([commands
+connect on their own](../providers/network.md#commands-connect-on-their-own)).
 
 `allowLocalBinding` allows local listeners; it does not grant host egress or
 publish a Linux namespace port onto the host. On macOS a local listener may
@@ -410,9 +412,9 @@ The confinement-only resource ceilings do not apply. Permission approval and a
 worktree are not a sandbox.
 
 `crucible --sandbox` prints what a command in the directory you are standing in
-would actually run under — which backend enforces it, what that backend can and
-cannot hold, the reach and ceilings a command would get, and anything given up
-along the way — and stops without running one. See
+would actually run under, and stops without running one. The report says which
+backend enforces it, what that backend can and cannot hold, the reach and
+ceilings a command would get, and anything given up along the way. See
 [Operating-system confinement](../security/sandboxing.md) for the exact backend
 capability matrix, lifecycle, inspection and failure behavior, and for how to
 read that report.
@@ -432,7 +434,7 @@ this is the key reference.
 | `extraDirectories` | a list of absolute paths | Directories outside the working directory that tools may reach. |
 
 A rule is a tool name and what it may act on: `read(src/**)`,
-`bash(cargo test)`. A tool name on its own — or `bash(*)` — is everything that
+`bash(cargo test)`. A tool name on its own, or `bash(*)`, is everything that
 tool could do.
 
 ```json
@@ -469,13 +471,13 @@ to put it in project configuration.
 ```
 
 Leave it alone and Return sends, while Shift+Return, Alt+Return and Ctrl+J each
-open a line under the one you are typing — as does a backslash on the end of the
+open a line under the one you are typing, as does a backslash on the end of the
 line you are on, which asks the terminal for nothing at all. That is what almost
 every terminal makes possible and it is what the prompt does out of the box.
 
 Set it to `altEnter` and the two swap: Return opens a line and a modified Return
 sends. That is the answer for a terminal that keeps Shift+Return for itself and
-never forwards it — you press Return for as many lines as you want, then
+never forwards it: you press Return for as many lines as you want, then
 Alt+Return to send. Ctrl+J sends too, because a terminal has always spelled it
 the same way as the other modified Returns.
 
@@ -498,8 +500,8 @@ you with no way to send at all.
 `auto` asks the terminal what its background is and picks the dark or the light
 table from the answer, which is the setting to leave alone unless you have a
 reason: it is the only one that keeps being right when you change your terminal.
-The two `colourblind` tables move the diff off the red-green axis — a line put
-in goes blue and a line taken out goes amber — and `ansi` spends nothing but the
+The two `colourblind` tables move the diff off the red-green axis (a line put
+in goes blue and a line taken out goes amber), and `ansi` spends nothing but the
 sixteen colours your terminal already has, so your own terminal theme decides
 every hue.
 
@@ -510,13 +512,13 @@ is a list of colours and nobody can picture one from its name.
 One thing is not in any table: the row your own prompt is left on takes a
 background blended off your terminal's, a fixed step lighter on a dark one and
 darker on a light one, so it cannot fight a terminal theme crucible has not
-seen. Most terminals will not say what their background is — the question is not
-widely implemented — and there the step is taken off the background the table in
+seen. Most terminals will not say what their background is (the question is not
+widely implemented), and there the step is taken off the background the table in
 force is drawn for instead, which is the same assumption every other colour on
 screen is already making.
 
 `syntaxTheme` is a separate answer because it is a separate question. The theme
-above decides the interface — borders, marks, the mode in force, the ground a
+above decides the interface: borders, marks, the mode in force, the ground a
 diff takes. This decides what a fenced block of code in an answer looks like,
 and the two are chosen together on `/theme`, one axis each.
 
@@ -524,14 +526,14 @@ The names are the ones you already have an opinion about: Monokai Extended,
 GitHub, Dracula, Nord, gruvbox, Solarized, one-half and the rest. `/theme` lists
 every one of them.
 
-A block is read only where its fence named a language crucible knows — ```` ```rust ````
+A block is read only where its fence named a language crucible knows: ```` ```rust ````
 rather than a bare ```` ``` ````. One that named nothing, or named something it does
 not know, is drawn exactly as it was before any of this existed: quiet and
 whole. TypeScript is read as the JavaScript it extends, so a type annotation is
 drawn as ordinary words.
 
 `glyphs` is asked rather than detected. A hollow square where a border should be
-is a font missing that character, and nothing about that reaches crucible — the
+is a font missing that character, and nothing about that reaches crucible. The
 bytes arrived, the encoding was right, and the gap is in a font this program
 cannot see. So it is a setting, and `ascii` is the answer for a terminal whose
 font has no box drawing rather than a fallback crucible guesses its way into.
@@ -560,8 +562,8 @@ result the transcript cut short, resting the pointer on one of those results
 lights the one you are on, and a drag selects what it covers and puts it on your
 clipboard when you let go.
 
-Hold **Shift** while you drag and the selection is your terminal's own again —
-every terminal keeps Shift as the way past a program holding the pointer, which
+Hold **Shift** while you drag and the selection is your terminal's own again.
+Every terminal keeps Shift as the way past a program holding the pointer, which
 is the answer for a reader who wanted their emulator's selection rather than
 this one.
 
@@ -580,7 +582,7 @@ because you asked; this is the only time crucible decides to on its own. At most
 once a day, on a thread of its own, it asks GitHub which release is newest and
 writes the answer to `~/.crucible/release`; nothing waits for it, so the answer
 is drawn under the welcome the *next* time you start. No part of your session,
-your directory or your configuration is sent — the request is a plain GET for
+your directory or your configuration is sent. The request is a plain GET for
 the repository's latest release, carrying a user agent that names crucible and
 its version.
 
@@ -589,9 +591,9 @@ anything about releases.
 
 ### `env`
 
-Environment variables for the commands crucible runs — the bash tool's children
-— and the place crucible's own settings are written, under names that begin
-with `CRUCIBLE_CODE_`. crucible does not put a variable in its own environment,
+Environment variables for the commands crucible runs (the bash tool's children)
+and the place crucible's own settings are written, under names that begin with
+`CRUCIBLE_CODE_`. crucible does not put a variable in its own environment,
 because writing to it is `unsafe` in a process with threads. It reads its own
 names from the block as settings, and one set in the shell you start crucible in
 still wins.
@@ -618,7 +620,7 @@ When native Windows confinement is enabled, the backend replaces `TEMP` and
 
 Everything else stops here, and your provider key is why. `env` and `printenv`
 are ordinary things for a model to run, and what a command prints comes back as
-tool output — onto your screen, into the next request, and into the session log.
+tool output: onto your screen, into the next request, and into the session log.
 The list says what to keep rather than what to drop, because `apiKeyEnv` takes a
 name: a key can be called anything, so a list of the names keys usually have
 would cover exactly the names somebody thought of.
@@ -626,8 +628,8 @@ would cover exactly the names somebody thought of.
 A name written in `env` beats the inherited one, so `"PATH"` there replaces what
 crucible was started with rather than adding to it.
 
-A command that needs anything else — a `CARGO_TARGET_DIR`, a token a deploy
-script reads — is told about it here, which is you handing it over on purpose.
+A command that needs anything else (a `CARGO_TARGET_DIR`, a token a deploy
+script reads) is told about it here, which is you handing it over on purpose.
 
 ## The workspace files
 
@@ -654,15 +656,15 @@ trusted source of authority:
 ```
 
 The exception is crucible's own names, which begin with `CRUCIBLE_CODE_`. One of
-those is not arbitrary — it is a knob crucible declares and whose meaning
-crucible fixes — so a project may set one for everybody who clones it, and that
+those is not arbitrary: it is a knob crucible declares and whose meaning
+crucible fixes. So a project may set one for everybody who clones it, and that
 is still not a way to ship somebody's key.
 
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
 and `provider`. The last four are not permissions, and they are here for the
-same reason — they replace the instructions that say to ask, or choose which
+same reason: they replace the instructions that say to ask, or choose which
 credential is read and who receives it, and nothing on those paths stops to ask.
 Each is read only from your home file and refused in both files under the
 workspace.
@@ -716,9 +718,9 @@ two listings a week apart tell you whether the file changed.
 `hosted` is whether this crucible could run the extension at all, which is a
 different question from whether you have allowed it and is not something
 allowing it would change. It says no for two reasons. One is a protocol whose
-first number is not the one this build speaks — two programs that disagree
-about the shape of what crosses the wire, with no older crucible or newer one
-that would help:
+first number is not the one this build speaks, so the two programs disagree
+about the shape of what crosses the wire, and no older crucible or newer one
+would help:
 
 ```
   protocol  2.0, needs crucible 0.34.0
@@ -750,7 +752,7 @@ host that starts one yet.
 ### Allowing one
 
 Installed is not permitted. An extension stays off until you say otherwise, and
-you say it under its own identifier — the `id` its manifest states, which is
+you say it under its own identifier, the `id` its manifest states, which is
 also what the listing prints. Two keys, not one:
 
 ```json
@@ -821,7 +823,7 @@ its documentation gives rather than any crucible knows:
 Nothing inside is checked, because there is nothing here to check it against:
 crucible has never read that extension's documentation, and refusing a key it
 does not recognise would mean deleting a line the extension told you to write.
-Any JSON goes in — strings, numbers, lists, blocks inside blocks — and the only
+Any JSON goes in (strings, numbers, lists, blocks inside blocks), and the only
 thing crucible insists on is that the block is a block:
 
 ```
@@ -852,7 +854,7 @@ under its own heading with the reason:
 
 Crucible reads 64 directories. A directory holding more than that is refused
 whole and nothing in it is listed, because the 64 a sweep would reach first are
-whichever ones the filesystem handed back — a list built from them could name
+whichever ones the filesystem handed back, so a list built from them could name
 different extensions on the next run:
 
 ```
@@ -862,7 +864,7 @@ different extensions on the next run:
   /home/you/.crucible/extensions holds more than 64 installed directories, so none of them were read — move what is not an extension out of it
 ```
 
-Two directories claiming one `id` are not both kept — the first in sorted order
+Two directories claiming one `id` are not both kept. The first in sorted order
 keeps the identifier and the second is listed as refused, because the identifier
 is what everything else would key on.
 
@@ -888,7 +890,7 @@ want their tools qualified by:
 
 The name you choose is the name you will read later: `docs` makes the server's
 `search` tool `mcp:docs/search`. So a name may not hold `:` or `/`, which are
-the two characters that qualification is spelled with — a server called `a/b`
+the two characters that qualification is spelled with; a server called `a/b`
 would produce tool names nobody could read back to a server.
 
 Writing a record starts nothing. It is a statement that a server exists and how
@@ -900,14 +902,14 @@ crucible --with-mcp docs
 ```
 
 Repeat the flag for each server you want. A run that names none starts none,
-which is every run that does not type it — twenty servers written down and no
+which is every run that does not type it. Twenty servers written down and no
 flag is twenty processes that do not exist. A name nothing wrote down stops the
 run rather than being quietly left out, because a turn missing the tools you
 asked for reads as a model that will not do the work.
 
 The servers a turn hosts are started when it begins and stopped when it ends,
 and each is asked once what it offers. What comes back is named under the server
-it came from — the `docs` server's `search` tool is `mcp:docs/search` — so
+it came from (the `docs` server's `search` tool is `mcp:docs/search`), so
 nothing a server offers can take over a name crucible already uses.
 
 A server is somebody else's program, so it runs confined the way a command run
@@ -920,8 +922,8 @@ the variables `env` and `envFrom` name and nothing else: a server inherits
 none of crucible's own environment.
 
 `command` is the only key a record cannot do without, and it is either an
-absolute path or a bare name for `PATH` to answer. Anything in between —
-`./server`, `bin/server` — is refused, because it would be resolved against
+absolute path or a bare name for `PATH` to answer. Anything in between, such as
+`./server` or `bin/server`, is refused, because it would be resolved against
 whichever directory crucible happened to be started in:
 
 ```
@@ -936,7 +938,7 @@ What counts as absolute is the machine's own answer: a leading `/` on Linux and
 macOS, a drive or a share on Windows. A bare name is the spelling that means the
 same thing on all of them, which is why the schema offers it first.
 
-`env` holds values and is applied verbatim, so nothing secret belongs in it — a
+`env` holds values and is applied verbatim, so nothing secret belongs in it: a
 configuration file is a file, and a value written there is a value on disk.
 `envFrom` is the key for a secret: it holds *names* on both sides. `"DOCS_TOKEN":
 "MY_DOCS_TOKEN"` means the server is given `DOCS_TOKEN` set to whatever crucible
@@ -950,12 +952,12 @@ server writes on standard error and in the words of every reply it decodes from
 standard output and keeps: tool results, error messages, and the names,
 descriptions and schemas of the tools it offers. A reply is decoded first, so
 an echo the server's JSON escaped is found too, and the protocol around the
-words is read as it was sent — no frame is rewritten, and every number crucible
+words is read as it was sent: no frame is rewritten, and every number crucible
 reads, such as a call's `id`, is read as sent whatever the value is. The one
 number kept as words, the spelling of an `id` crucible could not have issued,
 is hidden like the rest of the words it keeps. A number crucible keeps is shown
-as sent too — an error's code, a number in a tool's schema, the `id` of an
-answer to a call it was not waiting on — so a value a server repeats as a
+as sent too (an error's code, a number in a tool's schema, the `id` of an
+answer to a call it was not waiting on), so a value a server repeats as a
 number reaches the model there, which is one more reason such a value belongs
 in `env`. A server whose tool schema would have two member names of one object
 alike once the value is hidden in them is refused, as a server offering two
@@ -983,7 +985,7 @@ them has an answer already:
 an interrupt takes. Pressing escape before a call reaches the server refuses it
 there and then. Pressing it during a call ends the wait at the press: the call
 comes back cancelled immediately, whatever `requestSeconds` is set to. What the
-press cannot do is reach the server — the request has gone, the tool may be
+press cannot do is reach the server: the request has gone, the tool may be
 running, and from crucible's side a tool that never started, one that finished,
 and one whose answer was lost look the same. So an interrupted server is
 finished with for the rest of that turn rather than asked a second question it
@@ -993,7 +995,7 @@ willing to wait for a server that has stopped answering.
 `restarts` is a ceiling on the endings crucible can prove were harmless, not a
 retry count. A server whose process had already gone when crucible tried to
 write the call left the far end untouched, so it is started again and the same
-call sent once — that is what the number is spent on. Every other ending has a
+call sent once; that is what the number is spent on. Every other ending has a
 request outstanding, and no number makes repeating it safe: those end the server
 for the turn whatever the ceiling says. A server started again has to come back
 offering the tool under the same name and the same schema, because the
@@ -1009,7 +1011,7 @@ ordinary startup refusal with confirmed cleanup can still be skipped.
 
 Every key in `mcp.servers` is read **only** from `~/.crucible/config.json`. A
 committed `.crucible/config.json` naming a server would be choosing whose
-program runs — and what it is told, and what it is started with — on behalf of
+program runs (and what it is told, and what it is started with) on behalf of
 whoever cloned the checkout, before anything has been typed:
 
 ```
@@ -1023,13 +1025,13 @@ home directory
 
 Crucible reads 64 servers, and 256 arguments and 256 variables per record. A
 block holding more than one of those is refused by name and line when the file
-is read, rather than accepted and then shortened — a server started with the
+is read, rather than accepted and then shortened. A server started with the
 first 256 of the 300 arguments you wrote is running a command you did not
 write, and would say nothing about the ones it dropped.
 
 ## `CRUCIBLE_CODE_HOME`
 
-Moves crucible's whole directory — the configuration file and the session logs
+Moves crucible's whole directory: the configuration file and the session logs
 both. It is taken as the home itself, not as somewhere to put a `.crucible`
 inside, and only when it is an absolute path.
 
@@ -1106,7 +1108,7 @@ force.
 
 Concatenation is the only rule a list could have here. If a nearer layer
 replaced a farther one, a `.crucible/config.json` that mentions `deny` at all
-would silently drop every `deny` you wrote at home — and a checked-out
+would silently drop every `deny` you wrote at home, and a checked-out
 repository would be deciding what your own machine protects. Keeping both is
 safe precisely because `deny` wins wherever it came from.
 
@@ -1117,7 +1119,7 @@ Removing an entry means editing the file that holds it.
 
 JSON has no comment syntax, which is the one real cost of the format. `$comment`
 is the standard's own answer to it, and crucible takes it anywhere in a
-document — at the top, beside a rule list, inside a provider block — and does
+document (at the top, beside a rule list, inside a provider block) and does
 nothing with it:
 
 ```json
@@ -1150,12 +1152,12 @@ and marks one out of range as you type.
 A key that crucible answers for itself when no layer set it says so too, and an
 editor fills that answer in. Every such key is one this page already documents
 with the same word, because the two come from one declaration. A key with no
-default carries none — a window worked out from the model, an effort the vendor
-decides, a reserve derived from the window — since a default invented for the
+default carries none (a window worked out from the model, an effort the vendor
+decides, a reserve derived from the window), since a default invented for the
 schema would be a sentence about behaviour that nothing runs.
 
 The schema is not fixed. Keys may be added, renamed or removed in any 0.x
-release, and the URL above serves one copy — the newest release, not the version
+release, and the URL above serves one copy: the newest release, not the version
 you are running. An editor marking something red is worth a second look; the
 program is what decides.
 
@@ -1189,9 +1191,9 @@ relative to
 ```
 
 An entry in a list is named by the index it sits at and located at the key
-holding the list, because an entry has no key of its own to search the file for
-— and the other `"read(src/**)"` further down would be a perfectly correct line
-to be sent to.
+holding the list, because an entry has no key of its own to search the file
+for, and the other `"read(src/**)"` further down would be a perfectly correct
+line to be sent to.
 
 Where a key appears more than once in the file, the position is left off rather
 than pointing at one of them, which would send you to a line that is correct.

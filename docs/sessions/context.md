@@ -74,11 +74,11 @@ only half of it.
 What the model was told is written to the session log as the words it was
 sent, followed by a line recording the state behind them. `--continue` and
 `--resume` read both back, so a resumed session carries on comparing against
-what the model already knows rather than starting over. The tools section is
-always sent again, as a short change note: each run of crucible builds its
-tools afresh under a new generation, and the note names it along with any tool
-added or removed. Any other section is sent only if it changed, as when the
-date has moved on or you resume under another model. The mode and any
+what the model already knows rather than starting over. If nothing changed
+while it was closed, nothing is restated. A section is sent only if it changed,
+as when the date has moved on, you resume under another model or a tool was
+added or removed. The tools are compared by name, so a run that builds the same
+tools afresh does not tell the model about them again. The mode and any
 session-long allow
 [are not carried over](../permissions/modes.md#--continue-resumes-the-transcript-not-the-mode),
 so the model is told when they differ from what it last heard.

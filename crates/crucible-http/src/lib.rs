@@ -23,7 +23,10 @@
 //!   `socks5h://` one, or an `http://` or `https://` one whose address
 //!   cannot be rebuilt without its user information, is refused. A
 //!   credential is sent only to the proxy and registered for redaction on
-//!   the request's headers.
+//!   the request's headers. A program relaying another's connections asks
+//!   [`ProxyEnv::relay`], under which an `http://` proxy carries them, a
+//!   SOCKS proxy a request connects past is connected past, and any other
+//!   refuses them.
 //! - **A hostname lookup** runs on a bounded blocking worker ([`Lookups`]).
 //!   A poisoned owner looks up under a 5 s deadline and a [`Poison`]:
 //!   one lookup that outlives it fails every later one at once, because the
@@ -96,4 +99,4 @@ pub use connect::{ConnectError, Tls};
 /// register each exact secret representation with `Outgoing::protect`.
 pub use crucible_credentials::Outgoing;
 pub use dns::{LookupError, Lookups, PlainLookups, Poison};
-pub use proxy::ProxyEnv;
+pub use proxy::{ConnectProxy, ProxyEnv, Relay};
