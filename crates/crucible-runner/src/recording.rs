@@ -180,6 +180,23 @@ impl Recording {
         (Arc::new(picked), transcript)
     }
 
+    /// The same session as a crash leaves it: the record at `at`, in the order
+    /// [`Recording::kept`] reads, and every record after it never reached the
+    /// log.
+    ///
+    /// What a run picking it up would be asked with is read off the copy
+    /// through [`Recording::reopened`], as it is for any other session.
+    pub(crate) fn cut_short(&self, at: usize) -> Arc<Self> {
+        let mut kept = self.kept();
+        kept.truncate(at);
+        let cut = Self::held(self.id.clone(), self.owner.clone(), kept, None);
+        // A crash loses records, not the log's vintage.
+        if self.context_snapshot().is_none() {
+            *cut.context.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        }
+        Arc::new(cut)
+    }
+
     /// Everything recorded, in the order it was recorded.
     pub(crate) fn kept(&self) -> Vec<Kept> {
         self.kept
