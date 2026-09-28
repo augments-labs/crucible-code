@@ -323,11 +323,11 @@ reading remains until the compacted transcript replaces it.
 
 When there is no longer room for another exchange, crucible **makes room in the
 middle of the turn and the turn carries on**. It asks the model to write down
-what is worth keeping under fixed headings — Goal, Constraints & Preferences,
+what is worth keeping under fixed headings: Goal, Constraints & Preferences,
 Progress (as Done, In Progress and Blocked), Decisions, Next Steps and Critical
-Context — and adds the files the replaced messages read or modified itself, so
-that list survives a second compaction. That recap stands where the messages it
-replaced were. The most recent turns stay word for word — bounded in tokens
+Context. crucible adds the files the replaced messages read or modified itself,
+so that list survives a second compaction. That recap stands where the messages
+it replaced were. The most recent turns stay word for word, bounded in tokens
 rather than counted in turns, so a turn that is mostly tool output cannot carry
 the tail past the window on its own. Old bulky tool output is pruned first; if a
 completed active tool pass still cannot fit, automatic recovery may recap that
@@ -370,14 +370,14 @@ malformed, filtered, silently ended, or token-truncated recap replaces nothing,
 and a turn that was making room for itself ends there rather than asking for the
 notes again.
 
-If a provider refuses a request for want of room — because crucible had the
-window wrong, or was never told it — the same thing happens and the question
-goes back once the session is smaller. A compaction that frees nothing gets one
-more go; when that frees nothing either, the turn stops with `there is no room
-left in the model's window, and compacting it freed none` — or, where the
-provider refused the request outright rather than cutting its answer short,
+If a provider refuses a request for want of room, because crucible had the
+window wrong or was never told it, the same thing happens and the question goes
+back once the session is smaller. A compaction that frees nothing gets one more
+go; when that frees nothing either, the turn stops with `there is no room left
+in the model's window, and compacting it freed none`. Where the provider
+refused the request outright rather than cutting its answer short, it stops
 with the provider's own `<provider>: the request did not fit the model's
-window`. `/clear` or a model with a larger window is what gets past it.
+window` instead. `/clear` or a model with a larger window is what gets past it.
 
 [Configuration](../configuration/configuration.md#compaction) has the keys.
 
