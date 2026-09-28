@@ -109,8 +109,13 @@ that follows a replay would take every turn recorded after the damage off the
 disk as well. crucible says which file it is and continues nothing, so the file
 is still there, whole, to look at.
 
-A log that stops between a tool call and its result is the one case where the
-last recorded turn does not come back: an unanswered question is not something
+A log that stops between a tool call and its result is answered from what the
+calls recorded. A call that recorded how it ended, whether it succeeded, failed
+or was stopped, is answered with that result, so the model is told what it did
+instead of being free to run it again, and any other call in the same pass is
+answered as interrupted; that answer is written to the log before anything new
+is. Where no call in the pass recorded how it ended, the last recorded turn does
+not come back: an unanswered question is not something
 to send a provider, so the replay ends before it and the file is cut to match.
 
 ## Conversation, journal and checkpoints
@@ -145,7 +150,9 @@ version 2: sandbox plans record boolean `enabled` and `disabled_reason` replaces
 the obsolete degradation field. Message metadata does not copy
 the prompt text. Prompt-cache records keep normalized per-attempt decisions,
 usage and cost; invocation records keep stable prepared, started and finished
-states. Conversation replay skips all of these records.
+states. Conversation replay skips these records, except where a log stops
+before a tool pass's result line: a finished invocation record then answers its
+call, as described under [Continuing](#continuing).
 
 Namespaced custom entries use the same framework journal and carry their own
 schema version, source and entry identity. They are not sent to a model unless

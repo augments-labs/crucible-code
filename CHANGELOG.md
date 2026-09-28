@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A session picked up after crucible died mid-turn keeps the tool calls that
+  had already finished.** The pick-up used to drop the whole pass, so the model
+  could run a finished command or edit a second time; it now gets each finished
+  call's recorded result. A call in that pass that had not finished is answered
+  as interrupted, and a pass where no call finished is still dropped.
 - **The rollback drill checks 0.43.0, the release you would now roll back
   to.** It still ran 0.42.0 after 0.43.0 was published, so nothing proved
   0.43.0 reads what the next release writes. `RELEASING.md` now moves it to

@@ -7,9 +7,10 @@ use std::str::FromStr as _;
 use std::sync::{Arc, Mutex};
 
 use crucible_storage::{
-    CallResultKey, CallResultStoreError, CustomEntry, InvocationId, JournalEntryId, JournalStore,
-    RunItem,
+    CallResultKey, CallResultStoreError, CustomEntry, InvocationId, InvocationRecord,
+    JournalEntryId, JournalStore, RunItem, ToolEffect,
 };
+use crucible_tools::ToolOutcome;
 use crucible_types::ResultProvenance;
 use crucible_types::{
     Ancestry, Calibration, Carried, ContextPatch, ContextSnapshot, Fragment, Message,
@@ -1404,6 +1405,178 @@ fn calls_nothing_ever_answered_do_not_come_back() {
         Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
 
     assert_eq!(transcript.messages(), &[said("check the tests")]);
+}
+
+/// A call's record as the runner writes it once the call has run to its end.
+fn ran(session: &Session, call: &ToolCall, output: RecordedToolOutput) {
+    let mut record = InvocationRecord::new(
+        call.clone(),
+        Ancestry::new(),
+        ToolEffect::NonIdempotent,
+        None,
+    );
+    record
+        .finish(ToolOutcome::Succeeded, output)
+        .expect("a fresh record finishes");
+    session.append_journal(&RunItem::Invocation {
+        record,
+        preview: None,
+    });
+}
+
+fn call(id: &str) -> ToolCall {
+    ToolCall {
+        id: ToolId::new(id),
+        name: "bash".into(),
+        args: ToolArgs::new("{}"),
+    }
+}
+
+#[test]
+fn a_pass_that_died_among_its_calls_comes_back_with_what_each_one_came_to() {
+    // The first call ran to its end and the second never did, and the process
+    // died before the pass's result line. The finished call is answered with
+    // what it recorded, so the model is not free to run it again; the other is
+    // answered as interrupted, which is all the log can say about it.
+    let sample = Sample::new("session-finished-partly");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let asking = Message::Agent {
+        continuation: None,
+        text: "on it".into(),
+        calls: vec![call("call-1"), call("call-2")],
+        stop: Some(StopReason::WantsTools),
+    };
+    session.append(&said("check the tests"));
+    session.append(&asking);
+    ran(
+        &session,
+        &call("call-1"),
+        RecordedToolOutput::ok("2 passed"),
+    );
+    drop(session);
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    let Some(Message::ToolResults(results)) = transcript.messages().get(2) else {
+        panic!("the pass was not answered: {:?}", transcript.messages());
+    };
+    assert_eq!(transcript.messages().len(), 3);
+    assert_eq!(
+        results.first(),
+        Some(&ToolResult {
+            id: ToolId::new("call-1"),
+            output: RecordedToolOutput::ok("2 passed"),
+        })
+    );
+    let interrupted = results.get(1).expect("the second call is answered");
+    assert_eq!(interrupted.id, ToolId::new("call-2"));
+    assert!(interrupted.output.is_failed());
+}
+
+#[test]
+fn two_records_that_answer_one_call_differently_are_refused() {
+    let sample = Sample::new("session-finished-twice");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("check the tests"));
+    session.append(&calling("call-1", "bash", "{}"));
+    ran(
+        &session,
+        &call("call-1"),
+        RecordedToolOutput::ok("2 passed"),
+    );
+    ran(
+        &session,
+        &call("call-1"),
+        RecordedToolOutput::ok("3 passed"),
+    );
+    drop(session);
+    let before = fs::read(&path).expect("the log");
+
+    let problem =
+        Session::resume(&sample.logs(), &sample.workspace()).expect_err("a call answered two ways");
+
+    assert!(matches!(problem, SessionError::Log { .. }), "{problem}");
+    assert_eq!(fs::read(&path).expect("the log"), before, "the log was cut");
+}
+
+#[test]
+fn records_a_result_line_answered_are_not_weighed_against_each_other() {
+    // Nothing stops a provider asking for one call id twice in one message,
+    // and each of those calls then leaves a record under that id. The result
+    // line answers the pass, so the records are never read to answer it.
+    let sample = Sample::new("session-finished-twice-answered");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let path = session.path().to_owned();
+    session.append(&said("check the tests"));
+    session.append(&Message::Agent {
+        continuation: None,
+        text: "on it".into(),
+        calls: vec![call("call-1"), call("call-1")],
+        stop: Some(StopReason::WantsTools),
+    });
+    let outputs = [
+        RecordedToolOutput::ok("2 passed"),
+        RecordedToolOutput::ok("3 passed"),
+    ];
+    for output in &outputs {
+        ran(&session, &call("call-1"), output.clone());
+    }
+    session.append(&Message::ToolResults(
+        outputs
+            .into_iter()
+            .map(|output| ToolResult {
+                id: ToolId::new("call-1"),
+                output,
+            })
+            .collect(),
+    ));
+    drop(session);
+    let before = fs::read(&path).expect("the log");
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    assert_eq!(transcript.messages().len(), 3);
+    assert_eq!(fs::read(&path).expect("the log"), before);
+}
+
+#[test]
+fn a_record_for_no_call_of_the_last_pass_answers_nothing() {
+    // The first pass was answered by its result line, so its record answers
+    // nothing more, even for a later call reusing its id. A record naming a
+    // call the last message never asked for answers nothing either. The last
+    // pass has no record of its own, so it is cut as it always was.
+    let sample = Sample::new("session-finished-elsewhere");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session");
+    let first = [said("check the tests"), calling("call-1", "bash", "{}")];
+    for message in &first {
+        session.append(message);
+    }
+    ran(
+        &session,
+        &call("call-1"),
+        RecordedToolOutput::ok("2 passed"),
+    );
+    let answered = Message::ToolResults(vec![ToolResult {
+        id: ToolId::new("call-1"),
+        output: RecordedToolOutput::ok("2 passed"),
+    }]);
+    session.append(&answered);
+    session.append(&calling("call-1", "bash", "{}"));
+    ran(
+        &session,
+        &call("call-9"),
+        RecordedToolOutput::ok("9 passed"),
+    );
+    drop(session);
+
+    let (_session, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+    let [said, asked] = first;
+    assert_eq!(transcript.messages(), &[said, asked, answered]);
 }
 
 #[test]
