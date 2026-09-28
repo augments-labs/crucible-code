@@ -46,7 +46,6 @@ use std::fmt;
 use std::io;
 use std::time::Duration;
 
-use crucible_runtime::Unready;
 use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation};
 use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken};
 
@@ -421,17 +420,14 @@ impl From<Unspoken> for Unstarted {
 
 /// What leads in a stop's error in [`Unstarted::Unreaped`]'s message.
 ///
-/// A stop that never answered, and a stop dropped because it would have had
-/// to wait, already say that what they began is unconfirmed: the first is the
-/// [`Unanswered`](crucible_transport::Unanswered) the error holds, the second
-/// the refusal, either of which `get_ref` finds; the transport keeps it there
-/// as it stands. No current stop path produces the dropped one; the `Unready`
-/// arm stays as defense, mirroring the MCP twin. One level is enough because this `cleanup` only ever reaches here from
+/// A stop that never answered already says that what it began is unconfirmed:
+/// it is the [`Unanswered`](crucible_transport::Unanswered) the error holds,
+/// which `get_ref` finds; the transport keeps it there as it stands. One level
+/// is enough because this `cleanup` only ever reaches here from
 /// `Unspoken::after`, which hands back the stop's own error and never the
 /// wrapper a process stopped at its publication ceiling is given.
 fn process_cleanup(cleanup: &io::Error) -> &'static str {
-    if matches!(cleanup.get_ref(), Some(held) if held.is::<Unready>() || held.is::<crucible_transport::Unanswered>())
-    {
+    if matches!(cleanup.get_ref(), Some(held) if held.is::<crucible_transport::Unanswered>()) {
         "process cleanup"
     } else {
         "process cleanup remains unconfirmed"

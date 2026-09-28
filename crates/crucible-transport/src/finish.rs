@@ -30,7 +30,6 @@ use std::io;
 use std::process::ExitStatus;
 use std::time::Duration;
 
-use crucible_runtime::Unready;
 use crucible_sandbox::{SandboxLifecycle, SandboxProcess};
 
 /// How long the wait for a process to finish sleeps between looks.
@@ -239,14 +238,11 @@ impl Finish {
 /// A process stopped at its publication ceiling whose stop was not confirmed.
 ///
 /// Why its end is not known is its source, kept as the error it is, so that a
-/// stop that never answered is still told apart from one
-/// that failed. What the ceiling cost it is said in its message, and a caller
-/// reaches it nowhere else. A stop that never answered, and a stop dropped
-/// because it would have had to wait, already say that what they began is
-/// unconfirmed, so the
-/// message gives their words as they stand; no current stop path produces the
-/// dropped one, and the arm stays for the refusal it names. A failed stop's words need not say
-/// it, so the message says it before them.
+/// stop that never answered is still told apart from one that failed. What the
+/// ceiling cost it is said in its message, and a caller reaches it nowhere
+/// else. A stop that never answered already says that what it began is
+/// unconfirmed, so the message gives its words as they stand. A failed stop's
+/// words need not say it, so the message says it before them.
 #[derive(Debug, thiserror::Error)]
 struct Unconfirmed {
     /// What it lost: no successful publication was confirmed.
@@ -259,7 +255,7 @@ struct Unconfirmed {
 impl std::fmt::Display for Unconfirmed {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self { publication, stop } = self;
-        if matches!(stop.get_ref(), Some(held) if held.is::<Unready>() || held.is::<Unanswered>()) {
+        if matches!(stop.get_ref(), Some(held) if held.is::<Unanswered>()) {
             write!(formatter, "{publication}, and {stop}")
         } else {
             write!(

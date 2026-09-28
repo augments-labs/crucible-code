@@ -101,20 +101,6 @@ pub enum TurnError {
         /// The most tool-output text one turn retains.
         maximum: usize,
     },
-
-    /// A step the loop took, or a step a compaction between turns took, would
-    /// have had to wait.
-    ///
-    /// The loop awaits the provider, the session, every call's run, every
-    /// prompt-cache step, a background result's acceptance and the toolset's
-    /// preparation, listing, refreshing and disposal, so no step on the
-    /// turn's own path refuses this way anymore. The bridges that still ask
-    /// once, `CommandStop` and `CommandAcceptance`, are crossed outside the
-    /// turn and answer their refusal where they are crossed, so none of them
-    /// ends a turn this way either. A step that did would have been dropped
-    /// unanswered, so its effect would be unconfirmed rather than undone.
-    #[error(transparent)]
-    Unready(#[from] crucible_runtime::Unready),
 }
 
 /// Where a worker reports what happened.

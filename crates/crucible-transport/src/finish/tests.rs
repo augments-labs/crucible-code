@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crucible_runtime::{BoxFuture, Unready};
+use crucible_runtime::BoxFuture;
 use crucible_sandbox::{
     SandboxBackendId, SandboxBackendIdentity, SandboxBackendProvenance, SandboxCapabilities,
     SandboxFilesystemAccess, SandboxFilesystemProvenance, SandboxFilesystemRule, SandboxInspection,
@@ -132,27 +132,6 @@ fn exited() -> ExitStatus {
     use std::os::windows::process::ExitStatusExt as _;
 
     ExitStatus::from_raw(0)
-}
-
-/// The refusal somewhere beneath `error`, however it was carried.
-///
-/// An [`io::Error`] hides the error it holds from `source`, so the walk looks
-/// inside one before stepping past it.
-fn refusal(error: &(dyn std::error::Error + 'static)) -> Option<Unready> {
-    let mut next = Some(error);
-    while let Some(link) = next {
-        if let Some(unready) = link.downcast_ref::<Unready>() {
-            return Some(*unready);
-        }
-        next = match link
-            .downcast_ref::<io::Error>()
-            .and_then(io::Error::get_ref)
-        {
-            Some(inner) => Some(inner as &(dyn std::error::Error + 'static)),
-            None => link.source(),
-        };
-    }
-    None
 }
 
 fn process(ending: &Arc<Ending>) -> Process {
@@ -363,8 +342,6 @@ async fn a_stop_that_never_answers_is_given_up_on_and_reported_as_failed_cleanup
                 "stopping a hosted program did not answer within 50ms, so whatever it \
                  began is unconfirmed"
             );
-            // Not a refusal to wait: this finish did wait, and ran out.
-            assert!(refusal(&problem).is_none(), "{problem:?}");
         }
         other => panic!("a stop that never answered was reported as {other:?}"),
     }

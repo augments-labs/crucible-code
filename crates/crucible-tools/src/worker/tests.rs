@@ -199,8 +199,8 @@ fn a_run_asked_once_from_outside_any_runtime_waits_and_its_job_stops_when_it_is_
     let started = Arc::new(AtomicBool::new(false));
     let ended = Arc::new(AtomicBool::new(false));
 
-    // Asked once, on a thread no runtime runs and none is entered on, the way
-    // a crossing that polls once asks a tool's run.
+    // Asked once, on a thread no runtime runs and none is entered on, and then
+    // dropped.
     {
         let cancel = Cancel::new();
         let mut asked = std::pin::pin!(worker.run(&cancel, until_stopped(&started, &ended)));

@@ -53,10 +53,10 @@ fn what_answers_a_question_is_reached_as_a_trait_and_may_answer_nobody() {
 /// it, the way a real front end's channel does, really does wake a future
 /// left pending on it rather than depending on being polled again by luck.
 ///
-/// The manual poll this test drives it with belongs here, in a file this
-/// crate's own bridge-ledger check reads as a test rather than as shipped
-/// source, and not beside the trait: a synchronous caller in shipped code
-/// crosses through a `Bridge` instead of building a waker by hand.
+/// The manual poll this test drives it with belongs here, in a file the
+/// workspace's hand-poll check reads as a test rather than as shipped source,
+/// and not beside the trait: a caller in shipped code awaits the future instead
+/// of building a waker by hand.
 struct Stalled {
     answer: std::sync::Mutex<Option<Vec<Answered>>>,
     waker: std::sync::Mutex<Option<std::task::Waker>>,

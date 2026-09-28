@@ -1746,8 +1746,8 @@ fn a_call_dropped_while_its_request_stalls_tells_the_request_to_stop() {
         .unwrap();
     let cancel = Cancel::new();
 
-    // Asked once inside the runtime, as a crossing that asks once would, and
-    // dropped while its request stalls: nobody cancels the call.
+    // Asked once inside the runtime, and dropped while its request stalls:
+    // nobody cancels the call.
     {
         let _entered = runtime.enter();
         let mut searching = Search::search(&source, "x", &cancel);

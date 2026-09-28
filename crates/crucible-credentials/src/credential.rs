@@ -19,7 +19,7 @@
 //! a renewal can have to reach a server before it knows whether the token it
 //! holds is still good. One holding only a key has nothing to wait for and
 //! answers the first time that future is polled; one whose token is due waits
-//! for its renewal, which a caller that polls once refuses.
+//! for its renewal.
 
 use std::fmt;
 use std::future::Future;
@@ -513,10 +513,8 @@ pub trait Credential: Send + Sync + fmt::Debug {
     /// is still good, at the only moment that can be answered about. One
     /// holding only a key, or a token still good, has nothing to wait for and
     /// answers the first time its future is polled. One whose token is due
-    /// waits for its renewal, without holding the thread that polls it; a
-    /// caller that polls once and treats a future still pending as a failure
-    /// refuses that request, and what dropping the future leaves behind is
-    /// the credential's to say.
+    /// waits for its renewal, without holding the thread that polls it, and
+    /// what dropping the future leaves behind is the credential's to say.
     ///
     /// # Errors
     ///
@@ -534,9 +532,9 @@ mod tests {
     ///
     /// Tests that need to answer a credential's future — `authorize` cannot
     /// be called synchronously — live in `tests/ready_body.rs` instead: this
-    /// crate cannot name `crucible-runtime`'s `Bridge`, and standing in for
-    /// its one poll by hand is something `scripts/python/bridge-ledger.py`
-    /// only allows outside the crate's shipped source.
+    /// crate cannot name `crucible-runtime`'s `answered!`, and the workspace's
+    /// hand-poll check allows the poll that stands in for it only outside the
+    /// crate's shipped source.
     const SECRET: &str = "sk-ant-do-not-log-me";
 
     /// One header's value, by name.

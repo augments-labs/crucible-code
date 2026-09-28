@@ -32,9 +32,8 @@ crucible-models.workspace = true
 # The provenance a recorded agent and tool generation is written down under, and
 # the registry the roster of a resumed run is read back from.
 crucible-registry.workspace = true
-# The bridges the turn loop crosses into the provider, the tools, the cache and
-# the session with while it is synchronous, and the refusal one gives instead of
-# waiting.
+# `BoxFuture`, the shape the provider, the tools, the cache and the session
+# answer the turn loop in, and the controls a turn is stopped and steered by.
 crucible-runtime.workspace = true
 # What a confined process was allowed to do and what it did, which the turn
 # records against its own.

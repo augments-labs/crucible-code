@@ -364,7 +364,7 @@ impl SandboxService for Late {
 }
 
 #[test]
-fn a_backend_that_answers_late_is_heard_rather_than_taken_for_unready() {
+fn a_backend_that_answers_late_is_heard_rather_than_given_up_on() {
     let sample = Sample::new("sandbox-choice-late");
     let policy = SandboxPolicy::standard(&sample.workspace()).expect("policy");
 

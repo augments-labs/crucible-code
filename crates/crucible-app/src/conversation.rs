@@ -209,9 +209,7 @@ impl Conversation {
     ///
     /// [`TurnError`] where the turn could not be taken at all, or was not
     /// finished, as [`Runner::turn`] says, which also says what each failure
-    /// leaves. [`TurnError::Unready`] is a step that would have had to wait and
-    /// was dropped, leaving what it began unconfirmed rather than undone. A
-    /// tool source's own step that would have had to wait comes back as that
+    /// leaves. A tool source's own step that gave up comes back as that
     /// source's failure.
     pub async fn turn(
         &mut self,

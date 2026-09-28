@@ -131,15 +131,10 @@ change in any release with no deprecation period.
   step, and the session and prompt-cache store operations now return a boxed
   `Send` future that borrows no more than the call was given, while names and
   classifications stay synchronous, so an adapter built against these crates
-  adopts the new signatures. Their callers are still synchronous and ask each
-  future once through a named crossing, which reports one that would have had
-  to wait as an error instead of blocking; nothing a user runs behaves
-  differently. Any `CallResultAcceptance` dropped unaccepted, or whose
-  `accept` future is dropped before it answers, must hand its scope back to
-  the registry that owns the scope's cleanup; and while a run prepares its
-  tools, a sandbox step that brings a hosted MCP server up (prepare,
-  materialize or start) and would have had to wait is reported as the new
-  `ToolsetError::Unready`, with its cleanup unconfirmed.
+  adopts the new signatures. Every caller awaits the future it is handed. Any
+  `CallResultAcceptance` dropped unaccepted, or whose `accept` future is
+  dropped before it answers, must hand its scope back to the registry that
+  owns the scope's cleanup.
 - **A turn is a task on the application's runtime, and waits for the model, a
   lone tool call and its toolset.** `Runner::turn` and `Runner::compact` are
   now `async`, so a provider stream, the run of a call that runs alone, or a

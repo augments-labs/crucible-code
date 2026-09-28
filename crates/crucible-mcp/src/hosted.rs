@@ -30,7 +30,7 @@ use std::fmt;
 use std::io;
 use std::time::{Duration, Instant};
 
-use crucible_runtime::{Cancel, Unready};
+use crucible_runtime::Cancel;
 use crucible_sandbox::{SandboxOutput, SandboxProcess, SandboxUsage, SandboxViolation};
 use crucible_transport::{Absent, Finish, Heard, Muttered, Pipes, Said, Unspoken};
 
@@ -466,16 +466,13 @@ fn process_cleanup(cleanup: &io::Error) -> &'static str {
 /// Whether `stop` is a stop that was never waited out, rather than one that
 /// failed.
 ///
-/// A stop that never answered, and a stop dropped because it would have had
-/// to wait, already say that what they began is unconfirmed, which is what
-/// the message around them must not say a second time. No current stop path
-/// produces the dropped one; the `Unready` arm stays as defense, mirroring
-/// the extension twin.
+/// A stop that never answered already says that what it began is unconfirmed,
+/// which is what the message around it must not say a second time.
 ///
-/// The refusal is the error `stop` holds; or, for a process stopped at its
-/// publication ceiling, the error held by the stop's own error, which the one
-/// saying what the ceiling cost keeps as its source. Either way its words
-/// already say that what the stop began is unconfirmed.
+/// The [`Unanswered`](crucible_transport::Unanswered) is the error `stop`
+/// holds; or, for a process stopped at its publication ceiling, the error held
+/// by the stop's own error, which the one saying what the ceiling cost keeps as
+/// its source.
 pub(crate) fn refused_stop(stop: &io::Error) -> bool {
     let Some(held) = stop.get_ref() else {
         return false;
@@ -484,9 +481,8 @@ pub(crate) fn refused_stop(stop: &io::Error) -> bool {
         .source()
         .and_then(|source| source.downcast_ref::<io::Error>())
         .and_then(io::Error::get_ref);
-    held.is::<Unready>()
-        || held.is::<crucible_transport::Unanswered>()
-        || matches!(beneath, Some(inner) if inner.is::<Unready>() || inner.is::<crucible_transport::Unanswered>())
+    held.is::<crucible_transport::Unanswered>()
+        || matches!(beneath, Some(inner) if inner.is::<crucible_transport::Unanswered>())
 }
 
 #[cfg(test)]

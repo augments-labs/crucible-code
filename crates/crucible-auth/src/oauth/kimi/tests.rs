@@ -324,9 +324,9 @@ fn renewal_keeps_the_installation_identity() {
 
 #[test]
 fn authorize_answers_at_its_first_poll_when_nothing_needs_renewing() {
-    // A tool run's crossing polls a future once; a fresh token that pended
-    // there would be refused on every request, exactly like a pending
-    // renewal, even though nothing here has anything to wait for.
+    // A fresh token has nothing to wait for, so its future answers at the
+    // first poll; one that pended would hold every request as though it were
+    // renewing.
     const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
     // Nothing here is ever dialed: the token is fresh, so `needs_refresh` is
     // false and the flow's address is never read. The owner has no runtime,

@@ -17,8 +17,8 @@ use super::*;
 /// not depend on `crucible-runtime`, whose only shipped use here would be
 /// this one test-only macro, and the workspace's crate layering keeps that
 /// edge out of `crucible-config`. The manual poll belongs here, in a file
-/// this workspace's bridge-ledger check reads as a test rather than as
-/// shipped source, and not beside the settings it exercises.
+/// the workspace's hand-poll check reads as a test rather than as shipped
+/// source, and not beside the settings it exercises.
 fn answered_now<F: std::future::Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
     match future

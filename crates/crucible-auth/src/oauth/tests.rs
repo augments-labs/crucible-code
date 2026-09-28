@@ -822,9 +822,9 @@ fn a_real_login_still_answers_only_where_the_provider_will_redirect() {
 
 #[test]
 fn authorize_answers_at_its_first_poll_when_nothing_needs_renewing() {
-    // A tool run's crossing polls a future once; a fresh token that pended
-    // there would be refused on every request, even though nothing here has
-    // anything to wait for. The owner has no runtime, so a renewal started
+    // A fresh token has nothing to wait for, so its future answers at the
+    // first poll; one that pended would hold every request as though it were
+    // renewing. The owner has no runtime, so a renewal started
     // here would be refused rather than pend.
     let oauth = OpenAiOAuth::testing(Flow::testing("http://127.0.0.1:1", &Renewals::new()));
     let scratch = Scratch::new("fresh-token");
@@ -1206,7 +1206,7 @@ fn header(outgoing: &Outgoing, name: &str) -> Option<String> {
 /// spent the old refresh token — so it still finishes and is written down.
 ///
 /// The server holds its answer for [`HOLD`] seconds, and the waiter gives up
-/// after [`GIVES_UP`], as a waiting crossing does once its cancel is raised.
+/// after [`GIVES_UP`], as a turn does once its cancel is raised.
 /// A renewal done inside the waiter's own poll cannot be given up on at all:
 /// the waiter comes back only once the server has answered.
 #[test]
@@ -1562,12 +1562,12 @@ fn a_request_waiting_for_a_connection_slot_gives_up_at_its_own_deadline() {
     drop(held);
 }
 
-/// A rotation whose waiter was dropped — a crossing that polls once gave up on
-/// it — still lands, and then every credential for the account answers at its
+/// A rotation whose waiter was dropped — a turn stopped while it waited — still
+/// lands, and then every credential for the account answers at its
 /// first poll with it: the one that started it, whose own copy was never
 /// replaced by the waiter it lost, and another built from the store before the
 /// rotation. Without that, each would start a rotation of its own at every
-/// first poll, and a crossing that polls once would refuse it every time.
+/// first poll, and every request would wait on one.
 #[test]
 fn a_rotation_whose_waiter_was_dropped_answers_every_credential_at_its_first_poll() {
     let expires = now() + 3600;

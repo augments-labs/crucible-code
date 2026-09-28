@@ -7,12 +7,11 @@
 //! its provider and scope, and awaits its outcome. The rotation is a task on
 //! the application's runtime, held by [`Renewals`]; a waiter only watches it.
 //! A waiter whose authorization future is dropped — a turn or a web call
-//! stopped while it waits, which races the wait against its cancel, or a
-//! crossing that polls it once and gives up — drops its watch and nothing
-//! else, and the rotation still finishes and is written down. That matters
-//! because a rotation the token service has already answered has spent the
-//! old refresh token: abandoning it half way would leave the store holding a
-//! token that no longer renews.
+//! stopped while it waits, which races the wait against its cancel — drops its
+//! watch and nothing else, and the rotation still finishes and is written down.
+//! That matters because a rotation the token service has already answered has
+//! spent the old refresh token: abandoning it half way would leave the store
+//! holding a token that no longer renews.
 //!
 //! **One per account in this process, and one across processes.** Every
 //! credential built from the same login implementation shares one

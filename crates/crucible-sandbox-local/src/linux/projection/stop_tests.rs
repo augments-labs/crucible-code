@@ -4,8 +4,8 @@ use super::*;
 
 /// A stop hung in its mediator fails the stop and the cleanup, rather than
 /// joining without end or reporting a silent success: the synchronous stop
-/// owns the process's own stop directly, with no bridge left to drop the
-/// wait at.
+/// owns the process's own stop directly, with nothing between them to drop
+/// the wait at.
 #[test]
 fn a_stop_hung_in_its_mediator_is_failed_cleanup_not_silent_success() {
     use crucible_sandbox::{SandboxDomainPolicy, SandboxNetworkProvenance};
