@@ -2,6 +2,9 @@ name: blocking-ci
 
 on:
   pull_request: {}
+  # A pull request queued for dev is checked again on top of dev and of
+  # everything queued ahead of it, so nobody has to bring it up to date.
+  merge_group: {}
   push:
     branches: [main, dev]
 

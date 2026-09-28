@@ -16,7 +16,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A queued merge runs on a branch GitHub deletes once the queue is done
+      # with it, so a cache saved there is one no later run can restore.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
 
       - name: Install the pinned rg comparison binary
         env:

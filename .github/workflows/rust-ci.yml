@@ -16,7 +16,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A queued merge runs on a branch GitHub deletes once the queue is done
+      # with it, so a cache saved there is one no later run can restore.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
 
       # The gate runs on the enforcing sandbox host, and a missing backend is
       # a failure rather than a skip; the action says why.
@@ -47,6 +51,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - if: ${{ runner.os == 'Windows' && !cancelled() }}
         name: Build and provision the native Windows sandbox
@@ -108,6 +114,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.event_name != 'merge_group' }}
       # The tag the drill rolls back to, fetched without credentials. The drill
       # itself never fetches; it builds whatever tag is already local.
       - name: Fetch the previous release tag

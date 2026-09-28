@@ -32,10 +32,12 @@ from. Only two kinds of branch target `main`: a release branch carrying the
 version bump, and a hotfix for something already published.
 [`RELEASING.md`](RELEASING.md) owns both.
 
-Both branches carry the same ruleset: no direct pushes, no force-pushes, no
-deletion, and `CI required` green before a merge. Everything else is a task
-branch, and merging its pull request deletes it — the work is on `dev` by then,
-and the ruleset is what keeps the same rule from reaching `dev` or `main`.
+Both branches refuse direct pushes, force-pushes and deletion, and need
+`CI required` green before a merge. `dev` also merges through a merge queue,
+which checks each pull request again on top of `dev` and everything queued
+ahead of it, so nobody brings a branch up to date by hand. Everything else is a
+task branch, and merging its pull request deletes it — the work is on `dev` by
+then, and the ruleset is what keeps the same rule from reaching `dev` or `main`.
 
 ## Make a change
 

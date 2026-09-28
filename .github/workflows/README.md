@@ -1,8 +1,11 @@
 # Workflow ownership
 
-`blocking-ci.yml` is the pull-request entrypoint, and runs again on every push
-to `dev` and `main`. It calls focused reusable workflows and exposes
-`CI required` as the single merge result.
+`blocking-ci.yml` is the pull-request entrypoint. It runs again when the merge
+queue on `dev` builds a pull request, on top of `dev` and everything queued
+ahead of it, and on every push to `dev` and `main`. It calls focused reusable
+workflows and exposes `CI required` as the single merge result. A queued run
+restores caches but saves none, because the branch it runs on is deleted once
+the queue is done with it.
 
 | Workflow | Owns |
 | --- | --- |
