@@ -289,11 +289,13 @@ rustix = { version = "=1.1.5", features = ["fs"] }
 seccompiler = { version = "=0.5.0", default-features = false }
 
 # Names the platform constants a `std` call takes as a raw integer and never
-# spells: the `O_NONBLOCK` open flag `std` carries but does not name, and the
-# kernel syscall numbers seccompiler does not name on every supported Linux
-# architecture. The open itself is `std`'s, which supplies it, so this is here
-# for the names alone and brings no open of its own; the workspace already
-# locks this exact libc, and both edges are what is compiled.
+# spells: the `O_NONBLOCK` open flag `std` carries but does not name, for
+# crucible-config, and the kernel syscall numbers seccompiler does not name on
+# every supported Linux architecture, for crucible-sandbox-broker. Neither
+# makes a call through it. The binary makes one: `mallopt`, fixing glibc's
+# threshold for handing a freed block back to the system, which `std` has no
+# way to reach. The same libc is already compiled for tokio, mio and the other
+# crates that reach the platform through it, so these uses add no build.
 libc = "=0.2.189"
 
 # Being told to stop from outside. A closed window or a `kill` arrives as a
@@ -565,6 +567,12 @@ rustix = { workspace = true, features = ["param", "pipe", "pty", "termios"] }
 # reach.
 [target.'cfg(unix)'.dependencies]
 signal-hook.workspace = true
+
+# Keeps glibc from holding on to large blocks once they are freed, which it
+# otherwise does across the threads a turn moves between. Only glibc has that
+# threshold, so only a glibc build names libc here.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc.workspace = true
 
 [lints]
 workspace = true

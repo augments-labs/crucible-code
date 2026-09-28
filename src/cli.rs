@@ -21,8 +21,10 @@ mod draw;
 mod ending;
 #[cfg(test)]
 mod fake;
+mod freed;
 mod gathering;
 mod kept;
+mod panicked;
 #[cfg(test)]
 mod sample;
 mod seen;
@@ -298,11 +300,7 @@ pub(crate) enum Fatal {
     #[error("what you typed is longer than 1 MiB; no prompt was accepted")]
     InputTooLong,
 
-    /// The operating system could not create the thread that takes a turn.
-    #[error("the turn could not start: {0}")]
-    Worker(io::Error),
-
-    /// The thread running the turn ended without returning it.
+    /// The task running the turn ended without returning it.
     #[error("the turn ended unexpectedly")]
     Lost,
 
@@ -339,6 +337,7 @@ through_the_application!(
 
 /// Reads the command line and does what it says.
 pub(crate) fn start() -> ExitCode {
+    freed::handed_back();
     let cli = Cli::parse();
 
     let done = match (&cli.command, cli.extensions, cli.sandbox) {
@@ -647,6 +646,9 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),
         cancel: cancel.clone(),
+        // The runtime the conversation was assembled on, which its turns run
+        // on too.
+        runtime: services.runtime().handle().map_err(AppError::from)?,
         // Installed here, on the way into a session, and not where the
         // command line is read: a run that prints help, a version or a listing
         // has nothing a signal could interrupt half-written.

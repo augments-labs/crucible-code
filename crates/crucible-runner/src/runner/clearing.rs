@@ -159,16 +159,6 @@ impl Runner {
         !self.state.owed.is_empty()
     }
 
-    /// Whether a clearing still owes `store` its line: the same store, not
-    /// one that answers alike.
-    #[must_use]
-    pub fn owes_clearings_to(&self, store: &dyn JournalStore) -> bool {
-        self.state
-            .owed
-            .iter()
-            .any(|owed| std::ptr::addr_eq(Arc::as_ptr(&owed.store), store))
-    }
-
     /// Writes the lines clearing what a vendor may not be sent still owes a
     /// session, in the order they were owed, and waits for each session to
     /// take its line.
@@ -186,9 +176,7 @@ impl Runner {
     ///
     /// A line still owed keeps the session it is owed to, so a session this
     /// runner has left stays open until its line is written. One still owed
-    /// when the runner is dropped is never written: a caller that could not
-    /// wait for this says so to whoever reads the session, as the
-    /// application does.
+    /// when the runner is dropped is never written.
     pub async fn record_clearings(&mut self) {
         while !self.state.owed.is_empty() {
             let owed = self.state.owed.remove(0);

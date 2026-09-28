@@ -1,15 +1,14 @@
-//! What a turn can reach while the application waits for it.
+//! What a turn can reach while it runs.
 //!
-//! A conversation waits for a turn by polling it on the calling thread,
-//! entered into the application's runtime. Two things must then never happen
-//! inside the turn, and neither is something the runtime refuses by itself:
+//! A turn is a task on the application's runtime, and whoever waits for one
+//! does so from outside it. Two things must then never happen inside the
+//! turn, and neither is something the compiler refuses:
 //!
-//! - **A nested `block_on`.** Entering a runtime is not what Tokio's guard
-//!   against a nested `block_on` watches, so one reached from inside a waited
-//!   turn would block the turn's thread on a second wait rather than panic.
-//! - **A waiting crossing.** Every ledger entry that waits refuses on a
-//!   thread that has entered a runtime, so one reached from inside a turn
-//!   would end the turn on a refusal rather than on its own ending.
+//! - **A `block_on`.** Tokio refuses one inside a task by panicking, so one
+//!   reached from inside a turn would end it on a panic rather than on its
+//!   own ending.
+//! - **A waiting crossing.** A crossing that waited would hold the worker the
+//!   turn runs on until it was answered, so the bridge ledger holds none.
 //!
 //! Both are kept out by what the shipped sources say, and these read them:
 //! every Rust file shipped under `crates/` and under the command line's own
@@ -21,17 +20,14 @@
 //! included: a `block_on` such a module holds is allowed by its exact line
 //! and how many times the file may hold it, in [`BLOCK_ON_ALLOWED`], rather
 //! than told apart from shipped code by a reading of the source, which can
-//! only err by hiding one. The runner cannot name the application, which the
-//! crate graph forbids, so the one waiting crossing the application makes is
-//! outside every turn it waits for, and it is the only waiting crossing there
-//! is.
+//! only err by hiding one.
 //!
 //! What is looked for is the name itself, which no import can hide: a
 //! `block_on` is a method or a function named that, and a waiting entry is
-//! the variant's own name, however `Bridge` was reached. A glob import from
-//! Tokio, from `futures` or from the bridges is refused outright as well,
-//! since it is the one spelling that brings such a name in without writing
-//! it where it is imported.
+//! read off the ledger's own documentation. A glob import from Tokio, from
+//! `futures` or from the bridges is refused outright as well, since it is the
+//! one spelling that brings such a name in without writing it where it is
+//! imported.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -204,32 +200,57 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 /// Every line mentioning `block_on` a shipped file may hold, trimmed, with
 /// how many times that file may hold it, and none of them is reached by a
 /// turn: the runtime owner's documentation of why it is built multi-thread,
-/// the runner's test helper that drives a turn to its end on a runtime of
-/// the test's own, the two performance probes waiting, on their own main
-/// thread, for each call they time on a runtime of the probe's own, and the
-/// lines inside the `#[cfg(test)] mod tests` of the
-/// bridge ledger, of the sandbox's redaction and of the worker-task check,
-/// which only a test build compiles. The count makes the same line written
-/// once more in that file, wherever, one too many.
+/// the three waits made from outside every turn — startup writing what a
+/// session picked up owes before any turn exists, the drawing thread
+/// answering a command, and the drawing thread joining a turn that has
+/// ended — the runner's test helper that drives a turn to its end on a
+/// runtime of the test's own, the two performance probes waiting, on their
+/// own main thread, for each call they time on a runtime of the probe's own,
+/// and the lines inside the `#[cfg(test)] mod tests` of the bridge ledger, of
+/// the sandbox's redaction and of the worker-task check, which only a test
+/// build compiles. The count makes the same line written once more in that
+/// file, wherever, one too many.
 const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     (
         "crates/crucible-app/src/runtime.rs",
-        "//! the shape of `Handle::block_on`. Tokio's own documentation of that method,",
+        "//! joining a turn that has ended — waits for a future with `Handle::block_on`.",
         1,
     ),
     (
         "crates/crucible-app/src/runtime.rs",
-        "//! a `current_thread` runtime only `Runtime::block_on` can drive the IO and",
+        "//! `Runtime::block_on` can drive the IO and timer drivers and",
         1,
     ),
     (
         "crates/crucible-app/src/runtime.rs",
-        "//! timer drivers and `Handle::block_on` cannot, so anything relying on IO or",
+        "//! `Handle::block_on` cannot, so anything relying on IO or timers does not work",
         1,
     ),
     (
         "crates/crucible-app/src/runtime.rs",
-        "//! timers does not work unless another thread is inside `Runtime::block_on` on",
+        "//! unless another thread is inside `Runtime::block_on` on the same runtime. A",
+        1,
+    ),
+    (
+        "crates/crucible-app/src/runtime.rs",
+        "//! `Runtime::block_on`, and leave every future a caller waits on unwoken by the",
+        1,
+    ),
+    // Startup, on a thread of its own before the conversation is handed out.
+    (
+        "crates/crucible-app/src/startup.rs",
+        "runtime.block_on(conversation.clearings_recorded());",
+        1,
+    ),
+    // The drawing thread, answering a command and joining a turn that ended.
+    (
+        "src/cli/client.rs",
+        ".block_on(perform(conversation, &request, &self.desk(&providers)));",
+        1,
+    ),
+    (
+        "src/cli/converse.rs",
+        "let (conversation, did) = terms.runtime.block_on(working).map_err(|_| Fatal::Lost)?;",
         1,
     ),
     ("crates/crucible-runner/src/fake.rs", ".block_on(self)", 1),
@@ -239,16 +260,10 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
     ("src/bin/bench-tools.rs", "self.runtime.block_on(future)", 1),
     // Inside `crates/crucible-runtime/src/bridge.rs`'s `#[cfg(test)] mod tests`:
     // the documentation of the test that makes both crossings on a runtime
-    // worker, and the test that drives one to its refusal on a runtime of the
-    // test's own.
+    // worker.
     (
         "crates/crucible-runtime/src/bridge.rs",
         "/// A worker thread is where a `block_on` would panic or deadlock, so both",
-        1,
-    ),
-    (
-        "crates/crucible-runtime/src/bridge.rs",
-        ".block_on(async move {",
         1,
     ),
     // Inside `crates/crucible-sandbox-local/src/redaction.rs`'s
@@ -354,34 +369,10 @@ fn waiting_entries() -> Vec<String> {
 }
 
 #[test]
-fn the_one_waiting_crossing_is_the_application_s_around_a_turn() {
-    let waiting = waiting_entries();
-    assert_eq!(waiting, ["AppTurn"], "the ledger's waiting entries changed");
-
-    let mut crossed: Vec<(String, String)> = Vec::new();
-    for (path, text) in shipped() {
-        if path == "crates/crucible-runtime/src/bridge.rs" {
-            continue;
-        }
-        for line in code(&text) {
-            for entry in waiting.iter().filter(|entry| names(line, entry)) {
-                crossed.push((path.clone(), entry.clone()));
-            }
-        }
-    }
-
-    // Each line naming an entry is one pair, so an entry named twice in a
-    // file is seen twice. The entry is recorded rather than the line, since
-    // a line written here that names a bridge by its path would read, to the
-    // bridge ledger's own check, as this crate crossing it.
-    crossed.sort();
+fn no_crossing_in_the_ledger_waits() {
     assert_eq!(
-        crossed,
-        [(
-            "crates/crucible-app/src/conversation.rs".to_owned(),
-            "AppTurn".to_owned()
-        ),],
-        "a waiting crossing is named somewhere other than the conversation's one wait around a \
-         whole turn, where a turn could reach it"
+        waiting_entries(),
+        Vec::<String>::new(),
+        "a ledger entry waits, and a turn is a task, where a wait would hold the worker it runs on"
     );
 }

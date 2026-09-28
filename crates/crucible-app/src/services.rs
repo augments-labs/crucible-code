@@ -47,14 +47,17 @@ use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 // lookups, account renewals and a login's requests and store work, each counting
 // work it gave up on that is still running, the release check's one cache write,
 // one step at a time for each command left running, whose owner asks its process
-// everything there, and the stop and reap of each foreground command being
-// stopped, as many as a turn may have tool runs at once. An owner added to the
-// blocking threads is added here.
+// everything there, the stop and reap of each foreground command being
+// stopped, as many as a turn may have tool runs at once, and a terminal's
+// waits for a drawing thread that is behind, handed over so the worker waiting
+// goes on polling: its turn's, and a question put through the tool that asks,
+// which runs alone. An owner added to the blocking threads is added here.
 //
-// That is the reach of the assertion below, and two of those owners are there
-// because the owner decided on 2026-09-25 to widen `BLOCKING` by one for each
-// rather than let a newly counted owner take the thread in spare. No other
-// owner's bound changed by either decision.
+// That is the reach of the assertion below, and three of those owners are
+// there because the owner decided to widen `BLOCKING` for them rather than let
+// a newly counted owner take the thread in spare: on 2026-09-25 by one for
+// each of two, and on 2026-09-27 by two for the terminal's waits. No other
+// owner's bound changed by any of those decisions.
 //
 // A kept command's release task is inside that reach: it asks the very process
 // the `crucible_builtins::MOST` step was already reserved for, and that
@@ -71,6 +74,7 @@ use crate::runtime::{BLOCKING, RuntimeOwner, Unstarted, Unstopped};
 const HTTP_LOOKUPS: usize = 2;
 const RELEASE_WRITE: usize = 1;
 const FOREGROUND_STOPS: usize = 2;
+const TERMINAL_WAITS: usize = 2;
 const _: () = assert!(
     ToolWorker::CAPACITY
         + HTTP_LOOKUPS
@@ -78,10 +82,11 @@ const _: () = assert!(
         + crucible_builtins::MOST
         + RELEASE_WRITE
         + FOREGROUND_STOPS
+        + TERMINAL_WAITS
         < BLOCKING,
     "the tool worker, shared HTTP lookups, account requests, the release cache write, the \
-     commands left running and the foreground stops together would take every \
-     blocking thread the runtime has"
+     commands left running, the foreground stops and a terminal's waits together would \
+     take every blocking thread the runtime has"
 );
 
 /// How long a renewal still in flight when the run is over is given to

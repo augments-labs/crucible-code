@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn a_body_that_stalls_and_never_closes_gives_up_rather_than_holding_the_turn() {
-        // The turn thread is inside this function with no cancel to look at, so
+        // The turn is inside this function with no cancel to look at, so
         // a reader that only ever says "retry" is a session that never comes
         // back and never says why. `read_to_end` is what used to read this, and
         // it retries that answer for ever.

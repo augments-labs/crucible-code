@@ -41,14 +41,10 @@ change in any release with no deprecation period.
   keeps the same GitHub answer, 24-hour freshness rule, 10-second lifetime,
   256 KiB body ceiling and atomic cache replacement, while a separate pool and
   a bounded shutdown keep the check from outliving the run.
-- **A crossing that waits, and one runtime the application owns.**
-  `Bridge::wait` polls a future on the caller's thread against a runtime
-  handle until it answers or the turn's `Cancel` is raised, noticed within
-  20 ms, and refuses with `Unwaited` on a runtime thread or with no handle.
-  `crucible-app` lends a multi-thread runtime of 4 workers and at most 14
-  blocking threads, with a timer and an I/O driver, through
-  `services::Services`, built only when first asked for and shut down within
-  2 s once a run ends.
+- **One runtime the application owns.** `crucible-app` lends a multi-thread
+  runtime of 4 workers and at most 18 blocking threads, with a timer and an
+  I/O driver, through `services::Services`. It is built only when first asked
+  for and shut down within 2 s once a run ends.
 - **A sandboxed command's pipes can be read and written asynchronously.**
   `SandboxOutput` gains a waiting `read`, and `SandboxProcess` gains
   `take_async_stdin`, which hands back a `SandboxInput`; both have defaults
@@ -144,15 +140,15 @@ change in any release with no deprecation period.
   tools, a sandbox step that brings a hosted MCP server up (prepare,
   materialize or start) and would have had to wait is reported as the new
   `ToolsetError::Unready`, with its cleanup unconfirmed.
-- **A turn waits for the model, a lone tool call and its toolset.**
-  `Runner::turn` and `Runner::compact` are now `async`, so a provider stream,
-  the run of a call that runs alone, or a toolset's preparation or disposal
-  that has to wait is waited for rather than refused, and the runner spawns
-  nothing. `Conversation::turn` and `Conversation::compact` stay synchronous,
-  waiting on the calling thread through the runtime handed over with
-  `Conversation::on`, which `startup::assemble` now starts, and refusing with
-  the new `TurnError::Unwaited` without one;
-  `TurnError::ToolsetCleanupUnready` is gone.
+- **A turn is a task on the application's runtime, and waits for the model, a
+  lone tool call and its toolset.** `Runner::turn` and `Runner::compact` are
+  now `async`, so a provider stream, the run of a call that runs alone, or a
+  toolset's preparation or disposal that has to wait is waited for rather than
+  refused, and `TurnError::ToolsetCleanupUnready` is gone. `Conversation`'s
+  turn, compaction, clear, resume and account switches, and `client::turn` and
+  `client::perform`, are `async` too, and the terminal spawns each turn onto
+  the application's runtime, so a turn held up by a slow terminal leaves its
+  worker to other tasks.
 - **Prompt-cache resources now wait for their stores and provider.** A turn,
   recap, `/cache` inspection or cleanup, and a model, provider, or credential
   switch await each prompt-cache step on the application runtime; an operation
@@ -279,12 +275,8 @@ change in any release with no deprecation period.
   thread has handed the line to the operating system or kept why not as
   `Session::trouble`. `Runner::pick_up`, `serve` and `resuming` owe the session
   their clearing lines until the new `Runner::record_clearings`, or the next
-  turn or compaction, writes them, and `Conversation` awaits it after each; a
-  consumer whose conversation cannot make that wait, having no runtime or
-  asking from a runtime's thread, now finds it reported by the new
-  `Session::missed` on each session the lines are owed to, until a later wait,
-  turn or compaction of that conversation writes them, while the log goes on
-  recording. Nothing a user runs behaves differently.
+  turn or compaction, writes them, and `Conversation` awaits it after each.
+  Nothing a user runs behaves differently.
 
 - **An account login is a task its attempt owns, and leaving it closes its
   callback.** A ChatGPT or Kimi login now runs on the application's runtime
@@ -342,6 +334,12 @@ change in any release with no deprecation period.
   escaped the kill, kept running, and held the output open, so the command read
   as still printing. Crucible now repeats the kill until nothing in the
   command's process group is left running.
+- **A panic on another thread no longer writes over the session's screen.**
+  While a session holds the terminal, a panic on any thread but the one that
+  draws, such as a task on the application's runtime, is said in the
+  transcript at the next prompt instead of being written to standard error in
+  the middle of a frame. One the session never said is written to standard
+  error once the screen is handed back.
 - **A pipe left where a configuration file is read no longer holds the first
   frame.** The three settings layers are read before anything is drawn, and each
   name was opened in a way that waits for a writer, so anything able to write in

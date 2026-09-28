@@ -26,20 +26,17 @@
 //!
 //! Where the service contracts hand back a future and the caller is still
 //! synchronous, [`Bridge`] is how it crosses: once, without waiting, and with
-//! [`Unready`] where the future would have had to wait; or, for the entries
-//! that say they wait, by waiting on a runtime handed to it until the future
-//! answers or the turn is cancelled, and with [`Unwaited`] where it cannot. Its
-//! variants are the ledger of every such caller, and [`BoxFuture`] is the one
-//! shape every contract hands back.
+//! [`Unready`] where the future would have had to wait. Its variants are the
+//! ledger of every such caller, and [`BoxFuture`] is the one shape every
+//! contract hands back.
 //!
 //! Nothing here starts a runtime. A library that built its own would decide
 //! for the application how many threads it gets; [`Group`] runs on the runtime
-//! of whoever called it, a crossing that polls once enters none, and one that
-//! waits enters only the runtime its caller hands it.
+//! of whoever called it, and a crossing enters none.
 //!
 //! [`not_worker`] answers one narrower question: whether the code calling it
 //! is polled as a spawned task right now, which [`Handle::try_current`] cannot
-//! tell apart from the turn thread's own [`Bridge::wait`]. A step not yet
+//! tell apart from a thread that entered a runtime or waits on one. A step not yet
 //! built to run on a worker checks it and refuses itself with [`OnWorker`]
 //! rather than running where it is not safe to.
 //!
@@ -57,7 +54,7 @@ pub use aside::Aside;
 #[cfg(feature = "proof")]
 #[doc(hidden)]
 pub use bridge::__answered;
-pub use bridge::{BoxFuture, Bridge, NOTICED, Unready, Unwaited};
+pub use bridge::{BoxFuture, Bridge, NOTICED, Unready};
 pub use cancel::Cancel;
 pub use group::{Ended, Full, Group};
 pub use progress::{Progress, Told};

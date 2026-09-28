@@ -38,7 +38,7 @@ pub enum Ended {
 /// a command of its own is about no action — the turn it would have to be
 /// about is not this one — and is refused as stale, as it is at every door.
 /// What the turn reports on the way goes to `run`, as it always has.
-pub fn turn(
+pub async fn turn(
     conversation: &mut Conversation,
     request: &Request,
     attached: Box<[Attachment]>,
@@ -48,13 +48,21 @@ pub fn turn(
     match request.command() {
         Command::Prompt(prompt) => {
             let mut ask = Deciding::new(front, request.capabilities());
-            Ended::Turn(conversation.turn(prompt.as_str(), attached, &mut ask, run))
+            Ended::Turn(
+                conversation
+                    .turn(prompt.as_str(), attached, &mut ask, run)
+                    .await,
+            )
         }
         Command::Compact => {
             // What the recap cost is on the events `run` carried; a caller
             // that keeps a running total reads it there, as the terminal does.
             let mut spent = Spend::NONE;
-            Ended::Room(conversation.compact(Compacting::Asked, run, &mut spent))
+            Ended::Room(
+                conversation
+                    .compact(Compacting::Asked, run, &mut spent)
+                    .await,
+            )
         }
         Command::Decide(_) => Ended::Refused(ErrorCode::StaleDecision.into()),
         Command::Theme(_)

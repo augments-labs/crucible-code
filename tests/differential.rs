@@ -1827,8 +1827,7 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
                         .dated(std::time::UNIX_EPOCH + std::time::Duration::from_hours(496_704)),
                     session,
                 )
-            })
-            .on(runtime);
+            });
         let (events, seen) = std::sync::mpsc::channel::<crucible_runner::EventEnvelope>();
         let (cancel, steer, aside) = (
             Cancel::new(),
@@ -1839,7 +1838,12 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
             let run = conversation
                 .runner()
                 .starting(&events, &cancel, &steer, &aside);
-            conversation.turn("probe the tree", Box::default(), &mut Allowing, &run)
+            runtime.block_on(conversation.turn(
+                "probe the tree",
+                Box::default(),
+                &mut Allowing,
+                &run,
+            ))
         };
         drop(events);
         let trouble = conversation.session().finish();

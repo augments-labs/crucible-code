@@ -136,7 +136,6 @@ fn served_by(
     build: impl FnOnce(Arc<Session>) -> crucible_runner::Runner,
 ) -> Conversation {
     Conversation::recording(Arc::new(Session::nowhere()), Some(provider), build)
-        .on(crate::cli::fake::runtime())
 }
 
 fn commanding(typed: &str) -> (String, usize) {

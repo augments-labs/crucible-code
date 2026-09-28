@@ -365,7 +365,13 @@ impl<'a> Driving<'a> {
                 let run = conversation
                     .runner()
                     .starting(&events, &self.cancel, &steer, &aside);
-                let ended = client::turn(conversation, &request, Box::default(), &mut front, &run);
+                let ended = self.terms.runtime.block_on(client::turn(
+                    conversation,
+                    &request,
+                    Box::default(),
+                    &mut front,
+                    &run,
+                ));
                 drop(reported);
 
                 ended.outcome()
@@ -373,7 +379,14 @@ impl<'a> Driving<'a> {
             _ => {
                 let providers = self.terms.providers.snapshot();
 
-                client::perform(conversation, &request, &self.terms.desk(&providers)).outcome()
+                self.terms
+                    .runtime
+                    .block_on(client::perform(
+                        conversation,
+                        &request,
+                        &self.terms.desk(&providers),
+                    ))
+                    .outcome()
             }
         };
 

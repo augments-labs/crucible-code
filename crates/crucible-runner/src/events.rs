@@ -115,19 +115,6 @@ pub enum TurnError {
     /// dropped unanswered, so its effect is unconfirmed rather than undone.
     #[error(transparent)]
     Unready(#[from] crucible_runtime::Unready),
-
-    /// A synchronous caller's crossing into a turn or a compaction handed back
-    /// no answer.
-    ///
-    /// The runner never returns this. It is how a caller that waits for a turn
-    /// from synchronous code — the application, around each turn and each
-    /// compaction it is asked for — reports its crossing refusing. Refused for
-    /// having no runtime to wait on, or for being on a thread a runtime runs,
-    /// the turn was never asked anything; cancelled, it was dropped at a step
-    /// that had not answered, which the application's own crossing never is,
-    /// since nothing raises the cancel it waits under.
-    #[error(transparent)]
-    Unwaited(#[from] crucible_runtime::Unwaited),
 }
 
 /// Where a worker reports what happened.

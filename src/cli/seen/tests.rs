@@ -382,6 +382,42 @@ fn maximum_wire_sized_deltas_neither_overfill_nor_make_an_unbounded_batch() {
     assert_eq!(received, POSTED);
 }
 
+/// A turn is polled on the application's runtime, and a slow terminal holds it
+/// at the full channel: while it waits there, its worker must still go to every
+/// other task on that runtime, or one screen that draws slowly stalls whatever
+/// else the application has running.
+#[test]
+fn a_turn_held_up_by_a_slow_terminal_leaves_its_worker_to_other_tasks() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .build()
+        .unwrap();
+    let (to, from) = sync_channel(CAPACITY);
+    let (started, starting) = std::sync::mpsc::channel();
+    let flood = runtime.spawn(async move {
+        let relay = Relay::new(to, Putting::new());
+        let _ = started.send(());
+        for _ in 0..=CAPACITY {
+            Reporter::new(Ancestry::new(), &relay).post(Event::Delta { text: "x".into() });
+        }
+    });
+    starting.recv().unwrap();
+
+    // Nobody draws, so the flood waits at the full channel on the only worker.
+    let (ran, heard) = std::sync::mpsc::channel();
+    let other = runtime.spawn(async move {
+        let _ = ran.send(());
+    });
+    assert!(
+        heard.recv_timeout(Duration::from_secs(5)).is_ok(),
+        "a turn waiting for the terminal kept its worker from every other task"
+    );
+
+    drop(from);
+    runtime.block_on(flood).unwrap();
+    runtime.block_on(other).unwrap();
+}
+
 /// Proves that a dropped [`Front::put`] on [`Asking`] leaves no waiter
 /// behind: nothing is holding the answer's receiver once the future that
 /// awaited it is gone, so a late reply finds nobody rather than blocking or

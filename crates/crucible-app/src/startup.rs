@@ -196,8 +196,8 @@ impl fmt::Debug for Startup<'_> {
 ///
 /// [`AppError`] where no provider, server or session could be set up as
 /// asked, and [`AppError::Unstarted`] where the runtime the conversation's
-/// turns are waited for on would not start; nothing is written to the disk
-/// for a startup that fails.
+/// turns run on would not start; nothing is written to the disk for a startup
+/// that fails.
 pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let Startup {
         settings,
@@ -240,8 +240,8 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let reaching = web(startup, settings);
 
     // Before the session, for the reason the provider is: the runtime every
-    // turn is waited for on, and every command the sandbox starts is watched
-    // on, is started here, the first thing in a run that asks for it, and a
+    // turn runs on, and every command the sandbox starts is watched on, is
+    // started here, the first thing in a run that asks for it, and a
     // run whose runtime would not start writes no session.
     let runtime = startup.services.runtime().handle()?;
     // And the renewals every subscription login was built with run there too,
@@ -298,14 +298,14 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     let permission = settings.permission(startup.mode);
     let serving = startup.provider.map(|one| one.name);
     let run_policy = policy(settings);
-    let conversation = Conversation::recording(Arc::new(session), serving, |session| {
+    let mut conversation = Conversation::recording(Arc::new(session), serving, |session| {
         let runner = if chosen.is_empty() {
             Runner::new(provider, offering, asking, context, session)
         } else {
             Runner::with_toolset(
                 provider,
-                // The same runtime the turns are waited for on: each selected
-                // server's streams are read and written by tasks there.
+                // The same runtime the turns run on: each selected server's
+                // streams are read and written by tasks there.
                 Hosting::new(Arc::new(offering), sandbox, chosen, runtime.clone()),
                 asking,
                 context,
@@ -322,10 +322,42 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
             }
             None => runner,
         }
-    })
-    .on(runtime);
+    });
+    recorded(&mut conversation, &runtime);
 
     Ok(conversation)
+}
+
+/// Waits on `runtime` for what picking the session up owes it, before the
+/// conversation is handed over: a resumed transcript can hold results the
+/// vendor being asked may not be sent, and the lines clearing them are owed to
+/// the session.
+///
+/// Awaited from a thread of its own, because whoever assembles a run may be
+/// anywhere, and a runtime refuses to be waited on from inside one; and only
+/// when something is owed, so a run that owes nothing starts no thread. A
+/// thread that could not be started leaves the lines owed, and whatever next
+/// writes to the session — a turn, a compaction, a switch of vendor or
+/// account, a pick-up — writes them before anything of its own. A run that
+/// ends before any of those writes none, and says nothing of it: the results
+/// stay out of what this run sends either way, and the next pick-up of the
+/// session clears them from what it reads again and owes the same lines.
+fn recorded(conversation: &mut Conversation, runtime: &tokio::runtime::Handle) {
+    if !conversation.runner().owes_clearings() {
+        return;
+    }
+    std::thread::scope(|scope| {
+        let waiting = std::thread::Builder::new()
+            .name("clearing".into())
+            .spawn_scoped(scope, || {
+                runtime.block_on(conversation.clearings_recorded());
+            });
+        if let Ok(waiting) = waiting
+            && let Err(panicked) = waiting.join()
+        {
+            std::panic::resume_unwind(panicked);
+        }
+    });
 }
 
 /// Protects the user configuration before any value can be read from it.

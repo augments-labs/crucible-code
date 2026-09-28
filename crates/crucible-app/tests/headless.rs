@@ -314,8 +314,7 @@ fn conversing(
             crucible_context::ContextInputs::new(work),
             session,
         )
-    })
-    .on(runtime()?))
+    }))
 }
 
 /// Everything a switch is decided from, all of it under one tree: the
@@ -397,7 +396,7 @@ fn turn(conversation: &mut Conversation, prompt: &str) -> Result<(Turned, String
         let run = conversation
             .runner()
             .starting(&events, &cancel, &steer, &aside);
-        conversation.turn(prompt, Box::default(), &mut Nobody, &run)?
+        runtime()?.block_on(conversation.turn(prompt, Box::default(), &mut Nobody, &run))?
     };
     drop(events);
 
@@ -475,7 +474,8 @@ fn clearing_starts_a_new_session_and_hands_back_the_one_left() -> Result<(), Fai
     let first = conversation.session().path().to_owned();
     turn(&mut conversation, "one")?;
 
-    let left = conversation.clear(&tree.sessions(), &tree.workspace()?, None)?;
+    let left =
+        runtime()?.block_on(conversation.clear(&tree.sessions(), &tree.workspace()?, None))?;
 
     assert_eq!(
         left.path(),
@@ -506,7 +506,8 @@ fn resuming_picks_a_session_back_up_with_what_it_held() -> Result<(), Failed> {
     let first = conversation.session().path().to_owned();
     let id = conversation.session().id().cloned();
     turn(&mut conversation, "one")?;
-    let left = conversation.clear(&tree.sessions(), &tree.workspace()?, None)?;
+    let left =
+        runtime()?.block_on(conversation.clear(&tree.sessions(), &tree.workspace()?, None))?;
     assert_eq!(left.finish(), None);
     // A log is held for as long as its session is: letting go of the one left
     // is what makes it somebody's to pick up again.
@@ -514,7 +515,8 @@ fn resuming_picks_a_session_back_up_with_what_it_held() -> Result<(), Failed> {
     let second = conversation.session().path().to_owned();
 
     let id = id.expect("a started session has an id");
-    let left = conversation.resume(&tree.sessions(), &tree.workspace()?, &id)?;
+    let left =
+        runtime()?.block_on(conversation.resume(&tree.sessions(), &tree.workspace()?, &id))?;
 
     assert_eq!(
         left.path(),
@@ -538,7 +540,11 @@ fn a_session_nobody_recorded_is_refused_and_the_one_in_hand_is_kept() -> Result<
     let first = conversation.session().path().to_owned();
     turn(&mut conversation, "one")?;
 
-    let refused = conversation.resume(&tree.sessions(), &tree.workspace()?, &SessionId::new());
+    let refused = runtime()?.block_on(conversation.resume(
+        &tree.sessions(),
+        &tree.workspace()?,
+        &SessionId::new(),
+    ));
 
     assert!(refused.is_err(), "{refused:?}");
     assert_eq!(conversation.session().path(), first);
@@ -621,12 +627,12 @@ fn a_model_switched_to_within_a_provider_is_asked_for_and_written_down() -> Resu
         Some("anthropic"),
     )?;
 
-    let switched = conversation.ask_for(
+    let switched = runtime()?.block_on(conversation.ask_for(
         desk.one("anthropic")?,
         "claude-haiku-4-5",
         None,
         &desk.with(),
-    );
+    ));
 
     assert!(
         matches!(
@@ -665,8 +671,12 @@ fn a_provider_switched_to_is_the_one_asked_from_then_on() -> Result<(), Failed> 
         Some("anthropic"),
     )?;
 
-    let switched =
-        conversation.ask_for(desk.one("google")?, "gemini-3.8-flash", None, &desk.with());
+    let switched = runtime()?.block_on(conversation.ask_for(
+        desk.one("google")?,
+        "gemini-3.8-flash",
+        None,
+        &desk.with(),
+    ));
 
     assert!(
         matches!(
@@ -699,8 +709,12 @@ fn a_provider_nothing_can_reach_is_refused_and_the_one_answering_is_kept() -> Re
         Some("anthropic"),
     )?;
 
-    let switched =
-        conversation.ask_for(desk.one("google")?, "gemini-3.8-flash", None, &desk.with());
+    let switched = runtime()?.block_on(conversation.ask_for(
+        desk.one("google")?,
+        "gemini-3.8-flash",
+        None,
+        &desk.with(),
+    ));
 
     assert!(
         matches!(
@@ -735,8 +749,12 @@ fn a_switch_is_refused_for_a_rung_the_model_does_not_serve() -> Result<(), Faile
         "{thought:?}"
     );
 
-    let switched =
-        conversation.ask_for(desk.one("google")?, "gemini-3.8-flash", None, &desk.with());
+    let switched = runtime()?.block_on(conversation.ask_for(
+        desk.one("google")?,
+        "gemini-3.8-flash",
+        None,
+        &desk.with(),
+    ));
 
     assert!(
         matches!(switched, Switched::Unsupported(Effort::Max)),
@@ -762,8 +780,12 @@ fn a_rung_gemini_does_not_serve_is_refused_and_the_one_in_force_is_kept() -> Res
         &Guard::Nothing,
         Some("google"),
     )?;
-    let switched =
-        conversation.ask_for(desk.one("google")?, "gemini-3.8-flash", None, &desk.with());
+    let switched = runtime()?.block_on(conversation.ask_for(
+        desk.one("google")?,
+        "gemini-3.8-flash",
+        None,
+        &desk.with(),
+    ));
     assert!(matches!(switched, Switched::Taken { .. }), "{switched:?}");
 
     let thought = conversation.think(Effort::Max, &desk.with());
@@ -787,7 +809,7 @@ fn a_logout_falls_back_to_a_credential_the_store_never_held() -> Result<(), Fail
     )?;
     let anthropic = desk.one("anthropic")?;
 
-    let left = conversation.log_out(anthropic, &desk.with());
+    let left = runtime()?.block_on(conversation.log_out(anthropic, &desk.with()));
 
     let LoggedOut::StillServed { source, .. } = left else {
         panic!("the environment still serves it: {left:?}");
@@ -816,7 +838,7 @@ fn a_logout_with_nothing_to_fall_back_to_leaves_nobody_asked() -> Result<(), Fai
         Some("anthropic"),
     )?;
 
-    let left = conversation.log_out(desk.one("anthropic")?, &desk.with());
+    let left = runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
 
     assert!(matches!(left, LoggedOut::SignedOut { .. }), "{left:?}");
     assert_eq!(desk.logins.read().providers().count(), 0);
@@ -847,7 +869,7 @@ fn a_logout_that_leaves_other_providers_reachable_says_none_is_chosen() -> Resul
         Some("anthropic"),
     )?;
 
-    let left = conversation.log_out(desk.one("anthropic")?, &desk.with());
+    let left = runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
 
     assert!(matches!(left, LoggedOut::SignedOut { .. }), "{left:?}");
     assert_eq!(conversation.serving(), None);
@@ -871,7 +893,7 @@ fn a_logout_of_a_provider_nobody_is_asking_changes_nothing_else() -> Result<(), 
         Some("anthropic"),
     )?;
 
-    let left = conversation.log_out(desk.one("google")?, &desk.with());
+    let left = runtime()?.block_on(conversation.log_out(desk.one("google")?, &desk.with()));
 
     assert!(matches!(left, LoggedOut::Kept), "{left:?}");
     assert_eq!(desk.logins.read().providers().count(), 0);
@@ -887,7 +909,7 @@ fn a_credential_given_to_a_session_asking_nobody_is_who_it_asks_next() -> Result
     let desk = Desk::new(&tree, &["anthropic"])?;
     let mut conversation = conversing(&tree, Script::named("none"), &Guard::Nothing, None)?;
 
-    let signed = conversation.logged_in(desk.one("anthropic")?, &desk.with());
+    let signed = runtime()?.block_on(conversation.logged_in(desk.one("anthropic")?, &desk.with()));
 
     assert!(
         matches!(
@@ -921,7 +943,7 @@ fn a_credential_for_another_provider_keeps_the_one_already_answering() -> Result
         Some("anthropic"),
     )?;
 
-    let signed = conversation.logged_in(desk.one("google")?, &desk.with());
+    let signed = runtime()?.block_on(conversation.logged_in(desk.one("google")?, &desk.with()));
 
     assert!(matches!(signed, LoggedIn::Elsewhere), "{signed:?}");
     assert_eq!(conversation.serving(), Some("anthropic"));
