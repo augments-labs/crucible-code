@@ -1082,9 +1082,14 @@ and never used.
 
 ## How layers combine
 
-A **scalar** takes the nearest layer that set it. An **object** is merged key by
-key, so a project naming one provider leaves your other one alone. A **list** is
-concatenated: every layer's entries are kept and none of them replaces another.
+A **scalar** takes the nearest layer that set it. An **object** is merged key
+by key, so a project naming one provider leaves your other one alone. A
+**list** is usually concatenated: every layer's entries are kept and none of
+them replaces another. Two things narrow instead. A project's sandbox network
+allowlist (`allowedDomains`) and socket list (`allowUnixSockets`) replace the
+ones it inherits and may only narrow them, as the [`sandbox`](#sandbox) section
+describes. A project's `promptCaching.allowedMechanisms` is intersected with
+the list above it, so it can only remove mechanisms.
 
 Say `~/.crucible/config.json` holds this:
 
@@ -1099,21 +1104,21 @@ and the project's `.crucible/config.json` holds this:
 
 ```json
 { "providers": { "openai": { "model": "gpt-5.6-sol" } },
-  "permissions": { "allow": ["bash(cargo test)"] } }
+  "permissions": { "deny": ["edit(.git/**)"] } }
 ```
 
 In that project: `openai` asks for `gpt-5.6-sol`, `anthropic` still asks for
-`claude-opus-5`, `toolDetail` is still `full`, and both permission rules are in
+`claude-opus-5`, `toolDetail` is still `full`, and both `deny` rules are in
 force.
 
-Concatenation is the only rule a list could have here. If a nearer layer
-replaced a farther one, a `.crucible/config.json` that mentions `deny` at all
-would silently drop every `deny` you wrote at home, and a checked-out
+Concatenation is the only rule the permission lists could have. If a nearer
+layer replaced a farther one, a `.crucible/config.json` that mentions `deny` at
+all would silently drop every `deny` you wrote at home, and a checked-out
 repository would be deciding what your own machine protects. Keeping both is
 safe precisely because `deny` wins wherever it came from.
 
-The cost is that a list cannot be shortened by a nearer layer, only added to.
-Removing an entry means editing the file that holds it.
+The cost is that a nearer layer cannot shorten a concatenated list, only add to
+it. Removing an entry means editing the file that holds it.
 
 ## Comments
 
