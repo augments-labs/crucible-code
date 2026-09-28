@@ -112,7 +112,7 @@ jobs:
       # itself never fetches; it builds whatever tag is already local.
       - name: Fetch the previous release tag
         shell: bash
-        run: git fetch --depth=1 origin tag v0.43.1
+        run: git fetch --depth=1 origin tag v0.43.2
       # Built in a worktree of this checkout so the candidate tree is untouched.
       # No sandbox setup: the drill runs the binaries headless with redirected
       # input and compares replay, pending-action recovery and read-only
@@ -120,7 +120,7 @@ jobs:
       - name: Build the previous release binary
         shell: bash
         run: |
-          git worktree add --detach "$RUNNER_TEMP/prior-src" v0.43.1
+          git worktree add --detach "$RUNNER_TEMP/prior-src" v0.43.2
           (cd "$RUNNER_TEMP/prior-src" && cargo build --locked --bin crucible)
       - name: Build the candidate binary
         shell: bash
