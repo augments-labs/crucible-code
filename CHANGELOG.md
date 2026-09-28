@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.43.2] - 2026-09-29
+
+**A confined command can now reach its allowed hosts through your `http://`
+proxy.** Behind a proxy that is the only way out, those hosts used to be
+unreachable from inside the sandbox. A session picked up with the same tools no
+longer tells the model its tools changed. The documentation now explains how a
+turn runs, with a diagram of the loop.
+
 ### Fixed
 
 - **A session picked up with the same tools no longer tells the model its tools
@@ -4463,7 +4471,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...HEAD
+[0.43.2]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...v0.42.0
