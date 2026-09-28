@@ -27,7 +27,8 @@ continued later.
   file changes, commands and reads outside it are decided by rules and the
   active permission mode. OS sandboxing is opt-in with `sandbox.enabled: true`;
   configure filesystem, network and command limits or inspect them with `/sandbox`.
-  See [sandbox setup and platform support](docs/security/sandboxing.md).
+  See [turning it on](docs/security/sandboxing.md#turning-it-on) and
+  [platform support](docs/security/sandboxing.md#platform-support).
 - **A responsive terminal UI.** Prompts remain editable while a turn runs, tool
   output streams in place, and compact tool summaries open into full details.
   Redirected output stays plain text.
