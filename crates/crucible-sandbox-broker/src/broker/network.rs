@@ -844,6 +844,9 @@ mod tests {
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => break,
+                        // The relay closes with this response unread, and a close that
+                        // lands during a send reports that reset instead of a broken pipe.
+                        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
                         Err(error) => panic!("host write failed: {error}"),
                     }
                 }
