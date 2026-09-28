@@ -198,10 +198,10 @@ recovering.
 tail has to fit the window beside the recap, and only a figure in the window's
 own unit can promise that. The turn you are in is kept whole, whatever it has
 cost so far; the budget bounds the turns before it. The exception is automatic
-recovery with nothing older to recap: when those turns already fit the budget
-and the window is still full once old tool output is cleared, the whole
-conversation is recapped, the tool calls this turn has finished included. Left
-unset, crucible keeps the most recent 20,000 tokens.
+recovery with nothing older to recap. Once this turn has finished a tool call,
+if the turns before it already fit the budget and the window is still full
+after old tool output is cleared, the whole conversation is recapped, this turn
+included. Left unset, crucible keeps the most recent 20,000 tokens.
 
 `recap` is a ceiling rather than a requested length. Left unset, a structured
 recap may produce up to 10,240 tokens, further limited by the model's output
