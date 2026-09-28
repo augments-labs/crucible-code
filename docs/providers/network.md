@@ -46,8 +46,10 @@ a SOCKS proxy hides an `HTTPS_PROXY` you also set.
 
 These are read from the environment crucible was started in, so set them in
 your shell. One set in the [`env`](../configuration/configuration.md#env) block
-reaches the commands crucible runs but not crucible's own requests. Proxy
-settings made in the operating system's own network settings are not read.
+never reaches crucible's own requests. It reaches the commands crucible runs,
+unless confinement's per-command proxy replaces it (see [commands connect on
+their own](#commands-connect-on-their-own)). Proxy settings made in the
+operating system's own network settings are not read.
 
 What happens next depends on the scheme:
 
@@ -116,6 +118,8 @@ being sent to the start of the answer, whatever it spent waiting; the three
 minutes end when the answer starts, not when it finishes. A web tool's answer
 then has two minutes to arrive in full. Each request made while you sign in,
 or while an account's token is renewed, has 30 seconds from start to finish.
+When the provider refuses a request, its reply is read for at most ten seconds
+([keys](providers.md#keys) says more).
 
 Connecting directly, a provider's hostname is given five seconds to resolve.
 The operating system's lookup cannot be cancelled, so once one has taken
@@ -131,7 +135,7 @@ A turn names the provider and what went wrong, as in
 
 | Message | Means |
 | --- | --- |
-| `host was not found` | The proxy's hostname did not resolve, or, with no proxy, the provider's. |
+| `host was not found` | The proxy's hostname did not resolve, or, connecting directly, the provider's. |
 | `hostname resolution stalled; restart crucible before trying another provider request` | A lookup took longer than five seconds, or an earlier one did. |
 | `connection failed` | No connection could be made to the host or the proxy, the proxy refused the tunnel (for a wrong or missing password, or a provider hostname it could not resolve, say), or the proxy is one crucible refuses. |
 | `TLS setup failed` | The host's or the `https://` proxy's certificate was not trusted, or TLS with it failed. |
@@ -151,5 +155,5 @@ applies to it. Its environment is built for it rather than copied from yours
 credentials](../security/sandboxing.md#environment-and-credentials)). With
 confinement on under Linux or macOS and network domains allowed, its proxy
 variables name crucible's own per-command proxy, which connects straight to
-each allowed host rather than through the proxy your environment names
-([`sandbox`](../configuration/configuration.md#sandbox)).
+each allowed host rather than through a proxy your environment or the `env`
+block names ([`sandbox`](../configuration/configuration.md#sandbox)).
