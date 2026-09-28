@@ -392,7 +392,7 @@ full, the model would not take another request this size, you asked, or you
 chose notes over carrying a picked-up session whole.
 
 The box under it is a box throughout. What you type reaches it, <kbd>Enter</kbd>
-queues the line, and it is sent as the next turn once there is room — against
+queues the line, and it is sent as the next turn once there is room, against
 the session that has just been made smaller, which is why it waits rather than
 going first. <kbd>Esc</kbd> stops the notes and nothing is replaced, though old
 tool output cleared to make room before they began stays cleared.

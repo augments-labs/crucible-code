@@ -325,7 +325,7 @@ When there is no longer room for another exchange, crucible **makes room in the
 middle of the turn and the turn carries on**. It asks the model to write down
 what is worth keeping under fixed headings: Goal, Constraints & Preferences,
 Progress (as Done, In Progress and Blocked), Decisions, Next Steps and Critical
-Context. crucible adds the files the replaced messages read or modified itself,
+Context. crucible itself adds the files the replaced messages read or modified,
 so that list survives a second compaction. That recap stands where the messages
 it replaced were. The most recent turns stay word for word, bounded in tokens
 rather than counted in turns, so a turn that is mostly tool output cannot carry

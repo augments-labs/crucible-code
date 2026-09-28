@@ -197,11 +197,14 @@ recovering.
 `keep` is in tokens rather than turns because a turn can be enormous: the kept
 tail has to fit the window beside the recap, and only a figure in the window's
 own unit can promise that. The turn you are in is kept whole, whatever it has
-cost so far; the budget bounds the turns before it. The exception is automatic
-recovery with nothing older to recap. Once this turn has finished a tool call,
-if the turns before it already fit the budget and the window is still full
-after old tool output is cleared, the whole conversation is recapped, this turn
-included. Left unset, crucible keeps the most recent 20,000 tokens.
+cost so far; the budget bounds the turns before it. Here, a turn begins at the
+latest message on your side of the conversation, so a line you queued while it
+ran begins a new one, and so does the note crucible adds when a background
+command finishes. The exception is automatic recovery with nothing older to
+recap. Once this turn has finished a tool call, if the turns before it already
+fit the budget and the window is still full after old tool output is cleared,
+the whole conversation is recapped, this turn included. Left unset, crucible
+keeps the most recent 20,000 tokens.
 
 `recap` is a ceiling rather than a requested length. Left unset, a structured
 recap may produce up to 10,240 tokens, further limited by the model's output
