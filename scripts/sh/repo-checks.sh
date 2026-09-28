@@ -729,17 +729,69 @@ update types
 builtins attachments
 builtins runtime
 builtins sandbox
-builtins sandbox-local
 builtins tools
 builtins types
 builtins workspace'
+# Test-support edges are kept apart from the list above. The test-only edges in
+# that list are ones the layering would let shipped code take as well; an edge
+# here is one it would not, because a test's need is never permission for code
+# that ships. `builtins sandbox-local` is how the tools' tests get one machine's
+# confinement to run a command under; the check at the end of this section
+# holds each of these out of every table a build that ships resolves, reading
+# the manifest under `crates/`, so each names a member crate, not the root.
+test_support='builtins sandbox-local'
 while IFS= read -r edge; do
     [[ -z "$edge" ]] && continue
-    if ! grep -Fxq "$edge" <<<"$allowed"; then
+    if ! grep -Fxq "$edge" <<<"$allowed" && ! grep -Fxq "$edge" <<<"$test_support"; then
         printf '    FAIL dependency edge %s is outside the workspace layering\n' "$edge"
         failed=1
     fi
 done <<<"$edges"
+# The list is a layering only while no crate can reach itself through it.
+# Cargo refuses a cycle among the edges declared today, not one the list would
+# let a later manifest complete.
+if ! python3 -c '
+import sys
+
+taken = {}
+for line in sys.stdin.read().splitlines():
+    words = line.split()
+    if len(words) != 2:
+        print("    FAIL the allowed list has a line that is not one edge: %r" % line)
+        sys.exit(1)
+    taken.setdefault(words[0], []).append(words[1])
+
+state = {}
+
+def visit(crate, path):
+    state[crate] = "open"
+    for dependency in taken.get(crate, []):
+        if state.get(dependency) == "open":
+            loop = path[path.index(dependency):] + [dependency]
+            print("    FAIL the allowed list lets crucible-%s reach itself: %s" % (dependency, " -> ".join(loop)))
+            sys.exit(1)
+        if dependency not in state:
+            visit(dependency, path + [dependency])
+    state[crate] = "closed"
+
+for crate in list(taken):
+    if crate not in state:
+        visit(crate, [crate])
+' <<<"$allowed"; then
+    failed=1
+fi
+# `crucible-core` was the facade other crates reached names through. Its names
+# now live with the crates that own them, and a package by that name is the
+# facade coming back.
+if ! packages=$(cargo metadata --no-deps --offline --format-version 1 --color never --manifest-path Cargo.toml 2>/dev/null |
+    python3 -c 'import json, sys; print("\n".join(p["name"] for p in json.load(sys.stdin)["packages"]))') ||
+    [[ -z "$packages" ]]; then
+    printf '    FAIL cargo named no workspace package; this check measured nothing\n'
+    failed=1
+elif grep -Fxq crucible-core <<<"$packages"; then
+    printf '    FAIL the workspace has a crucible-core package; each name lives with the crate that owns it\n'
+    failed=1
+fi
 # Tighter than the allowed-edge list above for these crates, and for
 # crucible-runtime tighter than the architecture's maximum: giving one of them
 # a workspace dependency is a decision to take here rather than a line to add.
@@ -773,30 +825,32 @@ if ! grep -Fxq 'client-api types' <<<"$edges" || ! grep -Fxq 'app client-api' <<
     failed=1
 fi
 
-# `builtins sandbox-local` above is a test-support edge, and a test-support edge
-# never justifies a shipped one. A tool names the sandbox service contract;
-# naming one machine's answer to it in a table that ships is how that
-# distinction would quietly disappear. Every such table counts, not only
-# `[dependencies]`: a build script that pulls a backend in ships it too. Cargo
-# answers which tables those are, so this section runs `cargo`, and it asks
-# manifests whose answer is known as well as the one that matters. Only 3 is a
-# clean answer, because 1 is also what a crashed reader exits with.
+# A test-support edge never justifies a shipped one. A tool names the sandbox
+# service contract; naming one machine's answer to it in a table that ships is
+# how that distinction would quietly disappear. Every such table counts, not
+# only `[dependencies]`: a build script that pulls a backend in ships it too.
+# Cargo answers which tables those are, so this section runs `cargo`, and it
+# asks manifests whose answer is known as well as the one that matters. Only 3
+# is a clean answer, because 1 is also what a crashed reader exits with.
 if ! python3 scripts/python/shipped-edge.py --self-test; then
     printf '    FAIL the shipped-edge check failed its self-test\n'
     failed=1
 fi
-python3 scripts/python/shipped-edge.py crates/crucible-builtins/Cargo.toml crucible-sandbox-local
-case $? in
-    0)
-        printf '    FAIL crucible-builtins must reach crucible-sandbox-local only as a dev-dependency\n'
-        failed=1
-        ;;
-    3) ;;
-    *)
-        printf '    FAIL the shipped-edge check gave no answer for crates/crucible-builtins/Cargo.toml\n'
-        failed=1
-        ;;
-esac
+while read -r crate dependency; do
+    [[ -z "$crate" ]] && continue
+    python3 scripts/python/shipped-edge.py "crates/crucible-$crate/Cargo.toml" "crucible-$dependency"
+    case $? in
+        0)
+            printf '    FAIL crucible-%s must reach crucible-%s only as a dev-dependency\n' "$crate" "$dependency"
+            failed=1
+            ;;
+        3) ;;
+        *)
+            printf '    FAIL the shipped-edge check gave no answer for crates/crucible-%s/Cargo.toml\n' "$crate"
+            failed=1
+            ;;
+    esac
+done <<<"$test_support"
 
 section "a test build's sandbox state stays out of a release"
 # `per-checkout-state` names the Linux sandbox's state directory after the
