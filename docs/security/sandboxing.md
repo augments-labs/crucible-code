@@ -660,9 +660,9 @@ in order, and each keeps its place among the commands allowed to run at once
 until its own publication finishes. Every wait for the lock has a ceiling: a
 command being prepared is refused if the lock does not come free within a
 minute, a command whose own deadline has passed is stopped after a minute, and
-five seconds is the bound everywhere somebody is waiting (a cancelled turn, a
+five seconds is the bound everywhere somebody is waiting: a cancelled turn, a
 command left running whose report is overdue, a confined server being restarted
-or disposed of at a turn's end, and the run itself ending).
+or disposed of at a turn's end, and the run itself ending.
 
 A command that ran while another published into one of its roots publishes
 nothing, whatever the root looks like afterwards: this user's state directory
