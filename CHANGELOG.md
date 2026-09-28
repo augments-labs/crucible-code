@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-09-28
+
+**A session picked up after crucible died mid-turn now tells the model what its
+finished tool calls did.** The pick-up used to drop the whole pass, which left
+the model free to run a finished command or edit again. The release page is now
+a short summary with a link to every change. The documentation now says how to
+turn confinement on for each platform, how compaction runs, what the model is
+told with each request and what crucible connects to.
+
 ### Changed
 
 - **A release page is now the release's summary and a link to every change.**
@@ -4439,7 +4448,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/augments-labs/crucible-code/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/augments-labs/crucible-code/compare/v0.41.0...v0.41.1
