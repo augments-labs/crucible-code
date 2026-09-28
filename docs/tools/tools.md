@@ -1,7 +1,8 @@
 # Tools
 
-Twelve tools, advertised in the order a model tends to reach for them. Eight are
-always in the list. The rest are **held back**: they exist and they work, and the
+Twelve tools, advertised in the order a model tends to reach for them. Nine are
+in the list from the start, and eight when nobody is at a keyboard for
+`ask_user` to ask. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.

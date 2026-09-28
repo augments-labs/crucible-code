@@ -111,4 +111,5 @@ to the same bytes on both sides, and `--sandbox` and `--extensions` must agree.
 Everything happens under scratch directories with no model selected, so no
 provider is called and no real session is read. `scripts/sh/rollback-drill-selftest.sh`
 runs the drill clean and against a corrupted fixture, which must fail. CI runs
-both on Linux, both macOS and both Windows cells with a 30-minute timeout.
+the drill and its self-test on Linux, both macOS and both Windows cells with a
+30-minute timeout.

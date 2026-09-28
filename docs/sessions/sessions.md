@@ -310,8 +310,8 @@ every request carries — the system instructions and the tool schemas — is
 outside it too, so a session that has said nothing begins at `100%`, and
 automatic compaction begins at `0%` while that reserve remains available.
 
-Where crucible does not know how much the model accepts, the prompt says `window
-unknown` rather than inventing a percentage. While room is being made, the last
+Where crucible does not know how much the model accepts, the prompt shows no
+reading rather than inventing a percentage. While room is being made, the last
 reading remains until the compacted transcript replaces it.
 
 When there is no longer room for another exchange, crucible **makes room in the
@@ -509,7 +509,7 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":12,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
+{"format":13,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
 ```
 
 Then one line per message — what you typed, what the model said and asked to

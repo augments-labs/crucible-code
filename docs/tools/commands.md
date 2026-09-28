@@ -213,7 +213,9 @@ carries a quarter of a result's ceiling, so four commands ending into one note
 cost what one result does, and output cut to fit says so where it was cut.
 Output whose reading failed part-way ends with
 `[output is incomplete: reading it failed before the end]`, so the part that
-was read never passes for the whole.
+was read never passes for the whole. A command that ended while nobody waited,
+before its output was read to the end, says so the same way: `[output is
+incomplete: it had not been read to the end when the command was reported]`.
 
 The model is told the moment there is somewhere to put it. A turn that is
 running takes the ending between one step and the next, so a plan built around a

@@ -43,9 +43,10 @@ cannot silently lose one another's settings.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so — silently skipping it would turn a permissions mistake
-into settings that mysteriously stopped applying. Each file is limited to 1
-MiB before JSON parsing, so a checkout cannot choose an unbounded startup
-allocation.
+into settings that mysteriously stopped applying. Anything there that is not an
+ordinary file, such as a pipe, is refused with the file named rather than
+waited on. Each file is limited to 1 MiB before JSON parsing, so a checkout
+cannot choose an unbounded startup allocation.
 
 ## What you can set
 
@@ -1188,3 +1189,28 @@ Where a key appears more than once in the file, the position is left off rather
 than pointing at one of them, which would send you to a line that is correct.
 
 An error may name an environment variable. It never quotes the value beside it.
+
+### Checking without starting
+
+`crucible config check` reads the three files the way a startup would, resolves
+them the way it would, and stops. It opens no credential, starts no session,
+and launches or dials nothing, so it is safe to run when one of those is the
+suspect:
+
+```
+$ crucible config check
+configuration invalid
+  user config /home/you/.crucible/config.json: valid
+  project config /home/you/api/.crucible/config.json: invalid
+  project-local config /home/you/api/.crucible/config.local.json: absent
+  /home/you/api/.crucible/config.json: output.color does not accept beige at
+  line 3, column 5 — accepted here: auto, always, never
+  schema: https://www.schemastore.org/crucible-code-schema.json
+```
+
+Each file is `valid`, `invalid` or `absent`, and each error is the one a
+startup would stop on, including two layers whose rules contradict each other.
+It exits 0 when everything holds and 1 otherwise, repeating the first error on
+standard error. `--json` prints one JSON document instead, with the same
+`status`, `files`, `failures` and `schema`. Neither report carries a secret; a
+path, a rule or a rejected value an error quotes appears as it does above.

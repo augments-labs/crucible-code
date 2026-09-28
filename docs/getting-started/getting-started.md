@@ -114,8 +114,9 @@ Type `/login` to choose how crucible signs its requests: a ChatGPT plan, a Kimi
 Code plan, or *Provide your own API key*. ChatGPT offers a local browser
 callback and a device code for remote terminals; Kimi Code offers a device code.
 The live panel opens the authorization page, shows only the safe page and
-one-time code, stays cancellable with Escape, and takes a masked paste-back
-fallback for ChatGPT browser login. Anthropic and Google have no account route;
+one-time code, stays cancellable with Escape, which also closes the browser
+callback so the next `/login` can start, and takes a masked paste-back fallback
+for ChatGPT browser login. Anthropic and Google have no account route;
 choose *Provide your own API key*, then the provider from the list. That list
 names each provider with the variable it reads from, `set ANTHROPIC_API_KEY`
 and so on, for anyone who would rather export a key than store one.
@@ -784,8 +785,9 @@ When a file cannot go, a line says which half said no:
 That one is about the protocol, and nothing you type changes it. The other half
 of the same question is the model: where the one you are asking does not read
 the kind of file you named, the line names the model instead, and `/model`
-picks one that does. A file over 4 MB on its own, or one whose bytes are not
-what its name claims, gets its own line and never costs a request.
+picks one that does. A file over 4 MB on its own, which is never read past that,
+a pipe, or a file whose bytes are not what its name claims gets its own line and
+never costs a request.
 
 ## Commands
 
@@ -801,8 +803,10 @@ session.
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
+| `/sandbox` | Shows the [sandbox](../security/sandboxing.md) in force, and turns it on or off |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
 | `/resume` | Stands what was worked on in this directory beside a preview of it, and picks one back up |
+| `/cache` | Shows what [prompt caching](../providers/prompt-caching.md) did, or cleans up what it left |
 | `/compact` | Replaces what is behind you with the model's own notes on it, making room |
 | `/clear` | Starts a new session, leaving this one on `/resume` |
 | `/exit` | Ends the session |
@@ -884,9 +888,10 @@ would put it in your shell's history and in the process listing. The box is
 labelled with the provider it is for and takes a paste whole. Escape leaves it
 without writing anything and says so: `cancelled, nothing signed in`. A store
 that cannot be written is answered with `the key could not be saved` and what to
-fix — the permissions, another crucible still writing, or a store that cannot
-be read and should be moved aside — never with the path or the key. A window
-too short for the box says so instead, and asks for a taller one.
+fix — the permissions, another crucible still writing five seconds later, or a
+store that cannot be read and should be moved aside — never with the path or
+the key. A window too short for the box says so instead, and asks for a taller
+one.
 
 `/login` on its own asks how crucible should sign its requests, which is a
 different question from which vendor: somebody paying for a ChatGPT plan and
@@ -1056,8 +1061,9 @@ stays in the box, and the next prompt carries on the same session.
 
 ## What it can do
 
-Twelve tools, advertised in the order a model tends to reach for them. Eight are
-always in the list. The rest are **held back**: they exist and they work, and the
+Twelve tools, advertised in the order a model tends to reach for them. Nine are
+in the list from the start, and eight when nobody is at a keyboard for
+`ask_user` to ask. The rest are **held back**: they exist and they work, and the
 agent does not see them until it looks them up with `tool_search`. A schema the
 agent can see is one it pays for on every request of every turn, and most
 sessions never write a plan or ask a question about the world.
