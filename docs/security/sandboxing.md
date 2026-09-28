@@ -14,6 +14,38 @@ Configure filesystem grants and restrictions, domain mediation, local sockets
 and command limits in the same block. Project settings can require confinement
 and narrow inherited authority. See [configuration](../configuration/configuration.md#sandbox).
 
+## Turning it on
+
+1. **Give the platform what it needs.** Confinement runs only where this
+   machine can enforce it; while it is on and this machine cannot, a command
+   is refused rather than run unconfined.
+   - Linux: Bubblewrap 0.11.0 or newer from the system's packages (`bwrap
+     --version` says which you have), and `crucible-sandbox-broker` beside
+     `crucible`, which `install.sh` puts there.
+   - macOS: nothing to install. The built-in `/usr/bin/sandbox-exec` does the
+     confining, with `crucible-sandbox-broker` beside `crucible`.
+   - Windows: `crucible-sandbox-broker.exe` beside `crucible.exe`, and once,
+     from an Administrator PowerShell in that directory,
+     `.\crucible.exe sandbox setup`, adding `--owner` with your account when
+     that PowerShell runs as another administrator. It creates the account and
+     network rules described under
+     [Windows setup maintenance](#windows-setup-maintenance).
+2. **Turn it on** with `/sandbox enable` in a conversation, or with
+   `{"sandbox":{"enabled":true}}` in `~/.crucible/config.json`. The command
+   writes that same setting, but only once it has checked that this machine
+   can enforce it; when it cannot, it says why and changes nothing.
+3. **Check it.** `crucible --sandbox`, run in the project, prints the backend
+   and what a command there would run under, without running one
+   ([reading the report](#reading-the-report)). In a conversation, `/sandbox`
+   shows the settings, and its Dependencies tab says whether this machine's
+   backend is available and, when it is not, why.
+4. **Turn it off** with `/sandbox disable`, unless the project requires it. On
+   Windows, `.\crucible.exe sandbox uninstall`, from an Administrator
+   PowerShell in the same directory and with the same `--owner` setup was
+   given, removes what setup created.
+
+## How Linux and macOS confine a command
+
 On Linux, the production backend uses a
 canonical, root-owned, non-writable system Bubblewrap executable reached only
 through root-owned, non-writable parent directories. Every bounded `PATH`
@@ -106,7 +138,7 @@ runs can use the native backend. Keep the release's `crucible-sandbox-broker.exe
 beside `crucible.exe`. From an Administrator PowerShell in that directory, run:
 
 ```powershell
-.\crucible-sandbox-broker.exe --windows-sandbox-setup
+.\crucible.exe sandbox setup
 ```
 
 The command does not auto-elevate and an ordinary Crucible run remains
@@ -114,7 +146,7 @@ unelevated. If PowerShell was elevated with a different administrator account,
 name the developer account explicitly:
 
 ```powershell
-.\crucible-sandbox-broker.exe --windows-sandbox-setup --owner 'MACHINE\person'
+.\crucible.exe sandbox setup --owner 'MACHINE\person'
 ```
 
 Setup creates one deterministic local sandbox account for that owner, stores
@@ -129,12 +161,16 @@ To remove that state, use the same owner choice from an Administrator
 PowerShell:
 
 ```powershell
-.\crucible-sandbox-broker.exe --windows-sandbox-uninstall
+.\crucible.exe sandbox uninstall
 ```
 
 Removal disables the account before changing its firewall rules, then deletes
 the account and record. If cleanup fails, the disabled account and protected
 record remain so the command can be retried safely.
+
+`.\crucible-sandbox-broker.exe --windows-sandbox-setup` and
+`--windows-sandbox-uninstall`, with the same `--owner`, run the same setup and
+removal from the broker alone.
 
 An enabled command starts through the packaged broker, which logs on that
 dedicated account and then creates a `WRITE_RESTRICTED` token with all ordinary
