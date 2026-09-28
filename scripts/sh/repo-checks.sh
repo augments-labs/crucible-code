@@ -238,6 +238,21 @@ done < <(
         grep -IHoE '^[[:space:]]{0,3}\[[^]]+\]:[[:space:]]*[^[:space:]]+' \
             -- "${pages[@]}" </dev/null |
             sed -E 's/:[[:space:]]*\[[^]]*\]:[[:space:]]*/:/'
+        # An image in <img src> or <source srcset> is a link too, and a
+        # diagram whose file moved renders as nothing. A srcset may list
+        # several candidates, each a path and an optional size; an inline
+        # data URI names no file. Only a double-quoted value on one line is
+        # read, which is how every page writes one.
+        grep -IHoE '(src|srcset)="[^"]*"' -- "${pages[@]}" </dev/null |
+            awk -F'"' 'tolower($2) !~ /^[[:space:]]*data:/ {
+                file = $1
+                sub(/:(src|srcset)=$/, "", file)
+                n = split($2, candidates, ",")
+                for (i = 1; i <= n; i++) {
+                    sub(/^[[:space:]]+/, "", candidates[i])
+                    print file ":" candidates[i]
+                }
+            }'
     } | grep -v '://'
 )
 

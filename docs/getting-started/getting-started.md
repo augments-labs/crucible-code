@@ -19,21 +19,21 @@ Seven builds, one per release:
 The FreeBSD archive is the one that may be absent from a release. There is no
 FreeBSD machine to build it on, so it is built in a virtual one, and when that
 does not come up the release goes out without it rather than not at all. Build
-from source, or take the archive from the release before it — the version it
+from source, or take the archive from the release before it; the version it
 holds is the version it says.
 
 The Linux release workflow builds dynamically linked binaries against glibc
-2.34 — Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine; older than
+2.34. Debian 12, Ubuntu 22.04, RHEL 9 and anything later are fine; older than
 that has to build from source. The already-published 0.1.6 Linux artifacts
 predate that build and need glibc 2.39; release artifacts cannot be changed in
 place. A binary from the current release workflow asks the system for nothing
-else: no certificate bundle, no runtime to install. `scripts/sh/smoke.sh` is what
-keeps that true, by running each release in a sandbox holding the binary and its
-two libraries and nothing besides.
+else: no certificate bundle, no runtime to install. `scripts/sh/smoke.sh` is
+what keeps that true, by running each release in a sandbox holding the binary
+and its two libraries and nothing besides.
 
 The one thing crucible does look for is a POSIX shell, and only when the `bash`
 tool runs a command. Every platform here has one except Windows, where it is
-whichever `sh.exe` is on the `PATH` — [Git for
+whichever `sh.exe` is on the `PATH`. [Git for
 Windows](https://git-scm.com/download/win) carries one, and crucible finds that
 one where it is normally installed even when it is not on the `PATH`. Without
 one, everything except the `bash` tool works and that tool says what is missing.
@@ -72,7 +72,7 @@ unpack it with `tar xzf` and copy `crucible` into a directory on `PATH`. On
 Linux and macOS copy `crucible-sandbox-broker` into the same directory.
 
 Each Windows target also ships the executable on its own, beside the archive and
-named the same way — `crucible-<version>-windows-x86_64.exe` — so there is
+named the same way (`crucible-<version>-windows-x86_64.exe`), so there is
 nothing to unpack. `SHA256SUMS` covers those too; PowerShell verifies it with
 `(Get-FileHash .\crucible-<version>-windows-x86_64.exe -Algorithm SHA256).Hash`
 before the executable is moved into a directory on `PATH`.
@@ -127,7 +127,7 @@ after exporting that variable or storing a key. The key goes into its own
 labelled box, which takes a paste as readily as typing and draws a dot per
 character, never the key. Enter saves it; Enter on an empty box does nothing.
 Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
-read. The session asks that provider from the next turn on — there is nothing to
+read. The session asks that provider from the next turn on; there is nothing to
 restart. Authentication never chooses a model or effort; both stay explicit
 choices, and `/model` is where they are asked together.
 
@@ -140,7 +140,7 @@ variable. Then use /model to select a model.
 ```
 
 The prompt is there underneath it, the way it is on every other run. crucible
-does not stand a panel in front of that screen — the sentence is the whole
+does not stand a panel in front of that screen: the sentence is the whole
 answer, and it stays readable while you type at the box under it.
 
 ## Run it
@@ -158,7 +158,7 @@ the last few sessions started in this directory. The card
 still opens when a remembered provider has lost its credential; its provider,
 model and effort remain inactive until `/login` or `/model` makes them usable.
 The card fits itself to the terminal: two columns at eighty and above, one below
-that, and under forty-six there is no frame at all — just what it is and where.
+that, and under forty-six there is no frame at all, just what it is and where.
 Under the card is the box:
 
 ```
@@ -171,13 +171,13 @@ ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · hig
 ```
 
 The box is as wide as the terminal, and a line longer than it wraps onto the
-next row rather than scrolling sideways — so the box grows downwards as you
+next row rather than scrolling sideways, so the box grows downwards as you
 write. It stops at about half the window; past that the line scrolls under the
 top edge and what you are writing stays in view.
 
 Text pasted into the box keeps its shape. A tab arrives as the four columns it
-stood for, so a snippet written with tabs is still indented -- on screen and in
-the prompt that is sent. Anything else a terminal can hide in a paste is left
+stood for, so a snippet written with tabs is still indented, both on screen and
+in the prompt that is sent. Anything else a terminal can hide in a paste is left
 out, since drawn it would move a cursor this process had already placed.
 
 <kbd>Ctrl+V</kbd> reads an image from the operating-system clipboard. It
@@ -185,12 +185,11 @@ imports the PNG into the session's private attachment store and puts a marker
 such as `[image 1]` in the box, numbered in the order the images were pasted;
 ordinary text paste still uses the terminal's paste action. The marker can be
 written into any later prompt of the same session to attach that image again,
-and a clipboard holding a copied image *file* — a path, or a `file://` address
-the way a file manager copies one — pastes the picture it points at. A
-clipboard image can therefore be sent without a file in the project, and a
-pasted image remains available to `--continue`. When nothing readable is on
-the clipboard, the reason is written under the box and the next keystroke
-clears it.
+and a clipboard holding a copied image *file* (a path, or a `file://` address
+the way a file manager copies one) pastes the picture it points at. A clipboard
+image can therefore be sent without a file in the project, and a pasted image
+remains available to `--continue`. When nothing readable is on the clipboard,
+the reason is written under the box and the next keystroke clears it.
 
 A path can do the same explicitly. A relative image path names a file in the
 workspace as before; an absolute image path outside it is imported rather than
@@ -204,7 +203,7 @@ describe '/home/you/Pictures/Screenshots/Screen Shot.png'
 The copy is content-addressed under crucible's session directory, so moving or
 deleting the original does not change what the transcript sends later.
 
-What the transcript shows of a sent attachment is its label and its number —
+What the transcript shows of a sent attachment is its label and its number:
 `[Image #1]`, `[Video #1]`, counted per kind in the order they were attached.
 Not the path: where the file came from is a detail of getting it here, the copy
 that was sent lives somewhere you did not choose anyway, and a row of home
@@ -212,14 +211,14 @@ directory is a row of the screen spent on neither.
 
 The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
-behind the box. At the right is what the session is talking to — the provider,
+behind the box. At the right is what the session is talking to: the provider,
 the model, and the rung it is being asked on where one has been chosen. It sits
 beside the box because every key that changes it is typed into that box.
 
 The model is written the way `--model` takes it back, so what the row says is
 what you would type to ask for it again, and the vendor is named because a model
-name says which model and never whose — a machine holding keys for two of them
-is a machine where that is a real question.
+name says which model and never whose. A machine holding keys for two of them is
+a machine where that is a real question.
 
 The row is redrawn on every keystroke, and both ends move while a session runs:
 <kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort` and `/login` change the
@@ -227,18 +226,18 @@ right. Where the window is too narrow for both, the right end gives way whole
 rather than being cut, and the mode keeps its place.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
-moves a word — as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd> — and <kbd>Home</kbd>
+moves a word (as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd>), and <kbd>Home</kbd>
 and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
 not a space, so a path is one word.
 
 <kbd>↑</kbd> and <kbd>↓</kbd> on an empty line walk back through the prompts you
 have already sent from this directory, newest first, up to a hundred of them.
-The top border of the box says where you are — showing the prompt's chronological
-position within this window, such as `history 80/100` on the first press back when
-eighty prompts are retained, counting down toward `history 1/100` for the oldest —
-and Enter sends whatever is in the box.
-Edit the line instead, by so much as a <kbd>Backspace</kbd>, and the walk ends
-where you edited it: the count goes, and the line is yours again.
+The top border of the box says where you are: the prompt's chronological
+position within this window, such as `history 80/100` on the first press back
+when eighty prompts are retained, counting down toward `history 1/100` for the
+oldest. Enter sends whatever is in the box. Edit the line instead, by so much as
+a <kbd>Backspace</kbd>, and the walk ends where you edited it: the count goes,
+and the line is yours again.
 
 The prompts are kept between sessions, per directory. A line you sent in one
 checkout is never offered under the arrow key in another, and each directory
@@ -250,8 +249,8 @@ box, the arrows belong to that first and the history only answers once there is
 nothing left for them to walk.
 
 The wheel scrolls the transcript, and goes on scrolling it while a list or a
-panel stands over it — except where what is standing is itself a window over
-more text than fits, which the wheel walks instead. How far one notch goes is
+panel stands over it, except where what is standing is itself a window over more
+text than fits, which the wheel walks instead. How far one notch goes is
 [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed),
 six rows unless you say otherwise. Text arriving below while you read back does
 not take you away from it.
@@ -260,14 +259,14 @@ A click puts the cursor where you point in the box, marks a row of a list, or
 opens a result the transcript cut short.
 
 Resting the pointer on one of those results lights it, in your own foreground
-rather than the quiet the rest of the transcript is in — every row of that one
+rather than the quiet the rest of the transcript is in: every row of that one
 result where it took more than one, and no row of any other. What lights is what
 a click there opens, so the two always name the same result.
 
 A drag selects, and crucible is what answers it: the rows you cover light up as
 you go, and letting go puts them on your clipboard. It runs over the whole
-window rather than over the transcript alone — an answer, the row above the box
-and the box itself are one drag if that is what you covered — and the first and
+window rather than over the transcript alone (an answer, the row above the box
+and the box itself are one drag if that is what you covered), and the first and
 last rows are taken from where you pressed and to where you let go, the way a
 selection in any other window behaves. A drag that reaches the top or the foot
 of the transcript scrolls it a row at a time for as long as the pointer rests
@@ -278,20 +277,20 @@ of it, because a new width moves the words out from under the two ends. Holding
 <kbd>Shift</kbd> while you drag still hands the pointer back to your terminal,
 if its own selection is the one you wanted.
 
-What a drag over the box takes is the picture — a border down each side, and
+What a drag over the box takes is the picture: a border down each side, and
 blank ground out to the last column. So <kbd>Ctrl+Y</kbd> is still there for the
 line itself, exactly as you typed it and with nothing around it, and the row
 under the box says it went. It works while a turn is running too, since the line
 is yours either way.
 
-Under the box is the mode in force, every time — `ask mode on` is the one
-nothing configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while
-you type, and the row and the colour of the box both follow it.
+Under the box is the mode in force, every time; `ask mode on` is the one nothing
+configured gives you. <kbd>Shift-Tab</kbd> steps to the next one while you type,
+and the row and the colour of the box both follow it.
 [Permissions](../permissions/index.md) is where all three are.
 
 Type a prompt and press enter. The line stays where it was and the answer
 streams in under it, with the box and the mode still standing at the bottom of
-the screen — so a tool call arriving ten minutes into a turn is read beside the
+the screen, so a tool call arriving ten minutes into a turn is read beside the
 mode that let it through.
 
 You can go on writing in the box while the answer arrives. <kbd>Enter</kbd>
@@ -311,29 +310,29 @@ a second joins it above while a tool is out:
 ```
 
 The mark turns four times a second, and that is the part that says the program
-is busy rather than stuck — a screen that has been still for a minute looks the
+is busy rather than stuck; a screen that has been still for a minute looks the
 same either way. The word says what is being waited on: `thinking` for the
 model, `writing` while prose is arriving, `running` while a tool has not
 answered, `retrying` while a response that went away is being asked for again,
 `compacting` while room is being made, and `interrupting` once <kbd>Esc</kbd>
 has been pressed and the turn has not stopped yet. The clock counts from the
-moment the prompt was sent and never pauses — not for a permission question,
+moment the prompt was sent and never pauses, not even for a permission question,
 which is time spent waiting just as much.
 
 `↓` is what the turn has spent so far, counted in the tokens the model has
 produced and added up across every response of the turn. It is written the way
-it would be said — `840`, `1k`, `1.4k`, `128.4k` — with a tenth only where there
+it would be said (`840`, `1k`, `1.4k`, `128.4k`), with a tenth only where there
 is one to write. It appears once the provider has said and not before, so a turn
-shows no count for its first response — a provider that never reports and a
-model that has produced nothing are different things, and only one of them is
-worth a number. On a window too narrow for all of it the key goes first, the
-count next and the clock after that, since all three are recoverable — the key
-is named under the box, and the other two will be back next second; the word is
-the last thing left.
+shows no count for its first response. A provider that never reports and a model
+that has produced nothing are different things, and only one of them is worth a
+number. On a window too narrow for all of it the key goes first, the count next
+and the clock after that, since all three are recoverable: the key is named
+under the box, and the other two will be back next second. The word is the last
+thing left.
 
 The prompts waiting behind the turn stand in a panel over the box, framed the
-way the box is because they are the same thing a moment apart — your own words,
-one of them being typed and the rest already sent for:
+way the box is because they are the same thing a moment apart. They are your own
+words, one of them being typed and the rest already sent for:
 
 ```
 ┌─ 4 queued ───────────────────────────────────────────────┐
@@ -349,7 +348,7 @@ will be said in. A line too wide for the window is cut at the right. On a window
 too narrow to open a frame the panel is one indented row saying how many are
 waiting, since that is the fact that cannot go, and on one too short for
 everything standing over the box it gives its rows up before the row saying a
-turn is running does — a queued prompt has its own turn coming, and that row is
+turn is running does: a queued prompt has its own turn coming, and that row is
 written nowhere else.
 
 They go together. When the turn ends the whole queue is one turn: the oldest is
@@ -357,22 +356,22 @@ its prompt and the rest are handed to the same turn before it asks anything, so
 the model reads all of it and then answers all of it. Three lines typed behind a
 turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
-message, in the order you typed it — nothing is joined into a prompt you did not
+message, in the order you typed it; nothing is joined into a prompt you did not
 write.
 
 <kbd>Ctrl+Q</kbd> stands the whole queue where the box was. Up and down walk it,
 <kbd>x</kbd> takes the marked line back into the box to be edited or sent ahead
-of the rest, and <kbd>Esc</kbd> — or <kbd>Ctrl+Q</kbd> again — closes it. While
-it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view rather
-than interrupting the turn.
+of the rest, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes it. While it
+stands it has the keyboard, so <kbd>Esc</kbd> there closes the view rather than
+interrupting the turn.
 
 Nothing leaves the queue while it stands open. The turn above goes on writing,
 tools go on running, the answer goes on arriving; what waits is the one moment
 those lines would cross into the transcript, and it waits exactly as long as you
 hold the view open. A line already in the transcript cannot be taken back, which
 is why the ones you are still going over are kept out of it. Closing the view
-gives the whole batch up at once — edited and untouched alike — and the turn
-works them in at its next pass.
+gives the whole batch up at once, edited and untouched alike, and the turn works
+them in at its next pass.
 
 While room is being made, a second line under the word says how far the notes
 have got:
@@ -397,7 +396,7 @@ the session that has just been made smaller, which is why it waits rather than
 going first. <kbd>Esc</kbd> stops the notes and nothing is replaced, though old
 tool output cleared to make room before they began stays cleared.
 
-Under everything the turn says, and over the box, is the plan — when the agent
+Under everything the turn says, and over the box, is the plan, when the agent
 has written one:
 
 ```
@@ -416,12 +415,14 @@ started; `✓` is one that is finished, struck through and toned down. The task
 under way is drawn first whatever order the plan was written in, then what is
 open, then what is finished with the most recently ticked off at the top of it.
 
-Seven tasks are shown and the rest are counted — `… +4 more · ctrl+t to expand`.
-<kbd>Ctrl+T</kbd> takes that bound off and puts it back, and what it adds arrives
-underneath the rows already on screen, so nothing you were reading moves. On a
-window with no room for all of this, the panel is measured before the rows around
-it: the call line and the queued prompt give way first, since a call joins the transcript the moment its tool answers and a queued
-prompt has its own turn coming, while what the agent is working to is on screen nowhere else.
+Seven tasks are shown and the rest are counted: `… +4 more · ctrl+t to expand`.
+<kbd>Ctrl+T</kbd> takes that bound off and puts it back, and what it adds
+arrives underneath the rows already on screen, so nothing you were reading
+moves. On a window with no room for all of this, the panel is measured before
+the rows around it: the call line and the queued prompt give way first, since a
+call joins the transcript the moment its tool answers and a queued prompt has
+its own turn coming, while what the agent is working to is on screen nowhere
+else.
 
 The panel does not come down when the turn does. What the agent was working to
 is what the next prompt is typed against, so it stands over the box between
@@ -466,7 +467,7 @@ watching the bottom of the screen for it.
 
 The rest wait for their tool. A command that is still printing has its output to
 show and `ctrl+b` pointing at it, and a response that asked for four tools at
-once gets four answers in whatever order they finish — so writing those rows up
+once gets four answers in whatever order they finish, so writing those rows up
 front would take each result under the wrong call. Those stand above the working
 row instead, with the mark pulsing on the beat the mark below it turns on, and
 each commits the moment its own tool answers: the same words in the same
@@ -476,7 +477,7 @@ nothing between the two. On a window with room for one of the two, the call
 gives way to the row that says the turn is running at all.
 
 Where a response asked for several at once, that row counts them instead of
-naming one — `8 WebFetch`, or `2 WebFetch and 7 Read` — and the count falls as
+naming one (`8 WebFetch`, or `2 WebFetch and 7 Read`), and the count falls as
 each answers and joins the transcript. A model that fetches ten pages in one
 breath would otherwise hold the first of the ten over the box until it came
 back, which says nothing about the nine still out. A command in the batch is
@@ -488,17 +489,17 @@ It hangs under `└`, one column past the `●` that opened the call, so a resul
 belongs to the call above it at a glance rather than by being next to it. The
 whole row is toned down, corner and words together, because the line above it
 already says what was done and this is the detail under it. A call that failed
-is marked `✗` there and only there — the call line stands as it was, since a
-call that was made is a call that was made whatever came back — and that mark is
-the one thing on the row left in your terminal's own foreground, so it is where
-the eye goes.
+is marked `✗` there and only there; the call line stands as it was, since a call
+that was made is a call that was made whatever came back. That mark is the one
+thing on the row left in your terminal's own foreground, so it is where the eye
+goes.
 
 A result that opens like a record is squeezed onto that line instead of cut to
 it. `gh pr view --json …` comes back pretty-printed over thirty rows whose first
 line of content is whichever key sorts first, and `"assignees": []` spends the
 reader's only line on nothing; squeezed, the row reads as much of the record as
-the window holds, in the order it arrived. Two characters decide it — a brace or
-a bracket, and something a record could hold after it — so `[exit status 3]` and
+the window holds, in the order it arrived. Two characters decide it: a brace or
+a bracket, and something a record could hold after it. So `[exit status 3]` and
 a sentence somebody wrote in brackets keep their spaces and their meaning.
 
 Tool headings and result previews stay on one row, with an ellipsis inside
@@ -521,17 +522,17 @@ the line of the call it answers. Arrow keys move one row at a time; the mouse
 wheel uses `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` (six rows per notch by default).
 Long headings and output lines wrap here so their ends remain readable.
 <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
-it — the box comes back with the line you were typing still in it, and nothing
-is written into the transcript on either side of it.
+it: the box comes back with the line you were typing still in it, and nothing is
+written into the transcript on either side of it.
 
 The key works whether or not a turn is running. While one is, the view stands in
 the rows the box has and the turn goes on writing above it, so what you are
 reading stays where you left it rather than being pushed down the screen by the
 next result. A command that has not answered yet stands there too, at the top,
-since it is the newest thing there is — the end of what it has printed so far,
-which is what the five rows over the box are a sample of. What it holds is what had been cut when you opened it; a turn that
-cut more while you were reading is one press away, since opening it again is
-what brings the newer results in.
+since it is the newest thing there is: the end of what it has printed so far,
+which is what the five rows over the box are a sample of. What it holds is what
+had been cut when you opened it; a turn that cut more while you were reading is
+one press away, since opening it again is what brings the newer results in.
 
 The row names the call you asked about, so what stands is the output of that
 call alone. A click anywhere
@@ -545,7 +546,7 @@ Local file lookups and web research in the same batch are counted together:
 ```
 
 Only the kinds that happened are named, in that order, and each carries its own
-number — a run that read one file says `read 1 file`. Two calls are enough to
+number: a run that read one file says `read 1 file`. Two calls are enough to
 fold; a single lookup keeps the row it always had, since a count of one is the
 same width as the name it replaced and says less.
 
@@ -566,35 +567,36 @@ file, or an unrecognized command ends the run and keeps its own result row.
 The run also ends wherever the turn does something else worth
 reading: a paragraph of the answer, your next prompt, a stop.
 
-And it ends at every round trip — the agent asked for a batch of tools, was
+And it ends at every round trip: the agent asked for a batch of tools, was
 answered, and is going back to the model for more. So a line joins the
 transcript each time the agent comes back rather than once the whole turn is
 over, and a turn that spends two minutes looking around is two minutes of rows
 appearing instead of two minutes of empty screen.
 
 Nothing is folded away. Clicking the line opens every result in the run at once,
-in the same view a single result opens in, each under the call it answers — so
+in the same view a single result opens in, each under the call it answers, so
 the run costs one row and keeps all of it. The whole line lights up under the
 pointer, because the whole line is the door.
 
-While the run is still going the counters are in the present — `Searching for 1
-pattern, reading 4 files` — on its own row over the box, above the call that is
-out. It wears the same mark as that call and blinks on the same beat, since the
-two are one turn doing one thing, and a window with room for only one of them
-shows neither. That row does not light under the pointer and does not open,
-because nothing behind it has finished yet; it settles into the transcript, in
-the past tense and with both, the moment the round trip is answered.
+While the run is still going the counters are in the present
+(`Searching for 1 pattern, reading 4 files`), on its own row over the box, above
+the call that is out. It wears the same mark as that call and blinks on the same
+beat, since the two are one turn doing one thing, and a window with room for
+only one of them shows neither. That row does not light under the pointer and
+does not open, because nothing behind it has finished yet; it settles into the
+transcript, in the past tense and with both, the moment the round trip is
+answered.
 
 A call that changed a file is the exception, and says so by offering nothing. It
 is shown as the change itself, and a change too long for the block is cut where
-the change is built rather than where it is drawn — those lines are gone before
+the change is built rather than where it is drawn: those lines are gone before
 anything is drawn at all, so the count of them is the whole of what is still
 true about them.
 
 The answer itself is read as markdown rather than printed with the markers still
 in it. A heading loses its hashes and stands out, one `*` or `_` around a phrase
-leans on it and two raise its voice, backticks put a run of code — a command, a
-path, a name — in the theme's accent so it stands out of the prose, and a fenced
+leans on it and two raise its voice, backticks put a run of code (a command, a
+path, a name) in the theme's accent so it stands out of the prose, and a fenced
 block is toned for its whole length with the fence lines and the language
 written on them gone. The tone belongs to the row rather than to the text, so it
 costs no column: the answer wraps exactly where the same answer would have
@@ -602,23 +604,23 @@ wrapped plain.
 
 A phrase the model leant on or raised may run over more than one line, and it
 is read that way: a run opened on one line and closed on the next carries across
-the break. It carries no further than the paragraph it was written in -- a blank
-line, a heading, an item or a quote ends it -- so a marker the model opened and
+the break. It carries no further than the paragraph it was written in (a blank
+line, a heading, an item or a quote ends it), so a marker the model opened and
 never closed costs that paragraph and nothing after it.
 
 An answer wider than the terminal wraps at the last space before the edge, so a
 word arrives whole on one row rather than in halves on two. A word too long for
-any row -- a path, a hash, a line of code with no spaces in it -- is still broken
+any row (a path, a hash, a line of code with no spaces in it) is still broken
 where the row ends, since there is nowhere else to break it.
 
-A line that wraps and opens with a mark -- an item's bullet, a task's box, a
-quote's bar, a number and its dot -- continues under its own words rather than
+A line that wraps and opens with a mark (an item's bullet, a task's box, a
+quote's bar, a number and its dot) continues under its own words rather than
 back at the edge, so the mark is the only thing in its column and a list still
 reads as a list at any width.
 
 An address written on its own is a link without being written as one. `https://`
 or `http://` and everything up to the next space is drawn the way a link's words
-are, and arrives exactly as it was written -- the underscores and stars in a
+are, and arrives exactly as it was written: the underscores and stars in a
 path are part of it rather than markers. What ends the sentence is not part of
 the address, so a full stop after one stays with the prose.
 
@@ -631,8 +633,8 @@ Between two backticks nothing else is a marker. `*ptr`, `_private` and
 are code and code is full of characters that mean something else in prose.
 
 A block is fenced with three backticks or three tildes, and is closed by the
-marker that opened it -- so a block written with tildes can have backticks
-inside it, which is what a model reaches for tildes to do.
+marker that opened it, so a block written with tildes can have backticks inside
+it, which is what a model reaches for tildes to do.
 
 A block indented under an item is the item's: the spaces in front of its fence
 go with the fence, so the code inside it opens at the item's own column rather
@@ -656,11 +658,11 @@ left where it was.
 An item that opens with `[ ]` or `[x]` is a task, and its box takes the bullet's
 place rather than following it: an unfinished one gets a hollow mark, a finished
 one gets a tick and its words go behind you, subdued and struck through. The
-brackets have to open the item — `- see [TODO] in the grammar` is a bracket
+brackets have to open the item: `- see [TODO] in the grammar` is a bracket
 somebody wrote, and it stays one.
 
 A phrase between two `~~` is one the answer wrote and then took back, and it is
-drawn with a line through it and nothing else — struck rather than dimmed,
+drawn with a line through it and nothing else, struck rather than dimmed,
 because a retraction is still being read. Exactly two: `~/Projects` is a path,
 `~40` is an approximation, and both are left where they were.
 
@@ -669,9 +671,9 @@ between the columns and one under the header, every column is as wide as the
 widest thing drawn in it, and `:--`, `--:` or `:-:` in the row of dashes says
 which side a column is drawn against. Where the window cannot hold it, the table
 gives up columns from whichever is widest until it fits, and a cell that no
-longer fits wraps onto the rows under it — so every row is exactly the width of
-the window and the columns stay under each other. A window too narrow for even one
-column apiece gets the table as the model wrote it.
+longer fits wraps onto the rows under it, so every row is exactly the width of
+the window and the columns stay under each other. A window too narrow for even
+one column apiece gets the table as the model wrote it.
 
 A bar is only a table at the start of a line, and only where the line under it
 is the row of dashes that makes one. `a | b` in a shell, `Ok(_) | Err(_)` in a
@@ -686,14 +688,14 @@ A bare `#487`, or `PR #487` and `issue #487` with the word included, is read the
 same way, and points at the repository you are in. The
 address comes out of the `origin` remote in `.git/config`, so a checkout cloned
 from GitHub or GitLab gets a number you can click and every other checkout gets
-the four characters it always had — a link to a repository nobody named would be
+the four characters it always had; a link to a repository nobody named would be
 a link somewhere wrong. `owner/repo#12` is counted against the repository it
 names instead. The number goes to the issue page, because prose cannot say
 whether a number is an issue or a pull request, and a forge that files both in
 one series answers either from there.
 
 Where there is no colour to read it into, the markers are left where the model
-put them. That covers a redirected run, `NO_COLOR`, and `--color never` — taking
+put them. That covers a redirected run, `NO_COLOR`, and `--color never`. Taking
 a marker out there would drop the emphasis and put nothing in its place, and
 `crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
 
@@ -704,9 +706,9 @@ there have been shells, it is typed rather than signalled, and it works in every
 terminal with nothing configured.
 
 <kbd>Shift+Enter</kbd> does the same where your terminal can send it. Some
-cannot — the encoding they use has no room for the modifier, so they send the
-same bytes for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd> — and crucible asks
-each terminal for the newer encoding on the way in. Where it declines,
+cannot: the encoding they use has no room for the modifier, so they send the
+same bytes for <kbd>Enter</kbd> and <kbd>Shift+Enter</kbd>. crucible asks each
+terminal for the newer encoding on the way in. Where it declines,
 <kbd>Alt+Enter</kbd> and <kbd>Ctrl+J</kbd> need nothing asked for.
 
 If your terminal keeps all three for itself, swap the two presses over:
@@ -726,16 +728,17 @@ word behind the cursor, <kbd>Ctrl+U</kbd> the rest of the line behind it and
 <kbd>Alt+Backspace</kbd> take the word too, for fingers that came from an editor
 rather than a shell. <kbd>Delete</kbd> takes the character in front of the
 cursor, which stays where it is. A word goes on being a word across a break, so
-rubbing one out at the start of a line joins it to the line above — the same as
+rubbing one out at the start of a line joins it to the line above, the same as
 <kbd>Backspace</kbd> does. <kbd>Ctrl+Y</kbd> goes the other way and copies the
-whole line out to your clipboard; a line longer than a terminal will take says so
-instead.
+whole line out to your clipboard; a line longer than a terminal will take says
+so instead.
 
 <kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
-or not a turn is running. Against an empty box it offers to leave — `press ctrl+c
-again to leave`, under the mode — and a second press within two seconds takes the
-offer. Any other key first takes it back, so a session is never ended by one
-stray keystroke. <kbd>Ctrl+D</kbd> on an empty box leaves at once.
+or not a turn is running. Against an empty box it offers to leave
+(`press ctrl+c again to leave`, under the mode), and a second press within two
+seconds takes the offer. Any other key first takes it back, so a session is
+never ended by one stray keystroke. <kbd>Ctrl+D</kbd> on an empty box leaves at
+once.
 
 None of the bindings on this page answers a letter held with <kbd>Shift</kbd> as
 well. <kbd>Ctrl+Shift+C</kbd> is a different key from <kbd>Ctrl+C</kbd>, and
@@ -756,9 +759,9 @@ what is wrong with this layout? screenshot.png
 
 The file is sent as what it is rather than as text. Nothing else changes: the
 rest of the line is the prompt, and a path to anything crucible does not send
-this way — a source file, a log — is just a word in the sentence, which the
-`read` tool opens when the model asks for it. A picture the model asks for that
-way comes back as a picture too, rather than as a refusal — see
+this way (a source file, a log) is just a word in the sentence, which the `read`
+tool opens when the model asks for it. A picture the model asks for that way
+comes back as a picture too, rather than as a refusal; see
 [`read`](../tools/files.md#a-picture-is-looked-at-rather-than-read).
 
 Pictures go to all three providers. A PDF goes to Anthropic and OpenAI, whose
@@ -766,14 +769,14 @@ requests have a shape for a document; MoonshotAI's have none, and say so rather
 than sending the file as anything else.
 
 Nothing asks you first. Every other way a file reaches the model goes through a
-tool, and a tool is something the agent chose to run — which is the thing a
+tool, and a tool is something the agent chose to run, which is the thing a
 permission question exists to put in front of you. Here you typed the path
 yourself, in the sentence you are sending. There is no second decision to make,
 and a question about a file you just named would be asking you to confirm the
 prompt you wrote.
 
 The bytes stay on disk. A transcript holds the path, and each request reads the
-file again — so what is in front of the model is the file as it is now, and a
+file again, so what is in front of the model is the file as it is now, and a
 session with twenty of them costs twenty paths rather than twenty files. A
 request carries at most 4 MB of files; over that, the oldest stop being attached
 and the model is told to read them again if it needs them.
@@ -818,14 +821,14 @@ asked now named above it: a search line across the top, the providers this build
 serves in one pane beside the models in the other, and the rungs the marked model
 takes on a strip underneath. Model rows show exact API IDs, such as `gpt-6-astra`
 and `gemini-3.8-flash`; search also accepts display names.
-Type to narrow both panes at once — `openai` leaves
-everything that vendor serves, `sonnet` leaves the one model, and the line does
-not ask which kind of name it just got. <kbd>Tab</kbd> crosses between the panes,
-the up and down arrows walk whichever one the mark is in, the left and right
-arrows walk the rungs, and Enter takes the model and the rung under it together.
-Taking a row moves the session to whoever serves that model. Escape leaves it and
-changes nothing. `/model <name>` skips the shelf, and is also how to ask for a
-model the shelf does not carry: what it holds is a shortcut past the vendor's
+Type to narrow both panes at once: `openai` leaves everything that vendor
+serves, `sonnet` leaves the one model, and the line does not ask which kind of
+name it just got. <kbd>Tab</kbd> crosses between the panes, the up and down
+arrows walk whichever one the mark is in, the left and right arrows walk the
+rungs, and Enter takes the model and the rung under it together. Taking a row
+moves the session to whoever serves that model. Escape leaves it and changes
+nothing. `/model <name>` skips the shelf, and is also how to ask for a model the
+shelf does not carry: what it holds is a shortcut past the vendor's
 documentation, not the limit of what the vendor serves.
 
 Either way the name is written to `~/.crucible/config.json` under the provider
@@ -846,7 +849,7 @@ Enter depends on the command:
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already
   taken, so that half waits for `/effort` between turns.
-- The rest — `/clear`, `/logout`, `/resume` and the like — move the session
+- The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
 
@@ -857,9 +860,9 @@ it and writes it to `~/.crucible/config.json`; escape puts back what was in
 force and changes nothing. `/theme <name>` skips the list.
 
 There are two lists, and the left and right arrows step between them. **interface**
-is the one above — borders, marks, the mode in force, the ground a diff takes.
-**code** is which theme fenced code is drawn in, and its list holds the names you
-already know: Monokai Extended, GitHub, Dracula, Nord, gruvbox and the rest.
+is the one above: borders, marks, the mode in force, the ground a diff takes.
+**code** is which theme fenced code is drawn in, and its list holds the names
+you already know: Monokai Extended, GitHub, Dracula, Nord, gruvbox and the rest.
 
 The specimen shows both at once, which is why it is a diff. The rows a change
 touched carry a ground, and that is the interface theme's; the rows it did not
@@ -871,71 +874,70 @@ what was said rather than what it looked like, so the rows on screen are painted
 again from the theme now in force. See
 [Configuration](../configuration/configuration.md#output).
 
-`/effort` asks over the rungs the model in force serves — the same ones the
-shelf `/model` stands puts on its strip — and is the way to change the rung
-without changing the model. The answer is written to the same file beside the
-model. It draws a ladder rather than a panel: one track with the rungs under it,
-`Faster` at one end and `Smarter` at the other, walked with the left and right
-arrows. The mark opens on
-`high` where nothing has chosen yet, which is a place to start walking from
-rather than a rung being asked for: leaving it leaves the session asking for
-none, and what applies then is the vendor's own default for that model. The
-ladder holds what the model serves rather than all five — the Kimi models serve
-`low`, `high` and `max`, and a model whose vendor serves none is told so instead
-of being offered a ladder that cannot be answered. A session with no model
-chosen is sent to `/model` first, since a rung is asked of a model.
+`/effort` asks over the rungs the model in force serves (the same ones the shelf
+`/model` stands puts on its strip), and is the way to change the rung without
+changing the model. The answer is written to the same file beside the model. It
+draws a ladder rather than a panel: one track with the rungs under it, `Faster`
+at one end and `Smarter` at the other, walked with the left and right arrows.
+The mark opens on `high` where nothing has chosen yet, which is a place to start
+walking from rather than a rung being asked for: leaving it leaves the session
+asking for none, and what applies then is the vendor's own default for that
+model. The ladder holds what the model serves rather than all five: the Kimi
+models serve `low`, `high` and `max`, and a model whose vendor serves none is
+told so instead of being offered a ladder that cannot be answered. A session
+with no model chosen is sent to `/model` first, since a rung is asked of a
+model.
 
-`/login <provider>` opens a box for the key — never the command line, which
-would put it in your shell's history and in the process listing. The box is
-labelled with the provider it is for and takes a paste whole. Escape leaves it
-without writing anything and says so: `cancelled, nothing signed in`. A store
-that cannot be written is answered with `the key could not be saved` and what to
-fix — the permissions, another crucible still writing five seconds later, or a
-store that cannot be read and should be moved aside — never with the path or
-the key. A window too short for the box says so instead, and asks for a taller
-one.
+`/login <provider>` opens a box for the key, never the command line, which would
+put it in your shell's history and in the process listing. The box is labelled
+with the provider it is for and takes a paste whole. Escape leaves it without
+writing anything and says so: `cancelled, nothing signed in`. A store that
+cannot be written is answered with `the key could not be saved` and what to fix
+(the permissions, another crucible still writing five seconds later, or a store
+that cannot be read and should be moved aside), never with the path or the key.
+A window too short for the box says so instead, and asks for a taller one.
 
 `/login` on its own asks how crucible should sign its requests, which is a
 different question from which vendor: somebody paying for a ChatGPT plan and
 somebody holding an OpenAI console key are two people, and only one of them has a
-key to type. So the panel offers three ways — OpenAI's ChatGPT plan with your
+key to type. So the panel offers three ways: OpenAI's ChatGPT plan with your
 subscription; MoonshotAI's Kimi Code plan with your subscription; and *Provide
 your own API key*, billed by API usage. The two plans connect: ChatGPT opens a
 browser authorization, or a device code from a terminal with no browser to
-reach, and Kimi Code a device code — either writes a renewable credential to the
+reach, and Kimi Code a device code; either writes a renewable credential to the
 same protected store a key goes to. The key route asks whose key you have before
 opening the box, each provider shown with the variable it reads from, and is the
 route an Anthropic key takes, Anthropic having no account route.
 
-A run with no keyboard to walk that panel — and a window with no room to stand
-one in — gets the provider names as rows instead, with the variable each reads
+A run with no keyboard to walk that panel (and a window with no room to stand
+one in) gets the provider names as rows instead, with the variable each reads
 from.
 
 A key that is written lands on the session that took it: the provider is set up
 there and then, from the next turn on. Logging in chooses neither a model nor a
-rung — `/model` is the explicit next step where nothing has chosen one. A run
+rung; `/model` is the explicit next step where nothing has chosen one. A run
 started with no key for anything is one command away from a turn, and the row
-under the box says which model it will be asking — or sends you to `/model`
-where the files name none.
+under the box says which model it will be asking, or sends you to `/model` where
+the files name none.
 
 `/logout` is the same panel over what is actually there: the providers a key was
 written down for, and nothing else. `/logout <provider>` forgets that one
 directly, and a name with no key here says so and lists the ones that have. It
-reaches `~/.crucible/auth.json` and only that — a key exported into your shell is
-untouched and goes on winning — which is what the line under the answer says.
+reaches `~/.crucible/auth.json` and only that (a key exported into your shell is
+untouched and goes on winning), which is what the line under the answer says.
 
 `/clear` starts a new session with nothing said in it: the next prompt is the
 first one the model sees, and the turns before it are neither sent nor paid for
-again. The session you were in is finished rather than dropped — its log is
+again. The session you were in is finished rather than dropped: its log is
 complete and it is on `/resume`'s list, so everything said in it can be picked
 up whole. What does not come across is what that session allowed for the rest of
 itself, the record of which files it read, or the plan standing over the box,
-all three of which belonged to it — a plan that outlived its session would
-describe work the agent has no memory of. The panel comes down with it; the
-mode does not move, because it is where you are running crucible rather than
-something a session decided. The screen empties too, down to the welcome card
-a fresh start draws: the one you left is read back with `/resume` rather than
-by scrolling into it.
+all three of which belonged to it; a plan that outlived its session would
+describe work the agent has no memory of. The panel comes down with it; the mode
+does not move, because it is where you are running crucible rather than
+something a session decided. The screen empties too, down to the welcome card a
+fresh start draws: the one you left is read back with `/resume` rather than by
+scrolling into it.
 
 `/resume` stands this directory's [sessions](../sessions/sessions.md) over the
 whole shell: a search line across the top, the sessions in one pane newest
@@ -967,32 +969,32 @@ first, and the end of whichever one is marked drawn in the other.
 ```
 
 Type to narrow the list. The line is matched against a session's title *and* the
-branch it was recorded on, and does not ask which of the two it was just given —
+branch it was recorded on, and does not ask which of the two it was just given:
 `parser` and `fix/` both leave the first row above. The up and down arrows walk
 what is left, and the preview follows the mark: it is drawn by the code that
 draws the live transcript, so the prompts, the calls, the rows results came back
 on and the model's prose are what picking that session up would put back on
 screen. Under it are the session's age, how many messages are in it, its branch,
-and a note where another crucible still has it open — the count only where the
-session has ended at least once since counts were kept. The wheel scrolls whichever
-pane the pointer is over, so a preview can be read back past its last rows, and
-a window too narrow to split folds the preview away and gives the list every
-column.
+and a note where another crucible still has it open. The message count shows
+only where the session has ended at least once since counts were kept. The
+wheel scrolls whichever pane the pointer is over, so a preview can be read back
+past its last rows, and a window too narrow to split folds the preview away and
+gives the list every column.
 
-<kbd>Enter</kbd> picks up the marked session. The one you were in is closed —
-its log is finished and stays readable — and the one you took becomes the
-session this crucible is recording to, with everything already in it back in the
+<kbd>Enter</kbd> picks up the marked session. The one you were in is closed (its
+log is finished and stays readable), and the one you took becomes the session
+this crucible is recording to, with everything already in it back in the
 transcript. The plan comes back with it, standing over the box where it stood,
 because the call that wrote it is in the transcript being replayed.
 
 <kbd>Ctrl+R</kbd> renames the marked session where its title stands, and Enter
 saves it: that is the title the list shows from then on, here and in every later
-run. The row becomes a field — it takes the accent the search line takes, the
+run. The row becomes a field: it takes the accent the search line takes, the
 keys row under the panes changes to `enter to save · esc to cancel`, and a title
 longer than the pane scrolls under the cursor as you type rather than stopping
 at the edge. A title with nothing in it is refused where it was typed, because a
 session without one falls back to its first prompt. <kbd>Escape</kbd> steps back
-one layer at a time — out of a rename, then out of a query, then off the screen
+one layer at a time: out of a rename, then out of a query, then off the screen
 having picked up nothing.
 
 `/resume <id>` skips the picker and takes that session directly. The id is the
@@ -1001,24 +1003,24 @@ session named there can be picked up here without looking for it. Anything else
 after `/resume` is not read as a search: it says no session here is called that,
 and stands the picker so you can go and find it.
 
-A run with no keyboard — input redirected from a file — has nothing to walk, so
-it gets a numbered list of the last nine sessions instead, each row carrying the
+A run with no keyboard (input redirected from a file) has nothing to walk, so it
+gets a numbered list of the last nine sessions instead, each row carrying the
 whole id `/resume` and `--resume` take.
 
 Two things are worth knowing before you switch. The [permission
 mode](../permissions/modes.md) comes with you, but what you allowed *for the
-rest of that session* does not — the new session is asked about those calls
+rest of that session* does not: the new session is asked about those calls
 again, and rules you wrote to a file apply as they always did. And a session
 another crucible still has open cannot be picked up: it says so rather than
 letting two of them write to one log.
 
 Typing `/` opens the list above the box, filtered to what has been typed so far,
 so the box and the mode under it stay where they are. The list closes as soon as
-the line becomes something else — a path, a sentence, a command with a word
-after it. That is also what keeps `/etc/hosts is wrong` a prompt: a line is only
-taken for a command where it could not be anything else.
+the line becomes something else: a path, a sentence, a command with a word after
+it. That is also what keeps `/etc/hosts is wrong` a prompt: a line is only taken
+for a command where it could not be anything else.
 
-One row of the open list is marked, and that row is what <kbd>Enter</kbd> runs —
+One row of the open list is marked, and that row is what <kbd>Enter</kbd> runs,
 so a command runs from the letters that name it, without the rest being typed.
 The mark starts on the first row the filter left, or on the command whose name
 you have typed in full where that is one of them, and <kbd>↑</kbd> and
@@ -1087,7 +1089,7 @@ sessions never write a plan or ask a question about the world.
 
 Reads inside the workspace never ask; one that leads outside it puts the path
 to you first. Anything that changes a file or starts a process asks, until
-you configure rules or a mode that answer for you — see
+you configure rules or a mode that answer for you; see
 [Permissions](../permissions/index.md). [Tools](../tools/index.md) is what each
 one takes, what bounds its answer, and what it says when it hits that bound.
 
@@ -1098,7 +1100,7 @@ cannot: a `write` you approve is one you agreed to, and neither of you can see
 that the file holds work nobody looked at.
 
 `bash` runs its command through a POSIX shell in the workspace root, and starts
-it with a short list of variables — `PATH`, `HOME`, the locale — rather than the
+it with a short list of variables (`PATH`, `HOME`, the locale) rather than the
 environment crucible is running in. Your provider key is not on that list, so a
 command that prints the environment prints no key. Anything else a command needs
 is named in [`env`](../configuration/configuration.md#env).
@@ -1114,8 +1116,8 @@ filesystem view. An unavailable enforcing backend refuses execution. See
 capability matrix and behavior with confinement disabled.
 
 `todo_write` is the one that reaches nothing at all. It puts down the plan the
-agent is working to — a list of at most 64 tasks, each of them a line, each one
-of `open`, `doing` and `done` — and you read it as a panel above the box. Every
-call replaces the whole plan, so what the model thinks the plan is and what you
-are looking at are one thing rather than two. [Writing down the
+agent is working to: a list of at most 64 tasks, each of them a line, each one
+of `open`, `doing` and `done`. You read it as a panel above the box. Every call
+replaces the whole plan, so what the model thinks the plan is and what you are
+looking at are one thing rather than two. [Writing down the
 plan](../tools/planning.md) is the rest of it.
