@@ -108,11 +108,11 @@ pub enum TurnError {
     /// The loop awaits the provider, the session, every call's run, every
     /// prompt-cache step, a background result's acceptance and the toolset's
     /// preparation, listing, refreshing and disposal, so no step on the
-    /// turn's own path refuses this way anymore. What still refuses is a step
-    /// reached through one of the bridges that still asks once —
-    /// `BashSandbox`, `LocalBackend`, `SandboxReport` or `SandboxPanel` —
-    /// refusing rather than blocking, naming which it was. The step was
-    /// dropped unanswered, so its effect is unconfirmed rather than undone.
+    /// turn's own path refuses this way anymore. The bridges that still ask
+    /// once, `CommandStop` and `CommandAcceptance`, are crossed outside the
+    /// turn and answer their refusal where they are crossed, so none of them
+    /// ends a turn this way either. A step that did would have been dropped
+    /// unanswered, so its effect would be unconfirmed rather than undone.
     #[error(transparent)]
     Unready(#[from] crucible_runtime::Unready),
 }
