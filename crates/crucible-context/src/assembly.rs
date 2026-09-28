@@ -6,7 +6,10 @@
 //! projections, in one fixed order, and hands back the fragments to record and
 //! the merge patch that makes those words replayable as typed state. Recording
 //! them is the caller's: words first, state second, so a crash between the two
-//! replays as unknown rather than claiming the model saw words never retained.
+//! never claims the model saw words that were not retained. After such a crash
+//! the session replays against the state recorded before those words: a
+//! section told for the first time is unknown and restated whole, and a later
+//! change is compared against the state it changed from.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
