@@ -7,7 +7,7 @@ which names the command rather than a directory.
 | Argument | What it is |
 | --- | --- |
 | `command` | The command line, as a shell would read it. Required. |
-| `timeout` | Seconds to allow before stopping it. Defaults to 120, and anything over 600 is refused. |
+| `timeout` | Seconds to allow before stopping it. Defaults to 120; anything over 86400 is refused, and the command still stops at [`sandbox.limits.commandSeconds`](../configuration/configuration.md#sandbox) if that comes first. |
 | `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question) and again on the row that reports a backgrounded command ending. Optional, and nothing the command runs reads it. |
 | `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 
@@ -291,9 +291,9 @@ if that removes more of an escape-heavy result, a second note gives its original
 encoded size and the encoded bytes omitted.
 
 The retained head/tail budget is separate from the raw-stream safety ceiling.
-A command that emits more than 4 MiB across standard output and standard error
-is stopped with an explicit captured-output-ceiling result instead of consuming
-host I/O indefinitely.
+A command that emits more than `sandbox.limits.outputBytes` across standard
+output and standard error, 10 MiB unless configured, is stopped with an explicit
+captured-output-ceiling result instead of consuming host I/O indefinitely.
 
 ## When it stops
 
