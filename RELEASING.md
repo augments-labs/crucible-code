@@ -319,11 +319,10 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
 3. Open a fresh `Unreleased` section in the changelog, on `dev`, once the
    merge back has landed.
 4. Point the rollback drill at the release just published, on `dev`: the tag
-   in `scripts/sh/rollback-drill.sh`, `scripts/sh/rollback-drill-selftest.sh`,
-   the two steps in `.github/workflows/rust-ci.yml` that fetch and build it, and
-   the sentence in `docs/building/building.md` that names it. The drill proves
-   the previous release reads what `dev` writes, and until it moves, the
-   release a user would roll back to is the one it never runs.
+   in `scripts/sh/rollback-drill.sh`, which its self-test and CI read, and the
+   sentence in `docs/building/building.md` that names it. The drill proves the
+   previous release reads what `dev` writes, and until it moves, the release a
+   user would roll back to is the one it never runs.
 5. If a **published** release is broken, do not delete or move the tag. Fix
    forward with a patch release: a tag that changes meaning breaks every
    checksum anyone recorded against it. The `release tags` ruleset refuses the

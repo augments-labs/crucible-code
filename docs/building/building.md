@@ -112,4 +112,6 @@ Everything happens under scratch directories with no model selected, so no
 provider is called and no real session is read. `scripts/sh/rollback-drill-selftest.sh`
 runs the drill clean and against a corrupted fixture, which must fail. CI runs
 the drill and its self-test on Linux, both macOS and both Windows cells with a
-30-minute timeout.
+30-minute timeout. Each cell builds the previous release once and hands that
+binary to both. A run on `dev` keeps it in the Actions cache, and pull requests
+restore it from there instead of building it again until the tag moves.
