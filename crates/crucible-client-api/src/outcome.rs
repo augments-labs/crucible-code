@@ -187,7 +187,8 @@ pub enum RoomOutcome {
     },
     /// There was nothing worth replacing.
     Nothing,
-    /// It was cancelled, and the conversation is as it was.
+    /// It was cancelled, and nothing was replaced, though old tool output
+    /// pruned before it stays pruned.
     Stopped,
     /// Making room failed, for the reason the problem gives. Where the recap
     /// could not be had, nothing was replaced, though old tool output pruned

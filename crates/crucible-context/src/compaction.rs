@@ -23,9 +23,9 @@ pub enum Room {
     /// There was nothing worth replacing — a session with no middle. Nothing
     /// was asked of the model and nothing changed.
     Nothing,
-    /// Somebody stopped the recap while it was being written, so nothing
-    /// changed. Half a session's memory is not one, and standing it in place of
-    /// the messages it was meant to replace would lose the rest for good: the
+    /// Somebody stopped the recap while it was being written, so the messages
+    /// it was meant to replace are still there. Half a session's memory is not
+    /// one, and standing it in their place would lose the rest for good: the
     /// log still holds them, and nothing the model is sent ever would again.
     Stopped,
 }
