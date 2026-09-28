@@ -68,6 +68,12 @@ def main() -> int:
         "[CHANGELOG.md](https://github.com/example/project/blob/v1.1.0/CHANGELOG.md).\n"
     ), body
 
+    # A section with no list stops at the next version's heading.
+    candidate = MODULE.notes(CHANGELOG, "1.2.0-rc.1")
+    assert candidate.startswith(
+        "**A candidate whose heading starts with the next version's.**\n\n**Full changelog**"
+    ), candidate
+
     # The oldest section has no list to stop at, only the link definitions.
     oldest = MODULE.notes(CHANGELOG, "1.0.0")
     assert oldest.startswith(
