@@ -60,7 +60,17 @@ const TURN_BEATS: Duration = Duration::from_secs(1);
 /// faces turn: drawing them, the terminal work around them, and supervising the
 /// command the held turn left running. The key echo is timed on its own rather
 /// than charged here.
-const ACTIVE_CPU_PER_SECOND: Duration = Duration::from_millis(40);
+///
+/// A hundred and twenty milliseconds, measured rather than chosen. A watched
+/// second charges 37 to 66 ms from run to run and has reached 89 ms, and forty
+/// failed eight of twelve runs alone on a quiet host. The largest part is the
+/// runtime supervising the held command on its 20 ms poll; the mark is four
+/// frames and under 400 bytes a second. What this still catches is a turn that
+/// spins, charged about a second for each second watched, and a supervision
+/// poll tightened to a millisecond, charged about 200 ms. What it cannot catch
+/// is a draw that merely doubles: that moved the charge by about 2 ms, well
+/// inside the run-to-run spread.
+const ACTIVE_CPU_PER_SECOND: Duration = Duration::from_millis(120);
 
 /// How long a settled prompt is watched.
 const IDLE_SAMPLE: Duration = Duration::from_secs(1);
