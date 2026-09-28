@@ -1400,6 +1400,22 @@ fn a_name_no_tool_answers_to_is_reported_to_the_model_rather_than_ending_the_tur
 }
 
 #[test]
+fn arguments_a_tool_refuses_are_reported_to_the_model_rather_than_ending_the_turn() {
+    // Arguments of the wrong shape are the model's to correct, the same as a
+    // name no tool answers to, so they do not end the turn as the user's no
+    // does.
+    let mut proof =
+        Proof::new(Verdict::Allow).offering(Fixed::new("read").refusing("path is required"));
+
+    let (results, went) = proof.pass(&[call("a", "read")]);
+
+    assert_eq!(texts(&results), ["read: path is required"]);
+    assert!(results.first().is_some_and(|r| r.output.is_failed()));
+    assert!(matches!(went, Went::On), "the turn should carry on");
+    assert_eq!(outcomes(&proof), [ToolOutcome::Rejected]);
+}
+
+#[test]
 fn a_tool_that_fails_reports_it_to_the_model_rather_than_ending_the_turn() {
     let mut proof = Proof::new(Verdict::Allow).offering(Fixed::new("read").breaking("unreadable"));
 
