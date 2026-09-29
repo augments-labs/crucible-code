@@ -128,11 +128,11 @@ your home directory, or set it in the shell you start crucible in`. See
 
 All of these are read at start, and configuration overrides some of them.
 `output.color` decides whether colour is written at all: `always` writes it
-despite `NO_COLOR` and an output that is not a terminal, and `never` writes
-none. It does not raise what `TERM` allows, so `always` with `TERM` at `dumb`
-or unset still writes no colour unless `COLORTERM` says `truecolor` or
-`24bit`. `output.theme` set to anything but `auto` decides which table is
-drawn whatever `COLORFGBG` says. No key in
+on a terminal despite `NO_COLOR`, and `never` writes none. An output that is
+not a terminal gets no colour whichever is set. Neither raises what `TERM`
+allows, so `always` with `TERM` at `dumb` or unset still writes no colour
+unless `COLORTERM` says `truecolor` or `24bit`. `output.theme` set to anything
+but `auto` decides which table is drawn whatever `COLORFGBG` says. No key in
 [configuration](../configuration/configuration.md#output) overrides
 `COLORTERM`, `TERM`, or the four that stop the terminal being asked.
 

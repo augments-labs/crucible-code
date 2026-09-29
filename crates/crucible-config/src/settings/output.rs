@@ -57,7 +57,8 @@ pub enum Color {
     /// Follow the terminal and `NO_COLOR`.
     #[default]
     Auto,
-    /// Colour even when the output is not a terminal.
+    /// Colour on a terminal even under `NO_COLOR`; a file or pipe still gets
+    /// none.
     Always,
     /// Never, even when it is.
     Never,

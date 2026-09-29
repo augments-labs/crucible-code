@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Output redirected to a file or pipe under `output.color` set to `always`
+  keeps the model's markdown markers.** That setting dropped them from a
+  redirected run, so `**loud**` came out as `loud`, and the file got no colour
+  either. The markers now stay exactly as the model wrote them, and the
+  documentation no longer promises colour into a file.
 - **A mode you step to or a model you pick while a turn runs now shows between
   turns.** Both waited for the next turn's start, so the row went back to the
   old mode and model once the turn ended, and a <kbd>Shift-Tab</kbd> made there
