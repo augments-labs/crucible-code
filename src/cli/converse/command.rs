@@ -984,8 +984,8 @@ fn named(commands: &Commands, word: &str) -> Option<Command> {
     commands.find(word).map(|slash| slash.command)
 }
 
-/// Whether this word is shaped like a command name: a slash, then a letter,
-/// then letters and hyphens, and nothing else. A bare slash is the key that
+/// Whether this word is shaped like a command name: a slash, then an ASCII
+/// letter, then ASCII letters and hyphens, and nothing else. A bare slash is the key that
 /// opens the list, and passes too.
 ///
 /// It is what keeps a prompt that opens with a path a prompt. `/etc/hosts is

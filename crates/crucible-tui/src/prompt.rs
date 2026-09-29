@@ -314,8 +314,8 @@ pub struct Prompt<'a> {
     /// The command names a line may open with, spelled as they are typed.
     ///
     /// The first word of the line is drawn in [`Slot::Strong`] exactly while it
-    /// is one of them: the word that makes the line a command once it is sent,
-    /// where a word only part typed is still the list's to finish. Handed over
+    /// is one of them; a word only part typed stays plain, the list's to
+    /// finish. Handed over
     /// as words because this crate names no command: which there are is the
     /// caller's registry, and a box that kept its own list would be a second
     /// one. Empty where the line cannot be a command, and then nothing is.

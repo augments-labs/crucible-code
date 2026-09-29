@@ -1183,9 +1183,9 @@ pub(super) fn during<T: Terminal>(
                     // What Enter runs is the marked row where the list is open —
                     // a line still being typed is a reader choosing, and the mark
                     // is what they have chosen — and the typed word where it is
-                    // not. A bare `/` is the key that opens the list, not a
-                    // command and not a prompt: Enter on it submits nothing,
-                    // and the slash and its list stay where they are.
+                    // not. While a turn runs a bare `/` is the key that opened
+                    // the list, not a command and not a prompt: Enter on it
+                    // submits nothing, and the slash and its list stay put.
                     let bare = editor.text() == "/";
                     if bare {
                         continue;
