@@ -25,11 +25,11 @@ sessions never write a plan or ask a question about the world.
 There is nothing to install. What you configure is which calls get through, and
 that is [Permissions](../permissions/index.md).
 
-`ask_user` is always in the list, and is the one tool that is not there at all
-in some sessions: a run whose output is not a terminal has nobody to ask, so it
-is neither advertised nor held back. It is not deferred anywhere, because a
-model that cannot see it will not look it up at the moment it realises it should
-ask, and that moment is the only thing it is for.
+`ask_user` is always in the list, except in a run whose output is not a
+terminal: there is nobody to ask, so it is neither advertised nor held back. It
+is not deferred anywhere, because a model that cannot see it will not look it up
+at the moment it realises it should ask, and that moment is the only thing it is
+for.
 
 `todo_write`, `web_search` and `web_fetch` are held back. You will see the agent
 call `tool_search` before it uses one, which costs a round trip the first time
@@ -57,9 +57,9 @@ rather than a directory.
 `bash_output` and `todo_write` name no path, because they reach no file. What
 each one touches is a value inside crucible (the output crucible is already
 holding for a command it started, and the plan above the prompt), which is the
-whole of why nobody is asked about either: there is no target for a rule to be
-written about. [Writing down the plan](planning.md) and [Running a
-command](commands.md) are the rest of them.
+whole of why nobody is asked about either: there is no target to narrow a rule
+to. [Writing down the plan](planning.md) and [Running a command](commands.md)
+are the rest of them.
 
 Two files are outside the file tools' reach in every mode: `config.json` and
 `config.local.json` directly inside any directory named `.crucible`. [The files
