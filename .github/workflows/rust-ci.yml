@@ -131,7 +131,14 @@ jobs:
           # The runner image, since a binary built on a newer image may not
           # start on an older one while a label rolls between them.
           echo "PRIOR_IMAGE=${ImageOS:-unknown}" >>"$GITHUB_ENV"
-          git fetch --depth=1 origin tag "$tag"
+          # A runner that loses github.com for a minute or so has not found a
+          # broken drill, so the fetch is tried three times, with pauses.
+          for pause in 30 60 ''; do
+            git fetch --depth=1 origin tag "$tag" && break
+            [[ -n $pause ]] || exit 1
+            echo "::warning::could not fetch $tag; trying again in ${pause}s"
+            sleep "$pause"
+          done
       # The previous binary depends on nothing but the tag and the platform, so
       # it is restored from the cache once a run on `dev` has saved it.
       - name: Restore the previous release binary
@@ -145,11 +152,20 @@ jobs:
       # input and compares replay, pending-action recovery and read-only
       # commands — it starts no sandboxed command.
       - name: Build the previous release binary
+        id: build-prior
         if: ${{ steps.prior.outputs.cache-hit != 'true' }}
         shell: bash
         run: |
           git worktree add --detach "$RUNNER_TEMP/prior-src" "$PRIOR_TAG"
-          (cd "$RUNNER_TEMP/prior-src" && cargo build --locked --bin crucible)
+          # The tag built when it was released, and the crates it locks that
+          # the cache lacks are downloaded here. A failure is nearly always the
+          # registry out of reach for a minute, so it is tried three times too.
+          for pause in 30 60 ''; do
+            (cd "$RUNNER_TEMP/prior-src" && cargo build --locked --bin crucible) && break
+            [[ -n $pause ]] || exit 1
+            echo "::warning::could not build $PRIOR_TAG; trying again in ${pause}s"
+            sleep "$pause"
+          done
           mkdir -p "$RUNNER_TEMP/prior-bin"
           for name in crucible crucible.exe; do
             built="$RUNNER_TEMP/prior-src/target/debug/$name"
@@ -179,9 +195,10 @@ jobs:
           scripts/sh/rollback-drill.sh --prior-binary "$prior"
       # A second, independent gate, so it runs whatever the drill did. It is
       # handed the same previous binary, so the release is built once here
-      # rather than again inside the self-test.
+      # rather than again inside the self-test, and it waits for that binary:
+      # when it was never built, the step that failed to build it says why.
       - name: Run the rollback drill self-test
-        if: ${{ always() }}
+        if: ${{ always() && (steps.prior.outputs.cache-hit == 'true' || steps.build-prior.outcome == 'success') }}
         shell: bash
         run: |
           prior="$RUNNER_TEMP/prior-bin/crucible"

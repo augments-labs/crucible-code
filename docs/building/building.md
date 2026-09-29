@@ -114,4 +114,8 @@ runs the drill clean and against a corrupted fixture, which must fail. CI runs
 the drill and its self-test on Linux, both macOS and both Windows cells with a
 30-minute timeout. Each cell builds the previous release once and hands that
 binary to both. A run on `dev` keeps it in the Actions cache, and pull requests
-restore it from there instead of building it again until the tag moves.
+restore it from there instead of building it again until the tag moves. The tag
+fetch and that build are each tried three times, 30 and then 60 seconds apart,
+so a runner that loses the network for a minute does not fail the drill. When
+the build still fails, the self-test is skipped rather than reporting a binary
+that was never built.
