@@ -202,6 +202,8 @@ describe '/home/you/Pictures/Screenshots/Screen Shot.png'
 
 The copy is content-addressed under crucible's session directory, so moving or
 deleting the original does not change what the transcript sends later.
+[Attachments](../sessions/attachments.md) has the rest: what may be attached,
+the ceilings, and what a resumed session sends.
 
 What the transcript shows of a sent attachment is its label and its number:
 `[Image #1]`, `[Video #1]`, counted per kind in the order they were attached.
@@ -792,7 +794,8 @@ of the same question is the model: where the one you are asking does not read
 the kind of file you named, the line names the model instead, and `/model`
 picks one that does. A file over 4 MB on its own, which is never read past that,
 a pipe, or a file whose bytes are not what its name claims gets its own line and
-never costs a request.
+never costs a request. [Attachments](../sessions/attachments.md#when-a-file-is-refused)
+lists every such line.
 
 ## Commands
 
