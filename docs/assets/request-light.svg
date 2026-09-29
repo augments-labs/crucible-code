@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 500" width="720" height="500" role="img" aria-label="One request to the model has three parts: the instructions in the system field, the same bytes every request; the conversation so far, sent as it stands and growing, which opens with your first prompt and then six facts, each a user message of its own (where you are working, skills you can open, environment, what is answering, what you have, permissions), told once and then again as a short change note when one changes, and all six restated after a compaction, followed by the model's answers, tool calls and results and later prompts; and one schema for each tool advertised, sent every request.">
+  <title>What one request to the model is built from</title>
+
+  <!-- One request -->
+  <rect x="16" y="16" width="464" height="470" rx="10" fill="none" stroke="#0D6E68" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="32" y="36" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">One request to the model</text>
+
+  <!-- The instructions -->
+  <rect x="32" y="50" width="432" height="68" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="248" y="72" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">The instructions, in the system field</text>
+  <text x="248" y="91" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">crucible's own in the tone you chose, or your custom prompt</text>
+  <text x="248" y="106" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">in its place; what you append follows either one</text>
+
+  <text x="496" y="72" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Every request</text>
+  <text x="496" y="90" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">the same bytes each time,</text>
+  <text x="496" y="105" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">fixed when crucible starts</text>
+
+  <!-- The conversation -->
+  <rect x="32" y="132" width="432" height="272" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="248" y="154" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">The conversation so far, in order</text>
+
+  <text x="496" y="154" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Every request</text>
+  <text x="496" y="172" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">all of it as it stands, growing</text>
+  <text x="496" y="187" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">as the turn goes on</text>
+
+  <rect x="48" y="166" width="400" height="30" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="248" y="185" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">Your first prompt</text>
+
+  <rect x="48" y="204" width="400" height="130" rx="6" fill="none" stroke="#0D6E68" stroke-width="1.5"/>
+  <text x="60" y="224" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#14161A">Six facts, one user message each, in this order</text>
+  <text x="60" y="242" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">1  Where you are working: the workspace root</text>
+  <text x="60" y="257" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">2  Skills you can open</text>
+  <text x="60" y="272" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">3  Environment: the UTC date, OS and architecture</text>
+  <text x="60" y="287" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">4  What is answering: the model and its effort</text>
+  <text x="60" y="302" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">5  What you have: the names of the tools advertised</text>
+  <text x="60" y="317" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">6  Permissions: the mode and the scopes you allowed</text>
+
+  <text x="496" y="224" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Told once</text>
+  <text x="496" y="242" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">with your first prompt, then</text>
+  <text x="496" y="257" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">kept like anything else said;</text>
+  <text x="496" y="272" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">a short note when one changes</text>
+  <text x="496" y="294" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">All six restated after</text>
+  <text x="496" y="309" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">a compaction</text>
+
+  <rect x="48" y="342" width="400" height="48" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="248" y="362" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">The model's answers, its tool calls and their results,</text>
+  <text x="248" y="380" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">later prompts, and a change note wherever a fact changed</text>
+
+  <!-- The tools -->
+  <rect x="32" y="418" width="432" height="52" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="248" y="440" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">The tools, one schema each</text>
+  <text x="248" y="459" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">what each tool does and the arguments it takes</text>
+
+  <text x="496" y="440" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Every request</text>
+  <text x="496" y="458" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">the schemas of the tools</text>
+  <text x="496" y="473" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">advertised for it</text>
+</svg>
