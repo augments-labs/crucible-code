@@ -224,9 +224,9 @@ pub(super) enum Owned {
 }
 
 impl Owned {
-    /// Which command this is, or `Exit` for a word that names none — a command
-    /// that is never live, so an unknown word is refused the way a safe-looking
-    /// typo is.
+    /// Which command this is, or `Exit` for a word that names none. `Exit` is a
+    /// stand-in no caller runs: the class of a word that names none is a
+    /// refusal, and [`refused`] says the word itself back rather than a name.
     pub(super) fn command(&self) -> Command {
         match self {
             Self::Known { command, .. } => *command,
@@ -527,7 +527,9 @@ pub(super) fn apply_model<T: Terminal>(
 /// Stands why a command cannot run now over the box until escape closes it.
 ///
 /// Where the box was, as every panel is: the rule, the command's name, the one
-/// reason it cannot run while a turn is, and the key that closes it. The turn
+/// reason it cannot run while a turn is, and the key that closes it. A word
+/// that names no command has neither, and is said back with the names nearest
+/// to it, as it would be between turns. The turn
 /// goes on above — the panel stands where the working row, the box, the status
 /// and the map were, and the transcript keeps its own rows. Nothing of the turn
 /// changes: the command did nothing, and this is the whole of what happened.
@@ -884,23 +886,29 @@ const fn leaves(wanted: Wanted<'_>) -> bool {
 const NEAREST: usize = 3;
 
 /// The registered names nearest to a word that names none, nearest first.
+pub(super) fn nearest(commands: &Commands, word: &str) -> Vec<&'static str> {
+    nearest_among(
+        commands.entries().iter().map(|slash| slash.command.name()),
+        word,
+    )
+}
+
+/// The names of `names` nearest to `word`, nearest first, at most [`NEAREST`].
 ///
 /// Near is a few edits away: a letter put in, taken out or changed, or two
 /// neighbours swapped, which between them are the slips a hand makes. A longer
-/// name tolerates more of them, one for every five letters past the first
-/// four, so `/hlep` finds `/help` while `/zzz` finds nothing. Of two names
-/// equally near, the one as long as the word comes first, since a slip that
-/// kept the length changed a letter rather than dropping one; then the order
-/// `/help` lists them in.
-pub(super) fn nearest(commands: &Commands, word: &str) -> Vec<&'static str> {
-    let mut near: Vec<(usize, usize, usize, &'static str)> = commands
-        .entries()
-        .iter()
+/// name tolerates more of them, one more for every five of its letters past
+/// the first four, so `/hlep` finds `/help` while `/zzz` finds nothing. Of
+/// names equally near, the one nearest the word in length comes first, since a
+/// slip that kept the length changed a letter rather than dropping one; then
+/// the order the names were given in.
+fn nearest_among(names: impl Iterator<Item = &'static str>, word: &str) -> Vec<&'static str> {
+    let mut near: Vec<(usize, usize, usize, &'static str)> = names
         .enumerate()
-        .filter_map(|(listed, slash)| {
-            let name = slash.command.name();
+        .filter_map(|(listed, name)| {
             let edits = apart(word, name);
-            let tolerated = 1 + name.len().saturating_sub(4) / 5;
+            let letters = name.len().saturating_sub(1);
+            let tolerated = 1 + letters.saturating_sub(4) / 5;
             (edits > 0 && edits <= tolerated)
                 .then(|| (edits, name.len().abs_diff(word.len()), listed, name))
         })
@@ -950,7 +958,7 @@ fn apart(word: &str, name: &str) -> usize {
 ///
 /// The word is said back as it came, because only a word shaped like a
 /// command gets this far and such a word has nothing in it to write to the
-/// terminal but letters and hyphens.
+/// terminal but a slash, letters and hyphens.
 pub(super) fn refusal(commands: &Commands, word: &str) -> [String; 2] {
     let near = nearest(commands, word);
     let then = if near.is_empty() {

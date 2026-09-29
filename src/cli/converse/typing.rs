@@ -1184,20 +1184,16 @@ pub(super) fn during<T: Terminal>(
                     // a line still being typed is a reader choosing, and the mark
                     // is what they have chosen — and the typed word where it is
                     // not. A bare `/` is the key that opens the list, not a
-                    // command, so it is never a submission.
-                    // A bare `/` is the key that opens the list, not a command:
-                    // it parses as a word that names none and is refused, which
-                    // is not what a reader pressing Enter while still choosing
-                    // meant. Only a line past the bare slash is ever submitted.
+                    // command and not a prompt: Enter on it submits nothing,
+                    // and the slash and its list stay where they are.
                     let bare = editor.text() == "/";
-                    let marked = opened_list.chosen().filter(|_| !bare);
-                    let owned = if bare {
-                        None
-                    } else {
-                        marked
-                            .and_then(|line| command::owned(&commands, line))
-                            .or_else(|| command::owned(&commands, editor.text()))
-                    };
+                    if bare {
+                        continue;
+                    }
+                    let marked = opened_list.chosen();
+                    let owned = marked
+                        .and_then(|line| command::owned(&commands, line))
+                        .or_else(|| command::owned(&commands, editor.text()));
                     if let Some(owned) = owned {
                         // The line as it was sent, which is the command where
                         // a marked row is what Return answered and the typed

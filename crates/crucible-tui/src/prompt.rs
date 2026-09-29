@@ -155,15 +155,6 @@ impl<'a> Draft<'a> {
         }
     }
 
-    /// Whether the text drawn is the text Enter sends, rather than a line
-    /// something pasted stands in for part of.
-    fn verbatim(self) -> bool {
-        match self.shaped {
-            Shaped::Plain { .. } => true,
-            Shaped::Projected(projection) => projection.verbatim(),
-        }
-    }
-
     fn source_position(self, position: (usize, usize)) -> (usize, usize) {
         match self.shaped {
             Shaped::Plain { .. } => position,
@@ -323,7 +314,8 @@ pub struct Prompt<'a> {
     /// The command names a line may open with, spelled as they are typed.
     ///
     /// The first word of the line is drawn in [`Slot::Strong`] exactly while it
-    /// is one of them, which is exactly while Enter would run it. Handed over
+    /// is one of them: the word that makes the line a command once it is sent,
+    /// where a word only part typed is still the list's to finish. Handed over
     /// as words because this crate names no command: which there are is the
     /// caller's registry, and a box that kept its own list would be a second
     /// one. Empty where the line cannot be a command, and then nothing is.
@@ -954,6 +946,19 @@ impl Prompt<'_> {
         Some(width::clip("?", columns).to_owned())
     }
 
+    /// Where in the line the word that names a command is, while one does.
+    ///
+    /// The first word, after any space the line opens with, and only where it
+    /// is exactly one of [`Prompt::named`]: the same word, read the same way,
+    /// that decides whether a line is a command at all.
+    fn command(&self) -> Option<std::ops::Range<usize>> {
+        let said = self.draft.text();
+        let from = said.len() - said.trim_start().len();
+        let word = said.get(from..)?.split(char::is_whitespace).next()?;
+
+        self.named.contains(&word).then(|| from..from + word.len())
+    }
+
     /// The rows of the line the box has room for, and where the cursor sits
     /// among them.
     ///
@@ -968,24 +973,6 @@ impl Prompt<'_> {
     /// the border.
     ///
     /// [`room`]: Prompt::room
-    /// Where in the line the word that names a command is, while one does.
-    ///
-    /// The first word, after any space the line opens with, and only where it
-    /// is exactly one of [`Prompt::named`]: the same word, read the same way,
-    /// that decides whether Enter runs a command. A line with something pasted
-    /// into it is sent whatever it opens with, so it has none.
-    fn command(&self) -> Option<std::ops::Range<usize>> {
-        if self.named.is_empty() || !self.draft.verbatim() {
-            return None;
-        }
-
-        let said = self.draft.text();
-        let from = said.len() - said.trim_start().len();
-        let word = said.get(from..)?.split(char::is_whitespace).next()?;
-
-        self.named.contains(&word).then(|| from..from + word.len())
-    }
-
     fn shown(&self, inner: usize) -> Shown<'_> {
         let said = self.draft.text();
         let (line, column) = self.draft.position();

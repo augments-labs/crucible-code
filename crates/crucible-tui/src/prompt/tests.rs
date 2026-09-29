@@ -1468,13 +1468,14 @@ fn strong(said: &str, columns: usize) -> String {
 fn the_first_word_takes_the_accent_exactly_while_it_names_a_command() {
     // The accent says what Enter will do: run the command. So it is on the one
     // word that decides that, and on nothing a reader could take for part of
-    // it — not an argument, not a name half typed, not a path.
+    // it: not an argument, not a name half typed, not a path.
     for columns in [80, FRAMED_AT - 4] {
         for (said, accented) in [
             ("/model gpt-6-sol", "/model"),
             ("/model", "/model"),
             ("  /help", "/help"),
             ("/model /model", "/model"),
+            ("/model\nabcdefgh on a line of its own", "/model"),
             ("/mode", "/mode"),
             ("/mod", ""),
             ("/modle", ""),
@@ -1504,9 +1505,9 @@ fn a_name_the_box_has_to_break_is_accented_on_every_row_it_is_broken_over() {
 }
 
 #[test]
-fn a_line_holding_what_was_pasted_is_not_accented_since_enter_sends_it() {
-    // A line with something pasted into it is sent as a prompt whatever word it
-    // opens with, so its first word is not drawn as a command it will not run.
+fn a_command_word_before_a_folded_paste_is_accented_like_any_other() {
+    // The accent is about the word the line opens with, and what was pasted
+    // after it is not that word.
     let mut editor = Editor::new();
     editor.put("/model ");
     editor.paste(&"a paste long enough to be folded away ".repeat(40));
@@ -1520,12 +1521,15 @@ fn a_line_holding_what_was_pasted_is_not_accented_since_enter_sends_it() {
         named: &NAMES,
         ..typed("")
     };
-    assert!(
-        prompt
-            .rows(80, Glyphs::Unicode)
-            .iter()
-            .all(|row| row.spans().all(|(slot, _)| slot != Slot::Strong)),
-        "{:?}",
-        rows_of(&prompt.rows(80, Glyphs::Unicode))
-    );
+    let accented: String = prompt
+        .rows(80, Glyphs::Unicode)
+        .iter()
+        .flat_map(|row| {
+            row.spans()
+                .filter(|(slot, _)| *slot == Slot::Strong)
+                .map(|(_, text)| text.to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(accented, "/model");
 }

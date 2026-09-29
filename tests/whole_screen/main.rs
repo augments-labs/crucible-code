@@ -525,6 +525,26 @@ fn a_bare_slash_is_the_list_opener_not_a_command() {
     assert!(!still.contains("names no command"), "no refusal:\n{still}");
 }
 
+#[test]
+fn a_bare_slash_mid_turn_is_neither_refused_nor_queued() {
+    // Enter on the slash that opened the list is a reader still choosing. The
+    // next key typed lands after the slash in the box, which is what says the
+    // Enter was taken and the line kept: a refused slash would have stood a
+    // panel, and a queued one would have left the box empty.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("bare-slash-kept", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/", "/clear");
+    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("h", "› /h ");
+
+    let still = window.picture();
+    assert!(!still.contains("no such command"), "no refusal:\n{still}");
+    assert!(!still.contains("esc to close"), "no panel:\n{still}");
+    assert!(!still.contains("queued"), "nothing queued:\n{still}");
+}
+
 /// A word typed alone that names no command, said back with what it was near.
 ///
 /// Two rows under the line and nothing after them: the whole list under a slip

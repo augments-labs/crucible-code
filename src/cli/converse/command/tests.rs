@@ -143,6 +143,10 @@ fn a_line_is_a_command_only_where_its_first_word_names_one() {
         ("/model", Comes::Runs(Command::Model, String::new())),
         ("/", Comes::Refused),
         ("/modle", Comes::Refused),
+        ("/modle  ", Comes::Refused),
+        ("/a", Comes::Refused),
+        ("/foo-", Comes::Refused),
+        ("/\u{e9}", Comes::Asked),
         ("/zzz", Comes::Refused),
         ("/Model", Comes::Refused),
         ("/tmp", Comes::Refused),
@@ -200,6 +204,25 @@ fn the_nearest_names_are_at_most_three_and_the_nearest_first() {
 }
 
 #[test]
+fn no_more_than_three_names_are_offered_however_many_are_as_near() {
+    // Six names one edit from the word. Three are said: those as long as the
+    // word, in the order they were listed.
+    let names = ["/ab", "/ac", "/a", "/ad", "/ae", "/af"];
+    assert_eq!(
+        nearest_among(names.into_iter(), "/aa"),
+        ["/ab", "/ac", "/ad"]
+    );
+}
+
+#[test]
+fn a_letter_left_out_or_put_in_is_one_slip_like_a_letter_changed() {
+    let commands = commands();
+    assert_eq!(nearest(&commands, "/mdel").first(), Some(&"/model"));
+    assert_eq!(nearest(&commands, "/hel").first(), Some(&"/help"));
+    assert_eq!(nearest(&commands, "/helpp").first(), Some(&"/help"));
+}
+
+#[test]
 fn a_slip_is_said_back_with_the_names_it_was_nearest_to_and_nothing_more() {
     // Two rows. The whole list under a slip buries the one or two names that
     // answer it, and a name nobody was near is better answered by where the
@@ -211,6 +234,10 @@ fn a_slip_is_said_back_with_the_names_it_was_nearest_to_and_nothing_more() {
     assert_eq!(
         refusal(&commands(), "/zzz"),
         ["! no such command: /zzz", "  /help lists every command"]
+    );
+    assert_eq!(
+        refusal(&commands(), "/"),
+        ["! no such command: /", "  /help lists every command"]
     );
 }
 
