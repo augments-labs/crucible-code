@@ -530,9 +530,10 @@ impl Editor {
     /// Whether `key` would move the cursor, without moving it.
     ///
     /// Asked by the prompt to tell a vertical move within the text from one
-    /// meant for a list standing beside it: a one-line line has no row above or
-    /// below, and the key belongs to the list there. Only the vertical keys are
-    /// answered; the rest are the line's wherever it is.
+    /// meant for a list standing beside it: text with no newline has no line
+    /// above or below, whatever rows it wraps onto, and the key belongs to the
+    /// list there. Only the vertical keys are answered; the rest are the line's
+    /// wherever it is.
     #[must_use]
     pub fn moves(&self, key: Key) -> bool {
         match key {

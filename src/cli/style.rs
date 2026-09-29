@@ -128,10 +128,10 @@ impl Style {
         };
 
         // A different question with a different answer. A reader who set
-        // `NO_COLOR`, or passed `--color never`, asked about hues; they did not
-        // ask for a pull request named in an answer to stop being openable. So
-        // this asks only the two things that actually decide it: whether a
-        // terminal is attached at all, and whether it says it is dumb.
+        // `NO_COLOR`, or set `output.color` to `never`, asked about hues; they
+        // did not ask for a pull request named in an answer to stop being
+        // openable. So this asks only the two things that actually decide it:
+        // whether a terminal is attached at all, and whether it says it is dumb.
         let links = terminal && from(TERM).is_none_or(|term| term != DUMB);
 
         // The one place `auto` is answered, because this is the one place that

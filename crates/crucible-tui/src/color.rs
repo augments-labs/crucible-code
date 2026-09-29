@@ -869,7 +869,7 @@ enum Depth {
     Indexed,
     /// Sixteen, which is what a terminal saying nothing in particular has.
     Basic,
-    /// None: a pipe, `NO_COLOR`, `--color never`, or `TERM=dumb`.
+    /// None: a pipe, `NO_COLOR`, `output.color` set to `never`, or `TERM=dumb`.
     Off,
 }
 
@@ -886,11 +886,11 @@ pub struct Palette {
     /// Whether this terminal will take an address beside a word.
     ///
     /// Apart from `depth` because it is a different question with different
-    /// answers. Colour is off for a pipe, for `NO_COLOR`, for `--color never`
-    /// and for a terminal calling itself dumb; only the first and the last of
-    /// those are reasons to stop writing addresses. Somebody who asked for no
-    /// colour asked about hues, not about whether a pull request they are shown
-    /// can be opened.
+    /// answers. Colour is off for a pipe, for `NO_COLOR`, for `output.color`
+    /// set to `never` and for a terminal calling itself dumb; only the first
+    /// and the last of those are reasons to stop writing addresses. Somebody who
+    /// asked for no colour asked about hues, not about whether a pull request
+    /// they are shown can be opened.
     links: bool,
     /// Which table of hues is in force.
     theme: Theme,

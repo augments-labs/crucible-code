@@ -343,9 +343,9 @@ fn moving(arrived: Pressed, view: &mut View) -> Moved {
         // offering it say the key does. Esc is the way out of whatever is
         // standing everywhere else in a session — including out of a view
         // standing under a turn, which it closes rather than stopping the turn
-        // behind it — and Ctrl-C and Ctrl-D reach the line under this one, so
-        // the view goes first and the line gets the key it was always going to
-        // get.
+        // behind it. Ctrl-C and Ctrl-D belong to the line under this one, so a
+        // press closes the view and goes no further: only the next press
+        // reaches the line.
         Pressed::Expand | Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => Moved::Left,
 
         Pressed::Resized => Moved::Redraw,

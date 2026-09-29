@@ -920,7 +920,7 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     assert_eq!(meant(Pressed::Down), Meant::Arrow { back: false });
 
     // Shift+Tab is not one of them: a mode stepped to mid-turn is held for the
-    // next turn rather than dropped, which is what  carries here.
+    // next turn rather than dropped, which is what `Meant::Cycle` carries here.
     assert_eq!(meant(Pressed::Cycle), Meant::Cycle);
 }
 

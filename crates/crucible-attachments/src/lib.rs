@@ -424,8 +424,8 @@ impl Kind {
 /// container Moonshot documents carrying as a base64 data URL.
 ///
 /// A closed list rather than a guess from the extension, because the cost of
-/// being wrong is a refused request the user paid for. Anything not here is
-/// text, and the `read` tool already opens it.
+/// being wrong is a refused request the user paid for. Anything not here is not
+/// attached: the `read` tool opens it if it is text, and refuses it if not.
 pub const KINDS: &[Kind] = &[
     Kind {
         extension: "png",

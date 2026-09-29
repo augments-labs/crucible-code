@@ -846,9 +846,9 @@ impl<T: Terminal> Renderer<T> {
         self.arriving = Arriving::Answer;
 
         // Nowhere to put a slot is nowhere to put a marker either. A redirected
-        // run, `NO_COLOR`, `--color never`: the answer arrives as the model
-        // wrote it, which is markdown, and a file of markdown is worth more
-        // than a file it has been taken out of.
+        // run, `NO_COLOR`, `output.color` set to `never`: the answer arrives as
+        // the model wrote it, which is markdown, and a file of markdown is
+        // worth more than a file it has been taken out of.
         if !self.palette.writes_color() {
             self.take(Slot::Plain, delta)?;
             return self.draw();

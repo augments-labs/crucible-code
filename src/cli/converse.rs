@@ -227,9 +227,8 @@ pub(crate) struct Terms {
     /// The runner holding the mode is on the worker for a running turn's
     /// length, so a step made then cannot reach it — it is held here and put
     /// on the runner at the next turn's start, when the runner is this side's
-    /// again. The row under the box says the step at once, marked for the next
-    /// turn, so the press is not dead and the row is not a lie about the mode
-    /// the running turn is decided under.
+    /// again. The row under the box says the step at once, so the press is not
+    /// dead; the running turn keeps the mode it began under.
     pub(crate) pending_mode: Cell<Option<crucible_tools::Mode>>,
     /// The settled configuration model limits are read from. Kept in memory so
     /// `/model` resolves a new name exactly as startup did without touching a
