@@ -275,9 +275,17 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
         asking: Some("queued"),
         commands: crate::CommandCount::new(2, true),
         room: 6,
+        named: &["/model", "/help"],
     };
     across("the prompt box", |columns, glyphs| {
         prompt.rows(columns, glyphs)
+    });
+    let commanding = Prompt {
+        draft: crate::Draft::at("/model claude-opus-5", 20),
+        ..prompt
+    };
+    across("the prompt box with a command typed", |columns, glyphs| {
+        commanding.rows(columns, glyphs)
     });
     across("a committed prompt", |columns, glyphs| {
         Prompt::committed(PROSE, columns, glyphs, true)

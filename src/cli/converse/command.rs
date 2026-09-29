@@ -961,6 +961,16 @@ pub(super) fn refusal(commands: &Commands, word: &str) -> [String; 2] {
     [format!("! no such command: {word}"), then]
 }
 
+/// Every name a line may open with, in this generation of the registry, for
+/// the box to know its first word by.
+pub(super) fn names(commands: &Commands) -> Vec<&'static str> {
+    commands
+        .entries()
+        .iter()
+        .map(|slash| slash.command.name())
+        .collect()
+}
+
 /// The command that word names, in this generation of the registry.
 fn named(commands: &Commands, word: &str) -> Option<Command> {
     commands.find(word).map(|slash| slash.command)

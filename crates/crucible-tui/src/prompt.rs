@@ -155,6 +155,15 @@ impl<'a> Draft<'a> {
         }
     }
 
+    /// Whether the text drawn is the text Enter sends, rather than a line
+    /// something pasted stands in for part of.
+    fn verbatim(self) -> bool {
+        match self.shaped {
+            Shaped::Plain { .. } => true,
+            Shaped::Projected(projection) => projection.verbatim(),
+        }
+    }
+
     fn source_position(self, position: (usize, usize)) -> (usize, usize) {
         match self.shaped {
             Shaped::Plain { .. } => position,
@@ -311,6 +320,14 @@ pub struct Prompt<'a> {
     /// what a caller holding the window height works it out with; a caller
     /// drawing a box nobody is typing into passes 1.
     pub room: usize,
+    /// The command names a line may open with, spelled as they are typed.
+    ///
+    /// The first word of the line is drawn in [`Slot::Strong`] exactly while it
+    /// is one of them, which is exactly while Enter would run it. Handed over
+    /// as words because this crate names no command: which there are is the
+    /// caller's registry, and a box that kept its own list would be a second
+    /// one. Empty where the line cannot be a command, and then nothing is.
+    pub named: &'a [&'a str],
 }
 
 impl Prompt<'_> {
@@ -729,6 +746,7 @@ impl Prompt<'_> {
     fn typed(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         let inner = inner(columns);
         let edge = glyphs.vertical();
+        let command = self.command();
 
         self.shown(inner)
             .rows
@@ -739,7 +757,7 @@ impl Prompt<'_> {
                 // make fit: a character wider than the whole box. Half of one
                 // cannot be drawn, so none of it is, and the row still ends
                 // where the border expects it.
-                let mut line = Row::plain(width::clip(shown.text, inner));
+                let mut line = accenting(shown, inner, command.clone());
                 line.pad(inner);
 
                 let mark = if at == 0 { glyphs.caret() } else { " " };
@@ -766,6 +784,8 @@ impl Prompt<'_> {
             return vec![Row::new()];
         }
 
+        let command = self.command();
+
         self.shown(inner(columns))
             .rows
             .into_iter()
@@ -776,7 +796,7 @@ impl Prompt<'_> {
                 Row::new()
                     .then(Slot::Accent, mark)
                     .then(Slot::Plain, " ")
-                    .then(Slot::Plain, width::clip(shown.text, inner(columns)))
+                    .join(accenting(shown, inner(columns), command.clone()))
             })
             .collect()
     }
@@ -948,6 +968,24 @@ impl Prompt<'_> {
     /// the border.
     ///
     /// [`room`]: Prompt::room
+    /// Where in the line the word that names a command is, while one does.
+    ///
+    /// The first word, after any space the line opens with, and only where it
+    /// is exactly one of [`Prompt::named`]: the same word, read the same way,
+    /// that decides whether Enter runs a command. A line with something pasted
+    /// into it is sent whatever it opens with, so it has none.
+    fn command(&self) -> Option<std::ops::Range<usize>> {
+        if self.named.is_empty() || !self.draft.verbatim() {
+            return None;
+        }
+
+        let said = self.draft.text();
+        let from = said.len() - said.trim_start().len();
+        let word = said.get(from..)?.split(char::is_whitespace).next()?;
+
+        self.named.contains(&word).then(|| from..from + word.len())
+    }
+
     fn shown(&self, inner: usize) -> Shown<'_> {
         let said = self.draft.text();
         let (line, column) = self.draft.position();
@@ -988,6 +1026,9 @@ struct Shown<'a> {
 struct RowInLine<'a> {
     text: &'a str,
     line: usize,
+    /// Where in the whole text it starts, which is what places a word found in
+    /// the text on the rows it was broken over.
+    start: usize,
 }
 
 /// The text broken into display rows no wider than the box.
@@ -1002,21 +1043,27 @@ struct RowInLine<'a> {
 /// byte. Only a word or glyph sequence wider than the row is hard-broken.
 fn broken(said: &str, inner: usize) -> Vec<RowInLine<'_>> {
     if inner == 0 {
-        return vec![RowInLine { text: "", line: 0 }];
+        return vec![RowInLine {
+            text: "",
+            line: 0,
+            start: 0,
+        }];
     }
 
     let mut rows = Vec::new();
+    let mut start = 0;
 
     for (line, text) in said.split('\n').enumerate() {
         for range in width::wraps(text, inner) {
             rows.push(RowInLine {
+                start: start + range.start,
                 text: text.get(range).unwrap_or_default(),
                 line,
             });
         }
 
         if text.is_empty() {
-            rows.push(RowInLine { text, line });
+            rows.push(RowInLine { text, line, start });
         }
 
         // A line that exactly fills its last row is followed by an empty one, so
@@ -1027,11 +1074,41 @@ fn broken(said: &str, inner: usize) -> Vec<RowInLine<'_>> {
             .last()
             .is_some_and(|row| row.line == line && width::columns(row.text) == inner)
         {
-            rows.push(RowInLine { text: "", line });
+            rows.push(RowInLine {
+                text: "",
+                line,
+                start: start + text.len(),
+            });
         }
+
+        // Past the line and the break that ended it.
+        start += text.len() + 1;
     }
 
     rows
+}
+
+/// One row of the line, clipped to `inner`, with whatever part of `command`
+/// falls on it drawn in the accent a command name takes and the rest plain.
+fn accenting(shown: RowInLine<'_>, inner: usize, command: Option<std::ops::Range<usize>>) -> Row {
+    let text = width::clip(shown.text, inner);
+    let Some(command) = command else {
+        return Row::plain(text);
+    };
+
+    // The part of the name on this row, in the row's own bytes. Empty on
+    // every row the name is not on.
+    let from = command.start.saturating_sub(shown.start).min(text.len());
+    let to = command
+        .end
+        .saturating_sub(shown.start)
+        .min(text.len())
+        .max(from);
+
+    Row::new()
+        .then(Slot::Plain, text.get(..from).unwrap_or_default())
+        .then(Slot::Strong, text.get(from..to).unwrap_or_default())
+        .then(Slot::Plain, text.get(to..).unwrap_or_default())
 }
 
 /// Which display row the cursor's (`line`, `column`) falls on, and where in it.

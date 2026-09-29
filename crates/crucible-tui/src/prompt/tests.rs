@@ -85,6 +85,9 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         // running is still a test about what it said before.
         commands: CommandCount::default(),
         room: ROOM,
+        // None, so that every test written before the box knew a command's
+        // name is still a test about a box that did not.
+        named: &[],
     }
 }
 
@@ -1439,4 +1442,90 @@ fn a_place_outside_the_prompts_it_counts_is_no_place_at_all() {
             "{at}/{of}"
         );
     }
+}
+
+/// The commands a box is told of, in the tests that are about them.
+const NAMES: [&str; 3] = ["/help", "/model", "/mode"];
+
+/// Everything the box draws in the accent a registered name takes, joined.
+fn strong(said: &str, columns: usize) -> String {
+    Prompt {
+        named: &NAMES,
+        ..typed(said)
+    }
+    .rows(columns, Glyphs::Unicode)
+    .iter()
+    .flat_map(|row| {
+        row.spans()
+            .filter(|(slot, _)| *slot == Slot::Strong)
+            .map(|(_, text)| text.to_owned())
+            .collect::<Vec<_>>()
+    })
+    .collect()
+}
+
+#[test]
+fn the_first_word_takes_the_accent_exactly_while_it_names_a_command() {
+    // The accent says what Enter will do: run the command. So it is on the one
+    // word that decides that, and on nothing a reader could take for part of
+    // it — not an argument, not a name half typed, not a path.
+    for columns in [80, FRAMED_AT - 4] {
+        for (said, accented) in [
+            ("/model gpt-6-sol", "/model"),
+            ("/model", "/model"),
+            ("  /help", "/help"),
+            ("/model /model", "/model"),
+            ("/mode", "/mode"),
+            ("/mod", ""),
+            ("/modle", ""),
+            ("/Model", ""),
+            ("/etc/hosts is wrong", ""),
+            ("tell /model", ""),
+            ("", ""),
+        ] {
+            assert_eq!(strong(said, columns), accented, "{said:?} at {columns}");
+        }
+    }
+}
+
+#[test]
+fn a_name_the_box_has_to_break_is_accented_on_every_row_it_is_broken_over() {
+    // At eight columns there are six for the line: `/model` has to be broken
+    // over rows once the box is narrower than that, and both halves are the
+    // name. A name drawn half in the accent reads as two words. Every width
+    // here holds the whole line inside the rows the box is given.
+    for columns in 6..=80 {
+        assert_eq!(
+            strong("/model gpt-6-sol", columns),
+            "/model",
+            "at {columns}"
+        );
+    }
+}
+
+#[test]
+fn a_line_holding_what_was_pasted_is_not_accented_since_enter_sends_it() {
+    // A line with something pasted into it is sent as a prompt whatever word it
+    // opens with, so its first word is not drawn as a command it will not run.
+    let mut editor = Editor::new();
+    editor.put("/model ");
+    editor.paste(&"a paste long enough to be folded away ".repeat(40));
+    assert_ne!(
+        editor.projection().text(),
+        editor.text(),
+        "the paste stands folded"
+    );
+    let prompt = Prompt {
+        draft: Draft::projected(editor.projection()),
+        named: &NAMES,
+        ..typed("")
+    };
+    assert!(
+        prompt
+            .rows(80, Glyphs::Unicode)
+            .iter()
+            .all(|row| row.spans().all(|(slot, _)| slot != Slot::Strong)),
+        "{:?}",
+        rows_of(&prompt.rows(80, Glyphs::Unicode))
+    );
 }

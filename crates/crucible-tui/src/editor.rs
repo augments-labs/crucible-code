@@ -64,6 +64,12 @@ pub struct Projection<'a> {
 }
 
 impl<'a> Projection<'a> {
+    /// Whether what the prompt draws is the text itself, with nothing pasted
+    /// standing in for what it holds.
+    pub(crate) fn verbatim(&self) -> bool {
+        self.shown == self.source
+    }
+
     /// What the prompt draws.
     #[must_use]
     pub fn text(&self) -> &'a str {

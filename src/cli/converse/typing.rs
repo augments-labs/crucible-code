@@ -481,7 +481,7 @@ pub(crate) fn ask<T: Terminal>(
     // inside one.
     planning.moved();
 
-    let mut says = saying(conversation.runner());
+    let mut says = saying(conversation.runner()).naming(commands);
     says.running = left.count();
 
     // A local, because where the mark was in it is not worth keeping: a list of
@@ -664,7 +664,7 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Cycle => {
                 terms.perform(conversation, Command::CycleMode);
 
-                says = saying(conversation.runner());
+                says = saying(conversation.runner()).naming(commands);
                 true
             }
 
@@ -795,6 +795,9 @@ pub(super) struct Says {
     /// reads the mode rather than the sentence — which is why the value is
     /// kept beside its words instead of the words being parsed back.
     pub(crate) running_mode: Mode,
+    /// The commands a line may open with, by name, so the box can draw the one
+    /// it opens with in the accent. Told once a prompt, by [`Says::naming`].
+    pub(super) named: Vec<&'static str>,
 }
 
 impl Says {
@@ -1764,6 +1767,7 @@ pub(super) fn saying(runner: &Runner) -> Says {
         // Filled in by the frame rather than by the session, because it changes
         // while nothing else on this row does.
         running: 0,
+        named: Vec::new(),
     }
 }
 
