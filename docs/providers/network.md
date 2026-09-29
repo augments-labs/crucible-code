@@ -171,7 +171,8 @@ the proxy's address. A plain `http` request travels inside such a tunnel
 too. So the machine crucible runs
 on must be able to resolve the host, and the proxy must accept a tunnel to an
 address and to that port. A host that is not allowed gets `403 Forbidden` and
-never reaches the proxy, and the command never sees the proxy's address or
+never reaches the proxy, and an allowed one this machine cannot resolve gets
+`502 Bad Gateway` saying so. The command never sees the proxy's address or
 password.
 
 Only an `http://` proxy can carry a command's connections. Under an
