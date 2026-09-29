@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **Output redirected to a file or pipe under `output.color` set to `always`
+  keeps the model's markdown markers.** That setting dropped them from a
+  redirected run, so `**loud**` came out as `loud`, and the file got no colour
+  either. The markers now stay exactly as the model wrote them, and the
+  documentation no longer promises colour into a file.
 - **A sandboxed command is no longer told `403 Forbidden` for an allowed host
   that does not answer.** Reached straight rather than through a proxy, an
   allowed host that refused or timed out at every permitted address got the

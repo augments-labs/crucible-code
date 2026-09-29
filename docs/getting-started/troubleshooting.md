@@ -384,10 +384,11 @@ execution](../security/sandboxing.md#unconfined-execution).
 
 `output.color` is `auto` unless you set it, and `auto` writes colour only when
 the output is a terminal and `NO_COLOR` is unset or empty. Unset `NO_COLOR`, or
-set `{"output":{"color":"always"}}` in configuration, which writes colour even
-to a file; `never` turns it off even on a terminal. Even with `always`, `TERM`
-decides how much colour there is: `TERM=dumb`, or no `TERM` at all, means none,
-unless `COLORTERM` is `truecolor` or `24bit`. See
+set `{"output":{"color":"always"}}` in configuration, which writes colour on a
+terminal even with `NO_COLOR` set; `never` turns it off even on a terminal. A
+file or pipe never gets colour, whatever `output.color` says. Even with
+`always`, `TERM` decides how much colour there is: `TERM=dumb`, or no `TERM` at
+all, means none, unless `COLORTERM` is `truecolor` or `24bit`. See
 [`output`](../configuration/configuration.md#output).
 
 ### There is no prompt box, and the mode is written in front of each line

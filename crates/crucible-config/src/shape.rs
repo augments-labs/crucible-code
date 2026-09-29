@@ -436,7 +436,7 @@ const PROMPT: &[Field] = &[
 const OUTPUT: &[Field] = &[
     Field {
         name: "color",
-        about: "Whether to write colour: auto follows the terminal and NO_COLOR, always and never override it",
+        about: "Whether a terminal is written in colour: auto follows NO_COLOR, always and never override it; a file or pipe gets none",
         shape: Shape::Choice(COLOR),
         // A `Choice` lists its own answers, so an example would be one of them
         // written twice.

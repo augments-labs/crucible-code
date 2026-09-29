@@ -59,17 +59,19 @@ const DUMB: &str = "dumb";
 /// of them needs it *before* a style exists: what decides whether the terminal
 /// is asked about its background is whether the answer would ever be drawn.
 ///
-/// Both overrides mean it: `always` is how a run whose output is being captured
-/// on purpose — a recording, a pty in CI — asks for the colour it would have
-/// had, and it would be no override at all if the terminal check still had a
-/// veto.
+/// `never` means it everywhere, and `always` means it on a terminal: it is how
+/// a run whose output is being captured on purpose, a recording or a pty in CI,
+/// asks for the colour it would have had whatever `NO_COLOR` says. A file or pipe is not asked:
+/// nothing reads an escape out of one, and a palette that wrote colour there
+/// would have the model's markdown read into slots the file never keeps, so
+/// `**loud**` would reach it as `loud`.
 pub(crate) fn writes_colour(
     wanted: Option<Color>,
     terminal: bool,
     from: &dyn Fn(&str) -> Option<String>,
 ) -> bool {
     match wanted.unwrap_or_default() {
-        Color::Always => true,
+        Color::Always => terminal,
         Color::Never => false,
         Color::Auto => terminal && from(NO_COLOR).is_none_or(|set| set.is_empty()),
     }
@@ -118,11 +120,9 @@ impl Style {
         } = output;
 
         let color = match wanted.unwrap_or_default() {
-            // Both overrides mean it: `always` is how a run whose output is
-            // being captured on purpose — a recording, a pty in CI — asks for
-            // the colour it would have had, and it would be no override at all
-            // if the terminal check still had a veto.
-            Color::Always => true,
+            // `always` overrides `NO_COLOR` on a terminal and nothing on a
+            // file or pipe; `writes_colour` says why.
+            Color::Always => terminal,
             Color::Never => false,
             Color::Auto => terminal && from(NO_COLOR).is_none_or(|set| set.is_empty()),
         };
@@ -530,15 +530,46 @@ mod tests {
     }
 
     #[test]
-    fn always_and_never_override_both_the_terminal_and_the_variable() {
+    fn always_and_never_override_the_variable_on_a_terminal() {
         let shouting = environment(&[(NO_COLOR, "1")]);
 
-        // `always` on a pipe, with NO_COLOR set: the file said colour, and both
-        // of the things it overrides are saying no.
-        assert!(writes_colour(Some(Color::Always), false, &shouting));
+        // `always` on a terminal, with NO_COLOR set: the file said colour, and
+        // the variable is the thing it overrides.
+        assert!(writes_colour(Some(Color::Always), true, &shouting));
 
         // `never` on a terminal with nothing else objecting.
         assert!(!writes_colour(Some(Color::Never), true, &environment(&[])));
+    }
+
+    #[test]
+    fn always_writes_no_colour_to_a_file_or_pipe() {
+        // Nothing reads an escape out of a file, so `always` has nothing to
+        // override there, whatever the variables say about depth.
+        let captured = environment(&[("COLORTERM", "truecolor")]);
+        assert!(!writes_colour(Some(Color::Always), false, &captured));
+    }
+
+    #[test]
+    fn a_redirected_run_under_always_keeps_the_markers_the_model_wrote() {
+        // A palette that wrote colour would have the markdown read into slots,
+        // and a file keeps no slot: `**loud**` would reach it as `loud`.
+        let style = Style::resolve(
+            Output {
+                color: Some(Color::Always),
+                ..Output::default()
+            },
+            false,
+            None,
+            None,
+            &environment(&[("COLORTERM", "truecolor")]),
+        );
+        let mut render = crucible_tui::Renderer::new(crucible_tui::Recording::redirected(80, 24));
+        render.wears(style.palette());
+
+        render.stream("a **loud** word").unwrap();
+        render.settle().unwrap();
+
+        assert_eq!(render.terminal().written(), "a **loud** word\n");
     }
 
     #[test]
@@ -578,19 +609,21 @@ mod tests {
         );
 
         // And a run that overrode its way back on gets the depth its terminal
-        // announced, even though nothing here is a terminal.
-        let captured = environment(&[("COLORTERM", "truecolor")]);
-        let style = Style::resolve(
-            Output {
-                color: Some(Color::Always),
-                ..Output::default()
-            },
-            false,
-            None,
-            None,
-            &captured,
-        );
-        assert!(style.palette().writes_color());
+        // announced, while the same override on a pipe is still no.
+        let overridden = |terminal| {
+            Style::resolve(
+                Output {
+                    color: Some(Color::Always),
+                    ..Output::default()
+                },
+                terminal,
+                None,
+                None,
+                &shouting,
+            )
+        };
+        assert!(overridden(true).palette().writes_color());
+        assert!(!overridden(false).palette().writes_color());
     }
 
     #[test]
