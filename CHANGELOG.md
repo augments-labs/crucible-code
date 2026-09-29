@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A sandboxed command is no longer told `403 Forbidden` for an allowed host
+  that does not answer.** Reached straight rather than through a proxy, an
+  allowed host that refused or timed out at every permitted address got the
+  answer for a denial. It is now `502 Bad Gateway`, with a line saying no
+  address the host is allowed at answered, as the proxy path already did.
 - **A prompt with no provider chosen no longer tells you to set a key you
   already have.** With keys for more than one provider and none chosen, the
   welcome said to pick a provider, but a prompt afterwards, `/effort` and a
