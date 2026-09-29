@@ -90,10 +90,8 @@ fn what_follows_the_name_comes_back_with_it_and_nothing_else_does() {
 #[test]
 fn a_word_shaped_like_a_command_that_names_none_is_said_back() {
     assert_eq!(wanted(&commands(), "/nope"), Some(Wanted::Unknown("/nope")));
-    assert_eq!(
-        wanted(&commands(), "/nope with a word"),
-        Some(Wanted::Unknown("/nope"))
-    );
+    // With words after it the line is somebody talking, and is theirs to send.
+    assert_eq!(wanted(&commands(), "/nope with a word"), None);
 }
 
 #[test]
@@ -108,6 +106,112 @@ fn a_line_that_opens_with_a_path_is_a_prompt() {
     ] {
         assert_eq!(wanted(&commands(), said), None, "{said:?}");
     }
+}
+
+/// What a submitted line comes to.
+#[derive(Debug, PartialEq, Eq)]
+enum Comes {
+    /// The command runs, with this after it.
+    Runs(Command, String),
+    /// Nothing is sent, and the word is said back.
+    Refused,
+    /// The model is asked it, whole.
+    Asked,
+}
+
+/// What `wanted` makes of a line, in the words of [`Comes`].
+fn comes(line: &str) -> Comes {
+    match wanted(&commands(), line) {
+        Some(Wanted::Known { command, rest }) => Comes::Runs(command, rest.to_owned()),
+        Some(Wanted::Unknown(_)) => Comes::Refused,
+        None => Comes::Asked,
+    }
+}
+
+#[test]
+fn a_line_is_a_command_only_where_its_first_word_names_one() {
+    // One row for each kind of line somebody types at a coding agent that
+    // opens with a slash. A registered name runs. One unregistered word alone,
+    // shaped like a name, is a slip and is refused rather than paid for. A
+    // word with anything after it, or a word no command could be spelled
+    // like, is somebody talking about a path, and the model is asked.
+    let table = [
+        (
+            "/model gpt-6-sol",
+            Comes::Runs(Command::Model, "gpt-6-sol".into()),
+        ),
+        ("/model", Comes::Runs(Command::Model, String::new())),
+        ("/", Comes::Refused),
+        ("/modle", Comes::Refused),
+        ("/zzz", Comes::Refused),
+        ("/Model", Comes::Refused),
+        ("/tmp", Comes::Refused),
+        ("/usr-local", Comes::Refused),
+        ("/foo-bar", Comes::Refused),
+        ("/mo\u{1b}del", Comes::Asked),
+        ("/mo\u{7f}", Comes::Asked),
+        ("/modle gpt-6-sol", Comes::Asked),
+        ("/tmp is full", Comes::Asked),
+        ("/etc/hosts is wrong", Comes::Asked),
+        ("/usr/bin/env, but why", Comes::Asked),
+        ("/Users/me/notes.md", Comes::Asked),
+        ("/usr/bin", Comes::Asked),
+        ("/foo-bar is what I typed", Comes::Asked),
+        ("/-x", Comes::Asked),
+        ("/foo_bar", Comes::Asked),
+        ("/foo.bar", Comes::Asked),
+        ("/modle\nand a second line under it", Comes::Asked),
+    ];
+
+    let wrong: Vec<String> = table
+        .into_iter()
+        .filter_map(|(line, expected)| {
+            let came = comes(line);
+            (came != expected).then(|| format!("{line:?} came to {came:?}, not {expected:?}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn the_nearest_names_are_at_most_three_and_the_nearest_first() {
+    let commands = commands();
+
+    assert_eq!(nearest(&commands, "/modle"), ["/model", "/mode"]);
+    assert_eq!(nearest(&commands, "/hlep").first(), Some(&"/help"));
+    assert!(nearest(&commands, "/zzz").is_empty());
+    assert!(nearest(&commands, "/Model").contains(&"/model"));
+
+    // A slip of one letter anywhere in any name is offered that name first.
+    for command in EVERY {
+        let name = command.name();
+        for at in 1..name.len() {
+            let slipped: String = name
+                .char_indices()
+                .map(|(here, one)| if here == at { 'q' } else { one })
+                .collect();
+            let offered = nearest(&commands, &slipped);
+
+            assert_eq!(offered.first(), Some(&name), "{slipped}: {offered:?}");
+            assert!(offered.len() <= 3, "{slipped}: {offered:?}");
+            assert!(!offered.contains(&slipped.as_str()), "{slipped}");
+        }
+    }
+}
+
+#[test]
+fn a_slip_is_said_back_with_the_names_it_was_nearest_to_and_nothing_more() {
+    // Two rows. The whole list under a slip buries the one or two names that
+    // answer it, and a name nobody was near is better answered by where the
+    // list is than by the list.
+    assert_eq!(
+        refusal(&commands(), "/modle"),
+        ["! no such command: /modle", "  nearest: /model, /mode"]
+    );
+    assert_eq!(
+        refusal(&commands(), "/zzz"),
+        ["! no such command: /zzz", "  /help lists every command"]
+    );
 }
 
 #[test]

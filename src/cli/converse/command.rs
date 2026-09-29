@@ -373,10 +373,15 @@ pub(super) enum MidTurn {
 /// What `line` asked for, or `None` where it asked for no command at all.
 ///
 /// The whole of the parsing, done once, here. Everything downstream has either
-/// a [`Command`] or a word already known to be a slash and letters, which is
-/// what makes an unknown one safe to say back: it cannot be carrying an escape
-/// sequence, because a word carrying one is not shaped like a command and never
-/// reaches this far.
+/// a [`Command`] or a word already known to be a slash, letters and hyphens,
+/// which is what makes an unknown one safe to say back: it cannot be carrying
+/// an escape sequence, because a word carrying one is not shaped like a command
+/// and never reaches this far.
+///
+/// An unknown word is only ever the whole line. `/tmp is full` is a sentence
+/// that happens to open with a directory, and refusing it would be refusing to
+/// send somebody's question; a word typed alone is the one line that could
+/// only have been meant as a command.
 pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a>> {
     let line = line.trim();
     let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
@@ -385,13 +390,14 @@ pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a
         return None;
     }
 
-    Some(match named(commands, word) {
-        Some(command) => Wanted::Known {
+    match named(commands, word) {
+        Some(command) => Some(Wanted::Known {
             command,
             rest: rest.trim(),
-        },
-        None => Wanted::Unknown(word),
-    })
+        }),
+        None if rest.is_empty() => Some(Wanted::Unknown(word)),
+        None => None,
+    }
 }
 
 /// Runs a command that moves nothing but the screen, with a turn behind it.
@@ -736,9 +742,9 @@ fn answer<T: Terminal>(
         } => clear::run(renderer, conversation, held, terms)?,
 
         Wanted::Unknown(word) => {
-            renderer.commit(&format!("! no such command: {word}"))?;
-            renderer.commit("")?;
-            renderer.present(&listing(&terms.commands.snapshot(), columns, glyphs))?;
+            for row in refusal(&terms.commands.snapshot(), word) {
+                renderer.commit(&row)?;
+            }
         }
     }
 
@@ -854,22 +860,112 @@ const fn leaves(wanted: Wanted<'_>) -> bool {
     )
 }
 
+/// How many names a slip is answered with, at most. More than this is the
+/// list again, and the list is what `/help` is for.
+const NEAREST: usize = 3;
+
+/// The registered names nearest to a word that names none, nearest first.
+///
+/// Near is a few edits away: a letter put in, taken out or changed, or two
+/// neighbours swapped, which between them are the slips a hand makes. A longer
+/// name tolerates more of them, one for every five letters past the first
+/// four, so `/hlep` finds `/help` while `/zzz` finds nothing. Of two names
+/// equally near, the one as long as the word comes first, since a slip that
+/// kept the length changed a letter rather than dropping one; then the order
+/// `/help` lists them in.
+pub(super) fn nearest(commands: &Commands, word: &str) -> Vec<&'static str> {
+    let mut near: Vec<(usize, usize, usize, &'static str)> = commands
+        .entries()
+        .iter()
+        .enumerate()
+        .filter_map(|(listed, slash)| {
+            let name = slash.command.name();
+            let edits = apart(word, name);
+            let tolerated = 1 + name.len().saturating_sub(4) / 5;
+            (edits > 0 && edits <= tolerated)
+                .then(|| (edits, name.len().abs_diff(word.len()), listed, name))
+        })
+        .collect();
+    near.sort_unstable();
+    near.into_iter()
+        .take(NEAREST)
+        .map(|(.., name)| name)
+        .collect()
+}
+
+/// How many single edits turn `word` into `name`: a character put in, taken
+/// out or changed, or two neighbours swapped.
+fn apart(word: &str, name: &str) -> usize {
+    let word: Vec<char> = word.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    // Out of the table reads as too far to matter, so a slip at an edge is
+    // never the cheapest way through.
+    let at = |row: &[usize], column: usize| row.get(column).copied().unwrap_or(usize::MAX / 2);
+
+    let mut earlier = vec![0; name.len() + 1];
+    let mut last: Vec<usize> = (0..=name.len()).collect();
+    for (typed, one) in word.iter().enumerate() {
+        let mut row = Vec::with_capacity(name.len() + 1);
+        row.push(typed + 1);
+        for (listed, other) in name.iter().enumerate() {
+            let mut best = (at(&last, listed) + usize::from(one != other))
+                .min(at(&last, listed + 1) + 1)
+                .min(at(&row, listed) + 1);
+            let swapped = typed > 0
+                && listed > 0
+                && word.get(typed - 1) == Some(other)
+                && name.get(listed - 1) == Some(one);
+            if swapped {
+                best = best.min(at(&earlier, listed - 1) + 1);
+            }
+            row.push(best);
+        }
+        earlier = std::mem::replace(&mut last, row);
+    }
+    at(&last, name.len())
+}
+
+/// The two rows a word that names no command is refused with: the word, and
+/// the names it was nearest to, or where the whole list is when it was near
+/// none of them.
+///
+/// The word is said back as it came, because only a word shaped like a
+/// command gets this far and such a word has nothing in it to write to the
+/// terminal but letters and hyphens.
+pub(super) fn refusal(commands: &Commands, word: &str) -> [String; 2] {
+    let near = nearest(commands, word);
+    let then = if near.is_empty() {
+        format!("  {} lists every command", Command::Help.name())
+    } else {
+        format!("  nearest: {}", near.join(", "))
+    };
+    [format!("! no such command: {word}"), then]
+}
+
 /// The command that word names, in this generation of the registry.
 fn named(commands: &Commands, word: &str) -> Option<Command> {
     commands.find(word).map(|slash| slash.command)
 }
 
-/// Whether this word is shaped like a command name: a slash, then letters, and
-/// nothing else.
+/// Whether this word is shaped like a command name: a slash, then a letter,
+/// then letters and hyphens, and nothing else. A bare slash is the key that
+/// opens the list, and passes too.
 ///
 /// It is what keeps a prompt that opens with a path a prompt. `/etc/hosts is
 /// wrong` is a sentence about a file and `/Users/me/notes.md` is a file, and
 /// neither is read as a command that happens not to exist. A line is only ever
 /// taken for a command where it could not be anything else.
 pub(super) fn shaped(word: &str) -> bool {
-    match word.strip_prefix('/') {
-        Some(rest) => rest.chars().all(|one| one.is_ascii_alphabetic()),
-        None => false,
+    let Some(rest) = word.strip_prefix('/') else {
+        return false;
+    };
+    let mut letters = rest.chars();
+    match letters.next() {
+        None => true,
+        Some(first) => {
+            first.is_ascii_alphabetic()
+                && letters.all(|one| one.is_ascii_alphabetic() || one == '-')
+        }
     }
 }
 
