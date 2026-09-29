@@ -315,10 +315,10 @@ pub struct Prompt<'a> {
     ///
     /// The first word of the line is drawn in [`Slot::Strong`] exactly while it
     /// is one of them; a word only part typed stays plain, the list's to
-    /// finish. Handed over
-    /// as words because this crate names no command: which there are is the
-    /// caller's registry, and a box that kept its own list would be a second
-    /// one. Empty where the line cannot be a command, and then nothing is.
+    /// finish. Handed over as words because this crate names no command: which
+    /// there are is the caller's registry, and a box that kept its own list
+    /// would be a second one. Empty where the line cannot be a command, and
+    /// then nothing is.
     pub named: &'a [&'a str],
 }
 

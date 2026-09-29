@@ -840,9 +840,9 @@ stays plain, and the command list above the box offers the rest.
 
 Any other line is a prompt, even one that opens with a slash: `/etc/hosts is
 wrong` and `/tmp is full` are questions about files, and are sent as typed. The
-one exception is a word shaped like a command (a slash, a letter from a to z,
-then letters and hyphens) typed alone and naming none. That is taken for a
-slip: nothing is sent, and the answer names the nearest commands
+one exception is a word shaped like a command (a slash, a letter from a to z in
+either case, then letters and hyphens) typed alone and naming none. That is
+taken for a slip: nothing is sent, and the answer names the nearest commands
 (`nearest: /model, /mode`) or points at `/help`. The up arrow brings the line
 back to correct.
 
