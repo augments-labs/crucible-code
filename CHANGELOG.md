@@ -10,6 +10,9 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **`--with-mcp` against a configuration with no servers now reads as a
+  sentence.** It said "this configuration has no servers are written down under
+  mcp.servers"; it now says "this configuration has none under mcp.servers".
 - **A proxy that answers `407` to its password is sent it once per connection,
   not once per address.** A sandboxed command reaching a host with several
   addresses sent the refused credential for each of them, up to sixteen times,

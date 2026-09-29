@@ -209,7 +209,7 @@ fn confinement(
 /// The names the document did hold, for a sentence that says what to type.
 fn written(records: &[McpServer]) -> Box<str> {
     if records.is_empty() {
-        return "no servers are written down under mcp.servers".into();
+        return "none under mcp.servers".into();
     }
     records
         .iter()

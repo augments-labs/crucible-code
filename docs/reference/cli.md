@@ -147,7 +147,7 @@ crucible: no mcp server called docs; this configuration has tickets
 When nothing at all is written down, the line is:
 
 ```
-crucible: no mcp server called docs; this configuration has no servers are written down under mcp.servers
+crucible: no mcp server called docs; this configuration has none under mcp.servers
 ```
 
 ## Asking without starting
