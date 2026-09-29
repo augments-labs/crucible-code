@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.43.3] - 2026-09-29
+
+**The browser `/login` opens no longer carries your provider keys, and a mode
+or model you choose while a turn runs takes effect when that turn ends.** A
+sandboxed command is told `502 Bad Gateway` rather than `403 Forbidden` when an
+allowed host is down or cannot be looked up, and a proxy that refuses its
+password is sent it once per connection. A prompt cache kept for a session,
+workspace or user now outlasts the run that made it, and output redirected
+under `output.color` set to `always` keeps the model's markdown.
+
 ### Fixed
 
 - **Output redirected to a file or pipe under `output.color` set to `always`
@@ -22,10 +32,10 @@ change in any release with no deprecation period.
   in `fullAccess` while the row said `allowEdits`, and its commands were not
   asked about.
 - **A sandboxed command is no longer told `403 Forbidden` for an allowed host
-  that does not answer.** Reached straight rather than through a proxy, an
-  allowed host that refused or timed out at every permitted address got the
-  answer for a denial. It is now `502 Bad Gateway`, with a line saying no
-  address the host is allowed at answered, as the proxy path already did.
+  it cannot reach.** A name this machine could not look up, and a host reached
+  straight that refused or timed out at every permitted address, both got the
+  answer for a denial. They now get `502 Bad Gateway`, with a line saying the
+  host could not be resolved or that no address it is allowed at answered.
 - **A prompt with no provider chosen no longer tells you to set a key you
   already have.** With keys for more than one provider and none chosen, the
   welcome said to pick a provider, but a prompt afterwards, `/effort` and a
@@ -51,11 +61,6 @@ change in any release with no deprecation period.
   cache made by one run was never found by the next. The scope now follows the
   tools a request offers rather than the run that listed them, as
   `isolationScope` describes.
-- **A sandboxed command is no longer told `403 Forbidden` for an allowed host
-  crucible could not look up.** A failed lookup on this machine read as a
-  policy denial, most misleadingly behind a proxy that could have resolved the
-  name itself. It is now `502 Bad Gateway`, with a line saying the host could
-  not be resolved.
 - **The browser `/login` opens no longer inherits your provider keys.** It was
   started with crucible's whole environment, so a browser opened by it carried
   `ANTHROPIC_API_KEY` and the other key variables for as long as it ran. Each
@@ -4538,7 +4543,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...HEAD
+[0.43.3]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...v0.43.0
