@@ -15,6 +15,12 @@ change in any release with no deprecation period.
   addresses sent the refused credential for each of them, up to sixteen times,
   which can lock the account on a proxy that counts failed sign-ins. The first
   `407` now ends the attempt.
+- **A prompt cache kept for a session, workspace or user now outlasts the run
+  that made it.** Each start gave that session, workspace or user a cache scope
+  of its own, so OpenAI and Kimi were sent a new routing key and a persistent
+  cache made by one run was never found by the next. The scope now follows the
+  tools a request offers rather than the run that listed them, as
+  `isolationScope` describes.
 - **A sandboxed command is no longer told `403 Forbidden` for an allowed host
   crucible could not look up.** A failed lookup on this machine read as a
   policy denial, most misleadingly behind a proxy that could have resolved the

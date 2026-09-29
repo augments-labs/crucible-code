@@ -50,8 +50,8 @@ use crucible_runtime::{Aside, Cancel, Steer};
 use crucible_sandbox::SandboxAuditRegistry;
 use crucible_storage::{JournalStore, RunItem};
 use crucible_tools::{
-    Ask, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolGeneration, ToolSnapshot,
-    ToolWorker, Toolset, ToolsetContext,
+    Ask, Looking, Mode, Permission, Summary, ToolEntry, ToolError, ToolSnapshot, ToolWorker,
+    Toolset, ToolsetContext,
 };
 use crucible_types::{
     Attachment, Compacting, Message, Modalities, PromptCacheEncoding, PromptCacheFact,
@@ -148,7 +148,6 @@ struct Listening<'a> {
     /// been stopped, and how many goes it gets.
     run: &'a RunContext<'a>,
     advertised: &'a [ToolSchema<'a>],
-    generation: &'a ToolGeneration,
     counting: &'a mut Counting,
 }
 
@@ -1553,7 +1552,7 @@ impl Runner {
                 trust: b"local-workspace-authority-v1",
                 authority: authority.as_bytes(),
                 instructions: self.agent.instructions().unwrap_or_default().as_bytes(),
-                tool_generation: listening.generation.context_id(),
+                tools: listening.advertised,
             };
             self.state.prompt_cache_owner_scope = Some(prompt_cache::owner_scope(&scope));
             let mut resource_facts = Vec::new();
