@@ -832,9 +832,19 @@ such line.
 
 ## Commands
 
-A line starting with `/` is a command rather than a prompt. It is answered here,
-costs the provider nothing, and is not part of what the model is told about the
-session.
+A line whose first word is one of the names below is a command rather than a
+prompt. It is answered here, costs the provider nothing, and is not part of what
+the model is told about the session. Where colour is on, a command's name
+turns to the accent colour once it is typed in full. A name only part typed
+stays plain, and the command list above the box offers the rest.
+
+Any other line is a prompt, even one that opens with a slash: `/etc/hosts is
+wrong` and `/tmp is full` are questions about files, and are sent as typed. The
+one exception is a word shaped like a command (a slash, a letter from a to z in
+either case, then letters and hyphens) typed alone and naming none. That is
+taken for a slip: nothing is sent, and the answer names the nearest commands
+(`nearest: /model, /mode`) or points at `/help`. The up arrow brings the line
+back to correct.
 
 | Command | What it does |
 | --- | --- |
@@ -888,6 +898,9 @@ Enter depends on the command:
 - The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
+- **A word that names no command**, typed alone, stands the same panel with
+  the nearest names on it, and is not queued. With words after it the line is
+  a prompt, and waits for the turn like any other.
 
 `/theme` stands a list of themes where the prompt box was, with a specimen
 beside it drawn in whatever your marks are standing on. Moving a mark redraws

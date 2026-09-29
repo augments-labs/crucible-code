@@ -398,15 +398,46 @@ fn a_word_that_is_not_a_rung_is_said_back_with_the_rungs_that_are() {
 }
 
 #[test]
-fn a_word_shaped_like_a_command_that_names_none_says_so_and_lists_what_there_is() {
-    // Said back so it can be seen to be a typo, and the list under it so the
-    // next thing typed is the right one. Nothing is a turn: a mistyped command
-    // that reached the provider would be a request paid for by a slip.
+fn a_word_shaped_like_a_command_that_names_none_says_so_and_what_it_was_nearest_to() {
+    // Said back so it can be seen to be a typo, and the name it was nearest to
+    // under it so the next thing typed is the right one. Nothing is a turn: a
+    // mistyped command that reached the provider would be a request paid for
+    // by a slip.
     let (written, asked) = commanding("/hlep\n");
 
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("! no such command: /hlep"), "{written}");
-    assert!(written.contains("what these are"), "{written}");
+    assert!(written.contains("nearest: /help"), "{written}");
+    assert!(!written.contains("what these are"), "{written}");
+}
+
+#[test]
+fn a_slip_near_two_names_is_refused_in_two_rows_and_costs_no_turn() {
+    let (written, asked) = commanding("/modle\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("! no such command: /modle"), "{written}");
+    assert!(written.contains("nearest: /model, /mode"), "{written}");
+    assert!(!written.contains("what these are"), "{written}");
+}
+
+#[test]
+fn a_slip_near_no_name_points_at_the_list_rather_than_printing_it() {
+    let (written, asked) = commanding("/zzz\n");
+
+    assert_eq!(asked, 0, "{written}");
+    assert!(written.contains("! no such command: /zzz"), "{written}");
+    assert!(written.contains("/help lists every command"), "{written}");
+    assert!(!written.contains("what these are"), "{written}");
+}
+
+#[test]
+fn a_mistyped_command_with_words_after_it_is_a_prompt_and_takes_a_turn() {
+    let (written, asked) = commanding("/modle gpt-6-sol\n");
+
+    assert_eq!(asked, 1, "{written}");
+    assert!(written.contains("answered"), "{written}");
+    assert!(!written.contains("no such command"), "{written}");
 }
 
 #[test]

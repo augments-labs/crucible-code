@@ -1238,7 +1238,7 @@ impl Turn<'_, '_> {
             command::MidTurn::Live => self.live(renderer, command),
             command::MidTurn::Deferred => self.deferred(renderer, command),
             command::MidTurn::Refused(why) => {
-                command::refused(renderer, command.command(), why, self.terms.style()).map(|_| ())
+                command::refused(renderer, command, why, self.terms.style()).map(|_| ())
             }
         }
     }
@@ -1342,7 +1342,7 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(conversation.runner());
+    let mut says = typing::under(conversation.runner()).naming(&terms.commands.snapshot());
     let serving = conversation.serving();
 
     // And what ended while nothing was running goes into the aside rather than

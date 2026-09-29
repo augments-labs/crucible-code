@@ -17,7 +17,7 @@ use crate::cli::style::Style;
 
 use crate::cli::converse::planning::Planning;
 
-use super::{Opened, Says};
+use super::{Opened, Says, command};
 
 /// What is drawn around the box between turns.
 ///
@@ -198,6 +198,15 @@ pub(super) fn writing<'a>(
         asking: says.asking.as_deref(),
         commands: CommandCount::new(says.running, running_pointed),
         room,
+        named: &says.named,
+    }
+}
+
+impl Says {
+    /// The same row, told which commands a line may open with.
+    pub(in crate::cli::converse) fn naming(mut self, commands: &command::Commands) -> Self {
+        self.named = command::names(commands);
+        self
     }
 }
 

@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: refused
+---
+60x24 cursor 22,0 scrolled 0
+|│                                                          │|
+|│ ──────────────────────────────────────────────────────── │|
+|│                                                          │|
+|│ Tips                                                     │|
+|│                                                          │|
+|│ · /          opens the command list                      │|
+|│ · \ enter    adds a line without sending                 │|
+|│ · shift+tab  steps the permission mode                   │|
+|│ · ctrl+c     clears the line typed so far                │|
+|╰──────────────────────────────────────────────────────────╯|
+|                                                            |
+|› start it                                                  |
+|                                                            |
+|● Bash(sleep 30)                                            |
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)           |
+|                                                            |
+|It is started. That is all.                                 |
+|────────────────────────────────────────────────────────────|
+|                                                            |
+|! no such command: /modle                                   |
+|  nearest: /model, /mode                                    |
+|                                                            |
+|esc to close                                                |
+|                                                            |
