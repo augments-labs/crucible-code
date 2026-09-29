@@ -356,6 +356,28 @@ fn a_provider_this_build_does_not_serve_is_refused_before_anything_is_drawn() {
 }
 
 #[test]
+fn every_variable_a_key_is_read_from_is_named_the_usual_one_included() {
+    // `apiKeyEnv` moves where anthropic's key is read from. The usual name can
+    // still hold one exported before the setting was written, so both are
+    // named, and every other provider keeps its own.
+    let sample = Sample::new("key-variables");
+    let settings =
+        sample.user(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
+    let providers = catalogue();
+
+    let named: Vec<&str> = key_variables(&providers, &settings).collect();
+
+    for one in every() {
+        assert!(
+            named.contains(&one.key),
+            "{} is missing from {named:?}",
+            one.key
+        );
+    }
+    assert!(named.contains(&"WORK_ANTHROPIC_KEY"), "{named:?}");
+}
+
+#[test]
 fn a_variable_exported_blank_holds_no_key() {
     // The shell it happens in: `ANTHROPIC_API_KEY=` is how a machine turns that
     // provider off, and it used to count as a key held. Both ways round, so
