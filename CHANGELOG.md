@@ -10,12 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
-- **On Windows, a file crucible replaces is no longer refused while something
-  else is reading it.** Replacing `auth.json` or another file crucible keeps
-  failed with "Access is denied" whenever a second crucible or another program
-  had it open, and a renewed subscription sign-in written at that moment was
-  lost with it. The reader now keeps the copy it opened while the new file takes
-  its name, as on Linux and macOS.
+- **On Windows, a renewed subscription sign-in is no longer lost while another
+  crucible is reading `auth.json`.** Writing the rotated tokens failed with
+  "Access is denied" whenever a second crucible had the file open at that
+  moment, and the spent ones stayed on disk. That reader now keeps the copy it
+  opened while the new file takes its name, as on Linux and macOS.
 
 ## [0.43.2] - 2026-09-29
 

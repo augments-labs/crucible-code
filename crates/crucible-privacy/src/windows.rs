@@ -228,9 +228,9 @@ pub(super) fn replace(source: &Path, destination: &Path) -> io::Result<()> {
     // one it opened, which is what Unix does; `std::fs::rename` asks for
     // them after the same refusal, where the file system supports it. A
     // handle that did not allow deletion still refuses, and that error is
-    // the one returned. Write-through is not asked for again: Windows
-    // guarantees it for a move made by copying, and a rename within one
-    // directory is never one.
+    // the one returned. Write-through is not asked for again: the flush
+    // Windows documents for it is that of a move made by copying, and a rename
+    // within one directory is never one.
     if refused.raw_os_error() == Some(ERROR_ACCESS_DENIED.cast_signed()) {
         return std::fs::rename(source, destination);
     }
