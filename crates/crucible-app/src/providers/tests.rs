@@ -11,9 +11,9 @@ const REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 
 #[test]
 fn startup_distinguishes_no_credential_from_an_unselected_provider() {
-    assert_eq!(opening_unasked(None, false), NOTHING_TO_ASK);
-    assert_eq!(opening_unasked(None, true), NO_PROVIDER_CHOSEN);
-    assert_eq!(opening_unasked(Some(first()), true), NO_MODEL_CHOSEN);
+    assert_eq!(unasked(None, false), NOTHING_TO_ASK);
+    assert_eq!(unasked(None, true), NO_PROVIDER_CHOSEN);
+    assert_eq!(unasked(Some(first().name), true), NO_MODEL_CHOSEN);
 }
 
 /// The built-in providers, as one generation the tests read against.

@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A prompt with no provider chosen no longer tells you to set a key you
+  already have.** With keys for more than one provider and none chosen, the
+  welcome said to pick a provider, but a prompt afterwards, `/effort` and a
+  piped run said to use `/login` or set an API key. They now say what the
+  welcome says, and follow a `/logout` made during the session.
 - **A line queued during a long tool call no longer ends a full turn with no
   room.** When the window filled and nothing older was left to recap, a line
   you typed while the call ran kept the last-resort recap from seeing the

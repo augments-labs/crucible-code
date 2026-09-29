@@ -478,7 +478,7 @@ pub const NOTHING_TO_ASK: &str = "Warning: No models available. Use /login or se
 pub const NO_MODEL_CHOSEN: &str =
     "Warning: No model selected. Use /model to select the model to ask.";
 
-/// What it says when several providers are authenticated and none was chosen.
+/// What it says when a provider is authenticated and none was chosen.
 ///
 /// Authentication made models reachable; it did not choose which vendor may
 /// receive the next prompt. `/model` is the explicit joint provider/model
@@ -487,20 +487,14 @@ pub const NO_MODEL_CHOSEN: &str =
 pub const NO_PROVIDER_CHOSEN: &str =
     "Warning: No provider selected. Use /model to select a provider and model.";
 
-/// Which of the two a session with no model has to say.
+/// Which of the three a session with no model has to say.
 ///
 /// The provider by name rather than by entry, because the name is what
 /// [`crate::Conversation::serving`] still holds by the time this is asked again.
-pub const fn unasked(provider: Option<&str>) -> &'static str {
-    match provider {
-        Some(_) => NO_MODEL_CHOSEN,
-        None => NOTHING_TO_ASK,
-    }
-}
-
-/// The startup warning after credential discovery has distinguished zero from
-/// several available providers.
-pub const fn opening_unasked(provider: Option<Served>, any_credential: bool) -> &'static str {
+/// `any_credential` is whether [`available`] names a provider at all: with no
+/// provider chosen, it is what tells nothing set up from something set up and
+/// none chosen, and the welcome and every prompt after it have to agree on which.
+pub const fn unasked(provider: Option<&str>, any_credential: bool) -> &'static str {
     match (provider, any_credential) {
         (Some(_), _) => NO_MODEL_CHOSEN,
         (None, true) => NO_PROVIDER_CHOSEN,
@@ -577,7 +571,7 @@ pub fn re_serving(
         // the sentence the `None` arm refuses with is never reached; it is
         // spelled the way the launch would spell it for this provider anyway.
         Ok(Resolved {
-            provider: startup::provider(Some(named), unasked(Some(named.name)), auth, &http)?,
+            provider: startup::provider(Some(named), unasked(Some(named.name), true), auth, &http)?,
             source,
         })
     })
