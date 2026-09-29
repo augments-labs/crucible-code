@@ -631,7 +631,8 @@ impl fmt::Debug for ToolEntry {
 /// Equality identity and opaque label for one materialized roster.
 ///
 /// Equality stays pointer-based: the label spells that identity where a key
-/// has to be text, such as a prompt-cache scope, and is never an authorization
+/// has to be text, such as the one a hosted server's merged roster is kept
+/// under, and is never an authorization
 /// token or a second way to resolve an admitted call. Its UUID means a label
 /// stored by one run can never name another run's roster. That same freshness
 /// is why the model is told the names and never the label: a session picked up
