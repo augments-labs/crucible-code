@@ -3,6 +3,17 @@
 //! A tool result carrying files is one of them. The files are admitted by the
 //! verdict that let the tool run, so a body test cannot write one down — it has
 //! to be issued, by the engine that issues every other one.
+//!
+//! It also holds [`LATE_WAIT`], the one wait every late-read fixture shares.
+
+/// The wait a late-read fixture sleeps past before its last read answers.
+///
+/// Those fixtures prove what becomes of a read that returns once the wait has
+/// run out, so every read attempted before that late one has to start inside
+/// the wait. At 5 ms a busy macOS runner stalled before one of those reads and
+/// failed the test with the deadline it was not about. A second is long enough
+/// for a stall like that and still short enough for a fixture to sleep through.
+pub(crate) const LATE_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// A completed signed exchange whose recap must carry only descriptive text.
 pub(crate) fn recap_history() -> crucible_types::Transcript {

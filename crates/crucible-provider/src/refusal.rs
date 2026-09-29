@@ -663,7 +663,7 @@ mod tests {
         // The bug this proves against checked the wait right after this
         // read, before looking at what it returned, so a body that closed
         // cleanly exactly there was reported as a stall instead.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let mut reading = Late {
             wait,
             then: Vec::new(),
@@ -684,7 +684,7 @@ mod tests {
         // The other half: a read that cannot be shown to have ended, or to
         // be the whole reply, still handed bytes over before the wait ran
         // out finding that out, and those bytes must survive it.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let mut reading = Late {
             wait,
             then: b"partial".to_vec(),
@@ -733,7 +733,7 @@ mod tests {
         // so arrived once the wait had run out. Losing it turned a reply
         // into "the response could not be read", and keeping it says
         // `End::Whole` — no cut clause, because none of it was lost.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let body = r#"{"error":{"message":"upstream is unwell"}}"#;
         let reading = WholeThenLateEnd {
             first: Some(body.as_bytes().to_vec()),

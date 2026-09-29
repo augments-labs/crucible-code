@@ -155,7 +155,7 @@ mod tests {
         // The bug this proves against checked the wait right after this
         // read, before looking at what it returned, so a chunk handed over
         // exactly there was discarded in favour of the deadline error.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let mut reader = Limited::new(
             Box::new(Late {
                 wait,
@@ -181,7 +181,7 @@ mod tests {
     fn a_clean_end_a_read_hands_over_after_the_wait_runs_out_is_not_a_deadline() {
         // A body that closes cleanly exactly as the wait runs out must be
         // honoured as `Ok(0)`, not replaced by the deadline error.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let mut reader = Limited::new(
             Box::new(Late {
                 wait,
@@ -205,7 +205,7 @@ mod tests {
     fn a_late_probe_confirming_the_byte_cap_was_not_exceeded_is_not_a_deadline() {
         // Once `remaining` is spent, a one-byte probe that closes cleanly
         // late must still say the cap was not exceeded.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let mut reader = Limited::new(
             Box::new(Late {
                 wait,
@@ -286,7 +286,7 @@ mod tests {
         // `checked()` looks only at cancel, so a genuine error from this read
         // must come back as itself, not the deadline error a post-read wait
         // check would have replaced it with.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let mut reader = Limited::new(Box::new(SlowFailure { wait }), Cancel::new(), 16, wait);
 
         let error = reader
@@ -304,7 +304,7 @@ mod tests {
     fn a_real_probe_read_failure_landing_as_the_wait_runs_out_keeps_its_own_message() {
         // The same proof against the `remaining == 0` probe path, which also
         // calls `checked()` after its own read of the body.
-        let wait = Duration::from_millis(5);
+        let wait = crate::fake::LATE_WAIT;
         let mut reader = Limited::new(Box::new(SlowFailure { wait }), Cancel::new(), 0, wait);
 
         let error = reader
