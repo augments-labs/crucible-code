@@ -15,6 +15,10 @@ change in any release with no deprecation period.
   "Access is denied" whenever a second crucible had the file open at that
   moment, and the spent ones stayed on disk. That reader now keeps the copy it
   opened while the new file takes its name, as on Linux and macOS.
+- **A line written under Something else now reaches the agent on a question
+  that takes several answers.** The line showed on its own row, but the answers
+  read back and sent left it out, so the agent never saw it. It now comes back
+  after the answers you chose.
 
 ## [0.43.2] - 2026-09-29
 
