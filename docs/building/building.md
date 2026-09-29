@@ -5,14 +5,14 @@
 Three things, and the list ends there.
 
 **git and rustup.** The toolchain itself is pinned in `rust-toolchain.toml`, so
-rustup fetches the right one on the first cargo command in this directory —
+rustup fetches the right one on the first cargo command in this directory,
 including `rustfmt` and `clippy`, which the gate runs. There is no version to
 choose and no second toolchain to keep current.
 
 **A C compiler and a linker.** One dependency compiles C: `ring`, the
 cryptography under the TLS the HTTP client speaks. It ships its assembly
 pregenerated, so no assembler is needed and no C++ is compiled anywhere in the
-tree — the packages below carry a C++ compiler because that is how they are
+tree. The packages below carry a C++ compiler because that is how they are
 shipped, not because a build asks for one.
 
 **A POSIX shell and Python 3.11, to run the gate.** `scripts/sh/check.sh` is bash,
@@ -33,8 +33,8 @@ sudo dnf install gcc gcc-c++ make    # Fedora, RHEL
 sudo pacman -S base-devel            # Arch
 ```
 
-Then rustup, if the distribution's own Rust package is not the pinned version —
-it usually is not, and a distribution toolchain that shadows rustup is the most
+Then rustup, if the distribution's own Rust package is not the pinned version.
+It usually is not, and a distribution toolchain that shadows rustup is the most
 common reason a first build fails in a way that has nothing to do with crucible:
 
 ```bash
@@ -48,7 +48,7 @@ xcode-select --install
 ```
 
 That is clang, the linker and the macOS SDK. Full Xcode works too; nothing here
-needs it. Then rustup, the same way as above — Homebrew's `rust` is a toolchain
+needs it. Then rustup, the same way as above. Homebrew's `rust` is a toolchain
 that does not read `rust-toolchain.toml`.
 
 ## Windows
@@ -63,7 +63,7 @@ compiler comes from:
   Build Tools if they are missing.
 
 crucible's own `bash` tool looks for a POSIX shell at runtime as well, and finds
-the one [Git for Windows](https://git-scm.com/download/win) installs — see
+the one [Git for Windows](https://git-scm.com/download/win) installs. See
 [getting started](../getting-started/getting-started.md).
 
 ## Build it
@@ -103,8 +103,8 @@ also [build for another platform yourself](cross-compiling.md).
 ## The rollback drill
 
 `scripts/sh/rollback-drill.sh` proves the previous release can still read what
-this tree writes. It builds v0.43.2 from the local tag in a scratch worktree —
-it never fetches — and runs that binary headless over a copy of session
+this tree writes. It builds v0.43.2 from the local tag in a scratch worktree
+(it never fetches) and runs that binary headless over a copy of session
 fixtures the candidate binary has read and recovered: a conversation must
 replay byte-identical, a session ending in an unanswered tool call must recover
 to the same bytes on both sides, and `--sandbox` and `--extensions` must agree.

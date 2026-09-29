@@ -1,8 +1,8 @@
 # Security
 
-- [Operating-system confinement](sandboxing.md) — the `bash` process boundary,
+- [Operating-system confinement](sandboxing.md): the `bash` process boundary,
   backend capability matrix, disabled confinement, inspection and limits.
-- [Permissions](../permissions/index.md) — which operations may be attempted.
+- [Permissions](../permissions/index.md): which operations may be attempted.
 
 Permission and confinement answer different questions: permission decides
 whether Crucible may start an operation, while confinement limits what the

@@ -299,7 +299,7 @@ it is running. `memory_limit` is enforced but not asked for: the knob is the
 address space a process may map rather than the memory it uses, and runtimes
 that reserve enormously and touch little would be refused by any ceiling low
 enough to catch a real runaway. `disk_limit` is unsupported above, and a policy
-may not ask for a ceiling its backend cannot apply — which is also why disabling
+may not ask for a ceiling its backend cannot apply, which is also why disabling
 confinement takes the two confining ceilings off with it, rather than carrying
 numbers the compatibility backend would have to refuse.
 
@@ -312,12 +312,12 @@ gets its own. A policy may state fewer and the broker takes the lower of the
 two; it may not state more.
 
 Stating one is what the table's row is about, and it needs a kernel that counts
-processes per user namespace — Linux 5.14 and newer. Below that the kernel
+processes per user namespace (Linux 5.14 and newer). Below that the kernel
 counts them for the real user across the whole machine, so a stated ceiling
 would bound the host's other work rather than the sandbox's, and enabled confinement
 refuses the policy instead of applying a number that means something else. The
 broker's own 1024 still applies there, and under the older counting it can bind
-before the sandbox has reached 1024 of its own — but the only thing it ever
+before the sandbox has reached 1024 of its own, but the only thing it ever
 stops is the sandbox forking. Nothing outside the namespace is ended by it.
 
 The currently declared session surface is prepare, materialize, start, inspect,
@@ -355,8 +355,8 @@ one statement. A claimed feature must be accepted; a disclaimed one must be
 refused *by that name*, before any session exists. Two answers are faults and
 nothing else is: **overclaimed**, where a backend that says it cannot do
 something takes the policy anyway, and **withheld**, where a backend refuses
-what it says it can do. A backend that fails for its own reasons — no
-executable, a kernel that will not give it namespaces — leaves the claim
+what it says it can do. A backend that fails for its own reasons (no
+executable, a kernel that will not give it namespaces) leaves the claim
 **unreached**, because a host without a sandbox must not read as a backend that
 lies.
 
@@ -372,14 +372,14 @@ machine may treat it as a skip.
 Some features cannot be asked for in a policy at all. A terminal, direct file
 operations and resuming somebody else's session are asked of a session, and a
 bare policy offered in their name would be accepted by everyone. Those are
-reported **stated** or **absent** — read, not tested. Saying a claim was
+reported **stated** or **absent**: read, not tested. Saying a claim was
 exercised when nothing could exercise it is the same failure the suite exists
 to catch.
 
 The answers are grouped into the families a backend is chosen by: isolation,
 materialization, network, resources, terminal, persistence, accounting and
 cost. A backend that fences a filesystem perfectly and cannot bound one byte of
-egress is not partly conformant — it holds one family and not another, and a
+egress is not partly conformant. It holds one family and not another, and a
 policy is matched against the family it needs. `holds` says a family is exact,
 not that it is supported: a backend that disclaims every network feature and
 refuses every network policy holds that family, and the claims are what tell a
@@ -575,7 +575,7 @@ same directory produce the same digests, which is what makes them comparable
 between machines.
 
 Where a backend answers but will not take this workspace's policy, the matrix is
-printed and the refusal follows it — the unsupported feature above is usually
+printed and the refusal follows it. The unsupported feature above is usually
 the whole explanation. Where nothing answers at all, the report says that rather
 than printing a matrix of claims belonging to nobody. Neither is an error: both
 are the answer, and the run ends successfully.
@@ -660,7 +660,7 @@ in order, and each keeps its place among the commands allowed to run at once
 until its own publication finishes. Every wait for the lock has a ceiling: a
 command being prepared is refused if the lock does not come free within a
 minute, a command whose own deadline has passed is stopped after a minute, and
-five seconds is the bound everywhere somebody is waiting — a cancelled turn, a
+five seconds is the bound everywhere somebody is waiting: a cancelled turn, a
 command left running whose report is overdue, a confined server being restarted
 or disposed of at a turn's end, and the run itself ending.
 
@@ -669,7 +669,7 @@ nothing, whatever the root looks like afterwards: this user's state directory
 remembers how many publications have touched each root, and a command compares
 that count with the one it recorded when it took its baseline. A crucible from
 before this release takes the same lock, so the two still publish one at a time,
-but it does not keep that count — against such a peer the comparison has nothing
+but it does not keep that count. Against such a peer the comparison has nothing
 to see, and only the check against the root's own content remains. The holder
 may be another crucible of this user, including one from before this release,
 which keeps the lock for as long as its commands run; a wait with no end would
