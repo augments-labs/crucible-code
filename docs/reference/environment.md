@@ -263,5 +263,8 @@ whole of its map.
 
 The program `/login` opens your browser with (`xdg-open` on Linux, `open` on
 macOS, `explorer.exe` on Windows) is the one child started with crucible's own
-environment unchanged; it gets the address to open as its only argument. See
+environment, because a browser needs your display and desktop session to open.
+It is started without the variables a provider key is read from: each
+provider's usual one, such as `ANTHROPIC_API_KEY`, and any variable an
+`apiKeyEnv` setting names. It gets the address to open as its only argument. See
 [account login today](../providers/providers.md#account-login-today).
