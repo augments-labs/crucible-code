@@ -1159,13 +1159,14 @@ pub(super) fn during<T: Terminal>(
                 }
 
                 // The line is finished, and what finished it was whichever
-                // press `input.send` says finishes one. Steered first, so the
-                // running turn works it in at its next pass; then queued,
-                // because a turn already finishing takes nothing and the line
-                // is still owed a turn of its own. Whichever happens, it leaves
-                // the queue: the turn reports the lines it reached, and the
-                // loop that reads that drops them. The queue takes the editor
-                // empty, so the text is read off it before `queue` clears it.
+                // press `input.send` says finishes one. Queued first, because a
+                // turn already finishing takes nothing and the line is still
+                // owed a turn of its own; then, only if the queue took it,
+                // offered to the running turn to work in at its next pass. A
+                // line the queue refuses stays in the box and reaches nobody.
+                // Whichever happens to a taken line, it leaves the queue: the
+                // turn reports the lines it reached, and the loop that reads
+                // that drops them.
                 Typed::Submitted => {
                     // A slash command is not a line for the turn: it is answered
                     // on this thread, the way it is between turns. But the panel
@@ -1206,10 +1207,13 @@ pub(super) fn during<T: Terminal>(
                         *opened_list = Opened::default();
                         return Ok(Meanwhile::Command(owned));
                     }
-                    let line = editor.text().to_owned();
-                    recalling.keep(&line);
-                    steer.say(line);
-                    notice = queue(editor, queued, turning, renderer.columns(), style);
+                    recalling.keep(editor.text());
+                    let reading = queueing::Reading {
+                        queue: queued,
+                        editor,
+                        steer,
+                    };
+                    notice = queue(reading, turning, renderer.columns(), style);
                     moved = true;
                 }
 
@@ -1340,8 +1344,12 @@ pub(super) fn during<T: Terminal>(
     Ok(Meanwhile::Nothing)
 }
 
-/// Moves the finished line behind the running turn, and says what the row under
-/// the box owes for it.
+/// Moves the finished line behind the running turn, offers it to that turn, and
+/// says what the row under the box owes for it.
+///
+/// Offered only once the queue has taken it. A refused line stays in the box,
+/// and one the turn had been offered as well would reach the agent while the
+/// reader still held it, once more for every enter against a full queue.
 ///
 /// The row above the box is read again here rather than on the next thing to
 /// move, because what it names is exactly the line that has just gone: a box
@@ -1349,15 +1357,25 @@ pub(super) fn during<T: Terminal>(
 /// this row exists to answer. `None` where it was taken, which is also what
 /// clears whatever the row was saying before.
 fn queue(
-    editor: &mut Editor,
-    queued: &mut Prompts,
+    reading: queueing::Reading<'_>,
     turning: &mut Turning,
     columns: usize,
     style: Style,
 ) -> Option<&'static str> {
-    let retained = queued.accept(editor);
+    let queueing::Reading {
+        queue,
+        editor,
+        steer,
+    } = reading;
 
-    turning.queueing(queued.waiting_all(), columns, style);
+    let retained = queue.accept(editor);
+    if retained == Retained::Accepted
+        && let Some(line) = queue.lines.back()
+    {
+        steer.say(line.clone());
+    }
+
+    turning.queueing(queue.waiting_all(), columns, style);
     matches!(retained, Retained::Refused).then_some(QUEUED_LIMITED)
 }
 
@@ -1668,10 +1686,11 @@ pub(super) struct During<'a> {
     /// Where a line typed now is pushed so the running turn works it in, between
     /// one pass of asking and running tools and the next.
     ///
-    /// The queue above still keeps the line, and its own turn answers it after:
-    /// steering is the agent adjusting course at once, not a reason the question
-    /// stops being one. The two are what a mid-turn Enter means, and this is the
-    /// half the turn in front of it reads.
+    /// Pushed only once the queue above has taken the line, and the queue still
+    /// keeps it, so its own turn answers it after: steering is the agent
+    /// adjusting course at once, not a reason the question stops being one. The
+    /// two are what a mid-turn Enter means, and this is the half the turn in
+    /// front of it reads.
     pub(super) steer: &'a crucible_runtime::Steer,
     /// Where a mode stepped to mid-turn is held until the runner is back.
     ///

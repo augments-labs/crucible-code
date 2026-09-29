@@ -170,7 +170,8 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
 /// Three references rather than three arguments at each call, for the reason
 /// [`super::Held`] is one value: the list, the box a line taken back returns
 /// to, and the queue the turn reads are one subject, and a key press is
-/// answered against all three or against none of them.
+/// answered against all three or against none of them. Enter while a turn runs
+/// is answered against the same three, moving a line the other way.
 pub(super) struct Reading<'a> {
     /// The list being read, which is also the panel above the box.
     pub(super) queue: &'a mut Prompts,

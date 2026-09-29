@@ -16,6 +16,10 @@ change in any release with no deprecation period.
   cache made by one run was never found by the next. The scope now follows the
   tools a request offers rather than the run that listed them, as
   `isolationScope` describes.
+- **A prompt refused by a full queue no longer reaches the running turn.**
+  Past 64 waiting prompts or 1 MiB, the prompt stayed in the box as documented,
+  but the turn was handed it anyway, once more for every press of Enter. It now
+  goes to the turn only once the queue has taken it.
 - **On Windows, a renewed subscription sign-in is no longer lost while another
   crucible is reading `auth.json`.** Writing the rotated tokens failed with
   "Access is denied" whenever a second crucible had the file open at that
