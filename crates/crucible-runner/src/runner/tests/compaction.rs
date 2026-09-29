@@ -487,6 +487,59 @@ fn a_line_queued_in_the_pass_that_makes_room_starts_the_tail_kept_word_for_word(
 }
 
 #[test]
+fn a_line_queued_behind_the_only_turn_does_not_leave_it_without_room() {
+    // Everything before the line fits inside the budget kept word for word,
+    // so there is no older middle, and pruning finds nothing worth clearing.
+    // The last resort is to recap the active turn once its pass is complete,
+    // and the line queued behind that pass must not hide it: the turn is
+    // recapped up to the line, and the line is kept word for word.
+    let queued = "use the second file instead";
+    let steer = Steer::new();
+    let mut offered = Tools::new();
+    offered
+        .add_builtin(Typing::new("type", steer.clone(), queued))
+        .unwrap();
+    let script = Script::new(vec![
+        vec![
+            Delta::Carried(Carried::new(17_000)),
+            Delta::ToolStarted {
+                id: ToolId::new("a"),
+                name: "type".into(),
+            },
+            Delta::ToolArgs("{}".into()),
+            Delta::Stopped(StopReason::WantsTools),
+        ],
+        recap("notes to self"),
+        saying("carried on"),
+    ]);
+    let mut scripted = Scripted::new(script, offered, Verdict::Allow);
+    scripted.steer = steer;
+    scripted.runner.state.window = Some(20_000);
+
+    let stop = scripted
+        .turn("go")
+        .expect("the turn ended instead of making room");
+
+    assert_eq!(stop, StopReason::Yielded);
+    let kept = conversation(scripted.runner.state.transcript());
+    let [
+        Message::User { text: notes, .. },
+        line,
+        Message::Agent { text: answer, .. },
+    ] = kept.as_slice()
+    else {
+        panic!("not the recap, the queued line and the answer after it: {kept:#?}")
+    };
+    assert!(notes.contains("notes to self"), "no recap stands first");
+    assert_eq!(
+        line,
+        &Message::said(queued),
+        "the queued line was not kept word for word"
+    );
+    assert_eq!(answer.as_ref(), "carried on");
+}
+
+#[test]
 fn an_answer_cut_off_by_the_window_is_recorded_before_room_is_made() {
     // The provider streamed half an answer and then ran out of room. Making
     // room and asking again is the remedy, but the half that arrived was
