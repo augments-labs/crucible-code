@@ -2,16 +2,20 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/permission-dark.svg">
-  <img alt="A tool call is decided in order: a write or edit of crucible's own configuration files or a matching deny rule refuses it, a matching ask rule asks, allow rules that cover all of it allow it, and otherwise the mode allows or asks. A call that comes to asking runs if it was already allowed for this session or you say yes; a refusal by policy tells the model and the turn carries on, but your no ends the turn." src="../assets/permission-light.svg" width="720">
+  <img alt="A tool call is decided in order: a write or edit of crucible's own configuration files in a directory the workspace reaches, or a matching deny rule, refuses it, a matching ask rule asks, allow rules that cover all of it allow it, and otherwise the mode allows or asks. A call that comes to asking runs if it was already allowed for this session or you say yes; a refusal by policy tells the model and the turn carries on, but your no ends the turn." src="../assets/permission-light.svg" width="720">
 </picture>
 
-Nothing changes a file or starts a process without a decision. The decision
-comes from three places, tried in order: [rules](rules.md) you wrote speak
-first, the [mode](modes.md) answers for calls no rule mentions, and when what
-they settle on is "ask", the question below appears. With nothing configured,
-that is every change, every command, and every read that leaves the workspace.
-A read inside it is the exception in every mode: allowed, or refused by a rule,
-with a question only where an `ask` rule names exactly that path.
+Nothing changes a file or starts a process without a decision. One refusal
+comes before any of it: a `write` or `edit` of
+[crucible's own configuration files](#the-files-the-file-tools-may-not-write)
+in a directory the workspace reaches is refused, whatever the rules or the mode
+would say. Past that, the decision comes from three places, tried in order:
+[rules](rules.md) you wrote speak first, the [mode](modes.md) answers for calls
+no rule mentions, and when what they settle on is "ask", the question below
+appears. With nothing configured, that is every change, every command, and
+every read that leaves the workspace. A read inside it is the exception in
+every mode: allowed, or refused by a rule, with a question only where an `ask`
+rule names exactly that path.
 
 The row under the prompt box always shows the mode in force, and names the key
 that steps it:
@@ -221,6 +225,11 @@ directory. Not in any mode, and not under any rule: a single write there could
 put an allow for everything into the next start, so that refusal cannot be
 entrusted to the rules and modes it would defeat. Reading them stays ordinary;
 it is how a session begins.
+
+That refusal comes before the rules only for a file in a directory the
+workspace reaches. One outside it, such as `~/.crucible/config.json` when you
+started in a project, is refused by the tool like any
+[write outside](directories.md), and in `ask` mode the question comes first.
 
 `bash` remains the exception. An approved shell reaches anything you do, so a
 command can change those files; `fullAccess` runs one without asking. Use a

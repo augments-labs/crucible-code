@@ -3,11 +3,13 @@
 The file tools reach the directory crucible was started in, and nothing else
 without you. A read that leads outside it, measured after symbolic links are
 resolved, is put to you the way a command is, and runs only on your yes. A
-write outside it is refused by the tool itself, before any question could be
-asked, because the question a write outside would need has no honest wording:
-nothing out there was handed over. `bash` is the standing exception: a shell
-reaches whatever you can, which is why what bounds it is [the question and the
-rules](rules.md) rather than a boundary on paths.
+write outside it is refused by the tool itself, in every mode. In `ask` mode the
+question still comes first, naming only "a path it could not resolve", and a yes
+is followed by that refusal. The tool refuses because the question a write
+outside would need has no honest wording: nothing out there was handed over.
+`bash` is the standing exception: a shell reaches whatever you can, which is
+why what bounds it is [the question and the rules](rules.md) rather than a
+boundary on paths.
 
 `permissions.extraDirectories` widens that reach:
 
