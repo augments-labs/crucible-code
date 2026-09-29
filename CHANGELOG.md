@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A proxy that answers `407` to its password is sent it once per connection,
+  not once per address.** A sandboxed command reaching a host with several
+  addresses sent the refused credential for each of them, up to sixteen times,
+  which can lock the account on a proxy that counts failed sign-ins. The first
+  `407` now ends the attempt.
 - **A sandboxed command is no longer told `403 Forbidden` for an allowed host
   crucible could not look up.** A failed lookup on this machine read as a
   policy denial, most misleadingly behind a proxy that could have resolved the
