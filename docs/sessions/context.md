@@ -1,5 +1,10 @@
 # What the model is told
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/request-dark.svg">
+  <img alt="One request to the model has three parts: the instructions, the same bytes every time; the conversation so far, where six facts follow your first prompt and are told again as a change note when one changes, and in full after a compaction; and one schema for each tool advertised." src="../assets/request-light.svg" width="720">
+</picture>
+
 Every request that asks the model to go on with the conversation carries two
 kinds of text besides it: instructions, which say how to work, and facts, which
 say what is true of the session right now. They travel separately, and only the
