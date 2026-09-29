@@ -10,6 +10,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A mode you step to or a model you pick while a turn runs now shows between
+  turns.** Both waited for the next turn's start, so the row went back to the
+  old mode and model once the turn ended, and a <kbd>Shift-Tab</kbd> made there
+  was overruled by the held step when you sent your next line. A turn could run
+  in `fullAccess` while the row said `allowEdits`, and its commands were not
+  asked about.
 - **A sandboxed command is no longer told `403 Forbidden` for an allowed host
   that does not answer.** Reached straight rather than through a proxy, an
   allowed host that refused or timed out at every permitted address got the
