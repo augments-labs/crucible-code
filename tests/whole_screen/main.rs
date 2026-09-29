@@ -525,6 +525,67 @@ fn a_bare_slash_is_the_list_opener_not_a_command() {
     assert!(!still.contains("names no command"), "no refusal:\n{still}");
 }
 
+/// A word typed alone that names no command, said back with what it was near.
+///
+/// Two rows under the line and nothing after them: the whole list under a slip
+/// buries the names that answer it. Nothing is sent, and the arrow that brings
+/// back the last line brings back this one to be corrected.
+fn refused_as_a_slip(window: &mut Watched) -> String {
+    window.types_until("/modle\r", "nearest: /model, /mode");
+    let refused = window.picture();
+    assert!(refused.contains("no such command: /modle"), "{refused}");
+    assert!(!refused.contains("what these are"), "no list:\n{refused}");
+
+    window.types_until("\x1b[A", "│ › /modle");
+    refused
+}
+
+#[test]
+fn a_mistyped_command_is_refused_with_the_names_it_was_nearest_to() {
+    let mut window = Watched::open("mistyped", 80, 24);
+
+    insta::assert_snapshot!(refused_as_a_slip(&mut window));
+}
+
+#[test]
+fn a_mistyped_command_is_refused_the_same_way_in_a_narrow_window() {
+    let mut window = Watched::open("mistyped-narrow", 40, 24);
+
+    insta::assert_snapshot!(refused_as_a_slip(&mut window));
+}
+
+#[test]
+fn a_mistyped_command_mid_turn_is_refused_on_the_panel_and_not_queued() {
+    // The same two rows, on the panel a command that cannot run now stands.
+    // What heads it is the word typed, not a command it was taken for.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("mistyped-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/modle\r", "nearest: /model, /mode");
+
+    let refused = window.picture();
+    assert!(refused.contains("esc to close"), "{refused}");
+    assert!(!refused.contains("/exit"), "{refused}");
+    assert!(!refused.contains("queued"), "{refused}");
+    insta::assert_snapshot!(refused);
+}
+
+#[test]
+fn a_mistyped_command_with_words_after_it_mid_turn_is_queued_as_a_prompt() {
+    // With words after it the line is somebody's sentence, and waits for the
+    // turn like any other line typed while one runs.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("mistyped-queued", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/modle gpt-6-sol\r", "1 queued");
+
+    let queued = window.picture();
+    assert!(!queued.contains("no such command"), "{queued}");
+    assert!(!queued.contains("esc to close"), "{queued}");
+}
+
 #[test]
 fn a_theme_panel_opens_while_a_turn_is_still_running() {
     // The turn is held open behind a finished answer — not made long enough to

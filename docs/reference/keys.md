@@ -298,7 +298,8 @@ to close. While a turn runs it stands as a panel instead: any key closes it, and
 so does a click on its rows or a wheel notch, and a resize redraws it. A
 command that cannot act while a turn runs stands a panel saying so, with
 `esc to close` under it; <kbd>Esc</kbd>, <kbd>Enter</kbd>, <kbd>Ctrl+C</kbd>
-and <kbd>Ctrl+D</kbd> all close it.
+and <kbd>Ctrl+D</kbd> all close it. A word typed alone that names no command
+stands the same panel, with the nearest names in place of a reason.
 
 ### A large session on pickup
 

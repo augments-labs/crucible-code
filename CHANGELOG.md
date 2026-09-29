@@ -8,6 +8,21 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **A line that opens with a path is sent as a prompt, and a mistyped command
+  names the nearest ones.** `/tmp is full` and `/modle gpt-6-sol` used to be
+  refused as unknown commands; any line with words after its first is now a
+  prompt. A word typed alone that names no command is still refused, in two
+  rows naming the nearest commands instead of the whole list, and a command's
+  name turns to the accent colour as you type it.
+
+### Fixed
+
+- **A mistyped command typed while a turn runs is said back as you typed it.**
+  The panel it stood was headed `/exit`, the command an unknown word was taken
+  for, over `names no command`.
+
 ## [0.43.3] - 2026-09-29
 
 **The browser `/login` opens no longer carries your provider keys, and a mode
