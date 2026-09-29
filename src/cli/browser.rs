@@ -11,10 +11,15 @@
 //! variables a provider key is read from. A browser it starts lives on after
 //! crucible and has no use for one.
 
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+use std::{
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 const REAP_LIFETIME: Duration = Duration::from_secs(2);
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 const REAP_POLL: Duration = Duration::from_millis(20);
 
 /// Opens `uri` with the operating system's browser association, with none of
@@ -22,8 +27,8 @@ const REAP_POLL: Duration = Duration::from_millis(20);
 ///
 /// # Errors
 ///
-/// [`BrowserError`] when the platform has no launcher, the launcher could not
-/// start, or its bounded reaper thread could not be created.
+/// [`BrowserError`] when the launcher could not start, or its bounded reaper
+/// thread could not be created.
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub(super) fn open<'a>(
     uri: &str,
@@ -32,6 +37,11 @@ pub(super) fn open<'a>(
     spawn(without(command(uri), withheld))
 }
 
+/// Refuses on a platform this build knows no launcher for.
+///
+/// # Errors
+///
+/// Always [`BrowserError::Unsupported`].
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub(super) fn open<'a>(
     _uri: &str,
@@ -113,12 +123,15 @@ pub(super) enum BrowserError {
     #[error("this platform has no browser launcher")]
     Unsupported,
     /// The fixed platform launcher could not be spawned.
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     #[error("the browser launcher could not start: {0}")]
     Launch(std::io::Error),
     /// The worker responsible for reaping the launcher could not start.
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     #[error("the browser launcher could not be reaped: {0}")]
     Worker(std::io::Error),
     /// The reaper stopped before it received the launcher.
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     #[error("the browser launcher reaper stopped unexpectedly")]
     ReaperStopped,
 }
