@@ -37,7 +37,7 @@ use crucible_tui::{Glyphs, Ladder, Renderer, Row, Slot, Terminal, clip, fold};
 use crate::cli::Fatal;
 use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Taken};
-use crucible_app::providers::{rungs, unasked};
+use crucible_app::providers::rungs;
 use crucible_app::switching::Rung;
 
 use super::{Terms, say};
@@ -108,7 +108,7 @@ pub(super) fn run<T: Terminal>(
     // other says the key is fine and pick a model.
     let named = conversation.serving();
     let Some(provider) = named.filter(|_| !conversation.runner().model().is_empty()) else {
-        return renderer.commit(unasked(named)).map_err(Fatal::from);
+        return renderer.commit(terms.unasked(named)).map_err(Fatal::from);
     };
 
     // Every rung for a model this build has not heard of, which is why this is
@@ -195,7 +195,7 @@ fn taken<T: Terminal>(
     let said = match rung {
         Rung::Unasked => {
             return renderer
-                .commit(unasked(conversation.serving()))
+                .commit(terms.unasked(conversation.serving()))
                 .map_err(Fatal::from);
         }
         Rung::Unsupported => {

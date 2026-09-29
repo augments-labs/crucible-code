@@ -298,8 +298,10 @@ crucible: Warning: No models available. Use /login or set an API key environment
 ```
 
 When a provider is chosen and only the model is missing, the sentence is
-`Warning: No model selected. Use /model to select the model to ask.` instead,
-with the same `No turn was taken.` after it. With output still on a terminal,
+`Warning: No model selected. Use /model to select the model to ask.` instead.
+When credentials are set up but no provider was chosen, it is
+`Warning: No provider selected. Use /model to select a provider and model.`
+Either way `No turn was taken.` follows it. With output still on a terminal,
 the warning is drawn there instead and the run goes on to the next line.
 
 ## Exit status

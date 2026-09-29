@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A prompt with no provider chosen no longer tells you to set a key you
+  already have.** With keys for more than one provider and none chosen, the
+  welcome said to pick a provider, but a prompt afterwards, `/effort` and a
+  piped run said to use `/login` or set an API key. They now say what the
+  welcome says, and follow a `/logout` made during the session.
 - **`--with-mcp` against a configuration with no servers now reads as a
   sentence.** It said "this configuration has no servers are written down under
   mcp.servers"; it now says "this configuration has none under mcp.servers".

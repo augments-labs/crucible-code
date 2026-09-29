@@ -39,7 +39,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use crucible_app::AppError;
 use crucible_app::providers::{
-    Providers, Served, available, chosen, opening_unasked, providers, re_serving,
+    Providers, Served, available, chosen, providers, re_serving, unasked,
 };
 use crucible_app::services::{Services, Unfinished};
 use crucible_app::startup::{self, Startup, assemble, served};
@@ -715,6 +715,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
         ),
+        environment: Box::new(|name| std::env::var(name).ok()),
 
         // The two `/resume` reads a directory of logs with. Both are settled
         // here for the same reason everything else in `Terms` is: the session
@@ -883,7 +884,10 @@ fn launch(
     Ok(Launch {
         model: wanted(&choice, auth.settings, serving),
         effort: thinking(cli.effort, auth.settings, serving),
-        unasked: opening_unasked(serving, available(providers, auth).next().is_some()),
+        unasked: unasked(
+            serving.map(|one| one.name),
+            available(providers, auth).next().is_some(),
+        ),
         serving,
     })
 }

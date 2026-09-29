@@ -48,7 +48,8 @@ use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
 use crucible_app::client::Ended;
-use crucible_app::providers::{Served, Serving, unasked};
+use crucible_app::providers::{Lookup, Served, Serving, available};
+use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
@@ -251,6 +252,12 @@ pub(crate) struct Terms {
     /// the session asks from the next turn is what the next run here would ask,
     /// resolved once and out of the same files.
     pub(crate) serving: Serving,
+    /// Reads a variable from the environment the launch was started in, which
+    /// is where a key can be exported rather than stored.
+    ///
+    /// Handed in beside [`serving`](Self::serving), which reads the same one,
+    /// so a session with no environment to offer can say so.
+    pub(crate) environment: Lookup,
     /// Where this machine keeps its session logs.
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
@@ -305,6 +312,27 @@ impl Terms {
             logins: &self.logins,
             choosing: &self.choosing,
         }
+    }
+
+    /// What a session with no model says, read off what this machine holds now.
+    ///
+    /// Now rather than at the launch, because a `/logout` can take the last key
+    /// away or leave another: the welcome said it for the credentials there
+    /// were then, and a prompt saying it again says it for the ones there are.
+    pub(crate) fn unasked(&self, provider: Option<&str>) -> &'static str {
+        // With a provider chosen the missing piece is the model whatever else
+        // is set up, so the credentials are read only when they decide it.
+        let any = provider.is_none() && {
+            let stored = self.logins.read();
+            let auth = ProviderAuth {
+                settings: &self.settings,
+                from: &*self.environment,
+                stored: &stored,
+                subscriptions: &self.subscriptions,
+            };
+            available(&self.providers.snapshot(), auth).next().is_some()
+        };
+        crucible_app::providers::unasked(provider, any)
     }
 }
 
@@ -672,7 +700,7 @@ pub(crate) fn converse<T: Terminal>(
         // said again here rather than only under the welcome the session opened
         // with — by now that has scrolled away.
         if conversation.runner().model().is_empty() {
-            let said = unasked(conversation.serving());
+            let said = terms.unasked(conversation.serving());
 
             // Down a pipe there is nobody to type `/model`, so carrying on
             // reads every remaining line and answers none of them — and ends
