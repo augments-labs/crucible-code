@@ -188,6 +188,11 @@ pub fn sync_parent(path: &Path) -> Result<(), PrivacyError> {
 /// Both paths must name files in the same directory. The source is consumed on
 /// success and left for the caller to clean up on failure.
 ///
+/// A handle already open on the destination keeps the file it opened while the
+/// name moves on to the new one. On Windows that needs the handle to have
+/// allowed deletion, as a `std` open does; this crate's own opens do not, and
+/// replacing a file one of them holds fails.
+///
 /// # Errors
 ///
 /// [`PrivacyError`] when the replacement or its durability step fails.

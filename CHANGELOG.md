@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **On Windows, a file crucible replaces is no longer refused while something
+  else is reading it.** Replacing `auth.json` or another file crucible keeps
+  failed with "Access is denied" whenever a second crucible or another program
+  had it open, and a renewed subscription sign-in written at that moment was
+  lost with it. The reader now keeps the copy it opened while the new file takes
+  its name, as on Linux and macOS.
+
 ## [0.43.2] - 2026-09-29
 
 **A confined command can now reach its allowed hosts through your `http://`
