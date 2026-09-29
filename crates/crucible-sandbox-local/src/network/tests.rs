@@ -75,6 +75,44 @@ fn an_authenticated_tunnel_reaches_only_an_authorized_pinned_address() {
     echo.join().unwrap();
 }
 
+/// Nothing listening at a permitted address is the host's failure, not the
+/// policy's. The command is told so with the `502` a proxy that would not
+/// carry it gets, rather than the `403` of a denial.
+#[test]
+fn an_allowed_address_nothing_answers_on_is_not_answered_as_a_denial() {
+    let closed = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let proxy = Mediator::tcp(
+        policy(true),
+        SandboxId::new(),
+        Some(Duration::from_secs(10)),
+        direct(),
+    )
+    .unwrap();
+    let mut stream = TcpStream::connect(proxy.address()).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    write!(
+        stream,
+        "CONNECT {closed} HTTP/1.1\r\nProxy-Authorization: {}\r\n\r\n",
+        proxy.authorization()
+    )
+    .unwrap();
+    let mut answer = String::new();
+    let _ = stream.read_to_string(&mut answer);
+    assert!(
+        answer.starts_with("HTTP/1.1 502 Bad Gateway\r\n"),
+        "{answer}"
+    );
+    assert!(
+        answer.ends_with("\r\n\r\nno address the host is allowed at answered\n"),
+        "{answer}"
+    );
+}
+
 #[test]
 fn refused_targets_and_other_command_credentials_never_reach_the_origin() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

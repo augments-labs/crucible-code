@@ -478,7 +478,7 @@ pub const NOTHING_TO_ASK: &str = "Warning: No models available. Use /login or se
 pub const NO_MODEL_CHOSEN: &str =
     "Warning: No model selected. Use /model to select the model to ask.";
 
-/// What it says when several providers are authenticated and none was chosen.
+/// What it says when a provider is authenticated and none was chosen.
 ///
 /// Authentication made models reachable; it did not choose which vendor may
 /// receive the next prompt. `/model` is the explicit joint provider/model
@@ -487,20 +487,14 @@ pub const NO_MODEL_CHOSEN: &str =
 pub const NO_PROVIDER_CHOSEN: &str =
     "Warning: No provider selected. Use /model to select a provider and model.";
 
-/// Which of the two a session with no model has to say.
+/// Which of the three a session with no model has to say.
 ///
 /// The provider by name rather than by entry, because the name is what
 /// [`crate::Conversation::serving`] still holds by the time this is asked again.
-pub const fn unasked(provider: Option<&str>) -> &'static str {
-    match provider {
-        Some(_) => NO_MODEL_CHOSEN,
-        None => NOTHING_TO_ASK,
-    }
-}
-
-/// The startup warning after credential discovery has distinguished zero from
-/// several available providers.
-pub const fn opening_unasked(provider: Option<Served>, any_credential: bool) -> &'static str {
+/// `any_credential` is whether [`available`] names a provider at all: with no
+/// provider chosen, it is what tells nothing set up from something set up and
+/// none chosen, and the welcome and every prompt after it have to agree on which.
+pub const fn unasked(provider: Option<&str>, any_credential: bool) -> &'static str {
     match (provider, any_credential) {
         (Some(_), _) => NO_MODEL_CHOSEN,
         (None, true) => NO_PROVIDER_CHOSEN,
@@ -577,7 +571,7 @@ pub fn re_serving(
         // the sentence the `None` arm refuses with is never reached; it is
         // spelled the way the launch would spell it for this provider anyway.
         Ok(Resolved {
-            provider: startup::provider(Some(named), unasked(Some(named.name)), auth, &http)?,
+            provider: startup::provider(Some(named), unasked(Some(named.name), true), auth, &http)?,
             source,
         })
     })
@@ -629,6 +623,21 @@ pub fn chosen(
         return Ok(None);
     };
     Ok(second.is_none().then_some(first))
+}
+
+/// Every variable a key could be read from in this generation: each
+/// provider's own, and the one `apiKeyEnv` names in its place.
+///
+/// Both, because pointing `apiKeyEnv` elsewhere does not empty the usual
+/// variable, and a key exported before the setting was written is still a key.
+/// A program crucible starts that needs the rest of the environment, the way a
+/// browser does, is started without these.
+pub fn key_variables<'a>(
+    providers: &'a Providers,
+    settings: &'a Settings,
+) -> impl Iterator<Item = &'a str> + 'a {
+    offered(providers)
+        .flat_map(move |one| std::iter::once(one.key).chain(settings.api_key_env(one.name)))
 }
 
 /// Every provider crucible holds a usable credential for, in declaration order.

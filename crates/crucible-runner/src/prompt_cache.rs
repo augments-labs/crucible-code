@@ -3,7 +3,7 @@
 //! The provider-visible prefix has its own canonical fingerprint in
 //! `crucible-types`. This module binds that fingerprint to the live owners the
 //! runner can see: route, credential instance, model, selected sharing scope,
-//! authority, instructions, and tool generation. Only the final opaque digest
+//! authority, instructions, and the tools offered. Only the final opaque digest
 //! can leave this boundary as a provider routing key.
 
 use std::path::Path;
@@ -22,7 +22,7 @@ use crucible_types::{
     PromptCachePolicyDigest, PromptCachePolicySource, PromptCacheResourceBinding,
     PromptCacheResourceError, PromptCacheResourceFact, PromptCacheResourceOperation,
     PromptCacheResourceOwner, PromptCacheResourceRecord, PromptCacheResourceState,
-    ProviderAttemptId, RunId,
+    ProviderAttemptId, RunId, ToolSchema,
 };
 use sha2::{Digest, Sha256};
 
@@ -42,7 +42,7 @@ pub(super) struct ScopeInputs<'a> {
     pub trust: &'a [u8],
     pub authority: &'a [u8],
     pub instructions: &'a [u8],
-    pub tool_generation: &'a str,
+    pub tools: &'a [ToolSchema<'a>],
 }
 
 pub(super) struct Prepared {
@@ -679,7 +679,21 @@ pub(super) fn identity(
     field(&mut hash, 34, inputs.trust);
     field(&mut hash, 35, inputs.authority);
     field(&mut hash, 36, inputs.instructions);
-    field(&mut hash, 37, inputs.tool_generation.as_bytes());
+    // The tools by what the provider is shown of them, never by the generation
+    // that admitted them: every run mints its own, so binding one would give a
+    // session picked up by a later run, and every workspace or user scope, a
+    // cache of its own on each start.
+    field(
+        &mut hash,
+        37,
+        &u64::try_from(inputs.tools.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    for tool in inputs.tools {
+        field(&mut hash, 38, tool.name.as_bytes());
+        field(&mut hash, 39, tool.schema.as_bytes());
+    }
 
     PromptCacheIdentity::new(
         crucible_types::PromptCacheScopeDigest::new(hash.finalize().into()),
@@ -866,7 +880,10 @@ mod tests {
             trust: b"trusted",
             authority: b"authority-a",
             instructions: b"instructions-a",
-            tool_generation: "tools-a",
+            tools: &[ToolSchema {
+                name: "tool-a",
+                schema: "{}",
+            }],
         }
     }
 
@@ -898,7 +915,19 @@ mod tests {
         changed(&base, |one| one.effort = Some(Effort::Low));
         changed(&base, |one| one.authority = b"authority-b");
         changed(&base, |one| one.instructions = b"instructions-b");
-        changed(&base, |one| one.tool_generation = "tools-b");
+        changed(&base, |one| {
+            one.tools = &[ToolSchema {
+                name: "tool-b",
+                schema: "{}",
+            }];
+        });
+        changed(&base, |one| {
+            one.tools = &[ToolSchema {
+                name: "tool-a",
+                schema: r#"{"type":"object"}"#,
+            }];
+        });
+        changed(&base, |one| one.tools = &[]);
         changed(&base, |one| {
             one.policy = one
                 .policy

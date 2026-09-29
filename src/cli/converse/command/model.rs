@@ -546,7 +546,7 @@ fn applied<T: Terminal>(
 ///
 /// The same applying as `taken`, named for the caller that has a provider and a
 /// model rather than a row off the panel: a pick made while the runner was on
-/// the worker is applied at the next turn's start through here.
+/// the worker is applied through here as that turn ends.
 pub(super) fn apply<T: Terminal>(
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,

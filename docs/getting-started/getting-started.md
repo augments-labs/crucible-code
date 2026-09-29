@@ -202,6 +202,8 @@ describe '/home/you/Pictures/Screenshots/Screen Shot.png'
 
 The copy is content-addressed under crucible's session directory, so moving or
 deleting the original does not change what the transcript sends later.
+[Attachments](../sessions/attachments.md) has the rest: what may be attached,
+the ceilings, and what a resumed session sends.
 
 What the transcript shows of a sent attachment is its label and its number:
 `[Image #1]`, `[Video #1]`, counted per kind in the order they were attached.
@@ -230,23 +232,31 @@ moves a word (as do <kbd>Alt-B</kbd> and <kbd>Alt-F</kbd>), and <kbd>Home</kbd>
 and <kbd>End</kbd> reach the two ends. A word here is a run of anything that is
 not a space, so a path is one word.
 
-<kbd>↑</kbd> and <kbd>↓</kbd> on an empty line walk back through the prompts you
-have already sent from this directory, newest first, up to a hundred of them.
+<kbd>↑</kbd> walks back through the prompts you have already sent from this
+directory, newest first, up to a hundred of them, and <kbd>↓</kbd> walks forward
+again. The line does not have to be empty: whatever you had typed is set aside
+on the first step back, and stepping forward past the newest prompt puts it back
+in the box.
 The top border of the box says where you are: the prompt's chronological
 position within this window, such as `history 80/100` on the first press back
 when eighty prompts are retained, counting down toward `history 1/100` for the
-oldest. Enter sends whatever is in the box. Edit the line instead, by so much as
-a <kbd>Backspace</kbd>, and the walk ends where you edited it: the count goes,
-and the line is yours again.
+oldest. Enter sends whatever is in the box. Moving the cursor along it does not
+end the walk. Edit the line, by so much as a <kbd>Backspace</kbd>, and the walk
+ends where you edited it: the count goes, the line is yours again, and the one
+you had set aside is not coming back.
 
 The prompts are kept between sessions, per directory. A line you sent in one
 checkout is never offered under the arrow key in another, and each directory
 keeps its own hundred: the hundred-and-first prompt you send here is what the
 first one is spent on, and it goes from the file rather than sitting in it
-unreachable. Where the line is
-long enough to have wrapped onto a second row, or a list is standing over the
-box, the arrows belong to that first and the history only answers once there is
-nothing left for them to walk.
+unreachable.
+
+Where the prompt is more than one line, <kbd>↑</kbd> moves up through it and
+only reaches the history from the first line, and <kbd>↓</kbd> only from the
+last. A long line that the box has wrapped onto a second row is still one line,
+and the arrows go straight to the history from it. While a list is standing over
+the box the arrows are its alone, and the history does not answer at all, even
+at either end of the list.
 
 The wheel scrolls the transcript, and goes on scrolling it while a list or a
 panel stands over it, except where what is standing is itself a window over more
@@ -298,9 +308,15 @@ queues what you wrote, and it is offered to the turn that is running: a turn
 still working takes it at its next step and adjusts course, and one that was
 already finishing leaves it to be answered as its own turn. Up to 64 finished prompts and 1 MiB of their text can wait; when either
 bound is full, <kbd>Enter</kbd> leaves the line in the box and the row beneath
-it says why. <kbd>Esc</kbd> asks the turn to stop. The key that steps the mode is
-not offered there, because the mode is away with the turn until it finishes, and
-neither is <kbd>Ctrl+C</kbd>, which means the same thing there as at the prompt.
+it says why. <kbd>Esc</kbd> asks the turn to stop. <kbd>Shift-Tab</kbd> still
+steps the mode, but the running turn keeps the one it started under. The row and
+the colour of the box show the mode you stepped to at once, so for the rest of
+the turn they name the mode the next turn will run in rather than the one this
+turn's tools are asked under. The step is put on the session as this turn
+ends, so the row between turns still shows it. <kbd>Ctrl+C</kbd> means what it
+means at the prompt: it throws away the line in the box, and against an empty
+box it offers to leave, where a second press within two seconds asks the turn
+to stop and leaves.
 
 One row stands between the answer and the box for as long as the turn runs, and
 a second joins it above while a tool is out:
@@ -695,9 +711,17 @@ whether a number is an issue or a pull request, and a forge that files both in
 one series answers either from there.
 
 Where there is no colour to read it into, the markers are left where the model
-put them. That covers a redirected run, `NO_COLOR`, and `--color never`. Taking
-a marker out there would drop the emphasis and put nothing in its place, and
-`crucible < prompts.txt > answers.md` is a file of markdown worth keeping.
+put them. Taking a marker out there would drop the emphasis and put nothing in
+its place, and `crucible < prompts.txt > answers.md` is a file of markdown worth
+keeping.
+
+No flag sets colour. It follows
+[`output.color`](../configuration/configuration.md#output) in your configuration:
+`auto`, which is what nothing configured gives you, writes colour only when
+output is a terminal and `NO_COLOR` is unset or empty, `never` writes none, and
+`always` writes it on a terminal even when `NO_COLOR` is set. A terminal that
+calls itself `dumb` in `TERM`, or sets no `TERM` at all, is drawn without colour
+even under `always`, unless `COLORTERM` says `truecolor` or `24bit`.
 
 A prompt can be more than one line. End a line with a backslash and press
 <kbd>Enter</kbd>: the backslash goes, the box grows a row, and you carry on
@@ -729,9 +753,15 @@ word behind the cursor, <kbd>Ctrl+U</kbd> the rest of the line behind it and
 rather than a shell. <kbd>Delete</kbd> takes the character in front of the
 cursor, which stays where it is. A word goes on being a word across a break, so
 rubbing one out at the start of a line joins it to the line above, the same as
-<kbd>Backspace</kbd> does. <kbd>Ctrl+Y</kbd> goes the other way and copies the
-whole line out to your clipboard; a line longer than a terminal will take says
-so instead.
+<kbd>Backspace</kbd> does. <kbd>Ctrl+Y</kbd> goes the other way and asks the
+terminal to put the whole line on your clipboard. It is asked with the `OSC 52`
+sequence, which travels the wire the drawing does, so a copy taken over ssh
+lands where you are reading. The row under the box then says `line copied`, and
+that means the request went out, not that it was taken: a terminal that does not
+implement the sequence drops it without a word, and your next paste is the only
+thing that says whether it landed. crucible refuses a line over 64 KiB whole
+rather than sending part of it, and says `the line is too long for the terminal
+to copy` instead.
 
 <kbd>Ctrl+C</kbd> throws away a line you are part-way through, and does it whether
 or not a turn is running. Against an empty box it offers to leave
@@ -751,7 +781,7 @@ instead.
 
 ## Naming a file in the prompt
 
-Write the path to a picture or a PDF in the prompt and it goes with it:
+Write the path to a picture, a PDF or a video in the prompt and it goes with it:
 
 ```
 what is wrong with this layout? screenshot.png
@@ -764,9 +794,11 @@ tool opens when the model asks for it. A picture the model asks for that way
 comes back as a picture too, rather than as a refusal; see
 [`read`](../tools/files.md#a-picture-is-looked-at-rather-than-read).
 
-Pictures go to all three providers. A PDF goes to Anthropic and OpenAI, whose
-requests have a shape for a document; MoonshotAI's have none, and say so rather
-than sending the file as anything else.
+Pictures go to all four providers. A PDF goes to Anthropic, OpenAI and Google,
+whose requests have a shape for a document; MoonshotAI's have none, and say so
+rather than sending the file as anything else. A video, which has to be an
+`.mp4`, goes to Google and MoonshotAI; Anthropic's and OpenAI's requests have no
+shape for one.
 
 Nothing asks you first. Every other way a file reaches the model goes through a
 tool, and a tool is something the agent chose to run, which is the thing a
@@ -791,8 +823,12 @@ That one is about the protocol, and nothing you type changes it. The other half
 of the same question is the model: where the one you are asking does not read
 the kind of file you named, the line names the model instead, and `/model`
 picks one that does. A file over 4 MB on its own, which is never read past that,
-a pipe, or a file whose bytes are not what its name claims gets its own line and
-never costs a request.
+or a file whose bytes are not what its name claims gets its own line and never
+costs a request. A path that leads to something other than a regular file (a
+directory, a named pipe) is not refused but left alone: the word stays in the
+prompt as a word, nothing is read from it, and nothing is said about it.
+[Attachments](../sessions/attachments.md#when-a-file-is-refused) lists every
+such line.
 
 ## Commands
 
@@ -1115,9 +1151,9 @@ filesystem view. An unavailable enforcing backend refuses execution. See
 [Operating-system confinement](../security/sandboxing.md) for the exact
 capability matrix and behavior with confinement disabled.
 
-`todo_write` is the one that reaches nothing at all. It puts down the plan the
-agent is working to: a list of at most 64 tasks, each of them a line, each one
-of `open`, `doing` and `done`. You read it as a panel above the box. Every call
+`todo_write` reaches nothing outside crucible. It puts down the plan the agent
+is working to: a list of at most 64 tasks, each of them a line, each one of
+`open`, `doing` and `done`. You read it as a panel above the box. Every call
 replaces the whole plan, so what the model thinks the plan is and what you are
 looking at are one thing rather than two. [Writing down the
 plan](../tools/planning.md) is the rest of it.

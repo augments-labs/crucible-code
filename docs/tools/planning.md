@@ -1,8 +1,9 @@
 # Writing down the plan
 
 `todo_write` puts down the plan the agent is working to, and you read it as a
-panel above the prompt. It is the one tool that reaches nothing outside
-crucible: no file, no process, and so no question and no rule.
+panel above the prompt. It is one of the four tools that reach nothing outside
+crucible: no file and no process, so no mode asks about it, and a rule can only
+be about the whole tool.
 
 | Argument | What it is |
 | --- | --- |
@@ -29,7 +30,7 @@ open: Design the architecture
 
 The counts are the line a transcript hangs under the call, so a reader who is
 not going to open the result still learns what the plan did. A state nothing is
-in is left out of them — `0 done` is a word and a number spent saying that a
+in is left out of them: `0 done` is a word and a number spent saying that a
 plan nobody has finished anything in is a plan nobody has finished anything in.
 
 An empty list is how a plan is put away. It answers `the plan is empty`, and the
@@ -47,14 +48,14 @@ a task is at most 256 bytes and tasks[1] is 402: one line each
 a plan has at most one task under way and this one has 2: leave one doing and mark the rest open or done
 ```
 
-Sixty-four is far past the point a plan stops being one — a list that long is
+Sixty-four is far past the point a plan stops being one. A list that long is
 the work itself rather than a plan for it. The figure is not what a reader can
 take in; it is where a call has plainly stopped meaning to write a plan at all.
 The plan that was there is the one still standing after any of the three: none
 of a refused call is kept.
 
 A word outside `open`, `doing` and `done` is the other kind of failure and ends
-the turn, the way an unreadable argument does anywhere else —
+the turn, the way an unreadable argument does anywhere else:
 `todo_write: tasks[0] state must be one of open, doing, done`. Reading it as
 `open` would be the mistake the model cannot see.
 
@@ -94,11 +95,11 @@ seven tasks and counts the rest on a line of its own:
 ```
 
 <kbd>Ctrl+T</kbd> takes the bound off and puts it back. What it adds goes
-*underneath* the rows already on screen, so nothing you were reading moves —
+*underneath* the rows already on screen, so nothing you were reading moves,
 which is what makes the key worth pressing in the middle of a turn. Open, the
 same line reads `ctrl+t to collapse`, and a plan that fits either way is offered
 neither, since the press would do nothing. Where everything left over is
-finished work the line says so — `… +4 completed` — because that is a different
+finished work the line says so (`… +4 completed`), because that is a different
 thing from four tasks nobody has reached.
 
 A window too short for the panel takes rows from the same end, and a window with
@@ -109,16 +110,16 @@ the agent is working to.
 
 The panel is not written into the transcript. It stands in the rows above the
 box, so a plan rewritten twenty times in one turn costs twenty redraws of the
-same rows rather than twenty copies down the transcript — and it
-stays there when the turn ends, because what the agent was working to is what
-the next prompt is typed against.
+same rows rather than twenty copies down the transcript. It stays there when the
+turn ends, because what the agent was working to is what the next prompt is
+typed against.
 
 ## What it survives
 
 A session resumed by [`/resume`](../sessions/index.md) opens with the plan it
 stopped at. Nothing about a session file has to hold one: the call that wrote it
 is already in the transcript being replayed, and the plan is read back out of
-that call the same way the tool read it — so a call the tool refused is refused
+that call the same way the tool read it, so a call the tool refused is refused
 again rather than seeding a plan that was never written.
 
 `/clear` puts it away with the session it belonged to. A plan that outlived one

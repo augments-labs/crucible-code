@@ -161,4 +161,4 @@ public issue. Participation is covered by the
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).

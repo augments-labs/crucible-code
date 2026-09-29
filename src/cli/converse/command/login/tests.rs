@@ -51,6 +51,7 @@ fn in_force(sample: &Sample) -> Terms {
                 source: crucible_app::providers::CredentialSource::Environment(named.key.into()),
             })
         }),
+        environment: Box::new(|_| None),
         sessions: sample.logs(),
         workspace: sample.workspace(),
         sending: crucible_tui::Sending::default(),

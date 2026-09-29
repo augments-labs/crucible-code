@@ -171,8 +171,10 @@ the proxy's address. A plain `http` request travels inside such a tunnel
 too. So the machine crucible runs
 on must be able to resolve the host, and the proxy must accept a tunnel to an
 address and to that port. A host that is not allowed gets `403 Forbidden` and
-never reaches the proxy, and the command never sees the proxy's address or
-password.
+never reaches the proxy. An allowed one this machine cannot resolve, or one
+reached straight that answers at none of its allowed addresses, gets `502 Bad
+Gateway` saying which, so a command does not take a host that is down for a
+denial. The command never sees the proxy's address or password.
 
 Only an `http://` proxy can carry a command's connections. Under an
 `https://` proxy they fail rather than go around it, though crucible's own
@@ -182,4 +184,5 @@ requests do: a `socks://`, `socks4://` or `socks5://` one is passed by, and a
 there under any of these. A connection also fails when the proxy cannot be
 reached, refuses the tunnel, or has not opened it within five seconds of the
 command connecting. Each failure gets `502 Bad Gateway`, with one line saying
-which.
+which. A proxy that answers `407 Proxy Authentication Required` is not asked
+again for the host's other addresses.

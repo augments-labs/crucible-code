@@ -204,16 +204,43 @@ impl Runner {
             // still does not fit, recap it too. Keeping it whole forever is the
             // dead end that used to report NoRoom even though the session log
             // still held everything being replaced.
-            let completed_pass = self
-                .state
-                .transcript
-                .messages()
+            //
+            // A line typed while the pass ran is taken at the top of the next
+            // one, before the window is found full, so it can stand behind the
+            // completed pass with only context told after it. It is the
+            // reader's newest word rather than part of the pass: the pass is
+            // looked for behind it, and the recap stops where it begins, so the
+            // line reaches the model word for word as an ordinary cut keeps it.
+            // A new prompt behind a turn that ended on its tool results, as a
+            // cancelled or declined call leaves one, stands in the same place
+            // and is kept the same way, with that finished turn recapped.
+            let messages = self.state.transcript.messages();
+            let tail_from = messages.len().saturating_sub(
+                messages
+                    .iter()
+                    .rev()
+                    .take_while(|message| {
+                        matches!(message, Message::User { .. } | Message::Context(_))
+                    })
+                    .count(),
+            );
+            let queued = tail_from
+                .checked_sub(1)
+                .and_then(|pass| messages.get(pass))
+                .filter(|last| matches!(last, Message::ToolResults(_)))
+                .and_then(|_| {
+                    (tail_from..messages.len())
+                        .find(|&at| matches!(messages.get(at), Some(Message::User { .. })))
+                });
+            let ends = queued.unwrap_or(messages.len());
+            let completed_pass = messages
                 .iter()
+                .take(ends)
                 .rev()
                 .take_while(|message| !matches!(message, Message::User { .. }))
                 .any(|message| matches!(message, Message::ToolResults(_)));
             match (why, completed_pass) {
-                (Compacting::Full | Compacting::Refused, true) => self.state.transcript.len(),
+                (Compacting::Full | Compacting::Refused, true) => ends,
                 (Compacting::Asked | Compacting::Resumed, _)
                 | (Compacting::Full | Compacting::Refused, false) => {
                     return Ok(Room::Nothing);
@@ -308,8 +335,9 @@ impl Runner {
     /// and the kept tail is the thing that has to fit beside the recap. The
     /// current turn is always kept by this ordinary boundary. Automatic
     /// compaction has one fallback above it: after pruning has failed and no
-    /// older middle remains, a complete active turn may be recapped too. That
-    /// happens only between passes, where no tool call is in flight.
+    /// older middle remains, a complete active turn may be recapped too, up to
+    /// any line queued behind its last pass. That happens only between passes,
+    /// where no tool call is in flight.
     ///
     /// Earlier turns are kept while the running byte estimate stays under the
     /// budget, and every ordinary cut lands on a user prompt. That boundary is a rule,
@@ -522,7 +550,7 @@ impl Runner {
             // The standalone recap deliberately sends no system prompt or
             // tools, so its cache identity must bind those exact absences.
             instructions: b"",
-            tool_generation: "compaction-no-tools-v1",
+            tools: &[],
         };
         let mut resource_facts = Vec::new();
         let prepared = match (

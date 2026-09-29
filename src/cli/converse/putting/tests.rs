@@ -322,6 +322,34 @@ fn the_written_answer_is_what_comes_back_where_it_is_the_one_taken() {
 }
 
 #[test]
+fn a_line_written_where_several_may_be_chosen_comes_back_after_the_chosen() {
+    // The written answer is chosen by having something in it, on a question
+    // taking several as much as on one taking one. Its row reads back the line,
+    // so a line that did not come back would be one the reader saw kept and
+    // the model never read.
+    let questions = asked();
+    let mut standing = Standing::new(&questions);
+
+    moving(key(Key::Right), &mut standing, &questions);
+    moving(key(Key::Char(' ')), &mut standing, &questions);
+    moving(Pressed::Down, &mut standing, &questions);
+    moving(Pressed::Down, &mut standing, &questions);
+    moving(key(Key::Enter), &mut standing, &questions);
+    for typed in "Audio".chars() {
+        moving(key(Key::Char(typed)), &mut standing, &questions);
+    }
+    moving(key(Key::Enter), &mut standing, &questions);
+
+    let held = standing.held.get(1).expect("the second question");
+    let question = questions.get(1).expect("the second question");
+
+    assert_eq!(
+        held.answered(question).chosen().collect::<Vec<_>>(),
+        ["Images", "Audio"]
+    );
+}
+
+#[test]
 fn the_written_answer_row_reads_back_what_was_written() {
     // "Something else" is the offer, not the answer. Once a line has been
     // written, a row still saying the offer reads as the line having been

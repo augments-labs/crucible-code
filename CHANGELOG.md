@@ -8,6 +8,78 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.43.3] - 2026-09-29
+
+**The browser `/login` opens no longer carries your provider keys, and a mode
+or model you choose while a turn runs takes effect when that turn ends.** A
+sandboxed command is told `502 Bad Gateway` rather than `403 Forbidden` when an
+allowed host is down or cannot be looked up, and a proxy that refuses its
+password is sent it once per connection. A prompt cache kept for a session,
+workspace or user now outlasts the run that made it, and output redirected
+under `output.color` set to `always` keeps the model's markdown.
+
+### Fixed
+
+- **Output redirected to a file or pipe under `output.color` set to `always`
+  keeps the model's markdown markers.** That setting dropped them from a
+  redirected run, so `**loud**` came out as `loud`, and the file got no colour
+  either. The markers now stay exactly as the model wrote them, and the
+  documentation no longer promises colour into a file.
+- **A mode you step to or a model you pick while a turn runs now shows between
+  turns.** Both waited for the next turn's start, so the row went back to the
+  old mode and model once the turn ended, and a <kbd>Shift-Tab</kbd> made there
+  was overruled by the held step when you sent your next line. A turn could run
+  in `fullAccess` while the row said `allowEdits`, and its commands were not
+  asked about.
+- **A sandboxed command is no longer told `403 Forbidden` for an allowed host
+  it cannot reach.** A name this machine could not look up, and a host reached
+  straight that refused or timed out at every permitted address, both got the
+  answer for a denial. They now get `502 Bad Gateway`, with a line saying the
+  host could not be resolved or that no address it is allowed at answered.
+- **A prompt with no provider chosen no longer tells you to set a key you
+  already have.** With keys for more than one provider and none chosen, the
+  welcome said to pick a provider, but a prompt afterwards, `/effort` and a
+  piped run said to use `/login` or set an API key. They now say what the
+  welcome says, and follow a `/logout` made during the session.
+- **A line queued during a long tool call no longer ends a full turn with no
+  room.** When the window filled and nothing older was left to recap, a line
+  you typed while the call ran kept the last-resort recap from seeing the
+  finished call, and the turn stopped with "there is no room left in the
+  model's window". The recap now covers everything before the line and keeps
+  the line word for word.
+- **`--with-mcp` against a configuration with no servers now reads as a
+  sentence.** It said "this configuration has no servers are written down under
+  mcp.servers"; it now says "this configuration has none under mcp.servers".
+- **A proxy that answers `407` to its password is sent it once per connection,
+  not once per address.** A sandboxed command reaching a host with several
+  addresses sent the refused credential for each of them, up to sixteen times,
+  which can lock the account on a proxy that counts failed sign-ins. The first
+  `407` now ends the attempt.
+- **A prompt cache kept for a session, workspace or user now outlasts the run
+  that made it.** Each start gave that session, workspace or user a cache scope
+  of its own, so OpenAI and Kimi were sent a new routing key and a persistent
+  cache made by one run was never found by the next. The scope now follows the
+  tools a request offers rather than the run that listed them, as
+  `isolationScope` describes.
+- **The browser `/login` opens no longer inherits your provider keys.** It was
+  started with crucible's whole environment, so a browser opened by it carried
+  `ANTHROPIC_API_KEY` and the other key variables for as long as it ran. Each
+  provider's usual variable and any `apiKeyEnv` names are now left out; the
+  rest of the environment stays so the browser can still open.
+- **A prompt refused by a full queue no longer reaches the running turn.**
+  Past 64 waiting prompts or 1 MiB, the prompt stayed in the box as documented,
+  but the turn was handed it anyway, once more for every press of Enter. It now
+  goes to the turn only once the queue has taken it.
+- **On Windows, a renewed subscription sign-in is no longer lost while another
+  crucible is reading `auth.json`.** Writing the rotated tokens failed with
+  "Access is denied" whenever a second crucible had the file open at that
+  moment, and the spent ones stayed on disk. That reader now keeps the copy it
+  opened while the new file takes its name, as on Linux and macOS.
+- **A line written under Something else now reaches the agent on a question
+  that takes several answers.** The line showed on its own row, but the answers
+  read back and sent left it out, so the agent never saw it. It now comes back
+  after the answers you chose.
+
 ## [0.43.2] - 2026-09-29
 
 **A confined command can now reach its allowed hosts through your `http://`
@@ -4471,7 +4543,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...HEAD
+[0.43.3]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augments-labs/crucible-code/compare/v0.42.0...v0.43.0

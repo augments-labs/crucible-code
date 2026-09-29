@@ -169,9 +169,9 @@ fn a_selection_against_a_document_holding_no_servers_says_that_rather_than_a_lis
         panic!("nothing was written down");
     };
 
-    assert!(
-        refused.to_string().contains("no servers are written down"),
-        "{refused}"
+    assert_eq!(
+        refused.to_string(),
+        "no mcp server called docs; this configuration has none under mcp.servers"
     );
 }
 

@@ -920,7 +920,7 @@ fn every_other_key_read_during_a_turn_keeps_the_meaning_it_had() {
     assert_eq!(meant(Pressed::Down), Meant::Arrow { back: false });
 
     // Shift+Tab is not one of them: a mode stepped to mid-turn is held for the
-    // next turn rather than dropped, which is what  carries here.
+    // next turn rather than dropped, which is what `Meant::Cycle` carries here.
     assert_eq!(meant(Pressed::Cycle), Meant::Cycle);
 }
 
@@ -1431,4 +1431,51 @@ fn a_note_and_an_ending_are_one_turn_rather_than_two() {
 
     assert!(said.contains("#1 finished"), "{said}");
     assert!(said.contains("exit status 2"), "{said}");
+}
+
+#[test]
+fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
+    // A refused line stays in the box so that it is never dropped, and enter
+    // again is how it goes once there is room. Said to the turn as well, it
+    // reached the agent while the box still held it, and every enter against a
+    // full queue said it once more.
+    let lines: std::collections::VecDeque<String> = (0..super::super::QUEUED_LINES)
+        .map(|at| format!("prompt-{at}"))
+        .collect();
+    let mut queued = Prompts {
+        bytes: lines.iter().map(String::len).sum(),
+        lines,
+    };
+    let steer = crucible_runtime::Steer::new();
+    let mut turning = Turning::started(None);
+
+    let mut editor = Editor::new();
+    for typed in "once more".chars() {
+        editor.press(Key::Char(typed));
+    }
+
+    for _ in 0..3 {
+        let reading = queueing::Reading {
+            queue: &mut queued,
+            editor: &mut editor,
+            steer: &steer,
+        };
+        let notice = queue(reading, &mut turning, 80, Style::plain());
+        assert_eq!(notice, Some(QUEUED_LIMITED));
+    }
+
+    assert_eq!(editor.text(), "once more");
+    assert_eq!(steer.take(), Vec::<String>::new());
+
+    // Once there is room it is taken, and offered to the turn exactly once.
+    let _ = queued.pop();
+    let reading = queueing::Reading {
+        queue: &mut queued,
+        editor: &mut editor,
+        steer: &steer,
+    };
+    let notice = queue(reading, &mut turning, 80, Style::plain());
+    assert_eq!(notice, None);
+    assert!(editor.is_empty());
+    assert_eq!(steer.take(), ["once more"]);
 }

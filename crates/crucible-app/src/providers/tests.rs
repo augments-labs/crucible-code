@@ -11,9 +11,9 @@ const REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
 
 #[test]
 fn startup_distinguishes_no_credential_from_an_unselected_provider() {
-    assert_eq!(opening_unasked(None, false), NOTHING_TO_ASK);
-    assert_eq!(opening_unasked(None, true), NO_PROVIDER_CHOSEN);
-    assert_eq!(opening_unasked(Some(first()), true), NO_MODEL_CHOSEN);
+    assert_eq!(unasked(None, false), NOTHING_TO_ASK);
+    assert_eq!(unasked(None, true), NO_PROVIDER_CHOSEN);
+    assert_eq!(unasked(Some(first().name), true), NO_MODEL_CHOSEN);
 }
 
 /// The built-in providers, as one generation the tests read against.
@@ -353,6 +353,28 @@ fn a_provider_this_build_does_not_serve_is_refused_before_anything_is_drawn() {
     let problem = lands(&settings, &holding(&["OPENAI_API_KEY"])).expect_err("no such provider");
 
     assert!(problem.to_string().contains("gemini"), "{problem}");
+}
+
+#[test]
+fn every_variable_a_key_is_read_from_is_named_the_usual_one_included() {
+    // `apiKeyEnv` moves where anthropic's key is read from. The usual name can
+    // still hold one exported before the setting was written, so both are
+    // named, and every other provider keeps its own.
+    let sample = Sample::new("key-variables");
+    let settings =
+        sample.user(r#"{"providers": {"anthropic": {"apiKeyEnv": "WORK_ANTHROPIC_KEY"}}}"#);
+    let providers = catalogue();
+
+    let named: Vec<&str> = key_variables(&providers, &settings).collect();
+
+    for one in every() {
+        assert!(
+            named.contains(&one.key),
+            "{} is missing from {named:?}",
+            one.key
+        );
+    }
+    assert!(named.contains(&"WORK_ANTHROPIC_KEY"), "{named:?}");
 }
 
 #[test]

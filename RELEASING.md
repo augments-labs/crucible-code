@@ -163,16 +163,21 @@ git push -u origin chore/merge-v0.0.1
 
 gh pr create --base dev --title "chore: merge 0.0.1 back into dev"
 gh pr checks --watch
-gh pr merge --merge
+gh pr merge                     # joins the merge queue on dev
 ```
 
 Step 4 carries the bump over a branch rather than opening `main` against `dev`
-directly, because `dev` may have moved while the release was in flight. A pull
-request whose head is `main` would then be behind `dev`, and the ruleset that
-requires a branch to be up to date offers only one repair — pushing `dev` into
-`main` — which the same ruleset refuses. A branch cut from `dev` starts up to
-date: it fast-forwards when `dev` did not move and records a real merge when it
-did.
+directly, because whatever the merge needs, a conflict resolved or `dev`
+brought in, would have to be pushed to the head, and the ruleset refuses
+pushes to `main`. A branch cut from `dev` takes the merge where it can be
+fixed: it fast-forwards when `dev` did not move and records a real merge when
+it did.
+
+`dev` merges through a merge queue. A pull request joins it once `CI required`
+is green, and the queue runs the same checks again on `dev` with every change
+queued ahead of it applied, so a change that landed in the meantime never has
+to be merged in by hand. `main` has no queue: only a release branch or a hotfix
+reaches it, one at a time, and each must be up to date before it merges.
 
 Step 4 is not bookkeeping either. Until it runs, `dev` builds a binary that
 reports the previous version and a changelog with no entry for the release that
@@ -314,11 +319,10 @@ executing whatever the moving `sh.rustup.rs` endpoint serves that day.
 3. Open a fresh `Unreleased` section in the changelog, on `dev`, once the
    merge back has landed.
 4. Point the rollback drill at the release just published, on `dev`: the tag
-   in `scripts/sh/rollback-drill.sh`, `scripts/sh/rollback-drill-selftest.sh`,
-   the two steps in `.github/workflows/rust-ci.yml` that fetch and build it, and
-   the sentence in `docs/building/building.md` that names it. The drill proves
-   the previous release reads what `dev` writes, and until it moves, the
-   release a user would roll back to is the one it never runs.
+   in `scripts/sh/rollback-drill.sh`, which its self-test and CI read, and the
+   sentence in `docs/building/building.md` that names it. The drill proves the
+   previous release reads what `dev` writes, and until it moves, the release a
+   user would roll back to is the one it never runs.
 5. If a **published** release is broken, do not delete or move the tag. Fix
    forward with a patch release: a tag that changes meaning breaks every
    checksum anyone recorded against it. The `release tags` ruleset refuses the

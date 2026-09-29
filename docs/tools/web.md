@@ -14,7 +14,7 @@ that is why these two are asked about in a mode where a change to a file is not.
 ## What answers them
 
 crucible does not run a search engine and does not ask you to sign up for one.
-It asks the vendor whose credential you already set, in a request of its own —
+It asks the vendor whose credential you already set, in a request of its own,
 separate from the turn, carrying nothing but the query or the address.
 
 What you get depends on what your vendor serves:
@@ -22,17 +22,17 @@ What you get depends on what your vendor serves:
 | Provider | `web_search` | `web_fetch` |
 | --- | --- | --- |
 | Anthropic | yes | yes |
-| Google — Gemini API key | yes | yes |
-| OpenAI — API key or ChatGPT plan | yes | yes |
-| Moonshot — Kimi Code | yes | yes |
-| Moonshot — open platform | — | — |
+| Google (Gemini API key) | yes | yes |
+| OpenAI (API key or ChatGPT plan) | yes | yes |
+| Moonshot (Kimi Code) | yes | yes |
+| Moonshot (open platform) | no | no |
 
 A tool with nothing to answer it does not appear at all, rather than appearing
 and failing every call. Escape stops a search or fetch at once, even while its
 request is still connecting or reading.
 
-One difference worth knowing. OpenAI has no standalone fetch — opening a page is
-an action inside its search tool — so `web_fetch` there asks that tool to open
+One difference worth knowing. OpenAI has no standalone fetch (opening a page is
+an action inside its search tool), so `web_fetch` there asks that tool to open
 the one address, confined to its host. What comes back is the model's rendering
 of the page rather than the page itself. Anthropic and Kimi Code hand over the
 document; OpenAI hands over an account of it, which is fine for reading and
@@ -72,7 +72,7 @@ yourself. A key issued against the open platform is refused by them, so a
 session pointed there gets neither tool.
 
 Because it is a request crucible makes rather than one the model makes for
-itself, there is a call for the permission engine to hold a verdict about — which
+itself, there is a call for the permission engine to hold a verdict about, which
 is what lets the rest of this page exist.
 
 ## What it costs
@@ -136,9 +136,9 @@ You can write them yourself, in the same file as every other rule:
 an `@` is user information, and reading that address as `docs.rs` is how a rule
 you wrote about a documentation site ends up authorising somewhere else.
 
-crucible refuses to guess. An address it cannot read into a host plainly —
-anything with user information, anything carrying whitespace, anything with no
-host, anything that is not `http` or `https` — matches no rule except a blanket.
+crucible refuses to guess. An address it cannot read into a host plainly
+(anything with user information, anything carrying whitespace, anything with no
+host, anything that is not `http` or `https`) matches no rule except a blanket.
 In `ask` and `allowEdits` that means you are asked about it whatever else you
 have allowed, and `web_fetch` refuses to send it in any case.
 
@@ -151,14 +151,14 @@ do their work.
 ### A redirect somewhere else is a new question
 
 Allowing a host allows that host. If a page redirects to a different one,
-`web_fetch` does not hand back what it found there — it says where it was sent
+`web_fetch` does not hand back what it found there; it says where it was sent
 and stops. The verdict you gave was about the address that was asked for, and a
 site you trust can send a request anywhere; the page comes back only once you
 have allowed the host it actually came from. A redirect inside one host is still
 that host and is answered normally.
 
 Nothing here can reach your own machine. crucible does not fetch the page
-itself — the vendor does, from its own network — so `localhost`, a private
+itself (the vendor does, from its own network), so `localhost`, a private
 address and anything else behind your firewall are all unreachable through this
 tool whatever rule you write.
 

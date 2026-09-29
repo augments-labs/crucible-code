@@ -1,18 +1,18 @@
 # Asking you
 
 `ask_user` puts a question to you and waits. The agent uses it when the work
-forks on something only you can settle — which of several shapes to build, which
-of several directions to take — and guessing would put the whole turn's output
+forks on something only you can settle (which of several shapes to build, which
+of several directions to take) and guessing would put the whole turn's output
 on the wrong side of the fork.
 
-It is one of the two tools that reach nothing outside crucible: no file, no
-process, nothing that leaves the machine. So there is no question about
-permission and no rule to write about it.
+It is one of the four tools that reach nothing outside crucible: no file, no
+process, nothing that leaves the machine. So no mode asks about it, and a rule
+can only be about the whole tool: `deny ask_user` refuses every call to it.
 
 | Argument | What it is |
 | --- | --- |
 | `questions` | Every question to put, in the order to answer them. Required, and at most 4. |
-| `heading` | Two or three words naming one question, shown in a row of all of them. Required, and at most 24 bytes — the row holds every heading at once. |
+| `heading` | Two or three words naming one question, shown in a row of all of them. Required, and at most 24 bytes, because the row holds every heading at once. |
 | `question` | The question itself. Required, and at most 500 bytes. |
 | `several` | Whether more than one of its answers may be chosen. Left out means one. |
 | `answers` | The answers it offers, best first. Required, at least 2 and at most 8, and no two the same. |
@@ -49,13 +49,14 @@ across the top is both where you are and how much is left. It appears only where
 there is more than one question.
 
 Where a question takes several answers, each one carries a bracketed mark of its
-own — `[ ]` and `[✓]`. Bracketed on purpose: the row above says whether a
+own, `[ ]` and `[✓]`. Bracketed on purpose: the row above says whether a
 *question* is answered and these say whether an *answer* is chosen, and on that
 question both are on screen at once.
 
 Two answers are always there and the agent does not write them. **Something
-else** is a line you type yourself, and **Say it in the prompt instead** leaves
-the whole thing — which is what `esc` does too.
+else** is a line you type yourself, sent after whatever else you chose where
+several answers may be chosen. **Say it in the prompt instead** leaves the whole
+thing, which is what `esc` does too.
 
 ## The keys
 
@@ -63,9 +64,9 @@ the whole thing — which is what `esc` does too.
 | --- | --- |
 | `↑` `↓` | Moves down the answers. Stops at each end. |
 | `←` `→` | Steps to the next question, or the one before. Stops at each end. |
-| `enter` | Takes what is marked and moves on. On the last stop, sends. |
+| `enter` | Takes what is marked and moves on, or sends where there is nowhere left to move on to. On **Something else** with nothing written yet, it opens the line to write in instead. Where several answers may be chosen, it moves on without choosing the marked one: `space` does the choosing. |
 | `space` | Where several answers may be chosen: chooses the marked one, or unchooses it. |
-| `1`–`9` | Takes that answer. |
+| `1`–`9` | Does what `enter` would on the answer with that number. Where several answers may be chosen, it chooses or unchooses that one instead, as `space` does. The row under the rule leaves the whole thing, when its number is 9 or lower. |
 | `n` | Adds a line of your own beside the answer. |
 | `esc` | Stops typing, if you are. Otherwise leaves the whole thing unanswered. |
 
@@ -76,7 +77,7 @@ reason the arrows go both ways.
 
 Some questions are about what something will look like rather than what it is
 called. Those answers carry a specimen, drawn beside the answers where the
-window holds both whole — every answer unfolded, the widest specimen uncut:
+window holds both whole, every answer unfolded and the widest specimen uncut:
 
 ```
 │    1. Compact                     ┌────────────────────────────────────┐  │
@@ -113,8 +114,8 @@ before it goes, so nothing is sent that you have not seen:
 │    2. Cancel                                                 │
 ```
 
-An ask of one question has no such stop — a screen reading back one answer says
-what the screen before it said — unless that question takes several answers.
+An ask of one question has no such stop (a screen reading back one answer says
+what the screen before it said) unless that question takes several answers.
 There, `enter` would otherwise mean both *choose this one* and *I am done*, and
 a key meaning two things does the wrong one; the last stop is where being done
 happens instead.
@@ -123,7 +124,7 @@ happens instead.
 
 Leaving the ask is not an error and does not end the turn. The call comes back
 saying nobody answered and to ask in the prompt instead, and the agent carries
-on — usually by asking you the same thing in its own words, where you can reply
+on, usually by asking you the same thing in its own words, where you can reply
 however you like.
 
 The same is true where the window is too short to stand the panel in. The
@@ -133,5 +134,5 @@ each.
 ## Where it is not there
 
 A run whose output is not a terminal has nobody to ask, so the tool is not
-registered at all — not even for `tool_search` to find. Piping crucible's output
+registered at all, not even for `tool_search` to find. Piping crucible's output
 to a file is one of those runs.

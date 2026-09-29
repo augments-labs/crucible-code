@@ -20,6 +20,11 @@ and crucible runs the same way.
 
 ## The files
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/settings-dark.svg">
+  <img alt="Where a setting comes from, farthest layer first: your own ~/.crucible/config.json, then the project's .crucible/config.json and .crucible/config.local.json, then the command line, and the nearest layer wins. The two project files may set ordinary settings and tighten permissions, but never loosen permissions, choose a provider, credential or server, set an environment variable outside crucible's own names, or name a prompt-cache namespace; a scalar takes the nearest layer that set it, an object is merged key by key, and most lists add up." src="../assets/settings-light.svg" width="720">
+</picture>
+
 Three, read in this order. Nearer to the work wins.
 
 | File | Holds | Checked in? |
@@ -204,8 +209,10 @@ ran begins a new one, and so does the note crucible adds when a background
 command finishes. The exception is automatic recovery with nothing older to
 recap. Once this turn has finished a tool call, if the turns before it already
 fit the budget and the window is still full after old tool output is cleared,
-the whole conversation is recapped, this turn included. Left unset, crucible
-keeps the most recent 20,000 tokens.
+the whole conversation is recapped, this turn included. A line you queued
+while that call ran is left out of the recap and kept word for word, along with
+any lines queued after it. Left unset, crucible keeps the most recent 20,000
+tokens.
 
 `recap` is a ceiling rather than a requested length. Left unset, a structured
 recap may produce up to 10,240 tokens, further limited by the model's output
@@ -490,7 +497,7 @@ you with no way to send at all.
 
 | Key | Answers | Means |
 | --- | --- | --- |
-| `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; the other two override both. |
+| `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; `always` writes colour on a terminal even when `NO_COLOR` is set, and `never` writes none. Output that is not a terminal gets no colour whatever this says, and the model's markdown is kept as written. A `TERM` of `dumb`, or no `TERM` at all, still gets no colour, even under `always`, unless `COLORTERM` says `truecolor` or `24bit`. |
 | `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with. |
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in. |
@@ -719,8 +726,8 @@ two listings a week apart tell you whether the file changed.
 different question from whether you have allowed it and is not something
 allowing it would change. It says no for two reasons. One is a protocol whose
 first number is not the one this build speaks, so the two programs disagree
-about the shape of what crosses the wire, and no older crucible or newer one
-would help:
+about the shape of what crosses the wire. Every release so far that reads
+extensions speaks protocol 1, so no other version hosts such an extension:
 
 ```
   protocol  2.0, needs crucible 0.34.0
@@ -1082,9 +1089,14 @@ and never used.
 
 ## How layers combine
 
-A **scalar** takes the nearest layer that set it. An **object** is merged key by
-key, so a project naming one provider leaves your other one alone. A **list** is
-concatenated: every layer's entries are kept and none of them replaces another.
+A **scalar** takes the nearest layer that set it. An **object** is merged key
+by key, so a project naming one provider leaves your other one alone. A
+**list** is usually concatenated: every layer's entries are kept and none of
+them replaces another. Two things narrow instead. A project's sandbox network
+allowlist (`allowedDomains`) and socket list (`allowUnixSockets`) replace the
+ones it inherits and may only narrow them, as the [`sandbox`](#sandbox) section
+describes. A project's `promptCaching.allowedMechanisms` is intersected with
+the list above it, so it can only remove mechanisms.
 
 Say `~/.crucible/config.json` holds this:
 
@@ -1099,21 +1111,21 @@ and the project's `.crucible/config.json` holds this:
 
 ```json
 { "providers": { "openai": { "model": "gpt-5.6-sol" } },
-  "permissions": { "allow": ["bash(cargo test)"] } }
+  "permissions": { "deny": ["edit(.git/**)"] } }
 ```
 
 In that project: `openai` asks for `gpt-5.6-sol`, `anthropic` still asks for
-`claude-opus-5`, `toolDetail` is still `full`, and both permission rules are in
+`claude-opus-5`, `toolDetail` is still `full`, and both `deny` rules are in
 force.
 
-Concatenation is the only rule a list could have here. If a nearer layer
-replaced a farther one, a `.crucible/config.json` that mentions `deny` at all
-would silently drop every `deny` you wrote at home, and a checked-out
+Concatenation is the only rule the permission lists could have. If a nearer
+layer replaced a farther one, a `.crucible/config.json` that mentions `deny` at
+all would silently drop every `deny` you wrote at home, and a checked-out
 repository would be deciding what your own machine protects. Keeping both is
 safe precisely because `deny` wins wherever it came from.
 
-The cost is that a list cannot be shortened by a nearer layer, only added to.
-Removing an entry means editing the file that holds it.
+The cost is that a nearer layer cannot shorten a concatenated list, only add to
+it. Removing an entry means editing the file that holds it.
 
 ## Comments
 

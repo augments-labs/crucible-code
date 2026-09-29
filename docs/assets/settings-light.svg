@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 444" width="720" height="444" role="img" aria-label="Where a setting comes from, farthest layer first: your own ~/.crucible/config.json, then the project's .crucible/config.json and .crucible/config.local.json, then the command line, and the nearest layer wins. The two project files may set ordinary settings and tighten permissions, but never loosen permissions, choose a provider, credential or server, or set an environment variable outside crucible's own names; a scalar takes the nearest layer that set it, an object is merged key by key, and most lists add up.">
+  <title>Where a setting comes from</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#14161A"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0D6E68"/>
+    </marker>
+  </defs>
+
+  <!-- Nearer wins -->
+  <line x1="52" y1="28" x2="52" y2="315" stroke="#0D6E68" stroke-width="1.5" marker-end="url(#arrow-accent)"/>
+  <text x="52" y="336" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">nearer wins</text>
+
+  <!-- Your file -->
+  <rect x="80" y="28" width="320" height="52" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="240" y="49" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">~/.crucible/config.json</text>
+  <text x="240" y="68" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">yours; or $CRUCIBLE_CODE_HOME/config.json</text>
+  <text x="424" y="50" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">the only file that may widen</text>
+  <text x="424" y="66" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">/model, /theme and others save here</text>
+
+  <!-- In the workspace -->
+  <rect x="70" y="92" width="340" height="156" rx="10" fill="none" stroke="#0D6E68" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="82" y="108" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">In the workspace</text>
+
+  <rect x="80" y="120" width="320" height="52" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="240" y="141" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">.crucible/config.json</text>
+  <text x="240" y="160" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">checked in; everyone who clones gets it</text>
+
+  <rect x="80" y="184" width="320" height="52" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="240" y="205" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">.crucible/config.local.json</text>
+  <text x="240" y="224" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">this checkout; gitignore it</text>
+
+  <text x="424" y="112" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">May tighten, never loosen</text>
+  <text x="424" y="130" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">ask and deny rules; never mode or allow</text>
+  <text x="424" y="146" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">no provider, apiKeyEnv or baseUrl</text>
+  <text x="424" y="162" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">no custom prompt or extraDirectories</text>
+  <text x="424" y="178" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">no extensions or mcp.servers</text>
+  <text x="424" y="194" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">env: CRUCIBLE_CODE_ names only</text>
+  <text x="424" y="210" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">sandbox: may turn on, never off</text>
+  <text x="424" y="226" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">promptCaching: narrow; no namespace</text>
+
+  <!-- The command line -->
+  <rect x="80" y="264" width="320" height="52" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="240" y="285" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">The command line</text>
+  <text x="240" y="304" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">--model and --effort</text>
+  <text x="424" y="282" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">beats anything a file says;</text>
+  <text x="424" y="298" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">so does a CRUCIBLE_CODE_ variable</text>
+  <text x="424" y="314" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">set in the shell crucible starts in</text>
+
+  <!-- How layers combine -->
+  <line x1="240" y1="316" x2="240" y2="351" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="80" y="352" width="600" height="76" rx="8" fill="none" stroke="#14161A" stroke-width="2"/>
+  <text x="380" y="376" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">How layers combine</text>
+  <text x="180" y="400" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#14161A">a scalar</text>
+  <text x="180" y="417" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">the nearest layer that set it</text>
+  <text x="380" y="400" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#14161A">an object</text>
+  <text x="380" y="417" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">merged key by key</text>
+  <text x="580" y="400" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#14161A">a list</text>
+  <text x="580" y="417" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">most add up across layers</text>
+</svg>

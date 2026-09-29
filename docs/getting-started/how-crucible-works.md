@@ -31,9 +31,12 @@ through.
 
 ## Tool calls
 
-Each call is decided before it runs: your [rules](../permissions/rules.md)
-speak first, the [mode](../permissions/modes.md) answers for calls no rule
-mentions, and when what they settle on is "ask", the
+Each call is decided before it runs. A `write` or `edit` of
+[crucible's own configuration files](../permissions/permissions.md#the-files-the-file-tools-may-not-write)
+in a directory the workspace reaches is refused before anything else is asked.
+Otherwise your [rules](../permissions/rules.md) speak first, the
+[mode](../permissions/modes.md) answers for calls no rule mentions, and when
+what they settle on is "ask", the
 [question](../permissions/permissions.md#the-question) appears. The two kinds
 of no differ. Your no at the question ends the turn, and any call still
 waiting is answered as not run. A `deny` rule refuses one call: the model is
@@ -72,8 +75,8 @@ answers without asking for a tool. It can also end sooner, for example when:
   in
   [When a response goes away](../providers/providers.md#when-a-response-goes-away).
 - The conversation no longer fits the model's window and crucible cannot make
-  room, for example because making room freed nothing or because
-  `compaction.when` is `never`; see
+  room, for example because the recap came back incomplete, because making
+  room freed nothing, or because `compaction.when` is `never`; see
   [When the window fills](../sessions/sessions.md#when-the-window-fills).
 - The tools' output within one turn grows past what crucible will hold for a
   turn.

@@ -633,8 +633,8 @@ fn a_ground_the_terminal_answered_still_outranks_the_one_the_table_assumes() {
 #[test]
 fn the_band_is_nothing_at_all_where_there_is_no_colour() {
     // The one state left in which the row takes no ground, and it is the state
-    // a reader asked for: `NO_COLOR`, `--color never`, or output that is not a
-    // terminal at all.
+    // a reader asked for: `NO_COLOR`, `output.color` set to `never`, or output
+    // that is not a terminal at all.
     for theme in THEMES {
         for ground in [None, Some((0, 0, 0)), Some((255, 255, 255))] {
             let palette = wearing(Depth::Off, theme, ground);

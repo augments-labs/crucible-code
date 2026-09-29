@@ -173,22 +173,24 @@ impl Said {
     }
 }
 
-/// Moves the cursor within a many-rowed line, where there is a row to reach.
+/// Moves the cursor between the lines of a prompt that holds more than one,
+/// where there is a line to reach.
 ///
 /// Whether the editor moved is the answer a caller keys a frame on, and whether
-/// the key was the line's at all: a one-line line has no row above or below, so
-/// the arrows stay with whatever is open above the box instead.
+/// the key was the line's at all: a prompt with no newline in it has no line
+/// above or below, however many rows it wraps onto, so the arrows stay with
+/// whatever is open above the box instead.
 fn vertical(editor: &mut Editor, key: Key) -> bool {
     editor.moves(key) && editor.press(key) == Typed::Changed
 }
 
 /// The three claims on an arrow key, answered in order.
 ///
-/// The line first, where it wrapped and has a row to reach; then whatever list
-/// is standing over the box; then the prompts this directory has already been
-/// asked. Last of the three because it is the one that replaces the line rather
-/// than moving within it: a list still choosing and a line still being read
-/// through both have the stronger claim on the key.
+/// The line first, where it holds a newline and has a line to reach; then
+/// whatever list is standing over the box; then the prompts this directory has
+/// already been asked. Last of the three because it is the one that replaces
+/// the line rather than moving within it: a list still choosing and a line
+/// still being read through both have the stronger claim on the key.
 ///
 /// One function for both loops. The key means the same thing while a turn runs
 /// as it does between turns, and two copies of an order are two chances for it
@@ -938,10 +940,10 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// to be typed into and Esc closes the view rather than stopping the turn behind
 /// it.
 ///
-/// Stepping the mode is not among them: the runner that holds it is on
-/// the worker thread for the length of the turn, and a key that moved the row
-/// on screen and nothing else would be a lie about what the next tool call
-/// costs.
+/// Shift+Tab steps the mode, but for the next turn: the runner that holds it
+/// is on the worker thread for the length of the turn, so the step waits in
+/// the pending slot and the row under the box shows the mode stepped to. The
+/// running turn keeps the mode it began under.
 #[allow(clippy::too_many_lines)]
 pub(super) fn during<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -1070,8 +1072,9 @@ pub(super) fn during<T: Terminal>(
             // running turn is decided under was settled before it ran, so the
             // step cannot reach the runner on the worker — it goes into the
             // pending slot, and the row under the box says which mode that is,
-            // marked for the turn it lands on. The step is read off the slot's
-            // last value, or off the running mode the row was frozen with.
+            // in the words the running mode is said in. The step is read off
+            // the slot's last value, or off the running mode the row was
+            // frozen with.
             Meant::Cycle => {
                 let next = terms.pending_mode.get().unwrap_or(says.running_mode).next();
                 terms.pending_mode.set(Some(next));
@@ -1159,13 +1162,14 @@ pub(super) fn during<T: Terminal>(
                 }
 
                 // The line is finished, and what finished it was whichever
-                // press `input.send` says finishes one. Steered first, so the
-                // running turn works it in at its next pass; then queued,
-                // because a turn already finishing takes nothing and the line
-                // is still owed a turn of its own. Whichever happens, it leaves
-                // the queue: the turn reports the lines it reached, and the
-                // loop that reads that drops them. The queue takes the editor
-                // empty, so the text is read off it before `queue` clears it.
+                // press `input.send` says finishes one. Queued first, because a
+                // turn already finishing takes nothing and the line is still
+                // owed a turn of its own; then, only if the queue took it,
+                // offered to the running turn to work in at its next pass. A
+                // line the queue refuses stays in the box and reaches nobody.
+                // Whichever happens to a taken line, it leaves the queue: the
+                // turn reports the lines it reached, and the loop that reads
+                // that drops them.
                 Typed::Submitted => {
                     // A slash command is not a line for the turn: it is answered
                     // on this thread, the way it is between turns. But the panel
@@ -1206,10 +1210,13 @@ pub(super) fn during<T: Terminal>(
                         *opened_list = Opened::default();
                         return Ok(Meanwhile::Command(owned));
                     }
-                    let line = editor.text().to_owned();
-                    recalling.keep(&line);
-                    steer.say(line);
-                    notice = queue(editor, queued, turning, renderer.columns(), style);
+                    recalling.keep(editor.text());
+                    let reading = queueing::Reading {
+                        queue: queued,
+                        editor,
+                        steer,
+                    };
+                    notice = queue(reading, turning, renderer.columns(), style);
                     moved = true;
                 }
 
@@ -1340,8 +1347,12 @@ pub(super) fn during<T: Terminal>(
     Ok(Meanwhile::Nothing)
 }
 
-/// Moves the finished line behind the running turn, and says what the row under
-/// the box owes for it.
+/// Moves the finished line behind the running turn, offers it to that turn, and
+/// says what the row under the box owes for it.
+///
+/// Offered only once the queue has taken it. A refused line stays in the box,
+/// and one the turn had been offered as well would reach the agent while the
+/// reader still held it, once more for every enter against a full queue.
 ///
 /// The row above the box is read again here rather than on the next thing to
 /// move, because what it names is exactly the line that has just gone: a box
@@ -1349,15 +1360,25 @@ pub(super) fn during<T: Terminal>(
 /// this row exists to answer. `None` where it was taken, which is also what
 /// clears whatever the row was saying before.
 fn queue(
-    editor: &mut Editor,
-    queued: &mut Prompts,
+    reading: queueing::Reading<'_>,
     turning: &mut Turning,
     columns: usize,
     style: Style,
 ) -> Option<&'static str> {
-    let retained = queued.accept(editor);
+    let queueing::Reading {
+        queue,
+        editor,
+        steer,
+    } = reading;
 
-    turning.queueing(queued.waiting_all(), columns, style);
+    let retained = queue.accept(editor);
+    if retained == Retained::Accepted
+        && let Some(line) = queue.lines.back()
+    {
+        steer.say(line.clone());
+    }
+
+    turning.queueing(queue.waiting_all(), columns, style);
     matches!(retained, Retained::Refused).then_some(QUEUED_LIMITED)
 }
 
@@ -1668,17 +1689,18 @@ pub(super) struct During<'a> {
     /// Where a line typed now is pushed so the running turn works it in, between
     /// one pass of asking and running tools and the next.
     ///
-    /// The queue above still keeps the line, and its own turn answers it after:
-    /// steering is the agent adjusting course at once, not a reason the question
-    /// stops being one. The two are what a mid-turn Enter means, and this is the
-    /// half the turn in front of it reads.
+    /// Pushed only once the queue above has taken the line, and the queue still
+    /// keeps it, so its own turn answers it after: steering is the agent
+    /// adjusting course at once, not a reason the question stops being one. The
+    /// two are what a mid-turn Enter means, and this is the half the turn in
+    /// front of it reads.
     pub(super) steer: &'a crucible_runtime::Steer,
     /// Where a mode stepped to mid-turn is held until the runner is back.
     ///
     /// The runner holding the mode is on the worker for the turn's length, so
     /// a shift+tab pressed at it steps a pending slot here instead, and the
-    /// row under the box says which mode that is — marked for the next turn,
-    /// so the press is not dead and the running turn's mode is not lied about.
+    /// row under the box says which mode that is, so the press is not dead;
+    /// the running turn keeps the mode it began under.
     pub(super) terms: &'a Terms,
     /// When Ctrl-C was last pressed against an empty line, if it is still the
     /// last key pressed.

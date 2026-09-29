@@ -160,12 +160,16 @@ impl Held {
         let named: Vec<&str> = question.answers().map(Answer::answer).collect();
         let last = named.len();
 
+        // Where several may be chosen, the written line is one of them: it is
+        // chosen by having something in it, and it comes last because it is
+        // offered last.
         let chosen: Vec<String> = if question.takes_several() {
             named
                 .iter()
                 .enumerate()
                 .filter(|(at, _)| self.chosen.get(*at).copied().unwrap_or_default())
                 .map(|(_, name)| (*name).to_owned())
+                .chain((!written.is_empty()).then(|| written.to_owned()))
                 .collect()
         } else if self.marked == last {
             if written.is_empty() {

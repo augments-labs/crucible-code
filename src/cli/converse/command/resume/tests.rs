@@ -133,6 +133,7 @@ fn terms(sample: &Sample) -> Terms {
                 has: named.name.into(),
             })
         }),
+        environment: Box::new(|_| None),
         sessions: sample.logs(),
         workspace: sample.workspace(),
         sending: crucible_tui::Sending::default(),

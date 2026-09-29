@@ -48,7 +48,8 @@ use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
 use crucible_app::client::Ended;
-use crucible_app::providers::{Served, Serving, unasked};
+use crucible_app::providers::{Lookup, Served, Serving, available};
+use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
@@ -216,20 +217,19 @@ pub(crate) struct Terms {
     /// A model picked mid-turn, held for the turn the loop starts next.
     ///
     /// The runner is on the worker for the running turn's length, so a pick
-    /// made then cannot reach it — it is held here and applied at the next
-    /// turn's start, when the runner is this side's again. `/clear` takes it
-    /// with the rest of the session: a pick made for a session being left is
-    /// not one the new one asked for.
+    /// made then cannot reach it — it is held here and applied as that turn
+    /// ends, when the runner is this side's again, so the row between turns
+    /// names the model the next one is asked under.
     pub(crate) pending_model: Cell<Option<(Served, String)>>,
     /// A mode shift+tab stepped to mid-turn, held for the turn the loop starts
     /// next.
     ///
     /// The runner holding the mode is on the worker for a running turn's
     /// length, so a step made then cannot reach it — it is held here and put
-    /// on the runner at the next turn's start, when the runner is this side's
-    /// again. The row under the box says the step at once, marked for the next
-    /// turn, so the press is not dead and the row is not a lie about the mode
-    /// the running turn is decided under.
+    /// on the runner as that turn ends, when the runner is this side's again.
+    /// The row under the box says the step at once, so the press is not dead;
+    /// the running turn keeps the mode it began under, and between turns the
+    /// row is the runner's own mode again, which a step made there moves from.
     pub(crate) pending_mode: Cell<Option<crucible_tools::Mode>>,
     /// The settled configuration model limits are read from. Kept in memory so
     /// `/model` resolves a new name exactly as startup did without touching a
@@ -252,6 +252,12 @@ pub(crate) struct Terms {
     /// the session asks from the next turn is what the next run here would ask,
     /// resolved once and out of the same files.
     pub(crate) serving: Serving,
+    /// Reads a variable from the environment the launch was started in, which
+    /// is where a key can be exported rather than stored.
+    ///
+    /// Handed in beside [`serving`](Self::serving), which reads the same one,
+    /// so a session with no environment to offer can say so.
+    pub(crate) environment: Lookup,
     /// Where this machine keeps its session logs.
     pub(crate) sessions: PathBuf,
     /// The directory this conversation is about, which is what decides whose
@@ -306,6 +312,27 @@ impl Terms {
             logins: &self.logins,
             choosing: &self.choosing,
         }
+    }
+
+    /// What a session with no model says, read off what this machine holds now.
+    ///
+    /// Now rather than at the launch, because a `/logout` can take the last key
+    /// away or leave another: the welcome said it for the credentials there
+    /// were then, and a prompt saying it again says it for the ones there are.
+    pub(crate) fn unasked(&self, provider: Option<&str>) -> &'static str {
+        // With a provider chosen the missing piece is the model whatever else
+        // is set up, so the credentials are read only when they decide it.
+        let any = provider.is_none() && {
+            let stored = self.logins.read();
+            let auth = ProviderAuth {
+                settings: &self.settings,
+                from: &*self.environment,
+                stored: &stored,
+                subscriptions: &self.subscriptions,
+            };
+            available(&self.providers.snapshot(), auth).next().is_some()
+        };
+        crucible_app::providers::unasked(provider, any)
     }
 }
 
@@ -673,7 +700,7 @@ pub(crate) fn converse<T: Terminal>(
         // said again here rather than only under the welcome the session opened
         // with — by now that has scrolled away.
         if conversation.runner().model().is_empty() {
-            let said = unasked(conversation.serving());
+            let said = terms.unasked(conversation.serving());
 
             // Down a pipe there is nobody to type `/model`, so carrying on
             // reads every remaining line and answers none of them — and ends
@@ -811,31 +838,16 @@ fn unboxed<T: Terminal>(
 ///
 /// The three places a turn or a compaction starts do the same things after it:
 /// take the runner back, say once where the log has stopped recording, say
-/// what a request for room that changed nothing came to, and find out whether
-/// something pressed while it ran ends the session. `true` is the session
-/// leaving.
+/// what a request for room that changed nothing came to, find out whether
+/// something pressed while it ran ends the session, and put a model picked and
+/// a mode stepped to while it ran on the runner. `true` is the session leaving.
 fn ran<T: Terminal>(
-    mut conversation: Conversation,
+    conversation: Conversation,
     renderer: &mut Renderer<T>,
     terms: &Terms,
     work: Work,
     held: &mut Held<'_>,
 ) -> Result<(Conversation, bool), Fatal> {
-    // A model picked mid-turn is applied now, before the turn starts: the
-    // runner is this side's again, and the pick was made for the request about
-    // to go out rather than for the one already answered.
-    if let Some((provider, name)) = terms.pending_model.take() {
-        command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
-    }
-
-    // A mode stepped to mid-turn is put on the runner now, before the turn
-    // starts: the runner is this side's again, and the step was made for the
-    // requests about to go out rather than for the one already decided.
-    if let Some(mode) = terms.pending_mode.take() {
-        let asked = Command::SetMode(crucible_app::client::mode(mode));
-        terms.perform(&mut conversation, asked);
-    }
-
     // Only a line somebody typed has a reply to hang under it, which is why
     // this asks who asked rather than what ran: room made because the window
     // filled, or because a resumed session was picked up as notes, was nobody's
@@ -870,10 +882,28 @@ fn ran<T: Terminal>(
         renderer.subordinate(from, style.glyphs())?;
     }
 
-    Ok((
-        took.conversation,
-        matches!(took.meanwhile, typing::Meanwhile::Leaving),
-    ))
+    let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
+    let mut conversation = took.conversation;
+
+    // A model picked and a mode stepped to while the work ran are put on the
+    // runner now, the moment it is this side's again, so the row between turns
+    // and the next turn agree, and a step made between them moves from the
+    // mode the row shows. After the reply above, which answered the line that
+    // asked for this work. A session leaving drops both, a confirmed `/model`
+    // pick included: it has no next turn, and the pick is not written down.
+    let model = terms.pending_model.take();
+    let mode = terms.pending_mode.take();
+    if !leaving {
+        if let Some((provider, name)) = model {
+            command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
+        }
+        if let Some(mode) = mode {
+            let asked = Command::SetMode(crucible_app::client::mode(mode));
+            terms.perform(&mut conversation, asked);
+        }
+    }
+
+    Ok((conversation, leaving))
 }
 
 /// One turn, start to finish.
@@ -1237,7 +1267,7 @@ impl Turn<'_, '_> {
         })
     }
 
-    /// Runs a command whose pick the turn started next applies.
+    /// Runs a command whose pick is held for the turn started next.
     ///
     /// `/model` is the one of these. The picker opens over the running turn,
     /// the consequence is said and agreed to, and the pick is held — the

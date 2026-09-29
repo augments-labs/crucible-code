@@ -639,6 +639,44 @@ fn removing_the_only_active_credential_disables_the_current_session() {
 }
 
 #[test]
+fn logging_out_the_serving_provider_with_another_kept_says_choose_one() {
+    // The same logout with a second key still stored leaves a provider set up
+    // and none chosen, which is what the welcome calls "no provider selected".
+    // The warning is worked out when the prompt is sent, so it says that rather
+    // than the sentence for a machine with no key at all.
+    let sample = Sample::new("logout-active-other-kept");
+    sample.stored("openai");
+    sample.stored("anthropic");
+    let mut terms = plain();
+    terms.logins = sample.store();
+    let conversation = served_by("openai", |session| {
+        scripted(Script::new(Vec::new()), Tools::new(), session)
+    });
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/logout openai\nhello\n".to_vec());
+
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to finish");
+
+    let written = renderer.terminal().written();
+    assert!(
+        written.contains("active session is now signed out"),
+        "{written}"
+    );
+    assert!(written.contains("No provider selected"), "{written}");
+    assert!(!written.contains("No models available"), "{written}");
+}
+
+#[test]
 fn logout_down_a_pipe_lists_what_is_logged_in_and_forgets_none_of_it() {
     // No keyboard, so the panel would be a session that stopped — this test
     // hanging is that defect. The names it would have offered are written

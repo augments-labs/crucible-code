@@ -336,9 +336,8 @@ fn esc_closes_it_the_way_esc_closes_everything_else() {
 
 #[test]
 fn the_keys_the_line_underneath_owns_take_the_view_with_them() {
-    // Ctrl-C throws the line away and Ctrl-D ends the session, and both reach
-    // the line whatever is standing over it. The view goes first so that the
-    // key does what it has always done rather than being swallowed here.
+    // Ctrl-C and Ctrl-D belong to the line, but the view is what is standing:
+    // a press closes it and is consumed there, so the line sees only the next one.
     for key in [Key::Interrupt, Key::Eof] {
         let mut open = standing(3, 20);
         assert_eq!(moving(Pressed::Key(key), &mut open), Moved::Left, "{key:?}");

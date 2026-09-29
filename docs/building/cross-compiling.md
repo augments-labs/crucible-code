@@ -2,7 +2,7 @@
 
 Every published artifact is built natively, on a runner of its own
 architecture. Nothing a release ships is cross-compiled, and this page does not
-change that — what it is for is the other question: whether a change compiles
+change that. What it is for is the other question: whether a change compiles
 for the six platforms that are not the one in front of you, answered in a minute
 rather than in a round trip through CI.
 
@@ -44,7 +44,7 @@ saying it has no Xcode installation to read an SDK version out of; it links
 against its own copy and the binary is a real Mach-O executable either way.
 
 Linux ARM64 has a second route that needs no zig, if the distribution packages a
-cross toolchain — `gcc-aarch64-linux-gnu` on Debian and Ubuntu — and is told
+cross toolchain (`gcc-aarch64-linux-gnu` on Debian and Ubuntu) and is told
 which linker to use:
 
 ```bash
@@ -53,7 +53,7 @@ CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
 ```
 
 `cargo zigbuild` is the one to reach for anyway, because it also chooses which
-glibc to build against — `aarch64-unknown-linux-gnu.2.34` targets the floor the
+glibc to build against: `aarch64-unknown-linux-gnu.2.34` targets the floor the
 releases hold rather than whatever the host happens to have.
 
 **Windows ARM64 does not cross-build from Linux today.** `cargo-xwin` hands
@@ -65,6 +65,6 @@ that build is what proves it.
 ## What a cross build does not answer
 
 It compiles and links; it does not run. The tests for a target are run on that
-platform — CI runs them on Linux, macOS and Windows for every pull request — so
+platform (CI runs them on Linux, macOS and Windows for every pull request), so
 a cross build catches a platform-specific compile error and nothing that
 happens afterwards. `scripts/sh/check.sh` is still the gate.
