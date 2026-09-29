@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **The browser `/login` opens no longer inherits your provider keys.** It was
+  started with crucible's whole environment, so a browser opened by it carried
+  `ANTHROPIC_API_KEY` and the other key variables for as long as it ran. Each
+  provider's usual variable and any `apiKeyEnv` names are now left out; the
+  rest of the environment stays so the browser can still open.
 - **A prompt refused by a full queue no longer reaches the running turn.**
   Past 64 waiting prompts or 1 MiB, the prompt stayed in the box as documented,
   but the turn was handed it anyway, once more for every press of Enter. It now

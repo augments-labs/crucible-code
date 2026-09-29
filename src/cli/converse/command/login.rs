@@ -54,7 +54,7 @@ use crate::cli::Fatal;
 use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Picked, Taken};
 use crate::cli::converse::secret::{self, Asked};
-use crucible_app::providers::{Served, offered};
+use crucible_app::providers::{Served, key_variables, offered};
 use crucible_app::subscription::{Account, Route};
 
 use super::{Terms, about, say};
@@ -361,12 +361,15 @@ fn subscribed<T: Terminal>(
         Err(problem) => return say(renderer, &format!("! {problem}")),
     };
 
+    // Read once: nothing a login does moves where a key is read from.
+    let providers = terms.providers.snapshot();
+    let withheld: Vec<&str> = key_variables(&providers, &terms.settings).collect();
     let mut view = LoginView::new(terms.style().glyphs());
     view.show(renderer, terms, route.title())?;
     loop {
         match attempt.wait(Duration::from_millis(50)) {
             Ok(Some(update)) => {
-                if view.apply(update) {
+                if view.apply(update, &withheld) {
                     let Some(named) =
                         offered(&terms.providers.snapshot()).find(|one| one.name == provider)
                     else {
@@ -422,7 +425,9 @@ impl LoginView {
         }
     }
 
-    fn apply(&mut self, update: LoginUpdate) -> bool {
+    /// Takes one update from the login, opening the browser without the
+    /// `withheld` variables when the update is the page to visit.
+    fn apply(&mut self, update: LoginUpdate, withheld: &[&str]) -> bool {
         match update {
             LoginUpdate::Authorize {
                 browser_uri,
@@ -430,7 +435,8 @@ impl LoginView {
                 user_code,
                 manual,
             } => {
-                self.browser_failed = crate::cli::browser::open(&browser_uri).is_err();
+                self.browser_failed =
+                    crate::cli::browser::open(&browser_uri, withheld.iter().copied()).is_err();
                 self.page = Some((shown_uri, user_code));
                 self.accepts_manual = manual;
                 self.status = Cow::Borrowed("a browser should open; waiting for authorization…");

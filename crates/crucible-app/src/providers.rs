@@ -631,6 +631,21 @@ pub fn chosen(
     Ok(second.is_none().then_some(first))
 }
 
+/// Every variable a key could be read from in this generation: each
+/// provider's own, and the one `apiKeyEnv` names in its place.
+///
+/// Both, because pointing `apiKeyEnv` elsewhere does not empty the usual
+/// variable, and a key exported before the setting was written is still a key.
+/// A program crucible starts that needs the rest of the environment, the way a
+/// browser does, is started without these.
+pub fn key_variables<'a>(
+    providers: &'a Providers,
+    settings: &'a Settings,
+) -> impl Iterator<Item = &'a str> + 'a {
+    offered(providers)
+        .flat_map(move |one| std::iter::once(one.key).chain(settings.api_key_env(one.name)))
+}
+
 /// Every provider crucible holds a usable credential for, in declaration order.
 ///
 /// Two places to look and one entry either way. A provider whose credential is
