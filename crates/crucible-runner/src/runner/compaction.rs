@@ -522,7 +522,7 @@ impl Runner {
             // The standalone recap deliberately sends no system prompt or
             // tools, so its cache identity must bind those exact absences.
             instructions: b"",
-            tool_generation: "compaction-no-tools-v1",
+            tools: &[],
         };
         let mut resource_facts = Vec::new();
         let prepared = match (

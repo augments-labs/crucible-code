@@ -1403,6 +1403,57 @@ fn a_response_that_went_away_before_it_said_anything_is_asked_for_again() {
 }
 
 #[test]
+fn a_session_picked_up_by_a_later_run_is_asked_under_the_scope_it_was_cached_under() {
+    // Session isolation is the documented default: every turn of one
+    // conversation may share a cached prefix, including the turns a later run
+    // asks after picking the session up. The scope is what a provider's
+    // routing key and a persistent cache's owner are derived from, so a scope
+    // that moved with the run would give each run a cache of its own. Both
+    // runs sign in with the same key, which a stored credential says by the
+    // same scope each time.
+    let credential = crucible_types::CredentialScopeId::new();
+    let store = Recording::started("one-session");
+    let mut first = Scripted::recording(
+        Script::new(vec![saying("one")]).with_credential_scope(credential),
+        Tools::new(),
+        Verdict::Allow,
+        Arc::clone(&store),
+    );
+    assert_eq!(first.turn("first").unwrap(), StopReason::Yielded);
+
+    let (picked, transcript) = store.reopened();
+    let started = Scripted::recording(
+        Script::new(vec![saying("two")]).with_credential_scope(credential),
+        Tools::new(),
+        Verdict::Allow,
+        picked,
+    );
+    let mut later = Scripted {
+        runner: started.runner.resuming(transcript),
+        ..started
+    };
+    assert_eq!(later.turn("second").unwrap(), StopReason::Yielded);
+
+    let scope = |scripted: &Scripted| {
+        let sent = scripted.sent.lock().unwrap();
+        let [one] = sent.as_slice() else {
+            panic!("one request for the turn")
+        };
+        one.cache_identity
+            .map(crucible_models::PromptCacheIdentity::scope)
+    };
+    assert!(
+        scope(&first).is_some(),
+        "the first run was not cached at all"
+    );
+    assert_eq!(
+        scope(&first),
+        scope(&later),
+        "the run that picked the session up was given a scope of its own"
+    );
+}
+
+#[test]
 fn usage_reported_before_an_ambiguous_retry_is_attributed_once_to_each_attempt() {
     let first_usage = ProviderUsage::new(
         InputTokenUsage::inclusive_read_write(Some(100), Some(10), Some(5)).unwrap(),

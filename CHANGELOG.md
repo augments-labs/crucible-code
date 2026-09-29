@@ -10,6 +10,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A prompt cache kept for a session, workspace or user now outlasts the run
+  that made it.** Each start gave that session, workspace or user a cache scope
+  of its own, so OpenAI and Kimi were sent a new routing key and a persistent
+  cache made by one run was never found by the next. The scope now follows the
+  tools a request offers rather than the run that listed them, as
+  `isolationScope` describes.
 - **On Windows, a renewed subscription sign-in is no longer lost while another
   crucible is reading `auth.json`.** Writing the rotated tokens failed with
   "Access is denied" whenever a second crucible had the file open at that
