@@ -24,10 +24,11 @@ wrong in a way nobody notices until a session has already gone wrong.
 The table above is about the models. What a request actually carries is decided
 by the protocol crucible speaks to that provider, and each has its own way of
 spelling a picture: Anthropic Messages an `image` block, OpenAI Responses an
-`input_image` part, Moonshot a `data:` URL inside an `image_url`.
-Google Interactions uses typed media parts. Its function results admit text and
-images; PDFs, audio and video returned by tools follow the complete batch of
-function results as labelled user-input attachments naming their owning call.
+`input_image` part, Moonshot a `data:` URL inside an `image_url`, and Google
+Interactions an `image` part with its `mime_type` beside the bytes. Google's
+function results admit text and pictures; PDFs, audio and video that tools
+return follow the whole batch of function results as labelled user-input
+attachments, each naming the call it came from.
 
 A model reading a kind that its provider's protocol has no shape for is a kind
 crucible does not send. Both halves have to agree, and the narrower of the two is

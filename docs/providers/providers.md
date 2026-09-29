@@ -176,30 +176,31 @@ models that refuse the field outright. Naming one for a model that does not take
 it is refused by the vendor rather than dropped here, the same bargain a model
 name is already on.
 
-A word that is not a rung is refused before anything is drawn:
+A word that is not a rung is refused before anything is drawn, and crucible
+exits with status 2:
 
 ```
-crucible: no effort called maximum; crucible takes low, medium, high, xhigh, max
+error: invalid value 'maximum' for '--effort <RUNG>': no effort called maximum; crucible takes low, medium, high, xhigh, max
 ```
 
 Where a rung was chosen, the row under the prompt box says so after the model.
 Where none was, nothing is drawn in its place: the rung in force is then the
 vendor's, and crucible is never told which it picked.
 
-Mid-session, `/effort` stands a ladder over the rungs the model in force serves
+Mid-session, `/effort` stands a ladder over the rungs the model in force serves,
 and `/effort <rung>` takes one outright. The ladder is a track with the rungs
-written under it,
-`Faster` at one end and `Smarter` at the other; the left and right arrows move
-the mark, Enter takes what is under it and Escape leaves it. The same rungs are
-on the strip beneath the shelf `/model` stands, so a session settling both at
-once settles them in one visit, and `/effort` is the way to change the rung
-without touching the model. It is stood over a
-model by name and asks which model is being asked first, since a rung is one
-word in one request and what it buys is that model's to say. Either way it applies from the next turn on and is written to
-`~/.crucible/config.json` beside the model, so the next run here asks for the
-same. There is no way back to asking for nothing from inside a session. A rung
-you can see on the screen cannot be un-seen by being handed a default this
-program is never told the name of. Remove the key from the file for that.
+written under it, `Faster` at one end and `Smarter` at the other: the left and
+right arrows move the mark, Enter takes what is under it and Escape leaves it.
+Its title names the model, because a rung is one word in one request and what
+it buys is that model's to say, and with no model chosen yet `/effort` says so
+instead of standing one. The same rungs are on the strip beneath the shelf
+`/model` stands, so settling both takes one visit, and `/effort` changes the
+rung without touching the model. Either way the rung applies from the next turn
+on and is written to `~/.crucible/config.json` beside the model, so the next run
+here asks for the same. There is no way back to asking for nothing from inside
+a session: a rung you can see on the screen cannot be un-seen by being handed a
+default this program is never told the name of. Remove the key from the file
+for that.
 
 ### Asking crucible what it is
 
@@ -479,7 +480,7 @@ while it does, and <kbd>Esc</kbd> ends the wait. An attempt that failed leaves
 nothing in the transcript, and nothing is asked again once a word of the answer
 has arrived. Those words are on screen already, and a second answer would be
 written underneath the half of the first one you have read. A failure that
-outlives both goes is reported as itself.
+outlasts both retries is reported as itself.
 
 A refusal about the request rather than the moment is reported the first time: a
 key without access, a model name nobody serves, a response that did not parse.
