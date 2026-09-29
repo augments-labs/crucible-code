@@ -312,10 +312,11 @@ it says why. <kbd>Esc</kbd> asks the turn to stop. <kbd>Shift-Tab</kbd> still
 steps the mode, but the running turn keeps the one it started under. The row and
 the colour of the box show the mode you stepped to at once, so for the rest of
 the turn they name the mode the next turn will run in rather than the one this
-turn's tools are asked under, and the step is put on the session as that next
-turn starts. <kbd>Ctrl+C</kbd> means what it means at the prompt: it throws away
-the line in the box, and against an empty box it offers to leave, where a second
-press within two seconds asks the turn to stop and leaves.
+turn's tools are asked under. The step is put on the session as this turn
+ends, so the row between turns still shows it. <kbd>Ctrl+C</kbd> means what it
+means at the prompt: it throws away the line in the box, and against an empty
+box it offers to leave, where a second press within two seconds asks the turn
+to stop and leaves.
 
 One row stands between the answer and the box for as long as the turn runs, and
 a second joins it above while a tool is out:

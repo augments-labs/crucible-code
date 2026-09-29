@@ -70,7 +70,8 @@ for the turn that starts after: the turn in flight was decided under the mode
 that was on screen when it began, and nothing about it is reopened mid-turn. So
 no call is ever decided under a mode other than the one that was on screen when
 its turn started. The step you make over a running turn is the mode the *next*
-one runs under.
+one runs under, and it is in force the moment the running turn ends, so the row
+between turns shows it and a step made there moves on from it.
 
 A step changes one thing and no others. The rules you wrote hold exactly as
 they did, and anything already allowed for the session stays allowed.
