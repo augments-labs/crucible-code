@@ -17,7 +17,9 @@
 //! refused with `502` rather than connected around, as is a proxy that
 //! cannot be reached or does not open the tunnel within the handshake's
 //! bound. A permitted host this machine cannot resolve gets `502` too, so a
-//! command does not take it for a denial.
+//! command does not take it for a denial. A proxy that answers `407` is not
+//! asked again for the host's other addresses, since it would only be sent the
+//! credential it refused.
 
 mod body;
 mod request;
@@ -67,6 +69,10 @@ const PANIC_RESPONSE: u8 = 2;
 /// The next lookup fails, standing in for a host this machine cannot resolve.
 #[cfg(test)]
 const FAIL_LOOKUP: u8 = 3;
+/// Every address a lookup finds is tried twice, standing in for a host with
+/// several.
+#[cfg(test)]
+const REPEAT_ADDRESSES: u8 = 4;
 
 /// The forms of a proxy's `userinfo` a command could print: the password, as
 /// its proxy URL carries it, and the whole userinfo in base64, as its
@@ -238,6 +244,11 @@ impl Mediator {
     #[cfg(test)]
     fn inject_lookup_failure(&self) {
         self.fault.store(FAIL_LOOKUP, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    fn inject_repeated_addresses(&self) {
+        self.fault.store(REPEAT_ADDRESSES, Ordering::Release);
     }
 
     /// Replaces the listener's thread with one that never finishes, standing
@@ -568,6 +579,16 @@ fn prepare(
         addresses
     };
     let addresses = addresses.map_err(|_| Refusal::Unresolved)?;
+    #[cfg(test)]
+    let addresses = if context
+        .fault
+        .compare_exchange(REPEAT_ADDRESSES, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        addresses.repeat(2)
+    } else {
+        addresses
+    };
     let mut refusal = Refusal::Denied;
     for address in addresses {
         if life.check().is_err() {
@@ -588,8 +609,11 @@ fn prepare(
         match reached {
             Ok(origin) if life.check().is_ok() => return Ok((request, origin)),
             Ok(_) => return Err(refusal),
-            // Every other address goes to the same proxy, with the same result.
-            Err(Refusal::Upstream(problem @ (Upstream::Unsupported | Upstream::Unreachable))) => {
+            // Every other address goes to the same proxy with the same result,
+            // and one that refused the credential would only be sent it again.
+            Err(Refusal::Upstream(
+                problem @ (Upstream::Unsupported | Upstream::Unreachable | Upstream::Refused(407)),
+            )) => {
                 return Err(Refusal::Upstream(problem));
             }
             Err(problem) => refusal = problem,

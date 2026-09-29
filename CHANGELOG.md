@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A proxy that answers `407` to its password is sent it once per connection,
+  not once per address.** A sandboxed command reaching a host with several
+  addresses sent the refused credential for each of them, up to sixteen times,
+  which can lock the account on a proxy that counts failed sign-ins. The first
+  `407` now ends the attempt.
 - **A prompt cache kept for a session, workspace or user now outlasts the run
   that made it.** Each start gave that session, workspace or user a cache scope
   of its own, so OpenAI and Kimi were sent a new routing key and a persistent

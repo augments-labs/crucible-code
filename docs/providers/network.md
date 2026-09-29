@@ -183,4 +183,5 @@ requests do: a `socks://`, `socks4://` or `socks5://` one is passed by, and a
 there under any of these. A connection also fails when the proxy cannot be
 reached, refuses the tunnel, or has not opened it within five seconds of the
 command connecting. Each failure gets `502 Bad Gateway`, with one line saying
-which.
+which. A proxy that answers `407 Proxy Authentication Required` is not asked
+again for the host's other addresses.

@@ -9,6 +9,7 @@
 use std::io::{BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -540,6 +541,104 @@ fn an_upstream_that_does_not_open_the_tunnel_fails_the_connection() {
         );
         never_reached(&origin, "the origin");
     }
+}
+
+/// A fake upstream proxy answering each connection it takes with the next of
+/// its answers, the last one repeating, until the command has its answer or
+/// for up to ten seconds.
+struct Counting {
+    port: u16,
+    done: Arc<AtomicBool>,
+    asked: JoinHandle<usize>,
+}
+
+impl Counting {
+    fn answering(answers: &'static [&'static [u8]]) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let done = Arc::new(AtomicBool::new(false));
+        let asked = {
+            let done = Arc::clone(&done);
+            std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let mut asked = 0;
+                while !done.load(Ordering::Acquire) && Instant::now() < deadline {
+                    let Ok((stream, _)) = listener.accept() else {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    };
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut stream = BufReader::new(stream);
+                    head(&mut stream);
+                    let answer = answers.get(asked).or(answers.last()).unwrap();
+                    stream.get_mut().write_all(answer).unwrap();
+                    asked += 1;
+                }
+                asked
+            })
+        };
+        Self { port, done, asked }
+    }
+
+    /// How many connections it took, once the command has its answer.
+    fn asked(self) -> usize {
+        self.done.store(true, Ordering::Release);
+        self.asked.join().unwrap()
+    }
+}
+
+/// A proxy that turns crucible's credential down would turn it down for
+/// every address the host has, so it is sent the credential once rather than
+/// once for each of them.
+#[test]
+fn an_upstream_that_refuses_the_credential_is_not_sent_it_again() {
+    let upstream = Counting::answering(&[
+        b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n",
+    ]);
+    let proxy = Mediator::tcp(
+        loopback(),
+        SandboxId::new(),
+        Some(Duration::from_secs(10)),
+        settings(&at(upstream.port), None),
+    )
+    .unwrap();
+    proxy.inject_repeated_addresses();
+    let answer = whole(ask(&proxy, &connect("localhost:443")));
+    assert!(
+        answer.contains("refused the connection with status 407"),
+        "{answer}"
+    );
+    credential_absent(&answer);
+    assert_eq!(
+        upstream.asked(),
+        1,
+        "the proxy was sent the credential it had refused again"
+    );
+}
+
+/// Any other refusal may be about the one address, so the proxy is still
+/// asked for the host's next one.
+#[test]
+fn an_upstream_that_refuses_one_address_is_asked_for_the_next() {
+    let upstream = Counting::answering(&[
+        b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n",
+        OPENED,
+    ]);
+    let proxy = Mediator::tcp(
+        loopback(),
+        SandboxId::new(),
+        Some(Duration::from_secs(10)),
+        settings(&at(upstream.port), None),
+    )
+    .unwrap();
+    proxy.inject_repeated_addresses();
+    let answer = whole(ask(&proxy, &connect("localhost:443")));
+    assert!(answer.starts_with("HTTP/1.1 200 "), "{answer}");
+    assert_eq!(upstream.asked(), 2, "the next address was not asked for");
 }
 
 #[test]
