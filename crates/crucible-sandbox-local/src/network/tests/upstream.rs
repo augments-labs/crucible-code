@@ -409,6 +409,33 @@ fn a_denied_host_never_reaches_the_upstream_proxy() {
     }
 }
 
+/// Under a proxy that looks names up itself, an allowed host this machine
+/// cannot resolve is the common case. The command is told that, not the
+/// `403` of a denial, and the proxy is still not asked, since there is no
+/// checked address to ask it for.
+#[test]
+fn an_allowed_host_this_machine_cannot_resolve_is_not_answered_as_a_denial() {
+    let (upstream, upstream_port) = untouched();
+    let proxy = Mediator::tcp(
+        policy(&["localhost"], &[]),
+        SandboxId::new(),
+        Some(Duration::from_secs(10)),
+        settings(&at(upstream_port), None),
+    )
+    .unwrap();
+    proxy.inject_lookup_failure();
+    let answer = whole(ask(&proxy, &connect("localhost:443")));
+    assert!(
+        answer.starts_with("HTTP/1.1 502 Bad Gateway\r\n"),
+        "{answer}"
+    );
+    assert!(
+        answer.ends_with("\r\n\r\nthe host could not be resolved on this machine\n"),
+        "{answer}"
+    );
+    never_reached(&upstream, "the upstream proxy");
+}
+
 #[test]
 fn a_host_no_proxy_names_is_reached_directly() {
     let origin = TcpListener::bind("127.0.0.1:0").unwrap();

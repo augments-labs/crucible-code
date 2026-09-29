@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A sandboxed command is no longer told `403 Forbidden` for an allowed host
+  crucible could not look up.** A failed lookup on this machine read as a
+  policy denial, most misleadingly behind a proxy that could have resolved the
+  name itself. It is now `502 Bad Gateway`, with a line saying the host could
+  not be resolved.
 - **The browser `/login` opens no longer inherits your provider keys.** It was
   started with crucible's whole environment, so a browser opened by it carried
   `ANTHROPIC_API_KEY` and the other key variables for as long as it ran. Each

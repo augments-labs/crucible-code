@@ -16,7 +16,8 @@
 //! proxy that request refuses, and an address that cannot be used are
 //! refused with `502` rather than connected around, as is a proxy that
 //! cannot be reached or does not open the tunnel within the handshake's
-//! bound.
+//! bound. A permitted host this machine cannot resolve gets `502` too, so a
+//! command does not take it for a denial.
 
 mod body;
 mod request;
@@ -63,6 +64,9 @@ const STOP: Duration = Duration::from_secs(5);
 const FAIL_RELAY_SPAWN: u8 = 1;
 #[cfg(test)]
 const PANIC_RESPONSE: u8 = 2;
+/// The next lookup fails, standing in for a host this machine cannot resolve.
+#[cfg(test)]
+const FAIL_LOOKUP: u8 = 3;
 
 /// The forms of a proxy's `userinfo` a command could print: the password, as
 /// its proxy URL carries it, and the whole userinfo in base64, as its
@@ -229,6 +233,11 @@ impl Mediator {
     #[cfg(test)]
     fn inject_response_panic(&self) {
         self.fault.store(PANIC_RESPONSE, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    fn inject_lookup_failure(&self) {
+        self.fault.store(FAIL_LOOKUP, Ordering::Release);
     }
 
     /// Replaces the listener's thread with one that never finishes, standing
@@ -477,6 +486,8 @@ fn serve(socket: Socket, context: &Context) -> io::Result<()> {
 enum Refusal {
     /// Malformed, unauthorized or denied, or no permitted address answered.
     Denied,
+    /// A permitted host this machine could not resolve.
+    Unresolved,
     /// The proxy crucible's environment names would not carry it.
     Upstream(Upstream),
 }
@@ -498,15 +509,17 @@ enum Upstream {
 
 impl Refusal {
     /// What the command is told: `403` for anything it asked for that was
-    /// not allowed or not there, and `502` with one line saying why when the
-    /// proxy it has to go through would not carry it. Neither says anything
-    /// of that proxy's address or credential.
+    /// not allowed or did not answer, and `502` with one line saying why when
+    /// its host could not be resolved here or the proxy it has to go through
+    /// would not carry it. Neither says anything of that proxy's address or
+    /// credential.
     fn answer(self) -> Vec<u8> {
         let reason = match self {
             Self::Denied => {
                 return b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     .to_vec();
             }
+            Self::Unresolved => "the host could not be resolved on this machine\n".to_owned(),
             Self::Upstream(Upstream::Unsupported) => "the proxy in crucible's environment cannot carry a sandboxed command's traffic: only a usable http:// proxy can\n".to_owned(),
             Self::Upstream(Upstream::Unreachable) => {
                 "the proxy in crucible's environment could not be reached\n".to_owned()
@@ -543,8 +556,18 @@ fn prepare(
     let request = request::parse(&header, context.authorization.as_bytes(), &context.policy)
         .map_err(|_| Refusal::Denied)?;
     let relay = context.upstream.relay(request.endpoint.host());
-    let addresses = resolver::resolve(request.endpoint.clone(), context.id, life)
-        .map_err(|_| Refusal::Denied)?;
+    let addresses = resolver::resolve(request.endpoint.clone(), context.id, life);
+    #[cfg(test)]
+    let addresses = if context
+        .fault
+        .compare_exchange(FAIL_LOOKUP, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        Err(io::ErrorKind::NotFound.into())
+    } else {
+        addresses
+    };
+    let addresses = addresses.map_err(|_| Refusal::Unresolved)?;
     let mut refusal = Refusal::Denied;
     for address in addresses {
         if life.check().is_err() {
