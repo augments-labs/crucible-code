@@ -87,15 +87,6 @@ pub(super) fn run<T: Terminal>(
     // model with no memory of why.
     terms.revealed.forget();
 
-    // A model picked mid-turn was picked for the session being left, and is
-    // held on the session, so it goes with it rather than landing on the new
-    // one it was never chosen for.
-    terms.pending_model.take();
-
-    // A mode stepped to mid-turn was stepped for the session being left, and
-    // goes with it rather than landing on the new one it was never chosen for.
-    terms.pending_mode.take();
-
     // The last chance to say that the log of the session being left stopped
     // being written. After this there is no session to say it about.
     if let Some(problem) = unclosed {

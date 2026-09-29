@@ -445,7 +445,7 @@ pub(super) fn live<T: Terminal>(
 /// The stateless marker a panel with nothing to hold is stood with.
 struct Still;
 
-/// Runs a command whose pick the turn started next applies.
+/// Runs a command whose pick is held for the turn started next.
 ///
 /// `/model` is the one of these. The picker opens over the running turn and the
 /// consequence is said and agreed to before the pick is held; the running turn
@@ -504,10 +504,11 @@ pub(super) fn deferred<T: Terminal>(
     }
 }
 
-/// Applies a model picked mid-turn, at the start of the turn it was held for.
+/// Applies a model picked mid-turn, as the turn it was picked over ends.
 ///
 /// Reached from the loop, not the keyboard: the runner is back from the worker,
-/// and the pick made over the running turn is the one this turn is asked under.
+/// and the pick made over the running turn is the one the next turn is asked
+/// under.
 pub(super) fn apply_model<T: Terminal>(
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
