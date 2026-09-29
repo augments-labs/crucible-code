@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" width="720" height="520" role="img" aria-label="Before compaction, a long history (older turns, recent turns and the newest turn) is shown filling the model's window up to the room reserved for the answer and its tool results. When the window fills mid-turn, when you run /compact between turns, or when you choose Carry on from summary while picking up a large session, old tool output is cleared and the same model writes notes to stand in for the older turns, so the next request carries those notes, the recent turns word for word and the newest turn whole, with room to spare, and the session log keeps every message.">
+  <title>What compaction does to a session's context</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#14161A"/>
+    </marker>
+  </defs>
+
+  <!-- Before: the window as the next request would fill it -->
+  <rect x="40" y="16" width="640" height="92" rx="10" fill="none" stroke="#0D6E68" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="56" y="36" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Before: a long history, shown filling the window</text>
+
+  <rect x="48" y="44" width="96" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="96" y="69" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">instructions</text>
+  <text x="96" y="84" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">and tools</text>
+
+  <rect x="148" y="44" width="280" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="288" y="68" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">older turns</text>
+  <text x="288" y="85" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">prompts, answers, tool output</text>
+
+  <rect x="432" y="44" width="80" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="472" y="68" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">recent</text>
+  <text x="472" y="85" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">turns</text>
+
+  <rect x="516" y="44" width="68" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="550" y="68" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">newest</text>
+  <text x="550" y="85" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">turn</text>
+
+  <rect x="588" y="44" width="84" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="630" y="64" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">reserved</text>
+  <text x="630" y="77" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">for the</text>
+  <text x="630" y="90" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">answer</text>
+
+  <!-- The window-left reading spans the room the transcript may use -->
+  <line x1="148" y1="116" x2="586" y2="116" stroke="#0D6E68" stroke-width="1.5"/>
+  <line x1="148" y1="111" x2="148" y2="121" stroke="#0D6E68" stroke-width="1.5"/>
+  <line x1="586" y1="111" x2="586" y2="121" stroke="#0D6E68" stroke-width="1.5"/>
+  <text x="148" y="135" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#0D6E68">100%</text>
+  <text x="367" y="135" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#0D6E68">how much of the window is left</text>
+  <text x="586" y="135" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#0D6E68">0% left</text>
+
+  <!-- What starts it -->
+  <text x="40" y="162" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Room is made when</text>
+
+  <rect x="40" y="170" width="206" height="48" rx="8" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="143" y="190" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">the window fills</text>
+  <text x="143" y="208" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">mid-turn, and the turn carries on</text>
+
+  <rect x="257" y="170" width="206" height="48" rx="8" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="360" y="190" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">/compact</text>
+  <text x="360" y="208" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">between turns, when you choose</text>
+
+  <rect x="474" y="170" width="206" height="48" rx="8" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="577" y="190" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#14161A">Carry on from summary</text>
+  <text x="577" y="208" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">picking up a large session</text>
+
+  <line x1="143" y1="218" x2="143" y2="234" stroke="#14161A" stroke-width="1.5"/>
+  <line x1="360" y1="218" x2="360" y2="234" stroke="#14161A" stroke-width="1.5"/>
+  <line x1="577" y1="218" x2="577" y2="234" stroke="#14161A" stroke-width="1.5"/>
+  <line x1="143" y1="234" x2="577" y2="234" stroke="#14161A" stroke-width="1.5"/>
+  <line x1="360" y1="234" x2="360" y2="273" stroke="#14161A" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="372" y="252" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">old tool output is cleared, then the same model</text>
+  <text x="372" y="267" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">writes notes to stand in for the older turns</text>
+
+  <!-- After: what the next request carries instead -->
+  <rect x="40" y="274" width="640" height="92" rx="10" fill="none" stroke="#0D6E68" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="56" y="294" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">After: what the next request carries instead</text>
+
+  <rect x="48" y="302" width="96" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="96" y="327" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">instructions</text>
+  <text x="96" y="342" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">and tools</text>
+
+  <rect x="148" y="302" width="84" height="56" rx="6" fill="none" stroke="#0D6E68" stroke-width="2"/>
+  <text x="190" y="334" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">recap</text>
+
+  <rect x="236" y="302" width="80" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="276" y="326" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">recent</text>
+  <text x="276" y="343" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">turns</text>
+
+  <rect x="320" y="302" width="68" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5"/>
+  <text x="354" y="326" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">newest</text>
+  <text x="354" y="343" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">turn</text>
+
+  <rect x="392" y="302" width="192" height="56" rx="6" fill="none" stroke="#0D6E68" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="488" y="334" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#0D6E68">room left</text>
+
+  <rect x="588" y="302" width="84" height="56" rx="6" fill="none" stroke="#14161A" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="630" y="322" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">reserved</text>
+  <text x="630" y="335" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">for the</text>
+  <text x="630" y="348" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">answer</text>
+
+  <!-- What each kept part is -->
+  <line x1="340" y1="358" x2="340" y2="374" stroke="#14161A" stroke-width="1.5"/>
+  <text x="348" y="379" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">the newest turn, kept whole</text>
+
+  <line x1="250" y1="358" x2="250" y2="394" stroke="#14161A" stroke-width="1.5"/>
+  <text x="258" y="399" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">recent turns, kept word for word, as many as fit the budget</text>
+  <text x="258" y="414" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">(20,000 tokens unless compaction.keep is set)</text>
+
+  <line x1="160" y1="358" x2="160" y2="429" stroke="#14161A" stroke-width="1.5"/>
+  <text x="168" y="434" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">the recap: the model's own notes, standing in for the older turns,</text>
+  <text x="168" y="450" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">under fixed headings (Goal, Constraints &amp; Preferences, Progress, Decisions,</text>
+  <text x="168" y="465" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#14161A">Next Steps, Critical Context), plus the files those turns read or changed</text>
+
+  <text x="48" y="491" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#14161A">Old tool output past the newest 30,000 bytes is cleared, if that frees 30,000 bytes or more.</text>
+  <text x="48" y="510" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#0D6E68">Nothing is deleted: the session log keeps every message.</text>
+</svg>

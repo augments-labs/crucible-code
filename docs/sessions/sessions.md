@@ -303,6 +303,11 @@ having read nothing and changed nothing.
 
 ## When the window fills
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/compaction-dark.svg">
+  <img alt="Before compaction, a long history (older turns, recent turns and the newest turn) is shown filling the model's window up to the room reserved for the answer and its tool results. When the window fills mid-turn, when you run /compact between turns, or when you choose Carry on from summary while picking up a large session, old tool output is cleared and the same model writes notes to stand in for the older turns, so the next request carries those notes, the recent turns word for word and the newest turn whole, with room to spare, and the session log keeps every message." src="../assets/compaction-light.svg" width="720">
+</picture>
+
 Every model accepts only so much at once, and a long session eventually reaches
 it. crucible shows how much is left against the end of the row a turn runs on:
 
