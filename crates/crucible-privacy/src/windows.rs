@@ -12,7 +12,9 @@ use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::os::windows::io::AsRawHandle as _;
 use std::path::Path;
 
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_LOCK_VIOLATION, ERROR_SUCCESS, HANDLE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SUCCESS, HANDLE,
+};
 use windows_sys::Win32::Security::Authorization::{
     SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
 };
@@ -199,8 +201,8 @@ pub(super) fn sync_parent(_path: &Path) -> io::Result<()> {
 }
 
 pub(super) fn replace(source: &Path, destination: &Path) -> io::Result<()> {
-    let source = wide(source);
-    let destination = wide(destination);
+    let wide_source = wide(source);
+    let wide_destination = wide(destination);
 
     // SAFETY: both buffers are nul-terminated and live for the duration of the
     // call. The flags request one replace-over-existing operation and ask the
@@ -209,15 +211,30 @@ pub(super) fn replace(source: &Path, destination: &Path) -> io::Result<()> {
     // than Unix's rename followed by directory fsync.
     let moved = unsafe {
         MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
+            wide_source.as_ptr(),
+            wide_destination.as_ptr(),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
         )
     };
-    if moved == 0 {
-        return Err(io::Error::last_os_error());
+    if moved != 0 {
+        return Ok(());
     }
-    Ok(())
+    let refused = io::Error::last_os_error();
+
+    // `MoveFileExW` refuses a destination another handle has open, even one
+    // opened to allow exactly this: a second crucible reading the store, or
+    // anything else looking at the file as it is replaced. Under POSIX
+    // semantics the name moves on to the new file and that reader keeps the
+    // one it opened, which is what Unix does; `std::fs::rename` asks for
+    // them after the same refusal, where the file system supports it. A
+    // handle that did not allow deletion still refuses, and that error is
+    // the one returned. Write-through is not asked for again: the flush
+    // Windows documents for it is that of a move made by copying, and a rename
+    // within one directory is never one.
+    if refused.raw_os_error() == Some(ERROR_ACCESS_DENIED.cast_signed()) {
+        return std::fs::rename(source, destination);
+    }
+    Err(refused)
 }
 
 fn wide(path: &Path) -> Vec<u16> {

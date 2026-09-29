@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **On Windows, a renewed subscription sign-in is no longer lost while another
+  crucible is reading `auth.json`.** Writing the rotated tokens failed with
+  "Access is denied" whenever a second crucible had the file open at that
+  moment, and the spent ones stayed on disk. That reader now keeps the copy it
+  opened while the new file takes its name, as on Linux and macOS.
+
 ## [0.43.2] - 2026-09-29
 
 **A confined command can now reach its allowed hosts through your `http://`
