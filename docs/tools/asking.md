@@ -5,9 +5,9 @@ forks on something only you can settle (which of several shapes to build, which
 of several directions to take) and guessing would put the whole turn's output
 on the wrong side of the fork.
 
-It is one of the two tools that reach nothing outside crucible: no file, no
-process, nothing that leaves the machine. So there is no question about
-permission and no rule to write about it.
+It is one of the four tools that reach nothing outside crucible: no file, no
+process, nothing that leaves the machine. So no mode asks about it, and a rule
+can only be about the whole tool: `deny ask_user` refuses every call to it.
 
 | Argument | What it is |
 | --- | --- |
@@ -63,9 +63,9 @@ the whole thing, which is what `esc` does too.
 | --- | --- |
 | `↑` `↓` | Moves down the answers. Stops at each end. |
 | `←` `→` | Steps to the next question, or the one before. Stops at each end. |
-| `enter` | Takes what is marked and moves on. On the last stop, sends. |
+| `enter` | Takes what is marked and moves on, or sends where there is nowhere left to move on to. On **Something else** with nothing written yet, it opens the line to write in instead. Where several answers may be chosen, it moves on without choosing the marked one: `space` does the choosing. |
 | `space` | Where several answers may be chosen: chooses the marked one, or unchooses it. |
-| `1`–`9` | Takes that answer. |
+| `1`–`9` | Does what `enter` would on the answer with that number. Where several answers may be chosen, it chooses or unchooses that one instead, as `space` does. The row under the rule leaves the whole thing, when its number is 9 or lower. |
 | `n` | Adds a line of your own beside the answer. |
 | `esc` | Stops typing, if you are. Otherwise leaves the whole thing unanswered. |
 

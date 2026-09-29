@@ -1,8 +1,9 @@
 # Writing down the plan
 
 `todo_write` puts down the plan the agent is working to, and you read it as a
-panel above the prompt. It is the one tool that reaches nothing outside
-crucible: no file, no process, and so no question and no rule.
+panel above the prompt. It is one of the four tools that reach nothing outside
+crucible: no file and no process, so no mode asks about it, and a rule can only
+be about the whole tool.
 
 | Argument | What it is |
 | --- | --- |

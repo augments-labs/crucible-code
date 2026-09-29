@@ -1150,9 +1150,9 @@ filesystem view. An unavailable enforcing backend refuses execution. See
 [Operating-system confinement](../security/sandboxing.md) for the exact
 capability matrix and behavior with confinement disabled.
 
-`todo_write` is the one that reaches nothing at all. It puts down the plan the
-agent is working to: a list of at most 64 tasks, each of them a line, each one
-of `open`, `doing` and `done`. You read it as a panel above the box. Every call
+`todo_write` reaches nothing outside crucible. It puts down the plan the agent
+is working to: a list of at most 64 tasks, each of them a line, each one of
+`open`, `doing` and `done`. You read it as a panel above the box. Every call
 replaces the whole plan, so what the model thinks the plan is and what you are
 looking at are one thing rather than two. [Writing down the
 plan](../tools/planning.md) is the rest of it.

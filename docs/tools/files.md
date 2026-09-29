@@ -40,8 +40,8 @@ refusal says what would turn it into something readable.
 
 ### A picture is looked at rather than read
 
-A `.png`, `.jpg`, `.gif` or `.webp` has no lines to number, so `read` hands the
-file back to be looked at instead:
+A `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp` has no lines to number, so `read`
+hands the file back to be looked at instead:
 
 ```
 shot.png is attached as an image rather than read as text.
@@ -63,7 +63,7 @@ are what is there, and where they disagree the bytes win.
 A PDF is the exception, and deliberately: it is not handed back this way even on
 a model that reads one. What it gets is the refusal below, naming a converter:
 an answer that works on every model crucible offers, where an attachment works
-on two of the three.
+with three of the four providers.
 
 ### A document is read by converting it first
 
