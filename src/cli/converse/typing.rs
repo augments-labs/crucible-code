@@ -173,22 +173,24 @@ impl Said {
     }
 }
 
-/// Moves the cursor within a many-rowed line, where there is a row to reach.
+/// Moves the cursor between the lines of a prompt that holds more than one,
+/// where there is a line to reach.
 ///
 /// Whether the editor moved is the answer a caller keys a frame on, and whether
-/// the key was the line's at all: a one-line line has no row above or below, so
-/// the arrows stay with whatever is open above the box instead.
+/// the key was the line's at all: a prompt with no newline in it has no line
+/// above or below, however many rows it wraps onto, so the arrows stay with
+/// whatever is open above the box instead.
 fn vertical(editor: &mut Editor, key: Key) -> bool {
     editor.moves(key) && editor.press(key) == Typed::Changed
 }
 
 /// The three claims on an arrow key, answered in order.
 ///
-/// The line first, where it wrapped and has a row to reach; then whatever list
-/// is standing over the box; then the prompts this directory has already been
-/// asked. Last of the three because it is the one that replaces the line rather
-/// than moving within it: a list still choosing and a line still being read
-/// through both have the stronger claim on the key.
+/// The line first, where it holds a newline and has a line to reach; then
+/// whatever list is standing over the box; then the prompts this directory has
+/// already been asked. Last of the three because it is the one that replaces
+/// the line rather than moving within it: a list still choosing and a line
+/// still being read through both have the stronger claim on the key.
 ///
 /// One function for both loops. The key means the same thing while a turn runs
 /// as it does between turns, and two copies of an order are two chances for it
@@ -938,10 +940,10 @@ pub(super) fn under(runner: &Runner) -> Says {
 /// to be typed into and Esc closes the view rather than stopping the turn behind
 /// it.
 ///
-/// Stepping the mode is not among them: the runner that holds it is on
-/// the worker thread for the length of the turn, and a key that moved the row
-/// on screen and nothing else would be a lie about what the next tool call
-/// costs.
+/// Shift+Tab steps the mode, but for the next turn: the runner that holds it
+/// is on the worker thread for the length of the turn, so the step waits in
+/// the pending slot and the row under the box shows the mode stepped to. The
+/// running turn keeps the mode it began under.
 #[allow(clippy::too_many_lines)]
 pub(super) fn during<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -1070,8 +1072,9 @@ pub(super) fn during<T: Terminal>(
             // running turn is decided under was settled before it ran, so the
             // step cannot reach the runner on the worker — it goes into the
             // pending slot, and the row under the box says which mode that is,
-            // marked for the turn it lands on. The step is read off the slot's
-            // last value, or off the running mode the row was frozen with.
+            // in the words the running mode is said in. The step is read off
+            // the slot's last value, or off the running mode the row was
+            // frozen with.
             Meant::Cycle => {
                 let next = terms.pending_mode.get().unwrap_or(says.running_mode).next();
                 terms.pending_mode.set(Some(next));
@@ -1696,8 +1699,8 @@ pub(super) struct During<'a> {
     ///
     /// The runner holding the mode is on the worker for the turn's length, so
     /// a shift+tab pressed at it steps a pending slot here instead, and the
-    /// row under the box says which mode that is — marked for the next turn,
-    /// so the press is not dead and the running turn's mode is not lied about.
+    /// row under the box says which mode that is, so the press is not dead;
+    /// the running turn keeps the mode it began under.
     pub(super) terms: &'a Terms,
     /// When Ctrl-C was last pressed against an empty line, if it is still the
     /// last key pressed.

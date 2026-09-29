@@ -497,12 +497,8 @@ pub(super) fn deferred<T: Terminal>(
             }
             // "go back": round to the picker.
         },
-        // The mode is stepped by shift+tab, which is its own mid-turn way in;
-        // `/mode` here has no picker to stand, so it is the step the key would
-        // make, held for the next turn the same way. The loop holds it.
-        // `/mode` is stepped by shift+tab, which is its own mid-turn way in;
-        // it has no picker to stand here, so the step is the key's, held for
-        // the next turn the same way — and the loop holds it. Every other
+        // `/mode` has no picker to stand here: mid-turn it makes the step
+        // shift+tab would, and the loop holds it for the next turn. Every other
         // command the classifier does not route here holds nothing either.
         _ => Ok(None),
     }

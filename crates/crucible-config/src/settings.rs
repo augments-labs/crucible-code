@@ -295,6 +295,11 @@ impl Settings {
 /// layer adds entries and removes none, which is the only rule that leaves a
 /// `deny` written at home standing when a checked-out repository states rules
 /// of its own. All three are in `docs/configuration/configuration.md`.
+///
+/// A [`Shape::TextSet`] is not a list here and is replaced like a scalar. The
+/// sandbox's paths, domains and sockets are the text sets, and the sandbox
+/// reads each layer's own document rather than this merge, because what a
+/// project may add or narrow there is its decision and not this one's.
 fn merge(base: &mut Value, near: &Value, shape: &'static Shape) {
     if shape.element().is_some()
         && let (Some(into), Some(from)) = (base.as_array_mut(), near.as_array())
