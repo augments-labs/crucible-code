@@ -54,8 +54,9 @@ own, `[ ]` and `[✓]`. Bracketed on purpose: the row above says whether a
 question both are on screen at once.
 
 Two answers are always there and the agent does not write them. **Something
-else** is a line you type yourself, and **Say it in the prompt instead** leaves
-the whole thing, which is what `esc` does too.
+else** is a line you type yourself, sent after whatever else you chose where
+several answers may be chosen. **Say it in the prompt instead** leaves the whole
+thing, which is what `esc` does too.
 
 ## The keys
 
