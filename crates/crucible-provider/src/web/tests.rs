@@ -1290,7 +1290,7 @@ fn an_answer_already_whole_is_kept_when_its_closing_read_arrives_late() {
     // read, before looking at what it returned, so an answer already
     // complete in hand was reported as though it had stopped part-way
     // through instead of being used.
-    let wait = std::time::Duration::from_millis(5);
+    let wait = crate::fake::LATE_WAIT;
 
     let answered = filled(
         "test",
@@ -1335,7 +1335,7 @@ fn a_chunk_that_arrives_as_the_wait_runs_out_is_not_read_past() {
     // then blocks any further read — even one that would have ended
     // cleanly, as this mock's next one would (its `then` is fully drained
     // by the one read exercised here).
-    let wait = std::time::Duration::from_millis(5);
+    let wait = crate::fake::LATE_WAIT;
 
     let problem = filled(
         "test",
@@ -1375,7 +1375,7 @@ fn a_real_read_failure_landing_as_the_wait_runs_out_keeps_its_own_message() {
     // Before the fix, the removed check fired on this same failure before it
     // was looked at, so a genuine error landing here was replaced with the
     // generic "it stopped part-way through" instead of being shown.
-    let wait = std::time::Duration::from_millis(5);
+    let wait = crate::fake::LATE_WAIT;
 
     let problem = filled("test", Box::new(SlowFailure { wait }), wait, &Cancel::new())
         .expect_err("a real read failure to still be reported");

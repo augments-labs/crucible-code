@@ -214,7 +214,7 @@ async fn a_fetched_page_read_whole_is_delivered_when_its_close_arrives_late() {
     // done, had already arrived.
     let url = "https://example.com/page";
     let body = answer(&fetched(url)).into_bytes();
-    let wait = Duration::from_millis(5);
+    let wait = crate::fake::LATE_WAIT;
 
     let reading = WholeThenLateEnd {
         body: Some(body),
