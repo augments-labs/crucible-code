@@ -10,6 +10,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A line queued during a long tool call no longer ends a full turn with no
+  room.** When the window filled and nothing older was left to recap, a line
+  you typed while the call ran kept the last-resort recap from seeing the
+  finished call, and the turn stopped with "there is no room left in the
+  model's window". The recap now covers everything before the line and keeps
+  the line word for word.
 - **`--with-mcp` against a configuration with no servers now reads as a
   sentence.** It said "this configuration has no servers are written down under
   mcp.servers"; it now says "this configuration has none under mcp.servers".

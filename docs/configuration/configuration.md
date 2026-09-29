@@ -209,8 +209,10 @@ ran begins a new one, and so does the note crucible adds when a background
 command finishes. The exception is automatic recovery with nothing older to
 recap. Once this turn has finished a tool call, if the turns before it already
 fit the budget and the window is still full after old tool output is cleared,
-the whole conversation is recapped, this turn included. Left unset, crucible
-keeps the most recent 20,000 tokens.
+the whole conversation is recapped, this turn included. A line you queued
+while that call ran is left out of the recap and kept word for word, along with
+any lines queued after it. Left unset, crucible keeps the most recent 20,000
+tokens.
 
 `recap` is a ceiling rather than a requested length. Left unset, a structured
 recap may produce up to 10,240 tokens, further limited by the model's output
