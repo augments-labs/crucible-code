@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 770" width="720" height="770" role="img" aria-label="A tool call is decided in order: a write or edit of crucible's own configuration files or a matching deny rule refuses it, a matching ask rule asks, allow rules that cover all of it allow it, and the mode decides a call no rule named, allowing a read inside the workspace in every mode. A call that comes to asking runs if it was already allowed for this session or on your yes, once or for the session; a refusal by policy tells the model and the turn carries on, an allowed call runs only after this decision, and your no ends the turn.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 770" width="720" height="770" role="img" aria-label="A tool call is decided in order: a write or edit of crucible's own configuration files in a directory the workspace reaches, or a matching deny rule, refuses it, a matching ask rule asks, allow rules that cover all of it allow it, and the mode decides a call no rule named, allowing a read inside the workspace in every mode. A call that comes to asking runs if it was already allowed for this session or on your yes, once or for the session; a refusal by policy tells the model and the turn carries on, an allowed call runs only after this decision, and your no ends the turn.">
   <title>How one tool call is decided</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
@@ -23,7 +23,7 @@
 
   <rect x="200" y="158" width="320" height="50" rx="6" fill="none" stroke="#F5F7FA" stroke-width="1.5"/>
   <text x="360" y="179" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" fill="#F5F7FA">1. write or edit of crucible's config</text>
-  <text x="360" y="198" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#F5F7FA">config.json or config.local.json in any .crucible</text>
+  <text x="360" y="198" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#F5F7FA">in a .crucible the workspace reaches</text>
   <line x1="360" y1="208" x2="360" y2="229" stroke="#F5F7FA" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <rect x="200" y="230" width="320" height="34" rx="6" fill="none" stroke="#F5F7FA" stroke-width="1.5"/>

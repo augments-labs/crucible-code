@@ -31,9 +31,12 @@ through.
 
 ## Tool calls
 
-Each call is decided before it runs: your [rules](../permissions/rules.md)
-speak first, the [mode](../permissions/modes.md) answers for calls no rule
-mentions, and when what they settle on is "ask", the
+Each call is decided before it runs. A `write` or `edit` of
+[crucible's own configuration files](../permissions/permissions.md#the-files-the-file-tools-may-not-write)
+in a directory the workspace reaches is refused before anything else is asked.
+Otherwise your [rules](../permissions/rules.md) speak first, the
+[mode](../permissions/modes.md) answers for calls no rule mentions, and when
+what they settle on is "ask", the
 [question](../permissions/permissions.md#the-question) appears. The two kinds
 of no differ. Your no at the question ends the turn, and any call still
 waiting is answered as not run. A `deny` rule refuses one call: the model is
