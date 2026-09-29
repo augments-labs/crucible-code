@@ -533,7 +533,7 @@ One JSON object per line, in the order things happened. The first line says what
 the file is and where it belongs:
 
 ```json
-{"format":13,"session":"…","workspace":"/home/you/code/my-project","branch":"main"}
+{"branch":"main","format":13,"session":"…","workspace":"/home/you/code/my-project"}
 ```
 
 Then one line per message: what you typed, what the model said and asked to
