@@ -50,6 +50,21 @@ say() {
     printf '    %s\n' "$1"
 }
 
+# The end of a failed run's log, written under the FAIL line that names it.
+# The scratch directory holding the log is removed on the way out, so a path
+# would point at nothing by the time anyone reads it.
+readonly SHOWN=60
+shown() {
+    local lines
+    lines=$(wc -l <"$1")
+    if ((lines > SHOWN)); then
+        printf '    %s, its last %d of %d lines:\n' "${1##*/}" "$SHOWN" "$lines" >&2
+    else
+        printf '    %s:\n' "${1##*/}" >&2
+    fi
+    tail -n "$SHOWN" -- "$1" | sed 's/^/      /' >&2
+}
+
 for tool in bash cargo git mktemp rm; do
     command -v "$tool" >/dev/null || {
         printf 'FAIL %s is not installed\n' "$tool" >&2
@@ -103,10 +118,12 @@ if "$DRILL" --prior-binary "$prior" >"$scratch/clean.log" 2>&1; then
         say "clean fixtures pass"
     else
         printf 'FAIL the clean run exited 0 without its verdict line\n' >&2
+        shown "$scratch/clean.log"
         failed=1
     fi
 else
-    printf 'FAIL the drill failed on clean fixtures; see %s\n' "$scratch/clean.log" >&2
+    printf 'FAIL the drill failed on clean fixtures\n' >&2
+    shown "$scratch/clean.log"
     failed=1
 fi
 
@@ -118,7 +135,8 @@ if ((status == 1)) &&
     grep -Fq 'could not read the session log' "$scratch/corrupt.log"; then
     say "a corrupted fixture fails the drill at the prior binary's refusal"
 else
-    printf 'FAIL the corrupted run exited %d; see %s\n' "$status" "$scratch/corrupt.log" >&2
+    printf 'FAIL the corrupted run exited %d without refusing where it must\n' "$status" >&2
+    shown "$scratch/corrupt.log"
     failed=1
 fi
 if grep -Fq 'all rollback drill gates passed' "$scratch/corrupt.log"; then
