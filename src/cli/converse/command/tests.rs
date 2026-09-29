@@ -246,6 +246,54 @@ fn a_line_that_could_still_be_a_command_and_names_none_closes_the_list() {
 }
 
 #[test]
+fn a_hyphen_keeps_the_word_a_name_and_lists_only_what_it_still_begins() {
+    // A name may hold a hyphen, so one typed does not close the list the way a
+    // path's second slash does. What it lists is the names the word is still
+    // the beginning of, which for a word no name begins is nothing.
+    assert!(shown("/mode-").is_empty());
+    assert!(shown("/foo-bar").is_empty());
+    assert_eq!(shown("/mod"), ["/model", "/mode"]);
+    assert_eq!(shown("/").len(), EVERY.len());
+}
+
+#[test]
+fn a_slip_typed_while_a_turn_runs_is_refused_on_the_panel_in_the_same_words() {
+    let commands = commands();
+    let slip = owned(&commands, "/modle").expect("a lone slip is read as a command");
+    let MidTurn::Refused(why) = slip.class() else {
+        panic!("a slip is refused while a turn runs");
+    };
+    let rows = art(&refusing(&slip, why, 60, Glyphs::Unicode));
+
+    assert!(
+        rows.iter().any(|row| row == "! no such command: /modle"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row == "  nearest: /model, /mode"),
+        "{rows:#?}"
+    );
+    assert_eq!(rows.last().map(String::as_str), Some("esc to close"));
+    assert!(!rows.iter().any(|row| row.contains("/exit")), "{rows:#?}");
+
+    // With words after it the line is a prompt, queued like any other.
+    assert!(owned(&commands, "/modle gpt-6-sol").is_none());
+}
+
+#[test]
+fn the_words_a_slip_is_refused_with_mid_turn_fold_to_the_window() {
+    // The rows the refusal adds, between the rule and the closing key, which
+    // is the panel's own and is the same for every command it refuses.
+    let slip = owned(&commands(), "/release-nots").expect("a lone slip");
+    for columns in 1..=80 {
+        let rows = refusing(&slip, "names no command", columns, Glyphs::Ascii);
+        for row in rows.iter().take(rows.len() - 2) {
+            assert!(row.columns() <= columns, "at {columns}: {row:?}");
+        }
+    }
+}
+
+#[test]
 fn the_list_closes_the_moment_the_line_becomes_something_else() {
     // Every one of these is a line somebody is part way through typing, and on
     // none of them is a list of commands what they are looking at.

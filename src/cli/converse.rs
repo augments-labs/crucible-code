@@ -1238,7 +1238,7 @@ impl Turn<'_, '_> {
             command::MidTurn::Live => self.live(renderer, command),
             command::MidTurn::Deferred => self.deferred(renderer, command),
             command::MidTurn::Refused(why) => {
-                command::refused(renderer, command.command(), why, self.terms.style()).map(|_| ())
+                command::refused(renderer, command, why, self.terms.style()).map(|_| ())
             }
         }
     }

@@ -218,10 +218,9 @@ pub(super) enum Owned {
         /// What followed it. Empty where nothing did.
         rest: String,
     },
-    /// A word shaped like a command that names none. The word is not kept: an
-    /// unknown one is refused whichever it is, and the panel says only that it
-    /// names no command.
-    Unknown,
+    /// A word shaped like a command that names none, and the two rows it is
+    /// refused with, which the panel says in the words the transcript would.
+    Unknown([String; 2]),
 }
 
 impl Owned {
@@ -231,7 +230,7 @@ impl Owned {
     pub(super) fn command(&self) -> Command {
         match self {
             Self::Known { command, .. } => *command,
-            Self::Unknown => Command::Exit,
+            Self::Unknown(_) => Command::Exit,
         }
     }
 
@@ -240,7 +239,7 @@ impl Owned {
     pub(super) fn class(&self) -> MidTurn {
         match self {
             Self::Known { command, .. } => command.mid_turn(),
-            Self::Unknown => MidTurn::Refused("names no command"),
+            Self::Unknown(_) => MidTurn::Refused("names no command"),
         }
     }
 }
@@ -419,7 +418,7 @@ pub(super) fn live<T: Terminal>(
     let style = terms.style();
     let rest = match wanted {
         Owned::Known { rest, .. } => rest.as_str(),
-        Owned::Unknown => "",
+        Owned::Unknown(_) => "",
     };
     match wanted.command() {
         Command::Theme => theme::live(renderer, terms, rest, while_waiting),
@@ -534,7 +533,7 @@ pub(super) fn apply_model<T: Terminal>(
 /// changes: the command did nothing, and this is the whole of what happened.
 pub(super) fn refused<T: Terminal>(
     renderer: &mut Renderer<T>,
-    command: Command,
+    wanted: &Owned,
     why: &'static str,
     style: Style,
 ) -> Result<Option<&'static str>, Fatal> {
@@ -542,22 +541,7 @@ pub(super) fn refused<T: Terminal>(
         renderer,
         |_| style,
         &mut Still,
-        |_, columns, _| {
-            let glyphs = style.glyphs();
-            let mut rows = vec![
-                Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
-                Row::new(),
-                Row::new().then(Slot::Strong, command.name()),
-            ];
-            rows.extend(
-                fold(why, columns)
-                    .into_iter()
-                    .map(|line| Row::new().then(Slot::Plain, line)),
-            );
-            rows.push(Row::new());
-            rows.push(Row::new().then(Slot::Quiet, "esc to close"));
-            (rows, None)
-        },
+        |_, columns, _| (refusing(wanted, why, columns, style.glyphs()), None),
         |arrived, _| {
             // Matching the key rather than the state: the panel holds nothing,
             // so only the press decides what the loop does with it.
@@ -576,6 +560,41 @@ pub(super) fn refused<T: Terminal>(
     Ok(None)
 }
 
+/// The rows of the panel [`refused`] stands: the rule, what was asked for,
+/// why it cannot run now, and the key that closes it.
+///
+/// A word that names no command has no name to head the panel and no reason of
+/// its own, so it is said back the way the transcript says it between turns:
+/// the word, and the names it was nearest to.
+fn refusing(wanted: &Owned, why: &'static str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let mut rows = vec![
+        Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
+        Row::new(),
+    ];
+    let said = match wanted {
+        Owned::Known { command, .. } => {
+            rows.push(Row::new().then(Slot::Strong, command.name()));
+            vec![why]
+        }
+        Owned::Unknown(refused) => refused.iter().map(String::as_str).collect(),
+    };
+    // Folded after the indent a line opens with, so the names under a refused
+    // word stay under its words rather than back at the edge.
+    rows.extend(said.into_iter().flat_map(|line| {
+        let words = line.trim_start();
+        let gap = line.len() - words.len();
+        // A window no wider than the indent keeps none of it, so the words
+        // still have a column to be drawn in.
+        let indent = " ".repeat(if gap < columns { gap } else { 0 });
+        fold(words, columns - indent.len())
+            .into_iter()
+            .map(move |part| Row::new().then(Slot::Plain, format!("{indent}{part}")))
+    }));
+    rows.push(Row::new());
+    rows.push(Row::new().then(Slot::Quiet, "esc to close"));
+    rows
+}
+
 /// A command read mid-turn, owned so it crosses from the keyboard loop to the
 /// turn's own. `None` where the line is no command, the same as [`wanted`].
 pub(super) fn owned(commands: &Commands, line: &str) -> Option<Owned> {
@@ -584,7 +603,7 @@ pub(super) fn owned(commands: &Commands, line: &str) -> Option<Owned> {
             command,
             rest: rest.to_owned(),
         },
-        Wanted::Unknown(_) => Owned::Unknown,
+        Wanted::Unknown(word) => Owned::Unknown(refusal(commands, word)),
     })
 }
 
