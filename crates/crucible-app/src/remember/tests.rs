@@ -218,6 +218,20 @@ fn nothing_is_left_beside_a_file_that_could_not_be_replaced() {
     );
 }
 
+/// Asks again while another writer holds the file, as [`RememberError::Busy`]
+/// tells a user to, and gives up after a bounded number of tries.
+fn again_while_busy(
+    mut write: impl FnMut() -> Result<(), RememberError>,
+) -> Result<(), RememberError> {
+    for _ in 0..12 {
+        match write() {
+            Err(RememberError::Busy { .. }) => {}
+            answered => return answered,
+        }
+    }
+    write()
+}
+
 #[test]
 fn simultaneous_answers_keep_every_provider() {
     let sample = Sample::new("remember-concurrent");
@@ -231,11 +245,17 @@ fn simultaneous_answers_keep_every_provider() {
             let file = file.clone();
             writes.push(scope.spawn(move || {
                 ready.wait();
-                choosing(
-                    &file,
-                    &format!("provider-{number}"),
-                    &format!("model-{number}"),
-                )
+                // Sixteen writers queue behind one lock, and a slow disk can
+                // keep the last of them waiting longer than one crucible waits
+                // for another. This proves no answer is lost, not how fast the
+                // queue drains, so a writer told the file is busy asks again.
+                again_while_busy(|| {
+                    choosing(
+                        &file,
+                        &format!("provider-{number}"),
+                        &format!("model-{number}"),
+                    )
+                })
             }));
         }
         ready.wait();
