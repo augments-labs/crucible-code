@@ -17,9 +17,10 @@
 //! refused with `502` rather than connected around, as is a proxy that
 //! cannot be reached or does not open the tunnel within the handshake's
 //! bound. A permitted host this machine cannot resolve gets `502` too, so a
-//! command does not take it for a denial. A proxy that answers `407` is not
-//! asked again for the host's other addresses, since it would only be sent the
-//! credential it refused.
+//! command does not take it for a denial, and so does one reached straight
+//! that answers at none of its permitted addresses. A proxy that answers
+//! `407` is not asked again for the host's other addresses, since it would
+//! only be sent the credential it refused.
 
 mod body;
 mod request;
@@ -495,10 +496,14 @@ fn serve(socket: Socket, context: &Context) -> io::Result<()> {
 /// Why a command's connection was answered rather than made.
 #[derive(Clone, Copy)]
 enum Refusal {
-    /// Malformed, unauthorized or denied, or no permitted address answered.
+    /// Malformed, unauthorized or denied, or ended before an address was
+    /// tried.
     Denied,
     /// A permitted host this machine could not resolve.
     Unresolved,
+    /// No permitted address of the host answered a connection made straight
+    /// to it.
+    Unanswered,
     /// The proxy crucible's environment names would not carry it.
     Upstream(Upstream),
 }
@@ -520,10 +525,10 @@ enum Upstream {
 
 impl Refusal {
     /// What the command is told: `403` for anything it asked for that was
-    /// not allowed or did not answer, and `502` with one line saying why when
-    /// its host could not be resolved here or the proxy it has to go through
-    /// would not carry it. Neither says anything of that proxy's address or
-    /// credential.
+    /// not allowed, and `502` with one line saying why when its host could not
+    /// be resolved here or reached at a permitted address, or the proxy it has
+    /// to go through would not carry it. Neither says anything of that proxy's
+    /// address or credential.
     fn answer(self) -> Vec<u8> {
         let reason = match self {
             Self::Denied => {
@@ -531,6 +536,7 @@ impl Refusal {
                     .to_vec();
             }
             Self::Unresolved => "the host could not be resolved on this machine\n".to_owned(),
+            Self::Unanswered => "no address the host is allowed at answered\n".to_owned(),
             Self::Upstream(Upstream::Unsupported) => "the proxy in crucible's environment cannot carry a sandboxed command's traffic: only a usable http:// proxy can\n".to_owned(),
             Self::Upstream(Upstream::Unreachable) => {
                 "the proxy in crucible's environment could not be reached\n".to_owned()
@@ -600,7 +606,7 @@ fn prepare(
         let reached = match relay {
             Relay::Direct => dial([address], life)
                 .and_then(|origin| Stream::new(origin, Arc::clone(life)).ok())
-                .ok_or(Refusal::Denied),
+                .ok_or(Refusal::Unanswered),
             Relay::Through(proxy) => {
                 tunnel(proxy, address, context.id, life).map_err(Refusal::Upstream)
             }
