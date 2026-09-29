@@ -3,11 +3,11 @@
 A session runs in one mode, set by `permissions.mode` in
 [configuration](../configuration/configuration.md): `ask`, `allowEdits` or
 `fullAccess`. Nothing set means `ask`. That is where a session starts rather
-than what it stays at — <kbd>Shift-Tab</kbd> steps it while you type, and
+than what it stays at: <kbd>Shift-Tab</kbd> steps it while you type, and
 `/mode` names one outright.
 
 A mode decides exactly one thing: what happens to a call no
-[rule](rules.md) mentions. It is never a way around the engine — every call
+[rule](rules.md) mentions. It is never a way around the engine. Every call
 takes the same route to running whatever the mode, a `deny` or `ask` rule
 holds in every one, and a read inside the workspace runs in every one.
 
@@ -21,17 +21,17 @@ holds in every one, and a read inside the workspace runs in every one.
 
 `allowEdits` means what its name says: `write` and `edit` change files without
 asking, and anything that starts a process or leaves the machine asks. Reaching
-the web is not an edit — it is the one thing whose effect is not on this
-computer, and the one that cannot be undone from here. It is for the stretch of work
-where being interrupted per edit costs more than the edits do. `fullAccess`
-asks about nothing, which makes a `deny` rule the only thing that can say no
-there — write those first.
+the web is not an edit; it is the one thing whose effect is not on this
+computer, and the one that cannot be undone from here. It is for the stretch
+of work where being interrupted per edit costs more than the edits do.
+`fullAccess` asks about nothing, which makes a `deny` rule the only thing that
+can say no there. Write those first.
 
 ## Why `allowEdits` still asks before a command
 
 `bash` runs a shell, and a shell reaches whatever you can. crucible reads the
 line closely enough to say what will run, which is what lets a [rule](rules.md)
-be written about it — but reading is not containment. Whatever a word in the
+be written about it, but reading is not containment. Whatever a word in the
 line was found to point at, the shell looks it up again by name when the command
 runs, and a symbolic link put at that name in between sends the change somewhere
 else, with nobody asked.
@@ -50,8 +50,8 @@ read it back and take it away again.
 
 ## The mode is always on screen
 
-The row under the prompt box says which one is in force — `ask mode on`,
-`allow edits on`, `full access mode on` — every time, not once at the top.
+The row under the prompt box says which one is in force (`ask mode on`,
+`allow edits on`, `full access mode on`) every time, not once at the top.
 Hours in, when the opening lines have scrolled away, which mode a session is in
 must not depend on what you remember starting. The box itself is drawn in that
 mode's colour, so a session that is not asking looks unlike one that is before
@@ -62,14 +62,14 @@ the row is read at all.
 <kbd>Shift-Tab</kbd> steps to the next mode and wraps round: `ask`, then
 `allowEdits`, then `fullAccess`, then `ask` again. The row under the box says
 which mode that landed in and the box changes colour with it, and the same key
-steps out again — a mode reached by one key is left by two more.
+steps out again: a mode reached by one key is left by two more.
 
 While a prompt is being typed, every step takes effect on the press, and it is
 the next call that is decided under it. While a turn is running, a step is held
 for the turn that starts after: the turn in flight was decided under the mode
 that was on screen when it began, and nothing about it is reopened mid-turn. So
 no call is ever decided under a mode other than the one that was on screen when
-its turn started — the step you make over a running turn is the mode the *next*
+its turn started. The step you make over a running turn is the mode the *next*
 one runs under.
 
 A step changes one thing and no others. The rules you wrote hold exactly as
@@ -79,7 +79,7 @@ they did, and anything already allowed for the session stays allowed.
 
 `/mode allowEdits` puts the session in that mode outright, spelled the way
 [configuration](../configuration/configuration.md) spells it. It is the same
-change under the same conditions — between turns, nothing else about the
+change under the same conditions: between turns, nothing else about the
 session moving.
 
 `/mode` on its own says which one is in force and lists the three to choose
@@ -88,7 +88,7 @@ was.
 
 ## When nobody can answer
 
-When input has ended — a prompt piped in, a closed terminal — a question has
+When input has ended (a prompt piped in, a closed terminal), a question has
 nobody to answer it, and an unanswerable question is a refusal. There is no
 deny-by-default mode to select because this is not a choice; it is what asking
 means with nobody there. A non-interactive run that must proceed says so
@@ -97,8 +97,8 @@ explicitly, with `allow` rules or with `fullAccess`.
 ## `--continue` resumes the transcript, not the mode
 
 The mode is read from configuration at every start. Continuing a session picks
-up its transcript; it does not pick up the mode the session last ran in — a
-step made with <kbd>Shift-Tab</kbd> included — nor a session-long allow, which
+up its transcript; it does not pick up the mode the session last ran in (a
+step made with <kbd>Shift-Tab</kbd> included), nor a session-long allow, which
 lives only as long as the process it was made in.
 
 A durable [allow rule](rules.md) in `~/.crucible/config.json` is read again on

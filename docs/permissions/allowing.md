@@ -7,18 +7,17 @@ removed, because the text of a rule can read far narrower than its reach.
 ## A command is everything it runs
 
 `allow: ["bash(make)"]` reads as a statement about `make`. It is a statement
-about every recipe in the makefile — which is to say, about anything at all.
+about every recipe in the makefile, which is to say, about anything at all.
 An allow rule for a build command is transitively an allow rule for whatever
 that build executes, in every mode including `ask`. The same holds for a test
 runner, a package manager's install step, anything that takes its instructions
-from files in the workspace — and those files are exactly what a coding agent
-edits.
+from files in the workspace. Those files are exactly what a coding agent edits.
 
 crucible has no built-in list of paths that always ask, and that is
 deliberate: every build tool ships a hook file, so such a list can never be
 complete, and an incomplete list that looks like protection stops being
 thought about. If a hook or a build script deserves guarding in your project,
-write the `ask` or `deny` [rule](rules.md) about it — visible, and yours.
+write the `ask` or `deny` [rule](rules.md) about it: visible, and yours.
 
 ## Wrapper programs cannot be allowed
 
@@ -48,23 +47,24 @@ Those interpreter and launcher shapes are enforceable. A different, open-ended
 class cannot be exhaustively classified: many ordinary programs will run an
 arbitrary command if asked the right way.
 
-- `git` — hooks, aliases, `core.pager`, `-c`
-- `cargo` — `build.rs`, runners and aliases in `.cargo/config.toml`
-- `npm` — lifecycle scripts
-- `make` — every recipe
-- `awk` — `system()`
-- `tar` — `--checkpoint-action`
-- `perl` — a language; whatever the one-liner says
+- `git`: hooks, aliases, `core.pager`, `-c`
+- `cargo`: `build.rs`, runners and aliases in `.cargo/config.toml`
+- `npm`: lifecycle scripts
+- `make`: every recipe
+- `awk`: `system()`
+- `tar`: `--checkpoint-action`
+- `perl`: a language; whatever the one-liner says
 
 `allow: ["bash(git *)"]` grants a shell, one subcommand away. crucible does
-not pretend to police this — it would mean reimplementing each program's
+not pretend to police this; it would mean reimplementing each program's
 argument grammar, wrongly. What it keeps instead is the rule text honest: you
 wrote `git *`, and everything `git` can be told to do is what it covers.
 
 ## The advice
 
 Write `deny` for what must never happen; it holds in every mode and no other
-list can qualify it. Write `allow` about exact commands — `bash(git status)`,
-`bash(cargo test)` — and prefer answering `y` a few extra times to a wildcard
-you would have to reason about. Leave everything you are less sure of to the
-question. The question is the mechanism; the rules are shortcuts through it.
+list can qualify it. Write `allow` about exact commands such as
+`bash(git status)` or `bash(cargo test)`, and prefer answering `y` a few extra
+times to a wildcard you would have to reason about. Leave everything you are
+less sure of to the question. The question is the mechanism; the rules are
+shortcuts through it.
