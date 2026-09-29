@@ -21,7 +21,7 @@ with no POSIX shell says so and runs nothing.
 ## What a command is started with
 
 Not crucible's own environment. That one holds your provider credential, and
-`env` is a command a model runs for ordinary reasons — so a child is given a
+`env` is a command a model runs for ordinary reasons, so a child is given a
 built set of variables rather than an inherited copy.
 
 The list is what a command needs to run at all rather than what is probably
@@ -59,8 +59,8 @@ out, before the counts, because a command that has printed nothing for half a
 minute is the one you most want to put down.
 
 Five rows is a sample and the count is what says so. <kbd>Ctrl</kbd>+<kbd>O</kbd>
-stands the whole of what has arrived so far — the same key that shows a finished
-result the transcript had to cut down to a row — and <kbd>Esc</kbd> closes it
+stands the whole of what has arrived so far (the same key that shows a finished
+result the transcript had to cut down to a row), and <kbd>Esc</kbd> closes it
 again while the command carries on.
 
 The sample is the first thing a short window gives up: the call line, the row
@@ -69,14 +69,14 @@ because what it shows is one keypress away either way. It is drawn and taken
 back rather than written down, so what the transcript keeps is the result below
 and not a second copy of the build log.
 
-A command writing over one line rather than adding lines — a progress bar — stays
+A command writing over one line rather than adding lines (a progress bar) stays
 one row. A command printing faster than the screen can be read has rows skipped:
 the count row is what tells you so, and what the model is sent is unaffected.
 
 ## Leaving one running
 
 Two ways, and they answer different situations. The model sends `background` when
-it means to start something with no end of its own — a dev server, a file watcher,
+it means to start something with no end of its own: a dev server, a file watcher,
 a tunnel. You press <kbd>Ctrl</kbd>+<kbd>B</kbd> when a command you did not expect
 to be long turns out to be. Either way the call is answered, the turn goes on, and
 the process keeps running. Silence does not detach a command: without an
@@ -85,7 +85,7 @@ The agent should continue independent work, or yield if all remaining work
 depends on completion, rather than repeatedly checking the same job.
 
 A call that asked for it is answered as soon as the command has had a moment to
-fail on the spot — two hundred milliseconds, which is long enough for
+fail on the spot: two hundred milliseconds, which is long enough for
 `npm: command not found` to reach the model now rather than in a panel it cannot
 open. A command already over by then was never a background command and comes back
 as an ordinary result. The answer names the number it is running as:
@@ -115,8 +115,8 @@ command waited for will reasonably ask for it again.
 command left running has no deadline, so a call that sent both asked for two
 different things.
 
-A command that begins by sleeping to reach a later one — `sleep 15 && gh pr checks
-622` — is refused too. That is a wait written as a command, and waiting is what
+A command that begins by sleeping to reach a later one (`sleep 15 && gh pr checks
+622`) is refused too. That is a wait written as a command, and waiting is what
 leaving one running is for; the refusal names that move rather than only closing
 this one off, because the same line sent with `background: true` costs the turn
 nothing and comes back with what it printed. A `sleep` with nothing after it is a
@@ -126,7 +126,7 @@ pause rather than a poll and still runs.
 and the command it started is ended rather than left where nobody can see it.
 
 **The question says so.** Where a call asks to be left running, the panel where you
-allow it says the command will still be running after the turn ends — allowing it
+allow it says the command will still be running after the turn ends; allowing it
 is allowing that, and a panel that said only what the command was would be asking
 about the wrong thing.
 
@@ -139,7 +139,7 @@ that row you can act on:
   ask mode on (shift+tab to cycle) · 2 commands
 ```
 
-<kbd>Ctrl</kbd>+<kbd>B</kbd> at the prompt lists them where the box was — the same
+<kbd>Ctrl</kbd>+<kbd>B</kbd> at the prompt lists them where the box was: the same
 key that put one down, which is how every other key here works. Each row says how
 long it has been running, how many lines it has printed and how much:
 
@@ -190,7 +190,7 @@ list, and what it printed is already on its way.
 
 ## When one ends on its own
 
-It says so, because the count going quietly down would leave you — and the model —
+It says so, because the count going quietly down would leave you, and the model,
 believing a server is up:
 
 ```
@@ -199,7 +199,7 @@ believing a server is up:
 
 The line is written the moment it happens, even between turns. It names the call
 the way the call described itself, in whatever words the model chose, and falls
-back to `Bash(npm run dev)` where it described itself as nothing — by the time a
+back to `Bash(npm run dev)` where it described itself as nothing. By the time a
 command ends, the turn that started it has usually scrolled away, so this is the
 one chance to say which of the four it was in words you were shown at the time.
 The command gives up columns before the ending does: how it ended and how much
@@ -208,7 +208,7 @@ it printed is the part nobody can go back and ask for.
 The model is told what the command printed, not only that it ended. A note
 carrying an exit status and a line count leaves the question the command was
 answering still open, and the only move left is to run something else that asks
-it again — which is the polling the note exists to make unnecessary. Each ending
+it again, which is the polling the note exists to make unnecessary. Each ending
 carries a quarter of a result's ceiling, so four commands ending into one note
 cost what one result does, and output cut to fit says so where it was cut.
 Output whose reading failed part-way ends with
@@ -220,10 +220,10 @@ incomplete: it had not been read to the end when the command was reported]`.
 The model is told the moment there is somewhere to put it. A turn that is
 running takes the ending between one step and the next, so a plan built around a
 server that has already fallen over gets interrupted rather than finished. Where
-nothing is running, the next turn carries it — and where there is no next turn
-— the model left a build running and yielded, and the box is sitting there
-waiting — the ending starts one. A model waiting on your machine should not also
-be waiting on your keyboard. Whatever you had half-written in the box is still
+nothing is running, the next turn carries it. Where there is no next turn (the
+model left a build running and yielded, and the box is sitting there waiting),
+the ending starts one. A model waiting on your machine should not also be
+waiting on your keyboard. Whatever you had half-written in the box is still
 there afterwards.
 
 Whichever route gets there first is the only one that says it. An ending is told
@@ -239,7 +239,7 @@ about the conversation, and unlike a forgotten transcript a killed server cannot
 resumed. <kbd>Esc</kbd> does not either: it stops the turn, and a command you
 deliberately let go of is not part of the turn that started it.
 
-What does: <kbd>x</kbd> in the list, and crucible exiting — every process group
+What does: <kbd>x</kbd> in the list, and crucible exiting. Every process group
 goes with it, however the process leaves, including a panic. With Linux
 confinement enabled, the descriptor broker and PID namespace also end the complete
 workload if crucible is killed before user-space cleanup can run. Disabled confinement has no
@@ -257,7 +257,7 @@ output:
 ```
 
 A command that failed carries its exit status under it, and that is a failed
-result rather than a failed turn — the model reads `[exit status 1]` and decides
+result rather than a failed turn: the model reads `[exit status 1]` and decides
 what to do about it. A command that produced nothing at all answers
 `(no output)`, because an empty answer reads as a tool that did not run.
 
@@ -282,7 +282,7 @@ much of the middle was omitted while the pipes were being read:
 [process output was 41200 bytes; 11456 bytes omitted from the middle during capture]
 ```
 
-The ends are what carry the meaning — what the command started doing, and how it
+The ends are what carry the meaning: what the command started doing, and how it
 ended. The bound is applied while the command is still running rather than on
 the way out, so `yes` or `cat /dev/urandom` costs a fixed amount of memory rather
 than filling it with bytes that were always going to be thrown away. The final
@@ -336,7 +336,7 @@ but `fullAccess`, and nothing the tool can say about the line changes that.
 
 The reason is the gap between reading a command line and running it. crucible
 reads the line far enough to say what will run, which is what a rule can
-honestly be written about — a line whose shape it cannot read that far is
+honestly be written about. A line whose shape it cannot read that far is
 refused, and refusing means being asked. But what it cannot say is where a word
 in that line will land: the shell looks the name up again when the command runs,
 so a symbolic link put there in between sends the write somewhere else and
