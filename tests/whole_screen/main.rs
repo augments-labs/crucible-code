@@ -2022,7 +2022,7 @@ fn in_ascii() -> String {
         "updates": {"check": "never"},
         "output": {"glyphs": "ascii"}
     }))
-    .unwrap()
+    .expect("a configuration document")
 }
 
 /// The last word of 0.41.1 in the changelog: the one release these pictures
