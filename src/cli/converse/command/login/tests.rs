@@ -21,6 +21,9 @@ use super::*;
 /// serving closure resolves any credential without reaching a network.
 fn in_force(sample: &Sample) -> Terms {
     Terms {
+        consent: crucible_app::content_use::Consent::new(
+            crucible_app::content_use::Routes::production(),
+        ),
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
@@ -1019,6 +1022,9 @@ fn a_sign_in_row_nothing_is_registered_for_says_so_rather_than_standing_an_empty
     let sample = Sample::new("login-unregistered");
     let mut terms = named(&sample);
     terms.subscriptions = crucible_app::subscription::Subscriptions::new(Vec::new(), Vec::new());
+    // The row's route said yes to, so what stands is the screen this is about
+    // rather than the question before it.
+    terms.consent.record("subscription:moonshot@kimi.ai");
     let rows = production();
     let mut conversation = asking("claude-test-1");
     let mut renderer = Renderer::new(Recording::new(80, 24));

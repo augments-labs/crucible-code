@@ -377,3 +377,39 @@ fn the_yes_read_at_the_start_is_read_once() {
     consent.recorded(["key:google".to_owned()]);
     assert!(consent.asks("key:google").is_some());
 }
+
+/// What a send by a provider would go on is asked about where it has no yes:
+/// a model that is itself warned first, then the route the provider is served
+/// on; a provider served on nothing, or on an unwarned route, asks nothing.
+#[test]
+fn a_send_asks_about_the_route_its_provider_is_served_on() {
+    let model = Warned {
+        route: "model:moonshot/k3",
+        shown: "K3",
+        warning: KIMI_AI,
+        origins: &[],
+    };
+    let mut warned = WARNED.to_vec();
+    warned.push(model);
+    let consent = Consent::new(Routes::new(warned));
+    assert_eq!(
+        consent.unanswered("moonshot", "k3"),
+        None,
+        "served on nothing"
+    );
+
+    consent.served("moonshot", Some(serving("key:moonshot")));
+    consent.served("anthropic", Some(serving("key:anthropic")));
+    assert_eq!(
+        consent.unanswered("moonshot", "k3").map(|one| one.route),
+        Some("model:moonshot/k3")
+    );
+    consent.record("model:moonshot/k3");
+    assert_eq!(
+        consent.unanswered("moonshot", "k3").map(|one| one.route),
+        Some("key:moonshot")
+    );
+    consent.record("key:moonshot");
+    assert_eq!(consent.unanswered("moonshot", "k3"), None);
+    assert_eq!(consent.unanswered("anthropic", "claude-fable-5-1"), None);
+}

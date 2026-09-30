@@ -33,6 +33,7 @@ use crate::cli::Fatal;
 use crate::cli::choice::Choice;
 use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
+use crate::cli::converse::warning::{self, Chosen};
 use crucible_app::providers::{Model, NO_MODEL_CHOSEN, Served, offered};
 use crucible_app::startup::served;
 
@@ -134,7 +135,7 @@ pub(super) fn run<T: Terminal>(
     keys: bool,
 ) -> Result<(), Fatal> {
     if !said.is_empty() {
-        return named(said, renderer, conversation, terms);
+        return named(said, renderer, conversation, terms, keys);
     }
 
     if keys {
@@ -145,14 +146,25 @@ pub(super) fn run<T: Terminal>(
             model: runner.model(),
             effort: runner.effort().map(Effort::as_str),
         };
-        match stood(renderer, terms, current, track, &mut |_| Ok(()))? {
-            Shelved::Took(selected, rung) => {
-                return applied(selected, rung, renderer, conversation, terms);
+        let mut on = None;
+        loop {
+            match stood(renderer, terms, (current, on), track, &mut |_| Ok(()))? {
+                Shelved::Took(selected, rung) => {
+                    let chose = (selected.provider.name, selected.model.name);
+                    match warning::choosing(renderer, terms, chose, keys, &mut |_| Ok(()))? {
+                        Chosen::Take => {
+                            return applied(selected, rung, renderer, conversation, terms);
+                        }
+                        // Back to the shelf, with the mark where it was.
+                        Chosen::Back => on = Some(chose),
+                        Chosen::Stop(said) => return say(renderer, &said),
+                    }
+                }
+                // Escape asked for the screen that was there before the shelf. A
+                // listing under it would be the same question put a second time.
+                Shelved::Left => return say(renderer, LEFT),
+                Shelved::Cramped => break,
             }
-            // Escape asked for the screen that was there before the shelf. A
-            // listing under it would be the same question put a second time.
-            Shelved::Left => return say(renderer, LEFT),
-            Shelved::Cramped => {}
         }
     }
 
@@ -173,7 +185,13 @@ pub(super) fn picked_while<T: Terminal>(
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Taken<Selected>, Fatal> {
     Ok(
-        match stood(renderer, terms, current, Track::Refused, while_waiting)? {
+        match stood(
+            renderer,
+            terms,
+            (current, None),
+            Track::Refused,
+            while_waiting,
+        )? {
             Shelved::Took(selected, _) => Taken::Took(selected),
             Shelved::Left => Taken::Left,
             Shelved::Cramped => Taken::Cramped,
@@ -233,6 +251,7 @@ fn named<T: Terminal>(
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
     terms: &Terms,
+    keys: bool,
 ) -> Result<(), Fatal> {
     let Some(choice) = Choice::parse(said) else {
         return say(renderer, "! a model cannot have an empty provider");
@@ -272,6 +291,15 @@ fn named<T: Terminal>(
         }
         provider
     };
+
+    // Words name one thing, so going back from the question is leaving it.
+    match warning::choosing(renderer, terms, (provider.name, &model), keys, &mut |_| {
+        Ok(())
+    })? {
+        Chosen::Take => {}
+        Chosen::Back => return say(renderer, LEFT),
+        Chosen::Stop(said) => return say(renderer, &said),
+    }
 
     // Dropped for the same reason `apply` drops it: `/model provider/name`
     // names one thing and takes it or says why not, and there is no second half
@@ -314,7 +342,7 @@ fn keys(glyphs: Glyphs) -> (String, String) {
 fn stood<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    current: Asked<'_>,
+    (current, on): (Asked<'_>, Option<(&str, &str)>),
     track: Track,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Shelved<Selected>, Fatal> {
@@ -340,11 +368,13 @@ fn stood<T: Terminal>(
     // Opened on the one in force, so the first key moves off a known place
     // rather than towards one. A model chosen elsewhere is on no row here, and
     // the title above is where it is named.
+    // Or on the one a question just went back from.
+    let (provider, model) = on.map_or((current.provider, current.model), |(provider, model)| {
+        (Some(provider), model)
+    });
     let at = all
         .iter()
-        .position(|one| {
-            Some(one.provider.name) == current.provider && one.model.name == current.model
-        })
+        .position(|one| Some(one.provider.name) == provider && one.model.name == model)
         .unwrap_or(0);
     let rung = match track {
         Track::Offered(Some(effort)) => all

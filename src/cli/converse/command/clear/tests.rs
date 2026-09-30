@@ -54,6 +54,9 @@ fn standing(sample: &Sample) -> Standing {
 /// and the two things the tools of such a run would have been built with.
 fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
     Terms {
+        consent: crucible_app::content_use::Consent::new(
+            crucible_app::content_use::Routes::production(),
+        ),
         style: std::cell::Cell::new(Style::plain()),
         chosen: std::cell::Cell::new(None),
         reading: std::cell::RefCell::default(),
@@ -399,6 +402,9 @@ fn a_new_session_that_cannot_be_started_leaves_the_one_in_hand_running() {
     let blocked = sample.root().join("not-a-directory");
     std::fs::write(&blocked, "").expect("a file where a directory is wanted");
     let terms = Terms {
+        consent: crucible_app::content_use::Consent::new(
+            crucible_app::content_use::Routes::production(),
+        ),
         sessions: blocked,
         ..terms(&sample, &Ledger::new(), &Plan::new())
     };

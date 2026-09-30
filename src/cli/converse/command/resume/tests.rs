@@ -102,6 +102,9 @@ fn runner(session: &Arc<Session>) -> Runner {
 
 fn terms(sample: &Sample) -> Terms {
     Terms {
+        consent: crucible_app::content_use::Consent::new(
+            crucible_app::content_use::Routes::production(),
+        ),
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),

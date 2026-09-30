@@ -61,6 +61,7 @@ use std::time::Duration;
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
+use crucible_app::content_use;
 use crucible_app::providers::{List, Providers, Row as Way, Rows, Served, key_variables, offered};
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
@@ -75,6 +76,7 @@ use crate::cli::Fatal;
 use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Picked};
 use crate::cli::converse::secret::{self, Asked};
+use crate::cli::converse::warning::{self, Answer, Put};
 
 use super::{Terms, about, say};
 
@@ -590,6 +592,35 @@ const fn credential(way: &Way) -> &'static str {
 
 /// The screen of one row: its key box, or its sign-in.
 fn screen<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+    let route = content_use::row_route(way);
+    if let Some(warned) = walk.terms.consent.asks(&route).copied() {
+        let style = walk.terms.style();
+        match warning::ask(walk.renderer, style, &warned, Put::Choice)? {
+            Answer::Yes => walk.terms.consent.give(&route),
+            Answer::Back if opened == Opened::Below => return Ok(Closed::Back),
+            Answer::Back => {
+                say(walk.renderer, LEFT)?;
+                return Ok(Closed::Done);
+            }
+            Answer::Cramped => {
+                walk.renderer.commit(warning::CRAMPED_CHOICE)?;
+                return Ok(Closed::Done);
+            }
+        }
+    }
+    let closed = opening(way, opened, walk);
+    // A yes given here and not written down with a stored credential goes:
+    // a sign-in that failed or was left agreed to nothing.
+    walk.terms.consent.withdraw(&route);
+    closed
+}
+
+/// The screen of `way`, once nothing is left to ask before it.
+fn opening<T: Terminal>(
+    way: &Way,
+    opened: Opened,
+    walk: &mut Walk<'_, T>,
+) -> Result<Closed, Fatal> {
     let served = walk.terms.providers.snapshot();
     let Some(named) = offered(&served).find(|one| one.name == way.provider) else {
         say(
@@ -781,6 +812,7 @@ fn subscribed<T: Terminal>(
         match attempt.wait(Duration::from_millis(50)) {
             Ok(Some(update)) => {
                 if view.apply(update, &withheld) {
+                    warning::stored(renderer, terms, &content_use::row_route(way))?;
                     let Some(named) =
                         offered(&terms.providers.snapshot()).find(|one| one.name == provider)
                     else {
@@ -808,6 +840,7 @@ fn subscribed<T: Terminal>(
                 view.show(renderer, terms, route.title())?;
                 match after_stop(attempt.cancel(), opened) {
                     AfterStop::Take => {
+                        warning::stored(renderer, terms, &content_use::row_route(way))?;
                         let Some(named) =
                             offered(&terms.providers.snapshot()).find(|one| one.name == provider)
                         else {
@@ -1138,7 +1171,12 @@ fn kept<T: Terminal>(
     } = walk;
     let terms = *terms;
     match terms.logins.keep(stored, key) {
-        Ok(_) => taken(named, renderer, conversation, terms),
+        Ok(_) => {
+            if let Some(way) = Rows::production().of(Kind::Key, stored) {
+                warning::stored(renderer, terms, &content_use::row_route(way))?;
+            }
+            taken(named, renderer, conversation, terms)
+        }
         Err(failed) => say(
             renderer,
             &format!(

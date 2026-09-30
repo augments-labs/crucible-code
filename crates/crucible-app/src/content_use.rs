@@ -371,6 +371,23 @@ impl Consent {
         (!state.recorded.contains(route) && !state.given.contains(route)).then_some(warned)
     }
 
+    /// The warned route a send by `provider`, asking `model`, would go on
+    /// with no yes: the model's own where the model is warned, then the route
+    /// the provider is served on. `None` where nothing is to be asked.
+    #[must_use]
+    pub fn unanswered(&self, provider: &str, model: &str) -> Option<Warned> {
+        let served = {
+            let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
+            state.serving.get(provider)?.route.clone()
+        };
+        let model = model_route(provider, model);
+        [Some(model.as_str()), served.as_deref()]
+            .into_iter()
+            .flatten()
+            .find_map(|route| self.asks(route))
+            .copied()
+    }
+
     /// Takes the routes the user's file says yes to, the first time it is
     /// told this run; later tellings are ignored, since a yes the run has
     /// taken out since must not come back from settings read before it was.
@@ -396,6 +413,13 @@ impl Consent {
     pub fn give(&self, route: &str) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
         state.given.insert(route.to_owned());
+    }
+
+    /// Whether `route` has a yes given and not yet written down.
+    #[must_use]
+    pub fn given(&self, route: &str) -> bool {
+        let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
+        state.given.contains(route)
     }
 
     /// Takes back a yes that was given and never recorded.

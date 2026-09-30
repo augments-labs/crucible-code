@@ -293,6 +293,13 @@ pub(crate) enum Fatal {
     #[error("{0} No turn was taken.")]
     Unanswerable(&'static str),
 
+    /// A send on a route whose vendor uses what is sent, with no yes to it and
+    /// no terminal to ask on. Ended the way an unanswerable prompt is, for
+    /// the same reason: a run that sent nothing must say so where a script
+    /// reads.
+    #[error("{0}")]
+    Unanswered(Box<str>),
+
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
     Input(io::Error),
@@ -749,6 +756,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // The account logins `/login` can start, the same registry the launch
         // resolved stored subscriptions through.
         subscriptions: subscriptions.clone(),
+        consent: services.consent().clone(),
         sessions: home.sessions().to_owned(),
         workspace: workspace.clone(),
     };

@@ -56,6 +56,11 @@ fn typed(text: &str) -> Editor {
     editor
 }
 
+/// Consent over the routes this build warns, with nothing served on any.
+pub(crate) fn unwarned() -> crucible_app::content_use::Consent {
+    crucible_app::content_use::Consent::new(crucible_app::content_use::Routes::production())
+}
+
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
@@ -70,6 +75,7 @@ pub(crate) fn plain() -> Terms {
         .join("crucible-unwritten");
 
     Terms {
+        consent: unwarned(),
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
@@ -132,6 +138,7 @@ pub(crate) fn plain() -> Terms {
 /// inside `sample`, which removes it when the test is over.
 pub(crate) fn keeping(sample: &Sample) -> Terms {
     Terms {
+        consent: unwarned(),
         choosing: sample.user_file(),
         ..plain()
     }
@@ -359,6 +366,7 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     // same captured style fed — the one that says no model has been chosen.
     let sample = Sample::new("theme-mid-session");
     let terms = Terms {
+        consent: unwarned(),
         style: Cell::new(Style::coloured()),
         ..keeping(&sample)
     };
@@ -1160,6 +1168,7 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = Cursor::new(Vec::new());
         let terms = Terms {
+            consent: unwarned(),
             style: std::cell::Cell::new(Style::drawn(glyphs)),
             ..plain()
         };
@@ -1334,6 +1343,7 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     // the worker, and this test would prove nothing about the seam it is for.
     let putting = crate::cli::seen::Putting::new();
     let terms = Terms {
+        consent: unwarned(),
         putting: putting.clone(),
         ..plain()
     };
@@ -1390,6 +1400,7 @@ mod login;
 mod question;
 mod release_notes;
 mod restricted;
+mod warning;
 
 // Which questions a mode leaves to be drawn.
 //
