@@ -1034,7 +1034,12 @@ fn a_sign_in_row_nothing_is_registered_for_says_so_rather_than_standing_an_empty
     terms.subscriptions = crucible_app::subscription::Subscriptions::new(Vec::new(), Vec::new());
     // The row's route said yes to, so what stands is the screen this is about
     // rather than the question before it.
-    terms.consent.record("subscription:moonshot@kimi.ai");
+    terms.consent.keeps_in(sample.user_file());
+    let warned = crucible_app::content_use::WARNED
+        .iter()
+        .find(|one| one.route == "subscription:moonshot@kimi.ai")
+        .expect("the kimi.ai sign-in row is warned");
+    terms.consent.accept(warned).expect("a yes written down");
     let rows = production();
     let mut conversation = asking("claude-test-1");
     let mut renderer = Renderer::new(Recording::new(80, 24));

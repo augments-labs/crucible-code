@@ -218,7 +218,7 @@ fn the_release_owner_lends_a_client_and_keeps_its_own_pool_unbuilt() {
     let (asked, stopped) = serving(|services| {
         let owner = services.release();
         let plain = crucible_http::Lookups::plain(std::num::NonZeroUsize::MIN);
-        let lent = owner.client(plain.clone().into());
+        let lent = owner.client(plain.clone().into(), Arc::new(services.consent().clone()));
         let check_has_its_own = format!("{owner:?}");
 
         (

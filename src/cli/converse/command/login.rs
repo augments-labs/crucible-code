@@ -173,8 +173,9 @@ const STORE_UNREADABLE: &str =
 
 /// The way back in, when the yes that goes with the credential being replaced
 /// could not be taken out of the configuration file first.
-const STORE_UNRELEASED: &str =
-    "crucible cannot change its configuration file; fix it and try /login again";
+const STORE_UNRELEASED: &str = "crucible could not change its configuration file first; \
+     try /login again once no other crucible is changing it, or check the file reads as \
+     configuration";
 
 /// Manual callback input is transient credential material. It has the same
 /// bound as the key box and is never committed or echoed.

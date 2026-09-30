@@ -189,8 +189,7 @@ impl Services {
             let poison = Poison::default();
             let targets = Lookups::poisoned(NonZeroUsize::MIN, &poison);
             self.release()
-                .client(targets)
-                .map(|client| client.holding(Arc::new(self.consent.clone())))
+                .client(targets, Arc::new(self.consent.clone()))
                 .map_or_else(HttpTurns::unavailable, HttpTurns::new)
         })
     }

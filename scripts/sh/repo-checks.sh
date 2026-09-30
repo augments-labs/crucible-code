@@ -373,9 +373,9 @@ section "every HTTP client is built where its hold was decided"
 # A request leaves through a client, and a hold is handed to a client when it
 # is built. Each file below builds one outside a tests file, and each was
 # decided about: renewal.rs builds the client sign-ins and renewals go
-# through, handed the application's hold; release.rs builds the client
-# provider turns and web posts share, which the application holds, and the
-# release check's own, which reaches GitHub alone; transport/http.rs builds one
+# through, handed the application's hold; release.rs lends the client
+# provider turns and web posts share only under a hold its caller hands in,
+# and builds the release check's own, which reaches GitHub alone; transport/http.rs builds one
 # only inside its test module. One more file is one more decision to take.
 decided="crates/crucible-auth/src/oauth/renewal.rs
 crates/crucible-provider/src/transport/http.rs

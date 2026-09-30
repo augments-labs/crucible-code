@@ -487,8 +487,10 @@ impl Consent {
         state.recorded = routes.into_iter().collect();
     }
 
-    /// Records `route` as said yes to, once the file holds it.
-    pub fn record(&self, route: &str) {
+    /// Records `route` as said yes to, once the file holds it: the crate's
+    /// own, so a yes is let go only through [`Consent::accept`], which writes
+    /// it down first.
+    pub(crate) fn record(&self, route: &str) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
         state.given.remove(route);
         state.recorded.insert(route.to_owned());
