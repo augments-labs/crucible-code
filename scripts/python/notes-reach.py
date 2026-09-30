@@ -16,7 +16,8 @@ the command returns; `std` gives only `cmp` and `fmt`; the one `include*!` is
 the changelog; and the only module it declares is its tests. So `super`, `self`,
 `tokio`, `core`, a braced `std` import and any other crate are refused, as is a
 `mod` other than its tests in a test build, or a `path` in any attribute, that
-would bring in a file this never reads.
+would bring in a file this never reads. A macro is refused, since what it
+expands to is read by nothing here.
 
 Words inside a string, a character or a comment are no path, and are taken out
 first by reading the file as Rust is read: a string runs to its closing quote
@@ -106,6 +107,8 @@ def code(source):
                 if at >= end:
                     raise Unreadable("a string never closes")
                 if source[at] == "\\":
+                    # A line break escaped to join two lines is still a line.
+                    lines += source[at + 1 : at + 2] == "\n"
                     at += 2
                     continue
                 if source[at] == '"':
@@ -145,9 +148,14 @@ def reached(source):
         kept = path if path.startswith("crate::") else "::".join(path.split("::")[:2])
         if kept not in PATHS:
             said.append(f"names {kept}")
+    # The code keeps the source's lines, or nothing below can be matched to them.
+    if text.count("\n") != source.count("\n"):
+        return ["could not keep the source's lines, so it was not read"]
+    if re.search(r"\bmacro_rules\s*!", text):
+        said.append("writes a macro, whose expansion this never reads")
     # The one include is judged in the code, where a comment cannot vouch for it.
-    written = source.splitlines()
-    for number, line in enumerate(text.splitlines(), 1):
+    written = source.split("\n")
+    for number, line in enumerate(text.split("\n"), 1):
         if re.search(r"\binclude\w*\s*!", line):
             own = written[number - 1] if number <= len(written) else ""
             if own.strip() != f"pub(super) const CHANGELOG: &str = {INCLUDED};":
@@ -222,6 +230,13 @@ REFUSED = [
     "#[cfg_attr(all(), path = \"other.rs\")]\n#[cfg(test)]\nmod tests;",
     "mod tests;",
     "const B: &[u8] = include_bytes!(\"/etc/hostname\"); // include_str!(\"../../../../CHANGELOG.md\")",
+    "const A: &str = \"a\\\n    b\\\n    c\";\n/*\npub(super) const CHANGELOG: &str = include_str!(\"../../../../CHANGELOG.md\");\n*/\nconst B: &[u8] = include_bytes!(\"embedded.txt\");",
+    "// a\u2028pub(super) const CHANGELOG: &str = include_str!(\"../../../../CHANGELOG.md\");\nconst B: &[u8] = include_bytes!(\"embedded.txt\");",
+    "mod r#tests;",
+    "#[allow(dead_code)]\nmod tests;",
+    "#[cfg(not(test))]\nmod tests;",
+    "macro_rules! m { ($n:ident) => { mod $n; }; }\nm!(reach);",
+    "macro_rules! m { ($i:ident) => { $i!(\"x\") }; }\nconst B: &[u8] = m!(include_bytes);",
 ]
 
 # Lines that must be read clean after `BASE`: what the module does write.
@@ -237,6 +252,7 @@ ALLOWED = [
     "fn u() -> usize { [1, 2].iter().copied().collect::<Vec<usize>>().len() }",
     "fn v() -> Result<(), Fatal> { Ok(()) }",
     "fn w() -> std::fmt::Result { Ok(()) }",
+    "const A: &str = \"a\\\n    b\";\nfn t2() -> u8 { 1 }",
 ]
 
 
