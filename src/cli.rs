@@ -603,15 +603,10 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // that never needed it.
     //
     // A second credential for one provider, which only 0.43.3 writing after a
-    // roll back leaves, is taken out first and said in the same place.
+    // roll back leaves, is taken out after that read and said in the same
+    // place.
     let rows = crucible_app::providers::Rows::production();
-    let store = Store::in_home(home.path()).naming(rows.names());
-    let settled = startup::settle(&store, &rows);
-    let keys = store.read();
-    let trouble = match (settled, keys.trouble()) {
-        (Some(settled), Some(read)) => Some(format!("{settled}; {read}")),
-        (settled, read) => settled.or_else(|| read.map(str::to_owned)),
-    };
+    let (keys, trouble) = stored(home.path(), &rows);
     let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
@@ -972,6 +967,35 @@ fn fail(problem: &Fatal) -> ExitCode {
 
     let _ = io::stderr().write_all(line.as_bytes());
     ExitCode::FAILURE
+}
+
+/// What a start reads its credentials from `home` as, and the one sentence
+/// to say about the store under the welcome, where there is one.
+///
+/// The store is told the names `rows` write credentials under, so a
+/// credential given on a row the bare provider name does not stand for is
+/// found; and a second credential for one provider is taken out.
+fn stored(
+    home: &std::path::Path,
+    rows: &crucible_app::providers::Rows,
+) -> (crucible_auth::StoredCredentials, Option<String>) {
+    let store = Store::in_home(home).naming(rows.names());
+    // Read first: that read tightens a store left readable by others and says
+    // so, and the settle after it finds the file private.
+    let keys = store.read();
+    let read = keys.trouble().map(str::to_owned);
+    let settled = startup::settle(&store, rows);
+    // A credential taken out is no longer one to serve.
+    let keys = if settled.is_some() {
+        store.read()
+    } else {
+        keys
+    };
+    let trouble = match (settled, read) {
+        (Some(settled), Some(read)) => Some(format!("{settled}; {read}")),
+        (settled, read) => settled.or(read),
+    };
+    (keys, trouble)
 }
 
 #[cfg(test)]
