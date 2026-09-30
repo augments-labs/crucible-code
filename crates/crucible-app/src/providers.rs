@@ -53,6 +53,7 @@ const PROVIDERS: [Served; 4] = [
         reach: startup::anthropic_web,
         window: 200_000,
         fast: Anthropic::fast_at_vendor,
+        fast_signed_in: None,
         models: &[
             Model::shown("claude-fable-5-1", "Claude Fable 5.1", EVERY),
             Model::new("claude-fable-5", EVERY),
@@ -72,6 +73,7 @@ const PROVIDERS: [Served; 4] = [
         build: startup::google,
         reach: startup::google_web,
         fast: Google::fast_at_vendor,
+        fast_signed_in: None,
         // The model's full input capacity is available through configuration;
         // starting below the long-context pricing boundary keeps it deliberate.
         window: 200_000,
@@ -90,6 +92,7 @@ const PROVIDERS: [Served; 4] = [
         reach: startup::moonshot_web,
         window: 262_144,
         fast: Moonshot::fast_at_vendor,
+        fast_signed_in: None,
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
         // names and does not serve the second of these at all, so a key from
@@ -114,6 +117,7 @@ const PROVIDERS: [Served; 4] = [
         reach: startup::openai_web,
         window: 272_000,
         fast: OpenAi::fast_at_vendor,
+        fast_signed_in: Some(OpenAi::fast_signed_in),
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
@@ -487,9 +491,13 @@ pub struct Served {
     /// using it is a choice rather than the starting behavior.
     pub window: u32,
     /// How each of its models is asked to answer fast at the vendor's own
-    /// address, for a list read before any provider is set up. A provider set
-    /// up answers for itself; a test holds the two to one answer.
+    /// address with a key, for a list that reads every provider's models
+    /// without setting each one up. A provider set up answers for itself; a
+    /// test holds the two to one answer.
     pub fast: fn(&str) -> FastForm,
+    /// The same, where a stored sign-in serves it, for a provider whose
+    /// sign-in serves fast on other models than its key.
+    pub fast_signed_in: Option<fn(&str) -> FastForm>,
 }
 
 /// Why the built-in providers could not be assembled.

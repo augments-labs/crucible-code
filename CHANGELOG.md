@@ -26,9 +26,9 @@ change in any release with no deprecation period.
 - **`/fast` asks a model for its vendor's fast form, at its price.** OpenAI,
   Anthropic and Google models that have one show the vendor's price and caveat
   before you choose, and the label adds `fast` only after an answer served fast;
-  a refusal of fast is sent once more at standard speed. Before rolling back to
-  0.43.3, delete `"fast": true` from each provider in your configuration file,
-  or 0.43.3 stops on it.
+  where the vendor documents a refusal of fast, the request is sent once more at
+  standard speed. Before rolling back to 0.43.3, delete `"fast": true` from each
+  provider in your configuration file, or 0.43.3 stops on it.
 - **`/release-notes` prints what changed in each release.** Older releases get
   a row each with how many entries they added, changed and fixed, the ten
   newest are printed in full, and the one you are running is marked `this

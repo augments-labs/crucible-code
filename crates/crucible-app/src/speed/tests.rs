@@ -1,7 +1,6 @@
 //! The fast table in the docs, held to the words each provider answers with.
 
 use crucible_models::FastForm;
-use crucible_provider::OpenAi;
 
 use crate::providers::{Served, offered, providers};
 
@@ -29,11 +28,12 @@ fn named(cell: &str) -> Vec<&str> {
     cell.split('`').skip(1).step_by(2).collect()
 }
 
-/// How `model` is asked to answer fast under `credential`, as its provider
-/// answers.
+/// How `model` is asked to answer fast under `credential`, as the registry
+/// lists it.
 fn form(served: Served, credential: &str, model: &str) -> FastForm {
-    match (served.name, credential) {
-        ("openai", "sign-in") => OpenAi::fast_signed_in(model),
+    match (credential, served.fast_signed_in) {
+        ("sign-in", Some(signed)) => signed(model),
+        ("sign-in", None) => panic!("{} has no sign-in with a fast form", served.name),
         _ => (served.fast)(model),
     }
 }

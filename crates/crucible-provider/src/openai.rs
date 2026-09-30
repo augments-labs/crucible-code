@@ -168,9 +168,8 @@ impl OpenAi {
     /// anywhere else.
     pub const VENDOR: Endpoint = VENDOR;
 
-    /// How `model` is asked to answer fast at the vendor's own address with an API
-    /// key:
-    /// what a list of models says before any provider is set up.
+    /// How `model` is asked to answer fast at the vendor's own address with an
+    /// API key: what a list of models says before any provider is set up.
     #[must_use]
     pub fn fast_at_vendor(model: &str) -> crucible_models::FastForm {
         fast::form(Some(Serving::Api), model)

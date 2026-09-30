@@ -545,3 +545,24 @@ fn the_shelf_title_says_fast_only_after_an_answer_served_fast() {
         "now  openai · gpt-6-astra · high"
     );
 }
+
+#[test]
+fn a_row_has_the_fast_form_of_the_route_its_provider_is_served_on() {
+    // A sign-in serves fast on fewer models than a key, and a configured
+    // address serves none: the note says what taking the row would ask.
+    let catalogue = catalogue();
+    let openai = offered(&catalogue)
+        .find(|served| served.name == "openai")
+        .expect("openai is offered");
+
+    assert!(super::routed(openai, "gpt-5.5", false, false).switched());
+    assert_eq!(
+        super::routed(openai, "gpt-5.5", false, true),
+        crucible_models::FastForm::None
+    );
+    assert!(super::routed(openai, "gpt-5.6-sol", false, true).switched());
+    assert_eq!(
+        super::routed(openai, "gpt-6-astra", true, false),
+        crucible_models::FastForm::None
+    );
+}

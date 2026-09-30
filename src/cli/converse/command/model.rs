@@ -70,6 +70,19 @@ const NO_RUNG: &str = "no rung";
 /// What the row of a model with a fast form says at its end.
 const FAST: &str = "fast";
 
+/// The fast form `model` has on the route `served` is served on: none at a
+/// configured address, which is not the vendor's to answer for, and the
+/// sign-in's where a stored sign-in serves the provider.
+fn routed(served: Served, model: &str, based: bool, signed_in: bool) -> FastForm {
+    if based {
+        return FastForm::None;
+    }
+    match served.fast_signed_in.filter(|_| signed_in) {
+        Some(signed) => signed(model),
+        None => (served.fast)(model),
+    }
+}
+
 /// The one note a model's row has room for: `no rung` before `fast`.
 fn note(rungs: &[Effort], form: FastForm) -> &'static str {
     if rungs.is_empty() {
@@ -365,6 +378,9 @@ fn stood<T: Terminal>(
     let all = narrowing::every(&providers);
     let glyphs = terms.style().glyphs();
     let (long, short) = keys(glyphs);
+    // Read once for the shelf, not once a frame: which providers a stored
+    // sign-in serves decides the fast form a row's model has.
+    let stored = terms.logins.read();
 
     // Which model is in force goes on the title row rather than beside an
     // entry: it is one fact about the session, and a pane whose rows all read
@@ -476,11 +492,17 @@ fn stood<T: Terminal>(
                     let now = Some(one.provider.name) == current.provider
                         && one.model.name == current.model;
                     // The model in force by the provider set up for it, which
-                    // knows the credential; the rest by the vendor's address.
+                    // knows the credential; the rest by their provider's route.
                     let form = if now {
                         current.pace.form
                     } else {
-                        (one.provider.fast)(one.model.name)
+                        let name = one.provider.name;
+                        routed(
+                            one.provider,
+                            one.model.name,
+                            terms.settings.base_url(name).is_some(),
+                            stored.has_subscription(name),
+                        )
                     };
                     (one, window, now, form)
                 })
