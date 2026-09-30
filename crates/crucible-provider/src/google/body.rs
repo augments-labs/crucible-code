@@ -23,7 +23,7 @@ pub(super) fn serialize(
     serialize_at(request, scope, false)
 }
 
-/// [`serialize`], asking for the priority tier where `fast`.
+/// The whole request body, asking for the priority tier where `fast`.
 pub(super) fn serialize_at(
     request: &Request<'_>,
     scope: ContinuationScope,
