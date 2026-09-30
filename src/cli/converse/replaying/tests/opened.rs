@@ -430,3 +430,41 @@ fn a_live_result_the_store_let_go_of_opens_once_the_last_has_arrived() {
     let shown = opened(&mut back, oldest);
     assert!(shown.contains(&inside(1)), "{shown}");
 }
+
+#[test]
+fn a_result_a_clearing_took_from_the_model_opens_with_the_words_its_row_showed() {
+    // A pruning and a restriction each take the words out of what the model is
+    // sent and leave them in the log. The row was drawn with them, so the row
+    // opens with them.
+    let clearings: [(&str, fn(&Session)); 2] = [
+        ("pruned", |session| {
+            session.pruned(25, &[ToolId::new("b-1")])
+        }),
+        ("restricted", |session| {
+            session.restricted(25, &[ToolId::new("b-1")], "[cleared]");
+        }),
+    ];
+
+    for (how, clearing) in clearings {
+        let sample = Sample::new(&format!("opened-after-{how}"));
+        let commands = ran_commands(40, LINES);
+        let recording =
+            Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+        for message in commands.messages() {
+            recording.append(message);
+        }
+        clearing(&recording);
+        drop(recording);
+        let (session, _) =
+            Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+
+        let mut back = put_back(commands, &Arc::new(session));
+        let first = back
+            .offers
+            .first()
+            .map(|offer| offer.line)
+            .expect("an offer");
+        let shown = opened(&mut back, first);
+        assert!(shown.contains(&inside(1)), "{how}:\n{shown}");
+    }
+}

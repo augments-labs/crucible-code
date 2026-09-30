@@ -216,3 +216,27 @@ fn a_line_still_being_written_reads_nothing_until_it_is_whole() {
         RecordedToolOutput::ok("what c.rs held")
     );
 }
+
+#[test]
+fn a_result_cut_to_the_ceiling_reads_back_with_the_note_it_was_cut_with() {
+    // What the log keeps of a result too long for it is the cut result and the
+    // note saying what went, and that is what is read back.
+    let sample = Sample::new("placed-cut-to-ceiling");
+    let mut output = RecordedToolOutput::ok(format!("HEAD{}TAIL", "x".repeat(40_000)));
+    let retained = output.limit_encoded(crucible_types::TOOL_RESULT_BYTES);
+    assert!(retained.omitted() > 0, "the result was not cut");
+    record(
+        &sample,
+        &[
+            said("print it all"),
+            calling("call-1", "bash", r#"{"command":"cat big"}"#),
+            answered("call-1", output.clone()),
+        ],
+    );
+    let session = Session::resume(&sample.logs(), &sample.workspace())
+        .expect("the session")
+        .0;
+
+    let place = replayed_places(&session).remove(0);
+    assert_eq!(session.read_back(&place).expect("read"), output);
+}
