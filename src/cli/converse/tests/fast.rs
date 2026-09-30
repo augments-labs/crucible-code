@@ -124,6 +124,11 @@ pub(super) const FIELD: FastForm = FastForm::Field(Cost {
 /// What the terminal holds after `typed` is run over `provider`, and the speed
 /// each request asked at.
 fn fasting(provider: Fastened, typed: &str) -> (String, Vec<Speed>) {
+    fasting_on(provider, "gpt-6-sol", typed)
+}
+
+/// The same, over `model`, the empty name where none is chosen.
+fn fasting_on(provider: Fastened, model: &str, typed: &str) -> (String, Vec<Speed>) {
     let speeds = Arc::clone(&provider.speeds);
     let conversation =
         Conversation::recording(Arc::new(Session::nowhere()), Some("openai"), |session| {
@@ -133,7 +138,7 @@ fn fasting(provider: Fastened, typed: &str) -> (String, Vec<Speed>) {
                 Agent::new(
                     AgentId::new("test"),
                     Model {
-                        name: "gpt-6-sol".into(),
+                        name: model.into(),
                         max_tokens: 64,
                         window: None,
                         accepts: None,
@@ -281,4 +286,12 @@ fn a_refusal_of_fast_is_one_line_and_one_more_request_at_standard() {
         "{written}"
     );
     assert!(written.contains("answered"), "{written}");
+}
+
+#[test]
+fn with_no_model_chosen_it_says_what_it_says_for_any_model_command() {
+    let (written, _) = fasting_on(Fastened::new(FIELD), "", "/fast\n");
+
+    assert!(written.contains("No model selected"), "{written}");
+    assert!(!written.contains("enter to choose"), "{written}");
 }
