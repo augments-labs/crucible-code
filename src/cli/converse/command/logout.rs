@@ -173,6 +173,7 @@ fn chosen<T: Terminal>(
         .collect();
 
     let panel = Panel {
+        source: None,
         title: "Remove stored credential",
         said: Some(SAID),
         shown: &shown,

@@ -357,6 +357,7 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
     let mut first = 0;
     loop {
         let panel = Panel {
+            source: None,
             title: TITLE,
             said: Some(HOW),
             shown: &FIRST,
@@ -457,6 +458,7 @@ impl Listing<'_> {
         let mut at = 0;
         loop {
             let panel = Panel {
+                source: None,
                 title: TITLE,
                 said: Some(self.said),
                 shown: &shown,
@@ -665,6 +667,7 @@ fn signed<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Res
     let mut at = 0;
     loop {
         let panel = Panel {
+            source: None,
             title: &title,
             said: Some("Choose where to finish account authorization."),
             shown: &shown,

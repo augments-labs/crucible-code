@@ -695,6 +695,7 @@ fn signed_in_is_kept_at_forty_columns_where_the_plan_words_are_cut() {
         })
         .collect();
     let panel = Panel {
+        source: None,
         title: TITLE,
         said: Some(ACCOUNTS),
         shown: &shown,

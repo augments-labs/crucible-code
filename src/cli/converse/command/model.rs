@@ -212,6 +212,7 @@ pub(super) fn confirmed<T: Terminal>(
     ];
 
     let panel = Panel {
+        source: None,
         title: "Switch model?",
         said: Some(&says),
         shown: &rows,
