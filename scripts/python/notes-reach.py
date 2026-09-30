@@ -15,7 +15,8 @@ is written with a leading `::` or without; the only `crate` path is the error
 the command returns; `std` gives only `cmp` and `fmt`; the one `include*!` is
 the changelog; and the only module it declares is its tests. So `super`, `self`,
 `tokio`, `core`, a braced `std` import and any other crate are refused, as is a
-`mod` or a `#[path]` that would bring in a file this never reads.
+`mod` other than its tests in a test build, or a `path` in any attribute, that
+would bring in a file this never reads.
 
 Words inside a string, a character or a comment are no path, and are taken out
 first by reading the file as Rust is read: a string runs to its closing quote
@@ -144,12 +145,21 @@ def reached(source):
         kept = path if path.startswith("crate::") else "::".join(path.split("::")[:2])
         if kept not in PATHS:
             said.append(f"names {kept}")
-    for number, line in enumerate(source.splitlines(), 1):
-        if re.search(r"\binclude\w*!", line) and INCLUDED not in line:
-            said.append(f"line {number} builds in something other than the changelog")
-    for module in sorted(set(re.findall(r"\bmod\s+([A-Za-z_]\w*)\s*;", text)) - MODULES):
+    # The one include is judged in the code, where a comment cannot vouch for it.
+    written = source.splitlines()
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.search(r"\binclude\w*\s*!", line):
+            own = written[number - 1] if number <= len(written) else ""
+            if own.strip() != f"pub(super) const CHANGELOG: &str = {INCLUDED};":
+                said.append(f"line {number} builds in something other than the changelog")
+    for module in sorted(set(re.findall(r"\bmod\s+(?:r#)?([A-Za-z_]\w*)\s*;", text)) - MODULES):
         said.append(f"declares the module {module}, which this never reads")
-    if re.search(r"#\s*!?\s*\[\s*path\b", text):
+    # Its tests are the one module, and only a test build has it.
+    if len(re.findall(r"\bmod\s+(?:r#)?tests\s*;", text)) != len(
+        re.findall(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*mod\s+tests\s*;", text)
+    ):
+        said.append("declares its tests outside a test build")
+    if re.search(r"#\s*!?\s*\[[^\]]*\bpath\s*=", text):
         said.append("points a module at a file of its own choosing")
     if "crucible_client_api" not in roots:
         said.append("names no crate this check knows it takes, so it measured nothing")
@@ -203,6 +213,15 @@ REFUSED = [
     "use {std::fs};",
     "fn n() { let _ = \"never closes; }",
     "/* never closes",
+    "fn x() { let _ = (\"\\\"\", std::fs::read(\"x\"), \"\\\"\"); }",
+    "fn y() { let _ = (r#\"a\"b\"#, std::fs::read(\"y\"), r#\"c\"d\"#); }",
+    "fn z() { let _ = (br#\"a\"b\"#, std::fs::read(\"y\"), br#\"c\"d\"#); }",
+    "/* a /* \" */ \" */ fn w() { let _ = std::fs::read(\"x\"); } const Q: &str = \"\";",
+    "mod r#reach;",
+    "#[cfg_attr(all(), path = \"other.rs\")]\nmod tests;",
+    "#[cfg_attr(all(), path = \"other.rs\")]\n#[cfg(test)]\nmod tests;",
+    "mod tests;",
+    "const B: &[u8] = include_bytes!(\"/etc/hostname\"); // include_str!(\"../../../../CHANGELOG.md\")",
 ]
 
 # Lines that must be read clean after `BASE`: what the module does write.
@@ -214,6 +233,7 @@ ALLOWED = [
     "fn s() -> &'static str { \"two\nlines with tokio::net in them\" }",
     "// std::fs in a comment\nfn t() -> u64 { u64::MAX }",
     "/* nested /* tokio::net */ still a comment */",
+    "/* a /* b */ std::fs */",
     "fn u() -> usize { [1, 2].iter().copied().collect::<Vec<usize>>().len() }",
     "fn v() -> Result<(), Fatal> { Ok(()) }",
     "fn w() -> std::fmt::Result { Ok(()) }",
