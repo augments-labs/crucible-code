@@ -8,6 +8,7 @@
 //! store, are the ones the defect was first shown with.
 
 use crucible_tools::ToolOutput;
+use crucible_tui::Pressed;
 
 use super::*;
 use crate::cli::converse::expanding::{self, Standing};
@@ -474,4 +475,207 @@ fn a_result_a_clearing_took_from_the_model_opens_with_the_words_its_row_showed()
         let shown = opened(&mut back, first);
         assert!(shown.contains(&inside(1)), "{how}:\n{shown}");
     }
+}
+
+/// Waits until the log of `session` holds `text`, which the writer puts there
+/// in its own time.
+fn landed(session: &Session, text: &str) {
+    let since = std::time::Instant::now();
+    while !std::fs::read_to_string(session.path()).is_ok_and(|log| log.contains(text)) {
+        assert!(
+            since.elapsed() < std::time::Duration::from_secs(5),
+            "{text:?} never reached the log"
+        );
+        std::thread::yield_now();
+    }
+}
+
+/// A live session recording to its log, the store reading back from it, and
+/// a terminal tall enough to read every row off.
+fn live(name: &str) -> (Sample, Arc<Session>, Kept, Renderer<Recording>) {
+    let sample = Sample::new(name);
+    let session =
+        Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a session"));
+    let mut kept = Kept::default();
+    logging(&mut kept, &session);
+    let mut renderer = Renderer::new(Recording::new(BROAD, TALL));
+    renderer.wears(Style::plain().palette());
+    session.append(&Message::said("run every one of them"));
+    (sample, session, kept, renderer)
+}
+
+/// One call of `bash`, asked for in a message of its own.
+fn asked_for(ids: &[ToolId]) -> Message {
+    Message::Agent {
+        continuation: None,
+        text: String::new().into(),
+        calls: ids
+            .iter()
+            .map(|id| ToolCall {
+                id: id.clone(),
+                name: "bash".into(),
+                args: ToolArgs::new(r#"{"command":"make"}"#),
+            })
+            .collect(),
+        stop: Some(StopReason::WantsTools),
+    }
+}
+
+/// Draws the call line and result `number` of `lines` lines, and says which
+/// line of the record its offer went on.
+fn drawn(
+    renderer: &mut Renderer<Recording>,
+    kept: &mut Kept,
+    id: &ToolId,
+    number: usize,
+    lines: usize,
+) -> usize {
+    draw::returned(renderer, "bash", Style::plain()).expect("a recording cannot fail");
+    let line = renderer.lines();
+    draw::came_back(
+        renderer,
+        kept,
+        id,
+        draw::Shown::live(ToolOutput::ok(printed(number, lines))),
+        Style::plain(),
+    )
+    .expect("a recording cannot fail");
+    line
+}
+
+/// The results of `ids`, numbered from `first`, as the log records them.
+fn results(ids: &[ToolId], first: usize, lines: usize) -> Message {
+    Message::ToolResults(
+        (first..)
+            .zip(ids)
+            .map(|(number, id)| ToolResult {
+                id: id.clone(),
+                output: ToolOutput::ok(printed(number, lines)).into_recorded(),
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn a_batch_the_log_took_before_its_rows_were_drawn_still_opens_every_row() {
+    // A turn records a batch of results once it has handed them to the screen,
+    // and the screen draws them in its own time, so the log can say where a
+    // result went before its row is drawn. The ceiling is crossed in the
+    // middle of such a batch, and the rows drawn after that, let go of in
+    // their turn, still open.
+    let (_sample, session, mut kept, mut renderer) = live("opened-batch-first");
+
+    let mut lines = Vec::new();
+    for turn in 0..6 {
+        let ids: Vec<ToolId> = (1..=8)
+            .map(|call| ToolId::new(format!("b-{}", turn * 8 + call)))
+            .collect();
+        session.append(&asked_for(&ids));
+        for id in &ids {
+            kept.calling(id.clone(), "bash".to_owned());
+        }
+        session.append(&results(&ids, turn * 8 + 1, LINES));
+        landed(&session, &inside(turn * 8 + 8));
+
+        for (number, id) in (turn * 8 + 1..).zip(&ids) {
+            lines.push(drawn(&mut renderer, &mut kept, id, number, LINES));
+        }
+    }
+    assert!(
+        kept.newest().count() < 24,
+        "the store held too much to say anything"
+    );
+
+    let mut back = PutBack {
+        offers: offers(&renderer),
+        kept,
+        renderer,
+    };
+    one_offer_to_a_result(&back, 48);
+    for (number, line) in (1..).zip(lines) {
+        let shown = opened(&mut back, line);
+        assert!(
+            shown.contains(&inside(number)),
+            "row {line} did not open result {number}:\n{shown}"
+        );
+    }
+}
+
+#[test]
+fn a_row_kept_long_before_the_first_let_go_still_opens() {
+    // More results than the log's writer keeps places for arrive before the
+    // store lets any go, each short and each cut. The first of them is let go
+    // of later, and still opens.
+    let (_sample, session, mut kept, mut renderer) = live("opened-kept-long");
+
+    let mut first = None;
+    for number in 1..=1100 {
+        let id = ToolId::new(format!("b-{number}"));
+        session.append(&asked_for(std::slice::from_ref(&id)));
+        kept.calling(id.clone(), "bash".to_owned());
+        let line = drawn(&mut renderer, &mut kept, &id, number, 3);
+        first.get_or_insert(line);
+        session.append(&results(std::slice::from_ref(&id), number, 3));
+    }
+    for number in 1101..=1125 {
+        let id = ToolId::new(format!("b-{number}"));
+        session.append(&asked_for(std::slice::from_ref(&id)));
+        kept.calling(id.clone(), "bash".to_owned());
+        drawn(&mut renderer, &mut kept, &id, number, LINES);
+        session.append(&results(std::slice::from_ref(&id), number, LINES));
+    }
+    assert!(
+        kept.newest()
+            .all(|whole| !whole.text().contains(&inside(1))),
+        "the first result is still held"
+    );
+
+    let first = first.expect("a first row");
+    let mut back = PutBack {
+        offers: Vec::new(),
+        kept,
+        renderer,
+    };
+    let shown = opened(&mut back, first);
+    assert!(shown.contains(&inside(1)), "{shown}");
+}
+
+#[test]
+fn ctrl_o_reaches_every_result_the_rows_offer() {
+    // The key the rows name opens every result they offer, held or let go
+    // of: walked to its end, the view has shown each one's own words, and
+    // none of them is a line saying it could not be read back.
+    let sample = Sample::new("opened-ctrl-o");
+    let commands = ran_commands(40, LINES);
+    let session = logged(&sample, &commands);
+    let mut back = put_back(commands, &session);
+    assert!(
+        back.kept.newest().count() < 40,
+        "the store held every result"
+    );
+
+    let mut standing = Standing::default();
+    standing.open(&back.kept);
+    let mut seen = std::collections::BTreeSet::new();
+    loop {
+        assert!(
+            expanding::under(
+                &mut back.renderer,
+                Style::plain(),
+                &back.kept,
+                &mut standing
+            )
+            .expect("a recording cannot fail"),
+            "the view closed"
+        );
+        let shown = back.renderer.terminal().picture().rows().join("\n");
+        assert!(!shown.contains(UNREAD), "{shown}");
+        seen.extend((1..=40).filter(|number| shown.contains(&inside(*number))));
+        if !standing.against(Pressed::Scrolled { back: false }, 300) {
+            break;
+        }
+    }
+
+    let missing: Vec<usize> = (1..=40).filter(|number| !seen.contains(number)).collect();
+    assert!(missing.is_empty(), "never shown: {missing:?}");
 }

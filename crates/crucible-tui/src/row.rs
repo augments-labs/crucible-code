@@ -379,7 +379,7 @@ impl Row {
     /// where paint shows the hue a palette settled on for one terminal — so
     /// this is how `crate::dump`, which only a test build has, writes a run's
     /// job into the picture beside the run. Shipped code has a palette in hand
-    /// and asks for paint; the one exception is a table, which folds a cell
+    /// and asks for paint, with two exceptions: a table, which folds a cell
     /// through a row and has to hand the pieces back to the scanner as the runs
     /// they are, and a row already written that is rewritten through
     /// [`Row::rewrite`], which has to know what it is looking at.

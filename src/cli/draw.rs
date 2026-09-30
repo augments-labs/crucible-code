@@ -1279,10 +1279,17 @@ pub(crate) fn withdraw<T: Terminal>(
     renderer: &mut Renderer<T>,
     kept: &mut Kept,
 ) -> Result<(), TerminalError> {
+    // Every row taken from the store is amended before a failure to redraw is
+    // said, because the store hands each one over once: a row left out here
+    // would go on offering with nothing behind it.
+    let mut drawn = Ok(());
     for at in kept.withdrawn() {
-        renderer.amend(at, unoffered)?;
+        let amended = renderer.amend(at, unoffered);
+        if drawn.is_ok() {
+            drawn = amended;
+        }
     }
-    Ok(())
+    drawn
 }
 
 /// A row that offered to expand, without the offer.

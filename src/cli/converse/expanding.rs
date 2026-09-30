@@ -30,11 +30,19 @@
 //! underneath it goes on cutting results, and letting those in would slide the
 //! rows being read down the screen as each one arrived; they are there the next
 //! time it is opened, which is one press away.
+//!
+//! A result the store let go of is still stood over, where the session has a
+//! log to read it back from, and it is read back when the window reaches it
+//! rather than when the view opens. What the view holds of those is what its
+//! window reaches, up to one result's worth, so standing over a long session
+//! costs what reading one result costs. A result the log cannot give back
+//! stands as a line saying so, and the others still open.
 
 use crucible_tui::{Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, Terminal};
+use crucible_types::TOOL_RESULT_BYTES;
 
 use crate::cli::Fatal;
-use crate::cli::kept::{Back, Kept, Whole};
+use crate::cli::kept::{Kept, Mark, Placed, Whole};
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
@@ -73,13 +81,16 @@ pub(super) struct View {
     from: usize,
     /// The furthest down it may go, as of the last frame drawn.
     end: usize,
+    /// Where the window was open when the last frame was drawn, which is how
+    /// a frame knows which way the window moved since.
+    was: usize,
     /// What it is a window over.
     over: Over,
-    /// What the row it opened on offered that the store no longer holds, read
-    /// back from the session log as it opened. Held for as long as the view
-    /// stands and no longer, so opening rows one after another holds one row's
-    /// results beyond the store at most.
-    back: Vec<Back>,
+    /// What the window reaches of the results the store let go of, read back
+    /// from the session log: which result, and what it said, or `None` where
+    /// the log could not give it back. No more than [`BEYOND`] of it, and held
+    /// only while the view stands.
+    back: Vec<(Mark, Option<Box<str>>)>,
 }
 
 impl View {
@@ -88,6 +99,7 @@ impl View {
         Self {
             from: 0,
             end: 0,
+            was: 0,
             over,
             back: Vec::new(),
         }
@@ -96,6 +108,16 @@ impl View {
 
 /// What stands in place of a result the log could not give back.
 const UNREAD: &str = "! this result could not be read back from the session log";
+
+/// What stands in place of a let-go result the window reaches while what it
+/// has read back above it already comes to [`BEYOND`]: it is read once that
+/// has left the window.
+const LATER: &str = "read back from the session log as the view moves on to it";
+
+/// The most the view reads back at once beyond what the store holds, in
+/// bytes: one result's worth, the most a recorded result can be. The first
+/// result the window reaches is read whatever it comes to.
+const BEYOND: usize = TOOL_RESULT_BYTES;
 
 /// Whether the whole of what was cut is standing, and where over it.
 ///
@@ -159,18 +181,13 @@ impl Standing {
     /// reader was already looking at.
     ///
     /// What the row offered and the store let go of is read back from the
-    /// session log now, one result at a time, and a result the log cannot give
-    /// back stands as a line saying so while the others still open.
+    /// session log as the view is drawn, as either way in does.
     pub(super) fn one(&mut self, kept: &Kept, at: usize) {
         if !kept.offered(at) {
             return;
         }
 
-        let back = kept.read_back(at);
-        *self = Self::Open(View {
-            back,
-            ..View::onto(Over::One(at))
-        });
+        *self = Self::Open(View::onto(Over::One(at)));
     }
 
     /// Gives one key to the view, and answers whether a frame is owed.
@@ -277,17 +294,63 @@ pub(super) fn under<T: Terminal>(
 /// reading it — rare, and the honest answer to it is the screen coming back
 /// rather than a frame of chrome with nothing under it.
 fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: usize) -> Vec<Row> {
+    let entries = entries(kept, &view.over);
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let heights = reaching(kept, view, &entries, columns, rows);
+
     let View {
         from,
         end,
-        over,
+        was,
         back,
+        ..
     } = view;
-    let shown: Vec<Shown<'_>> = match *over {
+    let shown: Vec<Shown<'_>> = entries.iter().map(|entry| shown(*entry, back)).collect();
+    let expanded = Expanded {
+        shown: &shown,
+        from: *from,
+    };
+
+    // Written before the rows are asked for, so the key pressed against this
+    // picture is clamped to what this picture could reach. Where results were
+    // let go of, the rows are counted already, and a result not read back yet
+    // is a few rows until it is: the last of them could sit under the end of
+    // the window and never be reached, so the window may go down as far as its
+    // top, which is where the view reads it.
+    *end = match heights {
+        Some(heights) => {
+            let total: usize = heights.iter().sum();
+            total
+                .saturating_sub(Expanded::seen(rows))
+                .max(unread(&entries, back, &heights))
+        }
+        None => expanded.end(columns, rows),
+    };
+    *from = (*from).min(*end);
+    *was = *from;
+
+    expanded.within(columns, rows, glyphs)
+}
+
+/// One result the view stands over: held by the store, or let go of and read
+/// back when the window reaches it.
+#[derive(Debug, Clone, Copy)]
+enum Entry<'a> {
+    Held(&'a Whole),
+    Let(&'a Placed),
+}
+
+/// What the view stands over, in the order it is read.
+fn entries<'a>(kept: &'a Kept, over: &Over) -> Vec<Entry<'a>> {
+    match *over {
         // Stepped over rather than counted up to, because the end that gives is
         // the other one: what arrived after the view opened is at the front of
         // `newest`, and what was dropped to stay under the ceiling has gone
-        // from its back.
+        // from the back of `older`. A result let go of moves from the back of
+        // the one to the front of the other, so the two read as one list that
+        // keeps its order as results arrive.
         // The call still out first, where there is one, because it is the newest
         // thing there is and it is what a reader pressing this while a command
         // runs is asking about. Chained rather than folded into `newest`: the
@@ -295,8 +358,13 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
         // call that has not answered has not been counted among them.
         Over::Everything(cut) => kept
             .writing()
-            .chain(kept.newest().skip(kept.cut().saturating_sub(cut)))
-            .map(showing)
+            .map(Entry::Held)
+            .chain(
+                kept.newest()
+                    .map(Entry::Held)
+                    .chain(kept.older().map(Entry::Let))
+                    .skip(kept.cut().saturating_sub(cut)),
+            )
             .collect(),
 
         // Every result that row offered, and usually that is one. A row
@@ -307,32 +375,228 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
         Over::One(at) => kept
             .newest()
             .filter(|whole| whole.at() == Some(at))
-            .map(showing)
-            .chain(back.iter().map(|back| match back {
-                Back::Read { called, text } => Shown { called, text },
-                Back::Unread { called } => Shown {
-                    called,
-                    text: UNREAD,
-                },
-            }))
+            .map(Entry::Held)
+            .chain(
+                kept.older()
+                    .filter(|placed| placed.at() == at)
+                    .map(Entry::Let),
+            )
             .collect(),
-    };
-
-    if shown.is_empty() {
-        return Vec::new();
     }
+}
 
-    let expanded = Expanded {
-        shown: &shown,
-        from: *from,
+/// One result as the view shows it, with what has been read back of the ones
+/// let go of.
+fn shown<'a>(entry: Entry<'a>, back: &'a [(Mark, Option<Box<str>>)]) -> Shown<'a> {
+    match entry {
+        Entry::Held(whole) => showing(whole),
+        Entry::Let(placed) => Shown {
+            called: placed.called(),
+            text: match back.iter().find(|(mark, _)| placed.is(mark)) {
+                Some((_, Some(text))) => text,
+                Some((_, None)) => UNREAD,
+                None => LATER,
+            },
+        },
+    }
+}
+
+/// Reads back what the window reaches of the results the store let go of,
+/// and lets go of what it has left, keeping the rows the reader sees where
+/// they were. Hands back how many rows each result comes to once it has,
+/// where any was let go of.
+///
+/// A step never passes a result the view has not read back: one down stops
+/// at its top, and one up at its end, so that walking the view shows every
+/// result whatever the step. What the window reaches then depends on where
+/// each result begins at this width, which depends on what has been read
+/// back; so it is worked out, the reading changed, and worked out again,
+/// twice at most.
+///
+/// The window then moves with the result it opens on, so what the reader is
+/// looking at stays on the same rows of the screen: a result read back keeps
+/// its heading and grows below it, one let go of shrinks, and results above
+/// the window changing length move it by as much. Stepping down onto a result
+/// shows it from its top; stepping up onto one shows it from its end.
+fn reaching(
+    kept: &Kept,
+    view: &mut View,
+    entries: &[Entry<'_>],
+    columns: usize,
+    rows: usize,
+) -> Option<Vec<usize>> {
+    if !entries.iter().any(|entry| matches!(entry, Entry::Let(_))) {
+        view.back.clear();
+        return None;
+    }
+    let seen = Expanded::seen(rows);
+    let down = view.from >= view.was;
+    let mut heights = heights(entries, &view.back, columns);
+    view.from = stopped(view, entries, &heights, down);
+
+    for _ in 0..2 {
+        let window = view.from..view.from.saturating_add(seen);
+        let before = starts(&heights);
+        let within = |span: &[usize]| matches!(span, [start, end] if *start < window.end && *end > window.start);
+        let reached: Vec<&Placed> = entries
+            .iter()
+            .zip(before.windows(2))
+            .filter(|(_, span)| within(span))
+            .filter_map(|(entry, _)| match entry {
+                Entry::Let(placed) => Some(*placed),
+                Entry::Held(_) => None,
+            })
+            .collect();
+
+        let had: Vec<Mark> = view.back.iter().map(|(mark, _)| mark.clone()).collect();
+        let back = reading(kept, std::mem::take(&mut view.back), &reached);
+        let has: Vec<Mark> = back.iter().map(|(mark, _)| mark.clone()).collect();
+        view.back = back;
+        if has == had {
+            break;
+        }
+        remeasured(&mut heights, entries, &view.back, columns);
+
+        // The result the window opens on, or, stepping up onto one just read
+        // back, the one under it: that one's rows are the ones staying put.
+        let top = before.windows(2).position(within);
+        let grew = |at: usize| {
+            matches!(entries.get(at), Some(Entry::Let(placed))
+                if !had.iter().any(|mark| placed.is(mark)) && has.iter().any(|mark| placed.is(mark)))
+        };
+        let anchor = top.map(|at| if !down && grew(at) { at + 1 } else { at });
+
+        if let Some(anchor) = anchor {
+            let now = starts(&heights);
+            if let (Some(was), Some(now)) = (before.get(anchor), now.get(anchor)) {
+                view.from = view.from.saturating_add(*now).saturating_sub(*was);
+            }
+        }
+    }
+    Some(heights)
+}
+
+/// Where the window stops on its way from where it was to where it was
+/// asked to go: at the top of the first result it would pass going down
+/// that it has not read back, or at the end of the first going up.
+fn stopped(view: &View, entries: &[Entry<'_>], heights: &[usize], down: bool) -> usize {
+    let (near, far) = if down {
+        (view.was, view.from)
+    } else {
+        (view.from, view.was)
     };
+    let unread = |entry: &Entry<'_>| matches!(entry, Entry::Let(placed) if !view.back.iter().any(|(mark, _)| placed.is(mark)));
+    let starts = starts(heights);
+    let passed = entries
+        .iter()
+        .zip(starts.windows(2))
+        .filter(|(entry, _)| unread(entry))
+        .filter_map(|(_, span)| match span {
+            [start, end] => Some((*start, *end)),
+            _ => None,
+        });
 
-    // Written before the rows are asked for, so the key pressed against this
-    // picture is clamped to what this picture could reach.
-    *end = expanded.end(columns, rows);
-    *from = (*from).min(*end);
+    let stop = if down {
+        passed
+            .map(|(start, _)| start)
+            .find(|start| *start > near && *start < far)
+    } else {
+        passed
+            .map(|(_, end)| end.saturating_sub(1))
+            .filter(|last| *last > near && *last < far)
+            .max()
+    };
+    stop.unwrap_or(view.from)
+}
 
-    expanded.within(columns, rows, glyphs)
+/// Where the last result the view has not read back begins, or nothing where
+/// it has read back every one it stands over.
+fn unread(entries: &[Entry<'_>], back: &[(Mark, Option<Box<str>>)], heights: &[usize]) -> usize {
+    entries
+        .iter()
+        .zip(starts(heights))
+        .filter(|(entry, _)| {
+            matches!(entry, Entry::Let(placed) if !back.iter().any(|(mark, _)| placed.is(mark)))
+        })
+        .map(|(_, start)| start)
+        .next_back()
+        .unwrap_or(0)
+}
+
+/// How many rows each of `entries` comes to at this width, counting the blank
+/// that parts it from the one above.
+fn heights(entries: &[Entry<'_>], back: &[(Mark, Option<Box<str>>)], columns: usize) -> Vec<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(at, entry)| measured(*entry, at, back, columns))
+        .collect()
+}
+
+/// Counts again the rows of the results let go of, which are the only ones
+/// what was read back changes.
+fn remeasured(
+    heights: &mut [usize],
+    entries: &[Entry<'_>],
+    back: &[(Mark, Option<Box<str>>)],
+    columns: usize,
+) {
+    for (at, (height, entry)) in heights.iter_mut().zip(entries).enumerate() {
+        if matches!(entry, Entry::Let(_)) {
+            *height = measured(*entry, at, back, columns);
+        }
+    }
+}
+
+/// How many rows one result comes to at this width, with the blank above it.
+fn measured(
+    entry: Entry<'_>,
+    at: usize,
+    back: &[(Mark, Option<Box<str>>)],
+    columns: usize,
+) -> usize {
+    let one = shown(entry, back);
+    Expanded {
+        shown: std::slice::from_ref(&one),
+        from: 0,
+    }
+    .length(columns)
+    .saturating_add(usize::from(at > 0))
+}
+
+/// Where each result begins, and where the last of them ends.
+fn starts(heights: &[usize]) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(heights.iter().scan(0_usize, |next, height| {
+            *next = next.saturating_add(*height);
+            Some(*next)
+        }))
+        .collect()
+}
+
+/// What the view holds read back for the results the window `reached`:
+/// what it held already of them, and the rest read from the log, in the
+/// order the window reaches them and no more than [`BEYOND`] of it.
+fn reading(
+    kept: &Kept,
+    mut held: Vec<(Mark, Option<Box<str>>)>,
+    reached: &[&Placed],
+) -> Vec<(Mark, Option<Box<str>>)> {
+    let mut back = Vec::new();
+    let mut bytes = 0_usize;
+    for placed in reached {
+        let text = match held.iter().position(|(mark, _)| placed.is(mark)) {
+            Some(at) => held.swap_remove(at).1,
+            None => kept.read_back(placed),
+        };
+        let size = text.as_ref().map_or(0, |text| text.len());
+        if !back.is_empty() && bytes.saturating_add(size) > BEYOND {
+            break;
+        }
+        bytes = bytes.saturating_add(size);
+        back.push((placed.mark(), text));
+    }
+    back
 }
 
 /// One held result, as the view shows it.

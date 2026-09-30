@@ -1900,6 +1900,37 @@ fn a_panic_on_another_thread_is_said_in_the_transcript_a_line_each() {
     );
 }
 
+#[test]
+fn a_row_that_stops_offering_keeps_its_count_and_loses_the_key() {
+    // What goes is the offer: the key's name, the brackets it stood in, and a
+    // change's offer of its own. A count of what the row could not show is
+    // still true and stays, and nothing is left lighting under the pointer.
+    let mut rows = [
+        one(&ToolOutput::ok("one\ntwo\nthree"), WIDE, Style::plain()),
+        one(
+            &ToolOutput::ok("page text ".repeat(200)),
+            WIDE,
+            Style::plain(),
+        ),
+        Row::new()
+            .then(Slot::Plain, "Update(a.rs) +1 -1")
+            .then(Slot::Cut, " (ctrl+o to expand)"),
+    ];
+    unoffered(&mut rows);
+
+    let said: Vec<String> = rows.iter().map(Row::text).collect();
+    assert_eq!(said.first().map(String::as_str), Some("  ⎿ one (+2 lines)"));
+    assert!(
+        said.get(1)
+            .is_some_and(|row| row.starts_with("  ⎿ page text") && !row.contains('(')),
+        "{said:?}"
+    );
+    assert_eq!(said.get(2).map(String::as_str), Some("Update(a.rs) +1 -1"));
+    for row in &rows {
+        assert!(row.kinds().all(|slot| slot != Slot::Cut), "{row:?}");
+    }
+}
+
 // Where a result is held against the row it was written on. Its text is kept
 // as it was agreed, which the formatter would otherwise re-wrap.
 #[rustfmt::skip]

@@ -55,19 +55,56 @@ fn restricted_then_forty(sample: &Sample) -> (Session, Transcript) {
     Session::resume(&sample.logs(), &sample.workspace()).expect("the session")
 }
 
+/// Puts `conversation`'s session back on a terminal, opens the row of the
+/// first result, which the store has let go of, and says what the view shows.
+fn opened_first(conversation: &crucible_app::Conversation, session: &Arc<Session>) -> String {
+    let mut kept = crate::cli::kept::Kept::default();
+    let mut renderer = Renderer::new(Recording::new(80, 400));
+    let pruned = crucible_session::Pruned::default();
+    let replay = replaying::Replay {
+        runner: conversation.runner(),
+        pruned: &pruned,
+        style: Style::plain(),
+    };
+    replaying::replayed(&mut renderer, &replay, session, &mut kept)
+        .expect("a recording cannot fail");
+
+    let first = kept
+        .older()
+        .last()
+        .map(crate::cli::kept::Placed::at)
+        .expect("the store let the first result go");
+    let mut standing = expanding::Standing::default();
+    standing.one(&kept, first);
+    assert!(
+        expanding::under(&mut renderer, Style::plain(), &kept, &mut standing)
+            .expect("a recording cannot fail"),
+        "the first row opened nothing"
+    );
+    renderer.terminal().picture().rows().join("\n")
+}
+
 #[test]
 fn a_restricted_result_the_log_still_holds_is_not_sent_to_the_model_after_a_resume() {
     // Picked up, the session is put back with a log to read the first result
-    // back from. The prompt after it is a request, and what that request
-    // sends of the first result is the sentence, not the words.
+    // back from, and the row is opened: the reader is shown the words. The
+    // prompt after it is a request, and what that request sends of the first
+    // result is the sentence, not the words.
     let sample = Sample::new("restricted-resumed");
     let (session, transcript) = restricted_then_forty(&sample);
+    let session = Arc::new(session);
 
     let script = Script::new(vec![saying("answered")]);
     let sent: Sent = script.sent();
-    let conversation = paired(Arc::new(session), |session| {
+    let conversation = paired(Arc::clone(&session), |session| {
         scripted(script, Tools::new(), session).resuming(transcript)
     });
+    let shown = opened_first(&conversation, &session);
+    assert!(
+        shown.contains("the restricted words") && !shown.contains("could not be read back"),
+        "the first result was not read back:\n{shown}"
+    );
+
     let mut renderer = Renderer::new(Recording::new(80, 24));
     let mut input = Cursor::new(b"and now?\n".to_vec());
 

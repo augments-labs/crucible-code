@@ -68,7 +68,7 @@ pub(super) fn replayed<T: Terminal>(
 }
 
 /// Sets where the rows of `session` read their results back from: its log,
-/// where it has one.
+/// or nowhere where it has none.
 ///
 /// Every way a session comes onto the screen passes here — the command line,
 /// `/resume` — and `/clear` asks for it when it starts another, so the store
@@ -76,9 +76,11 @@ pub(super) fn replayed<T: Terminal>(
 /// gives it nothing to read from, and its rows stop offering as their results
 /// are let go of.
 pub(super) fn logging(kept: &mut Kept, session: &Arc<Session>) {
-    if session.id().is_some() {
-        kept.logging(Box::new(Logged(Arc::clone(session))));
-    }
+    let log: Option<Box<dyn Log>> = session
+        .id()
+        .is_some()
+        .then(|| Box::new(Logged(Arc::clone(session))) as Box<dyn Log>);
+    kept.logging(log);
 }
 
 /// A session with a log, as the store reads results back from it.
@@ -86,12 +88,12 @@ pub(super) fn logging(kept: &mut Kept, session: &Arc<Session>) {
 struct Logged(Arc<Session>);
 
 impl Log for Logged {
-    fn placed(&self) -> Vec<(ToolId, u64)> {
-        self.0
-            .take_placed()
-            .into_iter()
-            .map(|place| (place.call().clone(), place.position()))
-            .collect()
+    fn landed(&self) -> Vec<(ToolId, u64)> {
+        placed(self.0.take_landed())
+    }
+
+    fn settled(&self) -> Vec<(ToolId, u64)> {
+        placed(self.0.take_placed())
     }
 
     fn read(&self, call: &ToolId, position: u64) -> Option<Box<str>> {
@@ -103,6 +105,14 @@ impl Log for Logged {
             .ok()
             .map(|output| draw::Shown::replayed(output, None).into_text())
     }
+}
+
+/// Each place as the store keeps it: the call, and the record's position.
+fn placed(places: Vec<Place>) -> Vec<(ToolId, u64)> {
+    places
+        .into_iter()
+        .map(|place| (place.call().clone(), place.position()))
+        .collect()
 }
 
 /// The change lines a log kept for one batch of results, for the reader alone.

@@ -47,9 +47,9 @@ pub(super) enum Request {
 
 /// The most places kept for the session to hand over, oldest let go first.
 ///
-/// Eight passes of the most calls one pass may make. What reads them takes
-/// them as they come, so this is a bound on a reader that never does rather
-/// than a number any ordinary run reaches.
+/// Eight passes of the most calls one pass may make. The screen takes them as
+/// each result arrives, so this bounds a screen that falls that far behind,
+/// and a session nothing draws, rather than a number an ordinary run reaches.
 pub(super) const PLACED: usize = 8 * 128;
 
 /// Where the results the writer appended went, waiting to be taken.
