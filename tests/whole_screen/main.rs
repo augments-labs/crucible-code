@@ -2719,3 +2719,92 @@ fn a_credential_taken_out_takes_its_yes_and_the_question_stands_again() {
     window.types_until("hello\r", "Use it anyway");
     assert_eq!(proxy.asked(), Vec::<String>::new());
 }
+
+#[test]
+fn a_base_url_crucible_recognises_is_asked_about_and_any_other_is_sent_to() {
+    for (at, base, shown) in [
+        (
+            0,
+            "https://api.moonshot.ai/v1",
+            Some("Kimi open platform · api.moonshot.ai"),
+        ),
+        (
+            1,
+            "https://API.Kimi.ai:443/coding/v1",
+            Some("MoonshotAI · kimi.ai"),
+        ),
+        (2, "https://gateway.example/v1", None),
+    ] {
+        let proxy = warning::Proxy::new();
+        let document = warning::based(base);
+        let case = format!("warning-base-{at}");
+        let mut window = warning::through(&case, (80, 30), &document, &proxy, (&[], None));
+        if let Some(shown) = shown {
+            window.types_until("hello\r", "Use it anyway");
+            assert!(window.picture().contains(shown), "{}", window.picture());
+            assert_eq!(proxy.asked(), Vec::<String>::new(), "{base}");
+        } else {
+            window.types("hello\r");
+            assert!(
+                !window.picture().contains("Use it anyway"),
+                "{}",
+                window.picture()
+            );
+            let reached = proxy.reached(1);
+            assert!(
+                !reached.is_empty() && reached.iter().all(|host| host == "gateway.example:443"),
+                "{reached:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_start_that_takes_a_second_credential_out_takes_its_yes_and_asks_again() {
+    // What a roll back to 0.43.3 can leave: a kimi.ai sign-in said yes to, and
+    // a kimi.com key 0.43.3 stored beside it. The start keeps the key and takes
+    // the sign-in out, and its yes with it, before the store is written.
+    let proxy = warning::Proxy::new();
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-settle-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+    let document = warning::based("https://api.kimi.com/coding/v1").replace(
+        "\n}\n",
+        ",\n  \"contentUse\": {\"accepted\": [\"subscription:moonshot@kimi.ai\"]}\n}\n",
+    );
+
+    let mut window = warning::through(
+        "warning-settle",
+        (80, 30),
+        &document,
+        &proxy,
+        (&[], Some(&earlier)),
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+    assert!(
+        !warning::said(&window).contains("subscription:moonshot@kimi.ai"),
+        "{}",
+        warning::said(&window)
+    );
+    window.types_until("hello\r", "Use it anyway");
+    assert!(
+        window.picture().contains("MoonshotAI · kimi.com"),
+        "{}",
+        window.picture()
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}

@@ -124,7 +124,11 @@ pub(crate) fn through(
         rows,
         &Launch {
             document,
-            env: &[("GEMINI_API_KEY", KEY), ("HTTPS_PROXY", &proxy.address)],
+            env: &[
+                ("GEMINI_API_KEY", KEY),
+                ("MOONSHOT_API_KEY", KEY),
+                ("HTTPS_PROXY", &proxy.address),
+            ],
             args,
             home,
         },
@@ -134,4 +138,13 @@ pub(crate) fn through(
 /// The user's own file, as the case left it.
 pub(crate) fn said(window: &Watched) -> String {
     std::fs::read_to_string(window.home().join("config.json")).unwrap_or_default()
+}
+
+/// The configuration of a `MoonshotAI` key sent to `base`.
+pub(crate) fn based(base: &str) -> String {
+    format!(
+        "{{\n  \"sandbox\": {{\"enabled\": false}},\n  \"updates\": {{\"check\": \"never\"}},\n  \
+         \"provider\": \"moonshot\",\n  \"providers\": {{\"moonshot\": {{\"model\": \"kimi-for-coding\", \
+         \"baseUrl\": \"{base}\"}}}}\n}}\n"
+    )
 }
