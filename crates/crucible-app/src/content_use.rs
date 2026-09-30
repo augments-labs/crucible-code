@@ -257,14 +257,15 @@ pub fn model_route(provider: &str, model: &str) -> String {
 ///
 /// Recognised when its scheme is the documented address's, its host is that
 /// address's without regard to case, to a trailing dot or to the default port
-/// written out, and its path, as some server could read it, is that
-/// address's path or lies under it by whole segments. Servers differ in
-/// whether they merge adjacent slashes, and in whether they decode escapes
-/// before or after resolving `.` and `..` and read a decoded `/` as a
-/// separator; each of those readings is taken, and any one of them being
-/// documented is enough for the route to be asked about. A reading is only
-/// ever added, never taken away, so a spelling one of them recognises stays
-/// recognised.
+/// written out, and its path, under any of six readings, is that address's
+/// path or lies under it by whole segments. The readings are three orders,
+/// each with adjacent slashes kept or merged: `.` and `..` resolved before
+/// escapes are decoded; after, with a decoded `/` kept inside its segment;
+/// and after, with it taken as a separator. Any one of them being documented
+/// is enough for the route to be asked about. A reading is only ever added,
+/// never taken away, so a spelling one of them recognises stays recognised.
+/// A path a server reads some other way, such as with `\` as a separator or
+/// with `;` parameters dropped, is not one of these.
 #[must_use]
 pub fn recognised(base_url: &str) -> Option<&'static str> {
     let origin = Origin::of(base_url)?;
@@ -467,7 +468,7 @@ struct State {
     /// What each provider's requests go on, as last resolved.
     serving: BTreeMap<String, Serving>,
     /// Providers whose credential was taken out since they were resolved,
-    /// read again the next time a send or a choice asks about them.
+    /// read again at the next send or choice, whichever provider it is for.
     stale: BTreeSet<String>,
 }
 
@@ -664,9 +665,10 @@ impl Consent {
     }
 
     /// Takes what `provider` was served on as gone stale, to be read again
-    /// by the next question about it. Until then it still claims its origin
-    /// on the route it was served on, whose yes went with the credential, so
-    /// the origin is held rather than decided by another provider's claim.
+    /// at the next send or choice, whichever provider it is for. Until then
+    /// it still claims its origin on the route it was served on, whose yes
+    /// went with the credential, so the origin is held rather than decided by
+    /// another provider's claim.
     fn unsettle(&self, provider: &str) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
         state.stale.insert(provider.to_owned());
@@ -727,8 +729,8 @@ impl Hold for Consent {
 /// route its provider's `baseUrl` answers for, taken out of the user's own
 /// file `file` and then out of `consent`, except a yes a `/login` gave and
 /// waits to write with this very credential. What that provider was served
-/// on is taken as stale, still holding its origin, and read again the next
-/// time it is asked about.
+/// on is taken as stale, still holding its origin, and read again at the
+/// next send or choice, whichever provider it is for.
 ///
 /// Changing or removing a `baseUrl` moves no yes; the address is read from
 /// `settings` once, here, as the run was started with it.

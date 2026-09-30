@@ -2844,12 +2844,13 @@ fn a_send_two_routes_hold_asks_about_each_before_it_goes() {
 
     window.types_until("hello\r", "Use it anyway");
     let first = window.picture();
-    window.types("\r");
-    let reached = proxy.reached(1);
-    let second = window.picture();
-    assert!(second.contains("Use it anyway"), "{first}\n{second}");
-    assert_ne!(first, second);
-    assert_eq!(reached, Vec::<String>::new(), "sent before the second yes");
+    window.types_until("\r", the_other(&first));
+    assert!(window.picture().contains("Use it anyway"), "{first}");
+    assert_eq!(
+        proxy.reached(1),
+        Vec::<String>::new(),
+        "sent before the second yes"
+    );
 
     window.types("\r");
     let reached = proxy.reached(1);
@@ -2876,12 +2877,8 @@ fn a_choice_two_routes_hold_asks_about_each_before_it_is_taken() {
     window.types("claude-sonnet-5");
     window.types_until("\r", "Takes this choice");
     let first = window.picture();
-    window.types("\r");
-    let second = within(|| {
-        let now = window.picture();
-        (now != first && now.contains("Takes this choice")).then_some(now)
-    });
-    assert!(second.is_some(), "{first}\n{}", window.picture());
+    window.types_until("\r", the_other(&first));
+    assert!(window.picture().contains("Takes this choice"), "{first}");
 
     window.types("\r");
     let said = within(|| {
@@ -2906,7 +2903,19 @@ fn a_choice_two_routes_hold_asks_about_each_before_it_is_taken() {
     );
 }
 
-/// What `seen` answers within ten seconds of asking, polled, or `None`.
+/// The name of whichever of the two routes at one origin `first` does not
+/// stand, which only the second question draws.
+fn the_other(first: &str) -> &'static str {
+    if first.contains("Kimi Code · kimi.com") {
+        "MoonshotAI · kimi.com"
+    } else {
+        "Kimi Code · kimi.com"
+    }
+}
+
+/// What `seen` answers within ten seconds of asking, polled, or `None`: for
+/// what is read afresh each time, such as a file, and never a picture, which
+/// changes only when keys are typed.
 fn within<T>(mut seen: impl FnMut() -> Option<T>) -> Option<T> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
