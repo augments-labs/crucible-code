@@ -37,6 +37,7 @@ use crucible_tools::{DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, Too
 use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
+use crate::content_use::{self, Consent, Serving};
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
 use crate::services::Services;
@@ -212,15 +213,22 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // session writes a file, and one written for a run that never happened is
     // then the newest for this directory — which is what `--continue` would
     // offer instead of the last real session.
+    let auth = ProviderAuth {
+        settings,
+        from: startup.from,
+        stored: startup.stored,
+        subscriptions: startup.subscriptions,
+    };
+    // Before anything could be sent: what the user's own file says yes to,
+    // and what each provider's requests would go on, are what the clients
+    // ask before a request leaves.
+    let consent = startup.services.consent();
+    consent.recorded(settings.content_accepted().into_iter().map(str::to_owned));
+    serve(consent, startup.providers, auth);
     let provider = provider(
         startup.provider,
         startup.unasked,
-        ProviderAuth {
-            settings,
-            from: startup.from,
-            stored: startup.stored,
-            subscriptions: startup.subscriptions,
-        },
+        auth,
         startup.services.http(),
     )?;
 
@@ -777,6 +785,61 @@ fn credential(
             Err(absent.into())
         }
     }
+}
+
+/// What `named`'s requests are sent on, resolved in the order [`credential`]
+/// and [`key`] choose a credential: a stored sign-in where no address is
+/// configured, then the variable's key, then a stored key. `None` where no
+/// credential would be found, so nothing would be sent.
+///
+/// A configured address takes a key wherever the key came from, and answers
+/// for the route [`content_use::recognised`] says, or for none.
+#[must_use]
+pub fn served_on(named: &str, variable: &str, auth: ProviderAuth<'_>) -> Option<Serving> {
+    let rows = crate::providers::Rows::production();
+    let base = auth.settings.base_url(named);
+    if base.is_none() && auth.subscriptions.credential(named, auth.stored).is_some() {
+        let row = rows.held(named, auth.stored)?;
+        return Some(Serving {
+            route: Some(content_use::row_route(row)),
+            at: None,
+        });
+    }
+    let row = if ApiKey::from_lookup(variable, auth.from).is_ok() {
+        rows.environment(named)
+    } else {
+        let held = auth
+            .stored
+            .held(named)
+            .filter(|held| held.kind == crucible_auth::Kind::Key)?;
+        auth.stored.get(&held.name)?;
+        rows.of(held.kind, &held.name)
+    };
+    Some(match base {
+        Some(base) => Serving {
+            route: content_use::recognised(base).map(str::to_owned),
+            at: Some(crucible_http::Origin::of(base)?),
+        },
+        None => Serving {
+            route: row.map(content_use::row_route),
+            at: None,
+        },
+    })
+}
+
+/// Tells `consent` what every provider this build serves is sent on, as
+/// `auth` resolves it now.
+///
+/// Called wherever what a request would be sent on can have changed: at the
+/// start, and after a credential is stored or taken out.
+pub fn serve(consent: &Consent, providers: &Providers, auth: ProviderAuth<'_>) {
+    let serving = providers::offered(providers)
+        .filter_map(|one| {
+            let variable = auth.settings.api_key_env(one.name).unwrap_or(one.key);
+            served_on(one.name, variable, auth).map(|serving| (one.name.to_owned(), serving))
+        })
+        .collect();
+    consent.serving(serving);
 }
 
 /// Takes out, at a start, a second credential a provider holds, and says what
