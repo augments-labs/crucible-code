@@ -679,3 +679,25 @@ fn ctrl_o_reaches_every_result_the_rows_offer() {
     let missing: Vec<usize> = (1..=40).filter(|number| !seen.contains(number)).collect();
     assert!(missing.is_empty(), "never shown: {missing:?}");
 }
+
+#[test]
+fn a_live_result_let_go_of_before_its_batch_is_written_waits_for_it_and_then_opens() {
+    // The store asks the session itself whether a place is still coming, so
+    // a result the turn has not written yet is not given up for lost.
+    let (_sample, session, mut kept, _renderer) = live("opened-waits-for-its-batch");
+    let ids: Vec<ToolId> = (1..=40).map(|n| ToolId::new(format!("b-{n}"))).collect();
+    session.append(&asked_for(&ids));
+    for (number, id) in (1..).zip(&ids) {
+        kept.calling(id.clone(), "bash".to_owned());
+        kept.finished(id, printed(number, LINES).into(), number);
+    }
+    let first = kept.older().last().expect("the first result was let go of");
+    assert_eq!(kept.read_back(first), crate::cli::kept::Back::Unplaced);
+
+    session.append(&results(&ids, 1, LINES));
+    let first = kept.older().last().expect("the first result was let go of");
+    assert!(
+        matches!(kept.read_back(first), crate::cli::kept::Back::Said(text) if text.contains(&inside(1))),
+        "the first result did not open once its batch was written"
+    );
+}

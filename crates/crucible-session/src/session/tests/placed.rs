@@ -517,3 +517,35 @@ fn a_session_says_whether_what_it_appends_is_still_placed() {
     torn.append(&results_of(&["call-1"]));
     assert!(!torn.places(), "a log a fragment ended places");
 }
+
+#[test]
+fn a_session_stops_placing_once_a_write_fails() {
+    // A batch the log could not take gets no place, and nothing tells a
+    // screen which: from the first failed write on, nothing it has not been
+    // given a place for is coming.
+    let sample = Sample::new("placed-failed");
+    for fails_at in [1, 2] {
+        let session = Session::writing(
+            empty(&sample, &format!("failed-{fails_at}.jsonl")),
+            Filling {
+                written: Written::default(),
+                writes: 0,
+                fails_at,
+            },
+        );
+        assert!(session.places(), "{fails_at}: before anything failed");
+        session.append(&results_of(&["call-1"]));
+        assert!(!session.places(), "{fails_at}: a failed batch still places");
+    }
+
+    let torn = Session::writing(
+        empty(&sample, "torn-by-a-line.jsonl"),
+        Fragmenting {
+            written: Written::default(),
+            writes: 0,
+            takes: 5,
+        },
+    );
+    torn.append(&said("a line, not a batch"));
+    assert!(!torn.places(), "a log a line's fragment ended still places");
+}

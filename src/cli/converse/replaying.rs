@@ -96,7 +96,7 @@ impl Log for Logged {
         placed(self.0.take_placed())
     }
 
-    fn placing(&self) -> bool {
+    fn places(&self) -> bool {
         self.0.places()
     }
 

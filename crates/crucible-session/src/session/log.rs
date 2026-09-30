@@ -57,7 +57,8 @@ pub(super) const PLACED: usize = 8 * 128;
 pub(super) type Placed = Arc<Mutex<VecDeque<Place>>>;
 
 /// Whether the writer still places what it writes: it stops for good where it
-/// could not tell how long the file was, and once a fragment ends the log.
+/// could not tell how long the file was, once a batch of results fails to land
+/// whole, and once a fragment ends the log.
 pub(super) type Placing = Arc<AtomicBool>;
 
 /// Appends every line that arrives until the session is dropped, telling
@@ -104,8 +105,8 @@ pub(super) fn write<W: io::Write>(
     let Some(lines) = queue.lines.as_ref() else {
         return;
     };
-    let placing = start;
-    if placing.is_none() {
+    let counting = start.is_some();
+    if !counting {
         still.store(false, Ordering::Release);
     }
     let mut tail = Tail {
@@ -115,6 +116,12 @@ pub(super) fn write<W: io::Write>(
 
     for request in lines {
         queue.room.notify_waiters();
+        // Whatever the last request was, a fragment it left ends placing, and
+        // this is said before the next request is answered, a barrier among
+        // them.
+        if tail.dead {
+            still.store(false, Ordering::Release);
+        }
         match request {
             Request::Line(line) => {
                 tail.append(&mut sink, &line, trouble);
@@ -133,8 +140,13 @@ pub(super) fn write<W: io::Write>(
                 let begins = tail.append(&mut sink, &line, trouble);
                 // Only where the file's length was known when the writer
                 // started: a count begun anywhere else would name places the
-                // log does not bear out.
-                if let Some(begins) = begins.filter(|_| placing.is_some()) {
+                // log does not bear out. A batch the log did not take whole is
+                // placed nowhere, and nothing says which calls it held, so
+                // from here on nothing unplaced is coming.
+                if begins.is_none() || tail.dead {
+                    still.store(false, Ordering::Release);
+                }
+                if let Some(begins) = begins.filter(|_| counting) {
                     let mut held = placed.lock().unwrap_or_else(PoisonError::into_inner);
                     for call in calls {
                         held.push_back(Place::new(call, begins));
@@ -142,9 +154,6 @@ pub(super) fn write<W: io::Write>(
                     while held.len() > PLACED {
                         held.pop_front();
                     }
-                }
-                if tail.dead {
-                    still.store(false, Ordering::Release);
                 }
                 if let Some(taken) = taken {
                     flushed(&mut sink, trouble);

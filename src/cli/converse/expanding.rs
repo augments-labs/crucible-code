@@ -92,7 +92,9 @@ pub(super) struct View {
     /// only while the view stands.
     back: Vec<(Mark, Option<Box<str>>)>,
     /// A result the window reached that did not fit beside what was read
-    /// back, and where the window was: not read again until the window moves.
+    /// back, and where the window was: not read again until the window moves,
+    /// or until it is the first result the window reaches, which is read
+    /// whatever it comes to.
     refused: Option<(usize, Mark)>,
 }
 
@@ -349,27 +351,36 @@ enum Entry<'a> {
 
 /// What the view stands over, in the order it is read.
 fn entries<'a>(kept: &'a Kept, over: &Over) -> Vec<Entry<'a>> {
-    match *over {
-        // Stepped over rather than counted up to, because the end that gives is
-        // the other one: what arrived after the view opened is at the front of
-        // `newest`, and what was dropped to stay under the ceiling has gone
-        // from the back of `older`. A result let go of moves from the back of
-        // the one to the front of the other, so the two read as one list that
-        // keeps its order as results arrive.
-        // The call still out first, where there is one, because it is the newest
-        // thing there is and it is what a reader pressing this while a command
-        // runs is asking about. Chained rather than folded into `newest`: the
-        // skip below steps over results that arrived since the view opened, and a
-        // call that has not answered has not been counted among them.
-        Over::Everything(cut) => kept
-            .writing()
+    // Newest first by the order the rows were drawn in, held or let go of: a
+    // short result can stay held after a longer one drawn later was let go of,
+    // so neither list alone says which came first.
+    let cut = |at: Option<usize>| {
+        let mut cut: Vec<Entry<'a>> = kept
+            .newest()
+            .filter(|whole| at.is_none_or(|at| whole.at() == Some(at)))
             .map(Entry::Held)
             .chain(
-                kept.newest()
-                    .map(Entry::Held)
-                    .chain(kept.older().map(Entry::Let))
-                    .skip(kept.cut().saturating_sub(cut)),
+                kept.older()
+                    .filter(|placed| at.is_none_or(|at| placed.at() == at))
+                    .map(Entry::Let),
             )
+            .collect();
+        cut.sort_by_key(|entry| std::cmp::Reverse(entry.drawn()));
+        cut
+    };
+
+    match *over {
+        // What had been cut when it opened, and nothing cut since: what
+        // arrives underneath a view standing over a turn would slide the rows
+        // being read down the screen.
+        // The call still out first, where there is one, because it is the newest
+        // thing there is and it is what a reader pressing this while a command
+        // runs is asking about. Kept apart from what was cut: a call that has
+        // not answered has not been counted among them.
+        Over::Everything(opened) => kept
+            .writing()
+            .map(Entry::Held)
+            .chain(cut(None).into_iter().filter(|entry| entry.drawn() < opened))
             .collect(),
 
         // Every result that row offered, and usually that is one. A row
@@ -377,16 +388,17 @@ fn entries<'a>(kept: &'a Kept, over: &Over) -> Vec<Entry<'a>> {
         // rather than finds: several calls were shown as one line, so the line
         // opens on all of them — a reader who was given a count is owed
         // everything it counted.
-        Over::One(at) => kept
-            .newest()
-            .filter(|whole| whole.at() == Some(at))
-            .map(Entry::Held)
-            .chain(
-                kept.older()
-                    .filter(|placed| placed.at() == at)
-                    .map(Entry::Let),
-            )
-            .collect(),
+        Over::One(at) => cut(Some(at)),
+    }
+}
+
+impl Entry<'_> {
+    /// The order its row was drawn in.
+    fn drawn(&self) -> usize {
+        match self {
+            Self::Held(whole) => whole.drawn(),
+            Self::Let(placed) => placed.drawn(),
+        }
     }
 }
 
@@ -585,7 +597,8 @@ fn starts(heights: &[usize]) -> Vec<usize> {
 ///
 /// A result the log has not placed yet is left out, to be asked for again on
 /// the next frame. One that did not fit is remembered with where the window
-/// was, and not read again until the window moves.
+/// was, and not read again until the window moves, or until nothing above it
+/// has been read back.
 fn reading(kept: &Kept, view: &mut View, reached: &[&Placed]) -> Vec<(Mark, Option<Box<str>>)> {
     let mut held = std::mem::take(&mut view.back);
     let mut back = Vec::new();

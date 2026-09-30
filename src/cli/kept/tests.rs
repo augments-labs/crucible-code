@@ -372,7 +372,7 @@ impl Log for Logged {
         self.went.take()
     }
 
-    fn placing(&self) -> bool {
+    fn places(&self) -> bool {
         !self.stopped.get()
     }
 
@@ -852,4 +852,114 @@ fn a_row_the_log_will_never_place_is_unreadable_rather_than_waiting() {
     went.borrow_mut()
         .push((crucible_types::ToolId::new("call-3"), 9));
     assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unread);
+}
+
+#[test]
+fn what_the_rows_keep_is_under_the_ceiling_however_short_their_results() {
+    // A row let go of keeps its call's line, its call and its place. What all
+    // of them keep, and the text still held, stays under the ceiling: a short
+    // result is no cheaper to keep as a place than as itself.
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(Logged::default())));
+    // Empty results, which stay held, among results long enough to be let
+    // go of, which are kept as places.
+    for n in 0..10_000_usize {
+        let call = crucible_types::ToolId::new(format!("call-with-a-long-id-{n:08}"));
+        cut.calling(call.clone(), "Glob(*.rs)".to_owned());
+        let text = if n % 2 == 0 {
+            String::new()
+        } else {
+            "x".repeat(200)
+        };
+        cut.gathered(&call, text.into(), Some(n));
+    }
+    assert!(
+        cut.older().count() > 1000,
+        "too few rows were let go of to say anything"
+    );
+
+    let kept: usize = cut
+        .older()
+        .map(|placed| placed.called().len() + placed.call.as_str().len() + size_of::<Placed>())
+        .chain(
+            cut.newest()
+                .map(|whole| whole.text().len() + whole.called().len()),
+        )
+        .sum();
+    assert!(kept <= HELD, "{kept} kept against {HELD}");
+}
+
+#[test]
+fn a_row_waiting_for_its_batch_is_not_given_up_for_an_older_row_being_placed() {
+    let logged = Logged::default();
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(logged)));
+    let first = crucible_types::ToolId::new("call-0");
+    cut.calling(first.clone(), "Read(0)".to_owned());
+    cut.placing(&first, 9);
+    cut.finished(&first, "x".repeat(HELD / 3).into(), 0);
+    for turn in 1..5 {
+        kept(&mut cut, &format!("Read({turn})"), HELD / 3);
+    }
+
+    assert_eq!(cut.read_back(let_go(&cut, 1)), Back::Unplaced);
+}
+
+#[test]
+fn a_row_with_no_place_behind_a_later_row_that_has_one_is_unreadable() {
+    let logged = Logged::default();
+    let went = std::rc::Rc::clone(&logged.went);
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(logged)));
+    for turn in 0..3 {
+        kept(&mut cut, &format!("Read({turn})"), HELD / 3);
+    }
+    // The next result's place lands, and the result after it files it.
+    went.borrow_mut()
+        .push((crucible_types::ToolId::new("call-3"), 9));
+    for turn in 3..6 {
+        kept(&mut cut, &format!("Read({turn})"), HELD / 3);
+    }
+
+    assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unread);
+}
+
+#[test]
+fn a_row_stops_offering_only_with_every_result_it_offered() {
+    // Where nothing held would make room, the oldest row goes, and a row
+    // counting a folded run goes with all of its calls rather than some.
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(Logged::default())));
+    for member in ["Grep(a)", "Glob(b)"] {
+        let call = crucible_types::ToolId::new(member);
+        cut.calling(call.clone(), member.to_owned());
+        // Short enough to cost less held than placed, long enough that taking
+        // one of them alone would make room for the next arrival.
+        cut.gathered(&call, "m".repeat(60).into(), Some(0));
+    }
+    assert!(
+        cut.newest().filter(|whole| whole.at() == Some(0)).count() == 2,
+        "the run is not held; the test says nothing"
+    );
+    let behind = |cut: &Kept| {
+        cut.newest().filter(|whole| whole.at() == Some(0)).count()
+            + cut.older().filter(|placed| placed.at() == 0).count()
+    };
+    for arrived in 1..20_000 {
+        kept(&mut cut, "R", 40);
+        let left = behind(&cut);
+        if left < 2 {
+            assert_eq!(
+                left, 0,
+                "after {arrived} arrivals the row lost some of its calls"
+            );
+            break;
+        }
+    }
+
+    assert!(cut.withdrawn().contains(&0), "the oldest row still offers");
+    assert!(!cut.offered(0));
+    assert!(cut.newest().all(|whole| whole.at() != Some(0)));
+    assert!(cut.older().all(|placed| placed.at() != 0));
+    assert!(cut.held <= HELD);
 }

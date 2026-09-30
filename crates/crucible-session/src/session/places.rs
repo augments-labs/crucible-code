@@ -153,7 +153,8 @@ impl Session {
 
     /// Whether a result appended from now on will still be placed: `false`
     /// where the session records nothing, where its writer has stopped, and
-    /// where the writer has stopped placing for good.
+    /// where the writer has stopped placing for good, which it does once a
+    /// batch of results fails to land whole or a fragment ends the log.
     ///
     /// Behind whatever is queued, as a read back is, so a write that ended the
     /// log's placing is counted.

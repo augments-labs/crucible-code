@@ -402,7 +402,7 @@ impl crate::cli::kept::Log for Long {
         Vec::new()
     }
 
-    fn placing(&self) -> bool {
+    fn places(&self) -> bool {
         true
     }
 
@@ -643,7 +643,7 @@ impl crate::cli::kept::Log for Late {
         self.went.take()
     }
 
-    fn placing(&self) -> bool {
+    fn places(&self) -> bool {
         !self.stopped.get()
     }
 
@@ -769,4 +769,38 @@ fn the_first_result_the_window_reaches_is_read_whatever_was_refused_before() {
         "{:?}",
         rows.iter().map(Row::text).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn ctrl_o_stands_results_newest_first_when_a_short_one_stays_held() {
+    // A short result costs less held than let go of, so it can outlast longer
+    // ones drawn after it. The view still reads newest first.
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(Long)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, u64::try_from(at).unwrap());
+        let text = if at == 0 {
+            "short".to_owned()
+        } else {
+            said(call.as_str())
+        };
+        kept.finished(&call, text.into(), at);
+    }
+    assert!(
+        kept.newest().any(|whole| whole.at() == Some(0)),
+        "the short result was let go of; the test says nothing"
+    );
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let order: Vec<usize> = entries(&kept, &opened(&mut standing).over)
+        .iter()
+        .map(Entry::drawn)
+        .collect();
+    let mut sorted = order.clone();
+    sorted.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(order, sorted);
+    assert_eq!(order.len(), 40);
 }
