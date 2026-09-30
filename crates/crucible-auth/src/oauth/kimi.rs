@@ -3,8 +3,9 @@
 //! `MoonshotAI` publishes an RFC 8628 device flow. Crucible reports its own
 //! product, platform and version on every authorization, renewal and model
 //! request; it never inherits Kimi Code's identity. A random installation id
-//! is kept in the protected auth document and copied into the credential's
-//! opaque details so every later request presents the same host identity. The
+//! is kept in the protected auth document, written with the first sign-in that
+//! completes and never before it, and copied into the credential's opaque
+//! details so every later request presents the same host identity. The
 //! token service and browser authorization page have different fixed origins;
 //! both are checked before a response can reach the terminal or browser.
 //!
@@ -378,8 +379,9 @@ impl Flow {
             if let Some(tokens) = self.poll(&device, &identity, time).await? {
                 let store = store.clone();
                 let name = self.name;
+                let kept = identity.device_id.to_string();
                 self.renewals
-                    .login_store(move || store.keep_subscription(name, tokens))
+                    .login_store(move || store.keep_identified(name, tokens, &kept))
                     .await?;
                 return updates.send(Ok(LoginUpdate::Complete));
             }
@@ -523,12 +525,12 @@ impl Identity {
         store: &Store,
         name: &'static str,
     ) -> Result<Self, OAuthError> {
-        let candidate = random_id()?;
         let store = store.clone();
-        let device_id = renewals
-            .login_store(move || store.identity(name, &candidate))
-            .await?;
-        Self::new(device_id)
+        let kept = renewals.login_store(move || store.identity(name)).await?;
+        match kept {
+            Some(device_id) => Self::new(device_id),
+            None => Self::new(random_id()?),
+        }
     }
 
     fn from_tokens(tokens: &Tokens) -> Result<Self, OAuthError> {

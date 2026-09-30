@@ -529,3 +529,83 @@ fn a_kimi_ai_device_response_is_read_against_www_kimi_ai() {
         "https://www.kimi.ai/code?user_code=ABCD-EFGH"
     );
 }
+
+/// A device authorization pointing the browser at `base`.
+fn device(base: &str) -> String {
+    serde_json::json!({
+        "device_code": "device-code",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": format!("{base}/device"),
+        "verification_uri_complete": format!("{base}/device?code=ABCD-EFGH"),
+        "expires_in": 600,
+        "interval": 1,
+    })
+    .to_string()
+}
+
+/// A store holding a kimi.com key and no identity: what a sign-in on either
+/// site must leave as it was until it completes.
+const HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{},"identities":{}}"#;
+
+#[test]
+fn a_kimi_sign_in_that_does_not_complete_leaves_the_store_byte_for_byte() {
+    // Refused at the device authorization, denied at the token, and left
+    // while it waits: each on a store holding a key, and on no store at all.
+    let refused = |_: &str| vec![(400, r#"{"error":"invalid_client"}"#.to_owned())];
+    let denied = |base: &str| {
+        vec![
+            (200, device(base)),
+            (400, r#"{"error":"access_denied"}"#.to_owned()),
+        ]
+    };
+    let left = |base: &str| vec![(200, device(base))];
+    let cases: [(&str, &dyn Fn(&str) -> Vec<(u16, String)>, bool); 3] = [
+        ("refused", &refused, false),
+        ("denied", &denied, false),
+        ("left", &left, true),
+    ];
+
+    for (case, answers, leaves) in cases {
+        for (held, site) in [
+            (Some(HELD), KimiSite::Ai),
+            (Some(HELD), KimiSite::Com),
+            (None, KimiSite::Ai),
+        ] {
+            let (base, _requests, server) = server(|base| answers(base));
+            let scratch = Scratch::new(&format!("unfinished-{case}-{}", site.name()));
+            let file = scratch.path().join("auth.json");
+            if let Some(held) = held {
+                std::fs::write(&file, held).unwrap();
+            }
+            let store = Store::in_home(scratch.path())
+                .naming(crate::Names::new(["moonshot", "moonshot@kimi.ai"]));
+            let runtime = runtime();
+            let flow = Flow::testing(&base, &renewing(&runtime)).named(site.name());
+            let oauth = KimiOAuth::testing(flow);
+
+            let attempt = oauth.start(KimiOAuth::DEVICE, store).unwrap();
+            if leaves {
+                assert!(matches!(
+                    attempt.wait(PATIENCE),
+                    Ok(Some(LoginUpdate::Authorize { .. }))
+                ));
+                attempt.cancel();
+            } else {
+                loop {
+                    match attempt.wait(PATIENCE) {
+                        Ok(Some(LoginUpdate::Authorize { .. })) => {}
+                        Err(_) => break,
+                        other => panic!("{case}: {other:?}"),
+                    }
+                }
+            }
+            server.join().unwrap();
+            drop(attempt);
+            drop(oauth);
+            drop(runtime);
+
+            let now = std::fs::read_to_string(&file).ok();
+            assert_eq!(now.as_deref(), held, "{case} on {}", site.name());
+        }
+    }
+}

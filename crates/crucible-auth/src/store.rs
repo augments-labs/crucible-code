@@ -229,38 +229,60 @@ impl Store {
         name: &str,
         tokens: Tokens,
     ) -> Result<Vec<Dropped>, AuthError> {
+        self.subscribe(name, tokens, None)
+    }
+
+    /// [`Store::keep_subscription`], keeping `identity` as the installation
+    /// identity `name`'s sign-ins present where none is kept yet, in the same
+    /// write.
+    ///
+    /// Written with the tokens and not before them, so a sign-in that does not
+    /// complete leaves the store as it found it. Where two first sign-ins
+    /// complete at once, the identity the first wrote stays.
+    pub(crate) fn keep_identified(
+        &self,
+        name: &str,
+        tokens: Tokens,
+        identity: &str,
+    ) -> Result<Vec<Dropped>, AuthError> {
+        self.subscribe(name, tokens, Some(identity))
+    }
+
+    fn subscribe(
+        &self,
+        name: &str,
+        tokens: Tokens,
+        identity: Option<&str>,
+    ) -> Result<Vec<Dropped>, AuthError> {
         let mut dropped = Vec::new();
         let names = self.names.clone();
         self.change(|document| {
             dropped = document.clear(&names, name, Kind::Account);
             document.subscriptions.insert(name.to_owned(), tokens);
+            if let Some(identity) = identity {
+                document
+                    .identities
+                    .entry(name.to_owned())
+                    .or_insert_with(|| identity.to_owned());
+            }
             true
         })?;
         Ok(dropped)
     }
 
-    /// Returns the stable installation identity for one provider, persisting
-    /// `candidate` when this is the first login to need one.
-    ///
-    /// The read and possible insert share the auth-store lock, so concurrent
-    /// first logins cannot leave two processes identifying the same Crucible
-    /// installation differently.
-    pub(crate) fn identity(&self, provider: &str, candidate: &str) -> Result<String, AuthError> {
-        let mut chosen = None;
-        self.change(|document| {
-            if let Some(existing) = document.identities.get(provider) {
-                chosen = Some(existing.clone());
-                return false;
-            }
-            document
-                .identities
-                .insert(provider.to_owned(), candidate.to_owned());
-            chosen = Some(candidate.to_owned());
-            true
-        })?;
-        chosen.ok_or_else(|| AuthError::Unreadable {
+    /// The installation identity `name`'s sign-ins present, where one is
+    /// kept. Reads and writes nothing else.
+    pub(crate) fn identity(&self, name: &str) -> Result<Option<String>, AuthError> {
+        if self.secure_existing()?.is_none() {
+            return Ok(None);
+        }
+        let Some(text) = self.read_text()? else {
+            return Ok(None);
+        };
+        let document = document::parse(&text).map_err(|_| AuthError::Unreadable {
             path: self.path.clone(),
-        })
+        })?;
+        Ok(document.identities.get(name).cloned())
     }
 
     /// Forgets `provider`'s key. `false` when there was none to forget.
