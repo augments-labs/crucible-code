@@ -6,15 +6,18 @@
 //! session *is* stays one level up — this is the part that would otherwise
 //! spread out across all three.
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use crucible_types::ToolId;
 use tokio::sync::{Notify, oneshot};
 
 use super::SessionError;
+use super::places::Place;
 
 /// Where the first write that failed is left for the main thread to find.
 pub(super) type Trouble = Arc<Mutex<Option<Box<str>>>>;
@@ -29,7 +32,27 @@ pub(super) enum Request {
     Acknowledged(Box<str>, oneshot::Sender<()>),
     /// Flush every earlier line before acknowledging the caller.
     Barrier(SyncSender<()>),
+    /// Append one message line that holds the results of `calls`, keep where
+    /// it went, and acknowledge `taken` where there is one to tell.
+    Results {
+        /// The line, which may open with a format guard of its own.
+        line: Box<str>,
+        /// The calls whose results the message holds.
+        calls: Box<[ToolId]>,
+        /// Told once the line is taken, where the sender waits.
+        taken: Option<oneshot::Sender<()>>,
+    },
 }
+
+/// The most places kept for the session to hand over, oldest let go first.
+///
+/// Eight passes of the most calls one pass may make. What reads them takes
+/// them as they come, so this is a bound on a reader that never does rather
+/// than a number any ordinary run reaches.
+pub(super) const PLACED: usize = 8 * 128;
+
+/// Where the results the writer appended went, waiting to be taken.
+pub(super) type Placed = Arc<Mutex<VecDeque<Place>>>;
 
 /// Appends every line that arrives until the session is dropped, telling
 /// `room` each time one is taken off the queue.
@@ -60,6 +83,7 @@ pub(super) fn write<W: io::Write>(
     lines: Receiver<Request>,
     trouble: &Trouble,
     room: Arc<Notify>,
+    (start, placed): (u64, Placed),
 ) {
     let queue = Closing {
         lines: Some(lines),
@@ -68,12 +92,17 @@ pub(super) fn write<W: io::Write>(
     let Some(lines) = queue.lines.as_ref() else {
         return;
     };
-    let mut tail = Tail::default();
+    let mut tail = Tail {
+        written: start,
+        ..Tail::default()
+    };
 
     for request in lines {
         queue.room.notify_waiters();
         match request {
-            Request::Line(line) => tail.append(&mut sink, &line, trouble),
+            Request::Line(line) => {
+                tail.append(&mut sink, &line, trouble);
+            }
             Request::Acknowledged(line, taken) => {
                 tail.append(&mut sink, &line, trouble);
                 flushed(&mut sink, trouble);
@@ -83,6 +112,25 @@ pub(super) fn write<W: io::Write>(
             Request::Barrier(done) => {
                 flushed(&mut sink, trouble);
                 let _ = done.send(());
+            }
+            Request::Results { line, calls, taken } => {
+                if let Some(at) = tail.append(&mut sink, &line, trouble) {
+                    // The message is the last line of what was queued, after
+                    // any guard written with it as one request.
+                    let into = line.rfind('\n').map_or(0, |guard| guard + 1);
+                    let begins = at.saturating_add(u64::try_from(into).unwrap_or(u64::MAX));
+                    let mut held = placed.lock().unwrap_or_else(PoisonError::into_inner);
+                    for call in calls {
+                        held.push_back(Place::new(call, begins));
+                    }
+                    while held.len() > PLACED {
+                        held.pop_front();
+                    }
+                }
+                if let Some(taken) = taken {
+                    flushed(&mut sink, trouble);
+                    let _ = taken.send(());
+                }
             }
         }
     }
@@ -110,37 +158,62 @@ struct Tail {
     torn: bool,
     /// A fragment landed mid-line, and the file must end where it ends.
     dead: bool,
+    /// How long the file is, counting every byte that landed.
+    written: u64,
 }
 
 impl Tail {
     /// Appends `line` and the newline that ends it, as far as what earlier
-    /// failures left allows.
-    fn append<W: io::Write>(&mut self, sink: &mut W, line: &str, trouble: &Trouble) {
+    /// failures left allows, and says where `line` began where all of it and
+    /// its newline landed.
+    fn append<W: io::Write>(&mut self, sink: &mut W, line: &str, trouble: &Trouble) -> Option<u64> {
         if self.dead {
-            return;
+            return None;
         }
 
         if self.torn {
-            if let (_, Some(problem)) = append(sink, b"\n") {
+            if let Some(problem) = self.counted(append(sink, b"\n")) {
                 record(trouble, &problem);
-                return;
+                return None;
             }
             self.torn = false;
         }
 
+        let begins = self.written;
         match append(sink, line.as_bytes()) {
-            (_, None) => {
-                if let (_, Some(problem)) = append(sink, b"\n") {
+            (landed, None) => {
+                self.count(landed);
+                if let Some(problem) = self.counted(append(sink, b"\n")) {
                     self.torn = true;
                     record(trouble, &problem);
+                    return None;
                 }
+                Some(begins)
             }
-            (0, Some(problem)) => record(trouble, &problem),
-            (_, Some(problem)) => {
+            (0, Some(problem)) => {
+                record(trouble, &problem);
+                None
+            }
+            (landed, Some(problem)) => {
+                self.count(landed);
                 self.dead = true;
                 record(trouble, &problem);
+                None
             }
         }
+    }
+
+    /// Adds what landed to the length of the file.
+    fn count(&mut self, landed: usize) {
+        self.written = self
+            .written
+            .saturating_add(u64::try_from(landed).unwrap_or(u64::MAX));
+    }
+
+    /// Counts what one write landed and hands back what stopped it.
+    fn counted(&mut self, (landed, problem): (usize, Option<io::Error>)) -> Option<io::Error> {
+        self.count(landed);
+        problem
     }
 }
 

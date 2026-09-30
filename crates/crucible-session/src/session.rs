@@ -54,6 +54,7 @@ mod display;
 mod glimpse;
 mod index;
 mod log;
+mod places;
 mod privacy;
 mod prompts;
 mod recent;
@@ -71,7 +72,8 @@ pub(crate) fn restored_output(
 use claim::{Claim, Claimed, claim};
 pub use display::{DisplayHistory, DisplayItem};
 pub use glimpse::{Glimpse, glimpse};
-use log::{Request as LogRequest, Trouble, make, open, shorten};
+use log::{Placed, Request as LogRequest, Trouble, make, open, shorten};
+pub use places::Place;
 pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Recorded, recent};
 pub use replay::Pruned;
@@ -261,6 +263,9 @@ pub struct Session {
     /// observe the first writer's not-yet-synced file.
     result_lock: Mutex<()>,
     trouble: Trouble,
+    /// Where the results this session's writer appended went, until whatever
+    /// draws them takes them. Empty in a session that records nothing.
+    placed: Placed,
 }
 
 impl Session {
@@ -502,6 +507,7 @@ impl Session {
             pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble: Trouble::default(),
+            placed: Placed::default(),
         }
     }
 
@@ -542,7 +548,16 @@ impl Session {
     /// which is the whole reason there is one.
     pub fn append(&self, message: &Message) {
         let Some(to) = &self.to else { return };
-        drop(to.send(LogRequest::Line(message_line(message))));
+        let line = message_line(message);
+        let request = match holding(message) {
+            Some(calls) => LogRequest::Results {
+                line,
+                calls,
+                taken: None,
+            },
+            None => LogRequest::Line(line),
+        };
+        drop(to.send(request));
         self.counted(message);
     }
 
@@ -738,9 +753,16 @@ impl Session {
     /// acknowledged — its thread ended before taking it — is kept as trouble,
     /// as a line the log refused is by the writer itself.
     async fn written(&self, line: impl FnOnce() -> Box<str>) {
+        self.sent(|taken| LogRequest::Acknowledged(line(), taken))
+            .await;
+    }
+
+    /// Queues the request `request` makes and waits for the writer to take it,
+    /// as [`Session::written`] does for a line.
+    async fn sent(&self, request: impl FnOnce(oneshot::Sender<()>) -> LogRequest) {
         let Some(to) = &self.to else { return };
         let (taken, told) = oneshot::channel();
-        let mut request = LogRequest::Acknowledged(line(), taken);
+        let mut request = request(taken);
         loop {
             // Listening before offering, so a line taken off the queue between
             // the offer and the wait still wakes it.
@@ -859,7 +881,13 @@ impl Session {
         let room = Arc::new(Notify::new());
         let told = Arc::clone(&room);
 
-        let writer = thread::spawn(move || log::write(sink, lines, &mine, told));
+        // Where the next line lands: the file as it stands, header and all,
+        // which is what the writer counts every byte on from.
+        let start = std::fs::metadata(&path).map_or(0, |held| held.len());
+        let placed = Placed::default();
+        let placing = Arc::clone(&placed);
+
+        let writer = thread::spawn(move || log::write(sink, lines, &mine, told, (start, placing)));
 
         // Read back from the name rather than carried in, so that the two ways
         // to reach a log — minting a name, and finding one — cannot disagree
@@ -882,7 +910,18 @@ impl Session {
             pruned: Mutex::new(Pruned::default()),
             result_lock: Mutex::new(()),
             trouble,
+            placed,
         }
+    }
+}
+
+/// The calls whose results `message` holds, where it holds any.
+fn holding(message: &Message) -> Option<Box<[crucible_types::ToolId]>> {
+    match message {
+        Message::ToolResults(results) if !results.is_empty() => {
+            Some(results.iter().map(|result| result.id.clone()).collect())
+        }
+        _ => None,
     }
 }
 
@@ -1040,7 +1079,17 @@ impl SessionStore for Session {
     fn append_message<'a>(&'a self, message: &'a Message) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if self.to.is_some() {
-                self.written(|| message_line(message)).await;
+                match holding(message) {
+                    Some(calls) => {
+                        self.sent(|taken| LogRequest::Results {
+                            line: message_line(message),
+                            calls,
+                            taken: Some(taken),
+                        })
+                        .await;
+                    }
+                    None => self.written(|| message_line(message)).await,
+                }
                 self.counted(message);
             }
         })

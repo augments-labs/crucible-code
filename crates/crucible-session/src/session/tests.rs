@@ -1596,6 +1596,9 @@ mod colliding;
 /// What a write through the store contract waits for before it answers.
 mod acknowledged;
 
+/// Where a result stands in the log, and what reading it back from there gives.
+mod placed;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {
