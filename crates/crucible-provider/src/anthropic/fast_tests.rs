@@ -202,3 +202,17 @@ fn the_refusals_taken_for_a_refusal_of_fast_are_the_ones_named_and_only_on_a_fas
         standard.err()
     );
 }
+
+#[test]
+fn a_refusal_of_fast_for_a_model_whose_replies_are_private_keeps_its_kind_and_loses_its_words() {
+    let scrubbed = super::diagnostics::refusal(ProviderError::FastRefused {
+        provider: "anthropic",
+        message: "refused; input echoed: PRIVATE-MARKER".into(),
+    });
+
+    let ProviderError::FastRefused { provider, message } = scrubbed else {
+        panic!("{scrubbed:?}");
+    };
+    assert_eq!(provider, "anthropic");
+    assert!(!message.contains("PRIVATE-MARKER"), "{message}");
+}

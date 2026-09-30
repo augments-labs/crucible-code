@@ -153,7 +153,7 @@ fn the_vendors_refusal_of_the_tier_is_a_refusal_of_fast_only_where_fast_was_aske
 
     let (provider, _) = openai(VENDOR, 400, REFUSED);
     let fast = crucible_runtime::answered!(provider.stream_at(
-        asking("gpt-6-astra"),
+        asking("gpt-5.6-sol"),
         Speed::Fast,
         &cancel
     ));
@@ -187,5 +187,31 @@ fn the_vendors_refusal_of_the_tier_is_a_refusal_of_fast_only_where_fast_was_aske
         matches!(&signed_in, Err(ProviderError::Refused { .. })),
         "{:?}",
         signed_in.err()
+    );
+}
+
+#[test]
+fn a_refusal_of_fast_for_a_model_whose_replies_are_private_shows_none_of_the_body() {
+    // The vendor's words about a private model reach no screen at standard
+    // speed, and a refusal of fast is no way round that: it is still sent
+    // again, and says only that the model would not be served fast.
+    let marked = r#"{"error":{"message":"refused; input echoed: PRIVATE-MARKER","type":"invalid_request_error","param":"service_tier","code":null}}"#;
+    let (provider, _) = openai(VENDOR, 400, marked);
+    let cancel = Cancel::new();
+
+    let answer = crucible_runtime::answered!(provider.stream_at(
+        asking("gpt-6-astra"),
+        Speed::Fast,
+        &cancel
+    ));
+
+    let Err(ProviderError::FastRefused { provider, message }) = answer else {
+        panic!("{:?}", answer.err());
+    };
+    assert_eq!(provider, "openai");
+    assert!(!message.contains("PRIVATE-MARKER"), "{message}");
+    assert!(
+        message.contains("private response details omitted"),
+        "{message}"
     );
 }
