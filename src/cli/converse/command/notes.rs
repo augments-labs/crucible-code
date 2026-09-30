@@ -134,8 +134,8 @@ fn answer(changelog: &str, version: Option<&str>) -> Result<NotesOutcome, Refusa
 ///
 /// No more rows than the transcript keeps, less the blank row the command
 /// ends on, so the first row printed is still there after the last. The least
-/// the timeline can be told in, ten rows and the closing row, is far under that
-/// at any width.
+/// the timeline can be told in, the ten a row each and the closing row, is far
+/// under that at any width.
 pub(super) fn whole(releases: &[Release<'_>], columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let split = releases.len().saturating_sub(FULL);
     let groups: Vec<Vec<(String, usize)>> = releases.iter().map(Release::groups).collect();
@@ -263,8 +263,9 @@ fn heading(line: &str) -> Option<(&str, &str)> {
 }
 
 impl<'a> Release<'a> {
-    /// The release under a heading, its body cut free of the link lines that
-    /// close the file.
+    /// The release under a heading, its body cut free of a closing run of link
+    /// definitions: the foot of the file, under the oldest release, or any a
+    /// release ends on. A link defined before its last words stays.
     fn of(version: &'a str, date: &'a str, body: Option<&'a str>) -> Self {
         let body = body.unwrap_or_default();
         // Where the run of link lines that nothing but blank lines follow

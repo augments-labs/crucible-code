@@ -56,9 +56,10 @@ pub struct Timeline<'a> {
     /// releases, then the words of the oldest told in full, each told in a row
     /// instead, then the end of the newest. The closing row says what went.
     ///
-    /// Every release told in a row, the newest's head and the closing row are
-    /// the least the whole can be told in, and are always kept: a `most` below
-    /// them gives them, and so more rows than `most`.
+    /// The releases told in full, each cut to a row, the rail, the newest's
+    /// first row and the closing row are the least the whole can be told in,
+    /// and are always kept: a `most` below them gives them, and so more rows
+    /// than `most`.
     pub most: usize,
 }
 

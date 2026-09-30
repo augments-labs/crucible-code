@@ -441,8 +441,9 @@ fn a_newest_release_that_alone_passes_the_most_is_cut_at_its_end_and_said_so() {
 
 #[test]
 fn a_most_below_the_least_the_whole_can_be_told_in_gives_that_least_and_says_what_went() {
-    // Every release told in a row, the newest's head and the closing row are
-    // the least the whole can be told in; below that, that is what comes.
+    // The releases told in full, each cut to a row, the rail, the newest's
+    // first row and the closing row are the least the whole can be told in;
+    // below that, that is what comes.
     let told = told();
     let rows = Timeline {
         older: &OLDER,
@@ -456,7 +457,14 @@ fn a_most_below_the_least_the_whole_can_be_told_in_gives_that_least_and_says_wha
     let lines = said(&rows);
     let closing = closing(&lines, Glyphs::Unicode);
 
-    assert!(rows.len() > 6, "{lines:#?}");
+    // Nine in a row, the rail, the newest's head, a blank and the closing row.
+    assert_eq!(rows.len(), 13, "{lines:#?}");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("◆ 0.43.3") && line.ends_with("this version")),
+        "{lines:#?}"
+    );
     for brief in told.iter().map(|told| told.brief) {
         assert!(
             lines.iter().any(|line| line.contains(brief.version)),

@@ -2093,19 +2093,19 @@ fn a_version_that_is_no_release_is_refused_the_same_in_ascii() {
 /// Rows enough to hold the newest release of the changelog built in, whole, at
 /// `columns`, with the box and the closing row under it.
 ///
-/// Its words hang five columns in, and a row is never less than half full,
-/// since a word that does not fit is carried whole to the next: so each line
-/// of the section takes at most its length over half that room, and one more.
+/// Its words hang five columns in, and a word that does not fit is carried
+/// whole to the next row, so any two rows together hold more than the room:
+/// each line of the section takes at most its length over half that room, and
+/// one more. A quarter more again, and the box and the closing row, is margin.
 fn holding_the_newest(columns: u16) -> u16 {
     const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
     let newest = CHANGELOG
         .split("\n## [")
         .nth(2)
         .expect("a release under Unreleased");
-    let newest = newest.split("\n[").next().unwrap_or(newest);
     let half = (usize::from(columns) - 5) / 2;
     let rows: usize = newest.lines().map(|line| line.len() / half + 1).sum();
-    u16::try_from(rows + 40).expect("a window a terminal can be")
+    u16::try_from(rows * 5 / 4 + 40).expect("a window a terminal can be")
 }
 
 #[test]
