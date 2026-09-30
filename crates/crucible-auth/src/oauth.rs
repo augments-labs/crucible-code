@@ -163,7 +163,9 @@ pub(crate) const PATIENCE: Duration = Duration::from_secs(30);
 pub(crate) const STOPPING: Duration = Duration::from_secs(1);
 
 /// How long stopping a sign-in waits for a credential write already begun:
-/// the store's own wait for its lock, and the write after it.
+/// the store's own wait for its lock (five seconds), and the write after it.
+/// It has to outlast that wait, so raising one raises the other; a test holds
+/// the two together.
 pub const SETTLING: Duration = Duration::from_secs(10);
 
 /// How many updates a login can report before the attempt takes one.
@@ -409,7 +411,12 @@ impl fmt::Debug for LoginUpdates {
 /// and [`Store`] to write the result down; all three are public, and none of
 /// them hands over a token. The method is a future, run as a task on the
 /// runtime the implementation hands the slot, and the store's work is blocking
-/// work, handed to that runtime's blocking threads:
+/// work, handed to that runtime's blocking threads.
+///
+/// The write goes through [`LoginUpdates::storing`], so that stopping the
+/// attempt and writing its credential settle between them which came first:
+/// a write made around it cannot be taken back by a stop, and the stop says
+/// nothing was written while it lands.
 ///
 /// ```
 /// use std::fmt;
@@ -444,7 +451,11 @@ impl fmt::Debug for LoginUpdates {
 ///                 return;
 ///             }
 ///             let Some(pasted) = typed.recv().await else { return };
-///             let kept = tokio::task::spawn_blocking(move || store.keep("ledger", &pasted)).await;
+///             let storing = updates.storing();
+///             let kept = tokio::task::spawn_blocking(move || {
+///                 storing.write(|| store.keep("ledger", &pasted))
+///             })
+///             .await;
 ///             let _ = match kept {
 ///                 Ok(Ok(_)) => updates.send(Ok(LoginUpdate::Complete)),
 ///                 Ok(Err(_)) | Err(_) => updates.send(Err(OAuthError::WorkerStopped)),

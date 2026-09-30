@@ -1667,3 +1667,106 @@ fn a_sign_in_whose_write_fails_after_the_stop_is_said_unwritten() {
     assert_eq!(storing.stop(Duration::from_secs(5)), Stopped::Unwritten);
     assert!(writer.join().expect("the writer").is_err());
 }
+
+#[test]
+fn an_openai_sign_in_stopped_while_its_write_waits_on_the_lock_says_what_the_store_holds() {
+    // The ChatGPT device sign-in, as the Kimi one: another crucible holds the
+    // store's lock as the tokens arrive and the reader stops the sign-in. The
+    // answer must be what the store holds once the lock is let go.
+    const HELD: &str =
+        r#"{"version":2,"keys":{"openai":"fabricated-openai-key"},"subscriptions":{}}"#;
+    let expires = now() + 3600;
+    let (base, _requests, server) = server(vec![
+        serde_json::json!({
+            "device_auth_id": "device-id",
+            "user_code": "ABCD-EFGH",
+            "interval": 0,
+        })
+        .to_string(),
+        serde_json::json!({
+            "authorization_code": "authorization-code",
+            "code_verifier": "verifier",
+        })
+        .to_string(),
+        tokens("unused-canary", "refresh-one", "account-one", expires),
+    ]);
+    let scratch = Scratch::new("openai-stopped-under-lock");
+    let file = scratch.path().join("auth.json");
+    std::fs::write(&file, HELD).unwrap();
+    let store = Store::in_home(scratch.path());
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(scratch.path().join("auth.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let runtime = runtime();
+    let oauth = OpenAiOAuth::testing(Flow::testing(&base, &renewing(&runtime)));
+
+    let attempt = oauth.start(OpenAiOAuth::DEVICE, store.clone()).unwrap();
+    assert!(matches!(
+        attempt.wait(PATIENCE),
+        Ok(Some(LoginUpdate::Authorize { .. }))
+    ));
+    server.join().unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    let letting_go = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(1));
+        lock.unlock().unwrap();
+    });
+
+    let stopped = attempt.cancel();
+    letting_go.join().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let signed_in = store.read().has_subscription("openai");
+    match stopped {
+        Stopped::Written => assert!(signed_in),
+        Stopped::Unwritten => {
+            assert!(!signed_in);
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), HELD);
+        }
+        Stopped::Unsettled => panic!("the write outlived its patience"),
+    }
+    assert_eq!(
+        stopped,
+        Stopped::Written,
+        "the tokens were served before the stop"
+    );
+}
+
+#[test]
+fn a_write_that_outlives_the_patience_is_said_unsettled_without_waiting_it_out() {
+    let storing = Storing::default();
+    let begun = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+    let writer = {
+        let (storing, begun) = (storing.clone(), std::sync::Arc::clone(&begun));
+        std::thread::spawn(move || {
+            storing.write(|| {
+                begun.wait();
+                std::thread::sleep(Duration::from_millis(500));
+                Ok::<_, OAuthError>(())
+            })
+        })
+    };
+    begun.wait();
+
+    let started = std::time::Instant::now();
+    assert_eq!(storing.stop(Duration::from_millis(20)), Stopped::Unsettled);
+    assert!(
+        started.elapsed() < Duration::from_millis(400),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(writer.join().expect("the writer").is_ok());
+}
+
+#[test]
+fn stopping_waits_longer_than_the_store_waits_for_its_lock() {
+    // A write stuck behind another crucible's lock gives up after the store's
+    // own wait; stopping must outlast it, and one write after it, to say
+    // truthfully how it ended.
+    assert!(SETTLING > crate::store::WAIT + Duration::from_secs(1));
+}

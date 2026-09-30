@@ -794,10 +794,11 @@ fn a_sign_in_stopped_while_its_write_waits_on_the_lock_says_what_the_store_ends_
         Ok(Some(LoginUpdate::Authorize { .. }))
     ));
     server.join().unwrap();
-    // The token has been served: the write is begun, or about to be.
-    std::thread::sleep(Duration::from_millis(100));
+    // The token has been served; half a second is ample for the flow to reach
+    // its write and begin waiting on the lock.
+    std::thread::sleep(Duration::from_millis(500));
     let letting_go = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_secs(1));
         lock.unlock().unwrap();
     });
 

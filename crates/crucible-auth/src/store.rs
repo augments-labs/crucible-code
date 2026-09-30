@@ -62,7 +62,7 @@ const PARTIAL: &str = "auth.json.new";
 /// Five seconds, then: long enough for that queue on a machine under load,
 /// short enough that a crucible which died holding the lock is a sentence
 /// telling them to try again rather than something that looks like a hang.
-const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// What this version of crucible writes, and the highest it can read.
