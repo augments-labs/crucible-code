@@ -998,3 +998,7 @@ fn a_replayed_change_is_held_at_the_row_that_offers_it() {
         );
     }
 }
+
+/// Every row a session put back offers to expand opens, from the log where it
+/// has one.
+mod opened;
