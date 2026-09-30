@@ -271,18 +271,48 @@ pub fn recognised(base_url: &str) -> Option<&'static str> {
         .map(|one| one.route)
 }
 
-/// The segments of `url`'s path, empty ones left out, so a trailing slash
-/// says nothing.
-fn segments(url: &str) -> Vec<&str> {
+/// The segments of `url`'s path as the path it names: empty ones left out, so
+/// a trailing slash says nothing, each one percent-decoded, and dot segments
+/// resolved, so another spelling of a documented path is that path.
+fn segments(url: &str) -> Vec<String> {
     let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let path = after_scheme
         .find('/')
         .and_then(|at| after_scheme.get(at..))
         .unwrap_or_default();
     let path = path.split(['?', '#']).next().unwrap_or_default();
-    path.split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect()
+    let mut named: Vec<String> = Vec::new();
+    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+        match decoded(segment).as_str() {
+            "." => {}
+            ".." => {
+                named.pop();
+            }
+            one => named.push(one.to_owned()),
+        }
+    }
+    named
+}
+
+/// `segment` with each `%XX` read as the byte it names.
+fn decoded(segment: &str) -> String {
+    let bytes = segment.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        let hex = bytes
+            .get(at + 1..at + 3)
+            .and_then(|pair| std::str::from_utf8(pair).ok())
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok());
+        if let (b'%', Some(value)) = (byte, hex) {
+            out.push(value);
+            at += 3;
+        } else {
+            out.push(byte);
+            at += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The warned routes a build has, and the origins each is sent to.
@@ -410,19 +440,39 @@ impl Consent {
 
     /// The warned route a send by `provider`, asking `model`, would go on
     /// with no yes: the model's own where the model is warned, then the route
-    /// the provider is served on. `None` where nothing is to be asked.
+    /// that holds an origin the provider is served at, its own or another
+    /// provider's there. `None` where nothing is to be asked.
     #[must_use]
     pub fn unanswered(&self, provider: &str, model: &str) -> Option<Warned> {
         let served = {
             let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
-            state.serving.get(provider)?.route.clone()
+            state.serving.get(provider)?.clone()
         };
-        let model = model_route(provider, model);
-        [Some(model.as_str()), served.as_deref()]
-            .into_iter()
-            .flatten()
-            .find_map(|route| self.asks(route))
-            .copied()
+        if let Some(warned) = self.asks(&model_route(provider, model)) {
+            return Some(*warned);
+        }
+        // Whatever holds the origins the provider is served at, which may be
+        // another provider's route there as well as its own: what is asked
+        // about is what keeps the request back.
+        let origins: Vec<Origin> = match (&served.at, &served.route) {
+            (Some(at), _) => vec![at.clone()],
+            (None, Some(route)) => self
+                .routes
+                .warned(route)
+                .map(|warned| {
+                    warned
+                        .origins
+                        .iter()
+                        .filter_map(|at| Origin::of(at))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            (None, None) => Vec::new(),
+        };
+        origins
+            .iter()
+            .find_map(|origin| self.held(origin))
+            .and_then(|route| self.routes.warned(&route).copied())
     }
 
     /// Takes the routes the user's file says yes to, the first time it is

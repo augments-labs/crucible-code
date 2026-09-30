@@ -75,6 +75,13 @@ pub(super) const CRAMPED_SEND: &str =
 pub(super) const CRAMPED_CHOICE: &str =
     "! this route needs an answer first; make the window taller and choose again";
 
+/// Said where no panel fits before room is made.
+pub(super) const CRAMPED_ROOM: &str =
+    "! this route needs an answer first; make the window taller and try again";
+
+/// Said once room was going to be made and nothing was sent.
+pub(super) const UNSENT: &str = "nothing was sent";
+
 /// Said once the message is back in the box.
 pub(super) const KEPT: &str = "nothing was sent; your message is back in the prompt box";
 
@@ -153,10 +160,10 @@ pub(super) fn ask_while<T: Terminal>(
 ///
 /// What stopped the file being written, in a sentence for the reader.
 pub(super) fn recorded(terms: &Terms, warned: &Warned) -> Result<(), String> {
-    crucible_app::remember::accepting(&terms.choosing, warned.route)
-        .map_err(|problem| format!("! your answer could not be written down: {problem}"))?;
-    terms.consent.record(warned.route);
-    Ok(())
+    terms
+        .consent
+        .accept(warned)
+        .map_err(|problem| format!("! your answer could not be written down: {problem}"))
 }
 
 /// Whether `work` is held back rather than sent: asked about first where the
@@ -196,6 +203,9 @@ pub(super) fn held<T: Terminal>(
             Ok(()) => return Ok(false),
             Err(said) => said,
         },
+        // Room to be made has no message to give back.
+        Answer::Back if matches!(work, Work::Room(_)) => UNSENT.to_owned(),
+        Answer::Cramped if matches!(work, Work::Room(_)) => CRAMPED_ROOM.to_owned(),
         Answer::Back => KEPT.to_owned(),
         Answer::Cramped => CRAMPED_SEND.to_owned(),
     };

@@ -2946,3 +2946,20 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
         }
     }
 }
+
+#[test]
+fn room_asked_for_on_a_warned_route_is_asked_about_and_going_back_says_nothing_was_sent() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-compact",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/compact\r", "Use it anyway");
+    window.types_until("\x1b", "nothing was sent");
+    let picture = window.picture();
+    assert!(!picture.contains("your message is back"), "{picture}");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}

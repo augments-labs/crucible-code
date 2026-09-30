@@ -852,13 +852,13 @@ fn ran<T: Terminal>(
     work: Work,
     held: &mut Held<'_>,
 ) -> Result<(Conversation, bool), Fatal> {
+    if warning::held(&conversation, renderer, terms, &work, held)? {
+        return Ok((conversation, false));
+    }
     // Only a line somebody typed has a reply to hang under it, which is why
     // this asks who asked rather than what ran: room made because the window
     // filled, or because a resumed session was picked up as notes, was nobody's
     // command and has no line above it to hang from.
-    if warning::held(&conversation, renderer, terms, &work, held)? {
-        return Ok((conversation, false));
-    }
     let command = matches!(work, Work::Room(Compacting::Asked)).then(|| renderer.lines());
     let took = take(conversation, renderer, terms, work, held)?;
     let style = terms.style();

@@ -609,3 +609,67 @@ fn a_credential_taken_out_takes_what_its_provider_was_served_on() {
         Some("key:google")
     );
 }
+
+/// Another provider's route at the origin this one is served at holds its
+/// requests too, so that route is what the send asks about: a request the
+/// hold keeps back is one a question can let go.
+#[test]
+fn a_send_asks_about_whatever_holds_its_origin() {
+    let consent = Consent::new(Routes::production());
+    consent.record("subscription:moonshot@kimi.ai");
+    consent.served("moonshot", Some(serving("subscription:moonshot@kimi.ai")));
+    let base = "https://api.kimi.ai/coding/v1/chat/completions";
+    consent.served(
+        "openai",
+        Some(Serving {
+            route: recognised(base).map(str::to_owned),
+            at: Origin::of(base),
+        }),
+    );
+
+    let origin = origin(base);
+    let held = consent.held(&origin);
+    assert_eq!(held.as_deref(), Some("key:moonshot@kimi.ai"));
+    assert_eq!(
+        consent.unanswered("moonshot", "k3").map(|one| one.route),
+        held.as_deref()
+    );
+
+    consent.record("key:moonshot@kimi.ai");
+    assert_eq!(consent.held(&origin), None);
+    assert_eq!(consent.unanswered("moonshot", "k3"), None);
+}
+
+/// A path spelled with dot segments or percent-encoding is the path it names,
+/// so another spelling of a documented address is that address.
+#[test]
+fn a_documented_path_spelled_another_way_is_recognised() {
+    for (spelled, route) in [
+        (
+            "https://generativelanguage.googleapis.com/./v1beta/interactions",
+            "key:google",
+        ),
+        (
+            "https://generativelanguage.googleapis.com/%76%31beta/interactions",
+            "key:google",
+        ),
+        (
+            "https://api.kimi.com/x/../coding/v1/chat/completions",
+            "key:moonshot",
+        ),
+        ("https://api.kimi.com/%63oding/v1", "key:moonshot"),
+        (
+            "https://api.moonshot.ai/v1/./chat/completions",
+            "api.moonshot.ai",
+        ),
+    ] {
+        assert_eq!(recognised(spelled), Some(route), "{spelled}");
+    }
+    for missed in [
+        "https://api.moonshot.ai/v1/../v2",
+        "https://api.moonshot.ai/%2E%2E/v1x",
+        "https://generativelanguage.googleapis.com/v1alpha",
+    ] {
+        assert_eq!(recognised(missed), None, "{missed}");
+    }
+}
