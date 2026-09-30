@@ -88,7 +88,7 @@ impl Conversation {
         let switched = self.runner.provider().fast(self.runner.model()).switched();
         let kept = self
             .serving
-            .and_then(|provider| remember::hastened(file, provider).ok());
+            .and_then(|provider| remember::hastened(file, provider, self.runner.model()).ok());
         let speed = match kept {
             Some(Speed::Fast) if switched => Speed::Fast,
             Some(_) | None => Speed::Standard,

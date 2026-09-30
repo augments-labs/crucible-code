@@ -289,10 +289,10 @@ fn text_of(file: &Path, named: &str) -> Result<String, RememberError> {
 ///
 /// [`RememberError::Unwritable`] when the file cannot be read, and
 /// [`RememberError::Unusable`] when what it says is not configuration.
-pub fn hastened(file: &Path, provider: &str) -> Result<Speed, RememberError> {
+pub fn hastened(file: &Path, provider: &str, model: &str) -> Result<Speed, RememberError> {
     let named = file.display().to_string();
     let text = text_of(file, &named)?;
-    Ok(crucible_config::hastened(&text, &named, provider)?)
+    Ok(crucible_config::hastened(&text, &named, provider, model)?)
 }
 
 /// Replaces the file, or leaves whatever is there untouched.
