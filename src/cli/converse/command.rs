@@ -40,7 +40,7 @@ use crate::cli::client::astray;
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
-use super::{Held, Terms, mode, picking};
+use super::{Held, Terms, mode, picking, warning};
 
 mod cache;
 mod clear;
@@ -512,7 +512,20 @@ pub(super) fn deferred<T: Terminal>(
 
             if model::confirmed(renderer, terms, selected, while_waiting)? {
                 let (provider, name) = selected.parts();
-                return Ok(Some(Kept::Model(provider, name)));
+                match warning::choosing(
+                    renderer,
+                    terms,
+                    (provider.name, &name),
+                    true,
+                    while_waiting,
+                )? {
+                    warning::Chosen::Take => return Ok(Some(Kept::Model(provider, name))),
+                    warning::Chosen::Back => {}
+                    warning::Chosen::Stop(said) => {
+                        renderer.commit(&said)?;
+                        return Ok(None);
+                    }
+                }
             }
             // "go back": round to the picker.
         },

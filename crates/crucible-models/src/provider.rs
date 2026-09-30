@@ -123,6 +123,15 @@ pub enum ProviderError {
     /// there to set one up in.
     #[error("{0}")]
     Unconfigured(Box<str>),
+
+    /// Nothing was sent: the route the request would go on waits for the
+    /// user's yes to what its vendor does with what is sent.
+    ///
+    /// Said whole, naming the provider and the route and no address or
+    /// credential. Not about the moment, so never retried: the same request
+    /// is held again until the yes is given.
+    #[error("{0}")]
+    Held(Box<str>),
 }
 
 impl ProviderError {
@@ -172,6 +181,7 @@ impl ProviderError {
                 },
             },
             Self::Unconfigured(problem) => Self::Unconfigured(redactions.redact(&problem).into()),
+            Self::Held(problem) => Self::Held(redactions.redact(&problem).into()),
         }
     }
 
@@ -207,7 +217,8 @@ impl ProviderError {
             | Self::Protocol { .. }
             | Self::Credential { .. }
             | Self::Cancelled(_)
-            | Self::Unconfigured(_) => false,
+            | Self::Unconfigured(_)
+            | Self::Held(_) => false,
         }
     }
 }

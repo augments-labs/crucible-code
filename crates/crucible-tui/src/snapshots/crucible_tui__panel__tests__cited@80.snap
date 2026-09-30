@@ -1,0 +1,19 @@
+---
+source: crates/crucible-tui/src/panel.rs
+expression: "picture(&panel.rows(columns, glyphs), columns)"
+---
+<Accent>────────────────────────────────────────────────────────────────────────────────</>
+
+<Strong>Kimi Code · kimi.ai</>
+
+Kimi may use what you send to train its models. To stop it, contact Kimi as its
+terms say; that covers only what you send afterwards.
+<Quiet>kimi.ai terms of service, 30 Sep 2026</>
+
+<Accent>›</> <Strong>Use it anyway</>
+  <Quiet>Sends your message; this route is not asked about again</>
+
+  Go back
+  <Quiet>Keeps your message in the prompt box; nothing is sent</>
+
+<Quiet>enter to choose · esc to go back</>

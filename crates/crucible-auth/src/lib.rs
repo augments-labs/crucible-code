@@ -37,4 +37,6 @@ pub use oauth::{
     LoginUpdates, OAuthError, OpenAiCredential, OpenAiOAuth, Renewals, SETTLING, Stopped, Storing,
     SubscriptionLogin, Unjoined,
 };
-pub use store::{Dropped, Held, Kind, Names, Settled, Store, StoredCredentials, provider_of};
+pub use store::{
+    Dropped, Held, Kind, LettingGo, Names, Settled, Store, StoredCredentials, provider_of,
+};

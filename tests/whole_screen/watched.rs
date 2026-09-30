@@ -162,6 +162,34 @@ fn working(scratch: &Path) -> PathBuf {
         .join("workspace")
 }
 
+/// What a case starts crucible with beyond what every case is given.
+#[derive(Debug, Default)]
+pub(crate) struct Launch<'a> {
+    /// The whole configuration file, written as it is.
+    pub(crate) document: &'a str,
+    /// More of the environment, beside what every case sets.
+    pub(crate) env: &'a [(&'a str, &'a str)],
+    /// The command line after the program's name.
+    pub(crate) args: &'a [&'a str],
+    /// A home an earlier run left, copied in before the configuration file is
+    /// written over it.
+    pub(crate) home: Option<&'a Path>,
+}
+
+/// Copies the tree at `from` into `to`, file by file.
+fn copied(from: &Path, to: &Path) {
+    fs::create_dir_all(to).expect("a directory to copy into");
+    for entry in fs::read_dir(from).expect("a home to copy").flatten() {
+        let path = entry.path();
+        let into = to.join(entry.file_name());
+        if path.is_dir() {
+            copied(&path, &into);
+        } else {
+            fs::copy(&path, &into).expect("a file copied");
+        }
+    }
+}
+
 /// Optional behavior of the terminal side of one whole-screen case.
 struct TerminalFixture<'a> {
     columns: u16,
@@ -207,6 +235,7 @@ impl Watched {
                 rows,
                 reply: Some(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?1;2c"),
             },
+            None,
         )
     }
 
@@ -385,6 +414,22 @@ impl Watched {
                 rows,
                 reply: None,
             },
+            None,
+        )
+    }
+
+    /// Starts crucible as `launch` says, in a window that size.
+    pub(crate) fn launched(case: &str, columns: u16, rows: u16, launch: &Launch<'_>) -> Self {
+        Self::configured_with_terminal(
+            case,
+            launch.document,
+            false,
+            &TerminalFixture {
+                columns,
+                rows,
+                reply: None,
+            },
+            Some(launch),
         )
     }
 
@@ -393,6 +438,7 @@ impl Watched {
         document: &str,
         keyed: bool,
         terminal: &TerminalFixture<'_>,
+        launch: Option<&Launch<'_>>,
     ) -> Self {
         // One flat directory per case, so the last thing a case does can take
         // the whole of what it made with it.
@@ -405,8 +451,14 @@ impl Watched {
         let workspace = working(&scratch);
         fs::create_dir_all(&home).expect("a scratch home directory");
         fs::create_dir_all(&workspace).expect("a scratch working directory");
-        fs::write(home.join("config.json"), fixture_document(document))
-            .expect("a configuration file");
+        if let Some(earlier) = launch.and_then(|launch| launch.home) {
+            copied(earlier, &home);
+        }
+        let written = match launch {
+            Some(_) => document.to_owned(),
+            None => fixture_document(document),
+        };
+        fs::write(home.join("config.json"), written).expect("a configuration file");
 
         // A checkout, because that is what crucible is run in. Only one fact
         // about it is read at startup and only one case turns on it -- but a
@@ -424,7 +476,7 @@ impl Watched {
         .expect("a git configuration file");
 
         let (mut near, inside) = pair(terminal.columns, terminal.rows);
-        let child = start(&scratch, keyed, terminal, inside);
+        let child = start(&scratch, keyed, terminal, launch, inside);
         if let Some(reply) = terminal.reply {
             near.write_all(reply)
                 .expect("the terminal background reply goes to crucible");
@@ -1077,7 +1129,13 @@ fn pair(columns: u16, rows: u16) -> (File, File) {
 /// beside it is a socket on this machine, and what answers there wants nothing
 /// signed — but crucible will not choose a provider without one, so a case with
 /// something to ask needs the variable set to reach the provider at all.
-fn start(scratch: &Path, keyed: bool, terminal: &TerminalFixture<'_>, inside: File) -> Child {
+fn start(
+    scratch: &Path,
+    keyed: bool,
+    terminal: &TerminalFixture<'_>,
+    launch: Option<&Launch<'_>>,
+    inside: File,
+) -> Child {
     let home = scratch.join("home");
     let workspace = working(scratch);
     let second = inside.try_clone().expect("a second handle on the far side");
@@ -1099,6 +1157,8 @@ fn start(scratch: &Path, keyed: bool, terminal: &TerminalFixture<'_>, inside: Fi
         .envs((!terminal.coloured()).then_some(("NO_COLOR", "1")))
         .env("CRUCIBLE_CODE_HOME", &home)
         .envs(keyed.then_some(("ANTHROPIC_API_KEY", "not-a-key-and-nothing-reads-it")))
+        .envs(launch.map(|launch| launch.env).unwrap_or_default().iter().copied())
+        .args(launch.map(|launch| launch.args).unwrap_or_default())
         .stdin(Stdio::from(inside))
         .stdout(Stdio::from(second))
         .stderr(Stdio::from(third))

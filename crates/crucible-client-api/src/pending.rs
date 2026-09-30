@@ -136,6 +136,20 @@ pub enum Pending {
         /// The questions, in the order they are to be answered.
         questions: Vec<Asked>,
     },
+    /// Whether a send may go on a route whose vendor says it uses what is
+    /// sent to it. Nothing has been sent.
+    Warning {
+        /// Which pending action this is.
+        id: PendingId,
+        /// The route, as a yes to it is written down.
+        route: Text,
+        /// What the route is called.
+        shown: Text,
+        /// What the vendor says, in English.
+        sentence: Text,
+        /// The page it says it on, and the day that was read.
+        source: Text,
+    },
 }
 
 impl Pending {
@@ -143,7 +157,9 @@ impl Pending {
     #[must_use]
     pub const fn id(&self) -> PendingId {
         match self {
-            Self::Permission { id, .. } | Self::Questions { id, .. } => *id,
+            Self::Permission { id, .. } | Self::Questions { id, .. } | Self::Warning { id, .. } => {
+                *id
+            }
         }
     }
 
@@ -167,6 +183,18 @@ impl Pending {
                     questions.iter().map(Asked::written).collect::<Vec<_>>(),
                 )
             }
+            Self::Warning {
+                id,
+                route,
+                shown,
+                sentence,
+                source,
+            } => Writing::kind("warning")
+                .with("id", id.number())
+                .text("route", route)
+                .text("shown", shown)
+                .text("sentence", sentence)
+                .text("source", source),
         }
         .finish()
     }
@@ -194,6 +222,13 @@ impl Pending {
                     .into_iter()
                     .map(Asked::read)
                     .collect::<Result<_, _>>()?,
+            },
+            "warning" => Self::Warning {
+                id,
+                route: fields.text("route")?,
+                shown: fields.text("shown")?,
+                sentence: fields.text("sentence")?,
+                source: fields.text("source")?,
             },
             _ => return Err(ErrorCode::Malformed.into()),
         };
@@ -300,8 +335,14 @@ pub enum Decision {
         /// The answers.
         answers: Vec<Picked>,
     },
-    /// About a model's questions: nobody is going to answer them.
+    /// About a model's questions: nobody is going to answer them. About a
+    /// warning: go back, sending nothing.
     Declined {
+        /// The pending action being answered.
+        id: PendingId,
+    },
+    /// About a warning: send anyway, and do not ask about the route again.
+    Accepted {
         /// The pending action being answered.
         id: PendingId,
     },
@@ -312,7 +353,10 @@ impl Decision {
     #[must_use]
     pub const fn id(&self) -> PendingId {
         match self {
-            Self::Ruled { id, .. } | Self::Answered { id, .. } | Self::Declined { id } => *id,
+            Self::Ruled { id, .. }
+            | Self::Answered { id, .. }
+            | Self::Declined { id }
+            | Self::Accepted { id } => *id,
         }
     }
 
@@ -356,6 +400,7 @@ impl Decision {
                 )
             }
             Self::Declined { id } => Writing::kind("declined").with("id", id.number()),
+            Self::Accepted { id } => Writing::kind("accepted").with("id", id.number()),
         }
         .finish()
     }
@@ -387,6 +432,7 @@ impl Decision {
                     .collect::<Result<_, _>>()?,
             },
             "declined" => Self::Declined { id },
+            "accepted" => Self::Accepted { id },
             _ => return Err(ErrorCode::InvalidArgument.into()),
         };
         fields.done()?;

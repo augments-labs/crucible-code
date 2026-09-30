@@ -269,6 +269,23 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// The routes the user has said yes to sending on, under
+    /// `contentUse.accepted`, as written.
+    ///
+    /// Only ever the user's own: the key widens, so a project file that
+    /// writes it is refused before this is read. A name no route of this
+    /// build answers to is handed back like any other and means nothing to
+    /// whoever reads it.
+    #[must_use]
+    pub fn content_accepted(&self) -> Vec<&str> {
+        self.value
+            .get("contentUse")
+            .and_then(|block| block.get("accepted"))
+            .and_then(Value::as_array)
+            .map(|routes| routes.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default()
+    }
+
     /// Whether operating-system confinement is enabled, false unless a document
     /// opts in with `sandbox.enabled`.
     /// Workspace layers may require confinement but cannot disable it.
@@ -354,6 +371,20 @@ mod tests {
         // that pins its own model must not silently take away the model the
         // user set for a provider it never mentioned.
         assert_eq!(settings.model("openai"), Some("also-from-home"));
+    }
+
+    #[test]
+    fn the_routes_said_yes_to_are_read_as_written_and_nothing_else_is() {
+        let user = Document::sample(
+            r#"{"contentUse": {"accepted": ["key:google", "key:nobody", "api.moonshot.ai"]}}"#,
+            Origin::User,
+        );
+        let settings = Settings::resolve(vec![user]);
+        assert_eq!(
+            settings.content_accepted(),
+            ["key:google", "key:nobody", "api.moonshot.ai"]
+        );
+        assert!(Settings::resolve(Vec::new()).content_accepted().is_empty());
     }
 
     #[test]

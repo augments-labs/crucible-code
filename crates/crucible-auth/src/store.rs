@@ -19,9 +19,11 @@ mod document;
 mod names;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crucible_credentials::ApiKey;
 
@@ -72,8 +74,13 @@ const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 /// a parse failure it would report as damage.
 const VERSION: u64 = 2;
 
+/// What is asked, under the store's lock, before a write takes a credential
+/// out: its answer is written before the store is, and a refusal leaves the
+/// store as it was. Handed every credential about to go.
+pub type LettingGo = Arc<dyn Fn(&[Dropped]) -> Result<(), Box<str>> + Send + Sync>;
+
 /// Where the keys crucible was given are written down.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Store {
     /// The file itself.
     path: PathBuf,
@@ -81,6 +88,18 @@ pub struct Store {
     home: PathBuf,
     /// The names this build writes each provider's credential under.
     names: Names,
+    /// What is asked before a credential is taken out, where anything is.
+    letting_go: Option<LettingGo>,
+}
+
+impl fmt::Debug for Store {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Store")
+            .field("path", &self.path)
+            .field("names", &self.names)
+            .field("letting_go", &self.letting_go.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Store {
@@ -95,7 +114,17 @@ impl Store {
             path: home.join(FILE),
             home: home.to_path_buf(),
             names: Names::default(),
+            letting_go: None,
         }
+    }
+
+    /// The same store, asking `letting_go` before any write takes a
+    /// credential out: a key or sign-in replaced by another row's, a provider
+    /// forgotten, a second credential settled at a start.
+    #[must_use]
+    pub fn letting_go(mut self, letting_go: LettingGo) -> Self {
+        self.letting_go = Some(letting_go);
+        self
     }
 
     /// The same store, told the names this build writes each provider's
@@ -326,8 +355,20 @@ impl Store {
             None => Document::default(),
         };
 
+        let before = held_in(&document);
         if !change(&mut document) {
             return Ok(());
+        }
+
+        // Asked with the file still as it was: whatever has to go with a
+        // credential goes first, so a stop between the two leaves the
+        // credential and not what went with it.
+        if let Some(letting_go) = &self.letting_go {
+            let after = held_in(&document);
+            let going: Vec<Dropped> = before.difference(&after).cloned().collect();
+            if !going.is_empty() {
+                letting_go(&going).map_err(|why| AuthError::Unreleased { why })?;
+            }
         }
 
         self.write(&document)
@@ -451,6 +492,21 @@ impl Store {
     }
 }
 
+/// Every credential `document` holds, by its map and name.
+fn held_in(document: &Document) -> BTreeSet<Held> {
+    document
+        .keys
+        .keys()
+        .map(|name| Held::new(Kind::Key, name))
+        .chain(
+            document
+                .subscriptions
+                .keys()
+                .map(|name| Held::new(Kind::Account, name)),
+        )
+        .collect()
+}
+
 /// Takes out of `document` every provider's second credential, where its bare
 /// name holds one, and says what went.
 fn seconds(document: &mut Document, names: &Names) -> Vec<Dropped> {
@@ -534,6 +590,9 @@ pub struct StoredCredentials {
     store: Option<Store>,
     /// What reading could not do, in a sentence for the user.
     trouble: Option<Box<str>>,
+    /// Whether the store could not be read at all, so what it holds is not
+    /// known: not an empty store, nor one read in full with a warning.
+    unread: bool,
 }
 
 impl StoredCredentials {
@@ -558,6 +617,7 @@ impl StoredCredentials {
             subscriptions: document.subscriptions,
             providers,
             trouble: None,
+            unread: false,
             store: Some(store),
         }
     }
@@ -566,6 +626,7 @@ impl StoredCredentials {
     fn nothing(store: Store, said: &str) -> Self {
         Self {
             trouble: Some(said.into()),
+            unread: true,
             store: Some(store),
             ..Self::default()
         }
@@ -626,6 +687,14 @@ impl StoredCredentials {
     #[must_use]
     pub fn trouble(&self) -> Option<&str> {
         self.trouble.as_deref()
+    }
+
+    /// Whether the store could not be read at all, so that holding nothing
+    /// here says nothing about what it holds. A store read in full whose
+    /// permissions had to be tightened is read.
+    #[must_use]
+    pub fn unread(&self) -> bool {
+        self.unread
     }
 
     /// The one credential `provider` is served by, and the name it is under.

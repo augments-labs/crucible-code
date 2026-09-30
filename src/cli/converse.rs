@@ -53,7 +53,7 @@ use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_client_api::{Command, Prompt, Refusal};
+use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
 use crucible_context::Room;
 use crucible_runner::{Event, Runner, Turned};
 use crucible_runtime::Cancel;
@@ -100,6 +100,7 @@ mod resuming;
 mod secret;
 mod turning;
 mod typing;
+mod warning;
 
 /// How long the loop waits on the turn before looking at the keyboard.
 ///
@@ -246,6 +247,9 @@ pub(crate) struct Terms {
     pub(crate) logins: Store,
     /// Subscription implementations compiled into this binary.
     pub(crate) subscriptions: Subscriptions,
+    /// The yes given to each route whose vendor uses what is sent, which the
+    /// clients this run sends through ask before a request leaves.
+    pub(crate) consent: crucible_app::content_use::Consent,
     /// Sets a provider up the way the launch set this run's up.
     ///
     /// `/login` is what calls it, handing back the keys it just wrote — so what
@@ -848,6 +852,9 @@ fn ran<T: Terminal>(
     work: Work,
     held: &mut Held<'_>,
 ) -> Result<(Conversation, bool), Fatal> {
+    if warning::held(&conversation, renderer, terms, &work, held)? {
+        return Ok((conversation, false));
+    }
     // Only a line somebody typed has a reply to hang under it, which is why
     // this asks who asked rather than what ran: room made because the window
     // filled, or because a resumed session was picked up as notes, was nobody's
@@ -1544,6 +1551,10 @@ fn sent(
                 Did::Reported
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
+            // Not reached from here: every route holding the send is asked
+            // about on the drawing thread before the work is sent, each yes
+            // is written down there, and nothing on the worker takes one out.
+            Ended::Warned(_) | Ended::Unrecorded(_) => Did::Unsent(ErrorCode::Abandoned.into()),
         };
 
         (conversation, did)

@@ -39,6 +39,14 @@ impl TurnOutcome {
                 failed("undecided", problem).maybe("stop", stop.map(Stop::as_str))
             }
             Self::Failed(problem) => failed("failed", problem),
+            Self::Warned {
+                route,
+                sentence,
+                source,
+            } => Writing::kind("warned")
+                .text("route", route)
+                .text("sentence", sentence)
+                .text("source", source),
         }
         .finish()
     }
@@ -46,6 +54,11 @@ impl TurnOutcome {
     pub(super) fn read(value: Value) -> Result<Self, Refusal> {
         let mut fields = Fields::of(value)?;
         let turn = match fields.kind()?.as_str() {
+            "warned" => Self::Warned {
+                route: fields.text("route")?,
+                sentence: fields.text("sentence")?,
+                source: fields.text("source")?,
+            },
             "ran" => Self::Ran {
                 stop: Stop::named(&fields.string("stop")?)?,
             },

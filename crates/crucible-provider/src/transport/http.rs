@@ -119,6 +119,9 @@ fn request_problem(problem: &HttpError) -> TransportError {
         HttpError::Invalid(_) => TransportError::Unreachable("HTTP protocol failed".into()),
         HttpError::Unverifiable => TransportError::Unreachable("request URL was invalid".into()),
         HttpError::Stalled(_) => TransportError::Unreachable("request timed out".into()),
+        // Said whole: it names the route the request waits on, which is the
+        // one thing the reader can act on, and no address or credential.
+        HttpError::Held(_) => TransportError::Held(problem.to_string().into()),
         HttpError::Exchange(_) => problem.connect().map_or_else(
             || TransportError::Unreachable("HTTP request failed".into()),
             connection_problem,
@@ -710,6 +713,16 @@ mod tests {
             request_problem(&HttpError::Unverifiable),
             TransportError::Unreachable(ref said) if said.as_ref() == "request URL was invalid"
         ));
+        // What a client's hold refused is held all the way to the provider's
+        // error: never retried, and known to have been sent nowhere.
+        let held = request_problem(&HttpError::Held("key:google".into()));
+        assert!(matches!(held, TransportError::Held(_)), "{held}");
+        let error = held.for_provider("google");
+        assert!(
+            matches!(&error, crucible_models::ProviderError::Held(said) if said.contains("key:google")),
+            "{error:?}"
+        );
+        assert!(!error.transient(), "{error:?}");
         let invalid = hyper::Request::builder()
             .uri("http://[::1")
             .body(())

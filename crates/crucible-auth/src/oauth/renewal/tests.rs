@@ -323,3 +323,39 @@ fn a_login_s_store_work_keeps_the_place_until_it_returns_after_its_login_is_drop
         finished_at.saturating_duration_since(placed_at)
     );
 }
+
+/// Holds every origin, under one route's name.
+#[derive(Debug)]
+struct Everywhere;
+
+impl crucible_http::Hold for Everywhere {
+    fn held(&self, _: &crucible_http::Origin) -> Option<Box<str>> {
+        Some("subscription:fabricated".into())
+    }
+}
+
+/// An account request to an origin the application holds is never sent: the
+/// listener standing where the authorization service would be accepts no
+/// connection, and the request fails naming the route it waits on.
+#[test]
+fn an_account_request_the_application_holds_is_never_sent() {
+    let runtime = runtime();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/oauth/token", listener.local_addr().unwrap());
+    let renewals = Renewals::new();
+    renewals.runs_on(runtime.handle().clone());
+    renewals.holds(Arc::new(Everywhere));
+
+    let sent = runtime.block_on(renewals.post(&url, Outgoing::new(), String::new(), PATIENCE));
+
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        listener.accept().is_err(),
+        "a held account request was dialled"
+    );
+    assert!(
+        matches!(&sent, Err(OAuthError::Held(route)) if &**route == "subscription:fabricated"),
+        "{sent:?}"
+    );
+}

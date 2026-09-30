@@ -2,7 +2,7 @@
   "harness": {
     "tests/whole_screen/screen.rs": "cc2ad5999ac72ed007d79e0197b0bd8782b9a75d05424aa7fb6ba8906b3a0e8f",
     "tests/whole_screen/vendor.rs": "b3f45a443650bc0f6b58e1d293d5749b15a70bac58e64330223be75bf4f27d12",
-    "tests/whole_screen/watched.rs": "61f2e4738bfb2652dd70c7844fd79cd5089e6f9e5abdf73de614da8a12b06a4c"
+    "tests/whole_screen/watched.rs": "86ef02c77c55de5770195b598c5783be38511407d17ca2afd2355a80c5bbf66c"
   },
   "captures": [
     {
@@ -319,7 +319,7 @@
       "opened": [
         "Watched::open(\"login-signed-in-40\", 40, 30)"
       ],
-      "sha256": "2282df404845c4cb5b105ba52ab542103be93811aa1fcfac4339670293380582"
+      "sha256": "ceafc13eea2036b5e234b22e8d6ff236775b2d4998a0e90550982dbbc089ef46"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_keys_signed_in_40.snap",
@@ -327,7 +327,7 @@
       "opened": [
         "Watched::open(\"login-signed-in-40\", 40, 30)"
       ],
-      "sha256": "67e6b3a89149bf7ac18d7bf5b4004d8df55b862375bd3c5cf4b3487374c82b38"
+      "sha256": "e39667602803ffffc451ec7ef4c071ae4d871c6752d873c82bfc8033bb295c9b"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_40.snap",
@@ -335,7 +335,7 @@
       "opened": [
         "Watched::open(&format!(\"login-narrowed-{columns}\"), columns, 30)"
       ],
-      "sha256": "2a911f3bf7f88c76372f1389868fcd50a0d12ea8701c6fcc063072fc84d5501f"
+      "sha256": "468bde6b1ff5bea70fba125cdebbd2e95eb60a8d43fabf4c6cde8da9b6760dc2"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_80.snap",
@@ -343,7 +343,7 @@
       "opened": [
         "Watched::open(&format!(\"login-narrowed-{columns}\"), columns, 30)"
       ],
-      "sha256": "23b9e2bd35024f0d33e02978166f5e5936ff79115b5d21ab347efc7592cce142"
+      "sha256": "f10350976325d8e62cf0fe6c6021da5c787812f6d28003b1c6fa0d363af4313d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",
@@ -427,6 +427,18 @@
       "sha256": "4c3485b23fdf47a61b1cf1392d4e37fd08afc7ecb5f6f2c6b4922221800fdbba"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__question_at_openai_plan_80.snap",
+      "case": "the_openai_plan_row_asks_with_its_condition_and_going_back_returns_to_its_list",
+      "opened": [],
+      "sha256": "4d0014ddff0fa0e250229001975af5d78ad113bfb4266d9e229591a1f330d095"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__question_at_send_80.snap",
+      "case": "a_send_on_a_warned_route_stands_the_question_and_sends_nothing_before_the_yes",
+      "opened": [],
+      "sha256": "4c6220c082bf6c6c80278d388778371ec1e59d2b800a6f6cbbdefd84e8c6485b"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_mid_turn_are_refused_on_the_panel.snap",
       "case": "release_notes_mid_turn_are_refused_on_the_panel",
       "opened": [
@@ -492,6 +504,24 @@
         "Watched::answering(\"transcript-map\", 80, 16, &vendor)"
       ],
       "sha256": "52387c07bcd499b3c16bfafdaf5826c0d5a57a96101b24b8a47cfb95c1b145ae"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_ascii.snap",
+      "case": "the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set",
+      "opened": [],
+      "sha256": "fe7ce4c25958681397e695a2134680e5306f82247c73957707faf82b0ca875ac"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_unicode.snap",
+      "case": "the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set",
+      "opened": [],
+      "sha256": "fb8d48961e9ca47292f51b7927ae473d907d1d96b57a8688422268e02e8ca561"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_80_ascii.snap",
+      "case": "the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set",
+      "opened": [],
+      "sha256": "cf474b6a87834859f4da0342b761c2004de3e0868041580f1fdfdf95e483dfc1"
     }
   ]
 }

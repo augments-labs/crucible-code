@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: asked
+---
+80x30 cursor 28,0 scrolled 0
+|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
+|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
+|│                                  │ ───────────────────────────────────────── │|
+|│  /…/workspace                    │                                           │|
+|│                                  │ Tips                                      │|
+|│                                  │                                           │|
+|│                                  │ · /          opens the command list       │|
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› hello                                                                         |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Google                                                                          |
+|                                                                                |
+|On unpaid quota, Google uses what you send and what it answers to improve its   |
+|products and machine learning technologies. In the EEA, Switzerland and the UK  |
+|the paid terms apply instead.                                                   |
+|Gemini API terms, 30 Sep 2026                                                   |
+|                                                                                |
+|› Use it anyway                                                                 |
+|  Sends your message; this route is not asked about again                       |
+|                                                                                |
+|  Go back                                                                       |
+|  Keeps your message in the prompt box; nothing is sent                         |
+|                                                                                |
+|enter to choose · esc to go back                                                |
+|                                                                                |

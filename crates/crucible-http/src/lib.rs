@@ -65,6 +65,11 @@
 //!   such as a proxy's credential, once that request is dropped or has its
 //!   response head. A hostname lookup already on its blocking worker still
 //!   runs until the platform answers, holding nothing but the name.
+//! - **A hold**, where whoever builds a client hands one in ([`Http::holding`]),
+//!   is asked about each request's [`Origin`] before anything is looked up,
+//!   dialled or written, and a request it keeps back fails with
+//!   [`HttpError::Held`] having sent nothing. Which origins wait, and on what,
+//!   is the hold's: nothing here names a vendor.
 //! - **Nothing is logged here.** This crate installs no logger or subscriber
 //!   and writes nothing to a terminal. hyper-util emits `tracing` events that
 //!   name hosts and addresses; they go nowhere only while nothing in the
@@ -82,6 +87,7 @@ mod body;
 mod client;
 mod connect;
 mod dns;
+mod hold;
 mod proxy;
 mod tasks;
 
@@ -99,4 +105,5 @@ pub use connect::{ConnectError, Tls};
 /// register each exact secret representation with `Outgoing::protect`.
 pub use crucible_credentials::Outgoing;
 pub use dns::{LookupError, Lookups, PlainLookups, Poison};
+pub use hold::{Hold, Origin};
 pub use proxy::{ConnectProxy, ProxyEnv, Relay};

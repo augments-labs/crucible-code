@@ -38,6 +38,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use crucible_app::AppError;
+use crucible_app::content_use;
 use crucible_app::providers::{
     Providers, Served, available, chosen, providers, re_serving, unasked,
 };
@@ -291,6 +292,13 @@ pub(crate) enum Fatal {
     /// the "it does nothing" report, arriving as success.
     #[error("{0} No turn was taken.")]
     Unanswerable(&'static str),
+
+    /// A send on a route whose vendor uses what is sent, with no yes to it and
+    /// no terminal to ask on. Ended the way an unanswerable prompt is, for
+    /// the same reason: a run that sent nothing must say so where a script
+    /// reads.
+    #[error("{0}")]
+    Unanswered(Box<str>),
 
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
@@ -605,8 +613,25 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // A second credential for one provider, which only 0.43.3 writing after a
     // roll back leaves, is taken out after that read and said in the same
     // place.
+    //
+    // What the user's own file says yes to is read first: a credential taken
+    // out, here or later, takes its route's yes with it, before the store is
+    // written, and a yes this run took out must not come back.
     let rows = crucible_app::providers::Rows::production();
-    let (keys, trouble) = stored(home.path(), &rows, style::glyph_set(settings.glyphs()));
+    services.consent().keeps_in(crucible_config::user(&home));
+    services
+        .consent()
+        .recorded(settings.content_accepted().into_iter().map(str::to_owned));
+    let store =
+        Store::in_home(home.path())
+            .naming(rows.names())
+            .letting_go(content_use::letting_go(
+                services.consent(),
+                crucible_config::user(&home),
+                rows.clone(),
+                &settings,
+            ));
+    let (keys, trouble) = stored(&store, &rows, style::glyph_set(settings.glyphs()));
     let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
@@ -621,6 +646,18 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the first prompt, and a model chosen without being asked for is one
     // vendor's name sent to whichever vendor the credential belongs to.
     let providers = providers()?;
+    // What a provider is served on is read again, from the store as it is
+    // then, once a credential taken out may have moved it: another may still
+    // serve it, and the write that took it out may have failed.
+    services
+        .consent()
+        .resolves(crucible_app::providers::resolving(
+            settings.clone(),
+            subscriptions.clone(),
+            &providers.snapshot(),
+            std::sync::Arc::new(|name: &str| std::env::var(name).ok()),
+            Store::in_home(home.path()).naming(rows.names()),
+        ));
     let launch = launch(
         cli,
         &providers.snapshot(),
@@ -719,6 +756,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
+            services.consent().clone(),
         ),
         environment: Box::new(|name| std::env::var(name).ok()),
 
@@ -727,10 +765,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // being picked up is one of this directory's, and which directory that
         // is was decided before the first prompt.
         // The same directory the keys above were read from.
-        logins: Store::in_home(home.path()).naming(rows.names()),
+        logins: store,
         // The account logins `/login` can start, the same registry the launch
         // resolved stored subscriptions through.
         subscriptions: subscriptions.clone(),
+        consent: services.consent().clone(),
         sessions: home.sessions().to_owned(),
         workspace: workspace.clone(),
     };
@@ -976,16 +1015,15 @@ fn fail(problem: &Fatal) -> ExitCode {
 /// credential given on a row the bare provider name does not stand for is
 /// found; and a second credential for one provider is taken out.
 fn stored(
-    home: &std::path::Path,
+    store: &Store,
     rows: &crucible_app::providers::Rows,
     glyphs: crucible_tui::Glyphs,
 ) -> (crucible_auth::StoredCredentials, Option<String>) {
-    let store = Store::in_home(home).naming(rows.names());
     // Read first: that read tightens a store left readable by others and says
     // so, and the settle after it finds the file private.
     let keys = store.read();
     let read = keys.trouble().map(str::to_owned);
-    let settled = startup::settle(&store, rows, glyphs.dot());
+    let settled = startup::settle(store, rows, glyphs.dot());
     // A credential taken out is no longer one to serve.
     let keys = if settled.is_some() {
         store.read()

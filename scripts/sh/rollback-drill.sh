@@ -12,7 +12,9 @@
 #   pending recovery:  both binaries resume a session ending in an unanswered
 #                      tool call, cut the same dangling message, and end with
 #                      byte-identical logs;
-#   command behaviour: --sandbox and --extensions agree past the home's name.
+#   command behaviour: --sandbox and --extensions agree past the home's name;
+#   a yes kept:        the prior binary stops on the contentUse block a
+#                      recorded yes leaves in the user's file, and names it.
 #
 # Every fixture is planted under a header the candidate itself recorded, read
 # back from a session it wrote in a home of its own. A log is picked up only
@@ -371,6 +373,24 @@ for command in --sandbox --extensions; do
         fail "$command differs between candidate and prior"
     printf '    %s %s\n' "$command" "$(digest "$stage/prior-$command.out")"
 done
+
+echo '==> the prior binary stops on a yes the candidate keeps'
+# A yes to a vendor that uses what is sent is kept under contentUse.accepted in
+# the user's own file. 0.43.3 has no such key and stops before drawing anything,
+# naming it; the changelog and the troubleshooting page say to delete the block
+# before rolling back. The drill takes no turn, so it records no yes itself:
+# the file is the one the candidate writes when a yes is recorded into a home
+# like these, which a test beside the candidate's writer holds byte for byte.
+yes_file='{ "updates": { "check": "never" }, "contentUse": {"accepted": ["key:google"]} }'
+yhome=$stage/yes-home
+mkdir -p "$yhome/sessions"
+printf '%s\n' "$yes_file" >"$yhome/config.json"
+status=$(headless "$candidate" "$yhome")
+[[ $status == 0 ]] || fail "the candidate over a yes exited $status"
+status=$(headless "$prior" "$yhome")
+[[ $status == 1 ]] || fail "the prior binary over a yes exited $status"
+has "$stage/err" 'contentUse is not a setting crucible has' 'the prior binary did not name contentUse'
+printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$yhome|HOME|")"
 
 if ((failed)); then
     echo 'rollback drill gates failed'

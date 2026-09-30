@@ -61,6 +61,7 @@ use std::time::Duration;
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
+use crucible_app::content_use;
 use crucible_app::providers::{List, Providers, Row as Way, Rows, Served, key_variables, offered};
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
@@ -75,6 +76,7 @@ use crate::cli::Fatal;
 use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Picked};
 use crate::cli::converse::secret::{self, Asked};
+use crate::cli::converse::warning::{self, Answer, Put};
 
 use super::{Terms, about, say};
 
@@ -168,6 +170,12 @@ const STORE_BUSY: &str =
 /// the store declines; moving it aside is what makes the next write safe.
 const STORE_UNREADABLE: &str =
     "crucible cannot read its login store; move it aside and try /login again";
+
+/// The way back in, when the yes that goes with the credential being replaced
+/// could not be taken out of the configuration file first.
+const STORE_UNRELEASED: &str = "crucible could not change its configuration file first; \
+     try /login again once no other crucible is changing it, or check the file reads as \
+     configuration";
 
 /// Manual callback input is transient credential material. It has the same
 /// bound as the key box and is never committed or echoed.
@@ -280,7 +288,9 @@ fn holding(rows: &Rows, terms: &Terms) -> Result<Vec<Way>, AuthError> {
         Err(failed @ (AuthError::Unreadable { .. } | AuthError::TooLarge { .. })) => {
             return Err(failed);
         }
-        Err(AuthError::Unwritable { .. } | AuthError::Busy { .. }) => Vec::new(),
+        Err(
+            AuthError::Unwritable { .. } | AuthError::Busy { .. } | AuthError::Unreleased { .. },
+        ) => Vec::new(),
     };
     Ok(held
         .iter()
@@ -350,6 +360,7 @@ fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fa
     let mut first = 0;
     loop {
         let panel = Panel {
+            source: None,
             title: TITLE,
             said: Some(HOW),
             shown: &FIRST,
@@ -450,6 +461,7 @@ impl Listing<'_> {
         let mut at = 0;
         loop {
             let panel = Panel {
+                source: None,
                 title: TITLE,
                 said: Some(self.said),
                 shown: &shown,
@@ -509,21 +521,37 @@ fn drawn(shown: &str, glyphs: Glyphs) -> Cow<'_, str> {
 /// What a row says beneath its name.
 ///
 /// `signed in` first, where the row holds the credential serving its
-/// provider, so a narrow window cuts the row's own words rather than it. A key
+/// provider, then the caution of a route whose vendor uses what is sent, so a
+/// narrow window cuts the row's own words rather than either. A key
 /// row holding nothing names the variable its key can be set in instead, where
 /// the provider's key is read from one for it.
 fn described(way: &Way, held: &[Way], providers: &Providers, glyphs: Glyphs) -> String {
     let holds = held.contains(way);
     let says = way.says.unwrap_or_default();
-    match (way.kind, holds) {
-        (Kind::Key, true) => SIGNED_IN_WITH_KEY.to_owned(),
-        (Kind::Key, false) => {
-            read_from(way, providers).map_or_else(|| says.to_owned(), |one| variable_row(&one))
-        }
-        (Kind::Account, true) if says.is_empty() => SIGNED_IN.to_owned(),
-        (Kind::Account, true) => format!("{SIGNED_IN} {} {says}", glyphs.dot()),
-        (Kind::Account, false) => says.to_owned(),
-    }
+    // The vendor's words about what it does with what is sent come after
+    // `signed in` and before the row's own, so a narrow window cuts those.
+    let caution = content_use::Routes::production()
+        .warned(&content_use::row_route(way))
+        .map(|warned| warned.warning.caution);
+    // A key row beside a caution says `signed in` alone, so the caution
+    // stands whole at forty columns: the list it is in already says a key.
+    let signed = holds.then_some(match (way.kind, caution) {
+        (Kind::Key, None) => SIGNED_IN_WITH_KEY,
+        (Kind::Key, Some(_)) | (Kind::Account, _) => SIGNED_IN,
+    });
+    let own = match (way.kind, holds) {
+        (Kind::Key, true) => None,
+        (Kind::Key, false) => Some(
+            read_from(way, providers).map_or_else(|| says.to_owned(), |one| variable_row(&one)),
+        ),
+        (Kind::Account, _) => Some(says.to_owned()),
+    };
+    [signed.map(str::to_owned), caution.map(str::to_owned), own]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(&format!(" {} ", glyphs.dot()))
 }
 
 /// The provider whose variable a key row's key can be set in instead, where
@@ -581,6 +609,35 @@ const fn credential(way: &Way) -> &'static str {
 
 /// The screen of one row: its key box, or its sign-in.
 fn screen<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+    let route = content_use::row_route(way);
+    if let Some(warned) = walk.terms.consent.asks(&route).copied() {
+        let style = walk.terms.style();
+        match warning::ask(walk.renderer, style, &warned, Put::Choice)? {
+            Answer::Yes => walk.terms.consent.give(&route),
+            Answer::Back if opened == Opened::Below => return Ok(Closed::Back),
+            Answer::Back => {
+                say(walk.renderer, LEFT)?;
+                return Ok(Closed::Done);
+            }
+            Answer::Cramped => {
+                walk.renderer.commit(warning::CRAMPED_CHOICE)?;
+                return Ok(Closed::Done);
+            }
+        }
+    }
+    let closed = opening(way, opened, walk);
+    // A yes given here and not written down with a stored credential goes:
+    // a sign-in that failed or was left agreed to nothing.
+    walk.terms.consent.withdraw(&route);
+    closed
+}
+
+/// The screen of `way`, once nothing is left to ask before it.
+fn opening<T: Terminal>(
+    way: &Way,
+    opened: Opened,
+    walk: &mut Walk<'_, T>,
+) -> Result<Closed, Fatal> {
     let served = walk.terms.providers.snapshot();
     let Some(named) = offered(&served).find(|one| one.name == way.provider) else {
         say(
@@ -658,6 +715,7 @@ fn signed<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Res
     let mut at = 0;
     loop {
         let panel = Panel {
+            source: None,
             title: &title,
             said: Some("Choose where to finish account authorization."),
             shown: &shown,
@@ -771,6 +829,7 @@ fn subscribed<T: Terminal>(
         match attempt.wait(Duration::from_millis(50)) {
             Ok(Some(update)) => {
                 if view.apply(update, &withheld) {
+                    warning::stored(renderer, terms, &content_use::row_route(way))?;
                     let Some(named) =
                         offered(&terms.providers.snapshot()).find(|one| one.name == provider)
                     else {
@@ -798,6 +857,7 @@ fn subscribed<T: Terminal>(
                 view.show(renderer, terms, route.title())?;
                 match after_stop(attempt.cancel(), opened) {
                     AfterStop::Take => {
+                        warning::stored(renderer, terms, &content_use::row_route(way))?;
                         let Some(named) =
                             offered(&terms.providers.snapshot()).find(|one| one.name == provider)
                         else {
@@ -1128,7 +1188,12 @@ fn kept<T: Terminal>(
     } = walk;
     let terms = *terms;
     match terms.logins.keep(stored, key) {
-        Ok(_) => taken(named, renderer, conversation, terms),
+        Ok(_) => {
+            if let Some(way) = Rows::production().of(Kind::Key, stored) {
+                warning::stored(renderer, terms, &content_use::row_route(way))?;
+            }
+            taken(named, renderer, conversation, terms)
+        }
         Err(failed) => say(
             renderer,
             &format!(
@@ -1141,7 +1206,7 @@ fn kept<T: Terminal>(
 
 /// The way back in, by what stopped the store.
 ///
-/// Three sentences for four causes: a store too large to parse and one that
+/// Four sentences for five causes: a store too large to parse and one that
 /// will not parse are the same thing to the reader, a file crucible cannot
 /// read and will not write over.
 fn remedy(failed: &AuthError) -> &'static str {
@@ -1149,6 +1214,7 @@ fn remedy(failed: &AuthError) -> &'static str {
         AuthError::Unwritable { .. } => STORE_UNWRITABLE,
         AuthError::Busy { .. } => STORE_BUSY,
         AuthError::Unreadable { .. } | AuthError::TooLarge { .. } => STORE_UNREADABLE,
+        AuthError::Unreleased { .. } => STORE_UNRELEASED,
     }
 }
 

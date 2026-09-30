@@ -34,9 +34,139 @@ const DRAWN: &str = "{\n  \"output\": {\n    \"KEY\": THEME\n  }\n}\n";
 /// nothing to write it beside.
 const UNASKED: &str = "{\n  \"compaction\": {\n    \"askOnResume\": 0\n  }\n}\n";
 
+/// The file crucible writes when a yes is all it has to say.
+const ACCEPTED: &str = "{\n  \"contentUse\": {\n    \"accepted\": [\n      ROUTE\n    ]\n  }\n}\n";
+
 /// The file crucible writes when it has nothing to write a provider's answer
 /// beside.
 const CHOSEN: &str = "{\n  \"providers\": {\n    PROVIDER: {\n      KEY: ANSWER\n    }\n  }\n}\n";
+
+/// The text of a configuration file that says yes to sending on `route`.
+///
+/// `text` is what the file holds now, and empty for a file that is not there
+/// yet. The route goes into `contentUse.accepted`, created with the block
+/// around it where the file has neither; a route already there leaves the
+/// file as it was.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] when the text is not JSON, and
+/// [`ConfigError::Unspliceable`] when it is JSON no answer can be written into
+/// without rewriting.
+pub fn accepting(text: &str, file: &str, route: &str) -> Result<String, ConfigError> {
+    let written = Value::String(route.to_owned()).to_string();
+
+    if text.trim().is_empty() {
+        return Ok(ACCEPTED.replace("ROUTE", &written));
+    }
+
+    let value = parsed(text, file)?;
+    let said = |block: &Value| {
+        block
+            .get("accepted")
+            .and_then(Value::as_array)
+            .is_some_and(|routes| routes.iter().any(|one| one.as_str() == Some(route)))
+    };
+    if value.get("contentUse").is_some_and(said) {
+        return Ok(text.to_owned());
+    }
+
+    let refuse = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: "contentUse.accepted".into(),
+        written: written.clone().into(),
+    };
+    let root = splice::root(text)
+        .filter(|_| value.is_object())
+        .ok_or_else(refuse)?;
+
+    // Outwards in, as a rule is added: whichever of the two is already there
+    // is where this stops.
+    let Some(block) = value.get("contentUse") else {
+        return Ok(splice::insert(text, root, |indent| match indent {
+            Some(indent) => format!(
+                "\"contentUse\": {{\n{indent}  \"accepted\": [\n{indent}    {written}\n{indent}  ]\n{indent}}}"
+            ),
+            None => format!("\"contentUse\": {{\"accepted\": [{written}]}}"),
+        }));
+    };
+    if !block.is_object() {
+        return Err(refuse());
+    }
+    let at = splice::member(text, root, "contentUse").ok_or_else(refuse)?;
+    match block.get("accepted") {
+        None => {
+            return Ok(splice::insert(text, at, |indent| match indent {
+                Some(indent) => format!("\"accepted\": [\n{indent}  {written}\n{indent}]"),
+                None => format!("\"accepted\": [{written}]"),
+            }));
+        }
+        Some(list) if !list.is_array() => return Err(refuse()),
+        Some(_) => {}
+    }
+    let accepted = splice::member(text, at, "accepted").ok_or_else(refuse)?;
+    Ok(splice::insert(text, accepted, |_| written.clone()))
+}
+
+/// The text of a configuration file with no yes to any route `gone` picks.
+///
+/// Only the `accepted` list is written over, with the routes left in it in
+/// the order they stood; every other byte stays where it was. A file that
+/// says yes to none of them is handed back as it is.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] when the text is not JSON, and
+/// [`ConfigError::Unremovable`] when it is JSON the list cannot be found in
+/// without rewriting.
+pub fn forgetting(
+    text: &str,
+    file: &str,
+    gone: impl Fn(&str) -> bool,
+) -> Result<String, ConfigError> {
+    if text.trim().is_empty() {
+        return Ok(text.to_owned());
+    }
+    let value = parsed(text, file)?;
+    let Some(held) = value
+        .get("contentUse")
+        .and_then(|block| block.get("accepted"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(text.to_owned());
+    };
+    let kept: Vec<&Value> = held
+        .iter()
+        .filter(|one| !one.as_str().is_some_and(&gone))
+        .collect();
+    if kept.len() == held.len() {
+        return Ok(text.to_owned());
+    }
+
+    let refuse = || ConfigError::Unremovable {
+        file: file.into(),
+        at: "contentUse.accepted".into(),
+    };
+    let root = splice::root(text).ok_or_else(refuse)?;
+    let block = splice::member(text, root, "contentUse").ok_or_else(refuse)?;
+    let accepted = splice::member(text, block, "accepted").ok_or_else(refuse)?;
+    let written: Vec<String> = kept.iter().map(ToString::to_string).collect();
+    Ok(splice::over(
+        text,
+        accepted,
+        &format!("[{}]", written.join(", ")),
+    ))
+}
+
+/// `text` as JSON, or the error naming where it stopped being JSON.
+fn parsed(text: &str, file: &str) -> Result<Value, ConfigError> {
+    serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
+        file: file.into(),
+        line: source.line(),
+        column: source.column(),
+        problem: crate::document::without_position(&source.to_string()).into(),
+    })
+}
 
 /// The text of a configuration file with one more `allow` rule in it.
 ///

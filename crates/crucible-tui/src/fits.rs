@@ -165,6 +165,7 @@ fn a_panel_fits_the_window_it_stands_in() {
     ];
 
     let panel = Panel {
+        source: None,
         title: PROSE,
         said: Some(PROSE),
         shown: &OFFERED,
@@ -172,6 +173,16 @@ fn a_panel_fits_the_window_it_stands_in() {
         footer: "enter to take it · esc to leave",
     };
     across("a panel", |columns, glyphs| panel.rows(columns, glyphs));
+    let cited = Panel {
+        source: Some(PROSE),
+        ..panel
+    };
+    across("a panel citing its source", |columns, glyphs| {
+        cited.rows(columns, glyphs)
+    });
+    down("a panel citing its source", |columns, room, glyphs| {
+        cited.within(columns, room, glyphs)
+    });
     down("a panel", |columns, room, glyphs| {
         panel.within(columns, room, glyphs)
     });
@@ -206,6 +217,7 @@ fn a_panel_under_headings_fits_the_window_it_stands_in() {
 
     for chosen in 0..OFFERED.len() {
         let panel = Panel {
+            source: None,
             title: PROSE,
             said: Some(PROSE),
             shown: &OFFERED,

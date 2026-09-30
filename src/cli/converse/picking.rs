@@ -203,7 +203,7 @@ pub(super) fn adjust<T: Terminal>(
 // An event token is handed over, not lent: the handler takes the one thing
 // the reader produced, and a reference would say the caller kept a say in it.
 #[allow(clippy::needless_pass_by_value)]
-fn moving(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
+pub(super) fn moving(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
     match arrived {
         Pressed::Up => step(at, at.checked_sub(1)),
         Pressed::Down => step(at, Some(*at + 1).filter(|next| *next < count)),

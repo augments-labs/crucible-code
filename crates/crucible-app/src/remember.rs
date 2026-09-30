@@ -2,7 +2,8 @@
 //!
 //! `/model` and `/effort` write into the file at home, because which model to
 //! ask and how hard to think are facts about who is running crucible rather
-//! than about the checkout.
+//! than about the checkout; so does a yes to a route whose vendor uses what is
+//! sent, which only that file may hold.
 //!
 //! The crate below decides what a file may say and what one more answer leaves
 //! it looking like. This opens it, and puts the answer back.
@@ -104,6 +105,35 @@ pub fn unasked(file: &Path) -> Result<(), RememberError> {
 pub fn syntax(file: &Path, theme: &str) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::reading(text, named, theme)
+    })
+}
+
+/// Writes down the yes to sending on `route`.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the yes and nothing else.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn accepting(file: &Path, route: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::accepting(text, named, route)
+    })
+}
+
+/// Takes the yes to every route `gone` picks out of the file.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn forgetting(file: &Path, gone: impl Fn(&str) -> bool) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::forgetting(text, named, &gone)
     })
 }
 
@@ -217,6 +247,13 @@ fn answering(
     }
 
     let written = splice(&text, &named)?;
+    // An answer already written, or a yes taken out of a file that holds
+    // none, changes nothing, and a file nothing changed is not written: one
+    // that was not there would otherwise be left empty, which is not
+    // configuration.
+    if written == text {
+        return Ok(());
+    }
 
     put(file, &written).map_err(unwritable)
 }

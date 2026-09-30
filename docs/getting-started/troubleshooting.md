@@ -137,6 +137,37 @@ fixed to the vendor's own address and a `baseUrl` needs an API key instead. Fix
 the address, or take it out. See [keys](../providers/providers.md#keys) and
 [account login today](../providers/providers.md#account-login-today).
 
+### `crucible: <name>: <what the vendor's terms say> Nothing was sent; answer it once in a terminal.`
+
+The route this run would send on, named as the question titles it, is one
+whose vendor says it may use what is sent to train or improve its models,
+nobody has said yes to it, and there is no
+terminal to ask on: input or output is redirected. Nothing was sent. Start
+crucible once in a terminal and send anything on that route: choose **Use it
+anyway** and the answer is kept, so later runs, redirected or not, are not
+asked. See [content use](../providers/content-use.md).
+
+### `! this route needs an answer first; make the window taller and send again`
+
+The panel asking about a route whose vendor uses what is sent did not fit the
+window, so nothing was sent and your message is still in the prompt box. Make
+the window taller and send it again. The same line ending `choose again` comes
+from `/login` or `/model`, where nothing was chosen.
+
+### `<provider>: nothing was sent: <route> waits for an answer`
+
+A request was about to leave for a host of a route whose vendor uses what is
+sent, before that route had its yes. It was held, and nothing reached the host.
+Send a message on the route in a terminal to be asked, or see [content
+use](../providers/content-use.md).
+
+### `crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>`
+
+This is 0.43.3 or earlier reading a configuration file a later crucible wrote a
+yes into. Delete the `contentUse` block from the configuration file in your
+home directory, then start the older crucible again. A later crucible asks the
+question again the next time you send on such a route.
+
 ### `anthropic: HTTP 401: check the Anthropic API key and its model access`
 
 The provider refused the request with that status. For Anthropic's

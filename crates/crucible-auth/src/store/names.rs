@@ -73,7 +73,7 @@ pub enum Kind {
 
 /// A credential the store holds, by the map it is in and its name, which
 /// together say which row it was given on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Held {
     /// The map it is in.
     pub kind: Kind,

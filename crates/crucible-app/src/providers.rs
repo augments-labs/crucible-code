@@ -19,6 +19,7 @@ use crucible_registry::{
 };
 
 use crate::AppError;
+use crate::content_use::{Consent, Reading};
 use crate::models;
 use crate::startup::{self, served};
 use crate::subscription::Subscriptions;
@@ -769,6 +770,10 @@ pub fn capabilities<'a>(
 /// not set.
 pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
 
+/// A [`Lookup`] that can be read from any thread, as the consent's resolver
+/// is.
+pub type SharedLookup = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
 /// The [`Serving`] a provider is set up again through once a run is under
 /// way: after a credential is stored, after one is forgotten, and when
 /// `/model` names a provider other than the one answering.
@@ -779,11 +784,15 @@ pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
 /// run already read: nothing in them grows with the transcript. `from` is the
 /// environment lookup, handed in like every other source this crate reads, so
 /// that a caller with no environment to offer can say so.
+///
+/// `consent` is told what the provider is served on each time, before a
+/// request could go: a credential just stored or forgotten can move it.
 pub fn re_serving(
     settings: Settings,
     subscriptions: Subscriptions,
     from: Lookup,
     http: HttpTurns,
+    consent: Consent,
 ) -> Serving {
     Box::new(move |named: Served, stored: &StoredCredentials| {
         let auth = startup::ProviderAuth {
@@ -792,6 +801,8 @@ pub fn re_serving(
             stored,
             subscriptions: &subscriptions,
         };
+        let variable = settings.api_key_env(named.name).unwrap_or(named.key);
+        consent.served(named.name, startup::served_on(named.name, variable, auth));
         let source = credential_source(named, auth).ok_or_else(|| AppError::Authentication {
             provider: named.name.into(),
         })?;
@@ -803,6 +814,47 @@ pub fn re_serving(
             provider: startup::provider(Some(named), unasked(Some(named.name), true), auth, &http)?,
             source,
         })
+    })
+}
+
+/// The [`crate::content_use::Resolver`] a run's consent reads a provider
+/// again through: what it is served on, from `store` as it is when asked and
+/// the environment `from` reads.
+///
+/// `store` is read and never written, so it carries no hook of its own.
+pub fn resolving(
+    settings: Settings,
+    subscriptions: Subscriptions,
+    providers: &Providers,
+    from: SharedLookup,
+    store: crucible_auth::Store,
+) -> crate::content_use::Resolver {
+    let variables: std::collections::BTreeMap<String, String> = offered(providers)
+        .map(|one| {
+            let variable = settings.api_key_env(one.name).unwrap_or(one.key);
+            (one.name.to_owned(), variable.to_owned())
+        })
+        .collect();
+    Box::new(move |name| {
+        let Some(variable) = variables.get(name) else {
+            return Reading::Served(None);
+        };
+        let stored = store.read();
+        // A store that could not be read says nothing about what is left in
+        // it: the provider stays as it was, to be read again.
+        if stored.unread() {
+            return Reading::Unread;
+        }
+        Reading::Served(startup::served_on(
+            name,
+            variable,
+            startup::ProviderAuth {
+                settings: &settings,
+                from: &*from,
+                stored: &stored,
+                subscriptions: &subscriptions,
+            },
+        ))
     })
 }
 

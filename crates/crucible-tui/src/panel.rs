@@ -147,6 +147,11 @@ pub struct Panel<'a> {
     /// where the choice explains itself, and the first thing given up when the
     /// window is short.
     pub said: Option<&'a str>,
+    /// Where the sentence comes from and when it was read, on a quiet row of
+    /// its own under it, so a source is never folded into the words it
+    /// vouches for. `None` for a sentence that is crucible's own; given up with
+    /// the sentence when the window is short.
+    pub source: Option<&'a str>,
     /// What to offer, in the order it is listed.
     pub shown: &'a [Offered<'a>],
     /// Which entry a key would act on.
@@ -225,6 +230,7 @@ impl Panel<'_> {
 
         let quiet = Self {
             said: None,
+            source: None,
             ..*self
         };
 
@@ -336,7 +342,8 @@ impl Panel<'_> {
         rows
     }
 
-    /// The blank row and the sentence under the title, where there is one.
+    /// The blank row, the sentence under the title and its source, where
+    /// there is a sentence.
     ///
     /// Folded rather than clipped, and drawn in the reader's own foreground: it
     /// is the part of the panel that is read once and then not looked at again.
@@ -352,6 +359,15 @@ impl Panel<'_> {
 
         let mut rows = vec![Row::new()];
         rows.extend(folded.into_iter().map(Row::plain));
+        // Folded as the sentence is, and quiet: a date cut short is a date
+        // nobody can check.
+        for line in self
+            .source
+            .map(|source| fold(source, columns))
+            .unwrap_or_default()
+        {
+            rows.push(Row::new().then(Slot::Quiet, line));
+        }
         rows
     }
 }
@@ -498,6 +514,7 @@ mod tests {
     /// first entry.
     fn folding<'a>(shown: &'a [Offered<'a>]) -> Panel<'a> {
         Panel {
+            source: None,
             said: Some(PROSE),
             ..login(shown, 0)
         }
@@ -529,6 +546,7 @@ mod tests {
     /// The login panel over `shown`, with the mark on `chosen`.
     fn login<'a>(shown: &'a [Offered<'a>], chosen: usize) -> Panel<'a> {
         Panel {
+            source: None,
             title: "Log in",
             said: Some(SAID),
             shown,
@@ -634,6 +652,7 @@ mod tests {
             says: "",
         }];
         let panel = Panel {
+            source: None,
             said: None,
             ..login(&shown, 0)
         };
@@ -752,6 +771,7 @@ mod tests {
         // strings in here.
         let shown = offered();
         let panel = Panel {
+            source: None,
             title: "Welcome",
             said: None,
             shown: &shown,
@@ -802,6 +822,92 @@ mod tests {
         let shown = offered();
 
         pictured("ascii", &login(&shown, 1), 80, Glyphs::Ascii);
+    }
+
+    /// A panel whose sentence is a vendor's, with the page and the day under
+    /// it.
+    fn cited<'a>(shown: &'a [Offered<'a>]) -> Panel<'a> {
+        Panel {
+            title: "Kimi Code · kimi.ai",
+            said: Some(
+                "Kimi may use what you send to train its models. To stop it, contact Kimi as \
+                 its terms say; that covers only what you send afterwards.",
+            ),
+            source: Some("kimi.ai terms of service, 30 Sep 2026"),
+            shown,
+            chosen: 0,
+            footer: "enter to choose · esc to go back",
+        }
+    }
+
+    #[test]
+    fn a_source_stands_quiet_on_rows_of_its_own_under_the_sentence() {
+        let shown = offered();
+        for columns in [20, 40, 80] {
+            let rows = cited(&shown).rows(columns, Glyphs::Unicode);
+            let texts: Vec<String> = rows.iter().map(Row::text).collect();
+            let at = texts
+                .iter()
+                .position(|text| text.contains("kimi.ai terms"))
+                .unwrap_or_else(|| panic!("no source at {columns}: {texts:?}"));
+            let said: String = texts
+                .get(at..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|text| !text.trim().is_empty())
+                .map(|text| text.trim_end())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(said, "kimi.ai terms of service, 30 Sep 2026", "{columns}");
+            assert!(
+                texts
+                    .get(at - 1)
+                    .is_some_and(|above| above.contains("afterwards")),
+                "the source is not under the sentence at {columns}: {texts:?}"
+            );
+            for row in rows
+                .get(at..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|row| !row.text().trim().is_empty())
+            {
+                assert_eq!(slots(row), [Slot::Quiet], "{columns}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_window_short_of_the_sentence_gives_up_its_source_with_it() {
+        let shown = offered();
+        let panel = cited(&shown);
+        let whole = panel.rows(80, Glyphs::Unicode).len();
+        let rows = panel.within(80, whole - 1, Glyphs::Unicode);
+        let texts: Vec<String> = rows.iter().map(Row::text).collect();
+        assert!(
+            !texts.iter().any(|text| text.contains("kimi.ai terms")),
+            "{texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text.contains("train")),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
+    fn a_cited_panel_draws_at_forty_and_eighty_columns() {
+        let shown = [
+            Offered {
+                name: "Use it anyway",
+                says: "Sends your message; this route is not asked about again",
+            },
+            Offered {
+                name: "Go back",
+                says: "Keeps your message in the prompt box; nothing is sent",
+            },
+        ];
+        for columns in [40, 80] {
+            pictured("cited", &cited(&shown), columns, Glyphs::Unicode);
+        }
     }
 
     /// The rungs down, for a window the whole panel does not fit in.
@@ -1023,6 +1129,7 @@ mod tests {
     fn a_panel_under_headings_is_drawn_at_both_widths() {
         let shown = kinds();
         let headed = Panel {
+            source: None,
             said: Some("Choose the account or key to sign in with."),
             ..login(&shown, 0)
         }

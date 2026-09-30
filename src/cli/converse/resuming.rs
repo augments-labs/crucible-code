@@ -135,6 +135,7 @@ pub(super) fn asked<T: Terminal>(
     ];
 
     let panel = Panel {
+        source: None,
         title: TITLE,
         said: Some(&said),
         shown: &shown,
@@ -188,6 +189,7 @@ mod tests {
                     Carrying it whole spends that again on every turn.";
 
         Panel {
+            source: None,
             title: TITLE,
             said: Some(said),
             shown: &shown,

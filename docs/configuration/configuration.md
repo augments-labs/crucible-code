@@ -596,6 +596,22 @@ its version.
 `never` stops the asking. crucible then never contacts GitHub, and never says
 anything about releases.
 
+### `contentUse`
+
+| Key | Means |
+| --- | --- |
+| `accepted` | The routes you have said yes to sending on, though their vendor says it may use what is sent to train or improve its models. |
+
+```json
+{ "contentUse": { "accepted": ["key:google"] } }
+```
+
+crucible writes a route here when you choose **Use it anyway**, and takes it
+out when a credential of that route is removed or replaced; you rarely write it
+by hand. A name this build has no route for means nothing. Read only from your
+home file. See [content use](../providers/content-use.md) for the routes and
+what each vendor says.
+
 ### `env`
 
 Environment variables for the commands crucible runs (the bash tool's children)
@@ -670,9 +686,11 @@ is still not a way to ship somebody's key.
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
-and `provider`. The last four are not permissions, and they are here for the
-same reason: they replace the instructions that say to ask, or choose which
-credential is read and who receives it, and nothing on those paths stops to ask.
+`provider` and `contentUse.accepted`. The last five are not permissions, and
+they are here for the same reason: they replace the instructions that say to
+ask, choose which credential is read and who receives it, or answer for you
+whether a vendor that trains on what is sent may be sent anything, and nothing
+on those paths stops to ask.
 Each is read only from your home file and refused in both files under the
 workspace.
 

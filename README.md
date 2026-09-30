@@ -129,6 +129,11 @@ effort explicitly.
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
 accept API keys only, not product subscription logins.
 
+Where a vendor says it may train on what is sent (a ChatGPT plan, Kimi Code,
+the Kimi open platform, or a Gemini key on unpaid quota), Crucible asks once
+before anything is sent and remembers the answer; see [content
+use](docs/providers/content-use.md).
+
 Useful commands:
 
 ```text

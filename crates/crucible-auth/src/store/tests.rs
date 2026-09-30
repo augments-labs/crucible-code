@@ -936,3 +936,96 @@ fn a_store_past_its_limit_is_too_large_wherever_the_limit_falls() {
         store.holding()
     );
 }
+
+/// What a letting-go hook was handed, and what the store's file held when it
+/// was asked.
+type Asked = Arc<std::sync::Mutex<Vec<(Vec<Dropped>, String)>>>;
+
+/// A store that asks a hook recording what it was handed and what the file
+/// said then, refusing when `refuse` is set.
+fn asking(scratch: &Scratch, refuse: bool) -> (Store, Asked) {
+    let asked: Asked = Arc::default();
+    let file = scratch.home().join(FILE);
+    let recording = Arc::clone(&asked);
+    let store = Store::in_home(scratch.home())
+        .naming(named())
+        .letting_go(Arc::new(move |going: &[Dropped]| {
+            let then = fs::read_to_string(&file).unwrap_or_default();
+            recording.lock().unwrap().push((going.to_vec(), then));
+            if refuse {
+                Err("the yes could not be taken out".into())
+            } else {
+                Ok(())
+            }
+        }));
+    (store, asked)
+}
+
+/// Every write that takes a credential out asks first, with the store's file
+/// still as it was, and is handed exactly what goes: a key replaced by another
+/// row's sign-in, a provider forgotten, a second credential settled. A write
+/// that takes nothing out asks nothing.
+#[test]
+fn a_write_asks_before_it_takes_a_credential_out() {
+    let scratch = Scratch::new("letting-go");
+    let (store, asked) = asking(&scratch, false);
+
+    give(&store, (Kind::Key, "moonshot"), "first");
+    give(&store, (Kind::Key, "moonshot"), "again");
+    give(&store, (Kind::Key, "openai"), "openai");
+    assert!(asked.lock().unwrap().is_empty(), "nothing went yet");
+
+    let before = on_disk(&scratch);
+    give(&store, (Kind::Account, "moonshot@kimi.ai"), "second");
+    let between = on_disk(&scratch);
+    store.forget("openai").unwrap();
+
+    let asked = asked.lock().unwrap().clone();
+    assert_eq!(
+        asked,
+        [
+            (vec![Held::new(Kind::Key, "moonshot")], before),
+            (vec![Held::new(Kind::Key, "openai")], between),
+        ],
+        "asked with the store as it was before each write"
+    );
+}
+
+#[test]
+fn a_settle_asks_before_it_takes_the_second_credential_out() {
+    let scratch = Scratch::new("letting-go-settle");
+    scratch.holding(TWO_HELD);
+    let (store, asked) = asking(&scratch, false);
+
+    assert!(matches!(store.settle(), Settled::Removed(_)));
+    let going: Vec<Vec<Dropped>> = asked
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(going, _)| going.clone())
+        .collect();
+    assert_eq!(going, [vec![Held::new(Kind::Account, "moonshot@kimi.ai")]]);
+}
+
+/// A hook that cannot do what it must leaves the store byte for byte, and the
+/// write says why.
+#[test]
+fn a_refusal_before_a_credential_goes_leaves_the_store_as_it_was() {
+    let scratch = Scratch::new("letting-go-refused");
+    let (store, _) = asking(&scratch, true);
+    give(
+        &Store::in_home(scratch.home()).naming(named()),
+        (Kind::Key, "moonshot"),
+        "kept",
+    );
+    let before = on_disk(&scratch);
+
+    let replaced = store.keep_subscription("moonshot@kimi.ai", subscription("refused"));
+    let forgotten = store.forget("moonshot");
+
+    assert_eq!(on_disk(&scratch), before);
+    for failed in [replaced.err(), forgotten.err()] {
+        let said = failed.map(|error| error.to_string()).unwrap_or_default();
+        assert!(said.contains("the yes could not be taken out"), "{said}");
+    }
+}

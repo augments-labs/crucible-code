@@ -1138,6 +1138,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|name| (name == "CRUCIBLE_FIXTURE_ONLY_KEY").then(|| "not-a-key".into())),
         HttpTurns::unavailable(),
+        crate::content_use::Consent::new(crate::content_use::Routes::production()),
     );
     let found = handed(serving("openai"), &stored).expect("the handed variable holds a key");
     assert_eq!(
@@ -1150,6 +1151,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
         HttpTurns::unavailable(),
+        crate::content_use::Consent::new(crate::content_use::Routes::production()),
     );
     for one in every() {
         assert!(
@@ -1280,4 +1282,89 @@ fn every_sign_in_row_is_one_the_subscription_registry_starts_and_sends_to_its_ad
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), registered.len(), "{registered:?}");
+}
+
+/// Setting a provider up again tells the run's consent what it is now served
+/// on, so an origin two rows share follows the credential just stored.
+#[test]
+fn serving_again_tells_the_consent_what_the_provider_is_served_on() {
+    use crucible_http::Hold as _;
+
+    let sample = Sample::new("serving-again-consent");
+    let stored = sample.holding(
+        r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{}}"#,
+    );
+    let consent = crate::content_use::Consent::new(crate::content_use::Routes::production());
+    consent.recorded(["key:moonshot@kimi.ai".to_owned()]);
+    let model =
+        crucible_http::Origin::of("https://api.kimi.ai/coding/v1/chat/completions").unwrap();
+    assert!(
+        consent.held(&model).is_some(),
+        "nothing said what it is served on yet"
+    );
+
+    let again = re_serving(
+        Settings::default(),
+        Subscriptions::production(&crucible_auth::Renewals::new()),
+        Box::new(|_| None),
+        HttpTurns::unavailable(),
+        consent.clone(),
+    );
+    again(serving("moonshot"), &stored).expect("a stored key");
+
+    assert_eq!(consent.held(&model), None);
+}
+
+/// What the consent reads a provider again through: from the store as it is,
+/// and, where the store could not be read at all, nothing settled, so the
+/// provider stays as it was to be read again.
+#[test]
+fn a_provider_is_read_again_from_the_store_and_an_unreadable_store_settles_nothing() {
+    use crate::content_use::{Reading, Serving};
+
+    let sample = Sample::new("resolving");
+    let settings = sample.user("{}");
+    let resolve = |store| {
+        resolving(
+            settings.clone(),
+            Subscriptions::production(&crucible_auth::Renewals::new()),
+            &catalogue(),
+            std::sync::Arc::new(|_: &str| None),
+            store,
+        )
+    };
+
+    let store = sample.store();
+    store.keep("google", "fabricated-google-key").unwrap();
+    assert_eq!(
+        resolve(store.clone())("google"),
+        Reading::Served(Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }))
+    );
+    store.forget("google").unwrap();
+    assert_eq!(resolve(store)("google"), Reading::Served(None));
+
+    let unreadable = Sample::new("resolving-unreadable");
+    std::fs::create_dir_all(unreadable.home().join("auth.json")).unwrap();
+    assert_eq!(resolve(unreadable.store())("google"), Reading::Unread);
+
+    // Read in full, with a warning beside it that its permissions were
+    // tightened: what it holds is known.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let open = Sample::new("resolving-open");
+        let credentials = open.holding(
+            r#"{"version":2,"keys":{"google":"fabricated-google-key"},"subscriptions":{}}"#,
+        );
+        drop(credentials);
+        let file = open.home().join("auth.json");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            resolve(open.store())("google"),
+            Reading::Served(Some(_))
+        ));
+    }
 }

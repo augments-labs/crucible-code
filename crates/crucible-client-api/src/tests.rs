@@ -97,7 +97,7 @@ const KEYS: [&str; 71] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 12] = [
+const MORE_KEYS: [&str; 16] = [
     "count",
     "date",
     "groups",
@@ -105,7 +105,11 @@ const MORE_KEYS: [&str; 12] = [
     "notes",
     "release",
     "releases",
+    "route",
     "running",
+    "sentence",
+    "shown",
+    "source",
     "unwritten",
     "variable",
     "version",
@@ -177,6 +181,16 @@ fn questions() -> Pending {
     }
 }
 
+fn warning() -> Pending {
+    Pending::Warning {
+        id: PendingId::new(9),
+        route: marked(),
+        shown: marked(),
+        sentence: marked(),
+        source: marked(),
+    }
+}
+
 fn decisions() -> Vec<Decision> {
     vec![
         Decision::Ruled {
@@ -198,6 +212,9 @@ fn decisions() -> Vec<Decision> {
         },
         Decision::Declined {
             id: PendingId::new(8),
+        },
+        Decision::Accepted {
+            id: PendingId::new(9),
         },
     ]
 }
@@ -266,6 +283,11 @@ fn turn_outcomes() -> Vec<TurnOutcome> {
             stop: Some(Stop::Cancelled),
         },
         TurnOutcome::Failed(problem()),
+        TurnOutcome::Warned {
+            route: marked(),
+            sentence: marked(),
+            source: marked(),
+        },
     ];
     turns.extend(
         Stop::EVERY
@@ -468,7 +490,7 @@ fn progress() -> Vec<Progress> {
 }
 
 fn snapshots() -> Vec<Snapshot> {
-    [Some(permission()), Some(questions()), None]
+    [Some(permission()), Some(questions()), Some(warning()), None]
         .into_iter()
         .map(|pending| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
@@ -567,32 +589,35 @@ const fn decision_arm(one: &Decision) -> (usize, usize) {
         Decision::Ruled {
             ruling: Ruling::Allow,
             ..
-        } => (0, 4),
+        } => (0, 5),
         Decision::Ruled {
             ruling: Ruling::Deny,
             ..
-        } => (1, 4),
-        Decision::Answered { .. } => (2, 4),
-        Decision::Declined { .. } => (3, 4),
+        } => (1, 5),
+        Decision::Answered { .. } => (2, 5),
+        Decision::Declined { .. } => (3, 5),
+        Decision::Accepted { .. } => (4, 5),
     }
 }
 
 const fn pending_arm(one: &Pending) -> (usize, usize) {
     match one {
-        Pending::Permission { .. } => (0, 2),
-        Pending::Questions { .. } => (1, 2),
+        Pending::Permission { .. } => (0, 3),
+        Pending::Questions { .. } => (1, 3),
+        Pending::Warning { .. } => (2, 3),
     }
 }
 
 /// An optional field counts twice: once with something in it, once without.
 const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
     match one {
-        TurnOutcome::Ran { .. } => (0, 6),
-        TurnOutcome::Rejected { stop: Some(_), .. } => (1, 6),
-        TurnOutcome::Rejected { stop: None, .. } => (2, 6),
-        TurnOutcome::Undecided { stop: Some(_), .. } => (3, 6),
-        TurnOutcome::Undecided { stop: None, .. } => (4, 6),
-        TurnOutcome::Failed(_) => (5, 6),
+        TurnOutcome::Ran { .. } => (0, 7),
+        TurnOutcome::Rejected { stop: Some(_), .. } => (1, 7),
+        TurnOutcome::Rejected { stop: None, .. } => (2, 7),
+        TurnOutcome::Undecided { stop: Some(_), .. } => (3, 7),
+        TurnOutcome::Undecided { stop: None, .. } => (4, 7),
+        TurnOutcome::Failed(_) => (5, 7),
+        TurnOutcome::Warned { .. } => (6, 7),
     }
 }
 
@@ -1591,7 +1616,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 3_089_840_839_402_477_783),
+        (1, 16_623_693_777_715_215_189),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

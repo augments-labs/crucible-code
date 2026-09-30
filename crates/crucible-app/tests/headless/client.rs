@@ -89,6 +89,15 @@ fn calling() -> Vec<Delta> {
 /// A conversation over `script` that asks before anything is changed, with
 /// the counting tool on offer.
 fn asking(tree: &Tree, script: Script) -> Result<(Conversation, Arc<AtomicUsize>), Failed> {
+    asking_on(tree, script, None)
+}
+
+/// [`asking`], with the provider the registry calls `serving` answering.
+fn asking_on(
+    tree: &Tree,
+    script: Script,
+    serving: Option<&'static str>,
+) -> Result<(Conversation, Arc<AtomicUsize>), Failed> {
     let ran = Arc::new(AtomicUsize::new(0));
     let mut tools = Tools::new();
     tools.add_builtin(Counting(Arc::clone(&ran)))?;
@@ -104,7 +113,7 @@ fn asking(tree: &Tree, script: Script) -> Result<(Conversation, Arc<AtomicUsize>
         },
     );
     let work = tree.0.join("work");
-    let conversation = Conversation::recording(session, None, |session| {
+    let conversation = Conversation::recording(session, serving, |session| {
         Runner::new(
             Box::new(script),
             tools,
@@ -176,6 +185,8 @@ enum Saying {
     Naming(PendingId),
     /// Nothing, ever.
     Gone,
+    /// About a warning: send anyway, or go back.
+    Heeding(bool),
 }
 
 /// A client on the far side of a wire: it keeps what was put to it, and its
@@ -206,20 +217,17 @@ impl Front for Remote {
     ) -> BoxFuture<'a, Option<Decision>> {
         Box::pin(async move {
             self.put.push(pending.clone());
-            let (id, ruling) = match self.script.next()? {
-                Saying::Fitting(ruling) => (pending.id(), ruling),
-                Saying::Elsewhere => (PendingId::new(pending.id().number() + 40), Ruling::Allow),
-                Saying::Naming(id) => (id, Ruling::Allow),
+            let decision = match self.script.next()? {
+                Saying::Fitting(ruling) => ruled(pending.id(), ruling),
+                Saying::Elsewhere => {
+                    ruled(PendingId::new(pending.id().number() + 40), Ruling::Allow)
+                }
+                Saying::Naming(id) => ruled(id, Ruling::Allow),
                 Saying::Gone => return None,
+                Saying::Heeding(true) => Decision::Accepted { id: pending.id() },
+                Saying::Heeding(false) => Decision::Declined { id: pending.id() },
             };
-            let sent = self
-                .wire
-                .sent(Command::Decide(Decision::Ruled {
-                    id,
-                    ruling,
-                    lasting: Lasting::Once,
-                }))
-                .ok()?;
+            let sent = self.wire.sent(Command::Decide(decision)).ok()?;
 
             match sent.command() {
                 Command::Decide(decision) => Some(decision.clone()),
@@ -230,6 +238,15 @@ impl Front for Remote {
 
     fn refused(&mut self, refusal: Refusal) {
         self.refused.push(refusal);
+    }
+}
+
+/// A ruling on `id`, for this call only.
+const fn ruled(id: PendingId, ruling: Ruling) -> Decision {
+    Decision::Ruled {
+        id,
+        ruling,
+        lasting: Lasting::Once,
     }
 }
 
@@ -850,5 +867,204 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
     }
 
     assert_eq!(read.len(), Palette::EVERY.len(), "{read:?}");
+    Ok(())
+}
+
+/// A send on a route whose vendor uses what is sent, with no yes to it, is put
+/// to the client as a pending action before anything is sent. A yes on the
+/// wire is written into the user's own file and the turn goes; going back, or
+/// nobody answering, ends it with the route, what the vendor says and the page,
+/// and sends nothing.
+#[test]
+fn a_send_on_a_warned_route_is_put_to_the_client_and_only_a_yes_sends_it() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    for (said, sends) in [
+        (Saying::Heeding(true), 1),
+        (Saying::Heeding(false), 0),
+        (Saying::Gone, 0),
+    ] {
+        let tree = Tree::new("client-warned")?;
+        let script = Script::new(vec![saying("answered")]);
+        let asked = Arc::clone(&script.asked);
+        let (conversation, _) = asking_on(&tree, script, Some("google"))?;
+        let file = tree.0.join("config.json");
+        let consent = Consent::new(Routes::production());
+        consent.keeps_in(file.clone());
+        let mut conversation = conversation.consenting(consent.clone());
+        consent.served(
+            "google",
+            Some(Serving {
+                route: Some("key:google".to_owned()),
+                at: None,
+            }),
+        );
+        let mut remote = Remote::new(vec![said]);
+        let request = Wire::default().sent(prompt("hello")?)?;
+
+        let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+
+        assert_eq!(asked.load(Ordering::Relaxed), sends, "{said:?}");
+        assert!(
+            matches!(
+                remote.put.as_slice(),
+                [Pending::Warning { route, sentence, source, .. }]
+                    if route.as_str() == "key:google"
+                        && sentence.as_str().starts_with("On unpaid quota")
+                        && source.as_str() == "Gemini API terms, 30 Sep 2026"
+            ),
+            "{:?}",
+            remote.put
+        );
+        let written = std::fs::read_to_string(&file).unwrap_or_default();
+        match (sends, &response.outcome) {
+            (1, Outcome::Turn(TurnOutcome::Ran { .. })) => {
+                assert!(written.contains("key:google"), "{written}");
+            }
+            (0, Outcome::Turn(TurnOutcome::Warned { route, .. })) => {
+                assert_eq!(route.as_str(), "key:google");
+                assert!(!written.contains("key:google"), "{written}");
+            }
+            other => return Err(format!("{said:?}: {other:?}").into()),
+        }
+    }
+    Ok(())
+}
+
+/// Two routes with no yes hold the origin a send goes to: each is put to the
+/// client in turn, and the send goes once, after both yeses.
+#[test]
+fn a_send_two_routes_hold_puts_each_before_it_goes() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("client-warned-two")?;
+    let script = Script::new(vec![saying("answered")]);
+    let asked = Arc::clone(&script.asked);
+    let (conversation, _) = asking_on(&tree, script, Some("google"))?;
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(tree.0.join("config.json"));
+    let mut conversation = conversation.consenting(consent.clone());
+    consent.served(
+        "google",
+        Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }),
+    );
+    // Another provider sent to the same origin on a route of its own.
+    consent.served(
+        "another",
+        Some(Serving {
+            route: Some("key:moonshot".to_owned()),
+            at: crucible_http::Origin::of("https://generativelanguage.googleapis.com/v1beta"),
+        }),
+    );
+    let mut remote = Remote::new(vec![Saying::Heeding(true), Saying::Heeding(true)]);
+    let request = Wire::default().sent(prompt("hello")?)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+
+    assert_eq!(asked.load(Ordering::Relaxed), 1);
+    let routes: Vec<&str> = remote
+        .put
+        .iter()
+        .filter_map(|put| match put {
+            Pending::Warning { route, .. } => Some(route.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(routes.len(), 2, "{:?}", remote.put);
+    assert!(routes.contains(&"key:google") && routes.contains(&"key:moonshot"));
+    assert!(
+        matches!(&response.outcome, Outcome::Turn(TurnOutcome::Ran { .. })),
+        "{:?}",
+        response.outcome
+    );
+    Ok(())
+}
+
+/// A compaction asks the model too, so on a warned route it is put to the
+/// client the same way, and going back sends nothing.
+#[test]
+fn a_compaction_on_a_warned_route_is_put_to_the_client_first() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("client-warned-compact")?;
+    let script = Script::new(vec![saying("summary")]);
+    let asked = Arc::clone(&script.asked);
+    let (conversation, _) = asking_on(&tree, script, Some("google"))?;
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(tree.0.join("config.json"));
+    let mut conversation = conversation.consenting(consent.clone());
+    consent.served(
+        "google",
+        Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }),
+    );
+    let mut remote = Remote::new(vec![Saying::Heeding(false)]);
+    let request = Wire::default().sent(Command::Compact)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+
+    assert_eq!(asked.load(Ordering::Relaxed), 0);
+    assert!(
+        matches!(
+            remote.put.as_slice(),
+            [Pending::Warning { route, .. }] if route.as_str() == "key:google"
+        ),
+        "{:?}",
+        remote.put
+    );
+    assert!(
+        matches!(
+            &response.outcome,
+            Outcome::Turn(TurnOutcome::Warned { route, .. }) if route.as_str() == "key:google"
+        ),
+        "{:?}",
+        response.outcome
+    );
+    Ok(())
+}
+
+/// A yes on the wire that cannot be written down is not a going back: the turn
+/// fails naming why, and nothing is sent.
+#[test]
+fn a_yes_that_cannot_be_written_down_fails_the_turn_and_says_why() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("client-warned-unwritten")?;
+    let script = Script::new(vec![saying("answered")]);
+    let asked = Arc::clone(&script.asked);
+    let (conversation, _) = asking_on(&tree, script, Some("google"))?;
+    // A file that is not configuration cannot have a yes written into it.
+    let file = tree.0.join("config.json");
+    std::fs::write(&file, "{ not configuration")?;
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(file.clone());
+    consent.served(
+        "google",
+        Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }),
+    );
+    let mut conversation = conversation.consenting(consent);
+    let mut remote = Remote::new(vec![Saying::Heeding(true)]);
+    let request = Wire::default().sent(prompt("hello")?)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+
+    assert_eq!(asked.load(Ordering::Relaxed), 0);
+    match &response.outcome {
+        Outcome::Turn(TurnOutcome::Failed(problem)) => {
+            assert!(
+                problem.message.as_str().contains("config.json"),
+                "{problem:?}"
+            );
+        }
+        other => return Err(format!("{other:?}").into()),
+    }
     Ok(())
 }

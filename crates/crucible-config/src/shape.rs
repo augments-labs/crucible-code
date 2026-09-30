@@ -887,6 +887,27 @@ const COMPACTION: &[Field] = &[
     },
 ];
 
+/// The answers the person gave about what vendors do with what is sent.
+const CONTENT_USE: &[Field] = &[Field {
+    name: "accepted",
+    about: "Routes you have said yes to sending on, though their vendor says it may use what is sent to train or improve its models; crucible writes this when you choose Use it anyway. Read only from the configuration file in your home directory",
+    shape: Shape::List {
+        of: &ROUTE,
+        repeats: false,
+        most: None,
+    },
+    examples: &["key:google", "subscription:moonshot@kimi.ai"],
+    usual: None,
+    needed: false,
+    // A yes is what lets a request leave for such a vendor. Written in a
+    // checkout, it would be a repository answering that question for
+    // everybody who clones it.
+    widens: true,
+}];
+
+/// One route: a `/login` row, a model, or a Kimi open platform address.
+const ROUTE: Shape = Shape::Text;
+
 /// How much one model accepts, under the name it is asked for.
 ///
 /// Keyed by model rather than stated once for the provider, because a session
@@ -1365,6 +1386,15 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         name: "promptCaching",
         about: "Provider-side reuse of an identical prompt prefix, enabled through each provider's verified native mechanism by default",
         shape: Shape::Fields(PROMPT_CACHE),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+    Field {
+        name: "contentUse",
+        about: "What you have said about vendors that may use what is sent to them",
+        shape: Shape::Fields(CONTENT_USE),
         examples: &[],
         usual: None,
         needed: false,

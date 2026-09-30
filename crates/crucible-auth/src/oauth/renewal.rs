@@ -57,7 +57,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use crucible_credentials::Outgoing;
-use crucible_http::{BodyError, Http, Lookups, ProxyEnv, Tls, read_limited};
+use crucible_http::{BodyError, Hold, Http, HttpError, Lookups, ProxyEnv, Tls, read_limited};
 use crucible_runtime::BoxFuture;
 use crucible_types::CredentialScopeId;
 use hyper::Method;
@@ -110,6 +110,9 @@ pub struct Renewals(Arc<Inner>);
 struct Inner {
     runtime: OnceLock<Handle>,
     client: OnceLock<Http>,
+    /// What every account request is asked about before it leaves, once the
+    /// application has handed it one.
+    hold: OnceLock<Arc<dyn Hold>>,
     /// The one place this owner's blocking work takes: held by a rotation
     /// for the whole of its work and by a login request for the whole of its
     /// exchange.
@@ -159,11 +162,20 @@ impl Renewals {
         Self(Arc::new(Inner {
             runtime: OnceLock::new(),
             client: OnceLock::new(),
+            hold: OnceLock::new(),
             place: Arc::new(Semaphore::new(1)),
             rotations: Mutex::new(HashMap::new()),
             running: Mutex::new(0),
             ended: Condvar::new(),
         }))
+    }
+
+    /// Gives this owner what every sign-in and renewal request it sends is
+    /// asked about before it leaves. The first hold given is the one kept, and
+    /// one given after the first request has been sent is ignored, since the
+    /// client it would have gone into is already made.
+    pub fn holds(&self, hold: Arc<dyn Hold>) {
+        let _ = self.0.hold.set(hold);
     }
 
     /// Gives this owner the runtime its rotations and every account request
@@ -319,7 +331,10 @@ impl Renewals {
             let response = client
                 .send(Method::POST, url, &mut headers, body)
                 .await
-                .map_err(|_| OAuthError::Unreachable)?;
+                .map_err(|error| match error {
+                    HttpError::Held(route) => OAuthError::Held(route),
+                    _ => OAuthError::Unreachable,
+                })?;
             let status = response.status().as_u16();
             let body = match read_limited(response.into_body(), MAX_BODY, within).await {
                 Ok(body) => body,
@@ -391,8 +406,8 @@ impl Renewals {
 
     /// The client account requests are sent through, made the first time
     /// one is: TLS over the compiled-in roots, one hostname lookup at a time
-    /// for targets and proxies together, and the proxy this process's
-    /// environment names.
+    /// for targets and proxies together, the proxy this process's
+    /// environment names, and the hold the application handed in.
     fn client(&self) -> Result<&Http, OAuthError> {
         if let Some(client) = self.0.client.get() {
             return Ok(client);
@@ -403,6 +418,10 @@ impl Renewals {
         // own deadline rather than by a lookup's.
         let lookups = Lookups::plain(NonZeroUsize::MIN);
         let client = Http::new(&tls, lookups.clone().into(), lookups, ProxyEnv::capture());
+        let client = match self.0.hold.get() {
+            Some(hold) => client.holding(Arc::clone(hold)),
+            None => client,
+        };
         Ok(self.0.client.get_or_init(|| client))
     }
 }
@@ -417,6 +436,7 @@ impl fmt::Debug for Renewals {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Renewals")
             .field("runtime", &self.0.runtime.get().is_some())
+            .field("held", &self.0.hold.get().is_some())
             .field("running", &*lock(&self.0.running))
             .finish_non_exhaustive()
     }

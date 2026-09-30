@@ -1503,3 +1503,230 @@ fn each_kimi_site_answers_the_web_tools_of_the_credential_sent_to_it_and_no_othe
     let custom = Endpoint::parse("https://proxy.invalid/v1/chat/completions").unwrap();
     assert!(moonshot_site(&custom, key(), transport()).is_none());
 }
+
+/// A kimi.ai sign-in, a kimi.com sign-in, and keys, fabricated, as a store
+/// holds them.
+const KIMI_AI_SIGN_IN: &str = r#"{"version":2,"keys":{},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+const KIMI_COM_SIGN_IN: &str = r#"{"version":2,"keys":{},"subscriptions":{"moonshot":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+const KIMI_AI_KEY: &str =
+    r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{}}"#;
+const GOOGLE_KEY: &str =
+    r#"{"version":2,"keys":{"google":"fabricated-google-key"},"subscriptions":{}}"#;
+const OPENAI_SIGN_IN: &str = r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+const NOTHING: &str = r#"{"version":2,"keys":{},"subscriptions":{}}"#;
+
+/// One state a provider's credential can be in, and what it is served on:
+/// the provider, the store, whether its variable is set, the `baseUrl`, the
+/// route and the configured origin.
+type Case = (
+    &'static str,
+    &'static str,
+    bool,
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
+/// Where each way of holding a credential sends a provider's requests, and
+/// the route that is: the stored sign-in first where no address is set, a key
+/// from the environment on its provider's fixed row before a stored one, and a
+/// configured address answering for the route it is recognised as or none.
+/// Where [`credential`] resolves the same state, the address it sends to is
+/// one of the route's origins.
+#[test]
+fn a_provider_is_served_on_the_route_its_credential_goes_to() {
+    let routes = content_use::Routes::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let cases: [Case; 13] = [
+        (
+            "moonshot",
+            KIMI_AI_SIGN_IN,
+            false,
+            None,
+            Some("subscription:moonshot@kimi.ai"),
+            None,
+        ),
+        (
+            "moonshot",
+            KIMI_COM_SIGN_IN,
+            true,
+            None,
+            Some("subscription:moonshot"),
+            None,
+        ),
+        (
+            "moonshot",
+            KIMI_AI_KEY,
+            false,
+            None,
+            Some("key:moonshot@kimi.ai"),
+            None,
+        ),
+        (
+            "moonshot",
+            KIMI_AI_KEY,
+            true,
+            None,
+            Some("key:moonshot"),
+            None,
+        ),
+        (
+            "moonshot",
+            NOTHING,
+            true,
+            Some("https://api.moonshot.ai/v1"),
+            Some("api.moonshot.ai"),
+            Some("https://api.moonshot.ai"),
+        ),
+        (
+            "moonshot",
+            KIMI_COM_SIGN_IN,
+            true,
+            Some("https://gateway.example/v1"),
+            None,
+            Some("https://gateway.example"),
+        ),
+        ("google", NOTHING, true, None, Some("key:google"), None),
+        ("google", GOOGLE_KEY, false, None, Some("key:google"), None),
+        (
+            "openai",
+            OPENAI_SIGN_IN,
+            true,
+            None,
+            Some("subscription:openai"),
+            None,
+        ),
+        ("openai", NOTHING, true, None, Some("key:openai"), None),
+        (
+            "anthropic",
+            NOTHING,
+            true,
+            None,
+            Some("key:anthropic"),
+            None,
+        ),
+        ("moonshot", NOTHING, false, None, None, None),
+        (
+            "moonshot",
+            KIMI_COM_SIGN_IN,
+            false,
+            Some("https://gateway.example/v1"),
+            None,
+            None,
+        ),
+    ];
+    for (at, (named, held, exported, base, route, origin)) in cases.into_iter().enumerate() {
+        let sample = Sample::new(&format!("served-on-{at}"));
+        let stored = sample.holding(held);
+        let settings = match base {
+            Some(base) => sample.user(&format!(
+                r#"{{"providers": {{"{named}": {{"baseUrl": "{base}"}}}}}}"#
+            )),
+            None => Settings::default(),
+        };
+        let from = move |_: &str| exported.then(|| "fabricated-exported-key".to_owned());
+        let auth = ProviderAuth {
+            settings: &settings,
+            from: &from,
+            stored: &stored,
+            subscriptions: &subscriptions,
+        };
+
+        let serving = served_on(named, "VARIABLE", auth);
+        let case = format!("case {at}: {named} {held} {exported} {base:?}");
+        if route.is_none() && origin.is_none() {
+            assert_eq!(serving, None, "{case}");
+            continue;
+        }
+        let serving = serving.unwrap_or_else(|| panic!("{case}: served on nothing"));
+        assert_eq!(serving.route.as_deref(), route, "{case}");
+        assert_eq!(
+            serving.at.as_ref().map(ToString::to_string).as_deref(),
+            origin,
+            "{case}"
+        );
+
+        let vendor = match named {
+            "moonshot" => Moonshot::CODING,
+            "openai" => OpenAi::VENDOR,
+            _ => continue,
+        };
+        let sending = base.map(|base| Endpoint::parse(base).unwrap());
+        let (endpoint, _) = credential(
+            ApiAudience {
+                provider: named,
+                variable: "VARIABLE",
+                vendor,
+            },
+            sending,
+            auth,
+        )
+        .unwrap_or_else(|_| panic!("{case}: no credential"));
+        let sent = crucible_http::Origin::of(endpoint.as_str()).unwrap();
+        let reached = serving.at.as_ref() == Some(&sent)
+            || serving
+                .route
+                .as_deref()
+                .and_then(|route| routes.warned(route))
+                .is_none_or(|warned| warned.origins.contains(&sent.to_string().as_str()));
+        assert!(reached, "{case}: {sent} is not where {serving:?} goes");
+    }
+}
+
+/// A start reads the yes from the user's file and what each provider is
+/// served on, before anything is sent: a key from the environment on a warned
+/// route holds that route's origin until its yes, and a yes in the file lets
+/// it through.
+#[test]
+fn a_start_holds_a_warned_route_until_the_users_file_says_yes() {
+    use crucible_http::Hold as _;
+
+    let google = crucible_http::Origin::of(Google::VENDOR.as_str()).unwrap();
+    for (tree, document, held) in [
+        ("unsaid", "{}", Some("key:google")),
+        (
+            "said",
+            r#"{"contentUse": {"accepted": ["key:google"]}}"#,
+            None,
+        ),
+    ] {
+        let sample = Sample::new(&format!("start-consent-{tree}"));
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+        let services = Services::new();
+        let settings = sample.user(document);
+
+        assemble(&Startup {
+            providers: &catalogue(),
+            provider: Some(serving("google")),
+            unasked: NOTHING_TO_ASK,
+            model: Some("gemini-3.8-flash"),
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &settings,
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| Some("fabricated-exported-key".to_owned()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("a start with a key");
+
+        assert_eq!(services.consent().held(&google).as_deref(), held, "{tree}");
+        // A model address shared by two rows follows the one served.
+        let kimi = crucible_http::Origin::of(Moonshot::CODING.as_str()).unwrap();
+        assert_eq!(
+            services.consent().held(&kimi).as_deref(),
+            Some("key:moonshot"),
+            "{tree}"
+        );
+    }
+}

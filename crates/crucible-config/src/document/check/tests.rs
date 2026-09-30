@@ -873,3 +873,19 @@ fn checking_starts_nothing_it_only_names() {
         "the check launched the server it only validated"
     );
 }
+
+#[test]
+fn neither_workspace_file_can_say_yes_to_a_route_for_the_user() {
+    // A yes lets requests leave for a vendor that says it trains on them. A
+    // repository that could write one would be answering that for everybody
+    // who clones it, before any of them had been asked.
+    for read in [shared as fn(&str) -> Result<Document, ConfigError>, local] {
+        let err = read(r#"{"contentUse": {"accepted": ["key:google"]}}"#).unwrap_err();
+
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(said.contains("contentUse.accepted"), "got {said}");
+        assert!(said.contains("home directory"), "got {said}");
+    }
+    mine(r#"{"contentUse": {"accepted": ["key:google", "api.moonshot.ai"]}}"#).unwrap();
+}
