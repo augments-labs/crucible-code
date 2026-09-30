@@ -468,7 +468,11 @@ fn home_holding(case: &str, document: &str) -> std::path::PathBuf {
 fn a_start_over_two_credentials_keeps_the_bare_one_and_says_which_went() {
     let home = home_holding("two-held", TWO_HELD);
 
-    let (keys, trouble) = stored(&home, &crucible_app::providers::Rows::production());
+    let (keys, trouble) = stored(
+        &home,
+        &crucible_app::providers::Rows::production(),
+        crucible_tui::Glyphs::Unicode,
+    );
 
     let said = trouble.expect("a line under the welcome");
     assert_eq!(
@@ -481,6 +485,8 @@ fn a_start_over_two_credentials_keeps_the_bare_one_and_says_which_went() {
         keys.held("moonshot").map(|held| held.name),
         Some("moonshot".to_owned())
     );
+    // What was taken out is no longer among what the start holds.
+    assert!(!keys.has_subscription("moonshot@kimi.ai"));
     let _ = std::fs::remove_dir_all(&home);
 }
 
@@ -491,7 +497,11 @@ fn a_start_finds_a_credential_given_on_a_kimi_ai_row() {
         r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{}}"#,
     );
 
-    let (keys, trouble) = stored(&home, &crucible_app::providers::Rows::production());
+    let (keys, trouble) = stored(
+        &home,
+        &crucible_app::providers::Rows::production(),
+        crucible_tui::Glyphs::Unicode,
+    );
 
     assert_eq!(trouble, None);
     assert_eq!(
@@ -520,10 +530,39 @@ fn a_start_over_a_store_others_could_read_still_says_it_was_tightened() {
         )
         .expect("a store others can read");
 
-        let (_, trouble) = stored(&home, &crucible_app::providers::Rows::production());
+        let (_, trouble) = stored(
+            &home,
+            &crucible_app::providers::Rows::production(),
+            crucible_tui::Glyphs::Unicode,
+        );
 
         let said = trouble.unwrap_or_default();
         assert!(said.contains("readable by others"), "{case}: {said}");
+        // Both are said where both happened.
+        assert_eq!(
+            said.contains("was removed"),
+            case == "open-two",
+            "{case}: {said}"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
+}
+
+#[test]
+fn a_start_line_names_its_rows_with_the_glyph_sets_own_dot() {
+    let home = home_holding("two-held-ascii", TWO_HELD);
+
+    let (_, trouble) = stored(
+        &home,
+        &crucible_app::providers::Rows::production(),
+        crucible_tui::Glyphs::Ascii,
+    );
+
+    let said = trouble.expect("a line under the welcome");
+    assert!(said.is_ascii(), "{said}");
+    assert!(
+        said.contains("the Kimi Code - kimi.ai sign-in was removed"),
+        "{said}"
+    );
+    let _ = std::fs::remove_dir_all(&home);
 }

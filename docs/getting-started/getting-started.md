@@ -986,7 +986,7 @@ A provider holds one credential. Choosing a row whose provider holds another
 says on the next screen what it replaces, and nothing is replaced until the new
 one is stored: a sign-in that fails, is refused or expires says `sign-in did
 not complete` and names what is unchanged. A store that is there and cannot be
-read is said before any row is drawn.
+parsed, is not text, or is past its size limit is said before any row is drawn.
 
 A run with no keyboard to walk that panel (and a window with no room to stand
 one in) gets each row as the line to type instead: `/login` and the words that

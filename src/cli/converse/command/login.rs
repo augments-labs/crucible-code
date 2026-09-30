@@ -19,8 +19,8 @@
 //! A row whose provider holds a credential says on its next screen what will be
 //! replaced. Nothing is replaced until the new one is stored, so a sign-in that
 //! fails, is refused or expires leaves the store as it was and says what is
-//! unchanged. A sign-in stopped by Escape is asked about again, since tokens
-//! that arrived as it was pressed may already be written.
+//! unchanged. A sign-in stopped by Escape while its credential is being written
+//! is waited for, and taken as signed in where the write went through.
 //!
 //! A real subscription implementation starts its login as a task on the
 //! application's runtime and reports the page the user must visit; the terminal
@@ -61,7 +61,7 @@ use crucible_app::client::Performed;
 use crucible_app::providers::{List, Providers, Row as Way, Rows, Served, key_variables, offered};
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
-use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate};
+use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
 use crucible_client_api::Command;
 use crucible_tui::{
     Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
@@ -126,6 +126,11 @@ const CANCEL: &str = "esc to cancel";
 
 /// The same, on a screen chosen from a list.
 const BACK: &str = "esc to go back";
+
+/// What a sign-in stopped while its credential was still being written says:
+/// the write outlived the wait, so what it left is for `/login` to show.
+const UNSETTLED: &str =
+    "! the sign-in was being stored when it was stopped; /login shows what is stored";
 
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
@@ -715,8 +720,10 @@ fn line(way: &Way, rows: &Rows, providers: &Providers, glyphs: Glyphs) -> String
 ///
 /// Escape stops the flow. Opened below another screen it goes back there;
 /// opened by the command it cancels it, as Escape on any screen the command
-/// opened does. A flow that fails, is refused or expires says what went wrong
-/// and that nothing held was replaced.
+/// opened does; and where its credential was being written as it was
+/// stopped, the write is waited for and a sign-in that went through is taken.
+/// A flow that fails, is refused or expires says what went wrong and that
+/// nothing held was replaced.
 fn subscribed<T: Terminal>(
     route: Route,
     way: &Way,
@@ -776,25 +783,30 @@ fn subscribed<T: Terminal>(
         };
         match arrived {
             Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => {
-                attempt.cancel();
-                // Tokens that arrived as Escape was pressed may already be
-                // written, and stopping the flow does not take them back:
-                // the store is asked again rather than told nothing changed.
-                if landed(way, held, terms) {
-                    let Some(named) =
-                        offered(&terms.providers.snapshot()).find(|one| one.name == provider)
-                    else {
-                        say(renderer, "! the signed-in provider is unavailable")?;
+                // A write already begun cannot be taken back: stopping waits
+                // for it and says whether the credential was written, and
+                // that answer is what is said.
+                match attempt.cancel() {
+                    Stopped::Written => {
+                        let Some(named) =
+                            offered(&terms.providers.snapshot()).find(|one| one.name == provider)
+                        else {
+                            say(renderer, "! the signed-in provider is unavailable")?;
+                            return Ok(Closed::Done);
+                        };
+                        taken(named, renderer, conversation, terms)?;
                         return Ok(Closed::Done);
-                    };
-                    taken(named, renderer, conversation, terms)?;
-                    return Ok(Closed::Done);
+                    }
+                    Stopped::Unsettled => {
+                        say(renderer, UNSETTLED)?;
+                        return Ok(Closed::Done);
+                    }
+                    Stopped::Unwritten if opened == Opened::Below => return Ok(Closed::Back),
+                    Stopped::Unwritten => {
+                        say(renderer, LEFT)?;
+                        return Ok(Closed::Done);
+                    }
                 }
-                if opened == Opened::Below {
-                    return Ok(Closed::Back);
-                }
-                say(renderer, LEFT)?;
-                return Ok(Closed::Done);
             }
             Pressed::Resized => renderer.resized()?,
             pressed => {
@@ -805,12 +817,6 @@ fn subscribed<T: Terminal>(
         }
         view.show(renderer, terms, route.title())?;
     }
-}
-
-/// Whether `way`'s credential is in the store now where it was not when the
-/// walk began: a sign-in that completed as it was being stopped.
-fn landed(way: &Way, held: &[Way], terms: &Terms) -> bool {
-    !held.contains(way) && holding(&Rows::production(), terms).is_ok_and(|now| now.contains(way))
 }
 
 struct LoginView {

@@ -606,7 +606,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // roll back leaves, is taken out after that read and said in the same
     // place.
     let rows = crucible_app::providers::Rows::production();
-    let (keys, trouble) = stored(home.path(), &rows);
+    let (keys, trouble) = stored(home.path(), &rows, style::glyph_set(settings.glyphs()));
     let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
@@ -978,13 +978,14 @@ fn fail(problem: &Fatal) -> ExitCode {
 fn stored(
     home: &std::path::Path,
     rows: &crucible_app::providers::Rows,
+    glyphs: crucible_tui::Glyphs,
 ) -> (crucible_auth::StoredCredentials, Option<String>) {
     let store = Store::in_home(home).naming(rows.names());
     // Read first: that read tightens a store left readable by others and says
     // so, and the settle after it finds the file private.
     let keys = store.read();
     let read = keys.trouble().map(str::to_owned);
-    let settled = startup::settle(&store, rows);
+    let settled = startup::settle(&store, rows, glyphs.dot());
     // A credential taken out is no longer one to serve.
     let keys = if settled.is_some() {
         store.read()
