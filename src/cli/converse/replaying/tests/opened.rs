@@ -32,10 +32,12 @@ const UNREAD: &str = "! this result could not be read back from the session log"
 /// What result `number` of a session said: `lines` lines of sixty-four bytes,
 /// each naming the result it is a line of.
 fn printed(number: usize, lines: usize) -> String {
+    use std::fmt::Write as _;
+
     let mut text = String::with_capacity(lines * 64);
     for line in 1..=lines {
         let said = format!("result {number:03} line {line:04} ");
-        text.push_str(&format!("{said:-<63}\n"));
+        let _ = writeln!(text, "{said:-<63}");
     }
     text
 }
@@ -122,9 +124,8 @@ fn offers(renderer: &Renderer<Recording>) -> Vec<Offer> {
                 "window row {at} says {:?} and the record says {says:?}",
                 picture.row(at)
             );
-            let line = match renderer.aimed(at) {
-                Some(crucible_tui::Aimed::Line(line)) => line,
-                _ => panic!("window row {at} is no line of the record: {says:?}"),
+            let Some(crucible_tui::Aimed::Line(line)) = renderer.aimed(at) else {
+                panic!("window row {at} is no line of the record: {says:?}");
             };
             Offer {
                 line,
@@ -274,12 +275,15 @@ fn opening_every_row_leaves_the_log_as_it_was() {
     assert_eq!(std::fs::read(session.path()).expect("the log"), before);
 }
 
+/// One way a log comes to hold less than was read from it, by name.
+type Breaking = (&'static str, fn(&std::path::Path));
+
 #[test]
 fn a_result_the_log_cannot_give_back_is_said_to_be_missing_and_the_others_still_open() {
     // The log cut short, a line taken out of it, and the log gone altogether:
     // each is a result that cannot be read back, which the view says in its
     // place, and none of them stops a result the store still holds opening.
-    let broken: [(&str, fn(&std::path::Path)); 3] = [
+    let broken: [Breaking; 3] = [
         ("cut-short", |log| {
             let text = std::fs::read_to_string(log).expect("the log");
             let at = text.find(r#""b-1""#).expect("the first call") + 20;
@@ -431,14 +435,17 @@ fn a_live_result_the_store_let_go_of_opens_once_the_last_has_arrived() {
     assert!(shown.contains(&inside(1)), "{shown}");
 }
 
+/// One way a result is taken out of what the model is sent, by name.
+type Clearing = (&'static str, fn(&Session));
+
 #[test]
 fn a_result_a_clearing_took_from_the_model_opens_with_the_words_its_row_showed() {
     // A pruning and a restriction each take the words out of what the model is
     // sent and leave them in the log. The row was drawn with them, so the row
     // opens with them.
-    let clearings: [(&str, fn(&Session)); 2] = [
+    let clearings: [Clearing; 2] = [
         ("pruned", |session| {
-            session.pruned(25, &[ToolId::new("b-1")])
+            session.pruned(25, &[ToolId::new("b-1")]);
         }),
         ("restricted", |session| {
             session.restricted(25, &[ToolId::new("b-1")], "[cleared]");
