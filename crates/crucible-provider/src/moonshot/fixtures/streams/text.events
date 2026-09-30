@@ -1,0 +1,4 @@
+Text("Hello")
+Text(", world")
+Stopped(Yielded)
+Usage(ProviderUsage { input: InputTokenUsage { total: Some(9), uncached: None, cache_read: None, cache_write_or_creation: None }, output: Some(4), reasoning: None, total: Some(13), storage_token_hours: None, details: [] })

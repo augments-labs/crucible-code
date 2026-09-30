@@ -1,0 +1,7 @@
+POST https://api.kimi.com/coding/v1/chat/completions
+content-type: application/json
+accept: text/event-stream
+user-agent: crucible/{version}
+authorization: Bearer fabricated-kimi-key
+
+{"model":"k3","max_tokens":4096,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"Read both and tell me the time."},{"role":"assistant","tool_calls":[{"id":"call_a","type":"function","function":{"name":"read","arguments":"{\"path\":\"a.rs\"}"}},{"id":"call_b","type":"function","function":{"name":"clock","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_a","content":"error: a.rs: no such file"},{"role":"tool","tool_call_id":"call_b","content":"12:00"},{"role":"assistant","content":"It is noon, and a.rs is not th"},{"role":"assistant","content":"[the answer above was cut off at the token ceiling]"},{"role":"user","content":"go on"}],"tools":[{"type":"function","function":{"name":"read","description":"Reads a file","parameters":{"properties":{"path":{"type":"string"}},"required":["path"],"type":"object"}}},{"type":"function","function":{"name":"clock","description":"Says the time","parameters":{"properties":{},"type":"object"}}}]}

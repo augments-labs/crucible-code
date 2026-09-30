@@ -1,0 +1,4 @@
+Text("Half")
+Stopped(OutOfTokens)
+Text(" more")
+Stopped(Unknown)

@@ -245,4 +245,6 @@ impl Provider for Moonshot {
 }
 
 #[cfg(test)]
+mod differential;
+#[cfg(test)]
 mod tests;
