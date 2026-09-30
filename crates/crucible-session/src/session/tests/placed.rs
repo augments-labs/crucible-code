@@ -184,3 +184,35 @@ fn a_session_that_records_nothing_has_no_places_and_reads_nothing() {
             .is_err()
     );
 }
+
+#[test]
+fn a_line_still_being_written_reads_nothing_until_it_is_whole() {
+    // Another writer mid-line — a turn appending to the same log while a row is
+    // opened — leaves a record with no end yet. What is read there is the whole
+    // record or nothing, never the part that has landed.
+    let sample = Sample::new("placed-half-written");
+    let session = two_results(&sample);
+    let line = format!(
+        "{}\n",
+        wire::line(&answered(
+            "call-3",
+            RecordedToolOutput::ok("what c.rs held")
+        ))
+    );
+    let position = std::fs::metadata(session.path()).expect("the log").len();
+    let place = Place::new(ToolId::new("call-3"), position);
+    let (landed, rest) = line.split_at(line.len() / 2);
+
+    let mut log = std::fs::OpenOptions::new()
+        .append(true)
+        .open(session.path())
+        .expect("the log");
+    log.write_all(landed.as_bytes()).expect("half the line");
+    assert!(session.read_back(&place).is_err(), "half a line was read");
+
+    log.write_all(rest.as_bytes()).expect("the rest of it");
+    assert_eq!(
+        session.read_back(&place).expect("the whole line"),
+        RecordedToolOutput::ok("what c.rs held")
+    );
+}

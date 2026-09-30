@@ -385,3 +385,61 @@ fn nothing_else_moves_it() {
         assert_eq!(open, standing(3, 20));
     }
 }
+
+/// A log that gives back, at any place, a result as long as any a log keeps.
+#[derive(Debug)]
+struct Long;
+
+impl crate::cli::kept::Log for Long {
+    fn placed(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        Vec::new()
+    }
+
+    fn read(&self, _: &crucible_types::ToolId, _: u64) -> Option<Box<str>> {
+        Some("y".repeat(LONG).into())
+    }
+}
+
+/// Bytes in each result below: as long as a recorded result may be once it is
+/// encoded, near enough.
+const LONG: usize = 25_600;
+
+#[test]
+fn opening_every_row_in_turn_holds_one_result_beyond_the_store_at_most() {
+    // What is read back is held by the view for as long as it stands, and a
+    // row opened after it takes its place: however many rows are opened, what
+    // is held is what the store holds and one result more.
+    let mut kept = Kept::default();
+    kept.logging(Box::new(Long));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, u64::try_from(at).unwrap());
+        kept.finished(&call, "x".repeat(LONG).into(), at);
+    }
+    let store = 512 * 1024;
+    let mut read = 0;
+
+    for at in 0..40 {
+        let mut standing = Standing::default();
+        standing.one(&kept, at);
+        let view = opened(&mut standing);
+
+        let held: usize = kept
+            .newest()
+            .map(|whole| whole.text().len() + whole.called().len())
+            .sum();
+        let back: usize = view
+            .back
+            .iter()
+            .map(|back| match back {
+                Back::Read { called, text } => called.len() + text.len(),
+                Back::Unread { called } => called.len(),
+            })
+            .sum();
+        assert!(held <= store, "row {at}: {held} held by the store");
+        assert!(back <= LONG + 16, "row {at}: {back} read back");
+        read += usize::from(back > 0);
+    }
+    assert!(read > 0, "no row was read back; the test says nothing");
+}
