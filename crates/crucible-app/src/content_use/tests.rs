@@ -590,16 +590,23 @@ fn a_base_url_changed_and_changed_back_moves_no_yes() {
     );
 }
 
-/// What a provider was served on goes with its credential: after a drop,
-/// nothing is asked about the route that credential was on, whether or not
-/// the provider was the one answering, until it is set up again.
+/// What a provider was served on is read again once its credential goes,
+/// from what is left when it is next asked about: a key from the environment
+/// may still serve the same route, whose yes went with the stored one, and
+/// another provider's route stays as it was.
 #[test]
-fn a_credential_taken_out_takes_what_its_provider_was_served_on() {
+fn a_credential_taken_out_has_its_provider_read_again_when_next_asked() {
     let sample = Sample::new("letting-go-served");
-    sample.user("{}");
+    sample.user(r#"{"contentUse": {"accepted": ["key:google"]}}"#);
     let consent = Consent::new(Routes::production());
+    consent.recorded(["key:google".to_owned()]);
     consent.served("openai", Some(serving("subscription:openai")));
     consent.served("google", Some(serving("key:google")));
+    let left: BTreeMap<&str, Serving> = BTreeMap::from([
+        ("openai", serving("key:openai")),
+        ("google", serving("key:google")),
+    ]);
+    consent.resolves(Box::new(move |name| left.get(name).cloned()));
     let store = sample.store().letting_go(letting_go(
         &consent,
         sample.user_file(),
@@ -610,16 +617,50 @@ fn a_credential_taken_out_takes_what_its_provider_was_served_on() {
         .store()
         .keep("openai", "fabricated-openai-key")
         .unwrap();
+    sample
+        .store()
+        .keep("google", "fabricated-google-key")
+        .unwrap();
 
     store.forget("openai").unwrap();
+    store.forget("google").unwrap();
 
+    // Not the sign-in that went: the key the environment still serves it on.
     assert_eq!(consent.unanswered("openai", "gpt-6-astra"), None);
+    // The same route as the key that went, whose yes went with it.
     assert_eq!(
         consent
             .unanswered("google", "gemini-3.8-flash")
             .map(|one| one.route),
         Some("key:google")
     );
+}
+
+/// A yes given at `/login` waits for the credential it was given for to be
+/// written, and that write keeps it even where the row it drops shares the
+/// route, as a `baseUrl` crucible recognises can make it.
+#[test]
+fn a_yes_given_at_login_outlasts_the_write_it_waits_for() {
+    let sample = Sample::new("letting-go-given");
+    let settings = sample
+        .user(r#"{"providers": {"moonshot": {"baseUrl": "https://api.kimi.com/coding/v1"}}}"#);
+    let consent = Consent::new(Routes::production());
+    let store = sample.store().letting_go(letting_go(
+        &consent,
+        sample.user_file(),
+        Rows::production(),
+        &settings,
+    ));
+    sample
+        .store()
+        .keep("moonshot@kimi.ai", "fabricated-kimi-ai-key")
+        .unwrap();
+    consent.give("key:moonshot");
+
+    store.keep("moonshot", "fabricated-kimi-com-key").unwrap();
+
+    assert!(consent.given("key:moonshot"));
+    assert!(consent.asks("key:moonshot").is_none());
 }
 
 /// Another provider's route at the origin this one is served at holds its

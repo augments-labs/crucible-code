@@ -394,6 +394,20 @@ pub struct Serving {
     pub at: Option<Origin>,
 }
 
+/// What a provider is served on, read again as things are when it is asked:
+/// the answer for a provider whose credential was just taken out, which may
+/// still be served by another credential, or by nothing.
+pub type Resolver = Box<dyn Fn(&str) -> Option<Serving> + Send + Sync>;
+
+/// The [`Resolver`] a consent was handed, which has nothing to show.
+struct Resolving(Resolver);
+
+impl std::fmt::Debug for Resolving {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("Resolving")
+    }
+}
+
 /// The yes given and recorded for each route, and what each provider is
 /// served on, asked before every request leaves.
 ///
@@ -405,6 +419,8 @@ pub struct Consent {
     state: Arc<RwLock<State>>,
     /// The user's own configuration file, where a yes is written down.
     file: Arc<std::sync::OnceLock<PathBuf>>,
+    /// Reads again what a provider is served on once that has gone stale.
+    resolving: Arc<std::sync::OnceLock<Resolving>>,
 }
 
 #[derive(Debug, Default)]
@@ -418,6 +434,9 @@ struct State {
     given: BTreeSet<String>,
     /// What each provider's requests go on, as last resolved.
     serving: BTreeMap<String, Serving>,
+    /// Providers whose credential was taken out since they were resolved,
+    /// read again the next time a send or a choice asks about them.
+    stale: BTreeSet<String>,
 }
 
 impl Consent {
@@ -428,7 +447,16 @@ impl Consent {
             routes,
             state: Arc::default(),
             file: Arc::default(),
+            resolving: Arc::default(),
         }
+    }
+
+    /// Reads again, through `resolver`, what a provider is served on once
+    /// its credential was taken out. The first resolver given is the one
+    /// kept; with none, such a provider is served on nothing until it is set
+    /// up again.
+    pub fn resolves(&self, resolver: Resolver) {
+        let _ = self.resolving.set(Resolving(resolver));
     }
 
     /// Writes each yes into `file`, the user's own configuration file. The
@@ -475,9 +503,19 @@ impl Consent {
     /// with no yes: the model's own where the model is warned, then the route
     /// that holds an origin the provider is served at, its own or another
     /// provider's there. `None` where nothing is to be asked, and for a
-    /// provider served on nothing, whatever its model.
+    /// provider served on nothing, whatever its model. A provider whose
+    /// credential was taken out since it was resolved is read again first.
     #[must_use]
     pub fn unanswered(&self, provider: &str, model: &str) -> Option<Warned> {
+        let unsettled = self
+            .state
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stale
+            .contains(provider);
+        if unsettled && let Some(Resolving(resolve)) = self.resolving.get() {
+            self.served(provider, resolve(provider));
+        }
         let served = {
             let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
             state.serving.get(provider)?.clone()
@@ -522,8 +560,9 @@ impl Consent {
     }
 
     /// Records `route` as said yes to, once the file holds it: the crate's
-    /// own, so a yes is let go only through [`Consent::accept`], which writes
-    /// it down first.
+    /// own, so a yes is recorded only through [`Consent::accept`], which
+    /// writes it down first. [`Consent::give`] lets a route go for the run
+    /// alone, unwritten, while a `/login` waits for its credential.
     pub(crate) fn record(&self, route: &str) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
         state.given.remove(route);
@@ -545,6 +584,12 @@ impl Consent {
         state.given.contains(route)
     }
 
+    /// Every route with a yes given and not yet written down.
+    fn waiting(&self) -> BTreeSet<String> {
+        let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
+        state.given.clone()
+    }
+
     /// Takes back a yes that was given and never recorded.
     pub fn withdraw(&self, route: &str) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
@@ -562,6 +607,7 @@ impl Consent {
     /// send with.
     pub fn served(&self, provider: &str, serving: Option<Serving>) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        state.stale.remove(provider);
         match serving {
             Some(serving) => state.serving.insert(provider.to_owned(), serving),
             None => state.serving.remove(provider),
@@ -572,7 +618,16 @@ impl Consent {
     /// resolved before.
     pub fn serving(&self, serving: BTreeMap<String, Serving>) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        state.stale.clear();
         state.serving = serving;
+    }
+
+    /// Takes what `provider` was served on as gone stale: nothing is claimed
+    /// for it until it is read again, which the next question about it does.
+    fn unsettle(&self, provider: &str) {
+        let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        state.serving.remove(provider);
+        state.stale.insert(provider.to_owned());
     }
 }
 
@@ -657,11 +712,16 @@ pub fn letting_go(consent: &Consent, file: PathBuf, rows: Rows, settings: &Setti
             }
             providers.insert(provider);
         }
+        // A yes given at `/login` and waiting for this very write is not
+        // one that goes with it: the credential it waits for is the one
+        // being written, whatever route it shares with what is dropped.
+        let waiting = consent.waiting();
         let gone = |route: &str| {
-            routes.contains(route)
+            (routes.contains(route)
                 || providers
                     .iter()
-                    .any(|provider| route.starts_with(&model_route(provider, "")))
+                    .any(|provider| route.starts_with(&model_route(provider, ""))))
+                && !waiting.contains(route)
         };
         crate::remember::forgetting(&file, gone).map_err(|problem| {
             Box::<str>::from(format!(
@@ -669,11 +729,11 @@ pub fn letting_go(consent: &Consent, file: PathBuf, rows: Rows, settings: &Setti
             ))
         })?;
         consent.forget(gone);
-        // What each provider was served on went with its credential, and
-        // stays unknown until the provider is set up again: a question asked
-        // before then would be about a credential that is gone.
+        // What each provider was served on may have gone with its
+        // credential, or not: another may serve it still, and the write may
+        // yet fail. Read again when next asked, from the store as it is then.
         for provider in &providers {
-            consent.served(provider, None);
+            consent.unsettle(provider);
         }
         Ok(())
     })

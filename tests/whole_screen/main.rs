@@ -2765,6 +2765,75 @@ fn a_credential_taken_out_takes_its_yes_and_the_question_stands_again() {
     assert_eq!(proxy.asked(), Vec::<String>::new());
 }
 
+/// Taking out a stored key of a provider nobody is asking takes its yes, and
+/// a key from the environment still serves the same route: choosing that
+/// provider at `/model` asks about the route again before it is taken.
+#[test]
+fn a_provider_logged_out_while_another_answers_is_asked_about_again_at_model() {
+    let proxy = warning::Proxy::new();
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-logout-other-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store =
+        r#"{"version":2,"keys":{"google":"fabricated-stored-google-key"},"subscriptions":{}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+    let document = concat!(
+        "{\n",
+        "  \"sandbox\": {\"enabled\": false},\n",
+        "  \"updates\": {\"check\": \"never\"},\n",
+        "  \"provider\": \"anthropic\",\n",
+        "  \"providers\": {\"anthropic\": {\"model\": \"claude-sonnet-5\"}},\n",
+        "  \"contentUse\": {\"accepted\": [\"key:google\"]}\n",
+        "}\n"
+    );
+    let mut window = Watched::launched(
+        "warning-logout-other",
+        80,
+        30,
+        &watched::Launch {
+            document,
+            env: &[
+                ("ANTHROPIC_API_KEY", "fabricated-anthropic-key-never-sent"),
+                ("GEMINI_API_KEY", warning::KEY),
+                ("HTTPS_PROXY", &proxy.address),
+            ],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+    window.types_until(
+        "/logout google\r",
+        "removed the stored credential for google",
+    );
+    assert!(
+        !warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+
+    window.types("/model\r");
+    window.types("gemini-3.7");
+    window.types_until("\r", "Takes this choice");
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a choice sends nothing"
+    );
+}
+
 #[test]
 fn a_base_url_crucible_recognises_is_asked_about_and_any_other_is_sent_to() {
     for (at, base, shown) in [

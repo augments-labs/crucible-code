@@ -646,6 +646,18 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the first prompt, and a model chosen without being asked for is one
     // vendor's name sent to whichever vendor the credential belongs to.
     let providers = providers()?;
+    // What a provider is served on is read again, from the store as it is
+    // then, once a credential taken out may have moved it: another may still
+    // serve it, and the write that took it out may have failed.
+    services
+        .consent()
+        .resolves(crucible_app::providers::resolving(
+            settings.clone(),
+            subscriptions.clone(),
+            &providers.snapshot(),
+            std::sync::Arc::new(|name: &str| std::env::var(name).ok()),
+            Store::in_home(home.path()).naming(rows.names()),
+        ));
     let launch = launch(
         cli,
         &providers.snapshot(),

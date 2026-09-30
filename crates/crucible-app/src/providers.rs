@@ -770,6 +770,10 @@ pub fn capabilities<'a>(
 /// not set.
 pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
 
+/// A [`Lookup`] that can be read from any thread, as the consent's resolver
+/// is.
+pub type SharedLookup = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
 /// The [`Serving`] a provider is set up again through once a run is under
 /// way: after a credential is stored, after one is forgotten, and when
 /// `/model` names a provider other than the one answering.
@@ -810,6 +814,40 @@ pub fn re_serving(
             provider: startup::provider(Some(named), unasked(Some(named.name), true), auth, &http)?,
             source,
         })
+    })
+}
+
+/// The [`crate::content_use::Resolver`] a run's consent reads a provider
+/// again through: what it is served on, from `store` as it is when asked and
+/// the environment `from` reads.
+///
+/// `store` is read and never written, so it carries no hook of its own.
+pub fn resolving(
+    settings: Settings,
+    subscriptions: Subscriptions,
+    providers: &Providers,
+    from: SharedLookup,
+    store: crucible_auth::Store,
+) -> crate::content_use::Resolver {
+    let variables: std::collections::BTreeMap<String, String> = offered(providers)
+        .map(|one| {
+            let variable = settings.api_key_env(one.name).unwrap_or(one.key);
+            (one.name.to_owned(), variable.to_owned())
+        })
+        .collect();
+    Box::new(move |name| {
+        let variable = variables.get(name)?;
+        let stored = store.read();
+        startup::served_on(
+            name,
+            variable,
+            startup::ProviderAuth {
+                settings: &settings,
+                from: &*from,
+                stored: &stored,
+                subscriptions: &subscriptions,
+            },
+        )
     })
 }
 
