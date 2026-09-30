@@ -82,10 +82,8 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
             failed: output.is_failed(),
         },
         // Sent once more before anything was answered, as a retry is; the
-        // speed it leaves in force is the snapshot's to say. A refusal whose
-        // second send a stop kept is no retry, and says nothing here.
+        // speed it leaves in force is the snapshot's to say.
         Event::Retrying | Event::FastRefused { resent: true, .. } => Progress::Retrying,
-        Event::FastRefused { resent: false, .. } => return None,
         Event::Compacting { part, .. } => Progress::Compacting {
             part: u64::from(*part),
         },
@@ -100,7 +98,9 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
             stop: self::stop(*stop),
         },
         Event::Failed { error } => Progress::Failed(Problem::failed(error)),
-        Event::PromptCache { .. }
+        // A refusal whose second send a stop ended is no retry.
+        Event::FastRefused { resent: false, .. }
+        | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Wrote { .. }
         | Event::Carried { .. }
