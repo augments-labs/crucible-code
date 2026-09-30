@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+40x30 cursor 28,0 scrolled 0
+|Warning: No models available. Use /login|
+|or set an API key environment variable. |
+|Then use /model to select a model.      |
+|                                        |
+|› /login kimi                           |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Choose the account or key to sign in    |
+|with.                                   |
+|                                        |
+|Subscription                            |
+|                                        |
+|› Kimi Code · kimi.ai                   |
+|  Kimi Code plan usage, accounts outsid…|
+|                                        |
+|  Kimi Code · kimi.com                  |
+|  Kimi Code plan usage, mainland China …|
+|                                        |
+|API key                                 |
+|                                        |
+|  MoonshotAI · kimi.ai                  |
+|  a Kimi Code Console key, accounts out…|
+|                                        |
+|  MoonshotAI · kimi.com                 |
+|  set MOONSHOT_API_KEY                  |
+|                                        |
+|esc to cancel                           |
+|                                        |

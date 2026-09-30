@@ -624,7 +624,7 @@ fn named(sample: &Sample) -> Terms {
 }
 
 /// A store holding a kimi.ai key and an OpenAI sign-in, and nothing else.
-const HELD: &str = r#"{"version":2,"keys":{"moonshot@kimi.ai":"sk-fabricated-kimi-ai-key"},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+const HELD: &str = r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
 
 #[test]
 fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_screen() {

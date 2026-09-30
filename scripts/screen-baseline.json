@@ -117,7 +117,7 @@
       "opened": [
         "Watched::open(\"login-key-pasted\", 80, 24)"
       ],
-      "sha256": "35784859a6c364f2c70361ef99af37f590c2fa5cfc783cdeaf456da4d5b82970"
+      "sha256": "c8ac4336e9f5616f9adcf6661e79551b81195ff758d8be9a2ed719d8a13cd0f1"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_prompt_typed_while_room_is_being_made_is_sent_once_there_is_room.snap",
@@ -314,6 +314,38 @@
       "sha256": "29687c5dd710e38a3f4a54de7a363c16697dff87ed0542d69438580fad073aae"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__login_accounts_signed_in_40.snap",
+      "case": "a_row_holding_its_providers_credential_says_signed_in_at_forty_columns",
+      "opened": [
+        "Watched::open(\"login-signed-in-40\", 40, 30)"
+      ],
+      "sha256": "2282df404845c4cb5b105ba52ab542103be93811aa1fcfac4339670293380582"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__login_keys_signed_in_40.snap",
+      "case": "a_row_holding_its_providers_credential_says_signed_in_at_forty_columns",
+      "opened": [
+        "Watched::open(\"login-signed-in-40\", 40, 30)"
+      ],
+      "sha256": "67e6b3a89149bf7ac18d7bf5b4004d8df55b862375bd3c5cf4b3487374c82b38"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_40.snap",
+      "case": "words_after_login_narrow_the_rows_and_stand_them_under_their_kinds",
+      "opened": [
+        "Watched::open(&format!(\"login-narrowed-{columns}\"), columns, 30)"
+      ],
+      "sha256": "2a911f3bf7f88c76372f1389868fcd50a0d12ea8701c6fcc063072fc84d5501f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_80.snap",
+      "case": "words_after_login_narrow_the_rows_and_stand_them_under_their_kinds",
+      "opened": [
+        "Watched::open(&format!(\"login-narrowed-{columns}\"), columns, 30)"
+      ],
+      "sha256": "23b9e2bd35024f0d33e02978166f5e5936ff79115b5d21ab347efc7592cce142"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",
       "case": "a_version_that_is_no_release_is_refused_naming_the_newest",
       "opened": [
@@ -383,7 +415,7 @@
       "opened": [
         "Watched::open(\"openai-login-methods\", 80, 24)"
       ],
-      "sha256": "74550d45fc697c8f0d5370ea76819dcab1b9cd67567b624b7a5cebf7a3eab093"
+      "sha256": "52581ca3b7196ea2647683323794e18f5a906302938c4532ffc004325ff2ce68"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__picking_a_session_up_asks_before_carrying_it_whole.snap",
@@ -417,15 +449,23 @@
       "opened": [
         "Watched::open(\"login-key-empty\", 80, 24)"
       ],
-      "sha256": "52a2900847ff0d52c6dde56b91b101ee0f9a1b90bbf166bd53cc8edc71f1b604"
+      "sha256": "51c4e6998f14db22da55e1a60024a38b30c76648227d35665be63e1525c87971"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_login_panel_at_40.snap",
+      "case": "the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own",
+      "opened": [
+        "Watched::open(&format!(\"login-ways-{held}-{columns}\"), columns, 24)"
+      ],
+      "sha256": "cd352db23d135a8a524b61097524bd9f1e87b4fbdab3f5ef81a69c07cf82b0d6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own.snap",
       "case": "the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own",
       "opened": [
-        "Watched::open(\"login-ways\", 80, 24)"
+        "Watched::open(&format!(\"login-ways-{held}-{columns}\"), columns, 24)"
       ],
-      "sha256": "83613a8b8b783db03d05cb513dfadfd0dc64be43b049771c7f953e91b2a5a6c1"
+      "sha256": "ced40a442b7bbea55b87f75296b6ec7476da0ff5e618e12056b97ec5b56ed2f8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_provider_panel_reaches_a_turn_without_a_provider_being_named.snap",
