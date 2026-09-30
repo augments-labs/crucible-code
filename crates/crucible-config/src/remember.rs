@@ -504,8 +504,8 @@ fn output(text: &str, file: &str, key: &str, value_of: &str) -> Result<String, C
 /// [`ConfigError::Unspliceable`] when it is JSON that no answer can be written
 /// into without rewriting — which is the moment to tell somebody what to type
 /// rather than to guess at their file. [`ConfigError::Unremovable`] when the
-/// rung chosen for the previous model cannot be lifted out for the same
-/// reason.
+/// rung or the speed chosen for the previous model cannot be lifted out for
+/// the same reason.
 pub fn choosing(
     text: &str,
     file: &str,
@@ -528,7 +528,7 @@ fn named(text: &str, provider: &str) -> Option<String> {
     let value: Value = serde_json::from_str(text).ok()?;
     answered(&value, provider, "model")
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        .map(|named| named.trim().to_owned())
 }
 
 /// Takes `providers.<provider>.<key>` out, where the file has it.
@@ -630,7 +630,8 @@ pub fn hastened(text: &str, file: &str, provider: &str, model: &str) -> Result<S
     }
     let document = crate::document::Document::parse(text, file, crate::document::Origin::User)?;
     let settings = crate::settings::Settings::resolve_checked(vec![document])?;
-    let beside = settings.model(provider) == Some(model);
+    // Trimmed as a run trims the name it asks for.
+    let beside = settings.model(provider).map(str::trim) == Some(model);
     Ok(if beside {
         settings.speed(provider)
     } else {

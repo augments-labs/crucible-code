@@ -270,6 +270,20 @@ fn a_speed_is_read_for_the_model_the_file_names_and_for_no_other() {
 }
 
 #[test]
+fn a_model_named_with_spaces_around_it_is_the_model_a_run_asks() {
+    // A run trims the name it reads, so the speed kept beside it is read for
+    // the same trimmed name, and choosing it again keeps the speed.
+    let padded = r#"{"providers": {"openai": {"model": " gpt-5.6-sol ", "fast": true}}}"#;
+    assert_eq!(
+        hastened(padded, "config.json", "openai", "gpt-5.6-sol").unwrap(),
+        Speed::Fast
+    );
+    let again = choosing(padded, "config.json", "openai", "gpt-5.6-sol")
+        .expect("the model already written");
+    assert_eq!(resolving(&again).speed("openai"), Speed::Fast);
+}
+
+#[test]
 fn a_speed_the_file_spells_as_no_is_standard() {
     let settings = resolving(r#"{"providers": {"openai": {"fast": false}}}"#);
     assert_eq!(settings.speed("openai"), Speed::Standard);
