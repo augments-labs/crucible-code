@@ -369,6 +369,29 @@ else
     fi
 fi
 
+section "every HTTP client is built where its hold was decided"
+# A request leaves through a client, and a hold is handed to a client when it
+# is built. Each file below builds one outside a tests file, and each was
+# decided about: renewal.rs builds the client sign-ins and renewals go
+# through, handed the application's hold; release.rs builds the client
+# provider turns and web posts share, which the application holds, and the
+# release check's own, which reaches GitHub alone; transport/http.rs builds one
+# only inside its test module. One more file is one more decision to take.
+decided="crates/crucible-auth/src/oauth/renewal.rs
+crates/crucible-provider/src/transport/http.rs
+crates/crucible-update/src/release.rs"
+built=$(git ls-files 'crates/*.rs' 'src/*.rs' |
+    grep -v -E '(^|/)tests(\.rs|/)' |
+    xargs grep -l -E '^[[:space:]]*[^/[:space:]].*Http::new\(' | sort)
+if [[ -z "$built" ]]; then
+    printf '    FAIL no file builds an HTTP client; this check measured nothing\n'
+    failed=1
+elif [[ "$built" != "$decided" ]]; then
+    diff <(printf '%s\n' "$decided") <(printf '%s\n' "$built") | sed 's/^/    /'
+    printf '    FAIL the files building an HTTP client changed; decide whether each is held\n'
+    failed=1
+fi
+
 section "accepted screens"
 # The whole-screen suite proves a capture matches its accepted picture. It
 # cannot prove the picture is still the one a reviewer accepted, because a
