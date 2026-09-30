@@ -1776,3 +1776,72 @@ fn a_map_put_to_rest_restores_the_identity_row() {
     let foot = drawn.screen().row(map_row(&drawn)).to_owned();
     assert!(foot.ends_with(" transcript map →"), "{foot:?}");
 }
+
+// A line amended after it was written.
+
+/// What the tests below amend a line with: every span quiet, the words kept.
+fn quieted(rows: &mut [Row]) {
+    for row in rows {
+        *row = Row::new().then(Slot::Quiet, row.text());
+    }
+}
+
+#[test]
+fn a_line_amended_after_it_was_written_is_drawn_amended() {
+    // What stops a row offering once what it offered has gone: the row stays
+    // where it was written, with the words it was drawn with, and no longer
+    // wears the slot that lights it under the pointer.
+    let mut drawn = Drawn::new(40, 8);
+    drawn.commit("before it").unwrap();
+    let at = drawn.render.lines();
+    drawn
+        .render
+        .present(&[Row::new()
+            .then(Slot::Cut, "what was cut")
+            .then(Slot::Quiet, " and the rest")])
+        .unwrap();
+    assert!(drawn.render.record.wears(at, Slot::Cut));
+
+    drawn.render.amend(at, quieted).unwrap();
+
+    assert!(!drawn.render.record.wears(at, Slot::Cut));
+    assert_eq!(drawn.screen().row(1), "what was cut and the rest");
+}
+
+#[test]
+fn a_block_amended_after_it_was_written_stays_amended_at_every_width() {
+    // A block laid out again at each width is laid out again amended: the edit
+    // is kept with what lays it out, not only with the rows it had then.
+    let mut drawn = Drawn::new(40, 8);
+    let at = drawn.render.lines();
+    drawn
+        .responsive(
+            0,
+            Box::new(|_| vec![Row::new().then(Slot::Cut, "a change that was offered")]),
+        )
+        .unwrap();
+    assert!(drawn.render.record.wears(at, Slot::Cut));
+
+    drawn.render.amend(at, quieted).unwrap();
+    assert!(!drawn.render.record.wears(at, Slot::Cut));
+
+    drawn.render.terminal.resize(30, 8);
+    drawn.resized().unwrap();
+
+    assert!(!drawn.render.record.wears(at, Slot::Cut));
+    assert_eq!(drawn.screen().row(0), "a change that was offered");
+}
+
+#[test]
+fn a_line_no_longer_held_is_not_amended_and_nothing_else_is() {
+    let mut drawn = Drawn::new(40, 8);
+    drawn
+        .render
+        .present(&[Row::new().then(Slot::Cut, "offered")])
+        .unwrap();
+    let past = drawn.render.lines();
+
+    drawn.render.amend(past, quieted).unwrap();
+
+    assert!(drawn.render.record.wears(past - 1, Slot::Cut));
+}

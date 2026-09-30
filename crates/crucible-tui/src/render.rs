@@ -1488,6 +1488,28 @@ impl<T: Terminal> Renderer<T> {
         self.record.lines()
     }
 
+    /// Edits the rows record line `at` was written as, now and at every width
+    /// the record is laid out at again.
+    ///
+    /// The one way a row already written says less than it did: an offer to
+    /// expand whose result has gone is taken off the row that made it, and the
+    /// row stays where it was. `at` numbers lines the way [`Renderer::lines`]
+    /// does; a line no longer held, and one not written yet, is left alone.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalError::Io`] if the terminal could not be redrawn.
+    pub fn amend(&mut self, at: usize, edit: fn(&mut [Row])) -> Result<(), TerminalError> {
+        if !self.terminal.is_terminal() {
+            // Redirected output was written through as it arrived; there is
+            // nothing on a screen to take anything back from.
+            return Ok(());
+        }
+
+        self.record.amend(at, edit);
+        self.draw()
+    }
+
     /// Hangs every transcript row written since `from` under one result mark.
     ///
     /// The first row receives `glyphs.hangs()` and the rest align beneath its
