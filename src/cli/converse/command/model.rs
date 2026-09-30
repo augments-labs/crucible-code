@@ -159,7 +159,7 @@ pub(super) fn run<T: Terminal>(
             provider: conversation.serving(),
             model: runner.model(),
             effort: runner.effort().map(Effort::as_str),
-            fast: (runner.provider().fast(runner.model()), runner.speed()),
+            pace: super::Pace::of(runner),
         };
         let mut on = None;
         loop {
@@ -478,7 +478,7 @@ fn stood<T: Terminal>(
                     // The model in force by the provider set up for it, which
                     // knows the credential; the rest by the vendor's address.
                     let form = if now {
-                        current.fast.0
+                        current.pace.form
                     } else {
                         (one.provider.fast)(one.model.name)
                     };
@@ -766,7 +766,7 @@ fn titled(current: Asked<'_>, glyphs: Glyphs) -> String {
                 current.provider.unwrap_or_default(),
                 name,
                 current.effort,
-                None,
+                current.pace.served.then_some("fast"),
                 glyphs
             )
         ),

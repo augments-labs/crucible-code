@@ -1314,7 +1314,7 @@ impl Turn<'_, '_> {
             provider: self.serving,
             model: &model,
             effort: self.says.effort,
-            fast: self.says.fast,
+            pace: self.says.pace,
         };
         let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
             self.drain(renderer);

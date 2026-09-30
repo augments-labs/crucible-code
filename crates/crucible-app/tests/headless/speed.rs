@@ -3,7 +3,7 @@
 
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::speed::{self as speeds, Hastened};
-use crucible_models::{Cost, FastForm, Speed};
+use crucible_models::{Cost, FastForm, Served, Speed};
 
 use super::*;
 
@@ -12,6 +12,8 @@ use super::*;
 struct Fastened {
     form: FastForm,
     refuses: bool,
+    /// What each answer says about the speed it was served at.
+    serves: Served,
     speeds: Arc<Mutex<Vec<Speed>>>,
     scope: CredentialScopeId,
 }
@@ -21,6 +23,7 @@ impl Fastened {
         Self {
             form,
             refuses: false,
+            serves: Served::Unsaid,
             speeds: Arc::default(),
             scope: CredentialScopeId::new(),
         }
@@ -91,8 +94,27 @@ impl Provider for Fastened {
                     message: "your plan does not include fast".into(),
                 });
             }
-            Ok(Box::new(Reading(saying("answered").into_iter())) as Box<dyn DeltaStream>)
+            Ok(Box::new(Answered {
+                deltas: Reading(saying("answered").into_iter()),
+                served: self.serves,
+            }) as Box<dyn DeltaStream>)
         })
+    }
+}
+
+/// One answer, and the speed it says it was served at.
+struct Answered {
+    deltas: Reading,
+    served: Served,
+}
+
+impl DeltaStream for Answered {
+    fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
+        self.deltas.next()
+    }
+
+    fn served(&self) -> Served {
+        self.served
     }
 }
 
@@ -356,5 +378,65 @@ fn a_stored_key_forgotten_while_the_environment_still_serves_turns_fast_off() ->
     );
     assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
     assert_eq!(conversation.runner().speed(), Speed::Standard);
+    Ok(())
+}
+
+/// Every theme name a host in these tests reads: none.
+fn reads(_: &str) -> bool {
+    false
+}
+
+/// The release notes a host in these tests has: none asked for here.
+fn notes(
+    _: Option<&str>,
+) -> Result<crucible_client_api::NotesOutcome, crucible_client_api::Refusal> {
+    Err(crucible_client_api::ErrorCode::InvalidArgument.into())
+}
+
+#[test]
+fn a_client_with_no_terminal_sets_the_speed_and_reads_what_was_served() -> Result<(), Failed> {
+    use crucible_app::client;
+    use crucible_client_api::{
+        Capabilities, Command, Correlation, Outcome, Pace, Request, Response, Snapshot,
+        SpeedOutcome,
+    };
+
+    let tree = Tree::new("speed-client")?;
+    let provider = Fastened {
+        serves: Served::Fast,
+        ..Fastened::new(FIELD)
+    };
+    let (mut conversation, standing) = fastened(&tree, provider)?;
+    let (workspace, sessions) = (tree.workspace()?, tree.sessions());
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        notes,
+    };
+    let sent = Request::new(
+        Capabilities::every(),
+        Correlation::new(1),
+        Command::SetSpeed(Pace::Fast),
+    );
+    let request = Request::decode(&sent.encode()?).map_err(|refused| refused.refusal)?;
+
+    let performed = runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
+
+    let answered = Response::decode(&performed.response(&request).encode()?)?;
+    assert_eq!(
+        answered.outcome,
+        Outcome::Speed(SpeedOutcome::Taken { unwritten: None })
+    );
+    let asked = Snapshot::decode(&client::snapshot(&conversation).encode()?)?;
+    assert_eq!((asked.speed, asked.served), (Pace::Fast, None));
+
+    turn(&mut conversation, "go")?;
+    let served = Snapshot::decode(&client::snapshot(&conversation).encode()?)?;
+    assert_eq!(
+        (served.speed, served.served),
+        (Pace::Fast, Some(Pace::Fast))
+    );
     Ok(())
 }

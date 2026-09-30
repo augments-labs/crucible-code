@@ -318,10 +318,7 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
                         provider: Some(served.name),
                         model: model.name,
                         effort: effort.map(Effort::as_str),
-                        fast: (
-                            crucible_models::FastForm::None,
-                            crucible_models::Speed::Standard,
-                        ),
+                        pace: super::super::Pace::default(),
                     };
                     assert_eq!(
                         titled(current, glyphs),
@@ -460,10 +457,7 @@ fn the_shelf_stood_while_a_turn_runs_names_the_rung_in_force() {
         provider: Some("anthropic"),
         model: "claude-sonnet-5",
         effort: Some("high"),
-        fast: (
-            crucible_models::FastForm::None,
-            crucible_models::Speed::Standard,
-        ),
+        pace: super::super::Pace::default(),
     };
 
     assert_eq!(
@@ -489,10 +483,7 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
         provider: None,
         model: "claude-sonnet-5",
         effort: Some("high"),
-        fast: (
-            crucible_models::FastForm::None,
-            crucible_models::Speed::Standard,
-        ),
+        pace: super::super::Pace::default(),
     };
 
     assert_eq!(
@@ -529,5 +520,27 @@ fn a_row_says_no_rung_before_it_says_fast_and_fast_for_either_kind_of_form() {
     assert_eq!(
         super::note(&[], crucible_models::FastForm::Field(cost)),
         "no rung"
+    );
+}
+
+#[test]
+fn the_shelf_title_says_fast_only_after_an_answer_served_fast() {
+    let asked = |served| Asked {
+        provider: Some("openai"),
+        model: "gpt-6-astra",
+        effort: Some("high"),
+        pace: super::super::Pace {
+            served,
+            ..super::super::Pace::default()
+        },
+    };
+
+    assert_eq!(
+        titled(asked(true), Glyphs::Unicode),
+        "now  openai · gpt-6-astra · high · fast"
+    );
+    assert_eq!(
+        titled(asked(false), Glyphs::Unicode),
+        "now  openai · gpt-6-astra · high"
     );
 }

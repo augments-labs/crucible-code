@@ -501,8 +501,32 @@ pub(super) struct Asked<'a> {
     pub(super) model: &'a str,
     /// The rung it is asked on, where one is in force.
     pub(super) effort: Option<&'a str>,
-    /// How the model is asked to answer fast, and the speed it is asked at.
-    pub(super) fast: (FastForm, Speed),
+    /// How fast the model is asked to answer, and was last served.
+    pub(super) pace: Pace,
+}
+
+/// How the model in force is asked to answer fast, the speed it is asked at,
+/// and whether the last answer was served fast: read off the runner while it
+/// is this side's, for what is drawn while it is away.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Pace {
+    /// The model's fast form, as its provider answers.
+    pub(super) form: FastForm,
+    /// The speed it is asked at.
+    pub(super) speed: Speed,
+    /// Whether the last answer was served fast.
+    pub(super) served: bool,
+}
+
+impl Pace {
+    /// The pace of the model `runner` asks.
+    pub(super) fn of(runner: &crucible_runner::Runner) -> Self {
+        Self {
+            form: runner.provider().fast(runner.model()),
+            speed: runner.speed(),
+            served: runner.served().fast(),
+        }
+    }
 }
 
 pub(super) fn deferred<T: Terminal>(

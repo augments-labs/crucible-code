@@ -57,7 +57,7 @@ pub(super) fn run<T: Terminal>(
         provider: Some(provider),
         model: runner.model(),
         effort: runner.effort().map(Effort::as_str),
-        fast: (runner.provider().fast(runner.model()), runner.speed()),
+        pace: super::Pace::of(runner),
     };
     let glyphs = terms.style().glyphs();
     let cost = match offered(asked, glyphs) {
@@ -87,7 +87,10 @@ pub(super) fn run<T: Terminal>(
         }
     }
 
-    let row = Row::new().then(Slot::Plain, clip(asked.fast.1.as_str(), renderer.columns()));
+    let row = Row::new().then(
+        Slot::Plain,
+        clip(asked.pace.speed.as_str(), renderer.columns()),
+    );
     renderer.present(&[row])?;
     listing(renderer, cost, glyphs)
 }
@@ -185,7 +188,7 @@ pub(super) fn taken<T: Terminal>(
 /// What fast costs for the model `asked` is over, or the line that says why
 /// there is nothing to switch.
 fn offered(asked: Asked<'_>, glyphs: Glyphs) -> Result<Cost, String> {
-    match asked.fast.0 {
+    match asked.pace.form {
         FastForm::Field(cost) => Ok(cost),
         form @ (FastForm::None | FastForm::Own(_)) => Err(unoffered(
             asked.provider.unwrap_or_default(),
@@ -234,7 +237,7 @@ fn chosen<T: Terminal>(
         said: cost.caveat,
         shown: &shown,
         // On the speed in force, so Enter changes nothing by accident.
-        chosen: usize::from(asked.fast.1 == Speed::Fast),
+        chosen: usize::from(asked.pace.speed == Speed::Fast),
         footer: &footer,
     };
 

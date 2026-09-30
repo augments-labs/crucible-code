@@ -195,7 +195,7 @@ pub(super) fn writing<'a>(
         model: says.model.as_str(),
         provider: says.provider,
         effort: says.effort,
-        speed: says.served.then_some("fast"),
+        speed: says.pace.served.then_some("fast"),
         asking: says.asking.as_deref(),
         commands: CommandCount::new(says.running, running_pointed),
         room,
