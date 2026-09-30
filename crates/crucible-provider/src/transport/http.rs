@@ -91,7 +91,7 @@ impl HttpTurns {
                 response
                     .headers()
                     .get(SERVED_TIER)
-                    .map(|value| value.to_str().unwrap_or_default()),
+                    .and_then(|value| value.to_str().ok()),
             );
             PostResponse::network(response.status().as_u16(), response.into_body()).with_tier(tier)
         })
@@ -337,6 +337,29 @@ mod tests {
         let mut said = Vec::new();
         body.read_to_end(&mut said).await.unwrap();
         assert_eq!(said, expected.as_bytes());
+    }
+
+    /// The tier a vendor says served a request arrives in a response header,
+    /// and is kept as the one byte a provider reads: priority, another tier,
+    /// or nothing said, which a value that is not text is too.
+    #[tokio::test]
+    async fn the_served_tier_header_is_read_off_the_response_as_it_arrives() {
+        let transport = shared();
+        for (header, tier) in [
+            (Some("priority"), Tier::Priority),
+            (Some("standard"), Tier::Other),
+            (Some("prïority"), Tier::Unsaid),
+            (None, Tier::Unsaid),
+        ] {
+            let line =
+                header.map_or_else(String::new, |value| format!("{SERVED_TIER}: {value}\r\n"));
+            let url = once(format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n{line}content-length: 0\r\n\r\n"
+            ));
+            let response = post(&transport, &url, &[], "{}").await.unwrap();
+
+            assert_eq!(response.tier(), tier, "{header:?}");
+        }
     }
 
     /// The pool is the client's, and every transport the application builds for
