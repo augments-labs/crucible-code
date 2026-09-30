@@ -10,7 +10,7 @@
 //! Nothing here opens a file. This crate says what a document may hold; the
 //! wiring above it reads and writes.
 
-use crucible_models::Effort;
+use crucible_models::{Effort, Speed};
 use crucible_tools::Minted;
 use serde_json::Value;
 
@@ -512,12 +512,12 @@ pub fn choosing(
     provider: &str,
     model: &str,
 ) -> Result<String, ConfigError> {
-    let written = beside(text, file, provider, "model", model)?;
-    without_effort(&written, file, provider)
+    let written = beside(text, file, provider, "model", &Value::from(model))?;
+    without(&written, file, provider, "effort")
 }
 
-/// Removes a rung chosen for the previous model.
-fn without_effort(text: &str, file: &str, provider: &str) -> Result<String, ConfigError> {
+/// Takes `providers.<provider>.<key>` out, where the file has it.
+fn without(text: &str, file: &str, provider: &str, key: &str) -> Result<String, ConfigError> {
     let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
         file: file.into(),
         line: source.line(),
@@ -527,17 +527,17 @@ fn without_effort(text: &str, file: &str, provider: &str) -> Result<String, Conf
     let Some(chosen) = value.get("providers").and_then(|all| all.get(provider)) else {
         return Ok(text.to_owned());
     };
-    if chosen.get("effort").is_none() {
+    if chosen.get(key).is_none() {
         return Ok(text.to_owned());
     }
     let refuse = || ConfigError::Unremovable {
         file: file.into(),
-        at: format!("providers.{provider}.effort").into(),
+        at: format!("providers.{provider}.{key}").into(),
     };
     let root = splice::root(text).ok_or_else(refuse)?;
     let providers = splice::member(text, root, "providers").ok_or_else(refuse)?;
     let provider = splice::member(text, providers, provider).ok_or_else(refuse)?;
-    splice::remove(text, provider, "effort").ok_or_else(refuse)
+    splice::remove(text, provider, key).ok_or_else(refuse)
 }
 
 /// The text of a configuration file that asks `provider` to think this hard.
@@ -557,7 +557,37 @@ pub fn thinking(
     provider: &str,
     effort: Effort,
 ) -> Result<String, ConfigError> {
-    beside(text, file, provider, "effort", effort.as_str())
+    beside(
+        text,
+        file,
+        provider,
+        "effort",
+        &Value::from(effort.as_str()),
+    )
+}
+
+/// The text of a configuration file that asks `provider` for this speed.
+///
+/// Fast is written as `true` beside the provider's model; standard is the key
+/// taken out, since a file that says nothing asks for standard, and a file the
+/// previous release can read again is worth more than one that says `false`.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] and [`ConfigError::Unspliceable`], for the same
+/// reasons as [`choosing`]; [`ConfigError::Unremovable`] where a speed written
+/// cannot be lifted out without rewriting.
+pub fn hastening(
+    text: &str,
+    file: &str,
+    provider: &str,
+    speed: Speed,
+) -> Result<String, ConfigError> {
+    match speed {
+        Speed::Fast => beside(text, file, provider, "fast", &Value::Bool(true)),
+        Speed::Standard if text.trim().is_empty() => Ok(text.to_owned()),
+        Speed::Standard => without(text, file, provider, "fast"),
+    }
 }
 
 /// The text of a configuration file where `providers.<provider>.<key>` says
@@ -576,12 +606,12 @@ fn beside(
     file: &str,
     provider: &str,
     key: &str,
-    answer: &str,
+    answer: &Value,
 ) -> Result<String, ConfigError> {
     // Both as JSON reads them. A provider name is somebody else's string, and
     // one holding a quote written raw would end the document.
     let named = Value::String(provider.to_owned()).to_string();
-    let written = Value::String(answer.to_owned()).to_string();
+    let written = answer.to_string();
 
     if text.trim().is_empty() {
         return Ok(CHOSEN
@@ -647,8 +677,8 @@ fn beside(
 }
 
 /// The answer a document already gives under this provider's key.
-fn answered<'a>(value: &'a Value, provider: &str, key: &str) -> Option<&'a str> {
-    value.get("providers")?.get(provider)?.get(key)?.as_str()
+fn answered<'a>(value: &'a Value, provider: &str, key: &str) -> Option<&'a Value> {
+    value.get("providers")?.get(provider)?.get(key)
 }
 
 /// Whether this rule is one the file already states.

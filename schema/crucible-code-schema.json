@@ -666,6 +666,10 @@
             ],
             "type": "string"
           },
+          "fast": {
+            "description": "Whether to ask this provider's model in force to answer fast, where its vendor serves a fast form at a higher price. Left off, standard speed",
+            "type": "boolean"
+          },
           "model": {
             "description": "The model to ask when --model does not name one",
             "type": "string"

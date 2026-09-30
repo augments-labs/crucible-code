@@ -1,5 +1,6 @@
 //! Splicing a durable rule into a user-owned configuration document.
 
+use crucible_models::Speed;
 use crucible_tools::{Ask, Command, Mode, Remember, Sensitivity, Settled, Verdict, narrowest};
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 
@@ -173,6 +174,66 @@ fn a_rung_chosen_again_is_written_over_rather_than_written_twice() {
 
     assert_eq!(resolving(&written).effort("moonshot"), Some(Effort::Xhigh));
     assert_eq!(written.matches("effort").count(), 1, "{written}");
+}
+
+#[test]
+fn fast_is_written_beside_the_model_and_standard_takes_it_out() {
+    let chosen = choosing("", "config.json", "openai", "gpt-5.6-sol")
+        .expect("an empty file is one to write whole");
+
+    let fast = hastening(&chosen, "config.json", "openai", Speed::Fast)
+        .expect("a provider already written is one to write beside");
+    assert_eq!(resolving(&fast).speed("openai"), Speed::Fast);
+    assert_eq!(resolving(&fast).model("openai"), Some("gpt-5.6-sol"));
+    assert!(fast.contains("\"fast\": true"), "{fast}");
+
+    let again = hastening(&fast, "config.json", "openai", Speed::Fast)
+        .expect("a speed already there is one to leave");
+    assert_eq!(again, fast);
+
+    let standard = hastening(&fast, "config.json", "openai", Speed::Standard)
+        .expect("a speed written is one to take out");
+    assert_eq!(resolving(&standard).speed("openai"), Speed::Standard);
+    assert!(!standard.contains("\"fast\""), "{standard}");
+    assert_eq!(standard, chosen);
+}
+
+#[test]
+fn standard_asked_of_a_file_with_no_speed_changes_nothing() {
+    for text in ["", "{\n  \"theme\": \"dark\"\n}\n"] {
+        let written = hastening(text, "config.json", "openai", Speed::Standard)
+            .expect("nothing to take out is nothing to refuse");
+        assert_eq!(written, text);
+    }
+}
+
+#[test]
+fn a_fast_file_asked_for_by_nobody_else_is_one_provider_with_one_key() {
+    let written = hastening("", "config.json", "anthropic", Speed::Fast)
+        .expect("an empty file is one to write whole");
+
+    assert_eq!(resolving(&written).speed("anthropic"), Speed::Fast);
+    assert_eq!(resolving(&written).speed("openai"), Speed::Standard);
+}
+
+#[test]
+fn choosing_a_model_leaves_the_speed_for_its_caller_to_decide() {
+    // The rung goes with every choice of a model; the speed goes only with a
+    // choice of another one, and only the caller knows which model is in force.
+    let chosen = choosing("", "config.json", "openai", "gpt-5.6-sol")
+        .expect("an empty file is one to write whole");
+    let fast = hastening(&chosen, "config.json", "openai", Speed::Fast)
+        .expect("a provider already written is one to write beside");
+    let written = choosing(&fast, "config.json", "openai", "gpt-5.6-luna")
+        .expect("a model already written is one to write over");
+
+    assert_eq!(resolving(&written).speed("openai"), Speed::Fast);
+}
+
+#[test]
+fn a_speed_the_file_spells_as_no_is_standard() {
+    let settings = resolving(r#"{"providers": {"openai": {"fast": false}}}"#);
+    assert_eq!(settings.speed("openai"), Speed::Standard);
 }
 
 #[test]

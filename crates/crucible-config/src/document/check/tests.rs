@@ -313,6 +313,19 @@ fn a_provider_can_still_be_chosen_from_the_user_file() {
 }
 
 #[test]
+fn a_checked_in_file_cannot_choose_to_pay_for_a_faster_answer() {
+    // Fast costs more on every request it is asked for, and a repository that
+    // could turn it on would be spending the money of everyone who opens it.
+    for read in [shared as fn(&str) -> Result<Document, ConfigError>, local] {
+        let err = read(r#"{"providers": {"openai": {"fast": true}}}"#).unwrap_err();
+
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(err.to_string().contains("providers.openai.fast"), "{err}");
+    }
+    mine(r#"{"providers": {"openai": {"fast": true}}}"#).unwrap();
+}
+
+#[test]
 fn a_provider_can_still_be_pointed_somewhere_from_the_user_file() {
     // The case the setting exists for: a gateway one person reaches, written
     // where only that person's machine reads it.
