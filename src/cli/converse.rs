@@ -1551,9 +1551,9 @@ fn sent(
                 Did::Reported
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
-            // Not reached from here: the route is asked about on the drawing
-            // thread before the work is sent, a yes is written down there,
-            // and nothing on the worker takes one out.
+            // Not reached from here: every route holding the send is asked
+            // about on the drawing thread before the work is sent, each yes
+            // is written down there, and nothing on the worker takes one out.
             Ended::Warned(_) | Ended::Unrecorded(_) => Did::Unsent(ErrorCode::Abandoned.into()),
         };
 

@@ -184,30 +184,35 @@ pub(super) fn held<T: Terminal>(
     let Some(provider) = conversation.serving() else {
         return Ok(false);
     };
-    let Some(warned) = terms
-        .consent
-        .unanswered(provider, conversation.runner().model())
-    else {
-        return Ok(false);
-    };
-    // A loop reading lines rather than keys has nobody to put a panel to,
-    // and neither has one whose raw mode never came up.
-    if !held.answers.keys {
-        return Err(Fatal::Unanswered(
-            format!("{}: {} {ELSEWHERE}", warned.shown, warned.warning.sentence).into(),
-        ));
-    }
-
-    let said = match ask(renderer, terms.style(), &warned, Put::Send)? {
-        Answer::Yes => match recorded(terms, &warned) {
-            Ok(()) => return Ok(false),
-            Err(said) => said,
-        },
-        // Room to be made has no message to give back.
-        Answer::Back if matches!(work, Work::Room(_)) => UNSENT.to_owned(),
-        Answer::Cramped if matches!(work, Work::Room(_)) => CRAMPED_ROOM.to_owned(),
-        Answer::Back => KEPT.to_owned(),
-        Answer::Cramped => CRAMPED_SEND.to_owned(),
+    // Every route that holds the send is asked about in turn: two warned
+    // routes at one origin each keep the request back until each has its
+    // yes. A yes is written down before the next question, so a route comes
+    // back only where its yes could not be, and that is said and stops here.
+    let said = loop {
+        let Some(warned) = terms
+            .consent
+            .unanswered(provider, conversation.runner().model())
+        else {
+            return Ok(false);
+        };
+        // A loop reading lines rather than keys has nobody to put a panel
+        // to, and neither has one whose raw mode never came up.
+        if !held.answers.keys {
+            return Err(Fatal::Unanswered(
+                format!("{}: {} {ELSEWHERE}", warned.shown, warned.warning.sentence).into(),
+            ));
+        }
+        break match ask(renderer, terms.style(), &warned, Put::Send)? {
+            Answer::Yes => match recorded(terms, &warned) {
+                Ok(()) => continue,
+                Err(said) => said,
+            },
+            // Room to be made has no message to give back.
+            Answer::Back if matches!(work, Work::Room(_)) => UNSENT.to_owned(),
+            Answer::Cramped if matches!(work, Work::Room(_)) => CRAMPED_ROOM.to_owned(),
+            Answer::Back => KEPT.to_owned(),
+            Answer::Cramped => CRAMPED_SEND.to_owned(),
+        };
     };
     if let Work::Turn(prompt, _) = work {
         held.editor.put(prompt);
@@ -228,9 +233,9 @@ pub(super) enum Chosen {
     Stop(String),
 }
 
-/// Asks about the route a choice of `model` on `provider` would send on,
-/// where it has no yes, before the choice is taken. A yes given here is
-/// written down at once.
+/// Asks about each route a choice of `model` on `provider` would send on
+/// that has no yes, before the choice is taken. A yes given here is written
+/// down at once.
 ///
 /// With no keys to read the choice is taken unasked: choosing sends nothing,
 /// and the send that would is where a run with no terminal ends.
@@ -245,22 +250,22 @@ pub(super) fn choosing<T: Terminal>(
     keys: bool,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Chosen, Fatal> {
-    let Some(warned) = terms.consent.unanswered(provider, model) else {
-        return Ok(Chosen::Take);
-    };
     if !keys {
         return Ok(Chosen::Take);
     }
-    Ok(
+    // Each route that would hold the choice's sends, in turn, as at a send.
+    while let Some(warned) = terms.consent.unanswered(provider, model) {
         match ask_while(renderer, terms.style(), &warned, Put::Choice, while_waiting)? {
-            Answer::Yes => match recorded(terms, &warned) {
-                Ok(()) => Chosen::Take,
-                Err(said) => Chosen::Stop(said),
-            },
-            Answer::Back => Chosen::Back,
-            Answer::Cramped => Chosen::Stop(CRAMPED_CHOICE.to_owned()),
-        },
-    )
+            Answer::Yes => {
+                if let Err(said) = recorded(terms, &warned) {
+                    return Ok(Chosen::Stop(said));
+                }
+            }
+            Answer::Back => return Ok(Chosen::Back),
+            Answer::Cramped => return Ok(Chosen::Stop(CRAMPED_CHOICE.to_owned())),
+        }
+    }
+    Ok(Chosen::Take)
 }
 
 /// Writes down the yes given to `route` at a `/login` choice, now that its

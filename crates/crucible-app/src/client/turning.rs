@@ -57,7 +57,11 @@ pub async fn turn(
     // asked the same way: a route whose vendor uses what is sent, with no yes
     // to it, is put to the front as a pending action, and a yes given there is
     // written into the user's own file before the turn goes.
-    if matches!(request.command(), Command::Prompt(_) | Command::Compact)
+    //
+    // Every route that holds the send is put in turn: two warned routes at
+    // one origin each keep the request back until each has its yes. A yes is
+    // written down before the next is put, so none comes back.
+    while matches!(request.command(), Command::Prompt(_) | Command::Compact)
         && let Some(warned) = unanswered(conversation)
     {
         let accepted = super::deciding::warned(request.capabilities(), front, &warned).await;

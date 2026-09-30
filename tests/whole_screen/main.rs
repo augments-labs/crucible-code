@@ -2834,6 +2834,77 @@ fn a_provider_logged_out_while_another_answers_is_asked_about_again_at_model() {
     );
 }
 
+/// Two routes with no yes hold one origin: a sign-in's, and the one a
+/// `baseUrl` there answers for. Each is asked about before the send, and the
+/// send goes once both have their yes.
+#[test]
+fn a_send_two_routes_hold_asks_about_each_before_it_goes() {
+    let proxy = warning::Proxy::new();
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-two-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store = r#"{"version":2,"keys":{},"subscriptions":{"moonshot":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+    let document = concat!(
+        "{\n",
+        "  \"sandbox\": {\"enabled\": false},\n",
+        "  \"updates\": {\"check\": \"never\"},\n",
+        "  \"provider\": \"anthropic\",\n",
+        "  \"providers\": {\"anthropic\": {\"model\": \"claude-sonnet-5\", ",
+        "\"baseUrl\": \"https://api.kimi.com/coding/v1\"}}\n",
+        "}\n"
+    );
+    let mut window = Watched::launched(
+        "warning-two",
+        80,
+        30,
+        &watched::Launch {
+            document,
+            env: &[
+                ("ANTHROPIC_API_KEY", "fabricated-anthropic-key-never-sent"),
+                ("HTTPS_PROXY", &proxy.address),
+            ],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+
+    window.types_until("hello\r", "Use it anyway");
+    let first = window.picture();
+    window.types("\r");
+    let reached = proxy.reached(1);
+    let second = window.picture();
+    assert!(second.contains("Use it anyway"), "{first}\n{second}");
+    assert_ne!(first, second);
+    assert_eq!(reached, Vec::<String>::new(), "sent before the second yes");
+
+    window.types("\r");
+    let reached = proxy.reached(1);
+    assert!(
+        !reached.is_empty() && reached.iter().all(|host| host == "api.kimi.com:443"),
+        "{reached:?} {}",
+        window.picture()
+    );
+    let said = warning::said(&window);
+    assert!(
+        said.contains("key:moonshot") && said.contains("subscription:moonshot"),
+        "{said}"
+    );
+}
+
 #[test]
 fn a_base_url_crucible_recognises_is_asked_about_and_any_other_is_sent_to() {
     for (at, base, shown) in [
