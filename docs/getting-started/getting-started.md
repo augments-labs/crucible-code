@@ -128,7 +128,9 @@ no account route.
 
 Words after `/login` narrow the rows: `/login openai` shows OpenAI's two,
 `/login kimi.ai` the two on kimi.ai, and words that leave one row open it at
-once. `/login anthropic` and `/login google` open the key box directly. Google also
+once. `/login anthropic` opens the key box directly, and `/login google` does
+once you have answered whether Google may use what is sent on unpaid quota
+(see [content use](../providers/content-use.md)). Google also
 reads `GEMINI_API_KEY`; for example, select `google/gemini-3.8-flash` in `/model`
 after exporting that variable or storing a key. The key goes into its own
 labelled box, which takes a paste as readily as typing and draws a dot per
@@ -137,6 +139,13 @@ Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
 read. The session asks that provider from the next turn on; there is nothing to
 restart. Authentication never chooses a model or effort; both stay explicit
 choices, and `/model` is where they are asked together.
+
+Some vendors say they may use what you send to train or improve their models:
+a ChatGPT plan, Kimi Code and the Kimi open platform, and a Gemini key on unpaid
+quota. Before the first message on one of those goes, crucible asks you once,
+with the vendor's words and where they are written; **Use it anyway** sends it
+and is remembered, **Go back** keeps the message and sends nothing. [Content
+use](../providers/content-use.md) lists each route and what its vendor says.
 
 You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:

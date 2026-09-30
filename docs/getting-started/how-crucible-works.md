@@ -13,6 +13,10 @@ anything, and that answer is the one you read. One request and the answer to
 it is what this page calls a round; the tools that answer asks for run before
 the next one.
 
+Before the first round on a route whose vendor says it may use what is sent to
+train or improve its models, crucible asks you once, and nothing leaves until
+you say yes: see [content use](../providers/content-use.md).
+
 ## One round
 
 Every round sends the model the whole conversation so far, from your first

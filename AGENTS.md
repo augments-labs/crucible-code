@@ -80,6 +80,9 @@ invariants. Update it when the implementation makes a sentence false.
   outgoing representations for response redaction. A stored credential's name
   is its `/login` row (the bare provider name for a row 0.43.3 knows, else
   `provider@site`) and never changes once shipped.
+- A route whose vendor uses what is sent is sent nothing before a yes: every
+  HTTP client built outside tests takes `crucible_app::content_use`'s hold, and
+  `scripts/sh/repo-checks.sh` lists each file that builds one.
 - Treat model output and checked-out files as hostile input. Validate path
   reach through `Workspace`; process execution is the explicit exception and
   must be classified by what it will run.

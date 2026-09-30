@@ -10,6 +10,13 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **Crucible asks once before sending to a vendor that may train on it.** A
+  ChatGPT plan, Kimi Code, the Kimi open platform and a Gemini key on unpaid
+  quota stand the vendor's own words before the first message, sign-in or
+  renewal goes, and nothing leaves until you choose Use it anyway, which is kept
+  under `contentUse.accepted` in your own configuration file. Before rolling
+  back to 0.43.3, delete the `contentUse` block from that file, or 0.43.3 stops
+  on it.
 - **Kimi Code signs in on kimi.ai as well as kimi.com.** `/login` has a row for
   each Kimi site, for a sign-in and for a Kimi Code Console key, and each
   credential goes only to its own site's hosts. Rolling back to 0.43.3 keeps
