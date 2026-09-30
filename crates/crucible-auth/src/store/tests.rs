@@ -559,3 +559,48 @@ fn a_second_crucible_writing_at_the_same_time_loses_nobody_a_login() {
         "a write that read the file before another finished would have dropped one"
     );
 }
+
+/// What is on the disk, as text. Every value in these tests is fabricated.
+fn on_disk(scratch: &Scratch) -> String {
+    fs::read_to_string(scratch.home().join(FILE)).expect("a store on the disk")
+}
+
+#[test]
+fn a_write_keeps_every_name_this_build_does_not_serve_and_drops_a_field_it_does_not_know() {
+    let scratch = Scratch::new("kept-names");
+    let store = scratch.holding(
+        r#"{"version":2,"keys":{"qwen@coding-plan.aliyun.com":"fabricated-plan-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{"moonshot@kimi.ai":"00000000-0000-4000-8000-000000000000"},"rows":{"added":"field"}}"#,
+    );
+
+    let read = store.read();
+    // A file this test wrote with the default mode is tightened on its first
+    // read, and the store says so once. Nothing else may be said.
+    assert!(
+        read.trouble().is_none_or(|said| said.contains("tightened")),
+        "the store was read whole"
+    );
+    assert_eq!(read.providers().count(), 2, "both names were read");
+
+    store.keep("openai", "fabricated-openai-key").unwrap();
+    let text = on_disk(&scratch);
+    assert!(text.contains(r#""qwen@coding-plan.aliyun.com":"fabricated-plan-key""#));
+    assert!(text.contains(r#""moonshot@kimi.ai":{"access_token":"fabricated-access""#));
+    assert!(text.contains("00000000-0000-4000-8000-000000000000"));
+    assert!(text.contains(r#""openai":"fabricated-openai-key""#));
+    assert!(text.contains(r#""version":2"#));
+    assert!(!text.contains("rows"), "a field this build does not know is gone");
+
+    // A key for the provider whose other row is held: 0.43.3 stores it
+    // beside that row rather than in its place.
+    store.keep("moonshot", "fabricated-moonshot-key").unwrap();
+    let text = on_disk(&scratch);
+    assert!(text.contains(r#""moonshot":"fabricated-moonshot-key""#));
+    assert!(text.contains(r#""moonshot@kimi.ai":{"access_token":"fabricated-access""#));
+    assert!(store.read().trouble().is_none());
+
+    // And forgetting the provider leaves the other name where it was.
+    assert!(store.forget("moonshot").unwrap());
+    let text = on_disk(&scratch);
+    assert!(!text.contains("fabricated-moonshot-key"));
+    assert!(text.contains(r#""moonshot@kimi.ai""#));
+}
