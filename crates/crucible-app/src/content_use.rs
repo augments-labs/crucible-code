@@ -257,45 +257,76 @@ pub fn model_route(provider: &str, model: &str) -> String {
 ///
 /// Recognised when its scheme is the documented address's, its host is that
 /// address's without regard to case, to a trailing dot or to the default port
-/// written out, and its path is that address's path or lies under it by
-/// whole segments.
+/// written out, and its path, as a server would read it, is that address's
+/// path or lies under it by whole segments. A path a server could read two
+/// ways is recognised where either reading is documented: whether a
+/// server decodes escapes before or after it resolves `.` and `..`, the route
+/// is asked about.
 #[must_use]
 pub fn recognised(base_url: &str) -> Option<&'static str> {
     let origin = Origin::of(base_url)?;
-    let path = segments(base_url);
+    let read = readings(base_url);
     RECOGNISED
         .iter()
         .find(|one| {
-            Origin::of(one.address).is_some_and(|documented| documented == origin)
-                && path.starts_with(&segments(one.address))
+            let documented = readings(one.address);
+            Origin::of(one.address).is_some_and(|at| at == origin)
+                && read.iter().any(|path| {
+                    documented
+                        .first()
+                        .is_some_and(|documented| path.starts_with(documented))
+                })
         })
         .map(|one| one.route)
 }
 
-/// The segments of `url`'s path as the path it names: empty ones left out, so
-/// a trailing slash says nothing, each one percent-decoded, and dot segments
-/// resolved, so another spelling of a documented path is that path.
-fn segments(url: &str) -> Vec<String> {
+/// The ways a server can read `url`'s path, each as its named segments: dot
+/// segments resolved over the path as written, with empty segments kept
+/// while they are (`/v1//../x` is `/v1/x`), then each segment
+/// percent-decoded; and every segment decoded first, a decoded `/` a
+/// separator, then resolved. Empty segments are left out of both once
+/// resolved, so a trailing slash says nothing.
+fn readings(url: &str) -> [Vec<String>; 2] {
     let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let path = after_scheme
         .find('/')
         .and_then(|at| after_scheme.get(at..))
         .unwrap_or_default();
     let path = path.split(['?', '#']).next().unwrap_or_default();
+    let written = resolved(path.split('/').map(str::to_owned))
+        .iter()
+        .map(|segment| decoded(segment))
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let decoded_first = resolved(path.split('/').flat_map(|segment| {
+        decoded(segment)
+            .split('/')
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    }))
+    .into_iter()
+    .filter(|segment| !segment.is_empty())
+    .collect();
+    [written, decoded_first]
+}
+
+/// `segments` with `.` and `..` resolved as RFC 3986 resolves them: a `.`
+/// names nothing, and a `..` takes out the segment before it, empty or not.
+fn resolved(segments: impl Iterator<Item = String>) -> Vec<String> {
     let mut named: Vec<String> = Vec::new();
-    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
-        match decoded(segment).as_str() {
+    for segment in segments {
+        match segment.as_str() {
             "." => {}
             ".." => {
                 named.pop();
             }
-            one => named.push(one.to_owned()),
+            _ => named.push(segment),
         }
     }
     named
 }
 
-/// `segment` with each `%XX` read as the byte it names.
+/// `segment` with each `%XX` of two hex digits read as the byte it names.
 fn decoded(segment: &str) -> String {
     let bytes = segment.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -303,6 +334,7 @@ fn decoded(segment: &str) -> String {
     while let Some(&byte) = bytes.get(at) {
         let hex = bytes
             .get(at + 1..at + 3)
+            .filter(|pair| pair.iter().all(u8::is_ascii_hexdigit))
             .and_then(|pair| std::str::from_utf8(pair).ok())
             .and_then(|pair| u8::from_str_radix(pair, 16).ok());
         if let (b'%', Some(value)) = (byte, hex) {

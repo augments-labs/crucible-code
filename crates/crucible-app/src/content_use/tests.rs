@@ -674,9 +674,27 @@ fn a_documented_path_spelled_another_way_is_recognised() {
             "https://api.moonshot.ai/v1/./chat/completions",
             "api.moonshot.ai",
         ),
+        // An empty segment is a segment a `..` can take out, as a server
+        // resolving the path takes it out.
+        (
+            "https://api.moonshot.ai/v1//../chat/completions",
+            "api.moonshot.ai",
+        ),
+        (
+            "https://generativelanguage.googleapis.com/v1beta//../models/x",
+            "key:google",
+        ),
+        // A slash spelled as an escape is a slash to a server that decodes
+        // before it routes.
+        ("https://api.kimi.com/coding%2Fv1", "key:moonshot"),
+        (
+            "https://api.moonshot.ai/v1%2Fchat%2Fcompletions",
+            "api.moonshot.ai",
+        ),
     ] {
         assert_eq!(recognised(spelled), Some(route), "{spelled}");
     }
+    assert_eq!(super::decoded("%+f%2B"), "%+f+");
     for missed in [
         "https://api.moonshot.ai/v1/../v2",
         "https://api.moonshot.ai/%2E%2E/v1x",

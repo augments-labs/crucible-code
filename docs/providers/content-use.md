@@ -93,8 +93,10 @@ kimi.com key row.
 A `baseUrl` is warned only at an address crucible documents. It is recognised
 when its scheme is the address's, its host is the address's (case, a trailing
 dot and the default port written out do not matter), and its path is the
-address's path or lies under it by whole segments, read as the path it names:
-percent-encoding decoded and `.` and `..` segments resolved. Every other `baseUrl`,
+address's path or lies under it by whole segments, read the way a server may
+read it: percent-encoding decoded, an encoded `/` as a separator, and `.` and
+`..` resolved as a server resolves them. Where a path can be read two ways,
+either reading being documented is enough to be asked. Every other `baseUrl`,
 including `https://chatgpt.com/backend-api/codex/responses`, where no key row
 stands, is not asked about.
 
