@@ -1059,3 +1059,35 @@ fn a_key_only_the_environment_holds_marks_no_row() {
         "{drawn:?}"
     );
 }
+
+#[test]
+fn what_is_said_after_a_stop_is_what_the_store_holds() {
+    use crucible_auth::Stopped;
+
+    for opened in [Opened::Below, Opened::Directly] {
+        assert_eq!(after_stop(Stopped::Written, opened), AfterStop::Take);
+        assert_eq!(after_stop(Stopped::Unsettled, opened), AfterStop::Unsettled);
+    }
+    assert_eq!(
+        after_stop(Stopped::Unwritten, Opened::Below),
+        AfterStop::Back
+    );
+    assert_eq!(
+        after_stop(Stopped::Unwritten, Opened::Directly),
+        AfterStop::Left
+    );
+}
+
+#[test]
+fn a_sign_in_being_stopped_says_so_while_it_waits() {
+    let mut view = LoginView::new(Glyphs::Unicode);
+    view.stopping();
+    let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+    let text: Vec<String> = rows.iter().map(Row::text).collect();
+
+    assert!(
+        text.iter()
+            .any(|row| row == "stopping; waiting for anything being stored…"),
+        "{text:?}"
+    );
+}

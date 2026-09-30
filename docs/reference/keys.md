@@ -288,7 +288,10 @@ window has no room for the key box; make it taller and try /login again`.
 
 While an account login waits on the browser, <kbd>Esc</kbd>,
 <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> stops it and goes back; on a sign-in
-that words opened directly it cancels with `cancelled, nothing signed in`. A
+that words opened directly it cancels with `cancelled, nothing signed in`.
+Pressed as the sign-in is being stored, it waits for the write, up to ten
+seconds, and ends signed in where the write went through, or says `! the
+sign-in was being stored when it was stopped; /login shows what is stored`. A
 sign-in that fails, is refused or expires ends with `! sign-in did not
 complete` and what stays stored. Where a code is typed by
 hand instead, typing, paste and <kbd>Backspace</kbd> edit it and

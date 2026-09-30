@@ -6,7 +6,8 @@
 //! the rows of that kind, read off the row registry, and a row that holds the
 //! credential serving its provider says `signed in`. Only which row holds one
 //! is read: the store is asked for names and kinds before anything is drawn,
-//! and a store that is there and cannot be parsed is said instead of a panel.
+//! and a store that is there and cannot be parsed, is not text or is past its
+//! size limit is said instead of a panel.
 //! Row names are drawn with the glyph set's dot. Below the first
 //! screen Escape goes back one level, with the mark where it was; at the first
 //! screen, and at one opened directly by words, it cancels.
@@ -20,11 +21,13 @@
 //! replaced. Nothing is replaced until the new one is stored, so a sign-in that
 //! fails, is refused or expires leaves the store as it was and says what is
 //! unchanged. A sign-in stopped by Escape while its credential is being written
-//! is waited for, and taken as signed in where the write went through.
+//! is waited for, and taken as signed in where the write went through, or said
+//! as still being stored where the write outlives the wait.
 //!
 //! A real subscription implementation starts its login as a task on the
 //! application's runtime and reports the page the user must visit; the terminal
-//! thread continues serving resize and cancellation, and leaving the view stops
+//! thread continues serving resize and cancellation, but for the moment a stop
+//! waits for a credential already being written, and leaving the view stops
 //! the login, closing a browser login's callback port.
 //!
 //! A key typed after a command is a key in the shell's history file, in the
@@ -131,6 +134,10 @@ const BACK: &str = "esc to go back";
 /// the write outlived the wait, so what it left is for `/login` to show.
 const UNSETTLED: &str =
     "! the sign-in was being stored when it was stopped; /login shows what is stored";
+
+/// What the sign-in view says while a stop waits for a credential being
+/// written.
+const STOPPING: &str = "stopping; waiting for anything being stored…";
 
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
@@ -721,7 +728,8 @@ fn line(way: &Way, rows: &Rows, providers: &Providers, glyphs: Glyphs) -> String
 /// Escape stops the flow. Opened below another screen it goes back there;
 /// opened by the command it cancels it, as Escape on any screen the command
 /// opened does; and where its credential was being written as it was
-/// stopped, the write is waited for and a sign-in that went through is taken.
+/// stopped, the write is waited for and a sign-in that went through is taken,
+/// or said as still being stored where it outlives the wait.
 /// A flow that fails, is refused or expires says what went wrong and that
 /// nothing held was replaced.
 fn subscribed<T: Terminal>(
@@ -784,10 +792,12 @@ fn subscribed<T: Terminal>(
         match arrived {
             Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => {
                 // A write already begun cannot be taken back: stopping waits
-                // for it and says whether the credential was written, and
-                // that answer is what is said.
-                match attempt.cancel() {
-                    Stopped::Written => {
+                // for it, which the view says first, and then says whether the
+                // credential was written, and that answer is what is said.
+                view.stopping();
+                view.show(renderer, terms, route.title())?;
+                match after_stop(attempt.cancel(), opened) {
+                    AfterStop::Take => {
                         let Some(named) =
                             offered(&terms.providers.snapshot()).find(|one| one.name == provider)
                         else {
@@ -797,12 +807,12 @@ fn subscribed<T: Terminal>(
                         taken(named, renderer, conversation, terms)?;
                         return Ok(Closed::Done);
                     }
-                    Stopped::Unsettled => {
+                    AfterStop::Unsettled => {
                         say(renderer, UNSETTLED)?;
                         return Ok(Closed::Done);
                     }
-                    Stopped::Unwritten if opened == Opened::Below => return Ok(Closed::Back),
-                    Stopped::Unwritten => {
+                    AfterStop::Back => return Ok(Closed::Back),
+                    AfterStop::Left => {
                         say(renderer, LEFT)?;
                         return Ok(Closed::Done);
                     }
@@ -816,6 +826,30 @@ fn subscribed<T: Terminal>(
             }
         }
         view.show(renderer, terms, route.title())?;
+    }
+}
+
+/// What `/login` does after stopping a sign-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterStop {
+    /// The credential was written as it was stopped: the session takes it.
+    Take,
+    /// The write outlived the wait: said, and left to `/login` to show.
+    Unsettled,
+    /// Nothing was written, below another screen: that one stands again.
+    Back,
+    /// Nothing was written, on a screen the command opened: cancelled.
+    Left,
+}
+
+/// What a sign-in opened as `opened` does once stopping it answered
+/// `stopped`: only what the store holds decides it.
+const fn after_stop(stopped: Stopped, opened: Opened) -> AfterStop {
+    match (stopped, opened) {
+        (Stopped::Written, _) => AfterStop::Take,
+        (Stopped::Unsettled, _) => AfterStop::Unsettled,
+        (Stopped::Unwritten, Opened::Below) => AfterStop::Back,
+        (Stopped::Unwritten, Opened::Directly) => AfterStop::Left,
     }
 }
 
@@ -852,6 +886,12 @@ impl LoginView {
         self.notice =
             replaces.map(|replaces| format!("Signing in replaces {replaces} once it completes."));
         self
+    }
+
+    /// Says the sign-in is being stopped, which can take a moment where its
+    /// credential is being written.
+    fn stopping(&mut self) {
+        self.status = Cow::Borrowed(STOPPING);
     }
 
     /// Takes one update from the login, opening the browser without the
