@@ -588,7 +588,10 @@ fn a_write_keeps_every_name_this_build_does_not_serve_and_drops_a_field_it_does_
     assert!(text.contains("00000000-0000-4000-8000-000000000000"));
     assert!(text.contains(r#""openai":"fabricated-openai-key""#));
     assert!(text.contains(r#""version":2"#));
-    assert!(!text.contains("rows"), "a field this build does not know is gone");
+    assert!(
+        !text.contains("rows"),
+        "a field this build does not know is gone"
+    );
 
     // A key for the provider whose other row is held: 0.43.3 stores it
     // beside that row rather than in its place.
@@ -603,4 +606,192 @@ fn a_write_keeps_every_name_this_build_does_not_serve_and_drops_a_field_it_does_
     let text = on_disk(&scratch);
     assert!(!text.contains("fabricated-moonshot-key"));
     assert!(text.contains(r#""moonshot@kimi.ai""#));
+}
+
+/// The names a build with two Kimi sites writes under, and one provider with a
+/// single row. Every value in the tests below is fabricated.
+fn named() -> Names {
+    Names::new(["moonshot", "moonshot@kimi.ai", "openai", "anthropic"])
+}
+
+/// Every row of `named`, by the map its credential sits in and its name.
+fn rows() -> Vec<(Kind, &'static str)> {
+    let mut rows = Vec::new();
+    for name in ["moonshot", "moonshot@kimi.ai", "openai", "anthropic"] {
+        rows.push((Kind::Key, name));
+        rows.push((Kind::Account, name));
+    }
+    rows
+}
+
+/// Writes `row`'s credential the way `/login` does.
+fn give(store: &Store, (kind, name): (Kind, &str), canary: &str) -> Vec<Dropped> {
+    match kind {
+        Kind::Key => store.keep(name, &format!("key-{canary}")),
+        Kind::Account => store.keep_subscription(name, subscription(canary)),
+    }
+    .expect("a writable store")
+}
+
+/// Every credential on the disk, by map and name, parsed the way 0.43.3
+/// parses a store: the parser is the one it shipped.
+fn on_the_disk(scratch: &Scratch) -> Vec<(Kind, String)> {
+    let text = on_disk(scratch);
+    assert!(text.len() <= MAX_STORE, "{} bytes", text.len());
+    let document = document::parse(&text).expect("a file 0.43.3 reads whole");
+    assert!(text.contains(r#""version":2"#), "{text}");
+    document
+        .keys
+        .keys()
+        .map(|name| (Kind::Key, name.clone()))
+        .chain(
+            document
+                .subscriptions
+                .keys()
+                .map(|name| (Kind::Account, name.clone())),
+        )
+        .collect()
+}
+
+#[test]
+fn every_pair_of_rows_leaves_a_provider_one_credential_and_says_which_went() {
+    for first in rows() {
+        for second in rows() {
+            if provider_of(first.1) != provider_of(second.1) {
+                continue;
+            }
+            let scratch = Scratch::new("one-each");
+            let store = Store::in_home(scratch.home()).naming(named());
+            give(&store, first, "first");
+            let dropped = give(&store, second, "second");
+
+            let held = on_the_disk(&scratch);
+            let at = format!("{first:?} then {second:?}: {held:?}");
+            assert_eq!(held, vec![(second.0, second.1.to_owned())], "{at}");
+            let wanted: Vec<Dropped> = (first != second)
+                .then(|| Dropped {
+                    kind: first.0,
+                    name: first.1.to_owned(),
+                })
+                .into_iter()
+                .collect();
+            assert_eq!(dropped, wanted, "{at}");
+        }
+    }
+}
+
+#[test]
+fn a_write_for_one_provider_leaves_every_other_providers_credential() {
+    let scratch = Scratch::new("others-kept");
+    let store = Store::in_home(scratch.home()).naming(named());
+    give(&store, (Kind::Key, "openai"), "openai");
+    give(&store, (Kind::Account, "moonshot@kimi.ai"), "kimi");
+    give(&store, (Kind::Key, "moonshot"), "moonshot");
+
+    assert_eq!(
+        on_the_disk(&scratch),
+        vec![
+            (Kind::Key, "moonshot".to_owned()),
+            (Kind::Key, "openai".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn where_two_are_held_the_one_under_the_bare_name_serves_the_provider() {
+    let scratch = Scratch::new("bare-wins");
+    let store = scratch
+        .holding(
+            r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{}}"#,
+        )
+        .naming(named());
+
+    assert_eq!(
+        store.read().held("moonshot"),
+        Some(Held {
+            kind: Kind::Key,
+            name: "moonshot".to_owned()
+        })
+    );
+}
+
+#[test]
+fn a_name_this_build_does_not_write_is_never_used_and_never_removed() {
+    let scratch = Scratch::new("unknown-name");
+    let store = scratch
+        .holding(
+            r#"{"version":2,"keys":{"moonshot@kimi.cn":"fabricated-later-key"},"subscriptions":{},"identities":{}}"#,
+        )
+        .naming(named());
+
+    assert_eq!(store.read().held("moonshot"), None);
+
+    give(&store, (Kind::Account, "moonshot@kimi.ai"), "kimi");
+    assert!(store.forget("moonshot").expect("a writable store"));
+    let text = on_disk(&scratch);
+    assert!(text.contains("fabricated-later-key"), "{text}");
+    assert!(!text.contains("access-kimi"), "{text}");
+}
+
+#[test]
+fn forgetting_a_provider_holding_two_takes_both_out_in_one_write() {
+    let scratch = Scratch::new("forget-both");
+    let store = scratch
+        .holding(
+            r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{}}"#,
+        )
+        .naming(named());
+
+    assert!(store.forget("moonshot").expect("a writable store"));
+    assert_eq!(on_the_disk(&scratch), Vec::new());
+}
+
+/// A store as 0.43.3 leaves one after a roll back: its own `moonshot` key
+/// beside the kimi.ai sign-in the new release wrote.
+const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{"moonshot@kimi.ai":"00000000-0000-4000-8000-000000000000"}}"#;
+
+#[test]
+fn a_start_that_finds_two_for_a_provider_keeps_the_bare_one_and_says_which_went() {
+    let scratch = Scratch::new("settled");
+    let store = scratch.holding(TWO_HELD).naming(named());
+
+    let settled = store.settle();
+
+    assert!(settled.unwritten.is_none(), "{settled:?}");
+    assert_eq!(
+        settled.dropped,
+        vec![Dropped {
+            kind: Kind::Account,
+            name: "moonshot@kimi.ai".to_owned()
+        }]
+    );
+    assert_eq!(
+        on_the_disk(&scratch),
+        vec![(Kind::Key, "moonshot".to_owned())]
+    );
+    // The installation's identity outlives the credential it was made for.
+    assert!(on_disk(&scratch).contains("00000000-0000-4000-8000-000000000000"));
+    // And a second start finds nothing to do.
+    assert!(store.settle().dropped.is_empty());
+}
+
+#[test]
+fn a_start_that_cannot_write_goes_on_with_the_bare_one_and_leaves_the_file() {
+    let scratch = Scratch::new("settle-unwritable");
+    let store = scratch.holding(TWO_HELD).naming(named());
+    // Read once so the file is tightened, then stand a directory where the
+    // write puts its temporary: the write is refused, as a full disk would.
+    let _ = store.read();
+    let before = on_disk(&scratch);
+    fs::create_dir(scratch.home().join(PARTIAL)).expect("a directory this test made");
+
+    let settled = store.settle();
+
+    assert!(settled.unwritten.is_some(), "{settled:?}");
+    assert_eq!(settled.dropped.len(), 1, "{settled:?}");
+    assert_eq!(on_disk(&scratch), before);
+    assert_eq!(
+        store.read().held("moonshot").map(|held| held.kind),
+        Some(Kind::Key)
+    );
 }

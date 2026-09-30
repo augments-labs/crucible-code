@@ -16,6 +16,7 @@
 //! file where a whole one was.
 
 mod document;
+mod names;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -28,6 +29,7 @@ use crate::error::AuthError;
 use crate::oauth::{OAuthError, Tokens};
 
 use self::document::Document;
+pub use self::names::{Dropped, Held, Kind, Names, Settled, provider_of};
 
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";
@@ -77,6 +79,8 @@ pub struct Store {
     path: PathBuf,
     /// The directory it lives in, which may not exist yet.
     home: PathBuf,
+    /// The names this build writes each provider's credential under.
+    names: Names,
 }
 
 impl Store {
@@ -90,6 +94,51 @@ impl Store {
         Self {
             path: home.join(FILE),
             home: home.to_path_buf(),
+            names: Names::default(),
+        }
+    }
+
+    /// The same store, told the names this build writes each provider's
+    /// credential under.
+    #[must_use]
+    pub fn naming(mut self, names: Names) -> Self {
+        self.names = names;
+        self
+    }
+
+    /// Takes out, in one locked write, every second credential a provider
+    /// holds, keeping the one under its bare name.
+    ///
+    /// Only a write by 0.43.3, rolled back to, leaves two; nothing a start does
+    /// with the store is held up by this failing, and it is tried again at the
+    /// next start.
+    #[must_use]
+    pub fn settle(&self) -> Settled {
+        let mut dropped = Vec::new();
+        let names = self.names.clone();
+        let written = self.change(|document| {
+            let providers: BTreeSet<String> = document
+                .keys
+                .keys()
+                .chain(document.subscriptions.keys())
+                .map(|name| provider_of(name).to_owned())
+                .collect();
+            for provider in providers {
+                if document.holds(&provider).is_none() {
+                    continue;
+                }
+                for name in names.of(&provider) {
+                    if name == provider {
+                        continue;
+                    }
+                    dropped.extend(document.take(name, None));
+                }
+            }
+            !dropped.is_empty()
+        });
+        Settled {
+            dropped,
+            unwritten: written.err(),
         }
     }
 
@@ -131,28 +180,38 @@ impl Store {
     ///
     /// [`AuthError`] when the store cannot be read back, when another crucible
     /// holds the lock, or when the file cannot be written.
-    pub fn keep(&self, provider: &str, key: &str) -> Result<(), AuthError> {
+    ///
+    /// Every other credential of the provider, under any name this build
+    /// writes it under and in either map, goes in the same write: a provider
+    /// holds one. What went comes back, so the caller can say which row it was.
+    pub fn keep(&self, name: &str, key: &str) -> Result<Vec<Dropped>, AuthError> {
+        let mut dropped = Vec::new();
+        let names = self.names.clone();
         self.change(|document| {
-            let removed_subscription = document.subscriptions.remove(provider).is_some();
+            dropped = document.clear(&names, name, Kind::Key);
             let changed =
-                document.keys.get(provider).is_none_or(|held| held != key) || removed_subscription;
-            document.keys.insert(provider.to_owned(), key.to_owned());
+                document.keys.get(name).is_none_or(|held| held != key) || !dropped.is_empty();
+            document.keys.insert(name.to_owned(), key.to_owned());
             changed
-        })
+        })?;
+        Ok(dropped)
     }
 
     /// Writes a completed subscription login and removes an API key previously
     /// selected for the same provider.
     pub(crate) fn keep_subscription(
         &self,
-        provider: &str,
+        name: &str,
         tokens: Tokens,
-    ) -> Result<(), AuthError> {
+    ) -> Result<Vec<Dropped>, AuthError> {
+        let mut dropped = Vec::new();
+        let names = self.names.clone();
         self.change(|document| {
-            document.keys.remove(provider);
-            document.subscriptions.insert(provider.to_owned(), tokens);
+            dropped = document.clear(&names, name, Kind::Account);
+            document.subscriptions.insert(name.to_owned(), tokens);
             true
-        })
+        })?;
+        Ok(dropped)
     }
 
     /// Returns the stable installation identity for one provider, persisting
@@ -184,11 +243,16 @@ impl Store {
     /// # Errors
     ///
     /// [`AuthError`] as [`Store::keep`].
+    ///
+    /// Every name this build writes the provider's credential under goes, so a
+    /// provider left holding two by a roll back is left holding none.
     pub fn forget(&self, provider: &str) -> Result<bool, AuthError> {
         let mut had = false;
+        let names = self.names.clone();
         self.change(|document| {
-            had = document.keys.remove(provider).is_some()
-                | document.subscriptions.remove(provider).is_some();
+            for name in names.of(provider) {
+                had |= !document.take(name, None).is_empty();
+            }
             had
         })?;
 
@@ -482,6 +546,28 @@ impl StoredCredentials {
     #[must_use]
     pub fn trouble(&self) -> Option<&str> {
         self.trouble.as_deref()
+    }
+
+    /// The one credential `provider` is served by, and the name it is under.
+    ///
+    /// Among the names this build writes for the provider only: a name it
+    /// does not know is never used. Where two are held, which only a write by
+    /// 0.43.3 can leave, the one under the bare name.
+    #[must_use]
+    pub fn held(&self, provider: &str) -> Option<Held> {
+        let names = self
+            .store
+            .as_ref()
+            .map_or_else(Names::default, |store| store.names.clone());
+        names.of(provider).into_iter().find_map(|name| {
+            if self.subscriptions.contains_key(name) {
+                Some(Held::new(Kind::Account, name))
+            } else if self.keys.contains_key(name) {
+                Some(Held::new(Kind::Key, name))
+            } else {
+                None
+            }
+        })
     }
 }
 

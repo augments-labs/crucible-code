@@ -342,7 +342,7 @@ impl fmt::Debug for LoginUpdates {
 ///             let Some(pasted) = typed.recv().await else { return };
 ///             let kept = tokio::task::spawn_blocking(move || store.keep("ledger", &pasted)).await;
 ///             let _ = match kept {
-///                 Ok(Ok(())) => updates.send(Ok(LoginUpdate::Complete)),
+///                 Ok(Ok(_)) => updates.send(Ok(LoginUpdate::Complete)),
 ///                 Ok(Err(_)) | Err(_) => updates.send(Err(OAuthError::WorkerStopped)),
 ///             };
 ///         })

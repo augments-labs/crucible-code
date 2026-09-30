@@ -617,7 +617,7 @@ fn written<T: Terminal>(
     terms: &Terms,
 ) -> Result<(), Fatal> {
     match terms.logins.keep(named.name, key) {
-        Ok(()) => taken(named, renderer, conversation, terms),
+        Ok(_) => taken(named, renderer, conversation, terms),
         Err(failed) => say(
             renderer,
             &format!(
