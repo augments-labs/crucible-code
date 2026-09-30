@@ -56,7 +56,7 @@ pub(crate) const KEY: &str = "fabricated-gemini-key-never-sent";
 /// A listener standing in for every host, which writes down what it is asked
 /// to connect to and refuses it.
 pub(crate) struct Proxy {
-    address: String,
+    pub(crate) address: String,
     asked: Arc<Mutex<Vec<String>>>,
 }
 

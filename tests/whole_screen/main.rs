@@ -2516,14 +2516,23 @@ fn a_yes_holds_for_the_next_run_on_the_same_home() {
     let document = warning::said(&window);
     assert!(document.contains("key:google"), "{document}");
 
+    // Another key in the variable is the same route: the yes is to the
+    // vendor's terms on that route, not to one key.
     let second = warning::Proxy::new();
     let home = window.home();
-    let mut again = warning::through(
+    let mut again = Watched::launched(
         "warning-once-again",
-        (80, 30),
-        &document,
-        &second,
-        (&[], Some(&home)),
+        80,
+        30,
+        &watched::Launch {
+            document: &document,
+            env: &[
+                ("GEMINI_API_KEY", "another-fabricated-gemini-key"),
+                ("HTTPS_PROXY", &second.address),
+            ],
+            args: &[],
+            home: Some(&home),
+        },
     );
     again.types("again\r");
     assert!(
@@ -2532,6 +2541,42 @@ fn a_yes_holds_for_the_next_run_on_the_same_home() {
         again.picture()
     );
     let reached = second.reached(1);
+    assert!(
+        !reached.is_empty() && reached.iter().all(|host| host == warning::GEMINI_HOST),
+        "{reached:?}"
+    );
+}
+
+/// A yes given at `/login` is written down with the key it stored, so the
+/// first send after it goes without asking again.
+#[test]
+fn a_yes_given_at_login_is_kept_with_the_key_and_the_send_after_it_asks_nothing() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-login-stored",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login google\r", "Use it anyway");
+    window.types_until("\r", "Google API key");
+    window.types_until("fabricated-google-key-never-sent", "enter to save");
+    window.types_until("\r", "login successful");
+    assert!(
+        warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "a login sends nothing");
+
+    window.types("hello\r");
+    let reached = proxy.reached(1);
+    assert!(
+        !window.picture().contains("Use it anyway"),
+        "{}",
+        window.picture()
+    );
     assert!(
         !reached.is_empty() && reached.iter().all(|host| host == warning::GEMINI_HOST),
         "{reached:?}"
