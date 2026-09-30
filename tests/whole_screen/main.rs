@@ -2808,3 +2808,141 @@ fn a_start_that_takes_a_second_credential_out_takes_its_yes_and_asks_again() {
     );
     assert_eq!(proxy.asked(), Vec::<String>::new());
 }
+
+#[test]
+fn a_session_picked_up_on_a_warned_route_is_asked_about_before_it_sends() {
+    // The first run said yes and sent, so there is a session on the route; the
+    // second picks it up from a file with no yes in it, and asks again before
+    // anything goes.
+    let first = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-resume",
+        (80, 30),
+        warning::GOOGLE,
+        &first,
+        (&[], None),
+    );
+    window.types_until("hello\r", "Use it anyway");
+    window.types("\r");
+    assert!(!first.reached(1).is_empty());
+    // Kept aside: the case's directory goes with the window, and the session
+    // belongs to the workspace path under it, so the second run takes the
+    // same case name and a copy of the home.
+    let kept = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-resume-kept",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&kept);
+    copy_tree(&window.home(), &kept);
+    drop(window);
+
+    let second = warning::Proxy::new();
+    let mut again = warning::through(
+        "warning-resume",
+        (80, 30),
+        warning::GOOGLE,
+        &second,
+        (&["--continue"], Some(&kept)),
+    );
+    let _ = std::fs::remove_dir_all(&kept);
+    again.types_until("again\r", "Use it anyway");
+    assert_eq!(second.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn the_openai_plan_row_asks_with_its_condition_and_going_back_returns_to_its_list() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-openai",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Your account with subscription");
+    window.types_until("", "Choose the account whose plan pays for usage.");
+    takes(&mut window, "OpenAI");
+    window.types_until("", "Use it anyway");
+    let asked = window.picture();
+    assert!(
+        asked.contains("On Free, Plus and Pro, OpenAI may use what you send"),
+        "{asked}"
+    );
+    assert!(
+        asked.contains("Takes this choice; this route is not asked about again"),
+        "{asked}"
+    );
+    insta::assert_snapshot!("question_at_openai_plan_80", asked);
+
+    // Go back: the list again, with the mark on the row it came from.
+    window.types_until("\x1b", "Choose the account whose plan pays for usage.");
+    let list = window.picture();
+    assert!(
+        list.lines()
+            .any(|row| row.trim_matches('|').trim_end() == "› OpenAI"),
+        "{list}"
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn with_input_and_output_redirected_a_warned_route_ends_the_run_and_sends_nothing() {
+    use std::io::Write as _;
+
+    let proxy = warning::Proxy::new();
+    let scratch = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-redirected",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let home = scratch.join("home");
+    let work = scratch.join("work");
+    std::fs::create_dir_all(&home).expect("a home");
+    std::fs::create_dir_all(&work).expect("a workspace");
+    std::fs::write(home.join("config.json"), warning::GOOGLE).expect("a configuration file");
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_crucible"))
+        .current_dir(&work)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", &scratch)
+        .env("CRUCIBLE_CODE_HOME", &home)
+        .env("GEMINI_API_KEY", warning::KEY)
+        .env("HTTPS_PROXY", proxy.address())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("crucible starts");
+    child
+        .stdin
+        .take()
+        .expect("its input")
+        .write_all(b"hello\n")
+        .expect("a line written");
+    let ended = child.wait_with_output().expect("crucible ends");
+    let _ = std::fs::remove_dir_all(&scratch);
+
+    let said = String::from_utf8_lossy(&ended.stderr);
+    assert_eq!(ended.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("On unpaid quota, Google uses what you send"),
+        "{said}"
+    );
+    assert!(said.contains("answer it once in a terminal"), "{said}");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+/// Copies the tree at `from` into `to`, file by file.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).expect("a directory to copy into");
+    for entry in std::fs::read_dir(from).expect("a tree to copy").flatten() {
+        let into = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &into);
+        } else {
+            std::fs::copy(entry.path(), &into).expect("a file copied");
+        }
+    }
+}

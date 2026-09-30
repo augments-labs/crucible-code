@@ -93,6 +93,11 @@ impl Proxy {
         Self { address, asked }
     }
 
+    /// Where it listens, as `HTTPS_PROXY` names it.
+    pub(crate) fn address(&self) -> &str {
+        &self.address
+    }
+
     /// Every host asked for so far.
     pub(crate) fn asked(&self) -> Vec<String> {
         self.asked.lock().expect("the record").clone()

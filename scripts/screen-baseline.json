@@ -427,6 +427,12 @@
       "sha256": "4c3485b23fdf47a61b1cf1392d4e37fd08afc7ecb5f6f2c6b4922221800fdbba"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__question_at_openai_plan_80.snap",
+      "case": "the_openai_plan_row_asks_with_its_condition_and_going_back_returns_to_its_list",
+      "opened": [],
+      "sha256": "4d0014ddff0fa0e250229001975af5d78ad113bfb4266d9e229591a1f330d095"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__question_at_send_80.snap",
       "case": "a_send_on_a_warned_route_stands_the_question_and_sends_nothing_before_the_yes",
       "opened": [],
