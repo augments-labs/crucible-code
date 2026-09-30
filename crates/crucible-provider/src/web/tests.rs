@@ -1773,3 +1773,27 @@ fn a_call_dropped_while_its_request_stalls_tells_the_request_to_stop() {
     );
     runtime.shutdown_background();
 }
+
+#[test]
+fn kimi_ai_web_tools_reach_the_global_hosts_alone() {
+    assert_eq!(
+        MoonshotWeb::SEARCH_AI.as_str(),
+        "https://api.kimi.ai/coding/v1/search"
+    );
+    assert_eq!(
+        MoonshotWeb::FETCH_AI.as_str(),
+        "https://api.kimi.ai/coding/v1/fetch"
+    );
+
+    let replay = Arc::new(Replay::new(
+        200,
+        json!({ "search_results": [] }).to_string(),
+    ));
+    let source = MoonshotWeb::global(
+        Box::new(HeaderKey::new(ApiKey::new(SECRET), Header::bearer())),
+        Box::new(Arc::clone(&replay)),
+    );
+    let _ = source.answered_search("serde", &Cancel::new());
+
+    assert_eq!(replay.sent().url, MoonshotWeb::SEARCH_AI.as_str());
+}
