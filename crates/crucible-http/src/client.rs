@@ -39,6 +39,7 @@ use tokio::time::{Instant, sleep_until};
 
 use crate::connect::{ConnectError, Connector, Setups, Tls, Waiting};
 use crate::dns::{Lookups, PlainLookups};
+use crate::hold::{Hold, Origin};
 use crate::proxy::{ProxyEnv, Route, select};
 use crate::tasks::Tasks;
 
@@ -94,6 +95,9 @@ pub struct Http {
     /// The proxy settings its connector routes by, to find the credential a
     /// request will travel with.
     env: Arc<ProxyEnv>,
+    /// What is asked whether a request may leave, where the builder handed
+    /// one in.
+    hold: Option<Arc<dyn Hold>>,
 }
 
 /// The part of a request whose minute ran out.
@@ -123,6 +127,10 @@ pub enum HttpError {
     /// One part of the request outlived its minute.
     #[error("request timed out")]
     Stalled(Phase),
+    /// The client's [`Hold`] kept the request back: nothing was dialled,
+    /// looked up or written.
+    #[error("nothing was sent: {0} waits for an answer")]
+    Held(Box<str>),
     /// The exchange failed: see [`HttpError::connect`] for a connection that
     /// was never made. A response head over its limits is hyper's
     /// `is_parse_too_large`.
@@ -136,7 +144,7 @@ impl HttpError {
     pub fn connect(&self) -> Option<&ConnectError> {
         match self {
             Self::Exchange(error) => std::error::Error::source(error)?.downcast_ref(),
-            Self::Invalid(_) | Self::Unverifiable | Self::Stalled(_) => None,
+            Self::Invalid(_) | Self::Unverifiable | Self::Stalled(_) | Self::Held(_) => None,
         }
     }
 }
@@ -157,7 +165,18 @@ impl Http {
             client: client(connector, &tasks),
             _tasks: tasks,
             env,
+            hold: None,
         }
+    }
+
+    /// The same client, asking `hold` about every request before it leaves.
+    ///
+    /// Clones share the pool and the hold. A client built with none sends
+    /// wherever it is asked to.
+    #[must_use]
+    pub fn holding(mut self, hold: Arc<dyn Hold>) -> Self {
+        self.hold = Some(hold);
+        self
     }
 
     /// Sends one request and hands back its response head, whatever its
@@ -193,6 +212,12 @@ impl Http {
             || uri.host().is_none_or(str::is_empty)
         {
             return Err(HttpError::Unverifiable);
+        }
+        if let Some(hold) = &self.hold
+            && let Some(origin) = Origin::from_uri(request.uri())
+            && let Some(route) = hold.held(&origin)
+        {
+            return Err(HttpError::Held(route));
         }
         if let Route::Tunnel(proxy) = select(&self.env, request.uri()) {
             proxy.protect(headers);
