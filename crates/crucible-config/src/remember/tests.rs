@@ -177,87 +177,74 @@ fn a_rung_chosen_again_is_written_over_rather_than_written_twice() {
 }
 
 #[test]
-fn fast_is_written_beside_the_model_and_standard_takes_it_out() {
+fn fast_is_written_with_the_model_it_was_chosen_for_and_standard_takes_it_out() {
     let chosen = choosing("", "config.json", "openai", "gpt-5.6-sol")
         .expect("an empty file is one to write whole");
 
-    let fast = hastening(&chosen, "config.json", "openai", Speed::Fast)
+    let fast = hastening(&chosen, "config.json", "openai", "gpt-5.6-sol")
         .expect("a provider already written is one to write beside");
     assert_eq!(resolving(&fast).speed("openai"), Speed::Fast);
     assert_eq!(resolving(&fast).model("openai"), Some("gpt-5.6-sol"));
     assert!(fast.contains("\"fast\": true"), "{fast}");
 
-    let again = hastening(&fast, "config.json", "openai", Speed::Fast)
+    let again = hastening(&fast, "config.json", "openai", "gpt-5.6-sol")
         .expect("a speed already there is one to leave");
     assert_eq!(again, fast);
 
-    let standard = hastening(&fast, "config.json", "openai", Speed::Standard)
-        .expect("a speed written is one to take out");
+    let standard =
+        slowing(&fast, "config.json", "openai").expect("a speed written is one to take out");
     assert_eq!(resolving(&standard).speed("openai"), Speed::Standard);
     assert!(!standard.contains("\"fast\""), "{standard}");
     assert_eq!(standard, chosen);
 }
 
 #[test]
+fn fast_chosen_for_a_model_the_file_does_not_name_names_it() {
+    // The speed is a choice about one model at one price, so the model goes
+    // into the file with it, whether the file named another or none.
+    for text in [
+        "",
+        "{\n  \"providers\": {\"openai\": {\"model\": \"gpt-6-astra\"}}\n}\n",
+    ] {
+        let fast = hastening(text, "config.json", "openai", "gpt-5.5")
+            .expect("a file a speed can be written into");
+        assert_eq!(resolving(&fast).model("openai"), Some("gpt-5.5"), "{fast}");
+        assert_eq!(resolving(&fast).speed("openai"), Speed::Fast, "{fast}");
+    }
+}
+
+#[test]
 fn standard_asked_of_a_file_with_no_speed_changes_nothing() {
     for text in ["", "{\n  \"theme\": \"dark\"\n}\n"] {
-        let written = hastening(text, "config.json", "openai", Speed::Standard)
+        let written = slowing(text, "config.json", "openai")
             .expect("nothing to take out is nothing to refuse");
         assert_eq!(written, text);
     }
 }
 
 #[test]
-fn a_fast_file_asked_for_by_nobody_else_is_one_provider_with_one_key() {
-    let written = hastening("", "config.json", "anthropic", Speed::Fast)
-        .expect("an empty file is one to write whole");
-
-    assert_eq!(resolving(&written).speed("anthropic"), Speed::Fast);
-    assert_eq!(resolving(&written).speed("openai"), Speed::Standard);
-}
-
-#[test]
-fn choosing_a_model_leaves_the_speed_for_its_caller_to_decide() {
-    // The rung goes with every choice of a model; the speed goes only with a
-    // choice of another one, and only the caller knows which model is in force.
+fn choosing_another_model_takes_the_speed_out_and_the_same_one_keeps_it() {
     let chosen = choosing("", "config.json", "openai", "gpt-5.6-sol")
         .expect("an empty file is one to write whole");
-    let fast = hastening(&chosen, "config.json", "openai", Speed::Fast)
+    let fast = hastening(&chosen, "config.json", "openai", "gpt-5.6-sol")
         .expect("a provider already written is one to write beside");
-    let written = choosing(&fast, "config.json", "openai", "gpt-5.6-luna")
+
+    let same =
+        choosing(&fast, "config.json", "openai", "gpt-5.6-sol").expect("the model already written");
+    assert_eq!(resolving(&same).speed("openai"), Speed::Fast);
+
+    let other = choosing(&fast, "config.json", "openai", "gpt-5.6-luna")
         .expect("a model already written is one to write over");
-
-    assert_eq!(resolving(&written).speed("openai"), Speed::Fast);
+    assert_eq!(resolving(&other).speed("openai"), Speed::Standard);
+    assert!(!other.contains("\"fast\""), "{other}");
 }
 
 #[test]
-fn the_speed_written_is_the_speed_read_back_from_the_text() {
-    let fast = hastening("", "config.json", "openai", Speed::Fast)
+fn a_speed_is_read_for_the_model_the_file_names_and_for_no_other() {
+    // A run on another model than the file names was never shown that
+    // model's price, and a file that names none names no price at all.
+    let fast = hastening("", "config.json", "openai", "gpt-5.6-sol")
         .expect("an empty file is one to write whole");
-
-    assert_eq!(
-        hastened(&fast, "config.json", "openai", "gpt-5.6-sol").unwrap(),
-        Speed::Fast
-    );
-    assert_eq!(
-        hastened(&fast, "config.json", "anthropic", "claude-opus-5").unwrap(),
-        Speed::Standard
-    );
-    assert_eq!(
-        hastened("", "config.json", "openai", "gpt-5.6-sol").unwrap(),
-        Speed::Standard
-    );
-    assert!(hastened("{", "config.json", "openai", "gpt-5.6-sol").is_err());
-}
-
-#[test]
-fn a_speed_is_read_for_the_model_it_was_chosen_beside_and_for_no_other() {
-    // A run started with `--model` on another model than the file names was
-    // never shown that model's price, so the file's speed is not its speed.
-    let chosen = choosing("", "config.json", "openai", "gpt-5.6-sol")
-        .expect("an empty file is one to write whole");
-    let fast = hastening(&chosen, "config.json", "openai", Speed::Fast)
-        .expect("a provider already written is one to write beside");
     assert_eq!(
         hastened(&fast, "config.json", "openai", "gpt-5.6-sol").unwrap(),
         Speed::Fast
@@ -266,6 +253,20 @@ fn a_speed_is_read_for_the_model_it_was_chosen_beside_and_for_no_other() {
         hastened(&fast, "config.json", "openai", "gpt-5.5").unwrap(),
         Speed::Standard
     );
+    assert_eq!(
+        hastened(&fast, "config.json", "anthropic", "claude-opus-5").unwrap(),
+        Speed::Standard
+    );
+    let unnamed = r#"{"providers": {"openai": {"fast": true}}}"#;
+    assert_eq!(
+        hastened(unnamed, "config.json", "openai", "gpt-5.5").unwrap(),
+        Speed::Standard
+    );
+    assert_eq!(
+        hastened("", "config.json", "openai", "gpt-5.6-sol").unwrap(),
+        Speed::Standard
+    );
+    assert!(hastened("{", "config.json", "openai", "gpt-5.6-sol").is_err());
 }
 
 #[test]
@@ -748,7 +749,7 @@ fn the_roll_back_drill_meets_the_file_a_chosen_speed_leaves() {
         "{ \"updates\": { \"check\": \"never\" } }\n",
         FILE,
         "openai",
-        Speed::Fast,
+        "gpt-5.6-sol",
     )
     .expect("a file a speed can be written into");
     assert_eq!(written, format!("{planted}\n"));

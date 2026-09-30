@@ -1734,16 +1734,18 @@ fn a_start_holds_a_warned_route_until_the_users_file_says_yes() {
 #[test]
 fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
     // A restart holds a chosen speed: the file is read as the run starts.
+    // A speed kept for another model than the one a run starts on was never
+    // shown at that model's price, and is not its speed.
     for (kept, asked) in [
-        (true, crucible_models::Speed::Fast),
-        (false, crucible_models::Speed::Standard),
+        (Some("gpt-5.6-sol"), crucible_models::Speed::Fast),
+        (Some("gpt-5.5"), crucible_models::Speed::Standard),
+        (None, crucible_models::Speed::Standard),
     ] {
-        let sample = Sample::new(&format!("start-fast-{kept}"));
+        let sample = Sample::new(&format!("start-fast-{}", kept.unwrap_or("none")));
         let (logs, workspace) = (sample.logs(), sample.workspace());
         let file = sample.user_file();
-        if kept {
-            crate::remember::hastening(&file, "openai", crucible_models::Speed::Fast)
-                .expect("a speed written down");
+        if let Some(model) = kept {
+            crate::remember::hastening(&file, "openai", model).expect("a speed written down");
         }
         let services = Services::new();
         services.consent().keeps_in(file);
@@ -1773,6 +1775,6 @@ fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
         })
         .expect("a session over a key starts");
 
-        assert_eq!(conversation.runner().speed(), asked, "kept {kept}");
+        assert_eq!(conversation.runner().speed(), asked, "kept {kept:?}");
     }
 }

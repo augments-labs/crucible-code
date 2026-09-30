@@ -619,7 +619,7 @@ fn the_store_a_run_writes_through_takes_a_moved_providers_speed_out_first() {
     let sample = Sample::new("store-speed");
     let home = sample.found();
     let file = crucible_config::user(&home);
-    crucible_app::remember::hastening(&file, "openai", crucible_models::Speed::Fast)
+    crucible_app::remember::hastening(&file, "openai", "gpt-5.6-sol")
         .expect("a speed written down");
     let consent =
         crucible_app::content_use::Consent::new(crucible_app::content_use::Routes::production());

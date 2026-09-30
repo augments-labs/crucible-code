@@ -8,7 +8,7 @@ before you choose it.
 
 `/fast` opens a panel over the model in force: its provider, its name and the
 credential it is served by, what the vendor says of fast, and two rows,
-`Standard` and `Fast`, with the price beneath `Fast`. The mark opens on the
+`Standard` and `Fast`, with the price and the vendor's speed beneath `Fast`. The mark opens on the
 speed in force, so Enter changes nothing by accident; Escape leaves it as it
 was.
 
@@ -52,8 +52,9 @@ again; nothing is added to the transcript.
 
 ## Where it is kept
 
-`/fast` writes `"fast": true` beside the provider's `model` in the
-configuration file in your home directory, and `/fast off` takes it out:
+`/fast` writes the model in force and `"fast": true` together under the
+provider in the configuration file in your home directory, since the speed was
+chosen at that model's price, and `/fast off` takes `fast` out:
 
 ```json
 { "providers": { "openai": { "model": "gpt-6-astra", "fast": true } } }
@@ -64,9 +65,9 @@ before it draws anything, as every key a checkout may not set does: fast costs
 more on every request, and a repository could otherwise spend your money.
 
 A request carries the fast form only where all of these hold: your file says
-`fast` for the provider, beside the model in force where it names a model; the
-model in force has a fast form in the table below for the credential in force;
-and no `baseUrl` is set for the provider. A
+`fast` for the provider beside the model in force; the model in force has a
+fast form in the table below for the credential in force; and no `baseUrl` is
+set for the provider. A
 `fast` left in the file where one of these does not hold is left there and
 asks for standard. Making room in the model's window asks at the same speed
 as a turn.
@@ -130,15 +131,3 @@ beside the price under `Fast`, where the vendor states one.
 OpenAI states twice the price for GPT-6 and GPT-5.6 Sol; for GPT-5.6 Terra and
 Luna, and for GPT-5.5, the multiple is worked out from the prices on its
 pricing page. The ChatGPT speed page states no speed for GPT-6 Astra.
-
-## Rolling back to 0.43.3
-
-0.43.3 does not know `fast`, and stops before drawing anything on a file that
-has it, with a line that begins:
-
-```text
-crucible: <home>/config.json: providers.openai.fast is not a setting crucible has
-```
-
-Delete `"fast": true` from each provider in the configuration file in your
-home directory before running 0.43.3.

@@ -2,15 +2,17 @@
 //! vendor serves a fast form, and what that costs.
 //!
 //! Two rows over the model in force, standard and fast, with the vendor's
-//! price beneath fast and whatever the vendor says of it first above both. The
+//! price and speed beneath fast and whatever the vendor says of it first above
+//! both. The
 //! words are the provider's, for this model on this credential: a price read
 //! off another model, or off another way of signing in, is a price somebody
 //! pays without having been shown it.
 //!
 //! A model with no fast form, and one that is itself a fast model, are told so
 //! on one line rather than offered a panel with one row that could be taken.
-//! What is taken is written down beside the model, as a rung is, and goes back
-//! to standard on its own where the price shown may no longer be the price.
+//! What is taken is written down with the model it was taken for, and goes
+//! back to standard on its own where the price shown may no longer be the
+//! price.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;

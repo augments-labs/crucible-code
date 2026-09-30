@@ -401,7 +401,7 @@ echo '==> the prior binary stops on a speed the candidate keeps'
 # rolling back. The drill takes no turn, so it chooses no speed itself: the file
 # is the one the candidate writes when fast is chosen into a home like these,
 # which a test beside the candidate's writer holds byte for byte.
-fast_file='{ "updates": { "check": "never" }, "providers": {"openai": {"fast": true}} }'
+fast_file='{ "updates": { "check": "never" }, "providers": {"openai": {"model": "gpt-5.6-sol", "fast": true}} }'
 fhome=$stage/fast-home
 mkdir -p "$fhome/sessions"
 printf '%s\n' "$fast_file" >"$fhome/config.json"

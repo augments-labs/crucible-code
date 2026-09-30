@@ -206,7 +206,7 @@ fn the_speed_in_the_file_is_asked_only_where_the_model_has_a_fast_form() -> Resu
     ] {
         let tree = Tree::new("speed-file")?;
         let (mut conversation, desk) = fastened(&tree, Fastened::new(form))?;
-        remember::hastening(&desk.choosing, "openai", Speed::Fast)?;
+        remember::hastening(&desk.choosing, "openai", "script")?;
 
         conversation.hastened_as_kept(&desk.choosing);
 

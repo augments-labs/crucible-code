@@ -48,7 +48,7 @@ pub enum Hastened {
 pub fn moving(file: PathBuf) -> Moving {
     Arc::new(move |providers: &[&str]| {
         for provider in providers {
-            remember::hastening(&file, provider, Speed::Standard).map_err(|problem| {
+            remember::slowing(&file, provider).map_err(|problem| {
                 Box::<str>::from(format!(
                     "the speed that goes with it could not be taken out: {problem}"
                 ))
@@ -70,16 +70,23 @@ impl Conversation {
             FastForm::Own(_) => Hastened::Own,
             FastForm::Field(_) => {
                 self.runner.hasten(speed);
+                let written = match speed {
+                    Speed::Fast => {
+                        remember::hastening(with.choosing, provider, self.runner.model())
+                    }
+                    Speed::Standard => remember::slowing(with.choosing, provider),
+                };
                 Hastened::Taken {
-                    unwritten: remember::hastening(with.choosing, provider, speed).err(),
+                    unwritten: written.err(),
                 }
             }
         }
     }
 
     /// Asks at the speed `file`, the user's own, says now for the provider in
-    /// force, where the model in force can be asked for it: what a run starts
-    /// at, and what a credential written or forgotten leaves.
+    /// force, where it names the model in force and that model can be asked
+    /// for it: what a run starts at, and what a credential written or
+    /// forgotten leaves.
     ///
     /// Read from the file rather than from the settings the run started with,
     /// because a credential that moved took its provider's speed out of the
@@ -100,15 +107,17 @@ impl Conversation {
     /// `file`.
     pub(crate) fn slowed(&mut self, provider: &str, file: &Path) -> Option<RememberError> {
         self.runner.hasten(Speed::Standard);
-        remember::hastening(file, provider, Speed::Standard).err()
+        remember::slowing(file, provider).err()
     }
 
-    /// Writes down that the vendor refused the fast form, where the turn that
-    /// just ended asked at `asked` and the runner turned it off.
+    /// Writes down that the vendor refused the fast form, where the turn or
+    /// the compaction that just ended asked at `asked` and the runner turned
+    /// it off.
     ///
     /// Written to the file a yes is written to, which is the user's own. A file
-    /// that could not be written is not said again here: the turn already said
-    /// fast is off, and the next run asks once, is refused once and says so.
+    /// that could not be written is not said again here: the line of the
+    /// refusal already said fast is off, and the next run asks once, is
+    /// refused once and says so.
     pub(crate) fn refusal_written(&self, asked: Speed) {
         if asked != Speed::Fast || self.runner.speed() != Speed::Standard {
             return;
@@ -119,7 +128,7 @@ impl Conversation {
         ) else {
             return;
         };
-        let _ = remember::hastening(file, provider, Speed::Standard);
+        let _ = remember::slowing(file, provider);
     }
 }
 

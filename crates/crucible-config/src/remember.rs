@@ -512,8 +512,23 @@ pub fn choosing(
     provider: &str,
     model: &str,
 ) -> Result<String, ConfigError> {
+    let was = named(text, provider);
     let written = beside(text, file, provider, "model", &Value::from(model))?;
-    without(&written, file, provider, "effort")
+    let written = without(&written, file, provider, "effort")?;
+    // The speed was chosen at that model's price, so it stays only with it.
+    if was.as_deref() == Some(model) {
+        Ok(written)
+    } else {
+        without(&written, file, provider, "fast")
+    }
+}
+
+/// The model `text` names for `provider`, where it is a file that names one.
+fn named(text: &str, provider: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    answered(&value, provider, "model")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 /// Takes `providers.<provider>.<key>` out, where the file has it.
@@ -566,35 +581,45 @@ pub fn thinking(
     )
 }
 
-/// The text of a configuration file that asks `provider` for this speed.
+/// The text of a configuration file that asks `provider` for `model`, fast.
 ///
-/// Fast is written as `true` beside the provider's model; standard is the key
-/// taken out, since a file that says nothing asks for standard, and a file the
-/// previous release can read again is worth more than one that says `false`.
+/// The speed is a choice about one model at its price, so the model is
+/// written with it, over whichever the file named, and the rung stays.
 ///
 /// # Errors
 ///
 /// [`ConfigError::Malformed`] and [`ConfigError::Unspliceable`], for the same
-/// reasons as [`choosing`]; [`ConfigError::Unremovable`] where a speed written
-/// cannot be lifted out without rewriting.
+/// reasons as [`choosing`].
 pub fn hastening(
     text: &str,
     file: &str,
     provider: &str,
-    speed: Speed,
+    model: &str,
 ) -> Result<String, ConfigError> {
-    match speed {
-        Speed::Fast => beside(text, file, provider, "fast", &Value::Bool(true)),
-        Speed::Standard if text.trim().is_empty() => Ok(text.to_owned()),
-        Speed::Standard => without(text, file, provider, "fast"),
+    let written = beside(text, file, provider, "model", &Value::from(model))?;
+    beside(&written, file, provider, "fast", &Value::Bool(true))
+}
+
+/// The text of a configuration file that asks `provider` for standard: the
+/// speed taken out, since a file that says nothing asks for standard.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`], and [`ConfigError::Unremovable`] where a speed
+/// written cannot be lifted out without rewriting.
+pub fn slowing(text: &str, file: &str, provider: &str) -> Result<String, ConfigError> {
+    if text.trim().is_empty() {
+        return Ok(text.to_owned());
     }
+    without(text, file, provider, "fast")
 }
 
 /// The speed `text`, the user's own file, asks `provider` for `model`: what
 /// [`hastening`] wrote, read back the way a start reads it.
 ///
-/// Fast only for the model the file names for the provider, or for any where
-/// it names none: a speed was chosen beside a model, at that model's price.
+/// Fast only for the model the file names for the provider: a speed was
+/// chosen for a model, at that model's price, and a file that names none
+/// names no price.
 ///
 /// # Errors
 ///
@@ -605,7 +630,7 @@ pub fn hastened(text: &str, file: &str, provider: &str, model: &str) -> Result<S
     }
     let document = crate::document::Document::parse(text, file, crate::document::Origin::User)?;
     let settings = crate::settings::Settings::resolve_checked(vec![document])?;
-    let beside = settings.model(provider).is_none_or(|named| named == model);
+    let beside = settings.model(provider) == Some(model);
     Ok(if beside {
         settings.speed(provider)
     } else {

@@ -71,7 +71,7 @@ pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{
     accepting, allowing, asking, choosing, drawing, forgetting, hastened, hastening, reading,
-    sandboxing, thinking, unasked,
+    sandboxing, slowing, thinking, unasked,
 };
 pub use settings::{
     Color, Compaction, Glyphs, McpServer, SandboxSettings, ScrollSpeed, Sending, Settings,

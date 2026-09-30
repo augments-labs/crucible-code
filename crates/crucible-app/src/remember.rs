@@ -186,19 +186,29 @@ pub fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<(), Remem
     })
 }
 
-/// Writes `speed` down as the speed to ask `provider`'s model in force at.
-///
-/// Fast is written beside the model; standard takes it out. Everything else
-/// already in the file stays where it was, byte for byte.
+/// Writes down that `provider` asks `model` fast: the model and the speed
+/// together, since the speed was chosen at that model's price. Everything
+/// else already in the file stays where it was, byte for byte.
 ///
 /// # Errors
 ///
 /// [`RememberError::Busy`] when another crucible holds the file,
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
 /// [`RememberError::Unusable`] when what it already says is not configuration.
-pub fn hastening(file: &Path, provider: &str, speed: Speed) -> Result<(), RememberError> {
+pub fn hastening(file: &Path, provider: &str, model: &str) -> Result<(), RememberError> {
     answering(file, |text, named| {
-        crucible_config::hastening(text, named, provider, speed)
+        crucible_config::hastening(text, named, provider, model)
+    })
+}
+
+/// Takes `provider`'s speed out of `file`, so it asks at standard.
+///
+/// # Errors
+///
+/// As [`hastening`].
+pub fn slowing(file: &Path, provider: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::slowing(text, named, provider)
     })
 }
 
