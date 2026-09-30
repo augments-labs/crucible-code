@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1504
 expression: window.picture()
 ---
 80x24 cursor 22,0 scrolled 0
@@ -14,7 +15,7 @@ expression: window.picture()
 |⎿ login successful; choose a model with /model                                  |
 |                                                                                |
 |› /model claude-test-1                                                          |
-|⎿ anthropic/claude-test-1                                                       |
+|⎿ anthropic · claude-test-1                                                     |
 |                                                                                |
 |› /effort                                                                       |
 |────────────────────────────────────────────────────────────────────────────────|

@@ -26,7 +26,7 @@ use crucible_client_api::{Command, Name};
 use crucible_models::Effort;
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
-    clip, fold,
+    clip, fold, label,
 };
 
 use crate::cli::Fatal;
@@ -328,19 +328,7 @@ fn stood<T: Terminal>(
     // name with nothing saying what it is the name of. The rung rides with it:
     // both are what the next turn would be asked under, and the shelf below
     // offers to change either.
-    let asked = match current.model {
-        "" => NOTHING_ASKED.to_owned(),
-        name => {
-            let slug = format!("{}/{name}", current.provider.unwrap_or("unselected"));
-            match track {
-                Track::Offered(Some(effort)) => {
-                    format!("{slug} {} {}", glyphs.dot(), effort.as_str())
-                }
-                _ => slug,
-            }
-        }
-    };
-    let now = format!("now  {asked}");
+    let now = titled(current, track, glyphs);
     let nothing = nothing(glyphs);
     let norung = match track {
         Track::Offered(_) => serves_none(glyphs),
@@ -624,7 +612,12 @@ fn taken<T: Terminal>(
 
     // The word may have come off the line and was never shape-checked — anything
     // at all can follow `/model ` — so it goes out the way arrived text goes out.
-    renderer.commit(&format!("{provider}/{name}"))?;
+    renderer.commit(&answered(
+        provider,
+        name,
+        conversation.runner().effort(),
+        terms.style().glyphs(),
+    ))?;
 
     // Both halves written, and the row above already says what to. Where they
     // went is not news: it is the same file every time, chosen by crucible
@@ -674,11 +667,14 @@ fn listed<T: Terminal>(
 ) -> Result<(), Fatal> {
     // Read out of a configuration file or off the command line either way, so
     // it goes out the way arrived text goes out.
-    match conversation.runner().model() {
+    let runner = conversation.runner();
+    match runner.model() {
         "" => renderer.commit(NO_MODEL_CHOSEN)?,
-        name => renderer.commit(&format!(
-            "{}/{name}",
-            conversation.serving().unwrap_or("unselected")
+        name => renderer.commit(&in_force(
+            conversation.serving(),
+            name,
+            runner.effort(),
+            terms.style().glyphs(),
         ))?,
     }
 
@@ -700,6 +696,45 @@ fn listed<T: Terminal>(
         .collect();
 
     Ok(renderer.present(&rows)?)
+}
+
+/// The model in force as the shelf's title row says it, with the rung where
+/// one may be taken here.
+fn titled(current: Asked<'_>, track: Track, glyphs: Glyphs) -> String {
+    let effort = match track {
+        Track::Offered(effort) => effort.map(Effort::as_str),
+        Track::Refused => None,
+    };
+    match current.model {
+        "" => format!("now  {NOTHING_ASKED}"),
+        name => format!(
+            "now  {}",
+            label(
+                current.provider.unwrap_or_default(),
+                name,
+                effort,
+                None,
+                glyphs
+            )
+        ),
+    }
+}
+
+/// The model a switch took, as the row answering `/model` says it: the same
+/// label the row under the box then draws.
+fn answered(provider: &str, name: &str, effort: Option<Effort>, glyphs: Glyphs) -> String {
+    label(provider, name, effort.map(Effort::as_str), None, glyphs)
+}
+
+/// The model in force, as the list printed where no shelf fits opens.
+fn in_force(provider: Option<&str>, name: &str, effort: Option<Effort>, glyphs: Glyphs) -> String {
+    label(
+        provider.unwrap_or_default(),
+        name,
+        effort.map(Effort::as_str),
+        None,
+        glyphs,
+    )
 }
 
 #[cfg(test)]

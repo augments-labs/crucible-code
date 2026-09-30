@@ -26,5 +26,5 @@ expression: on_the_first_beat(&window.picture())
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ › /                                                                          │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|ask mode on (shift+tab to cycle) · 1 command             anthropic/claude-test-1|
+|ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1|
 |                                                               transcript map → |

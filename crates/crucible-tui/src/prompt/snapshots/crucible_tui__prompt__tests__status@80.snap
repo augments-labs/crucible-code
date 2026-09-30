@@ -1,9 +1,10 @@
 ---
 source: crates/crucible-tui/src/prompt/tests.rs
+assertion_line: 145
 expression: "dump(&prompt.rows(columns, glyphs), columns)"
 ---
 <Quiet>                                                                                </>
 <Quiet>╭──────────────────────────────────────────────────────────────────────────────╮</>
 <Quiet>│</> <Accent>›</>                                                                            <Quiet>│</>
 <Quiet>╰──────────────────────────────────────────────────────────────────────────────╯</>
-<Accent>ask before edits</><Quiet> (shift+tab to cycle)</>           <Quiet>anthropic/claude-sonnet-5 · high</>
+<Accent>ask before edits</><Quiet> (shift+tab to cycle)</>         <Quiet>anthropic · claude-sonnet-5 · high</>

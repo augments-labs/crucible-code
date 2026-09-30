@@ -14,7 +14,9 @@ use crate::cli::sample::Sample;
 use crucible_app::Conversation;
 use crucible_app::providers::Providers;
 
-use super::{Effort, Selected, applied, keys, offered, taken};
+use super::{
+    Asked, Effort, Selected, Track, answered, applied, in_force, keys, offered, taken, titled,
+};
 
 /// The built-in providers, as one generation the rows are read off.
 fn catalogue() -> Providers {
@@ -244,4 +246,137 @@ fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
     assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
     assert_eq!(conversation.runner().maximum_output(), 16_000);
     assert_eq!(conversation.runner().context_window(), Some(345_678));
+}
+
+/// What the status row under the box says of the model, at a width that holds
+/// every fact on it: what follows the widest gap on the row.
+fn under_the_box(provider: &str, model: &str, effort: Option<&str>, glyphs: Glyphs) -> String {
+    let prompt = crucible_tui::Prompt {
+        draft: crucible_tui::Draft::at("", 0),
+        left: crucible_tui::Remaining::new(None),
+        history: crucible_tui::Recalled::default(),
+        mode: "ask mode on",
+        tone: crucible_tui::Slot::Quiet,
+        hint: "",
+        model,
+        provider,
+        effort,
+        asking: None,
+        commands: crucible_tui::CommandCount::new(0, false),
+        room: 10,
+        named: &[],
+    };
+    let rows: Vec<String> = prompt
+        .rows(200, glyphs)
+        .iter()
+        .map(crucible_tui::Row::text)
+        .collect();
+    let status = rows
+        .iter()
+        .find(|row| row.starts_with("ask mode on"))
+        .unwrap_or_else(|| panic!("no status row in {rows:#?}"));
+    status
+        .trim_end()
+        .rsplit("  ")
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[test]
+fn every_place_the_model_is_drawn_names_it_the_same_way() {
+    // The status row, the shelf's title, the row answering `/model` and the
+    // list printed where no shelf fits each say which model the next turn is
+    // asked of. For one state they say it in one form, for every model the
+    // registry holds, so a model added later is held to it with no new test.
+    let providers = catalogue();
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let dot = glyphs.dot();
+        for served in offered(&providers) {
+            for model in served.models {
+                let rungs = std::iter::once(None).chain(model.rungs.iter().copied().map(Some));
+                for effort in rungs {
+                    let wanted = match effort {
+                        Some(effort) => format!(
+                            "{} {dot} {} {dot} {}",
+                            served.name,
+                            model.name,
+                            effort.as_str()
+                        ),
+                        None => format!("{} {dot} {}", served.name, model.name),
+                    };
+                    let at = format!("{} {} {effort:?} {glyphs:?}", served.name, model.name);
+                    assert_eq!(
+                        under_the_box(served.name, model.name, effort.map(Effort::as_str), glyphs),
+                        wanted,
+                        "status row, {at}"
+                    );
+                    let current = Asked {
+                        provider: Some(served.name),
+                        model: model.name,
+                    };
+                    assert_eq!(
+                        titled(current, Track::Offered(effort), glyphs),
+                        format!("now  {wanted}"),
+                        "shelf title, {at}"
+                    );
+                    assert_eq!(
+                        answered(served.name, model.name, effort, glyphs),
+                        wanted,
+                        "answer row, {at}"
+                    );
+                    assert_eq!(
+                        in_force(Some(served.name), model.name, effort, glyphs),
+                        wanted,
+                        "list, {at}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn no_accepted_picture_draws_a_model_the_way_it_is_typed() {
+    // The label reads `provider · model`; `provider/model` is the form typed
+    // after `/model` and `--model`, and a line printed for somebody to type
+    // keeps it. So a picture may hold the slash only right after one of those.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let providers = catalogue();
+    let names: Vec<&str> = offered(&providers).map(|served| served.name).collect();
+    let mut pictures = Vec::new();
+    let mut folders = vec![root.join("tests"), root.join("crates"), root.join("src")];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).expect("a folder of the tree") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() && !path.ends_with("target") {
+                folders.push(path);
+            } else if path.extension().is_some_and(|kind| kind == "snap") {
+                pictures.push(path);
+            }
+        }
+    }
+    assert!(pictures.len() > 50, "{} pictures found", pictures.len());
+
+    let mut drawn = Vec::new();
+    for picture in &pictures {
+        let text = std::fs::read_to_string(picture).expect("a picture");
+        for line in text.lines() {
+            for name in &names {
+                let slashed = format!("{name}/");
+                let mut from = 0;
+                while let Some(found) = line.get(from..).and_then(|rest| rest.find(&slashed)) {
+                    let at = from + found;
+                    let before = line.get(..at).unwrap_or_default();
+                    let typed = before.ends_with("/model ") || before.ends_with("--model ");
+                    let word = before.chars().last().is_some_and(char::is_alphanumeric);
+                    if !typed && !word {
+                        drawn.push(format!("{}: {}", picture.display(), line.trim()));
+                    }
+                    from = at + slashed.len();
+                }
+            }
+        }
+    }
+    assert!(drawn.is_empty(), "{drawn:#?}");
 }

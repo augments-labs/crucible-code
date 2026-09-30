@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 651
 expression: on_the_first_beat(&window.picture())
 ---
 80x24 cursor 20,4 scrolled 0
@@ -25,5 +26,5 @@ expression: on_the_first_beat(&window.picture())
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-|allow edits on (shift+tab to cycle) · 1 command          anthropic/claude-test-1|
+|allow edits on (shift+tab to cycle) · 1 command        anthropic · claude-test-1|
 |                                                               transcript map → |

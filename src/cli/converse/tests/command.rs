@@ -290,7 +290,10 @@ fn a_model_named_on_the_line_is_written_down_under_a_provider_and_beside_it() {
     .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
-    assert!(written.contains("anthropic/claude-haiku-4-5"), "{written}");
+    assert!(
+        written.contains("anthropic · claude-haiku-4-5"),
+        "{written}"
+    );
 
     let held = std::fs::read_to_string(&choosing).expect("the file it said it wrote");
     assert!(held.contains("\"provider\": \"anthropic\""), "{held}");
