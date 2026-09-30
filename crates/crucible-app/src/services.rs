@@ -1,8 +1,10 @@
 //! What the application owns for the length of a run and lends to what it
 //! assembles: today the runtime, the worker tools hand their blocking work
 //! to, the shared HTTP service provider turns and web posts use, the release
-//! check and its cached answer, and the owner of account renewals, plus whatever
-//! later needs to be owned once per run the same way.
+//! check and its cached answer, the owner of account renewals, and the yes
+//! given to each route whose vendor uses what is sent, which both HTTP clients
+//! built here ask before a request leaves, plus whatever later needs to be
+//! owned once per run the same way.
 //!
 //! One value, [`Services`], made once by [`serving`] and lent to everything the
 //! run builds. [`crate::startup::Startup`] carries it, so a factory reaches
@@ -28,9 +30,10 @@
 
 use std::fmt;
 use std::num::NonZeroUsize;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::content_use::{Consent, Routes};
 use crucible_auth::{Renewals, Unjoined};
 use crucible_http::{Lookups, Poison};
 use crucible_provider::HttpTurns;
@@ -106,18 +109,38 @@ pub struct Services {
     http: OnceLock<HttpTurns>,
     renewals: Renewals,
     release: OnceLock<UpdateCrateReleaseCheck>,
+    consent: Consent,
 }
 
 impl Services {
     /// Services that have started nothing yet.
     pub(crate) fn new() -> Self {
+        Self::over(Routes::production())
+    }
+
+    /// Services whose clients hold the origins of `routes` until each has its
+    /// yes.
+    pub(crate) fn over(routes: Routes) -> Self {
+        let consent = Consent::new(routes);
+        // Before anything could be sent: the renewals owner makes its client
+        // with whatever hold it has by the first request.
+        let renewals = Renewals::new();
+        renewals.holds(Arc::new(consent.clone()));
         Self {
             runtime: RuntimeOwner::new(),
             tool_worker: OnceLock::new(),
             http: OnceLock::new(),
-            renewals: Renewals::new(),
+            renewals,
             release: OnceLock::new(),
+            consent,
         }
+    }
+
+    /// The yes given to each warned route, which every client built here asks
+    /// before a request leaves.
+    #[must_use]
+    pub fn consent(&self) -> &Consent {
+        &self.consent
     }
 
     /// The application's runtime, built the first time a handle to it is
@@ -156,7 +179,8 @@ impl Services {
     /// The one asynchronous HTTP service provider turns and web posts use.
     ///
     /// It is built the first time a factory needs it, with one poisoned lookup
-    /// place for targets and the release owner's plain place for proxy hosts.
+    /// place for targets and the release owner's plain place for proxy hosts,
+    /// and asks [`Services::consent`] before each request leaves.
     /// The release owner supplies the TLS and proxy decisions, so a separate
     /// pool never means a separate trust or environment decision.
     #[must_use]
@@ -166,12 +190,14 @@ impl Services {
             let targets = Lookups::poisoned(NonZeroUsize::MIN, &poison);
             self.release()
                 .client(targets)
+                .map(|client| client.holding(Arc::new(self.consent.clone())))
                 .map_or_else(HttpTurns::unavailable, HttpTurns::new)
         })
     }
 
     /// The one owner of account renewals for the run, which every
-    /// subscription login is built with.
+    /// subscription login is built with. Its requests ask
+    /// [`Services::consent`] before they leave, as the shared client's do.
     ///
     /// Cheap and inert until it is given the runtime, which
     /// [`crate::startup::assemble`] does once it has built it: until then a
@@ -190,6 +216,7 @@ impl Services {
             http,
             renewals,
             release,
+            consent: _,
         } = self;
         let release_owner = release;
         let release = release_owner

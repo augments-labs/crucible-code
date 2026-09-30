@@ -236,3 +236,68 @@ fn the_release_owner_lends_a_client_and_keeps_its_own_pool_unbuilt() {
     );
     assert_eq!(stopped, Ok(()));
 }
+
+/// A listener standing where a warned route's model would be, counting every
+/// byte it is sent and answering each request with an empty 200.
+fn recording() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+    let heard = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counting = Arc::clone(&heard);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buffer = [0; 4096];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            counting.fetch_add(read, Ordering::SeqCst);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+        }
+    });
+    (url, heard)
+}
+
+/// The one client provider turns and web posts share holds a warned route's
+/// origin: nothing reaches it before the yes, and the request goes after it.
+#[test]
+fn the_shared_client_sends_a_warned_route_nothing_until_its_yes() {
+    use crucible_credentials::Outgoing;
+    use crucible_provider::Transport as _;
+    use crucible_runtime::Cancel;
+
+    use crate::content_use::{Routes, WARNED, Warned};
+
+    let (url, heard) = recording();
+    let origin: &'static str = Box::leak(
+        crucible_http::Origin::of(&url)
+            .unwrap()
+            .to_string()
+            .into_boxed_str(),
+    );
+    let warned = Warned {
+        route: "key:recorded",
+        shown: "Recorded",
+        warning: WARNED[3].warning,
+        origins: Box::leak(Box::new([origin])),
+    };
+    let services = super::Services::over(Routes::new(vec![warned]));
+    let runtime = services.runtime().handle().unwrap();
+    let post = || {
+        runtime.block_on(services.http().post(
+            &url,
+            &mut Outgoing::new(),
+            "{}".into(),
+            &Cancel::new(),
+        ))
+    };
+
+    let held = post().err().map(|problem| problem.to_string());
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(heard.load(Ordering::SeqCst), 0, "{held:?}");
+    assert!(held.is_some_and(|said| said.contains("key:recorded")));
+
+    services.consent().record("key:recorded");
+    assert!(post().is_ok());
+    assert!(heard.load(Ordering::SeqCst) > 0);
+    drop(services);
+}
