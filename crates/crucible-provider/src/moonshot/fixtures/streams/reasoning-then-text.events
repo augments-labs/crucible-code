@@ -1,0 +1,3 @@
+Text("4")
+Stopped(Yielded)
+Usage(ProviderUsage { input: InputTokenUsage { total: Some(1200), uncached: Some(176), cache_read: Some(1024), cache_write_or_creation: None }, output: Some(30), reasoning: Some(22), total: Some(1230), storage_token_hours: None, details: [ProviderNumericDetail { label: "cached_tokens", value: 1024 }, ProviderNumericDetail { label: "reasoning_tokens", value: 22 }] })

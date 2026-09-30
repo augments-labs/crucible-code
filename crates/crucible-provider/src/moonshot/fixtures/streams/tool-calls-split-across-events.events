@@ -1,0 +1,8 @@
+Text("Reading.")
+ToolStarted { id: "call_1", name: "read" }
+ToolArgs("{\"path\":")
+ToolArgs("\"a.rs\"}")
+ToolStarted { id: "call_2", name: "clock" }
+ToolArgs("{}")
+Stopped(WantsTools)
+Usage(ProviderUsage { input: InputTokenUsage { total: Some(50), uncached: None, cache_read: None, cache_write_or_creation: None }, output: Some(20), reasoning: None, total: Some(70), storage_token_hours: None, details: [] })

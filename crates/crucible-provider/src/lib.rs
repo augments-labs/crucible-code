@@ -13,6 +13,7 @@
 //! way to authenticate does not edit a single provider.
 
 mod anthropic;
+mod completions;
 mod endpoint;
 #[cfg(test)]
 mod fake;

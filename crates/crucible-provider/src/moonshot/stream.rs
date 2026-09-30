@@ -1,15 +1,20 @@
 //! One `MoonshotAI` response, as deltas.
 //!
-//! The loop belongs to [`crate::stream`] and is the same for every provider.
-//! What is this provider's is which events mean something, which lives in
-//! [`super::wire`]; what is here is the pairing of the two, and the tests that
-//! read a recorded response end to end.
+//! The loop belongs to [`crate::stream`] and is the same for every provider,
+//! and which events mean something is [`crate::completions::wire`]'s, in
+//! [`super::Kimi`]'s dialect. What is here is for tests alone: the pairing of
+//! the two under the name Kimi's tests read a recorded response with.
 
-use crate::moonshot::wire::Completions;
+#[cfg(test)]
+use crate::completions::wire::Completions;
+#[cfg(test)]
+use crate::moonshot::Kimi;
+#[cfg(test)]
 use crate::stream::Response;
 
 /// A response being read, as this endpoint narrates one.
-pub(super) type Stream = Response<Completions>;
+#[cfg(test)]
+pub(super) type Stream = Response<Completions<Kimi>>;
 
 #[cfg(test)]
 pub(super) mod tests {
