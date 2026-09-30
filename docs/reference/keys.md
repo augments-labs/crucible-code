@@ -288,8 +288,9 @@ window has no room for the key box; make it taller and try /login again`.
 
 While an account login waits on the browser, <kbd>Esc</kbd>,
 <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> stops it and goes back; on a sign-in
-that words opened directly it ends with `! sign-in did not complete` and what
-stays stored. Where a code is typed by
+that words opened directly it cancels with `cancelled, nothing signed in`. A
+sign-in that fails, is refused or expires ends with `! sign-in did not
+complete` and what stays stored. Where a code is typed by
 hand instead, typing, paste and <kbd>Backspace</kbd> edit it and
 <kbd>Enter</kbd> submits it once it holds something. Past 16 KiB the row
 under the box says `authorization input is limited to 16 KiB`. [Account login
