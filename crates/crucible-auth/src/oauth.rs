@@ -531,6 +531,10 @@ pub enum OAuthError {
     /// The authorization service could not be reached.
     #[error("account login could not reach the authorization service")]
     Unreachable,
+    /// The application held the request back until the person answers for
+    /// the route it would have gone to: nothing was sent.
+    #[error("nothing was sent: {0} waits for an answer")]
+    Held(Box<str>),
     /// The authorization service refused one step.
     #[error("account login was refused (HTTP {status})")]
     Refused {
