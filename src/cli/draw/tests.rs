@@ -1899,3 +1899,8 @@ fn a_panic_on_another_thread_is_said_in_the_transcript_a_line_each() {
         "{rows:?}"
     );
 }
+
+// Where a result is held against the row it was written on. Its text is kept
+// as it was agreed, which the formatter would otherwise re-wrap.
+#[rustfmt::skip]
+mod row_position;

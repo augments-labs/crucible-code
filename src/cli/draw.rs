@@ -1213,6 +1213,11 @@ pub(crate) fn came_back<T: Terminal>(
     let details = kept
         .heading(call)
         .is_some_and(|said| words(said, renderer.columns(), style).text() != flattened(said));
+    // The first line the result writes, which is where the offer goes. Read
+    // before the rows go down rather than counted back after them: a change is
+    // written as one line however many rows it draws, so counting its rows back
+    // lands on a line above it.
+    let at = renderer.lines();
     let rows = if changed(&output).is_some() && renderer.is_terminal() {
         let retained = output.clone();
         let rows = finished_rows(&retained, renderer.columns(), style, details);
@@ -1235,14 +1240,12 @@ pub(crate) fn came_back<T: Terminal>(
     //
     // Where the offer went is the block's first row, which is the one that names
     // the key — the lines under it are a change, and a change is cut where it is
-    // built rather than here, so it offers nothing. Counted back from the end
-    // because the rows have already gone.
+    // built rather than here, so it offers nothing.
     if details
         || rows
             .iter()
             .any(|row| row.kinds().any(|slot| slot == Slot::Cut))
     {
-        let at = renderer.lines().saturating_sub(rows.len());
         kept.finished(call, output.into_text(), at);
     } else {
         // Even when nothing needs retaining, the call and any live tail are
