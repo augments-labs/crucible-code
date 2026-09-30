@@ -1,0 +1,94 @@
+---
+source: crates/crucible-tui/src/timeline/tests.rs
+expression: "pictured(40, Glyphs::Unicode)"
+---
+<Quiet>◇ </>0.0.1   <Quiet>2026-08-08</><Quiet>  18 added · 6 know</><Quiet>…</>
+<Quiet>◇ </>0.0.2   <Quiet>2026-08-09</><Quiet>  1 added · 1 fixed</><Quiet>…</>
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.36.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Added</>                                
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>A first command.</> It lists what     
+<Quiet>│  </>  there is.                          
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.37.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Fixed</>                                
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>A crash on start is gone.</> It read a
+<Quiet>│  </>  file that was not there.           
+<Quiet>│  </><Quiet>•</><Quiet> </>Another fix.                       
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.38.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Changed</>                              
+<Quiet>│  </><Strong>A paragraph under a </><Strong>he</><Strong>ading.</> It holds
+<Quiet>│  </>no bullet at all.                    
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.39.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Security</>                             
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>A TLS 1.3 </><Strong>ha</><Strong>ndshake that breaks the</>
+<Quiet>│  </>  <Strong>protocol's encryption rules is</>     
+<Quiet>│  </>  <Strong>refused.</> crucible now uses rustls  
+<Quiet>│  </>  0.23.45, which rejects a handshake 
+<Quiet>│  </>  message a server sends in          
+<Quiet>│  </>  plaintext.                         
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.40.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Added</>                                
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>A table.</>                           
+<Quiet>│</>                                       
+<Quiet>│  </><Strong>Key</><Quiet>   </><Quiet> </><Quiet>│</><Quiet> </><Strong>What it does</>                
+<Quiet>│  </><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>┼</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</><Quiet>─</>                
+<Quiet>│  </><Code>Ctrl+O</><Quiet> </><Quiet>│</><Quiet> </>opens                       
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.41.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Fixed</>                                
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>Code keeps its lines.</>              
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>first line</>                           
+<Quiet>│  </><Quiet>second line</>                          
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.41.1</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Fixed</>                                
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>A link.</> See <Link>the notes</> for more.    
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.42.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Removed</>                              
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>An old flag.</> It did nothing.       
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.43.0</><Quiet> · 2026-09-29</>                   
+<Quiet>│</>                                       
+<Quiet>│  </><Quiet>Added</>                                
+<Quiet>│  </><Quiet>•</><Quiet> </><Strong>A number.</> It was <Link>#123</> upstream.    
+<Quiet>│</>                                       
+<Quiet>│</>                                       
+<Accent>◆ </><Strong>0.43.3</><Quiet> · 2026-09-29</><Quiet> · this version</>    
+                                        
+   <Strong>The newest summary.</> Output redirected
+   under <Code>output.color</> keeps the         
+   markdown.                            
+                                        
+   <Quiet>Fixed</>                                
+   <Quiet>•</><Quiet> </><Strong>Output keeps its markers.</> That     
+     setting dropped them, so <Code>**loud**</>  
+     came out as loud.                  
+   <Quiet>•</><Quiet> </><Strong>A second fix.</> With a longer        
+     sentence that has to wrap at forty 
+     columns and at eighty too, so that 
+     the hanging indent shows.          
+                                        
+<Quiet>  ⎿ </>12 releases · ten newest in full ·  
+    /release-notes <version> prints one

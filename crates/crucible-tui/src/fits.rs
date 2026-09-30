@@ -45,6 +45,7 @@ use crate::row::Row;
 use crate::running::{Command, Running};
 use crate::sandbox_panel::{SandboxPanel, SandboxTab};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
+use crate::timeline::{Brief, Timeline, Told};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
 
@@ -611,5 +612,55 @@ fn a_picker_fits_the_window_it_stands_in() {
     };
     down("a picker with nothing on it", |columns, room, glyphs| {
         bare.within(columns, room, glyphs)
+    });
+}
+
+#[test]
+fn the_release_timeline_fits_the_window_it_is_printed_into() {
+    const COUNTED: [(&str, usize); 3] = [("added", 18), ("known limits", 6), (LONG, 1)];
+    const OLDER: [Brief<'static>; 2] = [
+        Brief {
+            version: "0.0.1",
+            date: "2026-08-08",
+            counted: &COUNTED,
+        },
+        Brief {
+            version: LONG,
+            date: LONG,
+            counted: &[],
+        },
+    ];
+    let words = format!(
+        "**{PROSE}** {LONG}\n\n### Fixed\n\n- **{PROSE}** {LONG} `{LONG}`\n\n\
+         | Key | {LONG} |\n| --- | --- |\n| `a` | {PROSE} |\n\n```\n{LONG}{LONG}\n```\n"
+    );
+    let told = [
+        Told {
+            brief: Brief {
+                version: "0.41.1",
+                date: "2026-09-14",
+                counted: &COUNTED,
+            },
+            text: &words,
+        },
+        Told {
+            brief: Brief {
+                version: LONG,
+                date: LONG,
+                counted: &COUNTED,
+            },
+            text: &words,
+        },
+    ];
+    let timeline = Timeline {
+        older: &OLDER,
+        told: &told,
+        running: Some(LONG),
+        forge: None,
+        closing: Some(PROSE),
+        most: 20_000,
+    };
+    across("the release timeline", |columns, glyphs| {
+        timeline.rows(columns, glyphs)
     });
 }

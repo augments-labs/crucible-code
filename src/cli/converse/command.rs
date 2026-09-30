@@ -48,6 +48,7 @@ mod effort;
 mod login;
 mod logout;
 mod model;
+mod notes;
 mod resume;
 mod sandbox;
 mod theme;
