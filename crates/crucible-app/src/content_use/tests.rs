@@ -511,3 +511,69 @@ fn every_warning_is_its_row_of_the_docs_table() {
     }
     assert_eq!(addresses.len(), RECOGNISED.len(), "{addresses:?}");
 }
+
+/// Stopped between the two writes: the yes is out of the user's file, the
+/// store could not be written, and the credential is still there with no yes,
+/// so the question stands again rather than a yes outliving what it was for.
+#[test]
+fn a_stop_between_the_two_writes_leaves_the_credential_and_no_yes() {
+    let sample = Sample::new("letting-go-between");
+    let said = r#"{"contentUse": {"accepted": ["key:moonshot"]}}"#;
+    sample.user(said);
+    let file = sample.user_file();
+    let consent = Consent::new(Routes::production());
+    consent.recorded(["key:moonshot".to_owned()]);
+    sample
+        .store()
+        .keep("moonshot", "fabricated-kimi-com-key")
+        .unwrap();
+    let store = sample.store().letting_go(letting_go(
+        &consent,
+        file.clone(),
+        Rows::production(),
+        &Settings::default(),
+    ));
+
+    // The store's own write cannot land: where it writes before it replaces
+    // is a directory.
+    std::fs::create_dir_all(sample.home().join("auth.json.new")).unwrap();
+    let forgotten = store.forget("moonshot");
+
+    assert!(forgotten.is_err(), "{forgotten:?}");
+    assert!(sample.store().read().held("moonshot").is_some());
+    assert!(
+        !std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("key:moonshot")
+    );
+    assert!(consent.asks("key:moonshot").is_some());
+}
+
+/// A `baseUrl` changed and changed back moves no yes: the route it answers
+/// for is asked about by what is sent on it, and nothing was taken out.
+#[test]
+fn a_base_url_changed_and_changed_back_moves_no_yes() {
+    let consent = Consent::new(Routes::production());
+    consent.recorded(["api.moonshot.ai".to_owned()]);
+    let at = |url: &str| Serving {
+        route: recognised(url).map(str::to_owned),
+        at: Origin::of(url),
+    };
+
+    consent.served("moonshot", Some(at("https://api.moonshot.ai/v1")));
+    assert_eq!(consent.unanswered("moonshot", "kimi-k2"), None);
+    consent.served("moonshot", Some(at("https://gateway.example/v1")));
+    assert_eq!(consent.unanswered("moonshot", "kimi-k2"), None);
+    consent.served("moonshot", Some(at("https://api.moonshot.ai/v1")));
+    assert_eq!(consent.unanswered("moonshot", "kimi-k2"), None);
+    assert!(consent.asks("api.moonshot.ai").is_none());
+
+    // And the address with no yes is asked about as soon as it is served.
+    consent.served("moonshot", Some(at("https://api.moonshot.cn/v1")));
+    assert_eq!(
+        consent
+            .unanswered("moonshot", "kimi-k2")
+            .map(|one| one.route),
+        Some("api.moonshot.cn")
+    );
+}
