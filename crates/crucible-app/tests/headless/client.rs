@@ -930,3 +930,44 @@ fn a_send_on_a_warned_route_is_put_to_the_client_and_only_a_yes_sends_it() -> Re
     }
     Ok(())
 }
+
+/// A yes on the wire that cannot be written down is not a going back: the turn
+/// fails naming why, and nothing is sent.
+#[test]
+fn a_yes_that_cannot_be_written_down_fails_the_turn_and_says_why() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("client-warned-unwritten")?;
+    let script = Script::new(vec![saying("answered")]);
+    let asked = Arc::clone(&script.asked);
+    let (conversation, _) = asking_on(&tree, script, Some("google"))?;
+    // A file that is not configuration cannot have a yes written into it.
+    let file = tree.0.join("config.json");
+    std::fs::write(&file, "{ not configuration")?;
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(file.clone());
+    consent.served(
+        "google",
+        Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }),
+    );
+    let mut conversation = conversation.consenting(consent);
+    let mut remote = Remote::new(vec![Saying::Heeding(true)]);
+    let request = Wire::default().sent(prompt("hello")?)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+
+    assert_eq!(asked.load(Ordering::Relaxed), 0);
+    match &response.outcome {
+        Outcome::Turn(TurnOutcome::Failed(problem)) => {
+            assert!(
+                problem.message.as_str().contains("config.json"),
+                "{problem:?}"
+            );
+        }
+        other => return Err(format!("{other:?}").into()),
+    }
+    Ok(())
+}

@@ -13,6 +13,7 @@ use super::deciding::{Deciding, Front};
 use super::reading;
 use crate::Conversation;
 use crate::content_use::Warned;
+use crate::remember::RememberError;
 
 /// How a command [`turn`] was given ended, in the application's own values.
 #[derive(Debug)]
@@ -26,6 +27,8 @@ pub enum Ended {
     /// Nothing was sent: the route it would go on is one whose vendor uses
     /// what is sent, and nobody said yes to it.
     Warned(Warned),
+    /// Nothing was sent: a yes was given and could not be written down.
+    Unrecorded(RememberError),
 }
 
 /// Takes the turn `request` asks for: a prompt, or a compaction somebody asked
@@ -57,11 +60,13 @@ pub async fn turn(
         && let Some(warned) = unanswered(conversation)
     {
         let accepted = super::deciding::warned(request.capabilities(), front, &warned).await;
-        let kept = conversation
-            .consent()
-            .is_some_and(|consent| accepted && consent.accept(&warned).is_ok());
-        if !kept {
+        let Some(consent) = conversation.consent().filter(|_| accepted) else {
             return Ended::Warned(warned);
+        };
+        // A yes that could not be written down is not a going back: said as
+        // the failure it is, and nothing is sent.
+        if let Err(problem) = consent.accept(&warned) {
+            return Ended::Unrecorded(problem);
         }
     }
     match request.command() {
@@ -192,6 +197,9 @@ impl Ended {
             Self::Room(Ok(Room::Stopped)) => Outcome::Room(RoomOutcome::Stopped),
             Self::Room(Err(problem)) => {
                 Outcome::Room(RoomOutcome::Failed(Problem::failed(problem)))
+            }
+            Self::Unrecorded(problem) => {
+                Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))
             }
             Self::Warned(warned) => Outcome::Turn(TurnOutcome::Warned {
                 route: Text::cut(warned.route),
