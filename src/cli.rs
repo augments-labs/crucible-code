@@ -626,15 +626,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     services
         .consent()
         .recorded(settings.content_accepted().into_iter().map(str::to_owned));
-    let store = Store::in_home(home.path())
-        .naming(rows.names())
-        .letting_go(content_use::letting_go(
-            services.consent(),
-            crucible_config::user(&home),
-            rows.clone(),
-            &settings,
-        ))
-        .moving(crucible_app::speed::moving(crucible_config::user(&home)));
+    let store = credential_store(&home, services.consent(), &rows, &settings);
     let (keys, trouble) = stored(&store, &rows, style::glyph_set(settings.glyphs()));
     let subscriptions = Subscriptions::production(services.renewals());
 
@@ -1040,6 +1032,26 @@ fn stored(
         (settled, read) => settled.or(read),
     };
     (keys, trouble)
+}
+
+/// The credential store a run writes through: a write that takes a credential
+/// out takes its route's yes out of the user's own file first, and a write that
+/// moves the credential a provider holds takes that provider's speed out of it.
+fn credential_store(
+    home: &Home,
+    consent: &crucible_app::content_use::Consent,
+    rows: &crucible_app::providers::Rows,
+    settings: &Settings,
+) -> Store {
+    Store::in_home(home.path())
+        .naming(rows.names())
+        .letting_go(content_use::letting_go(
+            consent,
+            crucible_config::user(home),
+            rows.clone(),
+            settings,
+        ))
+        .moving(crucible_app::speed::moving(crucible_config::user(home)))
 }
 
 #[cfg(test)]

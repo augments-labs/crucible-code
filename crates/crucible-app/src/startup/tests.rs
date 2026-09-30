@@ -1730,3 +1730,49 @@ fn a_start_holds_a_warned_route_until_the_users_file_says_yes() {
         );
     }
 }
+
+#[test]
+fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
+    // A restart holds a chosen speed: the file is read as the run starts.
+    for (kept, asked) in [
+        (true, crucible_models::Speed::Fast),
+        (false, crucible_models::Speed::Standard),
+    ] {
+        let sample = Sample::new(&format!("start-fast-{kept}"));
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+        let file = sample.user_file();
+        if kept {
+            crate::remember::hastening(&file, "openai", crucible_models::Speed::Fast)
+                .expect("a speed written down");
+        }
+        let services = Services::new();
+        services.consent().keeps_in(file);
+
+        let conversation = assemble(&Startup {
+            providers: &catalogue(),
+            provider: Some(serving("openai")),
+            unasked: NO_MODEL_CHOSEN,
+            model: Some("gpt-5.6-sol"),
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| Some("sk-test".to_owned()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("a session over a key starts");
+
+        assert_eq!(conversation.runner().speed(), asked, "kept {kept}");
+    }
+}
