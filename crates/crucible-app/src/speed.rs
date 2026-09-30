@@ -61,7 +61,8 @@ pub fn moving(file: PathBuf) -> Moving {
 impl Conversation {
     /// Asks the model in force at `speed` from the next turn on, and writes it
     /// down for the next run: fast together with the model in force, which a
-    /// plain start then asks for, and standard by taking fast out.
+    /// plain start then asks for where no project file names another, and
+    /// standard by taking fast out.
     pub fn hasten(&mut self, speed: Speed, with: &Switching<'_>) -> Hastened {
         let Some(provider) = self.serving.filter(|_| !self.runner.model().is_empty()) else {
             return Hastened::Unasked;

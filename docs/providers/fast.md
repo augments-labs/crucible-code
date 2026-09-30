@@ -61,8 +61,8 @@ chosen at that model's price, and `/fast off` takes `fast` out:
 ```
 
 The model written is the one in force, even where `--model` or a project's
-file chose it, so it becomes the one a plain start asks for, and `/fast off`
-leaves it there.
+file chose it, so it becomes the one a plain start asks for where no project
+file names another, and `/fast off` leaves it there.
 
 Only that file is read for it. A project file that sets `fast` stops crucible
 before it draws anything, as every key a checkout may not set does: fast costs

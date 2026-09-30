@@ -284,6 +284,15 @@ fn a_model_named_with_spaces_around_it_is_the_model_a_run_asks() {
 }
 
 #[test]
+fn a_blank_model_in_the_file_names_no_model_to_keep_a_speed_for() {
+    let blank = r#"{"providers": {"openai": {"model": "   ", "fast": true}}}"#;
+    assert_eq!(
+        hastened(blank, "config.json", "openai", "").unwrap(),
+        Speed::Standard
+    );
+}
+
+#[test]
 fn a_speed_the_file_spells_as_no_is_standard() {
     let settings = resolving(r#"{"providers": {"openai": {"fast": false}}}"#);
     assert_eq!(settings.speed("openai"), Speed::Standard);

@@ -504,8 +504,8 @@ fn output(text: &str, file: &str, key: &str, value_of: &str) -> Result<String, C
 /// [`ConfigError::Unspliceable`] when it is JSON that no answer can be written
 /// into without rewriting — which is the moment to tell somebody what to type
 /// rather than to guess at their file. [`ConfigError::Unremovable`] when the
-/// rung or the speed chosen for the previous model cannot be lifted out for
-/// the same reason.
+/// rung, or the speed kept for another model, cannot be lifted out for the
+/// same reason.
 pub fn choosing(
     text: &str,
     file: &str,
@@ -630,8 +630,12 @@ pub fn hastened(text: &str, file: &str, provider: &str, model: &str) -> Result<S
     }
     let document = crate::document::Document::parse(text, file, crate::document::Origin::User)?;
     let settings = crate::settings::Settings::resolve_checked(vec![document])?;
-    // Trimmed as a run trims the name it asks for.
-    let beside = settings.model(provider).map(str::trim) == Some(model);
+    // Trimmed as a run trims the name it asks for, and blank is no name.
+    let beside = settings
+        .model(provider)
+        .map(str::trim)
+        .filter(|named| !named.is_empty())
+        == Some(model);
     Ok(if beside {
         settings.speed(provider)
     } else {
