@@ -33,7 +33,9 @@ const MAX_BYTES: usize = 16 * 1024;
 /// Reads a key for `provider`, drawing a mark per character where the prompt
 /// draws a line.
 ///
-/// `provider` is the display name the breadcrumb and the frame's label spell.
+/// `provider` is the display name the breadcrumb and the frame's label spell,
+/// `replaces` the credential the key takes the place of where the provider
+/// holds one, and `leaves` what the last row says Escape does.
 /// A box that was left and one there was no room to stand both come back
 /// without a key, as two different [`Asked`]: the caller answers them with
 /// different sentences. Enter with nothing in the box is not a way out of it:
@@ -46,6 +48,8 @@ pub(super) fn ask<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     provider: &str,
+    replaces: Option<&str>,
+    leaves: &str,
 ) -> Result<Asked, Fatal> {
     let glyphs = style.glyphs();
     let mut held = String::new();
@@ -54,7 +58,14 @@ pub(super) fn ask<T: Terminal>(
         renderer,
         |_| style,
         &mut held,
-        |held, columns, room| standing(provider, held, columns, room, glyphs),
+        |held, columns, room| {
+            let boxed = Boxed {
+                provider,
+                replaces,
+                leaves,
+            };
+            standing(boxed, held, columns, room, glyphs)
+        },
         typing,
     )?;
 
@@ -86,19 +97,46 @@ pub(super) enum Asked {
     Cramped,
 }
 
+/// The box a key is asked in: whose key, what it replaces, and what Escape
+/// does there.
+#[derive(Debug, Clone, Copy)]
+struct Boxed<'a> {
+    provider: &'a str,
+    replaces: Option<&'a str>,
+    leaves: &'a str,
+}
+
+/// A box a command opened for `provider`, replacing nothing.
+impl<'a> From<&'a str> for Boxed<'a> {
+    fn from(provider: &'a str) -> Self {
+        Self {
+            provider,
+            replaces: None,
+            leaves: "esc to cancel",
+        }
+    }
+}
+
 /// The rows the box stands as while `held` is what it holds.
 ///
 /// The count is all the panel is given: the characters stay here.
-fn standing(
-    provider: &str,
+fn standing<'a>(
+    boxed: impl Into<Boxed<'a>>,
     held: &str,
     columns: usize,
     room: usize,
     glyphs: Glyphs,
 ) -> (Vec<Row>, Option<Caret>) {
+    let Boxed {
+        provider,
+        replaces,
+        leaves,
+    } = boxed.into();
     KeyPanel {
         provider,
         held: held.chars().count(),
+        replaces,
+        leaves,
     }
     .within(columns, room, glyphs)
 }

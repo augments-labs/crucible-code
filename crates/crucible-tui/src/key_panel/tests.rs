@@ -52,6 +52,8 @@ fn anthropic(held: usize) -> KeyPanel<'static> {
     KeyPanel {
         provider: "Anthropic",
         held,
+        replaces: None,
+        leaves: "esc to cancel",
     }
 }
 
@@ -205,6 +207,8 @@ fn a_label_that_does_not_fit_beside_the_rule_leaves_the_border_plain() {
     let panel = KeyPanel {
         provider: "a vendor with a name nothing can shorten",
         held: 0,
+        replaces: None,
+        leaves: "esc to cancel",
     };
     let rows = art(&panel, 40, Glyphs::Unicode);
     let top = rows
@@ -267,4 +271,37 @@ fn the_colour_goes_where_the_panels_put_it() {
     assert!(at(9).contains(&Slot::Accent), "the mark: {:?}", rows.get(9));
     assert_eq!(at(10), [Slot::Quiet], "the bottom border");
     assert_eq!(at(11), [Slot::Quiet], "the footer");
+}
+
+#[test]
+fn a_key_that_replaces_a_credential_says_which_before_it_is_typed() {
+    let panel = KeyPanel {
+        replaces: Some("the sign-in held for OpenAI"),
+        ..anthropic(0)
+    };
+    let said = art(&panel, 80, Glyphs::Unicode).join(" ");
+
+    assert!(
+        said.contains("Paste or type the key. It replaces the sign-in held for OpenAI once it"),
+        "{said}"
+    );
+    assert!(said.contains("is stored, and is never shown."), "{said}");
+    assert!(!said.contains("protected store"), "{said}");
+}
+
+#[test]
+fn a_box_chosen_from_a_list_says_escape_goes_back() {
+    for held in [0, 3] {
+        let panel = KeyPanel {
+            leaves: "esc to go back",
+            ..anthropic(held)
+        };
+        let rows = art(&panel, 80, Glyphs::Unicode);
+
+        assert!(
+            rows.last()
+                .is_some_and(|row| row.ends_with("· esc to go back")),
+            "{rows:?}"
+        );
+    }
 }

@@ -409,26 +409,19 @@ fn the_paste_box_draws_its_mark_and_its_dots_out_of_the_glyph_set() {
 
 #[test]
 fn every_way_is_named_by_what_the_reader_holds_and_how_it_is_billed() {
-    // The row under an account names the plan and whose it is; the row
-    // under the key names how a key is billed. Neither is a sentence about
-    // what pressing Enter does — the reader is choosing between things they
-    // have, and a future account row inherits the same shape.
-    let sample = Sample::new("login-ways");
-    let terms = in_force(&sample);
-    let ways = ways(&terms);
+    // Two ways to pay, whatever the store holds: an account whose plan
+    // includes the usage, or a key billed by what is sent. Neither row is a
+    // sentence about what pressing Enter does, and neither names a vendor:
+    // the vendors are the lists each leads to.
+    let shown: Vec<&str> = FIRST.iter().map(|way| way.name).collect();
+    let says: Vec<&str> = FIRST.iter().map(|way| way.says).collect();
 
-    let shown: Vec<&str> = ways.iter().map(|way| way.shown).collect();
-    let says: Vec<&str> = ways.iter().map(|way| way.says.as_str()).collect();
-
-    assert_eq!(shown, ["OpenAI", "MoonshotAI", KEY_ROUTE_SHOWN]);
+    assert_eq!(shown, ["Your account with subscription", KEY_ROUTE_SHOWN]);
     assert_eq!(
         says,
-        [
-            "ChatGPT plan with your subscription",
-            "Kimi Code plan with your subscription",
-            "API usage billing",
-        ]
+        ["Usage included in your paid plan", "API usage billing"]
     );
+    assert_eq!(HOW, "Choose how usage is paid for.");
 }
 
 #[test]
@@ -479,5 +472,382 @@ fn every_login_row_and_its_caret_fit_a_narrow_terminal() {
         assert!(rows.iter().all(|row| row.columns() <= columns));
         assert!(caret.column <= columns.saturating_sub(1));
         assert!(caret.row < rows.len());
+    }
+}
+
+/// The rows this build ships.
+fn production() -> Rows {
+    Rows::production()
+}
+
+/// The row of `production` named `shown` in `list`.
+fn way(rows: &Rows, list: List, shown: &str) -> Way {
+    rows.listed(list)
+        .find(|way| way.shown == shown)
+        .cloned()
+        .unwrap_or_else(|| panic!("a row named {shown}"))
+}
+
+/// The names of the rows `words` leave.
+fn left(words: &str, rows: &Rows) -> Vec<String> {
+    let words: Vec<&str> = words.split_whitespace().collect();
+    matching(&words, rows)
+        .iter()
+        .map(|way| format!("{} {}", way.shown, credential(way)))
+        .collect()
+}
+
+#[test]
+fn words_after_login_narrow_the_rows_to_those_every_word_matches() {
+    let rows = production();
+
+    assert_eq!(left("openai", &rows), ["OpenAI sign-in", "OpenAI API key"]);
+    for words in ["kimi", "moonshot", "KIMI", "Moonshot"] {
+        assert_eq!(
+            left(words, &rows),
+            [
+                "Kimi Code · kimi.ai sign-in",
+                "Kimi Code · kimi.com sign-in",
+                "MoonshotAI · kimi.ai API key",
+                "MoonshotAI · kimi.com API key",
+            ],
+            "{words}"
+        );
+    }
+    assert_eq!(
+        left("kimi code", &rows),
+        [
+            "Kimi Code · kimi.ai sign-in",
+            "Kimi Code · kimi.com sign-in"
+        ]
+    );
+    assert_eq!(
+        left("kimi.ai", &rows),
+        [
+            "Kimi Code · kimi.ai sign-in",
+            "MoonshotAI · kimi.ai API key"
+        ]
+    );
+    assert_eq!(
+        left("kimi code kimi.ai", &rows),
+        ["Kimi Code · kimi.ai sign-in"]
+    );
+    assert_eq!(left("openai subscription", &rows), ["OpenAI sign-in"]);
+    assert_eq!(left("openai key", &rows), ["OpenAI API key"]);
+    assert_eq!(left("anthropic", &rows), ["Anthropic API key"]);
+    assert_eq!(left("google", &rows), ["Google API key"]);
+    assert!(left("nope", &rows).is_empty());
+    assert_eq!(left("", &rows).len(), rows.all().len());
+}
+
+#[test]
+fn every_row_is_left_alone_by_the_words_it_is_typed_with() {
+    let rows = production();
+    for way in rows.all() {
+        let words = reaching(way, &rows);
+        let split: Vec<&str> = words.split_whitespace().collect();
+
+        assert_eq!(matching(&split, &rows), [way], "{words}");
+    }
+}
+
+/// A registry holding one row this build has never shipped of each kind.
+fn fabricated() -> Rows {
+    let mut rows = production().all().to_vec();
+    rows.insert(
+        0,
+        Way {
+            list: List::Subscription,
+            shown: "Fabricated Plan",
+            provider: "fabricated",
+            site: None,
+            says: Some("Fabricated plan usage"),
+            kind: Kind::Account,
+            mark: None,
+            stored: "fabricated",
+            environment: false,
+            known: false,
+            address: None,
+        },
+    );
+    rows.push(Way {
+        list: List::Key,
+        shown: "Fabricated",
+        provider: "fabricated",
+        site: None,
+        says: Some("a fabricated console key"),
+        kind: Kind::Key,
+        mark: None,
+        stored: "fabricated",
+        environment: false,
+        known: false,
+        address: None,
+    });
+    Rows::new(rows)
+}
+
+#[test]
+fn a_row_added_to_the_registry_is_listed_with_no_edit_here() {
+    let rows = fabricated();
+    let providers = crucible_app::providers::providers()
+        .expect("the built-in providers register")
+        .snapshot();
+
+    for (list, shown, says) in [
+        (
+            List::Subscription,
+            "Fabricated Plan",
+            "Fabricated plan usage",
+        ),
+        (List::Key, "Fabricated", "a fabricated console key"),
+    ] {
+        let listed: Vec<(&str, String)> = listed(&rows, list)
+            .into_iter()
+            .map(|way| {
+                let says = described(way, &[], &providers, Glyphs::Unicode);
+                (way.shown, says)
+            })
+            .collect();
+        assert!(listed.contains(&(shown, says.to_owned())), "{listed:?}");
+
+        let way = way(&rows, list, shown);
+        let line = line(&way, &rows, &providers, Glyphs::Unicode);
+        assert!(line.starts_with("/login fabricated "), "{line}");
+    }
+}
+
+/// Terms over `sample`'s home, whose store names what the rows do.
+fn named(sample: &Sample) -> Terms {
+    let mut terms = in_force(sample);
+    terms.logins = Store::in_home(&sample.root()).naming(production().names());
+    terms
+}
+
+/// A store holding a kimi.ai key and an OpenAI sign-in, and nothing else.
+const HELD: &str = r#"{"version":2,"keys":{"moonshot@kimi.ai":"sk-fabricated-kimi-ai-key"},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+
+#[test]
+fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_screen() {
+    let sample = Sample::new("login-signed-in");
+    std::fs::write(sample.root().join("auth.json"), HELD).expect("a store");
+    let terms = named(&sample);
+    let rows = production();
+    let providers = terms.providers.snapshot();
+
+    let held = holding(&rows, &terms).expect("a store that reads whole");
+    let said: Vec<(&str, String)> = rows
+        .all()
+        .iter()
+        .map(|way| {
+            (
+                way.shown,
+                described(way, &held, &providers, Glyphs::Unicode),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        said,
+        [
+            (
+                "OpenAI",
+                "signed in · ChatGPT plan usage with Plus, Pro, Business and Enterprise".to_owned()
+            ),
+            (
+                "Kimi Code · kimi.ai",
+                "Kimi Code plan usage, accounts outside mainland China".to_owned()
+            ),
+            (
+                "Kimi Code · kimi.com",
+                "Kimi Code plan usage, mainland China accounts".to_owned()
+            ),
+            ("Anthropic", "set ANTHROPIC_API_KEY".to_owned()),
+            ("Google", "set GEMINI_API_KEY".to_owned()),
+            (
+                "MoonshotAI · kimi.ai",
+                "signed in with a stored key".to_owned()
+            ),
+            ("MoonshotAI · kimi.com", "set MOONSHOT_API_KEY".to_owned()),
+            ("OpenAI", "set OPENAI_API_KEY".to_owned()),
+        ]
+    );
+    let everything = format!("{said:?} {held:?}");
+    assert!(!everything.contains("fabricated"), "{everything}");
+}
+
+#[test]
+fn signed_in_is_kept_at_forty_columns_where_the_plan_words_are_cut() {
+    let sample = Sample::new("login-signed-in-narrow");
+    std::fs::write(sample.root().join("auth.json"), HELD).expect("a store");
+    let terms = named(&sample);
+    let rows = production();
+    let providers = terms.providers.snapshot();
+    let held = holding(&rows, &terms).expect("a store that reads whole");
+
+    let says: Vec<String> = rows
+        .listed(List::Subscription)
+        .map(|way| described(way, &held, &providers, Glyphs::Unicode))
+        .collect();
+    let shown: Vec<Offered<'_>> = rows
+        .listed(List::Subscription)
+        .zip(&says)
+        .map(|(way, says)| Offered {
+            name: way.shown,
+            says,
+        })
+        .collect();
+    let panel = Panel {
+        title: TITLE,
+        said: Some(ACCOUNTS),
+        shown: &shown,
+        chosen: 0,
+        footer: BACK,
+    };
+    let drawn: Vec<String> = panel
+        .rows(40, Glyphs::Unicode)
+        .iter()
+        .map(|row| row.text().trim_end().to_owned())
+        .collect();
+
+    assert!(
+        drawn.contains(&"  signed in · ChatGPT plan usage with P…".to_owned()),
+        "{drawn:?}"
+    );
+}
+
+#[test]
+fn an_unreadable_store_is_said_before_any_row_is_drawn() {
+    for (case, text) in [
+        ("login-open-unreadable", "not json {".to_owned()),
+        ("login-open-too-large", "x".repeat(64 * 1024 + 1)),
+    ] {
+        let sample = Sample::new(case);
+        std::fs::write(sample.root().join("auth.json"), text).expect("a store");
+        let terms = named(&sample);
+        let mut conversation = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        run("", &mut renderer, &mut conversation, &terms, true)
+            .expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! crucible cannot read its login store; move it aside and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains(TITLE), "{written}");
+    }
+}
+
+#[test]
+fn what_a_choice_replaces_is_named_by_the_row_it_was_given_on() {
+    let rows = production();
+    let held = |list, shown| vec![way(&rows, list, shown)];
+
+    let openai_key = way(&rows, List::Key, "OpenAI");
+    let openai_plan = way(&rows, List::Subscription, "OpenAI");
+    let kimi_ai = way(&rows, List::Subscription, "Kimi Code · kimi.ai");
+    let anthropic = way(&rows, List::Key, "Anthropic");
+
+    assert_eq!(
+        replaced(&openai_key, &held(List::Subscription, "OpenAI")).as_deref(),
+        Some("the sign-in held for OpenAI")
+    );
+    assert_eq!(
+        replaced(&openai_plan, &held(List::Key, "OpenAI")).as_deref(),
+        Some("the API key held for OpenAI")
+    );
+    assert_eq!(
+        replaced(&kimi_ai, &held(List::Subscription, "Kimi Code · kimi.com")).as_deref(),
+        Some("the sign-in held for Kimi Code · kimi.com")
+    );
+    assert_eq!(
+        replaced(&anthropic, &held(List::Key, "Anthropic")).as_deref(),
+        Some("the API key held for Anthropic")
+    );
+    assert_eq!(replaced(&anthropic, &held(List::Key, "OpenAI")), None);
+
+    assert_eq!(
+        unchanged(&openai_plan, &held(List::Key, "OpenAI")),
+        "! sign-in did not complete; the API key stored for OpenAI is unchanged"
+    );
+    assert_eq!(
+        unchanged(&kimi_ai, &[]),
+        "! sign-in did not complete; nothing was stored"
+    );
+}
+
+#[test]
+fn a_sign_in_chosen_from_a_list_says_what_it_replaces_and_that_escape_goes_back() {
+    let view = LoginView::new(Glyphs::Unicode).opened(
+        BACK,
+        Some("the API key held for OpenAI".to_owned()),
+        Glyphs::Unicode,
+    );
+    let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+    let text: Vec<String> = rows.iter().map(Row::text).collect();
+
+    assert_eq!(
+        text.get(1).map(String::as_str),
+        Some("Signing in replaces the API key held for OpenAI once it completes."),
+        "{text:?}"
+    );
+    assert!(
+        text.iter().any(|row| row == "waiting — esc to go back"),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn the_key_route_is_worded_the_same_on_the_first_panel_and_the_key_box() {
+    assert_eq!(
+        KEY_ROUTE_SHOWN.to_lowercase(),
+        crucible_tui::KEY_ROUTE.to_lowercase()
+    );
+}
+
+/// What `/login` with nothing after it writes into a window `columns` by
+/// `height`, with a keyboard or without one.
+fn opened_into(columns: usize, height: usize, keys: bool) -> String {
+    let sample = Sample::new("login-no-room");
+    let terms = named(&sample);
+    let mut conversation = asking("claude-test-1");
+    let mut renderer = Renderer::new(Recording::new(columns, height));
+
+    run("", &mut renderer, &mut conversation, &terms, keys).expect("the terminal to be written");
+
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn a_window_with_no_room_for_a_panel_is_given_every_row_as_the_line_to_type() {
+    // A run with no keyboard stands no panel: it is given one line per row,
+    // `/login` and the words that leave that row alone, whole at forty
+    // columns too.
+    let rows = production();
+    for columns in [80, 40] {
+        let written = opened_into(columns, 40, false);
+        for way in rows.all() {
+            let typed = format!("/login {} —", reaching(way, &rows));
+            assert!(written.contains(&typed), "{columns}: {typed}: {written}");
+        }
+        assert_eq!(
+            written.matches("/login ").count(),
+            rows.all().len(),
+            "{written}"
+        );
+    }
+
+    // Three rows hold no panel either, keyboard or not: the same lines come
+    // out, the last of them on the screen.
+    for columns in [80, 40] {
+        let written = opened_into(columns, 3, true);
+        assert!(
+            written.contains("/login openai key —"),
+            "{columns}: {written}"
+        );
+        assert!(!written.contains(TITLE), "{columns}: {written}");
     }
 }

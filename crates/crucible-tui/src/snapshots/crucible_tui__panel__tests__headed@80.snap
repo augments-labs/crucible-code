@@ -1,0 +1,25 @@
+---
+source: crates/crucible-tui/src/panel.rs
+assertion_line: 1019
+expression: "picture(&headed.rows(columns, Glyphs::Unicode), columns)"
+---
+<Accent>────────────────────────────────────────────────────────────────────────────────</>
+
+<Strong>Log in</>
+
+Choose the account or key to sign in with.
+
+<Strong>Subscription</>
+
+<Accent>›</> <Strong>Kimi Code · kimi.ai</>
+  <Quiet>Kimi Code plan usage, accounts outside mainland China</>
+
+  Kimi Code · kimi.com
+  <Quiet>Kimi Code plan usage, mainland China accounts</>
+
+<Strong>API key</>
+
+  MoonshotAI · kimi.com
+  <Quiet>set MOONSHOT_API_KEY</>
+
+<Quiet>esc to cancel</>

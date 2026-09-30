@@ -476,13 +476,15 @@ fn login_down_a_pipe_names_the_variable_rather_than_opening_a_box() {
 
 #[test]
 fn login_naming_a_provider_this_build_has_none_of_says_so() {
-    // And goes on to say what it does have, which is the answer to the
+    // And says where what it does have is listed, which is the answer to the
     // question a misspelled name was asking.
     let (written, asked) = commanding("/login gemini\n");
 
     assert_eq!(asked, 0, "{written}");
-    assert!(written.contains("! no provider called gemini"), "{written}");
-    assert!(written.contains("OPENAI_API_KEY"), "{written}");
+    assert!(
+        written.contains("! no sign-in matches \"gemini\"; /login lists them"),
+        "{written}"
+    );
 }
 
 #[test]

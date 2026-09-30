@@ -24,6 +24,8 @@
 //! Height is [`KeyPanel::within`]'s subject. [`KeyPanel::rows`] draws the
 //! whole screen and assumes the caller has room for it.
 
+use std::borrow::Cow;
+
 use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::prompt::Prompt;
@@ -31,18 +33,19 @@ use crate::render::Caret;
 use crate::row::Row;
 use crate::width::{clip, columns as wide, fold};
 
-/// The words under the box while nothing is held, either side of the dot.
-pub const EMPTY_FOOTER: (&str, &str) = ("paste or type your API key", "esc to cancel");
+/// The words under the box while nothing is held, before the dot and what
+/// Escape does.
+pub const EMPTY_FOOTER: &str = "paste or type your API key";
 
-/// The words under the box once something is, either side of the dot.
-pub const HELD_FOOTER: (&str, &str) = ("enter to save", "esc to cancel");
+/// The words under the box once something is, before the dot.
+pub const HELD_FOOTER: &str = "enter to save";
 
 /// The few words at the top, the same on every screen of the walk.
 const TITLE: &str = "Log in";
 
 /// What follows the provider on the breadcrumb: the row taken on the first
 /// panel, in its own words.
-const ROUTE: &str = "provide your own API key";
+pub const ROUTE: &str = "provide your own API key";
 
 /// The one sentence, read once: where the key goes and that it is not echoed.
 const SAID: &str =
@@ -69,6 +72,12 @@ pub struct KeyPanel<'a> {
     pub provider: &'a str,
     /// How many characters the box holds.
     pub held: usize,
+    /// The credential the key takes the place of, where the provider holds
+    /// one: `the sign-in held for OpenAI`.
+    pub replaces: Option<&'a str>,
+    /// What Escape does, after the dot on the last row: `esc to cancel` on a
+    /// box a command opened, `esc to go back` on one chosen from a list.
+    pub leaves: &'a str,
 }
 
 /// The parts that give way, in the order they do: explanation goes before
@@ -146,7 +155,7 @@ impl KeyPanel<'_> {
         }
 
         if rung.keeps(SENTENCE) {
-            rows.extend(fold(SAID, columns).into_iter().map(Row::plain));
+            rows.extend(fold(&self.said(), columns).into_iter().map(Row::plain));
             rows.push(Row::new());
         }
 
@@ -167,6 +176,16 @@ impl KeyPanel<'_> {
 
     /// The way here: the mark, the provider and the row taken on the first
     /// panel, so the screen says what it is a step of.
+    /// The sentence: where the key goes, or what it replaces where the
+    /// provider holds a credential already.
+    fn said(&self) -> Cow<'static, str> {
+        self.replaces.map_or(Cow::Borrowed(SAID), |replaces| {
+            Cow::Owned(format!(
+                "Paste or type the key. It replaces {replaces} once it is stored, and is never shown."
+            ))
+        })
+    }
+
     fn breadcrumb(&self, columns: usize, glyphs: Glyphs) -> Row {
         let mark = glyphs.caret();
         let Some(room) = columns.checked_sub(wide(mark) + 1) else {
@@ -235,11 +254,12 @@ impl KeyPanel<'_> {
 
     /// The row under the box: what Enter does now, and what escape does.
     fn footer(&self, columns: usize, glyphs: Glyphs) -> String {
-        let (does, leaves) = if self.held == 0 {
+        let does = if self.held == 0 {
             EMPTY_FOOTER
         } else {
             HELD_FOOTER
         };
+        let leaves = self.leaves;
 
         let full = format!("{does} {} {leaves}", glyphs.dot());
         if wide(&full) <= columns {

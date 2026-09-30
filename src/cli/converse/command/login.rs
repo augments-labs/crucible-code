@@ -1,13 +1,28 @@
 //! `/login`: a subscription or console credential, selected without exposing
 //! a secret on the command line.
 //!
-//! With no argument, the first panel asks how the account is billed. A real
-//! subscription implementation starts its login as a task on the application's
-//! runtime and reports the page the user must visit; the terminal thread
-//! continues serving resize and cancellation, and leaving the panel stops the
-//! login, closing a browser login's callback port. Console credentials reach
-//! the provider panel and a key box. A vendor named directly keeps the
-//! existing API-key shortcut.
+//! With no words, the first panel asks how usage is paid for: an account whose
+//! plan includes it, or a key billed by what is sent. Each leads to a list of
+//! the rows of that kind, read off the row registry, and a row that holds the
+//! credential serving its provider says `signed in`. Only which row holds one
+//! is read: the store is asked for names and kinds before anything is drawn,
+//! and a store that cannot be read is said instead of a panel. Below the first
+//! screen Escape goes back one level, with the mark where it was; at the first
+//! screen, and at one opened directly by words, it cancels.
+//!
+//! Words after the command narrow the rows: the list's own word, a site, or
+//! the start of a word of a row's name or of its site, and the provider's typed
+//! name. Several rows left stand under the headings of their kinds; one opens
+//! its screen at once; none is said in one line naming the words.
+//!
+//! A row whose provider holds a credential says on its next screen what will be
+//! replaced. Nothing is replaced until the new one is stored, so a sign-in that
+//! does not complete leaves the store as it was and says what is unchanged.
+//!
+//! A real subscription implementation starts its login as a task on the
+//! application's runtime and reports the page the user must visit; the terminal
+//! thread continues serving resize and cancellation, and leaving the view stops
+//! the login, closing a browser login's callback port.
 //!
 //! A key typed after a command is a key in the shell's history file, in the
 //! process listing while the command runs, and in that shell's own scrollback
@@ -30,70 +45,84 @@
 //! nobody asked it, on the one screen where the reader is still finding out
 //! where they are.
 //!
-//! Naming somebody this build has never heard of, a panel that was left, and a
-//! window with no room to stand one in all come out the same way: which names
-//! crucible knows and which variable each of them signs a request from, written
-//! into the transcript where it can be scrolled back to. Every one of those
-//! halves comes off the provider registry, so a vendor this build serves and cannot be
-//! logged in to is not a state that exists.
+//! A window with no room to stand a panel in, and a run with no keyboard, are
+//! given each row as the whole line to type: `/login` and the words that leave
+//! that row alone. Every row comes off the registry, so a way in this build
+//! offers and cannot be typed is not a state that exists.
 
 use std::borrow::Cow;
 use std::time::Duration;
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
+use crucible_app::providers::{List, Providers, Row as Way, Rows, Served, key_variables, offered};
+use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
-use crucible_auth::{AuthError, LoginAttempt, LoginUpdate};
+use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate};
 use crucible_client_api::Command;
 use crucible_tui::{
-    Caret, Glyphs, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal, characters, clip,
-    pressed,
+    Caret, Glyphs, Heading, Key, Offered, Panel, Pressed, Renderer, Row, Slot, Terminal,
+    characters, clip, fold, pressed,
 };
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;
-use crate::cli::converse::picking::{self, Picked, Taken};
+use crate::cli::converse::picking::{self, Picked};
 use crate::cli::converse::secret::{self, Asked};
-use crucible_app::providers::{Served, key_variables, offered};
-use crucible_app::subscription::{Account, Route};
 
 use super::{Terms, about, say};
 
-/// One way Crucible can receive a credential.
-#[derive(Clone)]
-struct Way {
-    /// The name at the left of its row.
-    shown: &'static str,
-    /// What the row says at its right: what the reader holds and how it is
-    /// billed.
-    says: String,
-    reaches: Reaches,
-}
+/// The few words at the top of every `/login` panel.
+const TITLE: &str = "Log in";
 
-/// What selecting a way does.
-#[derive(Clone, Copy)]
-enum Reaches {
-    Account(Account),
-    Console,
-}
-
-/// The sentence under the account-kind panel.
-const HOW: &str = "Choose how crucible signs its requests.";
-
-/// The sentence under the provider panel.
-const SAID: &str = "Choose the provider whose API key you have.";
+/// The row that leads to the accounts, and what it says.
+const ACCOUNT_ROUTE_SHOWN: &str = "Your account with subscription";
+const ACCOUNT_ROUTE_SAYS: &str = "Usage included in your paid plan";
 
 /// The row that leads to a key of the reader's own, and what it says.
 pub(super) const KEY_ROUTE_SHOWN: &str = "Provide your own API key";
 pub(super) const KEY_ROUTE_SAYS: &str = "API usage billing";
 
-/// What follows the plan on an account row: the reader is billed through a
-/// subscription they already hold.
-const SUBSCRIBED: &str = "with your subscription";
+/// The first panel: two ways to pay, whatever the store holds.
+const FIRST: [Offered<'static>; 2] = [
+    Offered {
+        name: ACCOUNT_ROUTE_SHOWN,
+        says: ACCOUNT_ROUTE_SAYS,
+    },
+    Offered {
+        name: KEY_ROUTE_SHOWN,
+        says: KEY_ROUTE_SAYS,
+    },
+];
 
-/// The one key worth naming on either panel: the arrows and Enter are what a
-/// list with a mark on it is already saying.
+/// The sentence under the first panel.
+const HOW: &str = "Choose how usage is paid for.";
+
+/// The sentence under the list of accounts.
+const ACCOUNTS: &str = "Choose the account whose plan pays for usage.";
+
+/// The sentence under the list of keys.
+const SAID: &str = "Choose the provider whose API key you have.";
+
+/// The sentence over rows narrowed by words, which may be of either kind.
+const NARROWED: &str = "Choose the account or key to sign in with.";
+
+/// The headings rows narrowed by words stand under.
+const ACCOUNT_HEADING: &str = "Subscription";
+const KEY_HEADING: &str = "API key";
+
+/// What opens the description of a row holding its provider's sign-in.
+const SIGNED_IN: &str = "signed in";
+
+/// What a row holding its provider's key says.
+const SIGNED_IN_WITH_KEY: &str = "signed in with a stored key";
+
+/// The one key worth naming on a screen a command opened: the arrows and Enter
+/// are what a list with a mark on it is already saying.
 const CANCEL: &str = "esc to cancel";
+
+/// The same, on a screen chosen from a list.
+const BACK: &str = "esc to go back";
 
 /// What escape leaves behind, in place of the rows it used to write.
 const LEFT: &str = "cancelled, nothing signed in";
@@ -129,13 +158,51 @@ const STORE_UNREADABLE: &str =
 /// bound as the key box and is never committed or echoed.
 const MAX_MANUAL: usize = 16 * 1024;
 
-/// Runs it: a key taken for the one named, one chosen off the panel, or where
-/// each of them reads a key from.
+/// Where a screen was opened from, which decides what Escape does on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Opened {
+    /// By the command, or by words that left one row: Escape cancels.
+    Directly,
+    /// From a list or a panel before it: Escape goes back there.
+    Below,
+}
+
+impl Opened {
+    /// What the screen's last row says Escape does.
+    const fn leaves(self) -> &'static str {
+        match self {
+            Self::Directly => CANCEL,
+            Self::Below => BACK,
+        }
+    }
+}
+
+/// How a screen of the walk ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Closed {
+    /// It said its last line: the command is over.
+    Done,
+    /// Escape, on a screen below another: that one stands again.
+    Back,
+    /// No room for it: the caller prints the lines to type.
+    Cramped,
+}
+
+/// What every screen of the walk is drawn on and acts for, and which row
+/// holds each provider's credential as the walk began.
+struct Walk<'w, T: Terminal> {
+    renderer: &'w mut Renderer<T>,
+    conversation: &'w mut Conversation,
+    terms: &'w Terms,
+    held: &'w [Way],
+}
+
+/// Runs it: the walk from the first panel, the rows words narrow it to, or
+/// where no panel can stand, the lines to type.
 ///
 /// `keys` is whether there is a keyboard to take one from. Down a pipe there is
 /// not, and a panel or a box waiting for something nobody can type is a session
-/// that stopped — so what a piped run gets is the rows naming the variables
-/// instead.
+/// that stopped — so what a piped run gets is the lines instead.
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
@@ -143,118 +210,282 @@ pub(super) fn run<T: Terminal>(
     terms: &Terms,
     keys: bool,
 ) -> Result<(), Fatal> {
-    let providers = terms.providers.snapshot();
-    let named = offered(&providers).find(|one| one.name == said);
+    let rows = Rows::production();
+    let held = match holding(&rows, terms) {
+        Ok(held) => held,
+        Err(failed) => return say(renderer, &format!("! {}", remedy(&failed))),
+    };
+
+    let words: Vec<&str> = said.split_whitespace().collect();
+    let matched = matching(&words, &rows);
+    if matched.is_empty() {
+        // The words came off the line and were never shape-checked — anything
+        // at all can follow `/login ` — so they go out the way arrived text
+        // goes out.
+        let words = words.join(" ");
+        renderer.commit(&format!(
+            "! no sign-in matches \"{words}\"; /login lists them"
+        ))?;
+        return Ok(());
+    }
 
     if keys {
-        if let Some(named) = named {
-            return given(named, renderer, conversation, terms);
-        }
-
-        // Nobody named and a keyboard to walk the account and provider lists.
-        if said.is_empty() && walked(renderer, conversation, terms)? {
+        let mut walk = Walk {
+            renderer: &mut *renderer,
+            conversation,
+            terms,
+            held: &held,
+        };
+        let stood = if words.is_empty() {
+            walked(&mut walk, &rows)?
+        } else if let [only] = matched.as_slice() {
+            screen(only, Opened::Directly, &mut walk)?
+        } else {
+            narrowed(&matched, &mut walk)?
+        };
+        if stood != Closed::Cramped {
             return Ok(());
         }
     }
 
-    // The word came off the line and was never shape-checked — anything at all
-    // can follow `/login ` — so it goes out the way arrived text goes out, and
-    // the names that would have worked go under it.
-    if named.is_none() && !said.is_empty() {
-        renderer.commit(&format!("! no provider called {said}"))?;
-    }
-
-    let columns = renderer.columns();
-    let rows: Vec<Row> = offered(&providers)
-        .filter(|one| named.is_none_or(|only| only.name == one.name))
-        .map(|one| {
-            let said = about(
-                &format!("/login {}", one.name),
-                &format!("a key from {}", one.key),
-                terms.style().glyphs(),
-            );
-
-            Row::new().then(Slot::Quiet, clip(&said, columns))
-        })
-        .collect();
-
-    Ok(renderer.present(&rows)?)
+    typed(&matched, &rows, renderer, terms)
 }
 
-/// Walks the account route, then only the provider question that route needs.
+/// Which row holds the credential serving each provider: names and kinds, read
+/// before anything is drawn, and no key or token.
 ///
-/// `false` is a window with no room to stand a panel in, and only that: the
-/// caller draws the rows instead, which is the one answer a short window can be
-/// given. Escape comes back `true`, because leaving a panel is an answer — the
-/// screen from before it is what was asked for, and a list of every provider
-/// underneath would be the same question put a second time.
-fn walked<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    conversation: &mut Conversation,
-    terms: &Terms,
-) -> Result<bool, Fatal> {
-    let ways = ways(terms);
-    let way = match asked(renderer, terms, &ways)?.of(&ways) {
-        Taken::Took(way) => way,
-        Taken::Left => {
-            say(renderer, LEFT)?;
-            return Ok(true);
+/// A store that is there and cannot be read is one a write would refuse to
+/// replace, so it comes back to be said before anything is asked. One that
+/// cannot be reached at all marks no row, and the write that meets it says
+/// why, as it always has.
+fn holding(rows: &Rows, terms: &Terms) -> Result<Vec<Way>, AuthError> {
+    let held = match terms.logins.holding() {
+        Ok(held) => held,
+        Err(failed @ (AuthError::Unreadable { .. } | AuthError::TooLarge { .. })) => {
+            return Err(failed);
         }
-        Taken::Cramped => return Ok(false),
+        Err(AuthError::Unwritable { .. } | AuthError::Busy { .. }) => Vec::new(),
     };
-
-    match way.reaches {
-        Reaches::Account(account) => {
-            let routes = terms.subscriptions.routes(account.provider());
-            let route = match routes.as_slice() {
-                [only] => *only,
-                _ => match method(renderer, terms, account, &routes)?.of(&routes) {
-                    Taken::Took(route) => route,
-                    Taken::Left => {
-                        say(renderer, LEFT)?;
-                        return Ok(true);
-                    }
-                    Taken::Cramped => return Ok(false),
-                },
-            };
-            subscribed(route, renderer, conversation, terms)?;
-            return Ok(true);
-        }
-        Reaches::Console => {}
-    }
-
-    let offering: Vec<Served> = offered(&terms.providers.snapshot()).collect();
-    let named = match chosen(&offering, renderer, terms)?.of(&offering) {
-        Taken::Took(named) => named,
-        Taken::Left => {
-            say(renderer, LEFT)?;
-            return Ok(true);
-        }
-        Taken::Cramped => return Ok(false),
-    };
-
-    given(named, renderer, conversation, terms)?;
-
-    Ok(true)
+    Ok(held
+        .iter()
+        .filter_map(|held| rows.of(held.kind, &held.name))
+        .cloned()
+        .collect())
 }
 
-fn ways(terms: &Terms) -> Vec<Way> {
-    let mut ways: Vec<_> = terms
-        .subscriptions
-        .accounts()
+/// The rows `words` leave, in the order the lists show them: all of them where
+/// there are none.
+///
+/// Without regard to case, a row stays when every word matches it: the words
+/// `subscription` and `key` match the rows of that list, a word that is
+/// exactly a site the rows of that site, and any other word a row whose
+/// provider it names, or the start of a word of whose name or of whose site it
+/// is.
+fn matching<'r>(words: &[&str], rows: &'r Rows) -> Vec<&'r Way> {
+    let sites: Vec<&str> = rows.all().iter().filter_map(|way| way.site).collect();
+    rows.all()
         .iter()
-        .map(|account| Way {
-            shown: account.shown,
-            says: format!("{} {SUBSCRIBED}", account.plan),
-            reaches: Reaches::Account(*account),
-        })
-        .collect();
-    ways.push(Way {
-        shown: KEY_ROUTE_SHOWN,
-        says: KEY_ROUTE_SAYS.to_owned(),
-        reaches: Reaches::Console,
-    });
-    ways
+        .filter(|way| words.iter().all(|word| matches(word, way, &sites)))
+        .collect()
+}
+
+/// Whether one word leaves `way`.
+fn matches(word: &str, way: &Way, sites: &[&str]) -> bool {
+    let word = word.to_lowercase();
+    match word.as_str() {
+        "subscription" => return way.list == List::Subscription,
+        "key" => return way.list == List::Key,
+        _ => {}
+    }
+    if sites.iter().any(|site| site.to_lowercase() == word) {
+        return way.site.is_some_and(|site| site.to_lowercase() == word);
+    }
+    way.provider.to_lowercase() == word
+        || way
+            .shown
+            .split_whitespace()
+            .any(|part| part.to_lowercase().starts_with(&word))
+        || way
+            .site
+            .is_some_and(|site| site.to_lowercase().starts_with(&word))
+}
+
+/// The words after `/login` that leave `way` alone: its provider's name, then
+/// its list's word, then its site, as few of them as do it.
+fn reaching(way: &Way, rows: &Rows) -> String {
+    let list = match way.list {
+        List::Subscription => "subscription",
+        List::Key => "key",
+    };
+    let alone = |words: &[&str]| matching(words, rows) == [way];
+    let mut words = vec![way.provider];
+    for more in [Some(list), way.site].into_iter().flatten() {
+        if alone(&words) {
+            break;
+        }
+        words.push(more);
+    }
+    words.join(" ")
+}
+
+/// The first panel, the list of the kind chosen on it, and the screen of the
+/// row chosen from that, until one of them is done.
+fn walked<T: Terminal>(walk: &mut Walk<'_, T>, rows: &Rows) -> Result<Closed, Fatal> {
+    let mut first = 0;
+    loop {
+        let panel = Panel {
+            title: TITLE,
+            said: Some(HOW),
+            shown: &FIRST,
+            chosen: first,
+            footer: CANCEL,
+        };
+        let (list, said) = match picking::pick(walk.renderer, walk.terms.style(), panel)? {
+            Picked::Took(0) => (List::Subscription, ACCOUNTS),
+            Picked::Took(_) => (List::Key, SAID),
+            Picked::Left => {
+                say(walk.renderer, LEFT)?;
+                return Ok(Closed::Done);
+            }
+            Picked::Cramped => return Ok(Closed::Cramped),
+        };
+        first = usize::from(list == List::Key);
+
+        let listed = listed(rows, list);
+        let listing = Listing {
+            said,
+            ways: &listed,
+            headings: &[],
+            footer: BACK,
+        };
+        match listing.stand(walk)? {
+            Closed::Back => {}
+            closed => return Ok(closed),
+        }
+    }
+}
+
+/// The rows of one list, in the order the registry gives them.
+fn listed(rows: &Rows, list: List) -> Vec<&Way> {
+    rows.listed(list).collect()
+}
+
+/// The rows words left, under the headings of their kinds, opened by the
+/// command: Escape cancels.
+fn narrowed<T: Terminal>(matched: &[&Way], walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+    let accounts = matched
+        .iter()
+        .filter(|way| way.list == List::Subscription)
+        .count();
+    let headings: Vec<Heading<'_>> = [
+        (0, ACCOUNT_HEADING, accounts > 0),
+        (accounts, KEY_HEADING, accounts < matched.len()),
+    ]
+    .into_iter()
+    .filter(|(_, _, any)| *any)
+    .map(|(before, name, _)| Heading { before, name })
+    .collect();
+
+    let listing = Listing {
+        said: NARROWED,
+        ways: matched,
+        headings: &headings,
+        footer: CANCEL,
+    };
+    match listing.stand(walk)? {
+        Closed::Back => {
+            say(walk.renderer, LEFT)?;
+            Ok(Closed::Done)
+        }
+        closed => Ok(closed),
+    }
+}
+
+/// A list of rows to choose one from.
+struct Listing<'a> {
+    said: &'a str,
+    ways: &'a [&'a Way],
+    headings: &'a [Heading<'a>],
+    footer: &'a str,
+}
+
+impl Listing<'_> {
+    /// Stands the list, and the screen of each row chosen from it, until one
+    /// is done or the list is left.
+    fn stand<T: Terminal>(&self, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+        let providers = walk.terms.providers.snapshot();
+        let glyphs = walk.terms.style().glyphs();
+        let says: Vec<String> = self
+            .ways
+            .iter()
+            .map(|way| described(way, walk.held, &providers, glyphs))
+            .collect();
+        let shown: Vec<Offered<'_>> = self
+            .ways
+            .iter()
+            .zip(&says)
+            .map(|(way, says)| Offered {
+                name: way.shown,
+                says,
+            })
+            .collect();
+
+        let mut at = 0;
+        loop {
+            let panel = Panel {
+                title: TITLE,
+                said: Some(self.said),
+                shown: &shown,
+                chosen: at,
+                footer: self.footer,
+            };
+            let style = walk.terms.style();
+            let picked =
+                picking::pick_under(walk.renderer, style, panel, self.headings, &mut |_| Ok(()))?;
+            match picked {
+                Picked::Took(chosen) => {
+                    at = chosen;
+                    let Some(way) = self.ways.get(chosen) else {
+                        return Ok(Closed::Cramped);
+                    };
+                    match screen(way, Opened::Below, walk)? {
+                        Closed::Back => {}
+                        closed => return Ok(closed),
+                    }
+                }
+                Picked::Left => return Ok(Closed::Back),
+                Picked::Cramped => return Ok(Closed::Cramped),
+            }
+        }
+    }
+}
+
+/// What a row says beneath its name.
+///
+/// `signed in` first, where the row holds the credential serving its
+/// provider, so a narrow window cuts the row's own words rather than it. A key
+/// row holding nothing names the variable its key can be set in instead, where
+/// the provider's key is read from one for it.
+fn described(way: &Way, held: &[Way], providers: &Providers, glyphs: Glyphs) -> String {
+    let holds = held.contains(way);
+    let says = way.says.unwrap_or_default();
+    match (way.kind, holds) {
+        (Kind::Key, true) => SIGNED_IN_WITH_KEY.to_owned(),
+        (Kind::Key, false) => {
+            read_from(way, providers).map_or_else(|| says.to_owned(), |one| variable_row(&one))
+        }
+        (Kind::Account, true) if says.is_empty() => SIGNED_IN.to_owned(),
+        (Kind::Account, true) => format!("{SIGNED_IN} {} {says}", glyphs.dot()),
+        (Kind::Account, false) => says.to_owned(),
+    }
+}
+
+/// The provider whose variable a key row's key can be set in instead, where
+/// it is that provider's row for one.
+fn read_from(way: &Way, providers: &Providers) -> Option<Served> {
+    way.environment
+        .then(|| offered(providers).find(|one| one.name == way.provider))
+        .flatten()
 }
 
 /// What a provider row says: the variable the same key can be set in instead,
@@ -264,107 +495,205 @@ fn variable_row(one: &Served) -> String {
     format!("set {}", one.key)
 }
 
-/// Stands the account-kind panel.
-fn asked<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    terms: &Terms,
-    ways: &[Way],
-) -> Result<Picked, Fatal> {
-    let shown: Vec<_> = ways
-        .iter()
-        .map(|way| Offered {
-            name: way.shown,
-            says: &way.says,
-        })
-        .collect();
-    picking::pick(
-        renderer,
-        terms.style(),
-        Panel {
-            title: "Log in",
-            said: Some(HOW),
-            shown: &shown,
-            chosen: 0,
-            footer: CANCEL,
-        },
-    )
+/// What choosing `way` replaces: the credential its provider holds, on any row
+/// of it, that one included.
+fn replaced(way: &Way, held: &[Way]) -> Option<String> {
+    held.iter()
+        .find(|one| one.provider == way.provider)
+        .map(|one| format!("the {} held for {}", credential(one), one.shown))
 }
 
-/// Asks how a provider with more than one authorization method should open.
-fn method<T: Terminal>(
-    renderer: &mut Renderer<T>,
-    terms: &Terms,
-    account: Account,
-    routes: &[Route],
-) -> Result<Picked, Fatal> {
-    let shown: Vec<_> = routes
+/// What a sign-in that did not complete says: nothing was replaced.
+fn unchanged(way: &Way, held: &[Way]) -> String {
+    held.iter()
+        .find(|one| one.provider == way.provider)
+        .map_or_else(
+            || "! sign-in did not complete; nothing was stored".to_owned(),
+            |one| {
+                format!(
+                    "! sign-in did not complete; the {} stored for {} is unchanged",
+                    credential(one),
+                    one.shown
+                )
+            },
+        )
+}
+
+/// What a row's credential is called in a sentence.
+const fn credential(way: &Way) -> &'static str {
+    match way.kind {
+        Kind::Key => "API key",
+        Kind::Account => "sign-in",
+    }
+}
+
+/// The screen of one row: its key box, or its sign-in.
+fn screen<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+    let served = walk.terms.providers.snapshot();
+    let Some(named) = offered(&served).find(|one| one.name == way.provider) else {
+        say(
+            walk.renderer,
+            &format!("! {} is not served by this build", way.shown),
+        )?;
+        return Ok(Closed::Done);
+    };
+    match way.kind {
+        // The row a provider's key has always been read for, opened by the
+        // command: the way `/login anthropic` comes in.
+        Kind::Key if opened == Opened::Directly && way.environment => {
+            given(named, walk.renderer, walk.conversation, walk.terms)?;
+            Ok(Closed::Done)
+        }
+        Kind::Key => keyed(way, named, opened, walk),
+        Kind::Account => signed(way, opened, walk),
+    }
+}
+
+/// The key box for `way`, and the key written down under its name.
+fn keyed<T: Terminal>(
+    way: &Way,
+    named: Served,
+    opened: Opened,
+    walk: &mut Walk<'_, T>,
+) -> Result<Closed, Fatal> {
+    let replaces = replaced(way, walk.held);
+    let asked = secret::ask(
+        walk.renderer,
+        walk.terms.style(),
+        way.shown,
+        replaces.as_deref(),
+        opened.leaves(),
+    )?;
+    match asked {
+        Asked::Key(key) => kept(way.stored, named, &key, walk)?,
+        Asked::Left if opened == Opened::Below => return Ok(Closed::Back),
+        Asked::Left => say(walk.renderer, LEFT)?,
+        Asked::Cramped => say(walk.renderer, CRAMPED)?,
+    }
+    Ok(Closed::Done)
+}
+
+/// The sign-in of `way`: its methods where it has more than one, then the
+/// view the sign-in runs under.
+fn signed<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
+    let routes = walk.terms.subscriptions.routes(way.stored);
+    if let [route] = routes.as_slice() {
+        return subscribed(*route, way, opened, walk);
+    }
+
+    let shown: Vec<Offered<'_>> = routes
         .iter()
         .map(|route| Offered {
             name: route.shown,
             says: route.says,
         })
         .collect();
-    picking::pick(
-        renderer,
-        terms.style(),
-        Panel {
-            title: account.shown,
+    let mut at = 0;
+    loop {
+        let panel = Panel {
+            title: way.shown,
             said: Some("Choose where to finish account authorization."),
             shown: &shown,
-            chosen: 0,
-            footer: CANCEL,
-        },
-    )
+            chosen: at,
+            footer: opened.leaves(),
+        };
+        match picking::pick(walk.renderer, walk.terms.style(), panel)? {
+            Picked::Took(chosen) => {
+                at = chosen;
+                let Some(route) = routes.get(chosen) else {
+                    return Ok(Closed::Cramped);
+                };
+                match subscribed(*route, way, Opened::Below, walk)? {
+                    Closed::Back => {}
+                    closed => return Ok(closed),
+                }
+            }
+            Picked::Left if opened == Opened::Below => return Ok(Closed::Back),
+            Picked::Left => {
+                say(walk.renderer, LEFT)?;
+                return Ok(Closed::Done);
+            }
+            Picked::Cramped => return Ok(Closed::Cramped),
+        }
+    }
 }
 
-/// Stands the provider panel and says how it ended.
-fn chosen<T: Terminal>(
-    offering: &[Served],
+/// Each row in `ways` as the whole line to type, for a window with no room for
+/// a panel and a run with no keyboard.
+fn typed<T: Terminal>(
+    ways: &[&Way],
+    rows: &Rows,
     renderer: &mut Renderer<T>,
     terms: &Terms,
-) -> Result<Picked, Fatal> {
-    let says: Vec<String> = offering.iter().map(variable_row).collect();
-
-    let shown: Vec<Offered<'_>> = offering
+) -> Result<(), Fatal> {
+    let providers = terms.providers.snapshot();
+    let glyphs = terms.style().glyphs();
+    let columns = renderer.columns();
+    // Folded rather than cut: a line to type with its last word cut off is a
+    // line that reaches some other row, or none.
+    let lines: Vec<Row> = ways
         .iter()
-        .zip(&says)
-        .map(|(one, says)| Offered {
-            name: one.shown,
-            says,
+        .flat_map(|way| {
+            let line = line(way, rows, &providers, glyphs);
+            fold(&line, columns)
+                .into_iter()
+                .map(|part| Row::new().then(Slot::Quiet, part))
+                .collect::<Vec<_>>()
         })
         .collect();
 
-    let panel = Panel {
-        title: "Log in",
-        said: Some(SAID),
-        shown: &shown,
-        chosen: 0,
-        footer: CANCEL,
-    };
+    Ok(renderer.present(&lines)?)
+}
 
-    picking::pick(renderer, terms.style(), panel)
+/// One row as the line to type, and what typing it reaches: the words name
+/// the row, so what follows says only what it takes.
+fn line(way: &Way, rows: &Rows, providers: &Providers, glyphs: Glyphs) -> String {
+    let what = match (way.kind, read_from(way, providers)) {
+        (Kind::Key, Some(one)) => format!("a key, or set {}", one.key),
+        (Kind::Key, None) => "a key".to_owned(),
+        (Kind::Account, _) => "a sign-in".to_owned(),
+    };
+    about(&format!("/login {}", reaching(way, rows)), &what, glyphs)
 }
 
 /// Runs a registered subscription flow and switches this session on success.
+///
+/// Escape stops the flow. Opened below another screen it goes back there;
+/// opened by the command it ends the command, and says, as a flow that fails
+/// does, that nothing held was replaced.
 fn subscribed<T: Terminal>(
     route: Route,
-    renderer: &mut Renderer<T>,
-    conversation: &mut Conversation,
-    terms: &Terms,
-) -> Result<(), Fatal> {
+    way: &Way,
+    opened: Opened,
+    walk: &mut Walk<'_, T>,
+) -> Result<Closed, Fatal> {
+    let Walk {
+        renderer,
+        conversation,
+        terms,
+        held,
+    } = walk;
+    let (terms, held) = (*terms, *held);
     let provider = route.provider();
     if !terms.subscriptions.supports(provider) {
-        return say(renderer, &format!("! no subscription login for {provider}"));
+        say(renderer, &format!("! no subscription login for {provider}"))?;
+        return Ok(Closed::Done);
     }
+    let failed = |renderer: &mut Renderer<T>, problem: &dyn std::fmt::Display| {
+        say(renderer, &format!("! {problem}"))?;
+        say(renderer, &unchanged(way, held))?;
+        Ok(Closed::Done)
+    };
     let attempt = match terms.subscriptions.start(route, terms.logins.clone()) {
         Ok(attempt) => attempt,
-        Err(problem) => return say(renderer, &format!("! {problem}")),
+        Err(problem) => return failed(renderer, &problem),
     };
 
     // Read once: nothing a login does moves where a key is read from.
     let providers = terms.providers.snapshot();
     let withheld: Vec<&str> = key_variables(&providers, &terms.settings).collect();
-    let mut view = LoginView::new(terms.style().glyphs());
+    let glyphs = terms.style().glyphs();
+    let mut view = LoginView::new(glyphs).opened(opened.leaves(), replaced(way, held), glyphs);
     view.show(renderer, terms, route.title())?;
     loop {
         match attempt.wait(Duration::from_millis(50)) {
@@ -373,14 +702,16 @@ fn subscribed<T: Terminal>(
                     let Some(named) =
                         offered(&terms.providers.snapshot()).find(|one| one.name == provider)
                     else {
-                        return say(renderer, "! the signed-in provider is unavailable");
+                        say(renderer, "! the signed-in provider is unavailable")?;
+                        return Ok(Closed::Done);
                     };
-                    return taken(named, renderer, conversation, terms);
+                    taken(named, renderer, conversation, terms)?;
+                    return Ok(Closed::Done);
                 }
                 view.show(renderer, terms, route.title())?;
             }
             Ok(None) => {}
-            Err(problem) => return say(renderer, &format!("! {problem}")),
+            Err(problem) => return failed(renderer, &problem),
         }
 
         let Some(arrived) = view.key(renderer)? else {
@@ -389,7 +720,11 @@ fn subscribed<T: Terminal>(
         match arrived {
             Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => {
                 attempt.cancel();
-                return say(renderer, LEFT);
+                if opened == Opened::Below {
+                    return Ok(Closed::Back);
+                }
+                say(renderer, &unchanged(way, held))?;
+                return Ok(Closed::Done);
             }
             Pressed::Resized => renderer.resized()?,
             pressed => {
@@ -403,6 +738,8 @@ fn subscribed<T: Terminal>(
 }
 
 struct LoginView {
+    /// What the sign-in replaces once it completes, under the title.
+    notice: Option<String>,
     page: Option<(Box<str>, Option<Box<str>>)>,
     status: Cow<'static, str>,
     browser_failed: bool,
@@ -415,6 +752,7 @@ struct LoginView {
 impl LoginView {
     fn new(glyphs: Glyphs) -> Self {
         Self {
+            notice: None,
             page: None,
             status: Cow::Owned(about("waiting", CANCEL, glyphs)),
             browser_failed: false,
@@ -423,6 +761,15 @@ impl LoginView {
             limited: false,
             following: None,
         }
+    }
+
+    /// The view of a sign-in opened as `leaves` says, replacing `replaces`
+    /// where the provider holds a credential.
+    fn opened(mut self, leaves: &str, replaces: Option<String>, glyphs: Glyphs) -> Self {
+        self.status = Cow::Owned(about("waiting", leaves, glyphs));
+        self.notice =
+            replaces.map(|replaces| format!("Signing in replaces {replaces} once it completes."));
+        self
     }
 
     /// Takes one update from the login, opening the browser without the
@@ -527,6 +874,9 @@ impl LoginView {
     fn frame(&self, columns: usize, title: &str, glyphs: Glyphs) -> (Vec<Row>, Caret) {
         let mut rows = Vec::with_capacity(7);
         rows.push(Row::new().then(Slot::Strong, clip(title, columns)));
+        if let Some(notice) = &self.notice {
+            rows.push(Row::new().then(Slot::Plain, clip(notice, columns)));
+        }
         if let Some((url, code)) = &self.page {
             rows.push(Row::new().then(Slot::Plain, clip(&format!("Open {url}"), columns)));
             if let Some(code) = code {
@@ -583,15 +933,35 @@ impl LoginView {
     }
 }
 
-/// Asks for a key, writes it down, and sets this session up with it — or
-/// says why nothing was written: the box was left, or never stood.
+/// Asks for a key for `named`'s own row, the one its variable is read for,
+/// writes it down, and sets this session up with it — or says why nothing was
+/// written: the box was left, or never stood.
+///
+/// Opened by the command, so Escape cancels. The box says what the key
+/// replaces where the provider holds a credential, which is read here: a
+/// store that cannot be read is said instead of the box.
 fn given<T: Terminal>(
     named: Served,
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    match secret::ask(renderer, terms.style(), named.shown)? {
+    let rows = Rows::production();
+    let held = match holding(&rows, terms) {
+        Ok(held) => held,
+        Err(failed) => return say(renderer, &format!("! {}", remedy(&failed))),
+    };
+    let replaces = rows
+        .environment(named.name)
+        .and_then(|way| replaced(way, &held));
+    let asked = secret::ask(
+        renderer,
+        terms.style(),
+        named.shown,
+        replaces.as_deref(),
+        CANCEL,
+    )?;
+    match asked {
         Asked::Key(key) => written(named, &key, renderer, conversation, terms),
         Asked::Left => say(renderer, LEFT),
         Asked::Cramped => say(renderer, CRAMPED),
@@ -616,7 +986,30 @@ fn written<T: Terminal>(
     conversation: &mut Conversation,
     terms: &Terms,
 ) -> Result<(), Fatal> {
-    match terms.logins.keep(named.name, key) {
+    let mut walk = Walk {
+        renderer,
+        conversation,
+        terms,
+        held: &[],
+    };
+    kept(named.name, named, key, &mut walk)
+}
+
+/// [`written`], under `stored`: the name of the row the key was given on.
+fn kept<T: Terminal>(
+    stored: &str,
+    named: Served,
+    key: &str,
+    walk: &mut Walk<'_, T>,
+) -> Result<(), Fatal> {
+    let Walk {
+        renderer,
+        conversation,
+        terms,
+        ..
+    } = walk;
+    let terms = *terms;
+    match terms.logins.keep(stored, key) {
         Ok(_) => taken(named, renderer, conversation, terms),
         Err(failed) => say(
             renderer,
