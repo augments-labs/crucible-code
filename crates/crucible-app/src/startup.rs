@@ -339,6 +339,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     });
     recorded(&mut conversation, &runtime);
 
+    conversation.hastened_as_written(settings);
     Ok(conversation.consenting(startup.services.consent().clone()))
 }
 

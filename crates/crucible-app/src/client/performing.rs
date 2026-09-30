@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crucible_client_api::{
     CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, LoginOutcome,
     LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem, Refusal, Request,
-    Resource, Response, ResumeOutcome, SandboxOutcome, Standing, Theme, ThemeOutcome,
+    Resource, Response, ResumeOutcome, SandboxOutcome, SpeedOutcome, Standing, Theme, ThemeOutcome,
 };
 use crucible_runner::PromptCacheCleanup;
 use crucible_runtime::Cancel;
@@ -19,6 +19,7 @@ use super::reading;
 use crate::Conversation;
 use crate::providers::{CredentialSource, Served, offered};
 use crate::remember::{self, RememberError};
+use crate::speed::Hastened;
 use crate::switching::{LoggedIn, LoggedOut, Rung, Switched, Switching};
 
 /// What the host lends a command: the registry generation and files a switch
@@ -97,6 +98,8 @@ pub enum Performed {
     Model(Switched),
     /// `/effort`.
     Effort(Rung),
+    /// `/fast`.
+    Speed(Hastened),
     /// `/mode`, by name or by stepping: the mode now in force.
     Mode(Mode),
     /// `/login`, once the credential was stored.
@@ -166,6 +169,9 @@ pub async fn perform(
         },
         Command::SetEffort(rung) => {
             Performed::Effort(conversation.think(reading::effort(*rung), &desk.switching))
+        }
+        Command::SetSpeed(pace) => {
+            Performed::Speed(conversation.hasten(reading::speed(*pace), &desk.switching))
         }
         Command::SetMode(mode) => {
             let mode = reading::mode_in(*mode);
@@ -241,6 +247,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Resume(_)
         | Command::SelectModel { .. }
         | Command::SetEffort(_)
+        | Command::SetSpeed(_)
         | Command::SetMode(_)
         | Command::CycleMode
         | Command::Login { .. }
@@ -340,6 +347,14 @@ impl Performed {
                 Rung::Unasked => EffortOutcome::Unasked,
                 Rung::Unsupported => EffortOutcome::Unsupported,
                 Rung::Taken { unwritten } => EffortOutcome::Taken {
+                    unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
+                },
+            }),
+            Self::Speed(hastened) => Outcome::Speed(match hastened {
+                Hastened::Unasked => SpeedOutcome::Unasked,
+                Hastened::Unsupported => SpeedOutcome::Unsupported,
+                Hastened::Own => SpeedOutcome::Own,
+                Hastened::Taken { unwritten } => SpeedOutcome::Taken {
                     unwritten: unwritten.as_ref().map(|problem| Problem::failed(problem)),
                 },
             }),

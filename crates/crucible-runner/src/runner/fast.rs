@@ -26,7 +26,13 @@ pub(super) struct Pace {
 impl Runner {
     /// Asks every request from now on to be answered at `speed`, where the
     /// model has a fast form the request can carry.
+    ///
+    /// Another speed than the one asked forgets what the last answer was
+    /// served at: it described an answer to requests that asked otherwise.
     pub fn hasten(&mut self, speed: Speed) {
+        if self.pace.asked != speed {
+            self.pace.served = Served::Unsaid;
+        }
         self.pace.asked = speed;
     }
 

@@ -97,7 +97,7 @@ const KEYS: [&str; 71] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 16] = [
+const MORE_KEYS: [&str; 18] = [
     "count",
     "date",
     "groups",
@@ -108,8 +108,10 @@ const MORE_KEYS: [&str; 16] = [
     "route",
     "running",
     "sentence",
+    "served",
     "shown",
     "source",
+    "speed",
     "unwritten",
     "variable",
     "version",
@@ -258,6 +260,7 @@ fn commands() -> Vec<Command> {
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
     commands.extend(Rung::EVERY.into_iter().map(Command::SetEffort));
+    commands.extend(Pace::EVERY.into_iter().map(Command::SetSpeed));
     commands.extend(Mode::EVERY.into_iter().map(Command::SetMode));
     commands
 }
@@ -390,6 +393,13 @@ fn outcomes() -> Vec<Outcome> {
             unwritten: Some(problem()),
         }),
         Outcome::Effort(EffortOutcome::Taken { unwritten: None }),
+        Outcome::Speed(SpeedOutcome::Unasked),
+        Outcome::Speed(SpeedOutcome::Unsupported),
+        Outcome::Speed(SpeedOutcome::Own),
+        Outcome::Speed(SpeedOutcome::Taken {
+            unwritten: Some(problem()),
+        }),
+        Outcome::Speed(SpeedOutcome::Taken { unwritten: None }),
         Outcome::Cache(CacheOutcome::Listed {
             resources: vec![
                 Resource {
@@ -497,6 +507,12 @@ fn snapshots() -> Vec<Snapshot> {
             provider: pending.as_ref().map(|_| name("anthropic")),
             model: pending.as_ref().and_then(|_| Model::new(MARKER)),
             effort: pending.as_ref().map(|_| Rung::Max),
+            speed: if pending.is_some() {
+                Pace::Fast
+            } else {
+                Pace::Standard
+            },
+            served: pending.as_ref().map(|_| Pace::Standard),
             mode: Mode::AllowEdits,
             messages: 4,
             turns: 2,
@@ -623,31 +639,32 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 23),
-        Command::Compact => (1, 23),
-        Command::Cancel => (2, 23),
-        Command::Decide(_) => (3, 23),
-        Command::Clear => (4, 23),
-        Command::Resume(_) => (5, 23),
+        Command::Prompt(_) => (0, 24),
+        Command::Compact => (1, 24),
+        Command::Cancel => (2, 24),
+        Command::Decide(_) => (3, 24),
+        Command::Clear => (4, 24),
+        Command::Resume(_) => (5, 24),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 23),
-        Command::SelectModel { effort: None, .. } => (7, 23),
-        Command::SetEffort(_) => (8, 23),
-        Command::SetMode(_) => (9, 23),
-        Command::CycleMode => (10, 23),
-        Command::Login { .. } => (11, 23),
-        Command::Logout { .. } => (12, 23),
-        Command::InspectCache => (13, 23),
-        Command::CleanCache => (14, 23),
-        Command::Sandbox { enabled: true } => (15, 23),
-        Command::Sandbox { enabled: false } => (16, 23),
-        Command::Theme(Theme::Drawing(_)) => (17, 23),
-        Command::Theme(Theme::Syntax(_)) => (18, 23),
-        Command::Help => (19, 23),
-        Command::ReleaseNotes { version: None } => (20, 23),
-        Command::ReleaseNotes { version: Some(_) } => (21, 23),
-        Command::Exit => (22, 23),
+        } => (6, 24),
+        Command::SelectModel { effort: None, .. } => (7, 24),
+        Command::SetEffort(_) => (8, 24),
+        Command::SetMode(_) => (9, 24),
+        Command::CycleMode => (10, 24),
+        Command::Login { .. } => (11, 24),
+        Command::Logout { .. } => (12, 24),
+        Command::InspectCache => (13, 24),
+        Command::CleanCache => (14, 24),
+        Command::Sandbox { enabled: true } => (15, 24),
+        Command::Sandbox { enabled: false } => (16, 24),
+        Command::Theme(Theme::Drawing(_)) => (17, 24),
+        Command::Theme(Theme::Syntax(_)) => (18, 24),
+        Command::Help => (19, 24),
+        Command::ReleaseNotes { version: None } => (20, 24),
+        Command::ReleaseNotes { version: Some(_) } => (21, 24),
+        Command::Exit => (22, 24),
+        Command::SetSpeed(_) => (23, 24),
     }
 }
 
@@ -716,6 +733,13 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             EffortOutcome::Unsupported => (1, 4),
             EffortOutcome::Taken { unwritten: Some(_) } => (2, 4),
             EffortOutcome::Taken { unwritten: None } => (3, 4),
+        },
+        Outcome::Speed(speed) => match speed {
+            SpeedOutcome::Unasked => (0, 5),
+            SpeedOutcome::Unsupported => (1, 5),
+            SpeedOutcome::Own => (2, 5),
+            SpeedOutcome::Taken { unwritten: Some(_) } => (3, 5),
+            SpeedOutcome::Taken { unwritten: None } => (4, 5),
         },
         Outcome::Login(login) => match login {
             LoginOutcome::Unusable(_) => (0, 5),
@@ -1097,6 +1121,7 @@ fn an_argument_outside_its_closed_set_is_invalid() {
     let invalid = [
         json!({"kind": "set_mode", "mode": "root"}),
         json!({"kind": "set_effort", "effort": "ludicrous"}),
+        json!({"kind": "set_speed", "speed": "ludicrous"}),
         json!({"kind": "prompt", "text": ""}),
         json!({"kind": "login", "provider": ""}),
         json!({"kind": "login", "provider": "a\nb"}),
@@ -1281,6 +1306,8 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
         provider: Some(name("anthropic")),
         model: Model::new(MARKER),
         effort: Some(Rung::Max),
+        speed: Pace::Standard,
+        served: Some(Pace::Standard),
         mode: Mode::AllowEdits,
         messages: 4,
         turns: 2,
@@ -1616,7 +1643,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 16_623_693_777_715_215_189),
+        (1, 7_024_358_126_322_682_185),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

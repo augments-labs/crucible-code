@@ -1253,11 +1253,13 @@ sandbox
 set_mode'
 decided=''
 kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
-# The five were picked out of the eighteen commands there were, and asking for
-# the release notes, the nineteenth, changes nothing a session may do. One more
-# is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 19)); then
-    printf '    FAIL the client contract no longer has the 19 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 19 in this check\n'
+# The five were picked out of the eighteen commands there were. Asking for the
+# release notes, the nineteenth, changes nothing a session may do, and neither
+# does asking for a speed, the twentieth: it changes what a request costs, not
+# what the session may reach or whom it acts as. One more is one nobody has
+# asked this of.
+if (($(grep -c . <<<"$kinds") != 20)); then
+    printf '    FAIL the client contract no longer has the 20 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 20 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do

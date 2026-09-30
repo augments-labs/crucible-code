@@ -125,3 +125,19 @@ fn the_speed_the_last_answer_was_served_at_is_kept() {
         assert_eq!(scripted.runner.served(), served);
     }
 }
+
+#[test]
+fn another_speed_forgets_what_the_last_answer_was_served_at() {
+    // A label that said `fast` after the speed was turned off would be
+    // describing an answer the next request is not going to get.
+    let script = Script::new(vec![saying("done")]).serving(Served::Fast);
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.hasten(Speed::Fast);
+    scripted.turn("go").expect("a turn");
+
+    scripted.runner.hasten(Speed::Fast);
+    assert_eq!(scripted.runner.served(), Served::Fast);
+
+    scripted.runner.hasten(Speed::Standard);
+    assert_eq!(scripted.runner.served(), Served::Unsaid);
+}

@@ -181,6 +181,9 @@ impl Conversation {
         with: &Switching<'_>,
     ) -> Switched {
         let provider = selected.name;
+        // The model in force chosen again keeps its speed; any other goes back
+        // to standard, since the price shown for fast was that model's.
+        let another = self.serving != Some(provider) || self.runner.model() != name;
         // Before retiring a cache or replacing the provider, so that a refusal
         // leaves the session exactly where it was.
         if let Some(effort) = rung.or(self.runner.effort())
@@ -231,10 +234,15 @@ impl Conversation {
         let unwritten = remember::asking(with.choosing, provider)
             .and_then(|()| remember::choosing(with.choosing, provider, name))
             .err();
+        let slowed = if another {
+            self.slowed(provider, with.choosing)
+        } else {
+            None
+        };
 
         Switched::Taken {
             retained,
-            unwritten,
+            unwritten: unwritten.or(slowed),
         }
     }
 

@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crucible_config::ConfigError;
-use crucible_models::Effort;
+use crucible_models::{Effort, Speed};
 
 #[cfg(test)]
 use crucible_tools::Minted;
@@ -183,6 +183,22 @@ pub fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), Remember
 pub fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::thinking(text, named, provider, effort)
+    })
+}
+
+/// Writes `speed` down as the speed to ask `provider`'s model in force at.
+///
+/// Fast is written beside the model; standard takes it out. Everything else
+/// already in the file stays where it was, byte for byte.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn hastening(file: &Path, provider: &str, speed: Speed) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::hastening(text, named, provider, speed)
     })
 }
 

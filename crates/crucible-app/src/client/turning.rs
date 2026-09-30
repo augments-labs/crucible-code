@@ -100,6 +100,7 @@ pub async fn turn(
         | Command::Resume(_)
         | Command::SelectModel { .. }
         | Command::SetEffort(_)
+        | Command::SetSpeed(_)
         | Command::SetMode(_)
         | Command::CycleMode
         | Command::Login { .. }
@@ -143,6 +144,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::Resume(_)
         | Command::SelectModel { .. }
         | Command::SetEffort(_)
+        | Command::SetSpeed(_)
         | Command::SetMode(_)
         | Command::CycleMode
         | Command::Login { .. }

@@ -240,7 +240,10 @@ impl Conversation {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        self.runner.turn(prompt, attached, ask, run).await
+        let asked = self.runner.speed();
+        let turned = self.runner.turn(prompt, attached, ask, run).await;
+        self.refusal_written(asked);
+        turned
     }
 
     /// Starts a new session and records into it from here on, with nothing
