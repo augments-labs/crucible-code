@@ -2014,3 +2014,152 @@ fn a_termination_sent_while_the_list_stands_over_an_answer_is_not_kept_waiting()
         "the turn ran to the end of its answer instead of being stopped"
     );
 }
+
+/// A configuration that draws crucible's own marks with the characters every
+/// font has.
+fn in_ascii() -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "updates": {"check": "never"},
+        "output": {"glyphs": "ascii"}
+    }))
+    .unwrap()
+}
+
+/// The last word of 0.41.1 in the changelog: the one release these pictures
+/// are of, which no later release changes.
+const RELEASE_ENDS: &str = "RUSTSEC-2026-0285";
+
+#[test]
+fn one_release_is_printed_in_full_with_no_rail() {
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-one-{columns}"), columns, 24);
+        window.types_until("/release-notes 0.41.1\r", RELEASE_ENDS);
+
+        insta::assert_snapshot!(format!("one_release_at_{columns}"), window.picture());
+    }
+}
+
+#[test]
+fn one_release_is_printed_in_full_in_ascii() {
+    for columns in [40, 80] {
+        let config = in_ascii();
+        let mut window = Watched::configured(
+            &format!("release-notes-one-ascii-{columns}"),
+            columns,
+            24,
+            &config,
+            false,
+        );
+        window.types_until("/release-notes v0.41.1\r", RELEASE_ENDS);
+
+        insta::assert_snapshot!(
+            format!("one_release_in_ascii_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn a_version_that_is_no_release_is_refused_naming_the_newest() {
+    // The newest is the running version, and so masked: no release moves it.
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-none-{columns}"), columns, 24);
+        window.types_until("/release-notes 0.0.0\r", "no release 0.0.0");
+
+        insta::assert_snapshot!(format!("no_release_at_{columns}"), window.picture());
+    }
+}
+
+#[test]
+fn a_version_that_is_no_release_is_refused_the_same_in_ascii() {
+    for columns in [40, 80] {
+        let config = in_ascii();
+        let mut window = Watched::configured(
+            &format!("release-notes-none-ascii-{columns}"),
+            columns,
+            24,
+            &config,
+            false,
+        );
+        window.types_until("/release-notes 0.0.0\r", "no release 0.0.0");
+
+        insta::assert_snapshot!(
+            format!("no_release_in_ascii_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
+    // Read rather than pictured: the list is the changelog built in, which every
+    // release adds to. The window is tall enough to hold the newest release
+    // whole, so the rows under its head are all on screen.
+    for (columns, rows) in [(40, 320), (80, 200)] {
+        let mut window = Watched::open(&format!("release-notes-whole-{columns}"), columns, rows);
+        window.types_until("/release-notes\r", "newest in full");
+        let picture = window.picture();
+        // A row of the picture without the edges it is drawn between.
+        let lines: Vec<&str> = picture
+            .lines()
+            .map(|line| line.strip_prefix('|').unwrap_or(line))
+            .collect();
+        let at = format!("{columns} columns:\n{picture}");
+
+        let head = lines
+            .iter()
+            .rposition(|line| line.contains("this version"))
+            .unwrap_or_else(|| panic!("no release marked as this version at {at}"));
+        let closing = lines
+            .iter()
+            .rposition(|line| line.contains('⎿'))
+            .unwrap_or_else(|| panic!("no closing row at {at}"));
+        let newest = lines.get(head).copied().unwrap_or_default();
+
+        // The running version is the one masked out of every picture.
+        assert!(newest.contains("◆ ######"), "{newest:?} at {at}");
+        assert!(
+            head < closing,
+            "the closing row is above the newest at {at}"
+        );
+        let body = lines.get(head + 1..closing).unwrap_or_default();
+        assert!(
+            body.iter().all(|line| !line.starts_with('│')),
+            "a rail stands under the newest at {at}"
+        );
+        assert!(
+            !body
+                .iter()
+                .any(|line| line.starts_with('◆') || line.starts_with('◇')),
+            "another release follows the newest at {at}"
+        );
+        // Between the closing row and the prompt box, whose own sides are drawn
+        // with the rail's character.
+        let boxed = lines
+            .iter()
+            .skip(closing)
+            .position(|line| line.starts_with('╭'))
+            .map_or(lines.len(), |under| closing + under);
+        let after = lines.get(closing + 1..boxed).unwrap_or_default();
+        assert!(
+            !after
+                .iter()
+                .any(|line| line.contains('◆') || line.contains('◇') || line.starts_with('│')),
+            "the closing row is not the last of the list at {at}"
+        );
+    }
+}
+
+#[test]
+fn release_notes_mid_turn_are_refused_on_the_panel() {
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("release-notes-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/release-notes\r", "thousand rows");
+
+    let refused = window.picture();
+    assert!(refused.contains("esc to close"), "{refused}");
+    assert!(!refused.contains("newest in full"), "{refused}");
+    insta::assert_snapshot!(refused);
+}
