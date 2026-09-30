@@ -270,7 +270,7 @@ that row into the transcript. Leaving writes `sandbox settings unchanged`.
 
 ### `/login`
 
-The two panels and each list take the common keys; the arrows pass over the
+The first panel and each list take the common keys; the arrows pass over the
 `Subscription` and `API key` headings that stand over rows narrowed by words.
 Below the first screen <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd>
 go back one screen with the mark where it was, and the footer reads `esc to go

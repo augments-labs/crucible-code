@@ -547,6 +547,9 @@ fn device(base: &str) -> String {
 /// site must leave as it was until it completes.
 const HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{},"identities":{}}"#;
 
+/// What a fake Kimi service answers, given the address it listens on.
+type Answers = dyn Fn(&str) -> Vec<(u16, String)>;
+
 #[test]
 fn a_kimi_sign_in_that_does_not_complete_leaves_the_store_byte_for_byte() {
     // Refused at the device authorization, denied at the token, and left
@@ -559,7 +562,7 @@ fn a_kimi_sign_in_that_does_not_complete_leaves_the_store_byte_for_byte() {
         ]
     };
     let left = |base: &str| vec![(200, device(base))];
-    let cases: [(&str, &dyn Fn(&str) -> Vec<(u16, String)>, bool); 3] = [
+    let cases: [(&str, &Answers, bool); 3] = [
         ("refused", &refused, false),
         ("denied", &denied, false),
         ("left", &left, true),

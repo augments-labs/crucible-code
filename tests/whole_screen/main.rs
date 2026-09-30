@@ -1350,12 +1350,9 @@ fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own()
                 }
             }
         }
-        assert!(panels.iter().all(|panel| *panel == panels[0]), "{panels:?}");
-        assert!(
-            panels[0].contains("Choose how usage is paid for."),
-            "{}",
-            panels[0]
-        );
+        let first = panels.first().expect("the panel over an empty store");
+        assert!(panels.iter().all(|panel| panel == first), "{panels:?}");
+        assert!(first.contains("Choose how usage is paid for."), "{first}");
     }
 }
 
@@ -1463,8 +1460,13 @@ fn a_key_for_a_provider_holding_a_credential_says_what_it_replaces_and_replaces_
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&store).expect("the store"))
                 .expect("a store in its format");
-        assert!(written[map].get(held_name).is_none(), "{written}");
-        assert!(written["keys"]["anthropic"].is_string(), "{written}");
+        let held = written.get(map).and_then(|map| map.get(held_name));
+        assert!(held.is_none(), "{written}");
+        let anthropic = written.get("keys").and_then(|keys| keys.get("anthropic"));
+        assert!(
+            anthropic.is_some_and(serde_json::Value::is_string),
+            "{written}"
+        );
     }
 }
 
