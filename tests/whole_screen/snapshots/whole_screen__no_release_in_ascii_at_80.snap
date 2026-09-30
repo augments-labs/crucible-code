@@ -4,7 +4,6 @@ assertion_line: 2086
 expression: window.picture()
 ---
 80x24 cursor 20,4 scrolled 0
-||                                  | ----------------------------------------- ||
 ||                                  |                                           ||
 ||                                  | Tips                                      ||
 ||                                  |                                           ||
@@ -19,7 +18,8 @@ expression: window.picture()
 |Then use /model to select a model.                                              |
 |                                                                                |
 |> /release-notes 0.0.0                                                          |
-|+ ! no release 0.0.0 - newest is ######                                         |
+|                                                                                |
+|! no release 0.0.0 - newest is ######                                           |
 |                                                                                |
 |                                                                                |
 |                                                                                |

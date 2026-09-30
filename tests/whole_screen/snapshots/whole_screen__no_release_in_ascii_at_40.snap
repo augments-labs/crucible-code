@@ -13,8 +13,8 @@ expression: window.picture()
 |Then use /model to select a model.      |
 |                                        |
 |> /release-notes 0.0.0                  |
-|+ ! no release 0.0.0 - newest is ###### |
 |                                        |
+|! no release 0.0.0 - newest is ######   |
 |                                        |
 |                                        |
 |                                        |

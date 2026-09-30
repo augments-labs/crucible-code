@@ -675,19 +675,15 @@ pub(super) fn run<T: Terminal>(
         return Ok(Ran::Leave);
     }
 
-    // The one answer not always hung off the line that asked: a timeline has
-    // a rail of its own down the left, and a thousand rows indented under a
-    // mark would be a second one beside it. A refusal hangs as any other does.
+    // The one answer not hung off the line that asked: a timeline has a rail
+    // of its own down the left, and a thousand rows indented under a mark
+    // would be a second one beside it.
     if let Wanted::Known {
         command: Command::ReleaseNotes,
         rest,
     } = wanted
     {
-        let start = renderer.lines();
-        let glyphs = terms.style().glyphs();
-        if notes::run(rest, renderer, glyphs)? == notes::Printed::Refusal {
-            renderer.subordinate(start, glyphs)?;
-        }
+        notes::run(rest, renderer, terms.style().glyphs())?;
         renderer.commit("")?;
         return Ok(Ran::Again);
     }

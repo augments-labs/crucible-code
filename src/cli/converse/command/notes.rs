@@ -40,18 +40,6 @@ fn forge() -> Forge {
     )
 }
 
-/// What `/release-notes` printed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Printed {
-    /// Releases, set apart from the line that asked: a timeline has a rail of
-    /// its own down the left, and rows hung under a mark would be a second one
-    /// beside it.
-    Releases,
-    /// A refusal, which hangs under the line that asked as any command's
-    /// answer does.
-    Refusal,
-}
-
 /// Runs `/release-notes`: every release with nothing after it, and the one
 /// named with a version after it.
 ///
@@ -65,42 +53,35 @@ pub(super) fn run<T: Terminal>(
     rest: &str,
     renderer: &mut Renderer<T>,
     glyphs: Glyphs,
-) -> Result<Printed, Fatal> {
+) -> Result<(), Fatal> {
     let releases = releases(CHANGELOG);
     let columns = renderer.columns();
     let newest = releases.last().map_or(RUNNING, |release| release.version);
     let dot = glyphs.dot();
 
+    renderer.apart()?;
     let words: Vec<&str> = rest.split_whitespace().collect();
-    let found = match words.as_slice() {
-        [] => Ok(whole(&releases, columns, glyphs)),
+    match words.as_slice() {
+        [] => renderer.present(&whole(&releases, columns, glyphs))?,
         [word] => match asked(word) {
-            Some(version) => releases
-                .iter()
-                .find(|release| release.version == version)
-                .map(|release| alone(release, columns, glyphs))
-                .ok_or_else(|| format!("! no release {version} {dot} newest is {newest}")),
-            None => Err(format!(
-                "! not a version: {word} {dot} write it as {newest}"
-            )),
+            Some(version) => match releases.iter().find(|release| release.version == version) {
+                Some(release) => renderer.present(&alone(release, columns, glyphs))?,
+                None => {
+                    renderer.commit(&format!("! no release {version} {dot} newest is {newest}"))?;
+                }
+            },
+            None => {
+                renderer.commit(&format!(
+                    "! not a version: {word} {dot} write it as {newest}"
+                ))?;
+            }
         },
-        _ => Err(format!(
+        _ => renderer.commit(&format!(
             "! not a version: {} {dot} write it as {newest}",
             rest.trim()
-        )),
-    };
-
-    match found {
-        Ok(rows) => {
-            renderer.apart()?;
-            renderer.present(&rows)?;
-            Ok(Printed::Releases)
-        }
-        Err(refusal) => {
-            renderer.commit(&refusal)?;
-            Ok(Printed::Refusal)
-        }
+        ))?,
     }
+    Ok(())
 }
 
 /// The release notes a client asked for: every release where it named none,

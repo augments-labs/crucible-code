@@ -941,8 +941,6 @@ fn a_command_answer_hangs_directly_under_the_line_that_asked() {
         "/hlep",
         "/resume",
         "/mode fly",
-        "/release-notes 0.99.0",
-        "/release-notes latest",
     ] {
         let rows = answered(command);
         let at = rows

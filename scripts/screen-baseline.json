@@ -319,7 +319,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-none-{columns}\"), columns, 24)"
       ],
-      "sha256": "90b705bdf629c9f747feb1232cd40ebd87791a5c45f8550685c12187d5186e37"
+      "sha256": "ed96e2c5eb367c1067782f9e454a4e2fa22d370bc52795ae4e747acbb62d7df6"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_80.snap",
@@ -327,7 +327,7 @@
       "opened": [
         "Watched::open(&format!(\"release-notes-none-{columns}\"), columns, 24)"
       ],
-      "sha256": "c30a1d87df25fcd330a80af119a89181b8df553f2d0bc747febdeaa29451bfd7"
+      "sha256": "bb44f2163e8187de2bad03602bb752031a76e23fc349d2596537dc3bc8d3f560"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_in_ascii_at_40.snap",
@@ -335,7 +335,7 @@
       "opened": [
         "Watched::configured( &format!(\"release-notes-none-ascii-{columns}\"), columns, 24, &config, false, )"
       ],
-      "sha256": "6210f066ac1c3c429def8a0630ace79ee6ed0dd5fa6312555938d8b3b7acf288"
+      "sha256": "7dbf2a5cd03f64197035eafea725ea1a39dd390b8765da0c61d1f463298cc584"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_in_ascii_at_80.snap",
@@ -343,7 +343,7 @@
       "opened": [
         "Watched::configured( &format!(\"release-notes-none-ascii-{columns}\"), columns, 24, &config, false, )"
       ],
-      "sha256": "4cff350826729d13939e010fd1070f98ff221e9f6b102d99a480463b79554f7b"
+      "sha256": "1a09b357c7f84c8c71d8e5ef3b926e6804208288d5836a3e109c0d28e4525dee"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__one_release_at_40.snap",
