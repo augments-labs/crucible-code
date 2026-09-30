@@ -96,6 +96,10 @@ impl Log for Logged {
         placed(self.0.take_placed())
     }
 
+    fn placing(&self) -> bool {
+        self.0.places()
+    }
+
     fn read(&self, call: &ToolId, position: u64) -> Option<Box<str>> {
         // What the row was drawn from, in the words the store would have held:
         // the result as the log recorded it, whatever a clearing has since

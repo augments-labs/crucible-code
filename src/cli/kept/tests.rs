@@ -358,6 +358,8 @@ struct Logged {
     went: std::rc::Rc<std::cell::RefCell<Vec<(crucible_types::ToolId, u64)>>>,
     /// How many times this was asked to wait for the writer.
     settles: std::rc::Rc<std::cell::Cell<usize>>,
+    /// Whether the writer has stopped placing what it writes.
+    stopped: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl Log for Logged {
@@ -368,6 +370,10 @@ impl Log for Logged {
     fn settled(&self) -> Vec<(crucible_types::ToolId, u64)> {
         self.settles.set(self.settles.get() + 1);
         self.went.take()
+    }
+
+    fn placing(&self) -> bool {
+        !self.stopped.get()
     }
 
     fn read(&self, call: &crucible_types::ToolId, position: u64) -> Option<Box<str>> {
@@ -730,11 +736,10 @@ fn a_row_let_go_of_before_its_batch_was_written_is_not_placed_yet_rather_than_un
 }
 
 #[test]
-fn letting_go_of_results_smaller_than_their_place_does_not_empty_the_store() {
+fn letting_go_of_results_smaller_than_their_place_keeps_their_rows_offering() {
     // A row let go of keeps its call's line and its place, which can weigh
-    // more than a short result did. Placing such a result would raise what is
-    // held rather than lower it, and one arrival would then let go of every
-    // result held.
+    // more than a short result did. Charged at that, letting one go would
+    // raise what is held, and one arrival would push out every row there was.
     let mut cut = Kept::default();
     cut.logging(Some(Box::new(Logged::default())));
     for _ in 0..15_000 {
@@ -742,9 +747,109 @@ fn letting_go_of_results_smaller_than_their_place_does_not_empty_the_store() {
     }
 
     assert!(cut.held <= HELD, "{} held", cut.held);
-    assert!(
-        cut.newest().count() > 10_000,
-        "{} results still held",
-        cut.newest().count()
-    );
+    let offering = (0..15_000).filter(|at| cut.offered(*at)).count();
+    assert!(offering > 10_000, "{offering} rows still offer");
+}
+
+/// A log holding `result n` for `call-n` at `n * 100`, the store reading from it.
+fn logged_store(count: u64) -> Kept {
+    let mut logged = Logged::default();
+    for n in 0..count {
+        logged.held.insert(
+            (crucible_types::ToolId::new(format!("call-{n}")), n * 100),
+            format!("result {n}").into(),
+        );
+    }
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(logged)));
+    cut
+}
+
+#[test]
+fn a_short_result_among_long_ones_leaves_every_row_offering_and_opening() {
+    // Letting go of a result shorter than its place costs nothing held, and
+    // takes nothing from the rows let go of before it.
+    let mut cut = logged_store(61);
+    for n in 0..61_u64 {
+        let call = crucible_types::ToolId::new(format!("call-{n}"));
+        cut.calling(call.clone(), format!("Read({n})"));
+        cut.placing(&call, n * 100);
+        let bytes = if n == 10 { 40 } else { 25_600 };
+        cut.finished(&call, "y".repeat(bytes).into(), usize::try_from(n).unwrap());
+    }
+
+    assert!(cut.held <= HELD, "{} held", cut.held);
+    assert!(cut.withdrawn().is_empty(), "rows stopped offering");
+    for at in 0..61 {
+        assert!(cut.offered(at), "row {at} stopped offering");
+    }
+    for placed in cut.older() {
+        assert!(
+            matches!(cut.read_back(placed), Back::Said(_)),
+            "row {} does not open",
+            placed.at()
+        );
+    }
+}
+
+#[test]
+fn every_call_of_a_folded_run_is_behind_its_row_however_short() {
+    let mut cut = logged_store(41);
+    for (n, called, bytes) in [(0_u64, "Grep(nothing)", 16), (1, "Read(big)", 25_600)] {
+        let call = crucible_types::ToolId::new(format!("call-{n}"));
+        cut.calling(call.clone(), called.to_owned());
+        cut.placing(&call, n * 100);
+        cut.gathered(&call, "z".repeat(bytes).into(), Some(0));
+    }
+    for n in 2..41_u64 {
+        let call = crucible_types::ToolId::new(format!("call-{n}"));
+        cut.calling(call.clone(), format!("Read({n})"));
+        cut.placing(&call, n * 100);
+        cut.finished(
+            &call,
+            "y".repeat(25_600).into(),
+            usize::try_from(n).unwrap(),
+        );
+    }
+
+    let mut behind: Vec<&str> = cut
+        .older()
+        .filter(|placed| placed.at() == 0)
+        .map(Placed::called)
+        .chain(
+            cut.newest()
+                .filter(|whole| whole.at() == Some(0))
+                .map(Whole::called),
+        )
+        .collect();
+    behind.sort_unstable();
+    assert!(cut.offered(0));
+    assert_eq!(behind, ["Grep(nothing)", "Read(big)"]);
+}
+
+#[test]
+fn a_row_the_log_will_never_place_is_unreadable_rather_than_waiting() {
+    // A writer that has stopped placing, and a row drawn after this one that
+    // the log has placed already: either way no place is coming for it.
+    let logged = Logged::default();
+    let stopped = std::rc::Rc::clone(&logged.stopped);
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(logged)));
+    for turn in 0..4 {
+        kept(&mut cut, &format!("Read({turn})"), HELD / 3);
+    }
+    assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unplaced);
+    stopped.set(true);
+    assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unread);
+
+    let logged = Logged::default();
+    let went = std::rc::Rc::clone(&logged.went);
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(logged)));
+    for turn in 0..4 {
+        kept(&mut cut, &format!("Read({turn})"), HELD / 3);
+    }
+    went.borrow_mut()
+        .push((crucible_types::ToolId::new("call-3"), 9));
+    assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unread);
 }

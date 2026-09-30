@@ -154,8 +154,13 @@ pub(crate) trait Log: fmt::Debug {
     fn landed(&self) -> Vec<(ToolId, u64)>;
 
     /// Takes them as [`Log::landed`] does, once everything queued before this
-    /// has been written.
+    /// has been written. Empty where the writer has stopped, which
+    /// [`Log::placing`] tells apart from nothing new.
     fn settled(&self) -> Vec<(ToolId, u64)>;
+
+    /// Whether what is written to the log from now on is still placed: not
+    /// once its writer has stopped, or has stopped placing for good.
+    fn placing(&self) -> bool;
 
     /// What the result of `call`, in the record beginning at `position`,
     /// said, or `None` where the log does not hold it there.
@@ -168,10 +173,10 @@ pub(crate) enum Back {
     /// What it said.
     Said(Box<str>),
     /// The log cannot give it back: the file is gone or changed, the record
-    /// is not the one placed there, or its place was lost.
+    /// is not the one placed there, or no place for it is ever coming.
     Unread,
-    /// The log has not said where it is yet, because the turn has not written
-    /// its batch; a later read may find it.
+    /// The log has not said where it is yet, and still may: the turn has not
+    /// written its batch, and nothing written after it has been placed.
     Unplaced,
 }
 
@@ -184,6 +189,8 @@ pub(crate) struct Placed {
     call: ToolId,
     at: usize,
     position: Option<u64>,
+    /// What it is charged against [`HELD`], fixed when it was let go of.
+    weight: usize,
 }
 
 /// Which let-go result a view has read back: the row that offered it and the
@@ -218,11 +225,11 @@ impl Placed {
         self.at == mark.at && self.call == mark.call
     }
 
-    /// What it costs against [`HELD`]: its call's line and its call, and the
-    /// place itself. Counted so that the rows still offering after their text
-    /// went are bounded by the same ceiling the text is.
-    fn weight(&self) -> usize {
-        weighing(&self.called, &self.call)
+    /// What it costs against [`HELD`]. Counted so that the rows still
+    /// offering after their text went are bounded by the same ceiling the text
+    /// is.
+    const fn weight(&self) -> usize {
+        self.weight
     }
 }
 
@@ -458,22 +465,13 @@ impl Kept {
         // otherwise be the one thing a reader could never see, and it is the
         // one they are most likely to be asking about.
         //
-        // A row let go of weighs its call's line and its place, which is more
-        // than a short result does; letting one of those go would raise what is
-        // held. So a row let go of goes first where there is one, and where
-        // there is none such a result is dropped with its offer rather than
-        // placed.
+        // Oldest first, held or let go of, so what stops offering is always the
+        // oldest row. Letting a result go never raises what is held, because a
+        // row let go of is charged no more than its result was.
         while self.held > HELD {
-            let lighter = self.whole.front().is_some_and(|oldest| {
-                oldest.text.len().saturating_add(oldest.called.len()) > placing(oldest)
-            });
-            if self.whole.len() > 1 && (lighter || self.placed.is_empty()) {
+            if self.whole.len() > 1 {
                 if let Some(gone) = self.whole.pop_front() {
-                    if lighter {
-                        self.let_go(gone);
-                    } else {
-                        self.forsake(gone);
-                    }
+                    self.let_go(gone);
                 }
             } else if let Some(oldest) = self.placed.pop_front() {
                 self.held = self.held.saturating_sub(oldest.weight());
@@ -506,30 +504,20 @@ impl Kept {
             return;
         }
 
+        // Its call's line, its call and the place itself, but no more than the
+        // result cost while it was held: a short result's place can weigh
+        // more than it did, and letting it go must not raise what is held.
+        let weight = (gone.called.len() + gone.call.as_str().len() + size_of::<Placed>())
+            .min(gone.text.len() + gone.called.len());
         let placed = Placed {
             called: gone.called,
             call: gone.call,
             at,
             position: gone.position,
+            weight,
         };
         self.held = self.held.saturating_add(placed.weight());
         self.placed.push_back(placed);
-    }
-
-    /// Drops a result whose place would weigh more than it does: its row stops
-    /// offering, as a row with no log does.
-    fn forsake(&mut self, gone: Whole) {
-        self.held = self
-            .held
-            .saturating_sub(gone.text.len())
-            .saturating_sub(gone.called.len());
-        match gone.at {
-            Some(at) => self.gone.push(at),
-            None if gone.position.is_none() && self.log.is_some() => {
-                waiting(&mut self.rowless, gone.call);
-            }
-            None => {}
-        }
     }
 
     /// Files where the log's writer put the results it has written since this
@@ -595,6 +583,22 @@ impl Kept {
         waiting(&mut self.rowless, call.clone());
     }
 
+    /// Whether a row drawn after `placed` has been placed already.
+    fn passed(&self, placed: &Placed) -> bool {
+        let unfiled = self.unfiled.borrow();
+        let later = self
+            .placed
+            .iter()
+            .skip_while(|one| !std::ptr::eq(*one, placed))
+            .skip(1)
+            .map(|one| (&one.call, one.position))
+            .chain(self.whole.iter().map(|whole| (&whole.call, whole.position)));
+        let mut later = later;
+        later.any(|(call, position)| {
+            position.is_some() || unfiled.iter().any(|(landed, _)| landed == call)
+        })
+    }
+
     /// Every row whose text was let go of and that still offers, newest
     /// first: all of them older than anything [`Kept::newest`] holds.
     pub(crate) fn older(&self) -> impl Iterator<Item = &Placed> {
@@ -622,7 +626,14 @@ impl Kept {
                 .map(|(_, position)| *position)
         });
         let Some(position) = position else {
-            return Back::Unplaced;
+            // No place is coming where the log has stopped placing, or where a
+            // row drawn after this one has one already: the writer places what
+            // it writes in the order it writes it.
+            return if log.placing() && !self.passed(placed) {
+                Back::Unplaced
+            } else {
+                Back::Unread
+            };
         };
         log.read(&placed.call, position)
             .map_or(Back::Unread, Back::Said)
@@ -726,16 +737,6 @@ impl Kept {
     pub(crate) fn is_empty(&self) -> bool {
         self.whole.is_empty() && self.placed.is_empty() && self.writing().next().is_none()
     }
-}
-
-/// What a row keeping the place of `whole` would weigh against [`HELD`].
-fn placing(whole: &Whole) -> usize {
-    weighing(&whole.called, &whole.call)
-}
-
-/// What a row let go of weighs: its call's line, its call, and the place.
-fn weighing(called: &str, call: &ToolId) -> usize {
-    called.len() + call.as_str().len() + size_of::<Placed>()
 }
 
 /// Adds `one` at the back of a queue bounded by [`UNCLAIMED`], letting the

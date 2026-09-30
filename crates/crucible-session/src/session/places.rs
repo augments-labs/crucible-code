@@ -25,6 +25,7 @@
 use std::fs::File;
 use std::io::{self, BufReader, Seek as _, SeekFrom};
 use std::sync::PoisonError;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::sync_channel;
 
 use crucible_types::{Message, RecordedToolOutput, ToolId};
@@ -148,6 +149,17 @@ impl Session {
             .unwrap_or_else(PoisonError::into_inner)
             .drain(..)
             .collect()
+    }
+
+    /// Whether a result appended from now on will still be placed: `false`
+    /// where the session records nothing, where its writer has stopped, and
+    /// where the writer has stopped placing for good.
+    ///
+    /// Behind whatever is queued, as a read back is, so a write that ended the
+    /// log's placing is counted.
+    #[must_use]
+    pub fn places(&self) -> bool {
+        self.to.is_some() && self.caught_up() && self.placing.load(Ordering::Acquire)
     }
 
     /// Waits for the writer to take everything queued before this, and says

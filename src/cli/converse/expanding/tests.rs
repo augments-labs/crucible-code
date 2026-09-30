@@ -402,6 +402,10 @@ impl crate::cli::kept::Log for Long {
         Vec::new()
     }
 
+    fn placing(&self) -> bool {
+        true
+    }
+
     fn read(&self, call: &crucible_types::ToolId, _: u64) -> Option<Box<str>> {
         Some(said(call.as_str()).into())
     }
@@ -627,6 +631,7 @@ fn a_step_past_a_result_read_back_moves_the_rows_by_that_step() {
 struct Late {
     went: std::rc::Rc<std::cell::RefCell<Vec<(crucible_types::ToolId, u64)>>>,
     reads: std::rc::Rc<std::cell::Cell<usize>>,
+    stopped: std::rc::Rc<std::cell::Cell<bool>>,
 }
 
 impl crate::cli::kept::Log for Late {
@@ -636,6 +641,10 @@ impl crate::cli::kept::Log for Late {
 
     fn settled(&self) -> Vec<(crucible_types::ToolId, u64)> {
         self.went.take()
+    }
+
+    fn placing(&self) -> bool {
+        !self.stopped.get()
     }
 
     fn read(&self, call: &crucible_types::ToolId, _: u64) -> Option<Box<str>> {
@@ -714,5 +723,50 @@ fn a_result_left_for_later_is_not_read_again_while_the_window_stands_still() {
         reads.get(),
         read,
         "the window stood still and the log was read again"
+    );
+}
+
+#[test]
+fn a_result_the_log_will_never_place_says_it_cannot_be_read_back() {
+    let late = Late::default();
+    late.stopped.set(true);
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(late)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.finished(&call, said(call.as_str()).into(), at);
+    }
+
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    assert!(
+        rows.iter().any(|row| row.text().contains(UNREAD)),
+        "{:?}",
+        rows.iter().map(Row::text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn the_first_result_the_window_reaches_is_read_whatever_was_refused_before() {
+    // A result left for later is left only beside something read back: with
+    // nothing above it, as after a resize, it is read.
+    let kept = forty(false);
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    let mark = kept
+        .older()
+        .find(|placed| placed.at() == 0)
+        .map(Placed::mark)
+        .expect("row 0 was let go of");
+    opened(&mut standing).refused = Some((0, mark));
+
+    let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    assert!(
+        rows.iter()
+            .any(|row| row.text().contains("call-000 line 0001")),
+        "{:?}",
+        rows.iter().map(Row::text).collect::<Vec<_>>()
     );
 }

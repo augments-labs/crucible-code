@@ -72,7 +72,7 @@ pub(crate) fn restored_output(
 use claim::{Claim, Claimed, claim};
 pub use display::{DisplayHistory, DisplayItem};
 pub use glimpse::{Glimpse, glimpse};
-use log::{Placed, Request as LogRequest, Trouble, make, open, shorten};
+use log::{Placed, Placing, Request as LogRequest, Trouble, make, open, shorten};
 pub use places::Place;
 pub use prompts::{PROMPTS, prompts, remember};
 pub use recent::{Recorded, recent};
@@ -266,6 +266,8 @@ pub struct Session {
     /// Where the results this session's writer appended went, until whatever
     /// draws them takes them. Empty in a session that records nothing.
     placed: Placed,
+    /// Whether its writer still places what it writes.
+    placing: Placing,
 }
 
 impl Session {
@@ -508,6 +510,7 @@ impl Session {
             result_lock: Mutex::new(()),
             trouble: Trouble::default(),
             placed: Placed::default(),
+            placing: Placing::default(),
         }
     }
 
@@ -887,8 +890,12 @@ impl Session {
         let start = std::fs::metadata(&path).ok().map(|held| held.len());
         let placed = Placed::default();
         let placing = Arc::clone(&placed);
+        let still = Placing::new(true.into());
+        let placing_still = Arc::clone(&still);
 
-        let writer = thread::spawn(move || log::write(sink, lines, &mine, told, (start, placing)));
+        let writer = thread::spawn(move || {
+            log::write(sink, lines, &mine, told, (start, placing, placing_still));
+        });
 
         // Read back from the name rather than carried in, so that the two ways
         // to reach a log — minting a name, and finding one — cannot disagree
@@ -912,6 +919,7 @@ impl Session {
             result_lock: Mutex::new(()),
             trouble,
             placed,
+            placing: still,
         }
     }
 }

@@ -113,9 +113,10 @@ impl View {
 /// What stands in place of a result the log could not give back.
 const UNREAD: &str = "! this result could not be read back from the session log";
 
-/// What stands in place of a let-go result the window reaches while what it
-/// has read back above it already comes to [`BEYOND`]: it is read once that
-/// has left the window.
+/// What stands in place of a let-go result the window reaches but has not
+/// read back: one whose batch the turn has not written yet, read on a frame
+/// after it has, and one that would take what is read back above it past
+/// [`BEYOND`], read once that has left the window.
 const LATER: &str = "read back from the session log as the view moves on to it";
 
 /// The most the view reads back at once beyond what the store holds, in
@@ -592,10 +593,11 @@ fn reading(kept: &Kept, view: &mut View, reached: &[&Placed]) -> Vec<(Mark, Opti
     for placed in reached {
         let text = match held.iter().position(|(mark, _)| placed.is(mark)) {
             Some(at) => held.swap_remove(at).1,
-            None if view
-                .refused
-                .as_ref()
-                .is_some_and(|(from, mark)| *from == view.from && placed.is(mark)) =>
+            None if !back.is_empty()
+                && view
+                    .refused
+                    .as_ref()
+                    .is_some_and(|(from, mark)| *from == view.from && placed.is(mark)) =>
             {
                 break;
             }

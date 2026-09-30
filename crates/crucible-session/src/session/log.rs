@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -55,6 +56,10 @@ pub(super) const PLACED: usize = 8 * 128;
 /// Where the results the writer appended went, waiting to be taken.
 pub(super) type Placed = Arc<Mutex<VecDeque<Place>>>;
 
+/// Whether the writer still places what it writes: it stops for good where it
+/// could not tell how long the file was, and once a fragment ends the log.
+pub(super) type Placing = Arc<AtomicBool>;
+
 /// Appends every line that arrives until the session is dropped, telling
 /// `room` each time one is taken off the queue.
 ///
@@ -90,7 +95,7 @@ pub(super) fn write<W: io::Write>(
     lines: Receiver<Request>,
     trouble: &Trouble,
     room: Arc<Notify>,
-    (start, placed): (Option<u64>, Placed),
+    (start, placed, still): (Option<u64>, Placed, Placing),
 ) {
     let queue = Closing {
         lines: Some(lines),
@@ -100,6 +105,9 @@ pub(super) fn write<W: io::Write>(
         return;
     };
     let placing = start;
+    if placing.is_none() {
+        still.store(false, Ordering::Release);
+    }
     let mut tail = Tail {
         written: start.unwrap_or(0),
         ..Tail::default()
@@ -134,6 +142,9 @@ pub(super) fn write<W: io::Write>(
                     while held.len() > PLACED {
                         held.pop_front();
                     }
+                }
+                if tail.dead {
+                    still.store(false, Ordering::Release);
                 }
                 if let Some(taken) = taken {
                     flushed(&mut sink, trouble);

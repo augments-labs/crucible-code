@@ -1950,6 +1950,43 @@ fn a_row_that_stops_offering_keeps_its_count_and_loses_the_key() {
     }
 }
 
+#[test]
+fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    let mut clipped = 0;
+    for width in 12..40 {
+        let mut rows = finished_rows(&change, width, Style::plain(), true);
+        rows.truncate(1);
+        let Some(offer) = rows
+            .first()
+            .and_then(|row| row.spans().last().map(|(_, text)| text.to_owned()))
+            .filter(|offer| offer.starts_with("(c") && !offer.ends_with(')'))
+        else {
+            continue;
+        };
+        clipped += 1;
+        unoffered(&mut rows);
+        let row = rows.first().expect("the row");
+        assert!(
+            !row.text().contains("(c"),
+            "{width}: {offer:?} left {:?}",
+            row.text()
+        );
+        assert!(
+            row.kinds().all(|slot| slot != Slot::Cut),
+            "{width}: {row:?}"
+        );
+    }
+    assert!(
+        clipped > 0,
+        "no width clipped the offer; the test says nothing"
+    );
+}
+
 // Where a result is held against the row it was written on. Its text is kept
 // as it was agreed, which the formatter would otherwise re-wrap.
 #[rustfmt::skip]

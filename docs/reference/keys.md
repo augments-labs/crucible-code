@@ -337,7 +337,8 @@ click on a result's ` (ctrl+o to expand)` offer stands that one. A result no
 longer held in memory is read back from the session log when the view reaches
 it, one result's worth at a time: a further one the window reaches says
 `read back from the session log as the view moves on to it` until the one
-above it leaves, and a step stops at each such result rather than passing it.
+above it leaves, as does one the running turn has not written yet, and a step
+stops at each such result rather than passing it.
 Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.

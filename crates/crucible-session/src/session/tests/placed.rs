@@ -485,3 +485,35 @@ fn every_place_a_replay_reports_reads_back_across_the_records_it_does_not_hand_o
         );
     }
 }
+
+#[test]
+fn a_session_says_whether_what_it_appends_is_still_placed() {
+    let sample = Sample::new("placed-still");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    assert!(session.places(), "a session writing its log places");
+    assert!(!Session::nowhere().places(), "a session with no log places");
+
+    let unmeasured = Session::writing(
+        PathBuf::from("no-such-directory/unmeasured.jsonl"),
+        Filling {
+            written: Written::default(),
+            writes: 0,
+            fails_at: usize::MAX,
+        },
+    );
+    assert!(
+        !unmeasured.places(),
+        "a writer with no length to count from places"
+    );
+
+    let torn = Session::writing(
+        empty(&sample, "torn-for-good.jsonl"),
+        Fragmenting {
+            written: Written::default(),
+            writes: 0,
+            takes: 5,
+        },
+    );
+    torn.append(&results_of(&["call-1"]));
+    assert!(!torn.places(), "a log a fragment ended places");
+}
