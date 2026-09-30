@@ -40,6 +40,9 @@ mod body;
 mod continuation;
 #[cfg(test)]
 mod continuation_tests;
+mod fast;
+#[cfg(test)]
+mod fast_tests;
 #[cfg(test)]
 mod model_tests;
 mod stream;
@@ -59,7 +62,7 @@ use crucible_types::{
 
 use crate::endpoint::Endpoint;
 use crate::openai::stream::Stream;
-use crate::refusal::refused;
+use crate::refusal::{FastRule, refused_at};
 use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
@@ -192,6 +195,19 @@ impl OpenAi {
             transport,
             endpoint,
             credential_scope,
+        }
+    }
+
+    /// The route whose fast forms the vendor documents: its own address or
+    /// the plan's. A configured address has none, since what a gateway does
+    /// with the field is not the vendor's to say.
+    fn fast_route(&self) -> Option<Serving> {
+        if self.endpoint == VENDOR {
+            Some(Serving::Api)
+        } else if self.endpoint == SUBSCRIPTION {
+            Some(Serving::Subscription)
+        } else {
+            None
         }
     }
 
@@ -471,9 +487,22 @@ impl Provider for OpenAi {
         body::prompt_cache_encoding(request, Serving::of(&self.endpoint))
     }
 
+    fn fast(&self, model: &str) -> crucible_models::FastForm {
+        fast::form(self.fast_route(), model)
+    }
+
     fn stream<'a>(
         &'a self,
         request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        self.stream_at(request, crucible_models::Speed::Standard, cancel)
+    }
+
+    fn stream_at<'a>(
+        &'a self,
+        request: Request<'a>,
+        speed: crucible_models::Speed,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         Box::pin(async move {
@@ -483,15 +512,20 @@ impl Provider for OpenAi {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
+            // Fast only where it was asked and this model on this route has a
+            // form the request carries; everywhere else the request is the
+            // ordinary one.
+            let fast = speed == crucible_models::Speed::Fast && self.fast(request.model).switched();
             let mut outgoing = self.headers(cancel).await?;
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,
                 self.endpoint.as_str(),
             );
-            let body = body::serialize(
+            let body = body::serialize_at(
                 &request,
                 Serving::of(&self.endpoint),
                 (request.model == ASTRA).then_some(scope),
+                fast,
             )?;
 
             let response = self
@@ -503,7 +537,10 @@ impl Provider for OpenAi {
                 response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
             if response.status() != 200 {
-                let error = refused(NAME, response.status(), response, &redactions, cancel).await;
+                // A refusal of the tier is documented for an API key alone.
+                let rule = (fast && self.fast_route() == Some(Serving::Api))
+                    .then_some(fast::refused as FastRule);
+                let error = refused_at(NAME, rule, response, &redactions, cancel).await;
                 return Err(if request.model == ASTRA {
                     continuation::refusal(error)
                 } else {

@@ -28,10 +28,21 @@ use super::Serving;
 use crate::json::{Array, Json, Object, described};
 
 /// The whole request body, as `serving` accepts it.
+#[cfg(test)]
 pub(super) fn serialize(
     request: &Request<'_>,
     serving: Serving,
     scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
+    serialize_at(request, serving, scope, false)
+}
+
+/// [`serialize`], asking for the fast tier where `fast`.
+pub(super) fn serialize_at(
+    request: &Request<'_>,
+    serving: Serving,
+    scope: Option<ContinuationScope>,
+    fast: bool,
 ) -> Result<String, ProviderError> {
     let explicit_message = explicit_message(request);
     let mut efforts = scope
@@ -42,6 +53,9 @@ pub(super) fn serialize(
     let mut outcome = Ok(());
     json.object(|body| {
         body.text("model", request.model);
+        if fast {
+            body.text("service_tier", super::fast::TIER);
+        }
         body.boolean("stream", true);
 
         // This endpoint counts reasoning and visible output together. The

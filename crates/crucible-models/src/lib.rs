@@ -75,6 +75,7 @@
 mod cache;
 mod model;
 mod provider;
+mod speed;
 mod transfer;
 
 pub use cache::{
@@ -93,4 +94,5 @@ pub use provider::{
     Attached, Content, Delta, DeltaStream, Effort, EffortError, Provider, ProviderError,
     ProviderLimit, Request, RequestPurpose,
 };
+pub use speed::{FastForm, Served, Speed};
 pub use transfer::{Transfer, transfer};
