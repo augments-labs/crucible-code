@@ -6,4 +6,5 @@ for it is read from.
 - [`--model`, and which key is read](providers.md)
 - [What a model can read](reading.md)
 - [Prompt caching](prompt-caching.md)
+- [Content use: vendors that train on what is sent](content-use.md)
 - [Network: proxies, certificates and timeouts](network.md)

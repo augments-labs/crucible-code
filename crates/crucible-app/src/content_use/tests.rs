@@ -423,3 +423,91 @@ fn every_caution_fits_after_signed_in_at_forty_columns() {
         assert!(row.chars().count() <= 38, "{}: {row}", warned.route);
     }
 }
+
+/// The page the routes are documented on.
+const DOCUMENTED: &str = include_str!("../../../../docs/providers/content-use.md");
+
+/// The cells of every table row of `DOCUMENTED` with `columns` cells, headers
+/// and rules left out.
+fn rows(columns: usize) -> Vec<Vec<String>> {
+    DOCUMENTED
+        .lines()
+        .filter(|line| line.starts_with("| ") && !line.starts_with("| ---"))
+        .map(|line| {
+            line.trim()
+                .trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .filter(|cells| {
+            cells.len() == columns
+                && cells
+                    .first()
+                    .is_some_and(|first| first != "Route" && first != "Address")
+        })
+        .collect()
+}
+
+/// Every warning the panel draws, and every caution a row draws, is its row
+/// of the docs table word for word, with the page and the day; the table
+/// warns nothing this build does not; and every address a `baseUrl` is
+/// recognised at is listed with the route it answers for.
+#[test]
+fn every_warning_is_its_row_of_the_docs_table() {
+    let table = rows(9);
+    assert_eq!(table.len(), WARNED.len(), "{table:?}");
+    for warned in WARNED {
+        let spelled = format!("`{}`", warned.route);
+        let row = table
+            .iter()
+            .find(|row| row.get(1) == Some(&spelled))
+            .unwrap_or_else(|| panic!("{} has no row", warned.route));
+        let warning = warned.warning;
+        assert_eq!(
+            row.get(2).map(String::as_str),
+            Some(warning.condition.unwrap_or("")),
+            "{}",
+            warned.route
+        );
+        assert_eq!(
+            row.get(3).map(String::as_str),
+            Some(warning.sentence),
+            "{}",
+            warned.route
+        );
+        assert_eq!(
+            row.get(4).map(String::as_str),
+            Some(warning.caution),
+            "{}",
+            warned.route
+        );
+        assert_eq!(
+            row.get(7).map(String::as_str),
+            Some(format!("[{}]({})", warning.source, warning.link).as_str()),
+            "{}",
+            warned.route
+        );
+        assert_eq!(
+            row.get(8).map(String::as_str),
+            Some(warning.read),
+            "{}",
+            warned.route
+        );
+    }
+
+    let addresses = rows(2);
+    for one in RECOGNISED {
+        let address = format!("`{}`", one.address);
+        let row = addresses
+            .iter()
+            .find(|row| row.first() == Some(&address))
+            .unwrap_or_else(|| panic!("{} is not listed", one.address));
+        assert!(
+            row.get(1)
+                .is_some_and(|route| route.starts_with(&format!("`{}`", one.route))),
+            "{row:?}"
+        );
+    }
+    assert_eq!(addresses.len(), RECOGNISED.len(), "{addresses:?}");
+}
