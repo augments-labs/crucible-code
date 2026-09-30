@@ -617,20 +617,24 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // What the user's own file says yes to is read first: a credential taken
     // out, here or later, takes its route's yes with it, before the store is
     // written, and a yes this run took out must not come back.
+    //
+    // A credential that moves a provider's row in force, stored, taken out or
+    // replaced, takes that provider's speed out of the same file first: what
+    // fast costs was shown for the credential it was chosen under.
     let rows = crucible_app::providers::Rows::production();
     services.consent().keeps_in(crucible_config::user(&home));
     services
         .consent()
         .recorded(settings.content_accepted().into_iter().map(str::to_owned));
-    let store =
-        Store::in_home(home.path())
-            .naming(rows.names())
-            .letting_go(content_use::letting_go(
-                services.consent(),
-                crucible_config::user(&home),
-                rows.clone(),
-                &settings,
-            ));
+    let store = Store::in_home(home.path())
+        .naming(rows.names())
+        .letting_go(content_use::letting_go(
+            services.consent(),
+            crucible_config::user(&home),
+            rows.clone(),
+            &settings,
+        ))
+        .moving(crucible_app::speed::moving(crucible_config::user(&home)));
     let (keys, trouble) = stored(&store, &rows, style::glyph_set(settings.glyphs()));
     let subscriptions = Subscriptions::production(services.renewals());
 

@@ -38,5 +38,5 @@ pub use oauth::{
     SubscriptionLogin, Unjoined,
 };
 pub use store::{
-    Dropped, Held, Kind, LettingGo, Names, Settled, Store, StoredCredentials, provider_of,
+    Dropped, Held, Kind, LettingGo, Moving, Names, Settled, Store, StoredCredentials, provider_of,
 };

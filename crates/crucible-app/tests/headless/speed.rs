@@ -2,7 +2,7 @@
 //! comes to, when the user's file is heeded, and when it goes back to standard.
 
 use crucible_app::content_use::{Consent, Routes};
-use crucible_app::speed::Hastened;
+use crucible_app::speed::{self as speeds, Hastened};
 use crucible_models::{FastForm, Speed};
 
 use super::*;
@@ -182,7 +182,7 @@ fn the_speed_in_the_file_is_asked_only_where_the_model_has_a_fast_form() -> Resu
         let (mut conversation, desk) = fastened(&tree, Fastened::new(form))?;
         remember::hastening(&desk.choosing, "openai", Speed::Fast)?;
 
-        conversation.hastened_as_written(&written(&tree)?);
+        conversation.hastened_as_kept(&desk.choosing);
 
         assert_eq!(conversation.runner().speed(), asked, "{form:?}");
     }
@@ -245,5 +245,114 @@ fn a_refusal_of_fast_is_written_down_as_standard() -> Result<(), Failed> {
     );
     assert_eq!(conversation.runner().speed(), Speed::Standard);
     assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
+    Ok(())
+}
+
+/// A desk whose store takes a provider's speed out of the user's file when its
+/// credential moves, as the terminal's does, and whose provider is set up as
+/// one with a fast form.
+struct Moving {
+    desk: Desk,
+    logins: Store,
+    serving: Serving,
+    /// The speed each request asked at, of every provider set up here.
+    speeds: Arc<Mutex<Vec<Speed>>>,
+}
+
+impl Moving {
+    fn new(tree: &Tree) -> Result<Self, Failed> {
+        let desk = Desk::new(tree, &["openai"])?;
+        let logins =
+            Store::in_home(tree.home()?.path()).moving(speeds::moving(desk.choosing.clone()));
+        let speeds: Arc<Mutex<Vec<Speed>>> = Arc::default();
+        let shared = Arc::clone(&speeds);
+        let serving: Serving = Box::new(move |_, _| {
+            Ok(Resolved {
+                provider: Box::new(Fastened {
+                    speeds: Arc::clone(&shared),
+                    ..Fastened::new(FIELD)
+                }),
+                source: CredentialSource::Environment("OPENAI_API_KEY".into()),
+            })
+        });
+        Ok(Self {
+            desk,
+            logins,
+            serving,
+            speeds,
+        })
+    }
+
+    fn with(&self) -> Switching<'_> {
+        Switching {
+            providers: &self.desk.providers,
+            settings: &self.desk.settings,
+            serving: &self.serving,
+            logins: &self.logins,
+            choosing: &self.desk.choosing,
+        }
+    }
+}
+
+#[test]
+fn a_key_stored_where_the_environment_served_turns_fast_off() -> Result<(), Failed> {
+    let tree = Tree::new("speed-stored")?;
+    let moving = Moving::new(&tree)?;
+    let (mut conversation, _) = fastened(&tree, Fastened::new(FIELD))?;
+    let _ = conversation.hasten(Speed::Fast, &moving.with());
+
+    moving.logins.keep("openai", "fabricated-stored-key")?;
+    assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
+    let openai = moving.desk.one("openai")?;
+    let logged_in = runtime()?.block_on(conversation.logged_in(openai, &moving.with()));
+
+    assert!(
+        matches!(logged_in, LoggedIn::Serving { .. }),
+        "{logged_in:?}"
+    );
+    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    turn(&mut conversation, "go")?;
+    assert_eq!(
+        *moving.speeds.lock().map_err(|_| "poisoned")?,
+        [Speed::Standard]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_key_written_again_under_its_own_row_keeps_fast() -> Result<(), Failed> {
+    let tree = Tree::new("speed-rekeyed")?;
+    let moving = Moving::new(&tree)?;
+    moving.logins.keep("openai", "fabricated-first-key")?;
+    let (mut conversation, _) = fastened(&tree, Fastened::new(FIELD))?;
+    let _ = conversation.hasten(Speed::Fast, &moving.with());
+
+    moving.logins.keep("openai", "fabricated-second-key")?;
+    let openai = moving.desk.one("openai")?;
+    let _ = runtime()?.block_on(conversation.logged_in(openai, &moving.with()));
+
+    assert_eq!(written(&tree)?.speed("openai"), Speed::Fast);
+    assert_eq!(conversation.runner().speed(), Speed::Fast);
+    Ok(())
+}
+
+#[test]
+fn a_stored_key_forgotten_while_the_environment_still_serves_turns_fast_off() -> Result<(), Failed>
+{
+    let tree = Tree::new("speed-forgotten")?;
+    let moving = Moving::new(&tree)?;
+    moving.logins.keep("openai", "fabricated-stored-key")?;
+    let (mut conversation, _) = fastened(&tree, Fastened::new(FIELD))?;
+    let _ = conversation.hasten(Speed::Fast, &moving.with());
+
+    let openai = moving.desk.one("openai")?;
+    let logged_out = runtime()?.block_on(conversation.log_out(openai, &moving.with()));
+
+    assert!(
+        matches!(logged_out, LoggedOut::StillServed { .. }),
+        "{logged_out:?}"
+    );
+    assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
+    assert_eq!(conversation.runner().speed(), Speed::Standard);
     Ok(())
 }

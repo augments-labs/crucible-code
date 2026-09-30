@@ -240,27 +240,7 @@ fn answering(
         Err(problem) => return Err(unwritable(problem.into_io())),
     }
 
-    let opened = match File::open(file) {
-        Ok(opened) => Some(opened),
-        // Nothing there yet, which is what most projects look like. The empty
-        // text is what the crate below reads as "write a whole file".
-        Err(source) if source.kind() == io::ErrorKind::NotFound => None,
-        Err(source) => return Err(unwritable(source)),
-    };
-    let mut text = String::new();
-    if let Some(opened) = opened {
-        opened
-            .take((crucible_config::MAX_DOCUMENT_BYTES + 1) as u64)
-            .read_to_string(&mut text)
-            .map_err(unwritable)?;
-        if text.len() > crucible_config::MAX_DOCUMENT_BYTES {
-            return Err(ConfigError::TooLarge {
-                file: named.clone().into(),
-                maximum: crucible_config::MAX_DOCUMENT_BYTES,
-            }
-            .into());
-        }
-    }
+    let text = text_of(file, &named)?;
 
     let written = splice(&text, &named)?;
     // An answer already written, or a yes taken out of a file that holds
@@ -272,6 +252,47 @@ fn answering(
     }
 
     put(file, &written).map_err(unwritable)
+}
+
+/// What `file`, named `named`, holds: the empty text where nothing is there
+/// yet, which is what most projects look like and what the crate below reads
+/// as "write a whole file".
+fn text_of(file: &Path, named: &str) -> Result<String, RememberError> {
+    let unwritable = |source| RememberError::Unwritable {
+        file: named.into(),
+        source,
+    };
+    let opened = match File::open(file) {
+        Ok(opened) => opened,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(source) => return Err(unwritable(source)),
+    };
+    let mut text = String::new();
+    opened
+        .take((crucible_config::MAX_DOCUMENT_BYTES + 1) as u64)
+        .read_to_string(&mut text)
+        .map_err(unwritable)?;
+    if text.len() > crucible_config::MAX_DOCUMENT_BYTES {
+        return Err(ConfigError::TooLarge {
+            file: named.into(),
+            maximum: crucible_config::MAX_DOCUMENT_BYTES,
+        }
+        .into());
+    }
+    Ok(text)
+}
+
+/// The speed `file` asks `provider` for now: what [`hastening`] last wrote,
+/// read without waiting on the lock, since a write replaces the file whole.
+///
+/// # Errors
+///
+/// [`RememberError::Unwritable`] when the file cannot be read, and
+/// [`RememberError::Unusable`] when what it says is not configuration.
+pub fn hastened(file: &Path, provider: &str) -> Result<Speed, RememberError> {
+    let named = file.display().to_string();
+    let text = text_of(file, &named)?;
+    Ok(crucible_config::hastened(&text, &named, provider)?)
 }
 
 /// Replaces the file, or leaves whatever is there untouched.

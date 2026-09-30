@@ -79,6 +79,13 @@ const VERSION: u64 = 2;
 /// store as it was. Handed every credential about to go.
 pub type LettingGo = Arc<dyn Fn(&[Dropped]) -> Result<(), Box<str>> + Send + Sync>;
 
+/// What is asked, under the store's lock, before a write moves the credential
+/// a provider holds: a first one stored, one taken out, one replaced by
+/// another row's. Handed each such provider by name; its answer is written
+/// before the store is, and a refusal leaves the store as it was. A key
+/// written again under its own name moves nothing.
+pub type Moving = Arc<dyn Fn(&[&str]) -> Result<(), Box<str>> + Send + Sync>;
+
 /// Where the keys crucible was given are written down.
 #[derive(Clone)]
 pub struct Store {
@@ -90,6 +97,8 @@ pub struct Store {
     names: Names,
     /// What is asked before a credential is taken out, where anything is.
     letting_go: Option<LettingGo>,
+    /// What is asked before a provider's credential moves, where anything is.
+    moving: Option<Moving>,
 }
 
 impl fmt::Debug for Store {
@@ -98,6 +107,7 @@ impl fmt::Debug for Store {
             .field("path", &self.path)
             .field("names", &self.names)
             .field("letting_go", &self.letting_go.is_some())
+            .field("moving", &self.moving.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -115,6 +125,7 @@ impl Store {
             home: home.to_path_buf(),
             names: Names::default(),
             letting_go: None,
+            moving: None,
         }
     }
 
@@ -124,6 +135,14 @@ impl Store {
     #[must_use]
     pub fn letting_go(mut self, letting_go: LettingGo) -> Self {
         self.letting_go = Some(letting_go);
+        self
+    }
+
+    /// The same store, asking `moving` before any write moves the credential
+    /// a provider holds.
+    #[must_use]
+    pub fn moving(mut self, moving: Moving) -> Self {
+        self.moving = Some(moving);
         self
     }
 
@@ -363,11 +382,21 @@ impl Store {
         // Asked with the file still as it was: whatever has to go with a
         // credential goes first, so a stop between the two leaves the
         // credential and not what went with it.
+        let after = held_in(&document);
         if let Some(letting_go) = &self.letting_go {
-            let after = held_in(&document);
             let going: Vec<Dropped> = before.difference(&after).cloned().collect();
             if !going.is_empty() {
                 letting_go(&going).map_err(|why| AuthError::Unreleased { why })?;
+            }
+        }
+        if let Some(moving) = &self.moving {
+            let moved: BTreeSet<&str> = before
+                .symmetric_difference(&after)
+                .map(|held| provider_of(&held.name))
+                .collect();
+            if !moved.is_empty() {
+                let moved: Vec<&str> = moved.into_iter().collect();
+                moving(&moved).map_err(|why| AuthError::Unreleased { why })?;
             }
         }
 

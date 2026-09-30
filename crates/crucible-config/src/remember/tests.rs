@@ -231,6 +231,26 @@ fn choosing_a_model_leaves_the_speed_for_its_caller_to_decide() {
 }
 
 #[test]
+fn the_speed_written_is_the_speed_read_back_from_the_text() {
+    let fast = hastening("", "config.json", "openai", Speed::Fast)
+        .expect("an empty file is one to write whole");
+
+    assert_eq!(
+        hastened(&fast, "config.json", "openai").unwrap(),
+        Speed::Fast
+    );
+    assert_eq!(
+        hastened(&fast, "config.json", "anthropic").unwrap(),
+        Speed::Standard
+    );
+    assert_eq!(
+        hastened("", "config.json", "openai").unwrap(),
+        Speed::Standard
+    );
+    assert!(hastened("{", "config.json", "openai").is_err());
+}
+
+#[test]
 fn a_speed_the_file_spells_as_no_is_standard() {
     let settings = resolving(r#"{"providers": {"openai": {"fast": false}}}"#);
     assert_eq!(settings.speed("openai"), Speed::Standard);

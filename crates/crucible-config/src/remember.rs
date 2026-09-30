@@ -590,6 +590,20 @@ pub fn hastening(
     }
 }
 
+/// The speed `text`, the user's own file, asks `provider` for: what
+/// [`hastening`] wrote, read back the way a start reads it.
+///
+/// # Errors
+///
+/// [`ConfigError`] where `text` is not a configuration file crucible reads.
+pub fn hastened(text: &str, file: &str, provider: &str) -> Result<Speed, ConfigError> {
+    if text.trim().is_empty() {
+        return Ok(Speed::Standard);
+    }
+    let document = crate::document::Document::parse(text, file, crate::document::Origin::User)?;
+    Ok(crate::settings::Settings::resolve_checked(vec![document])?.speed(provider))
+}
+
 /// The text of a configuration file where `providers.<provider>.<key>` says
 /// `answer`.
 ///

@@ -1029,3 +1029,62 @@ fn a_refusal_before_a_credential_goes_leaves_the_store_as_it_was() {
         assert!(said.contains("the yes could not be taken out"), "{said}");
     }
 }
+
+/// What a moving hook was handed on each write, and what the file held then.
+type Moved = Arc<std::sync::Mutex<Vec<(Vec<String>, String)>>>;
+
+/// Every write that moves the credential a provider holds asks first, with the
+/// file as it was, and is handed that provider: a first credential stored, one
+/// replaced by another row's, one forgotten, a second settled. A key written
+/// again under its own name moves nothing and asks nothing.
+#[test]
+fn a_write_asks_before_it_moves_the_credential_a_provider_holds() {
+    let scratch = Scratch::new("moving");
+    let moved: Moved = Arc::default();
+    let file = scratch.home().join(FILE);
+    let recording = Arc::clone(&moved);
+    let store = Store::in_home(scratch.home())
+        .naming(named())
+        .moving(Arc::new(move |providers: &[&str]| {
+            let then = fs::read_to_string(&file).unwrap_or_default();
+            let providers = providers.iter().map(|one| (*one).to_owned()).collect();
+            recording.lock().unwrap().push((providers, then));
+            Ok(())
+        }));
+
+    let empty = String::new();
+    give(&store, (Kind::Key, "moonshot"), "first");
+    give(&store, (Kind::Key, "moonshot"), "again");
+    let rekeyed = on_disk(&scratch);
+    give(&store, (Kind::Account, "moonshot@kimi.ai"), "second");
+    let second = on_disk(&scratch);
+    store.forget("moonshot").unwrap();
+
+    assert_eq!(
+        *moved.lock().unwrap(),
+        [
+            (vec!["moonshot".to_owned()], empty),
+            (vec!["moonshot".to_owned()], rekeyed),
+            (vec!["moonshot".to_owned()], second),
+        ]
+    );
+}
+
+#[test]
+fn a_refusal_before_a_credential_moves_leaves_the_store_as_it_was() {
+    let scratch = Scratch::new("moving-refused");
+    let store = Store::in_home(scratch.home())
+        .naming(named())
+        .moving(Arc::new(|_: &[&str]| {
+            Err("the speed could not be taken out".into())
+        }));
+
+    let kept = store.keep("moonshot", "refused");
+
+    assert!(!scratch.home().join(FILE).exists(), "nothing was written");
+    let said = kept
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(said.contains("the speed could not be taken out"), "{said}");
+}

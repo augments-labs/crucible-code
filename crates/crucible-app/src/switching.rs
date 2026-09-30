@@ -292,6 +292,7 @@ impl Conversation {
         if changed {
             self.runner.ask("", UNKNOWN_CEILING, None, None);
         }
+        self.hastened_as_kept(with.choosing);
 
         LoggedIn::Serving {
             retained,
@@ -330,6 +331,7 @@ impl Conversation {
         if let Ok(remaining) = (with.serving)(named, &stored) {
             self.runner.serve(remaining.provider);
             self.clearings_recorded().await;
+            self.hastened_as_kept(with.choosing);
             return LoggedOut::StillServed {
                 retained,
                 source: remaining.source,
@@ -343,6 +345,7 @@ impl Conversation {
             NOTHING_TO_ASK
         };
         self.runner.ask("", UNKNOWN_CEILING, None, None);
+        self.runner.hasten(crucible_models::Speed::Standard);
         self.runner.serve(Box::new(Unavailable::new(warning)));
         self.clearings_recorded().await;
         self.serving = None;

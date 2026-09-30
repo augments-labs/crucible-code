@@ -13,9 +13,10 @@
 //! force for the provider changes: each is a moment the price that was shown
 //! when fast was chosen may no longer be the price.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crucible_config::Settings;
+use crucible_auth::Moving;
 use crucible_models::{FastForm, Speed};
 
 use crate::Conversation;
@@ -39,6 +40,24 @@ pub enum Hastened {
     },
 }
 
+/// What the credential store asks before a write moves a provider's
+/// credential: that provider's speed taken out of `file`, the user's own,
+/// before the store is written. What fast costs was shown for the credential
+/// it was chosen under.
+#[must_use]
+pub fn moving(file: PathBuf) -> Moving {
+    Arc::new(move |providers: &[&str]| {
+        for provider in providers {
+            remember::hastening(&file, provider, Speed::Standard).map_err(|problem| {
+                Box::<str>::from(format!(
+                    "the speed that goes with it could not be taken out: {problem}"
+                ))
+            })?;
+        }
+        Ok(())
+    })
+}
+
 impl Conversation {
     /// Asks the model in force at `speed` from the next turn on, and writes it
     /// down beside the model for the next run.
@@ -58,16 +77,23 @@ impl Conversation {
         }
     }
 
-    /// Asks at the speed the user's own file says for the provider in force,
-    /// where the model in force can be asked for it: what a run starts at.
-    pub fn hastened_as_written(&mut self, settings: &Settings) {
-        let Some(provider) = self.serving else {
-            return;
-        };
+    /// Asks at the speed `file`, the user's own, says now for the provider in
+    /// force, where the model in force can be asked for it: what a run starts
+    /// at, and what a credential written or forgotten leaves.
+    ///
+    /// Read from the file rather than from the settings the run started with,
+    /// because a credential that moved took its provider's speed out of the
+    /// file after those were read. A file that cannot be read asks standard.
+    pub fn hastened_as_kept(&mut self, file: &Path) {
         let switched = self.runner.provider().fast(self.runner.model()).switched();
-        if switched && settings.speed(provider) == Speed::Fast {
-            self.runner.hasten(Speed::Fast);
-        }
+        let kept = self
+            .serving
+            .and_then(|provider| remember::hastened(file, provider).ok());
+        let speed = match kept {
+            Some(Speed::Fast) if switched => Speed::Fast,
+            Some(_) | None => Speed::Standard,
+        };
+        self.runner.hasten(speed);
     }
 
     /// Standard from the next turn on, for `provider`, in the runner and in
