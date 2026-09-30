@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 651
 expression: on_the_first_beat(&window.picture())
 ---
 80x24 cursor 20,4 scrolled 0

@@ -486,6 +486,8 @@ pub(super) struct Asked<'a> {
     pub(super) provider: Option<&'static str>,
     /// The model in force, empty where none is.
     pub(super) model: &'a str,
+    /// The rung it is asked on, where one is in force.
+    pub(super) effort: Option<&'a str>,
 }
 
 pub(super) fn deferred<T: Terminal>(

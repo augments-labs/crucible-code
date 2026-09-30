@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 376
 expression: window.picture()
 ---
 80x16 cursor 12,4 scrolled 0

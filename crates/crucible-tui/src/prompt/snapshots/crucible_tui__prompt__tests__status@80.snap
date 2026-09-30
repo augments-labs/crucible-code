@@ -1,6 +1,5 @@
 ---
 source: crates/crucible-tui/src/prompt/tests.rs
-assertion_line: 145
 expression: "dump(&prompt.rows(columns, glyphs), columns)"
 ---
 <Quiet>                                                                                </>

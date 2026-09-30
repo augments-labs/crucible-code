@@ -1,6 +1,5 @@
 ---
 source: crates/crucible-tui/src/shelf/tests.rs
-assertion_line: 427
 expression: "picture(&shelf(&providers, &models).within(58, 24, Glyphs::Unicode), 58)"
 ---
 <Strong>Model</>              <Quiet>now  anthropic · claude-sonnet-5 · high</>

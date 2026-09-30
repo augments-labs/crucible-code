@@ -198,6 +198,9 @@ fn model_down_a_pipe_lists_every_provider_beside_its_models() {
 
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("script"), "{written}");
+    // The list opens on the model in force as the label says it, never the
+    // slashed form a name is typed in.
+    assert!(!written.contains("/script"), "{written}");
     let providers = providers().expect("the built-in providers").snapshot();
     for provider in offered(&providers) {
         for model in provider.models {

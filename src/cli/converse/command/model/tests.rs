@@ -14,9 +14,7 @@ use crate::cli::sample::Sample;
 use crucible_app::Conversation;
 use crucible_app::providers::Providers;
 
-use super::{
-    Asked, Effort, Selected, Track, answered, applied, in_force, keys, offered, taken, titled,
-};
+use super::{Asked, Effort, Selected, answered, applied, in_force, keys, offered, taken, titled};
 
 /// The built-in providers, as one generation the rows are read off.
 fn catalogue() -> Providers {
@@ -249,7 +247,8 @@ fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
 }
 
 /// What the status row under the box says of the model, at a width that holds
-/// every fact on it: what follows the widest gap on the row.
+/// every fact on it: what follows the last run of two spaces, which at this
+/// width is the label, itself spaced singly.
 fn under_the_box(provider: &str, model: &str, effort: Option<&str>, glyphs: Glyphs) -> String {
     let prompt = crucible_tui::Prompt {
         draft: crucible_tui::Draft::at("", 0),
@@ -289,6 +288,9 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
     // list printed where no shelf fits each say which model the next turn is
     // asked of. For one state they say it in one form, for every model the
     // registry holds, so a model added later is held to it with no new test.
+    // This holds the status row as drawn and the builder each other site
+    // calls; which rung the sites hand those builders is held by the tests
+    // that take a model below, and the drawn rows by the pictures.
     let providers = catalogue();
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
         let dot = glyphs.dot();
@@ -314,9 +316,10 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
                     let current = Asked {
                         provider: Some(served.name),
                         model: model.name,
+                        effort: effort.map(Effort::as_str),
                     };
                     assert_eq!(
-                        titled(current, Track::Offered(effort), glyphs),
+                        titled(current, glyphs),
                         format!("now  {wanted}"),
                         "shelf title, {at}"
                     );
@@ -340,7 +343,9 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
 fn no_accepted_picture_draws_a_model_the_way_it_is_typed() {
     // The label reads `provider · model`; `provider/model` is the form typed
     // after `/model` and `--model`, and a line printed for somebody to type
-    // keeps it. So a picture may hold the slash only right after one of those.
+    // keeps it. So a picture may hold the slash only right after one of those,
+    // or where a built-in provider's name is only the tail of a longer word.
+    // What is read is every accepted `.snap` picture of the tree.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let providers = catalogue();
     let names: Vec<&str> = offered(&providers).map(|served| served.name).collect();
@@ -379,4 +384,114 @@ fn no_accepted_picture_draws_a_model_the_way_it_is_typed() {
         }
     }
     assert!(drawn.is_empty(), "{drawn:#?}");
+}
+
+/// What `renderer` has said, a row a line.
+fn said(renderer: &Renderer<Recording>) -> Vec<String> {
+    renderer
+        .tail(24)
+        .iter()
+        .map(|row| row.text().trim_end().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_model_taken_off_the_shelf_is_answered_with_the_rung_taken_with_it() {
+    // The rung marked under the row is the one the next turn is asked on, so
+    // the answer names it rather than the one in force before the Enter.
+    let sample = Sample::new("model-answer-rung");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), Some(Effort::High));
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let selected = row("anthropic", "claude-sonnet-5");
+    let at = selected
+        .model
+        .rungs
+        .iter()
+        .position(|rung| *rung == Effort::Low)
+        .expect("a model that serves low");
+
+    applied(selected, Some(at), &mut renderer, &mut conversation, &terms)
+        .expect("the row to be taken");
+
+    let said = said(&renderer);
+    assert!(
+        said.iter()
+            .any(|row| row == "anthropic · claude-sonnet-5 · low"),
+        "{said:#?}"
+    );
+    assert_eq!(conversation.runner().effort(), Some(Effort::Low));
+}
+
+#[test]
+fn a_model_named_with_a_rung_in_force_is_answered_with_that_rung() {
+    let sample = Sample::new("model-typed-rung");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), Some(Effort::High));
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+
+    taken(
+        row("anthropic", "claude-sonnet-5").provider,
+        ("claude-sonnet-5", None),
+        &mut renderer,
+        &mut conversation,
+        &terms,
+    )
+    .expect("the name to be taken");
+
+    let said = said(&renderer);
+    assert!(
+        said.iter()
+            .any(|row| row == "anthropic · claude-sonnet-5 · high"),
+        "{said:#?}"
+    );
+}
+
+#[test]
+fn the_shelf_stood_while_a_turn_runs_names_the_rung_in_force() {
+    // No rung may be taken while the turn runs, but one is still in force,
+    // and the row under the box says so: the title says the same.
+    let current = Asked {
+        provider: Some("anthropic"),
+        model: "claude-sonnet-5",
+        effort: Some("high"),
+    };
+
+    assert_eq!(
+        titled(current, Glyphs::Unicode),
+        "now  anthropic · claude-sonnet-5 · high"
+    );
+    assert_eq!(
+        under_the_box(
+            "anthropic",
+            "claude-sonnet-5",
+            Some("high"),
+            Glyphs::Unicode
+        ),
+        "anthropic · claude-sonnet-5 · high"
+    );
+}
+
+#[test]
+fn a_model_with_no_provider_answering_is_named_on_its_own() {
+    // A name taken from a file whose vendor has no credential yet: the label
+    // says the model and the rung, and no word stands in for the vendor.
+    let current = Asked {
+        provider: None,
+        model: "claude-sonnet-5",
+        effort: Some("high"),
+    };
+
+    assert_eq!(
+        titled(current, Glyphs::Unicode),
+        "now  claude-sonnet-5 · high"
+    );
+    assert_eq!(
+        in_force(None, "claude-sonnet-5", Some(Effort::High), Glyphs::Unicode),
+        "claude-sonnet-5 · high"
+    );
+    assert_eq!(
+        under_the_box("", "claude-sonnet-5", Some("high"), Glyphs::Unicode),
+        "claude-sonnet-5 · high"
+    );
 }

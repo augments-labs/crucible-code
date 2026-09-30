@@ -143,6 +143,7 @@ pub(super) fn run<T: Terminal>(
         let current = Asked {
             provider: conversation.serving(),
             model: runner.model(),
+            effort: runner.effort().map(Effort::as_str),
         };
         match stood(renderer, terms, current, track, &mut |_| Ok(()))? {
             Shelved::Took(selected, rung) => {
@@ -324,11 +325,11 @@ fn stood<T: Terminal>(
     // Which model is in force goes on the title row rather than beside an
     // entry: it is one fact about the session, and a pane whose rows all read
     // the same way is one that can be walked without reading each of them.
-    // Labelled, because a slug on its own at the far end of the title row is a
-    // name with nothing saying what it is the name of. The rung rides with it:
+    // Labelled, because a model's label on its own at the far end of the title
+    // row is a name with nothing saying what it is the name of. The rung rides with it:
     // both are what the next turn would be asked under, and the shelf below
     // offers to change either.
-    let now = titled(current, track, glyphs);
+    let now = titled(current, glyphs);
     let nothing = nothing(glyphs);
     let norung = match track {
         Track::Offered(_) => serves_none(glyphs),
@@ -612,10 +613,12 @@ fn taken<T: Terminal>(
 
     // The word may have come off the line and was never shape-checked — anything
     // at all can follow `/model ` — so it goes out the way arrived text goes out.
+    // The rung asked for with the model where the shelf marked one, which is
+    // put on the runner just after this; otherwise the one kept across it.
     renderer.commit(&answered(
         provider,
         name,
-        conversation.runner().effort(),
+        effort.or(conversation.runner().effort()),
         terms.style().glyphs(),
     ))?;
 
@@ -698,13 +701,10 @@ fn listed<T: Terminal>(
     Ok(renderer.present(&rows)?)
 }
 
-/// The model in force as the shelf's title row says it, with the rung where
-/// one may be taken here.
-fn titled(current: Asked<'_>, track: Track, glyphs: Glyphs) -> String {
-    let effort = match track {
-        Track::Offered(effort) => effort.map(Effort::as_str),
-        Track::Refused => None,
-    };
+/// The model in force as the shelf's title row says it, with the rung in
+/// force: while a turn runs none may be taken here, but one is still being
+/// asked on, and the row under the box names it too.
+fn titled(current: Asked<'_>, glyphs: Glyphs) -> String {
     match current.model {
         "" => format!("now  {NOTHING_ASKED}"),
         name => format!(
@@ -712,7 +712,7 @@ fn titled(current: Asked<'_>, track: Track, glyphs: Glyphs) -> String {
             label(
                 current.provider.unwrap_or_default(),
                 name,
-                effort,
+                current.effort,
                 None,
                 glyphs
             )
