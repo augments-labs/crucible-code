@@ -38,6 +38,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use crucible_app::AppError;
+use crucible_app::content_use;
 use crucible_app::providers::{
     Providers, Served, available, chosen, providers, re_serving, unasked,
 };
@@ -605,8 +606,24 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // A second credential for one provider, which only 0.43.3 writing after a
     // roll back leaves, is taken out after that read and said in the same
     // place.
+    //
+    // What the user's own file says yes to is read first: a credential taken
+    // out, here or later, takes its route's yes with it, before the store is
+    // written, and a yes this run took out must not come back.
     let rows = crucible_app::providers::Rows::production();
-    let (keys, trouble) = stored(home.path(), &rows, style::glyph_set(settings.glyphs()));
+    services
+        .consent()
+        .recorded(settings.content_accepted().into_iter().map(str::to_owned));
+    let store =
+        Store::in_home(home.path())
+            .naming(rows.names())
+            .letting_go(content_use::letting_go(
+                services.consent(),
+                crucible_config::user(&home),
+                rows.clone(),
+                &settings,
+            ));
+    let (keys, trouble) = stored(&store, &rows, style::glyph_set(settings.glyphs()));
     let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
@@ -719,6 +736,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
+            services.consent().clone(),
         ),
         environment: Box::new(|name| std::env::var(name).ok()),
 
@@ -727,7 +745,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // being picked up is one of this directory's, and which directory that
         // is was decided before the first prompt.
         // The same directory the keys above were read from.
-        logins: Store::in_home(home.path()).naming(rows.names()),
+        logins: store,
         // The account logins `/login` can start, the same registry the launch
         // resolved stored subscriptions through.
         subscriptions: subscriptions.clone(),
@@ -976,16 +994,15 @@ fn fail(problem: &Fatal) -> ExitCode {
 /// credential given on a row the bare provider name does not stand for is
 /// found; and a second credential for one provider is taken out.
 fn stored(
-    home: &std::path::Path,
+    store: &Store,
     rows: &crucible_app::providers::Rows,
     glyphs: crucible_tui::Glyphs,
 ) -> (crucible_auth::StoredCredentials, Option<String>) {
-    let store = Store::in_home(home).naming(rows.names());
     // Read first: that read tightens a store left readable by others and says
     // so, and the settle after it finds the file private.
     let keys = store.read();
     let read = keys.trouble().map(str::to_owned);
-    let settled = startup::settle(&store, rows, glyphs.dot());
+    let settled = startup::settle(store, rows, glyphs.dot());
     // A credential taken out is no longer one to serve.
     let keys = if settled.is_some() {
         store.read()

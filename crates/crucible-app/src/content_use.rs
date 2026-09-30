@@ -411,6 +411,16 @@ impl Consent {
         state.recorded.retain(|route| !gone(route));
     }
 
+    /// Takes what one provider's requests go on, or that it has nothing to
+    /// send with.
+    pub fn served(&self, provider: &str, serving: Option<Serving>) {
+        let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        match serving {
+            Some(serving) => state.serving.insert(provider.to_owned(), serving),
+            None => state.serving.remove(provider),
+        };
+    }
+
     /// Takes what each provider's requests go on, in place of what was
     /// resolved before.
     pub fn serving(&self, serving: BTreeMap<String, Serving>) {

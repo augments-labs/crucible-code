@@ -469,7 +469,7 @@ fn a_start_over_two_credentials_keeps_the_bare_one_and_says_which_went() {
     let home = home_holding("two-held", TWO_HELD);
 
     let (keys, trouble) = stored(
-        &home,
+        &Store::in_home(&home).naming(crucible_app::providers::Rows::production().names()),
         &crucible_app::providers::Rows::production(),
         crucible_tui::Glyphs::Unicode,
     );
@@ -498,7 +498,7 @@ fn a_start_finds_a_credential_given_on_a_kimi_ai_row() {
     );
 
     let (keys, trouble) = stored(
-        &home,
+        &Store::in_home(&home).naming(crucible_app::providers::Rows::production().names()),
         &crucible_app::providers::Rows::production(),
         crucible_tui::Glyphs::Unicode,
     );
@@ -531,7 +531,7 @@ fn a_start_over_a_store_others_could_read_still_says_it_was_tightened() {
         .expect("a store others can read");
 
         let (_, trouble) = stored(
-            &home,
+            &Store::in_home(&home).naming(crucible_app::providers::Rows::production().names()),
             &crucible_app::providers::Rows::production(),
             crucible_tui::Glyphs::Unicode,
         );
@@ -553,7 +553,7 @@ fn a_start_line_names_its_rows_with_the_glyph_sets_own_dot() {
     let home = home_holding("two-held-ascii", TWO_HELD);
 
     let (_, trouble) = stored(
-        &home,
+        &Store::in_home(&home).naming(crucible_app::providers::Rows::production().names()),
         &crucible_app::providers::Rows::production(),
         crucible_tui::Glyphs::Ascii,
     );
@@ -564,5 +564,50 @@ fn a_start_line_names_its_rows_with_the_glyph_sets_own_dot() {
         said.contains("the Kimi Code - kimi.ai sign-in was removed"),
         "{said}"
     );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// A start that takes out a second credential takes its route's yes out of
+/// the user's file first, and out of what the run holds; the kept row's yes
+/// stays.
+#[test]
+fn a_start_that_takes_a_credential_out_takes_its_yes_first() {
+    let home = home_holding("two-and-a-yes", TWO_HELD);
+    let file = home.join("config.json");
+    std::fs::write(
+        &file,
+        r#"{"contentUse": {"accepted": ["subscription:moonshot@kimi.ai", "key:moonshot"]}}"#,
+    )
+    .expect("a user file");
+    let rows = crucible_app::providers::Rows::production();
+    let consent = content_use::Consent::new(content_use::Routes::production());
+    consent.recorded([
+        "subscription:moonshot@kimi.ai".to_owned(),
+        "key:moonshot".to_owned(),
+    ]);
+    let store = Store::in_home(&home)
+        .naming(rows.names())
+        .letting_go(content_use::letting_go(
+            &consent,
+            file.clone(),
+            rows.clone(),
+            &crucible_config::Settings::default(),
+        ));
+
+    let (keys, trouble) = stored(&store, &rows, crucible_tui::Glyphs::Unicode);
+
+    assert!(
+        trouble.is_some_and(|said| said.contains("removed")),
+        "the start says what went"
+    );
+    assert_eq!(
+        keys.held("moonshot").map(|held| held.name),
+        Some("moonshot".to_owned())
+    );
+    let left = std::fs::read_to_string(&file).expect("the user file");
+    assert!(!left.contains("subscription:moonshot@kimi.ai"), "{left}");
+    assert!(left.contains("key:moonshot"), "{left}");
+    assert!(consent.asks("subscription:moonshot@kimi.ai").is_some());
+    assert!(consent.asks("key:moonshot").is_none());
     let _ = std::fs::remove_dir_all(&home);
 }

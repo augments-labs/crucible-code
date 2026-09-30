@@ -1138,6 +1138,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|name| (name == "CRUCIBLE_FIXTURE_ONLY_KEY").then(|| "not-a-key".into())),
         HttpTurns::unavailable(),
+        crate::content_use::Consent::new(crate::content_use::Routes::production()),
     );
     let found = handed(serving("openai"), &stored).expect("the handed variable holds a key");
     assert_eq!(
@@ -1150,6 +1151,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
         HttpTurns::unavailable(),
+        crate::content_use::Consent::new(crate::content_use::Routes::production()),
     );
     for one in every() {
         assert!(
@@ -1280,4 +1282,35 @@ fn every_sign_in_row_is_one_the_subscription_registry_starts_and_sends_to_its_ad
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), registered.len(), "{registered:?}");
+}
+
+/// Setting a provider up again tells the run's consent what it is now served
+/// on, so an origin two rows share follows the credential just stored.
+#[test]
+fn serving_again_tells_the_consent_what_the_provider_is_served_on() {
+    use crucible_http::Hold as _;
+
+    let sample = Sample::new("serving-again-consent");
+    let stored = sample.holding(
+        r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{}}"#,
+    );
+    let consent = crate::content_use::Consent::new(crate::content_use::Routes::production());
+    consent.recorded(["key:moonshot@kimi.ai".to_owned()]);
+    let model =
+        crucible_http::Origin::of("https://api.kimi.ai/coding/v1/chat/completions").unwrap();
+    assert!(
+        consent.held(&model).is_some(),
+        "nothing said what it is served on yet"
+    );
+
+    let again = re_serving(
+        Settings::default(),
+        Subscriptions::production(&crucible_auth::Renewals::new()),
+        Box::new(|_| None),
+        HttpTurns::unavailable(),
+        consent.clone(),
+    );
+    again(serving("moonshot"), &stored).expect("a stored key");
+
+    assert_eq!(consent.held(&model), None);
 }

@@ -19,6 +19,7 @@ use crucible_registry::{
 };
 
 use crate::AppError;
+use crate::content_use::Consent;
 use crate::models;
 use crate::startup::{self, served};
 use crate::subscription::Subscriptions;
@@ -779,11 +780,15 @@ pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
 /// run already read: nothing in them grows with the transcript. `from` is the
 /// environment lookup, handed in like every other source this crate reads, so
 /// that a caller with no environment to offer can say so.
+///
+/// `consent` is told what the provider is served on each time, before a
+/// request could go: a credential just stored or forgotten can move it.
 pub fn re_serving(
     settings: Settings,
     subscriptions: Subscriptions,
     from: Lookup,
     http: HttpTurns,
+    consent: Consent,
 ) -> Serving {
     Box::new(move |named: Served, stored: &StoredCredentials| {
         let auth = startup::ProviderAuth {
@@ -792,6 +797,8 @@ pub fn re_serving(
             stored,
             subscriptions: &subscriptions,
         };
+        let variable = settings.api_key_env(named.name).unwrap_or(named.key);
+        consent.served(named.name, startup::served_on(named.name, variable, auth));
         let source = credential_source(named, auth).ok_or_else(|| AppError::Authentication {
             provider: named.name.into(),
         })?;

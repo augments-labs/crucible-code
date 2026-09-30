@@ -169,6 +169,11 @@ const STORE_BUSY: &str =
 const STORE_UNREADABLE: &str =
     "crucible cannot read its login store; move it aside and try /login again";
 
+/// The way back in, when the yes that goes with the credential being replaced
+/// could not be taken out of the configuration file first.
+const STORE_UNRELEASED: &str =
+    "crucible cannot change its configuration file; fix it and try /login again";
+
 /// Manual callback input is transient credential material. It has the same
 /// bound as the key box and is never committed or echoed.
 const MAX_MANUAL: usize = 16 * 1024;
@@ -280,7 +285,9 @@ fn holding(rows: &Rows, terms: &Terms) -> Result<Vec<Way>, AuthError> {
         Err(failed @ (AuthError::Unreadable { .. } | AuthError::TooLarge { .. })) => {
             return Err(failed);
         }
-        Err(AuthError::Unwritable { .. } | AuthError::Busy { .. }) => Vec::new(),
+        Err(
+            AuthError::Unwritable { .. } | AuthError::Busy { .. } | AuthError::Unreleased { .. },
+        ) => Vec::new(),
     };
     Ok(held
         .iter()
@@ -1141,7 +1148,7 @@ fn kept<T: Terminal>(
 
 /// The way back in, by what stopped the store.
 ///
-/// Three sentences for four causes: a store too large to parse and one that
+/// Four sentences for five causes: a store too large to parse and one that
 /// will not parse are the same thing to the reader, a file crucible cannot
 /// read and will not write over.
 fn remedy(failed: &AuthError) -> &'static str {
@@ -1149,6 +1156,7 @@ fn remedy(failed: &AuthError) -> &'static str {
         AuthError::Unwritable { .. } => STORE_UNWRITABLE,
         AuthError::Busy { .. } => STORE_BUSY,
         AuthError::Unreadable { .. } | AuthError::TooLarge { .. } => STORE_UNREADABLE,
+        AuthError::Unreleased { .. } => STORE_UNRELEASED,
     }
 }
 
