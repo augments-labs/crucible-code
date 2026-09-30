@@ -12,7 +12,7 @@
         "Vendor::calling( \"edit\", r##\"{\"path\":\"release.yml\",\"find\":\"# trend data\",\"replace\":\"# what stops a tag\"}\"##, \"Renamed. Nothing else in the file moved.\", )",
         "Watched::allowing(\"tool-called\", 80, 24, &vendor, \"edit(*)\")"
       ],
-      "sha256": "b771fc07dbeffb7398ab9000a5c4e14318a762d94be7a0dee6c4206f9d7729fb"
+      "sha256": "8f6cb45cb42717d03803353f1e83f087c9111edfb56a55f5e77e3fa335219818"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_click_on_the_count_opens_the_list_while_a_turn_is_still_running.snap",
@@ -45,7 +45,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"logged-in\", 80, 24, &vendor)"
       ],
-      "sha256": "659fd00443629f62857758d43f35238c15ce09976104000b6592328768d87511"
+      "sha256": "e9d7350d715704af6e89125ade5b047df41dad08c188348a7d96793fa9c19313"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_key_that_cannot_be_written_down_is_said_without_a_path.snap",
@@ -126,7 +126,7 @@
         "Vendor::recapping_after( &[\"one answer\", \"two answer\", \"three answer\"], &notes, Some(\"the answer to what was queued\"), )",
         "Watched::compacting(\"compact-typing\", 80, 24, &vendor)"
       ],
-      "sha256": "65e0a6a84aaf7f88600e04b8accf9c2210e30b28c9bbe9ccc332aeef898c58da"
+      "sha256": "e0f90ad116f9c2d06741e6f81d4e762b9100e84d3384c12ab8a7744edeee85a7"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_remembered_provider_without_its_credential_still_opens_the_session.snap",
@@ -142,7 +142,7 @@
       "opened": [
         "Watched::allowing(\"mode-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "760e4e4570f28ed2e94e96e3f361a5a3f7a7cab6a2cc79497978516c75c72176"
+      "sha256": "90983550534de805b15c95b4f0be1a59a914ba260a501ad74e9f72bc8e4af15e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_opens_the_command_list_above_the_box.snap",
@@ -158,7 +158,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "1e5c5eb765a6433789285184916f80ddb28f161bf55e8f5faabd8dd21e5e010c"
+      "sha256": "49887facc4df7cd498d2d5e919bb435a9363256a0171bbcecbe755d37d8644a4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -192,7 +192,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::answering(\"answered\", 80, 24, &vendor)"
       ],
-      "sha256": "08d7efd8b1402606e2daebae55d93fec7d60f909b29856543180a68106861fd3"
+      "sha256": "763eb2cbbaf143f030f9cbde40a25cfd07333e3b36a5833ef9490b0d76c67a1d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_longer_than_the_window_leaves_the_box_whole_under_it.snap",
@@ -201,7 +201,7 @@
         "Vendor::answering(&a_long_answer())",
         "Watched::answering(\"answered-long\", 80, 16, &vendor)"
       ],
-      "sha256": "ff4a02fd771168ab55c8d37516f5ba848b6f10099dae524882e4c716f38886d8"
+      "sha256": "3923ff60f25516b23d189f528385838f22a26e7af910ac143195729fe5984f49"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_answer_reaches_the_screen_with_its_markers_read_rather_than_drawn.snap",
@@ -210,7 +210,7 @@
         "Vendor::answering(IN_MARKDOWN)",
         "Watched::in_colour(\"answered-markdown\", 80, 32, &vendor)"
       ],
-      "sha256": "85709d5579000491363f107eaa44b19aa1070ab31a66541090d60f4e447aa71c"
+      "sha256": "1fd0909ca130ab6ef1e5533ad64e9f75983a06bd09d06f7afeb6bd8df70ccc2d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__an_environment_authenticated_session_never_claims_logout_removed_it.snap",
@@ -219,7 +219,7 @@
         "Vendor::answering(\"still authenticated\")",
         "Watched::answering(\"environment-logout\", 80, 24, &vendor)"
       ],
-      "sha256": "dbe2afbb8d041618421508c568bd7fb79db82c70640bd42656a0f501149ebe5b"
+      "sha256": "f878eda9ad66899bf8ed3002c2b9c6773d4ced8502c7730b5d200c5663d4ea59"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__choosing_notes_makes_room_and_says_what_it_took.snap",
@@ -228,7 +228,7 @@
         "Vendor::recapping_after( &[ \"Notes on the first thing.\", \"Notes on the second thing.\", \"Notes on the third thing.\", ], \"Notes on everything that came before.\", None, )",
         "Watched::compacting(\"resume-notes\", 80, 24, &vendor)"
       ],
-      "sha256": "bf6253b07dbfb57d406c8607ede2747d8e3ed7b8a16241a0794bb84d70194f34"
+      "sha256": "c2df508dba089fb6dcee6258f64defd34fd8171d0a7c274702949c4f84b79de3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__compact_tool_activity.snap",
@@ -237,7 +237,7 @@
         "Vendor::calling_batches(&calls, \"Inspection finished.\")",
         "Watched::configured(\"compact-activity\", 80, 32, &config, true)"
       ],
-      "sha256": "3d1be633b3d6a03a46b627920a8ff1b2a8b9f20eee052887126c49580019c054"
+      "sha256": "6327dc2c448be29efbacf4a73066258fb97f1975ca7e2c89a2c5caf0a84b7a2e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__compact_tool_group_expanded.snap",
@@ -255,7 +255,7 @@
         "Vendor::recapping_after(&[\"one answer\", \"two answer\", \"three answer\"], &notes, None)",
         "Watched::compacting(\"compact-stopped\", 80, 24, &vendor)"
       ],
-      "sha256": "7c2cf9c35c11931a08b86db18cd296802533f34d3c6b7fcea6e077aa343e00fc"
+      "sha256": "7a9189d3a91d47ef7ddce131ebf16bbf4cb06aa250391369efdab62389d9c86e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__every_way_a_terminal_spells_a_newline_grows_the_box_and_sends_nothing.snap",
@@ -409,7 +409,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"effort-ladder\", 80, 24, &vendor)"
       ],
-      "sha256": "396e7d4db0a1beb1a09bbb0e6a55999e1da08b58298ae99746efbaafe20072d7"
+      "sha256": "4361e286225a8cbe93834882a79a185347f366ec05d75f22707d6f5ac6b7c4a8"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_key_box_stands_empty_under_the_provider_it_is_for.snap",
@@ -434,7 +434,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"login-walked\", 80, 24, &vendor)"
       ],
-      "sha256": "42210e08048467213c653152b78771a751c44ebc84b66d5b8cbcf01f47123f52"
+      "sha256": "d6e7f5eba50bf53f29f85fd16f8aaf5139dc6e5260bedea39115503ebe88823d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width.snap",
@@ -451,7 +451,7 @@
         "Vendor::answering(&a_long_answer())",
         "Watched::answering(\"transcript-map\", 80, 16, &vendor)"
       ],
-      "sha256": "cbac46bcb8f50e6a0c9579ec5cc060346079050bf5784c53a9d8e7f610c73065"
+      "sha256": "52387c07bcd499b3c16bfafdaf5826c0d5a57a96101b24b8a47cfb95c1b145ae"
     }
   ]
 }

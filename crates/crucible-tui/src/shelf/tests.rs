@@ -111,7 +111,7 @@ fn many() -> Vec<Stocked<'static>> {
 fn shelf<'a>(providers: &'a [Serving<'a>], models: &'a [Stocked<'a>]) -> Shelf<'a> {
     Shelf {
         title: "Model",
-        now: "now  anthropic/claude-sonnet-5 · high",
+        now: "now  anthropic · claude-sonnet-5 · high",
         query: "",
         typed: 0,
         hint: "a model, or a vendor",

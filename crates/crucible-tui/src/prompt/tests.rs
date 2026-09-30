@@ -31,7 +31,7 @@ const VENDOR: &str = "anthropic";
 const RUNG: &str = "high";
 
 /// The three of them as the row joins them.
-const MODEL: &str = "anthropic/claude-sonnet-5 · high";
+const MODEL: &str = "anthropic · claude-sonnet-5 · high";
 
 /// The three modes as the row under the box spells them, the colour each puts
 /// on its own sentence, and the name of the picture each is checked against.
@@ -623,7 +623,7 @@ fn the_status_row_says_whose_model_it_is_before_saying_which() {
     // on its own never said whose it was in the first place.
     let status = row(&asking_of(""), 4, 80, Glyphs::Unicode);
 
-    assert!(status.contains("anthropic/claude-sonnet-5"), "{status:?}");
+    assert!(status.contains("anthropic · claude-sonnet-5"), "{status:?}");
 }
 
 #[test]
@@ -1532,4 +1532,16 @@ fn a_command_word_before_a_folded_paste_is_accented_like_any_other() {
         })
         .collect();
     assert_eq!(accented, "/model");
+}
+
+#[test]
+fn in_the_ascii_set_the_label_is_joined_by_spaced_hyphens() {
+    assert_eq!(
+        crate::label("openai", "gpt-5.6-sol", Some("high"), None, Glyphs::Ascii),
+        "openai - gpt-5.6-sol - high"
+    );
+    assert_eq!(
+        crate::label("deepseek", "deepseek-flash", None, None, Glyphs::Unicode),
+        "deepseek · deepseek-flash"
+    );
 }

@@ -18,6 +18,10 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The model is named one way wherever it is drawn.** The row under the box,
+  the `/model` panel's title and the row answering `/model` now all read
+  `openai · gpt-5.6-sol · high`, and the answer names the rung it will be asked
+  on. What you type after `/model` and `--model` keeps `provider/model`.
 - **A line that opens with a path is sent as a prompt, and a mistyped command
   names the nearest ones.** `/tmp is full` and `/modle gpt-6-sol` used to be
   refused as unknown commands; a line whose first word names no command and

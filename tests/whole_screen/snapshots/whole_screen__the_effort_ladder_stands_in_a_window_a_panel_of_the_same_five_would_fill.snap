@@ -14,7 +14,7 @@ expression: window.picture()
 |⎿ login successful; choose a model with /model                                  |
 |                                                                                |
 |› /model claude-test-1                                                          |
-|⎿ anthropic/claude-test-1                                                       |
+|⎿ anthropic · claude-test-1                                                     |
 |                                                                                |
 |› /effort                                                                       |
 |────────────────────────────────────────────────────────────────────────────────|

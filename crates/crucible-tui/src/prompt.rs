@@ -898,29 +898,10 @@ impl Prompt<'_> {
         (row, drew_counted)
     }
 
-    /// Whose model it is, which model, and the rung it is being asked on, as one
-    /// string.
-    ///
-    /// Joined here rather than by the caller so that the dot comes out of the
-    /// set in force, and so that a session with nothing chosen says nothing at
-    /// all rather than naming a vendor over an empty name. The vendor is joined
-    /// the way [`crate::Welcome`] joins it and the way `--model` takes it back,
-    /// so the fact reads the same wherever it is said.
+    /// Whose model it is, which model, and the rung it is being asked on, as
+    /// [`label`] says them everywhere the model is drawn.
     fn asked(&self, glyphs: Glyphs) -> String {
-        if self.model.is_empty() {
-            return String::new();
-        }
-
-        let named = if self.provider.is_empty() {
-            self.model.to_owned()
-        } else {
-            format!("{}/{}", self.provider, self.model)
-        };
-
-        match self.effort {
-            Some(effort) => format!("{named} {} {effort}", glyphs.dot()),
-            None => named,
-        }
+        label(self.provider, self.model, self.effort, None, glyphs)
     }
 
     /// The usable-window fact in its full spelling, or nothing while no
@@ -1140,6 +1121,37 @@ fn inner(columns: usize) -> usize {
     };
 
     columns.saturating_sub(chrome)
+}
+
+/// Which model the next turn is asked of, as every place that draws it says
+/// it: the provider's name, the model's, the rung it is asked on, and a last
+/// part for how fast it is served, joined by the dot of the set in force.
+///
+/// Nothing at all where no model is chosen, and no provider where none is
+/// answering, so the label never names a vendor over an empty name. A dot and
+/// not the slash `--model` takes: the label is read, and what is typed keeps
+/// its own form.
+#[must_use]
+pub fn label(
+    provider: &str,
+    model: &str,
+    effort: Option<&str>,
+    speed: Option<&str>,
+    glyphs: Glyphs,
+) -> String {
+    if model.is_empty() {
+        return String::new();
+    }
+    [
+        (!provider.is_empty()).then_some(provider),
+        Some(model),
+        effort,
+        speed,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(&format!(" {} ", glyphs.dot()))
 }
 
 #[cfg(test)]

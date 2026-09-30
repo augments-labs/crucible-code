@@ -59,8 +59,9 @@ does not silently fall through to a different provider whose credential happens
 to be present.
 
 Whichever rung settled it, the answer is at the right of the row under the
-prompt box, which names the vendor before the model in the `provider/model`
-shape `--model` takes back. That row stands for the whole session and is said
+prompt box, which reads `provider · model · effort`, or `provider · model`
+where no rung is in force, the vendor before the model; what is typed after
+`--model` or `/model` keeps the slash, `provider/model`. That row stands for the whole session and is said
 again whenever one of the three changes, so it keeps up when `/model` hands the
 session to another vendor mid-way. The welcome card deliberately carries no provider, model or
 effort because it is the first thing in the transcript and is scrolled away from

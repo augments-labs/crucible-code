@@ -198,6 +198,9 @@ fn model_down_a_pipe_lists_every_provider_beside_its_models() {
 
     assert_eq!(asked, 0, "{written}");
     assert!(written.contains("script"), "{written}");
+    // The list opens on the model in force as the label says it, never the
+    // slashed form a name is typed in.
+    assert!(!written.contains("/script"), "{written}");
     let providers = providers().expect("the built-in providers").snapshot();
     for provider in offered(&providers) {
         for model in provider.models {
@@ -290,7 +293,10 @@ fn a_model_named_on_the_line_is_written_down_under_a_provider_and_beside_it() {
     .expect("the loop to finish");
 
     let written = renderer.terminal().written().to_string();
-    assert!(written.contains("anthropic/claude-haiku-4-5"), "{written}");
+    assert!(
+        written.contains("anthropic · claude-haiku-4-5"),
+        "{written}"
+    );
 
     let held = std::fs::read_to_string(&choosing).expect("the file it said it wrote");
     assert!(held.contains("\"provider\": \"anthropic\""), "{held}");

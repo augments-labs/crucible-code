@@ -148,7 +148,10 @@ fn a_model_picked_while_a_turn_runs_is_the_one_in_force_once_it_ends() {
     .expect("the loop to finish");
 
     let written = renderer.terminal().written();
-    assert!(written.contains("anthropic/claude-haiku-4-5"), "{written}");
+    assert!(
+        written.contains("anthropic · claude-haiku-4-5"),
+        "{written}"
+    );
 
     let held = std::fs::read_to_string(sample.user_file()).expect("the file it said it wrote");
     assert!(held.contains("\"model\": \"claude-haiku-4-5\""), "{held}");

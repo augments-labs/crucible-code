@@ -2,7 +2,7 @@
 source: crates/crucible-tui/src/shelf/tests.rs
 expression: "picture(&shelf.within(100, 30, Glyphs::Unicode), 100)"
 ---
-<Strong>Model</>                                                          <Quiet>now  anthropic/claude-sonnet-5 · high</>
+<Strong>Model</>                                                        <Quiet>now  anthropic · claude-sonnet-5 · high</>
 
 <Quiet>╭</><Quiet>──────────────────────────────────────────────────────────────────────────────────────────────────</><Quiet>╮</>
 <Quiet>│</><Quiet> Search</>    <Quiet>a model, or a vendor</>                                                                   <Quiet>│</>

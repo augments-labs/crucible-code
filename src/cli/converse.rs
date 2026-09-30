@@ -1300,6 +1300,7 @@ impl Turn<'_, '_> {
         let current = command::Asked {
             provider: self.serving,
             model: &model,
+            effort: self.says.effort,
         };
         let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
             self.drain(renderer);

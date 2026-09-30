@@ -167,7 +167,7 @@ Under the card is the box:
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ›                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · high
+ask mode on (shift+tab to cycle)              anthropic · claude-sonnet-5 · high
 ```
 
 The box is as wide as the terminal, and a line longer than it wraps onto the
@@ -217,8 +217,9 @@ behind the box. At the right is what the session is talking to: the provider,
 the model, and the rung it is being asked on where one has been chosen. It sits
 beside the box because every key that changes it is typed into that box.
 
-The model is written the way `--model` takes it back, so what the row says is
-what you would type to ask for it again, and the vendor is named because a model
+The three are joined by a dot, `anthropic · claude-sonnet-5 · high`, and read
+the same on the `/model` panel and in its answer. What you type keeps its own
+form, `/model anthropic/claude-sonnet-5`. The vendor is named because a model
 name says which model and never whose. A machine holding keys for two of them is
 a machine where that is a real question.
 
