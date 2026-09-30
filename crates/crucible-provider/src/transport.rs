@@ -67,9 +67,8 @@ impl TransportError {
                     .into(),
             },
             Self::Unreachable(problem) => ProviderError::Transport { provider, problem },
-            // Said as a provider with nothing to send on yet: not retried, and
-            // known to have reached no host.
-            Self::Held(problem) => ProviderError::Unconfigured(format!("{provider}: {problem}").into()),
+            // Its own failure: not retried, and known to have reached no host.
+            Self::Held(problem) => ProviderError::Held(format!("{provider}: {problem}").into()),
         }
     }
 }
@@ -608,10 +607,7 @@ mod held_tests {
         let said = "nothing was sent: key:google waits for an answer";
         let error = TransportError::Held(said.into()).for_provider("google");
         assert!(!error.transient(), "{error:?}");
-        assert!(
-            matches!(&error, ProviderError::Unconfigured(_)),
-            "{error:?}"
-        );
+        assert!(matches!(&error, ProviderError::Held(_)), "{error:?}");
         assert!(error.to_string().contains(said), "{error}");
     }
 }

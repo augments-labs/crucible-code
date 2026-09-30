@@ -1918,7 +1918,8 @@ fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheReque
         Err(
             ProviderError::Cancelled(_)
             | ProviderError::Credential { .. }
-            | ProviderError::Unconfigured(_),
+            | ProviderError::Unconfigured(_)
+            | ProviderError::Held(_),
         ) => PromptCacheRequestDisposition::NotSent,
         Err(ProviderError::Refused { .. } | ProviderError::WindowExceeded { .. }) => {
             PromptCacheRequestDisposition::Rejected
