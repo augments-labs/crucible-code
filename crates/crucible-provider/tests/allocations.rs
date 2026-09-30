@@ -10,6 +10,14 @@
 //!
 //! No probe of `scripts/sh/bench.sh` builds a provider request or reads a
 //! provider stream, which is why this is counted here.
+//!
+//! Counted on Linux `x86_64` alone, which is where the expected counts were
+//! written. Another platform's standard library costs what it costs on a path
+//! every case shares: on macOS each case, a refused request included, makes
+//! one allocation more than on Linux, before and after alike. Held to
+//! another platform's numbers, the count measures the platform rather than the
+//! change.
+#![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
