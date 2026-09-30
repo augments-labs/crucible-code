@@ -2840,8 +2840,73 @@ fn a_provider_logged_out_while_another_answers_is_asked_about_again_at_model() {
 #[test]
 fn a_send_two_routes_hold_asks_about_each_before_it_goes() {
     let proxy = warning::Proxy::new();
+    let mut window = two_routes_at_one_origin("warning-two", &proxy);
+
+    window.types_until("hello\r", "Use it anyway");
+    let first = window.picture();
+    window.types("\r");
+    let reached = proxy.reached(1);
+    let second = window.picture();
+    assert!(second.contains("Use it anyway"), "{first}\n{second}");
+    assert_ne!(first, second);
+    assert_eq!(reached, Vec::<String>::new(), "sent before the second yes");
+
+    window.types("\r");
+    let reached = proxy.reached(1);
+    assert!(
+        !reached.is_empty() && reached.iter().all(|host| host == "api.kimi.com:443"),
+        "{reached:?} {}",
+        window.picture()
+    );
+    let said = warning::said(&window);
+    assert!(
+        said.contains("key:moonshot") && said.contains("subscription:moonshot"),
+        "{said}"
+    );
+}
+
+/// The same two routes, reached by a choice at `/model`: each is asked about
+/// before the choice is taken, and choosing sends nothing.
+#[test]
+fn a_choice_two_routes_hold_asks_about_each_before_it_is_taken() {
+    let proxy = warning::Proxy::new();
+    let mut window = two_routes_at_one_origin("warning-two-model", &proxy);
+
+    window.types("/model\r");
+    window.types("claude-sonnet-5");
+    window.types_until("\r", "Takes this choice");
+    let first = window.picture();
+    window.types("\r");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let second = window.picture();
+    assert!(second.contains("Takes this choice"), "{first}\n{second}");
+    assert_ne!(first, second);
+
+    window.types("\r");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let said = warning::said(&window);
+    assert!(
+        said.contains("key:moonshot") && said.contains("subscription:moonshot"),
+        "{said}\n{}",
+        window.picture()
+    );
+    assert!(
+        !window.picture().contains("Takes this choice"),
+        "{}",
+        window.picture()
+    );
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a choice sends nothing"
+    );
+}
+
+/// crucible over a stored Kimi Code kimi.com sign-in and Anthropic answering
+/// through a `baseUrl` at the same origin, neither route said yes to.
+fn two_routes_at_one_origin(case: &str, proxy: &warning::Proxy) -> Watched {
     let earlier = std::env::temp_dir().join(format!(
-        "crucible-whole-screen-{}-warning-two-home",
+        "crucible-whole-screen-{}-{case}-home",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&earlier);
@@ -2866,8 +2931,8 @@ fn a_send_two_routes_hold_asks_about_each_before_it_goes() {
         "\"baseUrl\": \"https://api.kimi.com/coding/v1\"}}\n",
         "}\n"
     );
-    let mut window = Watched::launched(
-        "warning-two",
+    let window = Watched::launched(
+        case,
         80,
         30,
         &watched::Launch {
@@ -2881,28 +2946,7 @@ fn a_send_two_routes_hold_asks_about_each_before_it_goes() {
         },
     );
     let _ = std::fs::remove_dir_all(&earlier);
-
-    window.types_until("hello\r", "Use it anyway");
-    let first = window.picture();
-    window.types("\r");
-    let reached = proxy.reached(1);
-    let second = window.picture();
-    assert!(second.contains("Use it anyway"), "{first}\n{second}");
-    assert_ne!(first, second);
-    assert_eq!(reached, Vec::<String>::new(), "sent before the second yes");
-
-    window.types("\r");
-    let reached = proxy.reached(1);
-    assert!(
-        !reached.is_empty() && reached.iter().all(|host| host == "api.kimi.com:443"),
-        "{reached:?} {}",
-        window.picture()
-    );
-    let said = warning::said(&window);
-    assert!(
-        said.contains("key:moonshot") && said.contains("subscription:moonshot"),
-        "{said}"
-    );
+    window
 }
 
 #[test]
