@@ -113,13 +113,27 @@ fn only_the_models_the_vendor_lists_have_a_fast_form() {
 }
 
 #[test]
-fn the_answer_says_the_tier_it_was_served_at() {
-    for (tier, served) in [
-        ("priority", Served::Fast),
-        ("standard", Served::Standard),
-        ("", Served::Unsaid),
+fn the_tier_served_is_the_one_the_response_header_says() {
+    // The vendor says to watch the header for a request served at standard;
+    // the body says the other tier here, so only the header gives the answer.
+    for (header, body, served) in [
+        (Some("priority"), "standard", Served::Fast),
+        (Some("standard"), "priority", Served::Standard),
+        (None, "priority", Served::Unsaid),
     ] {
-        let (provider, _) = google(VENDOR, 200, &answered(tier));
+        let replay = Replay::new(200, answered(body));
+        let replay = match header {
+            Some(tier) => replay.tiered(tier),
+            None => replay,
+        };
+        let provider = Google::at(
+            VENDOR,
+            Box::new(HeaderKey::new(
+                ApiKey::new("synthetic-fast-key"),
+                Header::bare("x-goog-api-key"),
+            )),
+            Box::new(Arc::new(replay)),
+        );
         let cancel = Cancel::new();
         let mut stream = crucible_runtime::answered!(provider.stream_at(
             asking("gemini-3.8-flash"),
@@ -130,7 +144,7 @@ fn the_answer_says_the_tier_it_was_served_at() {
         while let Some(delta) = crucible_runtime::answered!(stream.next()) {
             delta.unwrap();
         }
-        assert_eq!(stream.served(), served, "{tier:?}");
+        assert_eq!(stream.served(), served, "{header:?}");
     }
 }
 

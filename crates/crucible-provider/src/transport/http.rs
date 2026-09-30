@@ -19,7 +19,7 @@ use crucible_http::{ConnectError, Http, HttpError};
 use crucible_runtime::{BoxFuture, Cancel};
 use hyper::Method;
 
-use super::{PostResponse, Transport, TransportError};
+use super::{PostResponse, SERVED_TIER, Tier, Transport, TransportError};
 use crate::Endpoint;
 
 /// The longest any one post takes from entering the shared client to its
@@ -86,8 +86,16 @@ impl HttpTurns {
             return Err(TransportError::Cancelled);
         }
 
-        sent.map(|response| PostResponse::network(response.status().as_u16(), response.into_body()))
-            .map_err(|problem| request_problem(&problem))
+        sent.map(|response| {
+            let tier = Tier::read(
+                response
+                    .headers()
+                    .get(SERVED_TIER)
+                    .map(|value| value.to_str().unwrap_or_default()),
+            );
+            PostResponse::network(response.status().as_u16(), response.into_body()).with_tier(tier)
+        })
+        .map_err(|problem| request_problem(&problem))
     }
 }
 

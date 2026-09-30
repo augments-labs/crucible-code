@@ -1,15 +1,17 @@
 //! Google's fast form: the Interactions field `service_tier: "priority"`, on
-//! the models the vendor lists for it, and how a completed interaction says
-//! the tier it was served at.
+//! the models the vendor lists for it, and the tier the response header
+//! `x-gemini-service-tier` says served it.
 //!
 //! Read on 2026-09-30 from the vendor's priority inference pages and the
 //! Interactions API reference. No page says what a refused priority request
 //! returns, so no refusal is taken for a refusal of fast: whatever comes back
 //! is reported as it would be at standard speed. Congestion does not refuse;
-//! it serves the request at the standard tier, which the answer then says.
+//! it serves the request at the standard tier, which the vendor says to watch
+//! the header for.
 
 use crucible_models::{Cost, FastForm, Served};
-use serde_json::Value;
+
+use crate::transport::Tier;
 
 /// The value a fast request asks for.
 pub(super) const TIER: &str = "priority";
@@ -37,14 +39,12 @@ pub(super) fn form(vendor: bool, model: &str) -> FastForm {
     }
 }
 
-/// The tier a completed interaction says it was served at, where it says.
-pub(super) fn served(payload: &Value) -> Option<Served> {
-    let tier = payload
-        .pointer("/interaction/service_tier")
-        .and_then(Value::as_str)?;
-    Some(if tier == TIER {
-        Served::Fast
-    } else {
-        Served::Standard
-    })
+/// What the response's `x-gemini-service-tier` header says served the
+/// request, where it carried one.
+pub(super) const fn served(tier: Tier) -> Served {
+    match tier {
+        Tier::Priority => Served::Fast,
+        Tier::Other => Served::Standard,
+        Tier::Unsaid => Served::Unsaid,
+    }
 }

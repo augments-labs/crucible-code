@@ -195,6 +195,7 @@ impl Provider for Google {
                     error => error,
                 });
             }
+            let wire = wire.serving(fast::served(response.tier()));
             Ok(Box::new(crate::stream::Response::with_wire(
                 response.into_reader(),
                 cancel.clone(),

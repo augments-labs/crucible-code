@@ -73,10 +73,43 @@ impl TransportError {
     }
 }
 
+/// The response header a vendor says the tier that served a request in: the
+/// one header a provider reads, kept where it arrives. Every other header is
+/// left where it arrived.
+pub(crate) const SERVED_TIER: &str = "x-gemini-service-tier";
+
+/// What a response's [`SERVED_TIER`] header said.
+///
+/// A byte rather than the words: it sits in the room the status leaves, so a
+/// response of every other provider is no larger for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tier {
+    /// No such header.
+    Unsaid,
+    /// `priority`, the tier a fast request asks for.
+    Priority,
+    /// Any other tier.
+    Other,
+}
+
+impl Tier {
+    /// What a [`SERVED_TIER`] header of `value` said, or none where there is
+    /// no such header.
+    pub(crate) fn read(value: Option<&str>) -> Self {
+        match value {
+            None => Self::Unsaid,
+            Some("priority") => Self::Priority,
+            Some(_) => Self::Other,
+        }
+    }
+}
+
 /// What an asynchronous post produced.
 pub struct PostResponse {
     status: u16,
     body: PostBody,
+    /// What the [`SERVED_TIER`] header said.
+    tier: Tier,
 }
 
 /// The body behind a [`PostResponse`].
@@ -95,6 +128,7 @@ impl PostResponse {
         Self {
             status,
             body: PostBody::Reader(Box::new(body)),
+            tier: Tier::Unsaid,
         }
     }
 
@@ -103,7 +137,18 @@ impl PostResponse {
         Self {
             status,
             body: PostBody::Network(body),
+            tier: Tier::Unsaid,
         }
+    }
+
+    /// The same response, its [`SERVED_TIER`] header having said `tier`.
+    pub(crate) fn with_tier(self, tier: Tier) -> Self {
+        Self { tier, ..self }
+    }
+
+    /// What its [`SERVED_TIER`] header said.
+    pub(crate) const fn tier(&self) -> Tier {
+        self.tier
     }
 
     /// The response status. Every status is an answer to the protocol reading it.
@@ -139,6 +184,7 @@ impl fmt::Debug for PostResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PostResponse")
             .field("status", &self.status)
+            .field("tier", &self.tier)
             .finish_non_exhaustive()
     }
 }
@@ -308,6 +354,7 @@ pub trait Transport: Send + Sync + fmt::Debug {
 pub(crate) struct Replay {
     status: u16,
     body: String,
+    tier: Option<String>,
     sent: std::sync::Mutex<Vec<Sent>>,
 }
 
@@ -327,7 +374,16 @@ impl Replay {
         Self {
             status,
             body: body.into(),
+            tier: None,
             sent: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The same, answering with `tier` in the [`SERVED_TIER`] header.
+    pub(crate) fn tiered(self, tier: &str) -> Self {
+        Self {
+            tier: Some(tier.to_owned()),
+            ..self
         }
     }
 
@@ -399,7 +455,8 @@ impl Transport for Replay {
             Ok(PostResponse::recorded(
                 self.status,
                 std::io::Cursor::new(self.body.clone().into_bytes()),
-            ))
+            )
+            .with_tier(Tier::read(self.tier.as_deref())))
         })
     }
 }

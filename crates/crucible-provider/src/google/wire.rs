@@ -25,11 +25,16 @@ pub(crate) struct Interactions {
     completed: bool,
     done: bool,
     budget: Budget,
-    /// The tier the completed interaction said it was served at.
+    /// The tier the response header said served the request.
     served: crucible_models::Served,
 }
 
 impl Interactions {
+    /// The same stream, served at `served`, as the response header said.
+    pub(crate) fn serving(self, served: crucible_models::Served) -> Self {
+        Self { served, ..self }
+    }
+
     pub(crate) fn new(model: &str, scope: ContinuationScope) -> Result<Self, ProviderError> {
         Ok(Self {
             state: Some(
@@ -106,9 +111,6 @@ impl Interactions {
     }
 
     fn completed(&mut self, payload: &Value) -> Result<Vec<Delta>, ProviderError> {
-        if let Some(served) = super::fast::served(payload) {
-            self.served = served;
-        }
         if !self.steps.is_empty() || self.next != self.started {
             return Err(protocol("interaction completed with unfinished steps"));
         }
