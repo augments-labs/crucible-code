@@ -795,3 +795,53 @@ fn a_start_that_cannot_write_goes_on_with_the_bare_one_and_leaves_the_file() {
         Some(Kind::Key)
     );
 }
+
+#[test]
+fn what_a_provider_holds_is_read_by_name_and_kind_alone() {
+    let scratch = Scratch::new("holding");
+    let store = scratch.holding(TWO_HELD).naming(named());
+    store
+        .keep("openai", "fabricated-openai-key")
+        .expect("a writable store");
+
+    let holding = store.holding().expect("a store that reads whole");
+
+    assert_eq!(
+        holding,
+        vec![
+            Held {
+                kind: Kind::Key,
+                name: "moonshot".to_owned(),
+            },
+            Held {
+                kind: Kind::Key,
+                name: "openai".to_owned(),
+            },
+        ]
+    );
+    let said = format!("{holding:?}");
+    assert!(!said.contains("fabricated"), "{said}");
+}
+
+#[test]
+fn a_store_that_cannot_be_read_whole_is_said_before_anything_is_marked() {
+    let unreadable = Scratch::new("holding-unreadable");
+    let store = unreadable.holding("not json {").naming(named());
+    assert!(
+        matches!(store.holding(), Err(AuthError::Unreadable { .. })),
+        "{:?}",
+        store.holding()
+    );
+
+    let large = Scratch::new("holding-large");
+    let store = large.holding(&"x".repeat(MAX_STORE + 1)).naming(named());
+    assert!(
+        matches!(store.holding(), Err(AuthError::TooLarge { .. })),
+        "{:?}",
+        store.holding()
+    );
+
+    let nothing = Scratch::new("holding-nothing");
+    let store = Store::in_home(nothing.home()).naming(named());
+    assert_eq!(store.holding().ok(), Some(Vec::new()));
+}

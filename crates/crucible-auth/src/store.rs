@@ -174,6 +174,31 @@ impl Store {
         keys
     }
 
+    /// The credential each provider this build names holds, by its map and
+    /// name: what a screen marking rows needs, and no key or token.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] where the store is there and cannot be read whole: the
+    /// store a write would refuse to replace, said before anything is asked.
+    pub fn holding(&self) -> Result<Vec<Held>, AuthError> {
+        if self.secure_existing()?.is_none() {
+            return Ok(Vec::new());
+        }
+        let Some(text) = self.read_text()? else {
+            return Ok(Vec::new());
+        };
+        let document = document::parse(&text).map_err(|_| AuthError::Unreadable {
+            path: self.path.clone(),
+        })?;
+        let stored = StoredCredentials::from_document(self.clone(), document);
+        Ok(self
+            .names
+            .providers()
+            .filter_map(|provider| stored.held(provider))
+            .collect())
+    }
+
     /// Writes `key` down as `provider`'s, replacing one already there.
     ///
     /// # Errors

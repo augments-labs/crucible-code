@@ -42,6 +42,11 @@ impl Names {
         }
     }
 
+    /// Every provider it was told a name of, in the order of their names.
+    pub(super) fn providers(&self) -> impl Iterator<Item = &str> {
+        self.names.keys().map(String::as_str)
+    }
+
     /// Every name this build writes `provider`'s credential under; the bare
     /// name alone where it was told none.
     ///
