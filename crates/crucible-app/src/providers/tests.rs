@@ -1314,3 +1314,57 @@ fn serving_again_tells_the_consent_what_the_provider_is_served_on() {
 
     assert_eq!(consent.held(&model), None);
 }
+
+/// What the consent reads a provider again through: from the store as it is,
+/// and, where the store could not be read at all, nothing settled, so the
+/// provider stays as it was to be read again.
+#[test]
+fn a_provider_is_read_again_from_the_store_and_an_unreadable_store_settles_nothing() {
+    use crate::content_use::{Reading, Serving};
+
+    let sample = Sample::new("resolving");
+    let settings = sample.user("{}");
+    let resolve = |store| {
+        resolving(
+            settings.clone(),
+            Subscriptions::production(&crucible_auth::Renewals::new()),
+            &catalogue(),
+            std::sync::Arc::new(|_: &str| None),
+            store,
+        )
+    };
+
+    let store = sample.store();
+    store.keep("google", "fabricated-google-key").unwrap();
+    assert_eq!(
+        resolve(store.clone())("google"),
+        Reading::Served(Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }))
+    );
+    store.forget("google").unwrap();
+    assert_eq!(resolve(store)("google"), Reading::Served(None));
+
+    let unreadable = Sample::new("resolving-unreadable");
+    std::fs::create_dir_all(unreadable.home().join("auth.json")).unwrap();
+    assert_eq!(resolve(unreadable.store())("google"), Reading::Unread);
+
+    // Read in full, with a warning beside it that its permissions were
+    // tightened: what it holds is known.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let open = Sample::new("resolving-open");
+        let credentials = open.holding(
+            r#"{"version":2,"keys":{"google":"fabricated-google-key"},"subscriptions":{}}"#,
+        );
+        drop(credentials);
+        let file = open.home().join("auth.json");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            resolve(open.store())("google"),
+            Reading::Served(Some(_))
+        ));
+    }
+}

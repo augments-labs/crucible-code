@@ -673,6 +673,51 @@ fn a_provider_gone_stale_still_holds_its_origin_until_read_again() {
     assert_eq!(consent.held(&origin(base)).as_deref(), Some("key:google"));
 }
 
+/// A provider nobody sends through, whose sign-in was taken out, is read
+/// again before a send by another provider at the same origin is asked
+/// about: a claim for a sign-in that is gone holds nothing once the store says
+/// so, and the send goes on its own route's yes.
+#[test]
+fn a_sign_in_taken_out_holds_no_other_providers_send_once_read_again() {
+    let sample = Sample::new("letting-go-other");
+    sample.user(r#"{"contentUse": {"accepted": ["key:moonshot", "subscription:moonshot"]}}"#);
+    sample.holding(
+        r#"{"version":2,"keys":{},"subscriptions":{"moonshot":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#,
+    );
+    let consent = Consent::new(Routes::production());
+    consent.recorded([
+        "key:moonshot".to_owned(),
+        "subscription:moonshot".to_owned(),
+    ]);
+    let base = "https://api.kimi.com/coding/v1";
+    consent.served(
+        "anthropic",
+        Some(Serving {
+            route: recognised(base).map(str::to_owned),
+            at: Origin::of(base),
+        }),
+    );
+    consent.served("moonshot", Some(serving("subscription:moonshot")));
+    consent.resolves(Box::new(|name| match name {
+        "anthropic" => Reading::Served(Some(Serving {
+            route: recognised("https://api.kimi.com/coding/v1").map(str::to_owned),
+            at: Origin::of("https://api.kimi.com/coding/v1"),
+        })),
+        _ => Reading::Served(None),
+    }));
+    let store = sample.store().letting_go(letting_go(
+        &consent,
+        sample.user_file(),
+        Rows::production(),
+        &Settings::default(),
+    ));
+
+    store.forget("moonshot").unwrap();
+
+    assert_eq!(consent.unanswered("anthropic", "claude-sonnet-5"), None);
+    assert_eq!(consent.held(&origin(base)), None);
+}
+
 /// A store that cannot be read when a stale provider is asked about leaves
 /// it stale, still claiming what it was last served on, and the next question
 /// reads it again.

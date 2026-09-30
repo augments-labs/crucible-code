@@ -2877,14 +2877,18 @@ fn a_choice_two_routes_hold_asks_about_each_before_it_is_taken() {
     window.types_until("\r", "Takes this choice");
     let first = window.picture();
     window.types("\r");
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let second = window.picture();
-    assert!(second.contains("Takes this choice"), "{first}\n{second}");
-    assert_ne!(first, second);
+    let second = within(|| {
+        let now = window.picture();
+        (now != first && now.contains("Takes this choice")).then_some(now)
+    });
+    assert!(second.is_some(), "{first}\n{}", window.picture());
 
     window.types("\r");
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let said = warning::said(&window);
+    let said = within(|| {
+        let said = warning::said(&window);
+        (said.contains("key:moonshot") && said.contains("subscription:moonshot")).then_some(said)
+    })
+    .unwrap_or_else(|| warning::said(&window));
     assert!(
         said.contains("key:moonshot") && said.contains("subscription:moonshot"),
         "{said}\n{}",
@@ -2900,6 +2904,20 @@ fn a_choice_two_routes_hold_asks_about_each_before_it_is_taken() {
         Vec::<String>::new(),
         "a choice sends nothing"
     );
+}
+
+/// What `seen` answers within ten seconds of asking, polled, or `None`.
+fn within<T>(mut seen: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(seen) = seen() {
+            return Some(seen);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 /// crucible over a stored Kimi Code kimi.com sign-in and Anthropic answering

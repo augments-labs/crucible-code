@@ -842,7 +842,7 @@ pub fn resolving(
         let stored = store.read();
         // A store that could not be read says nothing about what is left in
         // it: the provider stays as it was, to be read again.
-        if stored.trouble().is_some() {
+        if stored.unread() {
             return Reading::Unread;
         }
         Reading::Served(startup::served_on(

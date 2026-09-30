@@ -485,8 +485,8 @@ impl Consent {
 
     /// Reads again, through `resolver`, what a provider is served on once
     /// its credential was taken out. The first resolver given is the one
-    /// kept; with none, such a provider is served on nothing until it is set
-    /// up again.
+    /// kept; with none, such a provider keeps what it was last served on
+    /// until it is set up again.
     pub fn resolves(&self, resolver: Resolver) {
         let _ = self.resolving.set(Resolving(resolver));
     }
@@ -535,21 +535,27 @@ impl Consent {
     /// with no yes: the model's own where the model is warned, then the route
     /// that holds an origin the provider is served at, its own or another
     /// provider's there. `None` where nothing is to be asked, and for a
-    /// provider served on nothing, whatever its model. A provider whose
+    /// provider served on nothing, whatever its model. Every provider whose
     /// credential was taken out since it was resolved is read again first.
     #[must_use]
     pub fn unanswered(&self, provider: &str, model: &str) -> Option<Warned> {
-        let unsettled = self
-            .state
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .stale
-            .contains(provider);
-        if unsettled
-            && let Some(Resolving(resolve)) = self.resolving.get()
-            && let Reading::Served(now) = resolve(provider)
-        {
-            self.served(provider, now);
+        // Every provider gone stale, not only this one: a claim kept for a
+        // provider nobody sends through would otherwise hold an origin it
+        // shares with this one on the strength of a credential that is gone.
+        if let Some(Resolving(resolve)) = self.resolving.get() {
+            let unsettled: Vec<String> = self
+                .state
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .stale
+                .iter()
+                .cloned()
+                .collect();
+            for one in unsettled {
+                if let Reading::Served(now) = resolve(&one) {
+                    self.served(&one, now);
+                }
+            }
         }
         let served = {
             let state = self.state.read().unwrap_or_else(PoisonError::into_inner);

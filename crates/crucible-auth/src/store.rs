@@ -590,6 +590,9 @@ pub struct StoredCredentials {
     store: Option<Store>,
     /// What reading could not do, in a sentence for the user.
     trouble: Option<Box<str>>,
+    /// Whether the store could not be read at all, so what it holds is not
+    /// known: not an empty store, nor one read in full with a warning.
+    unread: bool,
 }
 
 impl StoredCredentials {
@@ -614,6 +617,7 @@ impl StoredCredentials {
             subscriptions: document.subscriptions,
             providers,
             trouble: None,
+            unread: false,
             store: Some(store),
         }
     }
@@ -622,6 +626,7 @@ impl StoredCredentials {
     fn nothing(store: Store, said: &str) -> Self {
         Self {
             trouble: Some(said.into()),
+            unread: true,
             store: Some(store),
             ..Self::default()
         }
@@ -682,6 +687,14 @@ impl StoredCredentials {
     #[must_use]
     pub fn trouble(&self) -> Option<&str> {
         self.trouble.as_deref()
+    }
+
+    /// Whether the store could not be read at all, so that holding nothing
+    /// here says nothing about what it holds. A store read in full whose
+    /// permissions had to be tightened is read.
+    #[must_use]
+    pub fn unread(&self) -> bool {
+        self.unread
     }
 
     /// The one credential `provider` is served by, and the name it is under.
