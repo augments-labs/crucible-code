@@ -257,11 +257,14 @@ pub fn model_route(provider: &str, model: &str) -> String {
 ///
 /// Recognised when its scheme is the documented address's, its host is that
 /// address's without regard to case, to a trailing dot or to the default port
-/// written out, and its path, as a server would read it, is that address's
-/// path or lies under it by whole segments. A path a server could read two
-/// ways is recognised where either reading is documented: whether a
-/// server decodes escapes before or after it resolves `.` and `..`, the route
-/// is asked about.
+/// written out, and its path, as some server could read it, is that
+/// address's path or lies under it by whole segments. Servers differ in
+/// whether they merge adjacent slashes, and in whether they decode escapes
+/// before or after resolving `.` and `..` and read a decoded `/` as a
+/// separator; each of those readings is taken, and any one of them being
+/// documented is enough for the route to be asked about. A reading is only
+/// ever added, never taken away, so a spelling one of them recognises stays
+/// recognised.
 #[must_use]
 pub fn recognised(base_url: &str) -> Option<&'static str> {
     let origin = Origin::of(base_url)?;
@@ -280,34 +283,52 @@ pub fn recognised(base_url: &str) -> Option<&'static str> {
         .map(|one| one.route)
 }
 
-/// The ways a server can read `url`'s path, each as its named segments: dot
-/// segments resolved over the path as written, with empty segments kept
-/// while they are (`/v1//../x` is `/v1/x`), then each segment
-/// percent-decoded; and every segment decoded first, a decoded `/` a
-/// separator, then resolved. Empty segments are left out of both once
-/// resolved, so a trailing slash says nothing.
-fn readings(url: &str) -> [Vec<String>; 2] {
+/// The ways a server can read `url`'s path, each as its named segments.
+///
+/// With empty segments kept while `..` is resolved (`/v1//../x` is `/v1/x`),
+/// and with adjacent slashes merged first (`/x//../v1` is `/v1`); and for
+/// each, three orders: resolved as written then decoded, each segment decoded
+/// whole then resolved, and decoded with a decoded `/` a separator then
+/// resolved. Empty segments are left out once resolved, so a trailing slash
+/// says nothing.
+fn readings(url: &str) -> Vec<Vec<String>> {
     let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
     let path = after_scheme
         .find('/')
         .and_then(|at| after_scheme.get(at..))
         .unwrap_or_default();
     let path = path.split(['?', '#']).next().unwrap_or_default();
-    let written = resolved(path.split('/').map(str::to_owned))
+    let written: Vec<String> = path.split('/').map(str::to_owned).collect();
+    let whole: Vec<String> = written.iter().map(|segment| decoded(segment)).collect();
+    let split: Vec<String> = whole
         .iter()
-        .map(|segment| decoded(segment))
-        .filter(|segment| !segment.is_empty())
+        .flat_map(|segment| segment.split('/').map(str::to_owned).collect::<Vec<_>>())
         .collect();
-    let decoded_first = resolved(path.split('/').flat_map(|segment| {
-        decoded(segment)
-            .split('/')
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    }))
-    .into_iter()
-    .filter(|segment| !segment.is_empty())
-    .collect();
-    [written, decoded_first]
+    let named = |segments: Vec<String>| -> Vec<String> {
+        segments
+            .into_iter()
+            .filter(|segment| !segment.is_empty())
+            .collect()
+    };
+    let mut readings = Vec::with_capacity(6);
+    for merged in [false, true] {
+        let kept = |segments: &[String]| -> Vec<String> {
+            segments
+                .iter()
+                .filter(|segment| !merged || !segment.is_empty())
+                .cloned()
+                .collect()
+        };
+        readings.push(named(
+            resolved(kept(&written).into_iter())
+                .iter()
+                .map(|segment| decoded(segment))
+                .collect(),
+        ));
+        readings.push(named(resolved(kept(&whole).into_iter())));
+        readings.push(named(resolved(kept(&split).into_iter())));
+    }
+    readings
 }
 
 /// `segments` with `.` and `..` resolved as RFC 3986 resolves them: a `.`

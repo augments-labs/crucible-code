@@ -732,6 +732,33 @@ fn a_documented_path_spelled_another_way_is_recognised() {
             "https://api.moonshot.ai/v1%2Fchat%2Fcompletions",
             "api.moonshot.ai",
         ),
+        // A server that merges adjacent slashes before it resolves reads
+        // `/x//../v1` as `/v1`.
+        (
+            "https://api.moonshot.ai/x//../v1/chat/completions",
+            "api.moonshot.ai",
+        ),
+        ("https://api.kimi.com/x//../coding/v1", "key:moonshot"),
+        (
+            "https://generativelanguage.googleapis.com/x//../v1beta/models/y",
+            "key:google",
+        ),
+        ("https://api.moonshot.ai/x//%2E%2E/v1", "api.moonshot.ai"),
+        // A server that decodes `%2E` but keeps `%2F` inside its segment.
+        (
+            "https://api.moonshot.ai/a%2Fb/%2E%2E/v1/chat/completions",
+            "api.moonshot.ai",
+        ),
+        (
+            "https://api.kimi.com/x%2Fy/%2E%2E/coding/v1",
+            "key:moonshot",
+        ),
+        (
+            "https://generativelanguage.googleapis.com/a%2Fb/%2e%2e/v1beta",
+            "key:google",
+        ),
+        ("https://api.kimi.com/x%2F..%2Fcoding/v1", "key:moonshot"),
+        ("https://api.kimi.com//coding/v1", "key:moonshot"),
     ] {
         assert_eq!(recognised(spelled), Some(route), "{spelled}");
     }
@@ -740,6 +767,10 @@ fn a_documented_path_spelled_another_way_is_recognised() {
         "https://api.moonshot.ai/v1/../v2",
         "https://api.moonshot.ai/%2E%2E/v1x",
         "https://generativelanguage.googleapis.com/v1alpha",
+        "https://api.moonshot.ai/v1/..",
+        "https://api.kimi.com/coding/v1/../../x",
+        "https://api.kimi.com/coding%2Fv1/%2E%2E/x",
+        "https://api.kimi.com/Coding/V1",
     ] {
         assert_eq!(recognised(missed), None, "{missed}");
     }
