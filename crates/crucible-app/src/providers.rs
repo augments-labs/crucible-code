@@ -19,7 +19,7 @@ use crucible_registry::{
 };
 
 use crate::AppError;
-use crate::content_use::Consent;
+use crate::content_use::{Consent, Reading};
 use crate::models;
 use crate::startup::{self, served};
 use crate::subscription::Subscriptions;
@@ -836,9 +836,16 @@ pub fn resolving(
         })
         .collect();
     Box::new(move |name| {
-        let variable = variables.get(name)?;
+        let Some(variable) = variables.get(name) else {
+            return Reading::Served(None);
+        };
         let stored = store.read();
-        startup::served_on(
+        // A store that could not be read says nothing about what is left in
+        // it: the provider stays as it was, to be read again.
+        if stored.trouble().is_some() {
+            return Reading::Unread;
+        }
+        Reading::Served(startup::served_on(
             name,
             variable,
             startup::ProviderAuth {
@@ -847,7 +854,7 @@ pub fn resolving(
                 stored: &stored,
                 subscriptions: &subscriptions,
             },
-        )
+        ))
     })
 }
 

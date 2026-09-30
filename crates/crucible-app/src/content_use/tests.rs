@@ -606,7 +606,9 @@ fn a_credential_taken_out_has_its_provider_read_again_when_next_asked() {
         ("openai", serving("key:openai")),
         ("google", serving("key:google")),
     ]);
-    consent.resolves(Box::new(move |name| left.get(name).cloned()));
+    consent.resolves(Box::new(move |name| {
+        Reading::Served(left.get(name).cloned())
+    }));
     let store = sample.store().letting_go(letting_go(
         &consent,
         sample.user_file(),
@@ -634,6 +636,83 @@ fn a_credential_taken_out_has_its_provider_read_again_when_next_asked() {
             .map(|one| one.route),
         Some("key:google")
     );
+}
+
+/// A provider whose credential went keeps claiming its origin on the route
+/// it was served on until it is read again, and that route's yes went with
+/// the credential: another provider's claim there, on an address crucible
+/// does not know, does not let the origin through in between.
+#[test]
+fn a_provider_gone_stale_still_holds_its_origin_until_read_again() {
+    let sample = Sample::new("letting-go-kept");
+    sample.user(r#"{"contentUse": {"accepted": ["key:google"]}}"#);
+    let consent = Consent::new(Routes::production());
+    consent.recorded(["key:google".to_owned()]);
+    consent.served("google", Some(serving("key:google")));
+    let base = "https://generativelanguage.googleapis.com/elsewhere";
+    consent.served(
+        "another",
+        Some(Serving {
+            route: None,
+            at: Origin::of(base),
+        }),
+    );
+    let store = sample.store().letting_go(letting_go(
+        &consent,
+        sample.user_file(),
+        Rows::production(),
+        &Settings::default(),
+    ));
+    sample
+        .store()
+        .keep("google", "fabricated-google-key")
+        .unwrap();
+
+    store.forget("google").unwrap();
+
+    assert_eq!(consent.held(&origin(base)).as_deref(), Some("key:google"));
+}
+
+/// A store that cannot be read when a stale provider is asked about leaves
+/// it stale, still claiming what it was last served on, and the next question
+/// reads it again.
+#[test]
+fn a_provider_the_store_cannot_be_read_for_stays_stale_until_it_can() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let sample = Sample::new("letting-go-unread");
+    sample.user("{}");
+    let consent = Consent::new(Routes::production());
+    consent.served("google", Some(serving("key:google")));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&reads);
+    consent.resolves(Box::new(move |_| {
+        if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+            Reading::Unread
+        } else {
+            Reading::Served(None)
+        }
+    }));
+    let store = sample.store().letting_go(letting_go(
+        &consent,
+        sample.user_file(),
+        Rows::production(),
+        &Settings::default(),
+    ));
+    sample
+        .store()
+        .keep("google", "fabricated-google-key")
+        .unwrap();
+    store.forget("google").unwrap();
+
+    let unread = consent.unanswered("google", "gemini-3.8-flash");
+    let read = consent.unanswered("google", "gemini-3.8-flash");
+    let settled = consent.unanswered("google", "gemini-3.8-flash");
+
+    assert_eq!(unread.map(|one| one.route), Some("key:google"));
+    assert_eq!(read, None);
+    assert_eq!(settled, None);
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
 }
 
 /// A yes given at `/login` waits for the credential it was given for to be

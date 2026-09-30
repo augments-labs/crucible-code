@@ -418,7 +418,18 @@ pub struct Serving {
 /// What a provider is served on, read again as things are when it is asked:
 /// the answer for a provider whose credential was just taken out, which may
 /// still be served by another credential, or by nothing.
-pub type Resolver = Box<dyn Fn(&str) -> Option<Serving> + Send + Sync>;
+pub type Resolver = Box<dyn Fn(&str) -> Reading + Send + Sync>;
+
+/// What a [`Resolver`] read of a provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reading {
+    /// What it is served on now, or `None` for nothing.
+    Served(Option<Serving>),
+    /// What it is served on could not be read, the store being unreadable:
+    /// it stays stale, what it was last served on still claims its origin,
+    /// and the next question reads it again.
+    Unread,
+}
 
 /// The [`Resolver`] a consent was handed, which has nothing to show.
 struct Resolving(Resolver);
@@ -534,8 +545,11 @@ impl Consent {
             .unwrap_or_else(PoisonError::into_inner)
             .stale
             .contains(provider);
-        if unsettled && let Some(Resolving(resolve)) = self.resolving.get() {
-            self.served(provider, resolve(provider));
+        if unsettled
+            && let Some(Resolving(resolve)) = self.resolving.get()
+            && let Reading::Served(now) = resolve(provider)
+        {
+            self.served(provider, now);
         }
         let served = {
             let state = self.state.read().unwrap_or_else(PoisonError::into_inner);
@@ -643,11 +657,12 @@ impl Consent {
         state.serving = serving;
     }
 
-    /// Takes what `provider` was served on as gone stale: nothing is claimed
-    /// for it until it is read again, which the next question about it does.
+    /// Takes what `provider` was served on as gone stale, to be read again
+    /// by the next question about it. Until then it still claims its origin
+    /// on the route it was served on, whose yes went with the credential, so
+    /// the origin is held rather than decided by another provider's claim.
     fn unsettle(&self, provider: &str) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
-        state.serving.remove(provider);
         state.stale.insert(provider.to_owned());
     }
 }
@@ -704,8 +719,10 @@ impl Hold for Consent {
 /// What a store asks before a write takes a credential out: the yes of the
 /// row it was given on, of every model route of its provider, and of the
 /// route its provider's `baseUrl` answers for, taken out of the user's own
-/// file `file` and then out of `consent`, which also forgets what that
-/// provider was served on.
+/// file `file` and then out of `consent`, except a yes a `/login` gave and
+/// waits to write with this very credential. What that provider was served
+/// on is taken as stale, still holding its origin, and read again the next
+/// time it is asked about.
 ///
 /// Changing or removing a `baseUrl` moves no yes; the address is read from
 /// `settings` once, here, as the run was started with it.
