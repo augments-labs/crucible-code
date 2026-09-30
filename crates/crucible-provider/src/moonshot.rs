@@ -92,13 +92,10 @@ impl Dialect for Kimi {
         wire::usage(payload)
     }
 
-    fn fast(model: &str) -> crucible_models::FastForm {
+    fn own_fast(model: &str) -> Option<crucible_models::Cost> {
         // A fast model of its own rather than a switch: nothing in the request
         // asks for it but its id, and it has no standard form to go back to.
-        match model {
-            "kimi-for-coding-highspeed" => crucible_models::FastForm::Own(HIGHSPEED),
-            _ => crucible_models::FastForm::None,
-        }
+        (model == "kimi-for-coding-highspeed").then_some(HIGHSPEED)
     }
 
     fn prompt_cache(model: &str) -> PromptCacheCapabilities {

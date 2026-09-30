@@ -28,8 +28,8 @@ use std::marker::PhantomData;
 
 use crucible_credentials::{Credential, Outgoing};
 use crucible_models::{
-    Delta, DeltaStream, Effort, FastForm, PromptCacheCapabilities, PromptCacheRoute, Provider,
-    ProviderError, Request,
+    Cost, Delta, DeltaStream, Effort, FastForm, PromptCacheCapabilities, PromptCacheRoute,
+    Provider, ProviderError, Request,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{CredentialScopeId, Modalities, PromptCacheEncoding};
@@ -84,12 +84,13 @@ pub trait Dialect: Send + Sync + 'static {
     /// addresses.
     fn prompt_cache(model: &str) -> PromptCacheCapabilities;
 
-    /// How `model` is asked to answer fast, at one of the vendor's own
-    /// addresses. None, by default: the answer of a vendor that serves no
-    /// fast form on this wire.
-    fn fast(model: &str) -> FastForm {
+    /// What `model` costs where it is itself a fast model, with no standard
+    /// form to switch to. None, by default. Only such a model is named here:
+    /// `Chat<D>` writes no field that asks for fast, so a form the request
+    /// would have to carry cannot be declared, and none is offered unsent.
+    fn own_fast(model: &str) -> Option<Cost> {
         let _ = model;
-        FastForm::None
+        None
     }
 }
 
@@ -118,7 +119,7 @@ impl<D: Dialect> Chat<D> {
     /// what a list of models says before any provider is set up.
     #[must_use]
     pub fn fast_at_vendor(model: &str) -> crucible_models::FastForm {
-        D::fast(model)
+        D::own_fast(model).map_or(FastForm::None, FastForm::Own)
     }
 
     /// A provider that authenticates with `credential`, sends over `transport`
@@ -204,7 +205,7 @@ impl<D: Dialect> Provider for Chat<D> {
 
     fn fast(&self, model: &str) -> FastForm {
         if self.vendor() {
-            D::fast(model)
+            Self::fast_at_vendor(model)
         } else {
             FastForm::None
         }
