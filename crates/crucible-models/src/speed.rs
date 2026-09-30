@@ -65,6 +65,8 @@ impl Served {
 pub struct Cost {
     /// What fast costs beside standard.
     pub price: &'static str,
+    /// How much faster the vendor says fast answers, where it says.
+    pub speed: Option<&'static str>,
     /// Who may use it, or when the vendor serves a fast request at standard
     /// speed, where the vendor says either.
     pub caveat: Option<&'static str>,

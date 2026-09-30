@@ -17,24 +17,37 @@ pub(super) const TIER: &str = "priority";
 /// What the vendor's fast mode guide says of a fast request with an API key.
 const DOWNGRADED: &str = "OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price.";
 
+/// How much faster the vendor's fast mode guide says a fast request is.
+const FASTER: &str = "up to 2.5x faster";
+
 /// What `Fast` costs with an API key, for the models priced at twice the
 /// standard rate.
 const TWICE: Cost = Cost {
     price: "2x the price",
+    speed: Some(FASTER),
     caveat: Some(DOWNGRADED),
 };
 
 /// What `Fast` costs with an API key for `gpt-5.5`.
 const TWO_AND_A_HALF: Cost = Cost {
     price: "2.5x the price",
+    speed: Some(FASTER),
     caveat: Some(DOWNGRADED),
 };
 
-/// What `Fast` costs under the `ChatGPT` sign-in. The speed page says nothing
-/// of a fast request served at standard speed.
+/// What `Fast` costs under the `ChatGPT` sign-in, for a model the speed page
+/// states no speed for. The page says nothing of a fast request served at
+/// standard speed.
 const PLAN: Cost = Cost {
     price: "2.5x your plan's usage; 2x purchased credits",
+    speed: None,
     caveat: None,
+};
+
+/// The same, for the GPT-5.6 models, whose speed the page states.
+const PLAN_STATED: Cost = Cost {
+    speed: Some("1.5x faster"),
+    ..PLAN
 };
 
 /// How `model` is asked to answer fast on `serving`, or on a configured
@@ -46,10 +59,10 @@ pub(super) fn form(serving: Option<Serving>, model: &str) -> FastForm {
             FastForm::Field(TWICE)
         }
         (Some(Serving::Api), "gpt-5.5") => FastForm::Field(TWO_AND_A_HALF),
-        (
-            Some(Serving::Subscription),
-            "gpt-6-astra" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna",
-        ) => FastForm::Field(PLAN),
+        (Some(Serving::Subscription), "gpt-6-astra") => FastForm::Field(PLAN),
+        (Some(Serving::Subscription), "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna") => {
+            FastForm::Field(PLAN_STATED)
+        }
         _ => FastForm::None,
     }
 }

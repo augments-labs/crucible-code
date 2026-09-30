@@ -327,7 +327,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "c59d04d0f7ad9917ceda0184aab4826ba90833a6f1008767227f9c66f22041ea"
+      "sha256": "7f0b9ca57fc66a61672f39c9f50bca2f52edafd0b95a3170acd656b65271efd4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_unicode_40.snap",
@@ -343,7 +343,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "7b6ebb38c200acbc004937ba561b3d2149776f189a27dd631a954db71a61b3af"
+      "sha256": "cfa9a15a0e93e7b52624fd4f4bfcf26f1d11fc32038b1989ee2274fda08fe325"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_api_key_login_40.snap",

@@ -18,6 +18,7 @@ const BETA: &str = "fast-mode-2026-02-01";
 /// who may use it.
 const PRICE: Cost = Cost {
     price: "$10 / $50 per million input / output tokens",
+    speed: Some("up to 2.5x higher output tokens per second"),
     caveat: Some("Fast mode is a research preview; Anthropic turns it on per organization."),
 };
 

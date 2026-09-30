@@ -117,6 +117,7 @@ impl DeltaStream for Answered {
 
 pub(super) const FIELD: FastForm = FastForm::Field(Cost {
     price: "2x the price",
+    speed: None,
     caveat: Some("OpenAI may serve a fast request at standard speed."),
 });
 
@@ -179,6 +180,7 @@ fn a_model_with_no_fast_form_is_told_so_and_asked_at_standard() {
 fn a_model_that_is_fast_of_its_own_points_at_the_others() {
     let own = FastForm::Own(Cost {
         price: "6x the speed for 3x the quota",
+        speed: None,
         caveat: None,
     });
     let (written, _) = fasting(Fastened::new(own), "/fast\n");
@@ -194,10 +196,9 @@ fn fast_turned_on_is_what_the_next_request_asks_at() {
     let (written, speeds) = fasting(Fastened::new(FIELD), "/fast on\nhello\n/fast off\nagain\n");
 
     assert!(written.contains("openai · gpt-6-sol · fast"), "{written}");
-    assert!(
-        written.contains("openai · gpt-6-sol · standard"),
-        "{written}"
-    );
+    // Standard is the label with no speed part, not a speed of its own.
+    assert!(written.contains("⎿ openai · gpt-6-sol,"), "{written}");
+    assert!(!written.contains("· standard"), "{written}");
     assert_eq!(speeds, [Speed::Fast, Speed::Standard]);
 }
 

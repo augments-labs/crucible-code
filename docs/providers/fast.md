@@ -22,7 +22,7 @@ it is then billed at the standard price.
   The standard price and speed
 
 › Fast
-  2x the price
+  2x the price · up to 2.5x faster
 
 enter to choose · esc to cancel
 ```
@@ -113,17 +113,18 @@ sent again. What counts as a refusal of fast:
 
 ## The fast forms
 
-Each price and caveat is the vendor's, as the panel shows it; each speed is the
-vendor's claim, where it makes one.
+Each price, caveat and speed is the vendor's, as the panel shows it: the speed
+beside the price under `Fast`, where the vendor states one.
 
 | Provider | Credential | Models | Price | Caveat | Speed | Source | Read |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | key | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | 2x the price | OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price. | "up to 2.5× faster speeds" | [OpenAI fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [OpenAI pricing](https://developers.openai.com/api/docs/pricing) | 30 Sep 2026 |
-| OpenAI | key | `gpt-5.5` | 2.5x the price | OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price. | "up to 2.5× faster speeds" | [OpenAI fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [OpenAI pricing](https://developers.openai.com/api/docs/pricing) | 30 Sep 2026 |
-| OpenAI | sign-in | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | 2.5x your plan's usage; 2x purchased credits | | "For GPT-5.6 and GPT-5.5, the speed increase is 1.5x." | [ChatGPT speed](https://learn.chatgpt.com/docs/agent-configuration/speed) | 30 Sep 2026 |
-| Anthropic | key | `claude-opus-5` | $10 / $50 per million input / output tokens | Fast mode is a research preview; Anthropic turns it on per organization. | "up to 2.5x higher output tokens per second" | [Anthropic fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) | 30 Sep 2026 |
+| OpenAI | key | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | 2x the price | OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price. | up to 2.5x faster | [OpenAI fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [OpenAI pricing](https://developers.openai.com/api/docs/pricing) | 30 Sep 2026 |
+| OpenAI | key | `gpt-5.5` | 2.5x the price | OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price. | up to 2.5x faster | [OpenAI fast mode](https://developers.openai.com/api/docs/guides/fast-mode), [OpenAI pricing](https://developers.openai.com/api/docs/pricing) | 30 Sep 2026 |
+| OpenAI | sign-in | `gpt-6-astra` | 2.5x your plan's usage; 2x purchased credits | | Not stated | [ChatGPT speed](https://learn.chatgpt.com/docs/agent-configuration/speed) | 30 Sep 2026 |
+| OpenAI | sign-in | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | 2.5x your plan's usage; 2x purchased credits | | 1.5x faster | [ChatGPT speed](https://learn.chatgpt.com/docs/agent-configuration/speed) | 30 Sep 2026 |
+| Anthropic | key | `claude-opus-5` | $10 / $50 per million input / output tokens | Fast mode is a research preview; Anthropic turns it on per organization. | up to 2.5x higher output tokens per second | [Anthropic fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode) | 30 Sep 2026 |
 | Google | key | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | 75-100% more than Standard | For Tier 2 and Tier 3 accounts only. Google serves a priority request at standard speed when priority is congested, and bills it at the standard price. | Not stated | [Gemini priority inference](https://ai.google.dev/gemini-api/docs/priority-inference) | 30 Sep 2026 |
-| MoonshotAI | any | `kimi-for-coding-highspeed`, a fast model of its own | 6x the speed for 3x the quota | | "6× speed" | [Kimi Code models](https://www.kimi.com/code/docs/en/kimi-code/models.html) | 29 Sep 2026 |
+| MoonshotAI | any | `kimi-for-coding-highspeed`, a fast model of its own | 3x the quota | | 6x the speed | [Kimi Code models](https://www.kimi.com/code/docs/en/kimi-code/models.html) | 29 Sep 2026 |
 
 OpenAI states twice the price for GPT-6 and GPT-5.6 Sol; for GPT-5.6 Terra and
 Luna, and for GPT-5.5, the multiple is worked out from the prices on its

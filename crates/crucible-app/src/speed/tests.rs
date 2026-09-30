@@ -79,6 +79,7 @@ fn every_fast_form_is_its_row_of_the_docs_table() {
             };
             assert_eq!(cost.price, cell(row, 3), "{model}");
             assert_eq!(cost.caveat.unwrap_or_default(), cell(row, 4), "{model}");
+            assert_eq!(cost.speed.unwrap_or("Not stated"), cell(row, 5), "{model}");
             documented.push((served.name, credential.to_owned(), model.to_owned()));
         }
     }

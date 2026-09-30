@@ -120,11 +120,13 @@ impl DeltaStream for Answered {
 
 const FIELD: FastForm = FastForm::Field(Cost {
     price: "2x the price",
+    speed: None,
     caveat: None,
 });
 
 const OWN: FastForm = FastForm::Own(Cost {
     price: "6x the speed for 3x the quota",
+    speed: None,
     caveat: None,
 });
 

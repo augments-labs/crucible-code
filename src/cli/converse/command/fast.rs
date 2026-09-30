@@ -155,7 +155,7 @@ pub(super) fn taken<T: Terminal>(
         runner.serving(),
         runner.model(),
         runner.effort().map(Effort::as_str),
-        Some(speed.as_str()),
+        (speed == Speed::Fast).then_some("fast"),
         glyphs,
     );
     let said = match hastened {
@@ -221,6 +221,7 @@ fn chosen<T: Terminal>(
     let provider = asked.provider.unwrap_or_default();
     let title = title(provider, asked.model, credential(provider, terms), glyphs);
     let footer = format!("enter to choose {} esc to cancel", glyphs.dot());
+    let fast = worded(cost, glyphs);
     let shown = [
         Offered {
             name: "Standard",
@@ -228,7 +229,7 @@ fn chosen<T: Terminal>(
         },
         Offered {
             name: "Fast",
-            says: cost.price,
+            says: &fast,
         },
     ];
     let panel = Panel {
@@ -265,6 +266,14 @@ fn credential(provider: &str, terms: &Terms) -> Option<String> {
         .map(|row| row.credential().replace('·', terms.style().glyphs().dot()))
 }
 
+/// What fast costs and how much faster the vendor says it is, where it says.
+fn worded(cost: Cost, glyphs: Glyphs) -> String {
+    match cost.speed {
+        Some(speed) => format!("{} {} {speed}", cost.price, glyphs.dot()),
+        None => cost.price.to_owned(),
+    }
+}
+
 /// The two lines that ask for each speed, the price beside fast.
 fn listing<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -273,7 +282,7 @@ fn listing<T: Terminal>(
 ) -> Result<(), Fatal> {
     let columns = renderer.columns();
     let rows = [
-        about("/fast on", cost.price, glyphs),
+        about("/fast on", &worded(cost, glyphs), glyphs),
         about("/fast off", STANDARD, glyphs),
     ]
     .map(|line| Row::new().then(Slot::Quiet, clip(&line, columns)));
@@ -302,9 +311,33 @@ mod tests {
     }
 
     #[test]
+    fn fast_says_its_price_and_the_speed_the_vendor_states_beside_it() {
+        let stated = Cost {
+            price: "2x the price",
+            speed: Some("up to 2.5x faster"),
+            caveat: None,
+        };
+        assert_eq!(
+            worded(stated, Glyphs::Unicode),
+            "2x the price · up to 2.5x faster"
+        );
+        assert_eq!(
+            worded(
+                Cost {
+                    speed: None,
+                    ..stated
+                },
+                Glyphs::Ascii
+            ),
+            "2x the price"
+        );
+    }
+
+    #[test]
     fn a_model_with_nothing_to_switch_says_which_of_the_two_it_is() {
         let own = FastForm::Own(Cost {
             price: "6x the speed for 3x the quota",
+            speed: None,
             caveat: None,
         });
         assert_eq!(

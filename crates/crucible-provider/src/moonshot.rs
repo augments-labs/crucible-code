@@ -59,7 +59,8 @@ const AGENT: &str = concat!("crucible/", env!("CARGO_PKG_VERSION"));
 
 /// What Kimi Code's highspeed model costs, in the vendor's words.
 const HIGHSPEED: crucible_models::Cost = crucible_models::Cost {
-    price: "6x the speed for 3x the quota",
+    price: "3x the quota",
+    speed: Some("6x the speed"),
     caveat: None,
 };
 

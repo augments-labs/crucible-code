@@ -504,6 +504,7 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
 fn a_row_says_no_rung_before_it_says_fast_and_fast_for_either_kind_of_form() {
     let cost = crucible_models::Cost {
         price: "2x the price",
+        speed: None,
         caveat: None,
     };
     let rungs = [Effort::High];

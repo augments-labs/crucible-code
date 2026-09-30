@@ -18,6 +18,7 @@ pub(super) const TIER: &str = "priority";
 /// congestion does to it.
 const PRICE: Cost = Cost {
     price: "75-100% more than Standard",
+    speed: None,
     caveat: Some(
         "For Tier 2 and Tier 3 accounts only. Google serves a priority request at standard speed when priority is congested, and bills it at the standard price.",
     ),
