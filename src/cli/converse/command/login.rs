@@ -202,7 +202,7 @@ struct Walk<'w, T: Terminal> {
 ///
 /// `keys` is whether there is a keyboard to take one from. Down a pipe there is
 /// not, and a panel or a box waiting for something nobody can type is a session
-/// that stopped — so what a piped run gets is the lines instead.
+/// that stopped, so what a piped run gets is the lines instead.
 pub(super) fn run<T: Terminal>(
     said: &str,
     renderer: &mut Renderer<T>,
@@ -219,8 +219,8 @@ pub(super) fn run<T: Terminal>(
     let words: Vec<&str> = said.split_whitespace().collect();
     let matched = matching(&words, &rows);
     if matched.is_empty() {
-        // The words came off the line and were never shape-checked — anything
-        // at all can follow `/login ` — so they go out the way arrived text
+        // The words came off the line and were never shape-checked (anything
+        // at all can follow `/login `), so they go out the way arrived text
         // goes out.
         let words = words.join(" ");
         renderer.commit(&format!(
@@ -934,7 +934,7 @@ impl LoginView {
 }
 
 /// Asks for a key for `named`'s own row, the one its variable is read for,
-/// writes it down, and sets this session up with it — or says why nothing was
+/// writes it down, and sets this session up with it, or says why nothing was
 /// written: the box was left, or never stood.
 ///
 /// Opened by the command, so Escape cancels. The box says what the key

@@ -340,9 +340,11 @@ needs nothing from your shell afterwards:
 
 `/login <provider>` inside a session is the direct API-key route. It writes
 from a labelled box that takes a paste and draws a dot per character rather
-than the key. `/login` on its own offers the account plans and *Provide your
-own API key*; that route then opens the provider list, each row naming the
-variable the provider reads from, and the same box.
+than the key. `/login` on its own asks how usage is paid for: *Your account with
+subscription* lists the accounts, and *Provide your own API key* lists the
+providers, each row naming the variable the provider reads from, and opens the
+same box. A row that holds the credential its provider is served by says
+`signed in`.
 
 The command reports that the key was stored, not that it was verified. Provider
 authentication is established by the next request; a rejected key stays stored
@@ -369,14 +371,25 @@ Editing the file by hand works too: crucible only reads what is there, and a
 name under `keys` that this build does not serve is left alone rather than
 offered for removal.
 
-The names under `keys` are provider names, the same ones `--model openai/…`
-takes. `version` says which crucible wrote the file, so one from a later version
-is left alone rather than guessed at.
+The names under `keys` and `subscriptions` say which `/login` row a credential
+was given on. A row every release has is written under the provider's own name,
+the one `--model openai/…` takes; a row an earlier release does not know is
+written under the provider, `@` and its site, as `moonshot@kimi.ai` is. So a
+roll back to an earlier release finds its credentials where it left them and
+leaves the rest alone. `version` says which crucible wrote the file, so one
+from a later version is left alone rather than guessed at.
 
-Stored login methods are mutually exclusive **per provider**. Saving an API key
-removes that provider’s stored subscription login; completing a subscription
-login removes its stored API key. Other providers’ credentials are unaffected.
-The login menu offers available methods, not multiple active methods at once.
+A provider holds **one** credential, whichever row it was given on. Saving a key
+or completing a sign-in removes that provider's other stored credential in the
+same write, and the screen before it says which. Nothing is replaced until the
+new credential is stored, so a sign-in that does not complete leaves the file as
+it was. Other providers' credentials are unaffected.
+
+Where the file holds two credentials for one provider, which only an earlier
+release writing after a roll back can cause, the one under the provider's own
+name is used. The next start removes the other in one write and says which it
+was; where that write cannot be made, the start goes on with the same credential
+and says so, and tries again the next time.
 
 For API-key authentication, **the variable wins over a stored API key**. It is
 the key chosen for this process (a second account, a work key, one rotated an
@@ -413,13 +426,23 @@ never learn whether it came from an account or a key.
 
 ### Account login today
 
-`/login` offers ChatGPT and Kimi Code account plans. ChatGPT uses browser PKCE
-or device authorization and is fixed to the ChatGPT subscription Responses
+`/login` offers ChatGPT and Kimi Code accounts. ChatGPT uses browser PKCE or
+device authorization and is fixed to the ChatGPT subscription Responses
 endpoint.
-Kimi Code uses RFC 8628 device authorization and is fixed to its managed coding
-endpoint. Its token exchange stays on `auth.kimi.com`, while the browser opens
-the authorization page on `www.kimi.com`; crucible accepts only those fixed
-HTTPS origins. Both refresh in the protected store, each request within 30
+Kimi Code uses RFC 8628 device authorization, with one row for each of Kimi's
+two sites, and an account belongs to one of them:
+
+| Row | Token exchange | Authorization page | Requests |
+| --- | --- | --- | --- |
+| Kimi Code · kimi.com, mainland China accounts | `auth.kimi.com` | `www.kimi.com` | `https://api.kimi.com/coding/v1` |
+| Kimi Code · kimi.ai, accounts outside mainland China | `auth.kimi.ai` | `www.kimi.ai` | `https://api.kimi.ai/coding/v1` |
+
+The kimi.ai hosts are those Kimi's own client names for its global region
+([`packages/oauth/src/region.ts`](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/region.ts),
+read 29 September 2026), which also shares one client id across both sites.
+crucible accepts only each row's fixed HTTPS origins, and sends a credential,
+its renewals and the web tools it signs to the hosts of the row it was given on
+and to no other. Both refresh in the protected store, each request within 30
 seconds; a renewal runs once for everything waiting on that account, and Escape
 stops the turn without waiting for it. A configured `baseUrl` is never allowed
 to receive either token.
@@ -497,7 +520,8 @@ accepted by the other:
 
 | Where the key came from | Address it is accepted at |
 | --- | --- |
-| Kimi Code Console | `https://api.kimi.com/coding/v1` |
+| Kimi Code Console, kimi.com | `https://api.kimi.com/coding/v1` |
+| Kimi Code Console, kimi.ai | `https://api.kimi.ai/coding/v1` |
 | Open Platform | `https://api.moonshot.ai/v1` |
 
 Nothing in the key itself says which, so crucible cannot read it and decide. It

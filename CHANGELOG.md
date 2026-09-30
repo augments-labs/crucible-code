@@ -10,6 +10,12 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **Kimi Code signs in on kimi.ai as well as kimi.com.** `/login` has a row for
+  each Kimi site, for a sign-in and for a Kimi Code Console key, and each
+  credential goes only to its own site's hosts. Rolling back to 0.43.3 keeps
+  every credential, though 0.43.3 does not use a kimi.ai one; a Kimi sign-in or
+  Moonshot key stored there is the one 0.44 keeps at its next start, and it says
+  which kimi.ai credential it removed.
 - **`/release-notes` prints what changed in each release.** Older releases get
   a row each with how many entries they added, changed and fixed, the ten
   newest are printed in full, and the one you are running is marked `this
@@ -18,6 +24,11 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **`/login` opens on two ways to pay.** It asks whether usage comes from your
+  account's plan or your own API key, lists the rows of each with `signed in`
+  on the one you hold, and says what a choice replaces before it replaces
+  anything. Words after `/login` narrow the rows, and Escape goes back one
+  screen at a time.
 - **The model is named one way wherever it is drawn.** The row under the box,
   the `/model` panel's title and the row answering `/model` now all read
   `openai · gpt-5.6-sol · high`, and the answer names the rung it will be asked
@@ -31,6 +42,9 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A Kimi sign-in that does not complete leaves the credential store as it
+  was.** It wrote an installation identity before its first request, so a
+  sign-in that was refused, denied or left still changed the file.
 - **A row that offers to expand opens once its result is no longer in memory.**
   Past the half mebibyte of results held in memory, older rows still offered
   `ctrl+o to expand` and opened nothing, after a resume or late in a long
