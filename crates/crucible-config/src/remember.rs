@@ -94,11 +94,15 @@ pub fn accepting(text: &str, file: &str, route: &str) -> Result<String, ConfigEr
         return Err(refuse());
     }
     let at = splice::member(text, root, "contentUse").ok_or_else(refuse)?;
-    if block.get("accepted").is_none() {
-        return Ok(splice::insert(text, at, |indent| match indent {
-            Some(indent) => format!("\"accepted\": [\n{indent}  {written}\n{indent}]"),
-            None => format!("\"accepted\": [{written}]"),
-        }));
+    match block.get("accepted") {
+        None => {
+            return Ok(splice::insert(text, at, |indent| match indent {
+                Some(indent) => format!("\"accepted\": [\n{indent}  {written}\n{indent}]"),
+                None => format!("\"accepted\": [{written}]"),
+            }));
+        }
+        Some(list) if !list.is_array() => return Err(refuse()),
+        Some(_) => {}
     }
     let accepted = splice::member(text, at, "accepted").ok_or_else(refuse)?;
     Ok(splice::insert(text, accepted, |_| written.clone()))

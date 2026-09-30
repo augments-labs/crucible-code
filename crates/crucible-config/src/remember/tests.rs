@@ -569,6 +569,24 @@ fn a_yes_is_added_beside_what_the_file_already_says_and_only_once() {
     );
 }
 
+/// A block or a list that is not the shape a yes goes into is refused rather
+/// than written into: a list spliced into a string would leave a file that no
+/// longer says what the user wrote.
+#[test]
+fn a_yes_is_not_written_into_a_block_or_list_of_another_shape() {
+    for text in [
+        "{\"contentUse\": []}",
+        "{\"contentUse\": {\"accepted\": \"key:google\"}}",
+        "{\"contentUse\": {\"accepted\": null}}",
+    ] {
+        let refused = accepting(text, FILE, "key:google").expect_err(text);
+        assert!(
+            matches!(refused, ConfigError::Unspliceable { .. }),
+            "{text}: {refused:?}"
+        );
+    }
+}
+
 #[test]
 fn forgetting_takes_out_the_named_routes_and_nothing_else() {
     let text = "{\n  \"provider\": \"moonshot\",\n  \"contentUse\": {\n    \"accepted\": [\"key:google\", \"key:moonshot\", \"api.moonshot.ai\"]\n  }\n}\n";
