@@ -429,26 +429,23 @@ impl Store {
             Err(problem) => return Err(AuthError::at(&self.path)(problem)),
         };
 
-        let mut text = String::new();
+        // Bytes first, so a store past the limit is one too large wherever
+        // the limit falls, even inside a character.
+        let mut bytes = Vec::new();
         file.take((MAX_STORE + 1) as u64)
-            .read_to_string(&mut text)
-            .map_err(|problem| {
-                // A file that opens and holds something other than text is
-                // there and cannot be read, which is not a permissions matter.
-                if problem.kind() == std::io::ErrorKind::InvalidData {
-                    AuthError::Unreadable {
-                        path: self.path.clone(),
-                    }
-                } else {
-                    AuthError::at(&self.path)(problem)
-                }
-            })?;
-        if text.len() > MAX_STORE {
+            .read_to_end(&mut bytes)
+            .map_err(AuthError::at(&self.path))?;
+        if bytes.len() > MAX_STORE {
             return Err(AuthError::TooLarge {
                 path: self.path.clone(),
                 maximum: MAX_STORE,
             });
         }
+        // A file that opens and holds something other than text is there and
+        // cannot be read, which is not a permissions matter.
+        let text = String::from_utf8(bytes).map_err(|_| AuthError::Unreadable {
+            path: self.path.clone(),
+        })?;
 
         Ok(Some(text))
     }

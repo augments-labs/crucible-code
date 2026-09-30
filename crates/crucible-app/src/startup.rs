@@ -785,14 +785,22 @@ fn credential(
 /// Only a write by 0.43.3 after a roll back leaves two. The one under the bare
 /// name is the one 0.43.3 wrote and is used; the other is taken out in one
 /// locked write. Where that write cannot be made the start goes on with the
-/// same credential and the line says so without claiming anything went.
+/// same credential and the line says so without claiming anything went, and
+/// why, where that is more than another crucible holding the store for a
+/// moment. Rows are named with `dot`, the glyph set's own, between a name and
+/// its site.
 #[must_use]
-pub fn settle(store: &crucible_auth::Store, rows: &crate::providers::Rows) -> Option<String> {
-    let (dropped, removed) = match store.settle() {
+pub fn settle(
+    store: &crucible_auth::Store,
+    rows: &crate::providers::Rows,
+    dot: &str,
+) -> Option<String> {
+    let (dropped, why) = match store.settle() {
         crucible_auth::Settled::Nothing => return None,
-        crucible_auth::Settled::Removed(dropped) => (dropped, true),
-        crucible_auth::Settled::Stayed { found, .. } => (found, false),
+        crucible_auth::Settled::Removed(dropped) => (dropped, None),
+        crucible_auth::Settled::Stayed { found, why } => (found, Some(why)),
     };
+    let named = |row: &crate::providers::Row| row.credential().replace('·', dot);
     let read = store.read();
     let mut said = Vec::new();
     let providers: std::collections::BTreeSet<&str> = dropped
@@ -802,24 +810,32 @@ pub fn settle(store: &crucible_auth::Store, rows: &crate::providers::Rows) -> Op
     for provider in providers {
         let kept = rows
             .held(provider, &read)
-            .map_or_else(|| provider.to_owned(), crate::providers::Row::credential);
+            .map_or_else(|| provider.to_owned(), named);
         let went: Vec<String> = dropped
             .iter()
             .filter(|dropped| crucible_auth::provider_of(&dropped.name) == provider)
             .map(|dropped| {
                 rows.of(dropped.kind, &dropped.name)
-                    .map_or_else(|| dropped.name.clone(), crate::providers::Row::credential)
+                    .map_or_else(|| dropped.name.clone(), named)
             })
             .collect();
         let went = went.join(" and the ");
-        said.push(if removed {
-            format!(
+        said.push(match &why {
+            None => format!(
                 "two credentials were stored for {provider}; the {went} was removed, and the {kept} is used"
-            )
-        } else {
-            format!(
-                "two credentials are stored for {provider}; the {kept} is used, and the {went} stays in the store until a start can remove it"
-            )
+            ),
+            Some(why) => {
+                let stays = format!(
+                    "two credentials are stored for {provider}; the {kept} is used, and the {went} stays in the store until a start can remove it"
+                );
+                // A lock another crucible holds lets go on its own; anything
+                // else comes back at every start, so it is named.
+                if matches!(why, crucible_auth::AuthError::Busy { .. }) {
+                    stays
+                } else {
+                    format!("{stays}: {why}")
+                }
+            }
         });
     }
     Some(said.join("; "))

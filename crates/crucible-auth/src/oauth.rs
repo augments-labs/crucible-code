@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::task::{Context, Poll};
@@ -161,6 +162,10 @@ pub(crate) const PATIENCE: Duration = Duration::from_secs(30);
 /// ends as soon as the future is gone.
 pub(crate) const STOPPING: Duration = Duration::from_secs(1);
 
+/// How long stopping a sign-in waits for a credential write already begun:
+/// the store's own wait for its lock, and the write after it.
+pub const SETTLING: Duration = Duration::from_secs(10);
+
 /// How many updates a login can report before the attempt takes one.
 ///
 /// Three is every update a browser or device login reports: the page to
@@ -190,6 +195,8 @@ pub struct LoginAttempt {
     updates: mpsc::Receiver<Result<LoginUpdate, OAuthError>>,
     input: tokio::sync::mpsc::Sender<Box<str>>,
     task: JoinHandle<()>,
+    /// Shared with the login's credential write.
+    storing: Storing,
     /// Never sent on: disconnected once the login's future has been dropped,
     /// finished or aborted.
     stopped: mpsc::Receiver<()>,
@@ -211,9 +218,15 @@ impl LoginAttempt {
     }
 
     /// Stops the login at whatever it is waiting on: a callback, a request in
-    /// flight or a pause between polls.
-    pub fn cancel(&self) {
+    /// flight or a pause between polls, and says whether its credential was
+    /// written anyway.
+    ///
+    /// A write already begun cannot be taken back, so it is waited for, up to
+    /// [`SETTLING`], rather than claimed not to have happened.
+    pub fn cancel(&self) -> Stopped {
+        let stopped = self.storing.stop(SETTLING);
         self.task.abort();
+        stopped
     }
 
     /// Hands bounded manual authorization input to the running method.
@@ -273,7 +286,10 @@ impl fmt::Debug for LoginAttempt {
 /// A login is a task on a runtime, and a task that waited on a send would hold
 /// the worker it runs on. So this has no waiting send at all: an update the
 /// attempt has no room for ends the login instead.
-pub struct LoginUpdates(mpsc::SyncSender<Result<LoginUpdate, OAuthError>>);
+pub struct LoginUpdates {
+    send: mpsc::SyncSender<Result<LoginUpdate, OAuthError>>,
+    storing: Storing,
+}
 
 impl LoginUpdates {
     /// Hands one update to the attempt, at once.
@@ -284,8 +300,96 @@ impl LoginUpdates {
     /// updates untaken: either way nobody is following the login, and it
     /// stops rather than wait.
     pub fn send(&self, update: Result<LoginUpdate, OAuthError>) -> Result<(), OAuthError> {
-        self.0.try_send(update).map_err(|_| OAuthError::Cancelled)
+        self.send
+            .try_send(update)
+            .map_err(|_| OAuthError::Cancelled)
     }
+
+    /// The guard the login's credential is written through, which its
+    /// attempt shares: see [`Storing`].
+    #[must_use]
+    pub fn storing(&self) -> Storing {
+        self.storing.clone()
+    }
+}
+
+/// Whether a sign-in's credential was written or its attempt stopped first:
+/// the one excludes the other.
+///
+/// The write runs as blocking work that stopping the attempt's task cannot
+/// take back, so the two settle it between them here: a stop before the write
+/// begins means it never does, and a stop after it began waits for it and says
+/// whether it was written.
+#[derive(Debug, Clone, Default)]
+pub struct Storing(Arc<AtomicU8>);
+
+impl Storing {
+    /// Writes the sign-in's credential through `write`, unless its attempt
+    /// was stopped first.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError::Cancelled`] where the attempt was stopped before the
+    /// write began, and nothing is written; `write`'s own error otherwise.
+    pub fn write<T, E: Into<OAuthError>>(
+        &self,
+        write: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, OAuthError> {
+        if self
+            .0
+            .compare_exchange(RUNNING, WRITING, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(OAuthError::Cancelled);
+        }
+        let written = write().map_err(Into::into);
+        let ended = if written.is_ok() { WRITTEN } else { UNWRITTEN };
+        self.0.store(ended, Ordering::SeqCst);
+        written
+    }
+
+    /// Stops the write before it begins, or waits up to `patience` for the
+    /// one already begun, and says how the credential was left.
+    fn stop(&self, patience: Duration) -> Stopped {
+        if self
+            .0
+            .compare_exchange(RUNNING, STOPPED, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return Stopped::Unwritten;
+        }
+        let until = std::time::Instant::now().checked_add(patience);
+        loop {
+            match self.0.load(Ordering::SeqCst) {
+                WRITTEN => return Stopped::Written,
+                STOPPED | UNWRITTEN => return Stopped::Unwritten,
+                _ => {}
+            }
+            if until.is_none_or(|until| std::time::Instant::now() >= until) {
+                return Stopped::Unsettled;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// Where a sign-in's write stands, as [`Storing`] holds it.
+const RUNNING: u8 = 0;
+const STOPPED: u8 = 1;
+const WRITING: u8 = 2;
+const WRITTEN: u8 = 3;
+const UNWRITTEN: u8 = 4;
+
+/// How stopping a sign-in left its credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// Nothing was written: the stop came first, or the write failed.
+    Unwritten,
+    /// The sign-in's credential was written before the stop could prevent
+    /// it, and replaced whatever its provider held.
+    Written,
+    /// The write had begun and had not ended within the patience given.
+    Unsettled,
 }
 
 impl fmt::Debug for LoginUpdates {
@@ -599,16 +703,24 @@ impl LoginSlot {
         let (send, updates) = mpsc::sync_channel(UPDATES);
         let (input, submitted) = tokio::sync::mpsc::channel(1);
         let (signal, stopped) = mpsc::sync_channel(0);
+        let storing = Storing::default();
         let running = Arc::new(Running { _stopped: signal });
         *slot = Arc::downgrade(&running);
         let task = runtime.spawn(Owned {
-            login: Box::pin(run(LoginUpdates(send), submitted)),
+            login: Box::pin(run(
+                LoginUpdates {
+                    send,
+                    storing: storing.clone(),
+                },
+                submitted,
+            )),
             _running: running,
         });
         Ok(LoginAttempt {
             updates,
             input,
             task,
+            storing,
             stopped,
         })
     }

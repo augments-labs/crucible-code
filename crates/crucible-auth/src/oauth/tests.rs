@@ -1610,3 +1610,60 @@ fn a_rotation_whose_waiter_was_dropped_answers_every_credential_at_its_first_pol
     assert!(requests.try_recv().is_err(), "a second rotation was sent");
     drop(server);
 }
+
+#[test]
+fn a_sign_in_stopped_before_its_write_writes_nothing_and_says_so() {
+    let storing = Storing::default();
+
+    assert_eq!(storing.stop(Duration::from_secs(1)), Stopped::Unwritten);
+
+    let mut ran = false;
+    let written = storing.write(|| {
+        ran = true;
+        Ok::<_, OAuthError>(())
+    });
+    assert!(matches!(written, Err(OAuthError::Cancelled)), "{written:?}");
+    assert!(!ran, "a write after the stop must not run");
+}
+
+#[test]
+fn a_sign_in_stopped_during_its_write_waits_for_it_and_says_it_was_written() {
+    let storing = Storing::default();
+    let begun = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+    let writer = {
+        let (storing, begun) = (storing.clone(), std::sync::Arc::clone(&begun));
+        std::thread::spawn(move || {
+            storing.write(|| {
+                begun.wait();
+                std::thread::sleep(Duration::from_millis(200));
+                Ok::<_, OAuthError>(())
+            })
+        })
+    };
+    begun.wait();
+
+    assert_eq!(storing.stop(Duration::from_secs(5)), Stopped::Written);
+    assert!(writer.join().expect("the writer").is_ok());
+}
+
+#[test]
+fn a_sign_in_whose_write_fails_after_the_stop_is_said_unwritten() {
+    let storing = Storing::default();
+    let begun = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+    let writer = {
+        let (storing, begun) = (storing.clone(), std::sync::Arc::clone(&begun));
+        std::thread::spawn(move || {
+            storing.write(|| {
+                begun.wait();
+                std::thread::sleep(Duration::from_millis(100));
+                Err::<(), _>(OAuthError::Unreachable)
+            })
+        })
+    };
+    begun.wait();
+
+    assert_eq!(storing.stop(Duration::from_secs(5)), Stopped::Unwritten);
+    assert!(writer.join().expect("the writer").is_err());
+}

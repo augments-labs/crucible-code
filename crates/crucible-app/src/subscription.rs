@@ -168,6 +168,13 @@ impl Subscriptions {
             .map(|registered| (registered.login.name(), &registered.endpoint))
     }
 
+    /// Every route this registry offers, for the test that holds each to a
+    /// registered login.
+    #[cfg(test)]
+    pub(crate) fn every_route(&self) -> impl Iterator<Item = Route> + '_ {
+        self.routes.iter().copied()
+    }
+
     /// Provider accounts in their stable display order.
     #[must_use]
     pub fn accounts(&self) -> &[Account] {

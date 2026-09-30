@@ -1438,7 +1438,7 @@ fn a_start_that_finds_two_says_which_went_in_one_line() {
     let _ = sample.holding(TWO_HELD);
     let rows = crate::providers::Rows::production();
 
-    let said = settle(&sample.store(), &rows).expect("a line");
+    let said = settle(&sample.store(), &rows, "·").expect("a line");
 
     assert_eq!(
         said,
@@ -1446,7 +1446,7 @@ fn a_start_that_finds_two_says_which_went_in_one_line() {
          and the MoonshotAI · kimi.com key is used"
     );
     assert!(!sample.store().read().has_subscription("moonshot@kimi.ai"));
-    assert_eq!(settle(&sample.store(), &rows), None);
+    assert_eq!(settle(&sample.store(), &rows, "·"), None);
 }
 
 #[test]
@@ -1456,7 +1456,7 @@ fn a_start_that_cannot_remove_the_second_says_so_and_claims_nothing_went() {
     std::fs::create_dir(sample.home().join("auth.json.new")).expect("a directory this test made");
     let rows = crate::providers::Rows::production();
 
-    let said = settle(&sample.store(), &rows).expect("a line");
+    let said = settle(&sample.store(), &rows, "·").expect("a line");
 
     assert!(
         said.starts_with(
@@ -1465,6 +1465,11 @@ fn a_start_that_cannot_remove_the_second_says_so_and_claims_nothing_went() {
         "{said}"
     );
     assert!(!said.contains("was removed"), "{said}");
+    // It comes back at every start, so it says why.
+    assert!(
+        said.contains("stays in the store until a start can remove it: "),
+        "{said}"
+    );
     assert!(sample.store().read().has_subscription("moonshot@kimi.ai"));
 }
 

@@ -1270,6 +1270,12 @@ fn every_sign_in_row_is_one_the_subscription_registry_starts_and_sends_to_its_ad
             "{name} is registered and no row gives it"
         );
     }
+    for route in subscriptions.every_route() {
+        assert!(
+            registered.iter().any(|(name, _)| *name == route.name()),
+            "{route:?} starts no registered login"
+        );
+    }
     let mut names: Vec<&str> = registered.iter().map(|(name, _)| *name).collect();
     names.sort_unstable();
     names.dedup();

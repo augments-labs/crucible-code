@@ -34,6 +34,7 @@ mod store;
 pub use error::AuthError;
 pub use oauth::{
     KimiCredential, KimiOAuth, KimiSite, LoginAttempt, LoginMethod, LoginSlot, LoginUpdate,
-    LoginUpdates, OAuthError, OpenAiCredential, OpenAiOAuth, Renewals, SubscriptionLogin, Unjoined,
+    LoginUpdates, OAuthError, OpenAiCredential, OpenAiOAuth, Renewals, SETTLING, Stopped, Storing,
+    SubscriptionLogin, Unjoined,
 };
 pub use store::{Dropped, Held, Kind, Names, Settled, Store, StoredCredentials, provider_of};

@@ -382,8 +382,11 @@ impl Flow {
                 let store = store.clone();
                 let name = self.name;
                 let kept = identity.device_id.to_string();
+                let storing = updates.storing();
                 self.renewals
-                    .login_store(move || store.keep_identified(name, tokens, &kept))
+                    .login_store(move || {
+                        storing.write(|| store.keep_identified(name, tokens, &kept))
+                    })
                     .await?;
                 return updates.send(Ok(LoginUpdate::Complete));
             }

@@ -919,3 +919,20 @@ fn a_store_that_is_not_text_is_one_that_cannot_be_read_rather_than_reached() {
         "a write refuses it the same way"
     );
 }
+
+#[test]
+fn a_store_past_its_limit_is_too_large_wherever_the_limit_falls() {
+    // The limit falls inside a two-byte character: what is read stops half
+    // way through it, and the store is still one too large, not one that
+    // cannot be read.
+    let scratch = Scratch::new("too-large-mid-character");
+    let mut text = "x".repeat(MAX_STORE);
+    text.push('é');
+    let store = scratch.holding(&text).naming(named());
+
+    assert!(
+        matches!(store.holding(), Err(AuthError::TooLarge { .. })),
+        "{:?}",
+        store.holding()
+    );
+}

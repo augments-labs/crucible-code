@@ -645,7 +645,7 @@ fn each_site_signs_in_renews_and_opens_its_page_on_its_own_hosts_alone() {
 }
 
 #[test]
-fn a_kimi_ai_renewal_reads_and_writes_its_own_name_and_leaves_kimi_com_alone() {
+fn a_kimi_ai_renewal_reads_and_writes_its_own_name_and_writes_nothing_under_kimi_com() {
     const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
     let (base, requests, server) = server(|_| {
         vec![(
@@ -750,4 +750,74 @@ fn a_completed_sign_in_keeps_its_identity_and_the_next_one_presents_it_again() {
             .and_then(serde_json::Value::as_str);
         assert_eq!(kept, Some(first.as_str()), "{on_disk}");
     }
+}
+
+#[test]
+fn a_sign_in_stopped_while_its_write_waits_on_the_lock_says_what_the_store_ends_up_holding() {
+    // Another crucible holds the store's lock, as a renewal does across its
+    // request, while a kimi.ai sign-in's tokens arrive and the reader stops
+    // it. Whatever `cancel` answers must be what the store holds once the lock
+    // is let go: never "nothing written" over a sign-in that then lands.
+    let (base, _requests, server) = server(|base| {
+        vec![
+            (200, device(base)),
+            (
+                200,
+                serde_json::json!({
+                    "access_token": "access-canary",
+                    "refresh_token": "refresh-canary",
+                    "expires_in": 3600,
+                })
+                .to_string(),
+            ),
+        ]
+    });
+    let scratch = Scratch::new("stopped-under-lock");
+    let file = scratch.path().join("auth.json");
+    std::fs::write(&file, HELD).unwrap();
+    let store =
+        Store::in_home(scratch.path()).naming(crate::Names::new(["moonshot", "moonshot@kimi.ai"]));
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(scratch.path().join("auth.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let runtime = runtime();
+    let flow = Flow::testing(&base, &renewing(&runtime)).named(KimiSite::Ai.name());
+    let oauth = KimiOAuth::testing(flow);
+
+    let attempt = oauth.start(KimiOAuth::DEVICE, store.clone()).unwrap();
+    assert!(matches!(
+        attempt.wait(PATIENCE),
+        Ok(Some(LoginUpdate::Authorize { .. }))
+    ));
+    server.join().unwrap();
+    // The token has been served: the write is begun, or about to be.
+    std::thread::sleep(Duration::from_millis(100));
+    let letting_go = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(500));
+        lock.unlock().unwrap();
+    });
+
+    let stopped = attempt.cancel();
+    letting_go.join().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let holding = store.holding().unwrap();
+    let signed_in = holding.iter().any(|held| held.name == "moonshot@kimi.ai");
+    match stopped {
+        crate::Stopped::Written => assert!(signed_in, "{holding:?}"),
+        crate::Stopped::Unwritten => {
+            assert!(!signed_in, "{holding:?}");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), HELD);
+        }
+        crate::Stopped::Unsettled => panic!("the write outlived its patience"),
+    }
+    assert_eq!(
+        stopped,
+        crate::Stopped::Written,
+        "the token was served before the stop"
+    );
 }
