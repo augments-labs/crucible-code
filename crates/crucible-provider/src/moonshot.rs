@@ -1,10 +1,11 @@
 //! The `MoonshotAI` provider: Kimi, as a dialect of Chat Completions.
 //!
 //! The wire is [`crate::completions`], which writes the request, reads the
-//! response and sends one for the other. What is Kimi's is here: its
-//! addresses, the name it is told crucible goes by, how it counts a cached
-//! prompt, and what its cache is known to do. [`body`], [`wire`] and [`stream`]
-//! hand the shared wire this dialect and keep Kimi's tests where they were.
+//! response and sends one for the other, and `Chat<Kimi>` is what ships. What
+//! is Kimi's is here: its addresses, the name it is told crucible goes by, how
+//! it counts a cached prompt (in [`wire`]), and what its cache is known to do.
+//! [`body`] and [`stream`] hold nothing that ships: they keep Kimi's tests
+//! where they were, reaching the shared wire through this dialect.
 //!
 //! It names no HTTP client and no credential kind. A [`crate::Transport`] is
 //! handed in and so is a [`crucible_credentials::Credential`], which is what
@@ -138,5 +139,7 @@ impl Chat<Kimi> {
 
 #[cfg(test)]
 mod differential;
+#[cfg(test)]
+mod identity;
 #[cfg(test)]
 mod tests;

@@ -2,8 +2,8 @@
 //!
 //! The loop belongs to [`crate::stream`] and is the same for every provider,
 //! and which events mean something is [`crate::completions::wire`]'s, in
-//! [`super::Kimi`]'s dialect. What is here is the pairing of the two, and the
-//! tests that read a recorded response end to end.
+//! [`super::Kimi`]'s dialect. What is here is for tests alone: the pairing of
+//! the two under the name Kimi's tests read a recorded response with.
 
 #[cfg(test)]
 use crate::completions::wire::Completions;

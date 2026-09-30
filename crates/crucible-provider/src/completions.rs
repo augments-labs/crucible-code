@@ -2,11 +2,11 @@
 //!
 //! The request is written in [`body`], one event of a response is read in
 //! [`wire`], and [`Chat`] is the provider that sends one and hands back the
-//! other. None of the three names a vendor. What differs between the vendors
-//! that serve this wire is a [`Dialect`]: what the provider is called, the
-//! addresses the vendor serves, the headers it asks for beside the credential,
-//! how it counts what a response cost, how it spells a rung of effort, and
-//! what its prompt cache is known to do.
+//! other. None of the three has a case for any one vendor. What differs between
+//! the vendors that serve this wire is a [`Dialect`]: what the provider is
+//! called, the addresses the vendor serves, the headers it asks for beside the
+//! credential, how it counts what a response cost, how it spells a rung of
+//! effort, and what its prompt cache is known to do.
 //!
 //! A second vendor on this wire is a dialect and nothing else: a type that
 //! implements [`Dialect`], and a name for `Chat` over it.
@@ -49,7 +49,7 @@ pub trait Dialect: Send + Sync + 'static {
     const NAME: &'static str;
 
     /// What the vendor is called in a line a request carries in place of a
-    /// file it cannot take.
+    /// file it cannot take, and what the provider is shown as in `Debug`.
     const TITLE: &'static str;
 
     /// The addresses the vendor serves. Any other is one a setting named, and
@@ -96,8 +96,7 @@ pub struct Chat<D: Dialect> {
 
 impl<D: Dialect> fmt::Debug for Chat<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Chat")
-            .field("dialect", &D::NAME)
+        f.debug_struct(D::TITLE)
             .field("credential", &self.credential)
             .field("transport", &self.transport)
             .field("endpoint", &self.endpoint)

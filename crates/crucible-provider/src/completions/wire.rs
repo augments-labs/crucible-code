@@ -10,8 +10,9 @@
 //! consumed once, here, and a struct per shape would be more code to say the
 //! same thing while still needing a fallback for what it does not know.
 //!
-//! Events are unnamed (the SSE `event:` line is never sent), so what an event
-//! is is decided by what its payload holds rather than by a word beside it.
+//! Events are unnamed (the wire's first vendor sends no SSE `event:` line), so
+//! what an event is is decided by what its payload holds rather than by a word
+//! beside it.
 //!
 //! What the counts in the last event mean is the one thing vendors on this
 //! wire disagree about, so the dialect reads them.
@@ -238,7 +239,7 @@ fn upstream<D: Dialect>(error: &Value) -> ProviderError {
 }
 
 /// One string field.
-pub(crate) fn text<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
+fn text<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
     value.get(field).and_then(Value::as_str)
 }
 

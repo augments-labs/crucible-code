@@ -56,8 +56,8 @@ pub(crate) fn serialize<D: Dialect>(request: &Request<'_>) -> String {
             body.text("reasoning_effort", D::effort(effort));
         }
 
-        // Absent rather than empty: an empty array is refused rather than read
-        // as a session with no tools.
+        // Absent rather than empty: the wire's first vendor refuses an empty
+        // array rather than read it as a session with no tools.
         if !request.tools.is_empty() {
             body.array("tools", |tools| {
                 for schema in request.tools {
@@ -101,9 +101,9 @@ pub(crate) fn prompt_cache_encoding(request: &Request<'_>) -> PromptCacheEncodin
 /// The transcript, as the list of messages this endpoint reads.
 ///
 /// Standing instructions go in front of it as a message of their own, which is
-/// the only place this wire has for them. It is a weaker promise than a field (the
-/// model may answer the instructions rather than obey them), and it is the
-/// one this endpoint offers.
+/// the only place this wire has for them. It is a weaker promise than a field
+/// (the model may answer the instructions rather than obey them), and it is
+/// the one this endpoint offers.
 fn write_messages<D: Dialect>(messages: &mut Array<'_>, request: &Request<'_>) {
     let mut history = crate::history::LegacyHistory::default();
     if let Some(system) = request.system {
@@ -175,7 +175,7 @@ fn append<D: Dialect>(
         } => {
             // Both fields are optional and one of them has to be there. A model
             // that goes straight to a tool says nothing first, and a message
-            // with neither is one the API refuses.
+            // with neither is one the wire's first vendor refuses.
             // Nothing said and nothing asked for: a turn cancelled or filtered
             // before the model's first word. It is recorded, so it would be
             // sent on every turn after it: one bad turn making the session
@@ -204,8 +204,8 @@ fn append<D: Dialect>(
             //
             // It cannot follow a message that carries tool calls: this wire
             // requires the next message after those to be their results, and
-            // one in between is a request the API refuses outright. A turn
-            // holding calls ended by asking for them, which is not a cut.
+            // one in between is a request its first vendor refuses outright. A
+            // turn holding calls ended by asking for them, which is not a cut.
             if let Some(said) = StopReason::cut(*stop).filter(|_| calls.is_empty()) {
                 messages.object(|message| {
                     message.text("role", "assistant");
@@ -305,11 +305,11 @@ fn arguments(args: &str) -> &str {
 
 /// One tool result, as its own message, and whatever files the tool found.
 ///
-/// The parts array rests on the published schema rather than on a worked
-/// example: as read on 2026-08-22 the schema allows parts for `content` and
-/// does not narrow them by role, and no example shows a tool message using
-/// one. A result that found nothing keeps the string it always sent, so this
-/// is reached only by a call that went looking for a file.
+/// The parts array rests on the first vendor's published schema rather than on
+/// a worked example: as read on 2026-08-22 the schema allows parts for
+/// `content` and does not narrow them by role, and no example shows a tool
+/// message using one. A result that found nothing keeps the string it always
+/// sent, so this is reached only by a call that went looking for a file.
 fn write_result<D: Dialect>(
     message: &mut Object<'_>,
     result: &ToolResult,
