@@ -439,6 +439,64 @@ fn a_newest_release_that_alone_passes_the_most_is_cut_at_its_end_and_said_so() {
     );
 }
 
+#[test]
+fn a_most_below_the_least_the_whole_can_be_told_in_gives_that_least_and_says_what_went() {
+    // Every release told in a row, the newest's head and the closing row are
+    // the least the whole can be told in; below that, that is what comes.
+    let told = told();
+    let rows = Timeline {
+        older: &OLDER,
+        told: &told,
+        running: Some("0.43.3"),
+        forge: None,
+        closing: Some("/release-notes <version> prints one"),
+        most: 6,
+    }
+    .rows(200, Glyphs::Unicode);
+    let lines = said(&rows);
+    let closing = closing(&lines, Glyphs::Unicode);
+
+    assert!(rows.len() > 6, "{lines:#?}");
+    for brief in told.iter().map(|told| told.brief) {
+        assert!(
+            lines.iter().any(|line| line.contains(brief.version)),
+            "{} went unsaid: {lines:#?}",
+            brief.version
+        );
+    }
+    assert!(
+        closing.contains(&format!("{} of the older rows left out", OLDER.len())),
+        "{closing:?}"
+    );
+    assert!(
+        closing.contains(&format!("{} told in a row each", told.len() - 1)),
+        "{closing:?}"
+    );
+    assert!(
+        closing.contains("the end of 0.43.3 left out"),
+        "{closing:?}"
+    );
+}
+
+#[test]
+fn with_no_release_told_in_full_the_closing_row_names_none() {
+    let rows = Timeline {
+        older: &OLDER,
+        told: &[],
+        running: None,
+        forge: None,
+        closing: Some("/release-notes <version> prints one"),
+        most: 100,
+    }
+    .rows(80, Glyphs::Unicode);
+    let closing = closing(&said(&rows), Glyphs::Unicode);
+
+    assert!(
+        closing.starts_with(&format!("⎿ {} releases · /release-notes", OLDER.len())),
+        "{closing:?}"
+    );
+}
+
 /// The twelve as a picture, for the four pictures kept beside this.
 fn pictured(columns: usize, glyphs: Glyphs) -> String {
     let told = told();

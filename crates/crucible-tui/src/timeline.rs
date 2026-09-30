@@ -3,8 +3,8 @@
 //! The older releases a row each, hollow-marked: the version, the day and how
 //! many entries of each kind it held. Then the newest few in full, each under
 //! a filled mark, their words hanging off the rail. The running version is the
-//! last of them, and nothing hangs under it: the rail ends where the program
-//! the reader is using is.
+//! last of them, and no rail runs under it: its words stand indented, and the
+//! rail ends where the program the reader is using is.
 
 use std::fmt::Write as _;
 
@@ -54,8 +54,11 @@ pub struct Timeline<'a> {
     ///
     /// Past it, what is left out goes in this order: the oldest one-row
     /// releases, then the words of the oldest told in full, each told in a row
-    /// instead. The newest is kept, cut at its end only where it alone passes
-    /// this. The closing row says what went.
+    /// instead, then the end of the newest. The closing row says what went.
+    ///
+    /// Every release told in a row, the newest's head and the closing row are
+    /// the least the whole can be told in, and are always kept: a `most` below
+    /// them gives them, and so more rows than `most`.
     pub most: usize,
 }
 
@@ -202,10 +205,13 @@ impl Timeline<'_> {
         let dot = glyphs.dot();
         let releases = self.older.len() + self.told.len();
         let told = self.told.len();
-        let many = COUNTED
-            .get(told.saturating_sub(1))
-            .map_or_else(|| told.to_string(), |word| (*word).to_owned());
-        let mut said = format!("{releases} releases {dot} {many} newest in full");
+        let mut said = format!("{releases} releases");
+        if told > 0 {
+            let many = COUNTED
+                .get(told - 1)
+                .map_or_else(|| told.to_string(), |word| (*word).to_owned());
+            let _ = write!(said, " {dot} {many} newest in full");
+        }
 
         let mut gone = Vec::new();
         if left.older > 0 {
