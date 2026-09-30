@@ -15,8 +15,9 @@ use crucible_client_api::{
 use crucible_tools::{Ask, Remember, Sensitivity, Target, Verdict};
 use crucible_types::{Answer, Question, ToolArgs, ToolCall, ToolId};
 
-use super::deciding::{Deciding, Front, Shown, questions};
+use super::deciding::{Deciding, Front, Shown, questions, warned};
 use super::reading::progress;
+use crate::content_use::WARNED;
 
 /// What a scripted front end says next about whatever it is put.
 enum Reply {
@@ -28,6 +29,10 @@ enum Reply {
     Answers(usize),
     /// A declining naming the action it was put.
     Declining,
+    /// Send anyway, naming the action it was put.
+    Accepting,
+    /// Send anyway, naming some other action.
+    AcceptingOther(u64),
 }
 
 /// Answers from a script, and remembers what it was put and what was refused.
@@ -83,6 +88,10 @@ impl Front for Scripted {
                         .ok()?,
                 },
                 Reply::Declining => Decision::Declined { id },
+                Reply::Accepting => Decision::Accepted { id },
+                Reply::AcceptingOther(number) => Decision::Accepted {
+                    id: PendingId::new(number),
+                },
             })
         })
     }
@@ -511,4 +520,88 @@ fn words_a_guardrail_ceiling_cut_reach_a_client_said_to_be_cut() {
         };
         assert!(problem.message.truncated(), "cut words were sent as whole");
     }
+}
+
+/// What `front` makes of the question a warned route puts: `true` is send
+/// anyway.
+fn heeded(front: &mut Scripted, has: Capabilities) -> bool {
+    let google = WARNED
+        .iter()
+        .find(|one| one.route == "key:google")
+        .expect("the Google key row is warned");
+    crucible_runtime::answered!(warned(has, front, google))
+}
+
+#[test]
+fn a_send_anyway_settles_no_permission_and_no_questions() {
+    let mut front = Scripted::saying([Reply::Accepting, Reply::Accepting]);
+    assert_eq!(
+        asked(&mut front, Capabilities::every()),
+        (Verdict::Deny, Remember::Never)
+    );
+    assert_eq!(
+        front.refused,
+        [ErrorCode::WrongDecision, ErrorCode::WrongDecision]
+    );
+
+    let mut asking = Scripted::saying([Reply::Accepting]);
+    assert!(
+        crucible_runtime::answered!(questions(
+            Capabilities::every(),
+            &mut asking,
+            &one_question()
+        ))
+        .is_none()
+    );
+    assert_eq!(asking.refused, [ErrorCode::WrongDecision]);
+}
+
+#[test]
+fn a_warning_is_settled_only_by_a_send_anyway_or_a_going_back_naming_it() {
+    // A ruling and answers are the other kinds of question's; each is refused
+    // and the warning is put again, and the fitting answer then settles it.
+    let mut front = Scripted::saying([
+        Reply::Fitting(Ruling::Allow, Lasting::Session),
+        Reply::Answers(1),
+        Reply::Accepting,
+    ]);
+    assert!(heeded(&mut front, Capabilities::every()));
+    assert_eq!(
+        front.refused,
+        [ErrorCode::WrongDecision, ErrorCode::WrongDecision]
+    );
+    assert!(matches!(front.put.first(), Some(Pending::Warning { .. })));
+
+    let mut back = Scripted::saying([Reply::Declining]);
+    assert!(!heeded(&mut back, Capabilities::every()));
+    assert!(back.refused.is_empty());
+}
+
+#[test]
+fn a_send_anyway_naming_another_action_settles_nothing() {
+    let mut front = Scripted::saying([
+        Reply::AcceptingOther(9_000),
+        Reply::AcceptingOther(9_001),
+        Reply::AcceptingOther(9_002),
+    ]);
+    assert!(!heeded(&mut front, Capabilities::every()));
+    assert_eq!(
+        front.refused,
+        [
+            ErrorCode::StaleDecision,
+            ErrorCode::StaleDecision,
+            ErrorCode::StaleDecision,
+            ErrorCode::Abandoned
+        ]
+    );
+}
+
+#[test]
+fn a_client_that_never_said_it_answers_permissions_is_not_put_a_warning() {
+    let mut front = Scripted::saying([Reply::Accepting]);
+    let without = Capabilities::none()
+        .with(Capability::Questions)
+        .with(Capability::Progress);
+    assert!(!heeded(&mut front, without));
+    assert!(front.put.is_empty(), "the yes it had ready was never heard");
 }
