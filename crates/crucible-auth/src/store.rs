@@ -109,37 +109,52 @@ impl Store {
     /// Takes out, in one locked write, every second credential a provider
     /// holds, keeping the one under its bare name.
     ///
-    /// Only a write by 0.43.3, rolled back to, leaves two; nothing a start does
-    /// with the store is held up by this failing, and it is tried again at the
-    /// next start.
+    /// Only a write by 0.43.3, rolled back to, leaves two. The store is looked
+    /// at without the lock first, so a start that finds one credential for
+    /// each provider takes no lock and waits on no other crucible; only a
+    /// start that finds two takes it, and looks again under it. What was found
+    /// comes back whether or not the write could be made, so the start can
+    /// say it either way; the next start tries again.
+    ///
+    /// Read the store first ([`Store::read`]): that read tightens a store left
+    /// readable by others and says so, and this one finds it private.
     #[must_use]
     pub fn settle(&self) -> Settled {
-        let mut dropped = Vec::new();
         let names = self.names.clone();
+        let found = match self.document() {
+            Ok(Some(mut document)) => seconds(&mut document, &names),
+            Ok(None) | Err(_) => Vec::new(),
+        };
+        if found.is_empty() {
+            return Settled::Nothing;
+        }
+
+        let mut dropped = Vec::new();
         let written = self.change(|document| {
-            let providers: BTreeSet<String> = document
-                .keys
-                .keys()
-                .chain(document.subscriptions.keys())
-                .map(|name| provider_of(name).to_owned())
-                .collect();
-            for provider in providers {
-                if document.holds(&provider).is_none() {
-                    continue;
-                }
-                for name in names.of(&provider) {
-                    if name == provider {
-                        continue;
-                    }
-                    dropped.extend(document.take(name, None));
-                }
-            }
+            dropped = seconds(document, &names);
             !dropped.is_empty()
         });
-        Settled {
-            dropped,
-            unwritten: written.err(),
+        match written {
+            Err(why) => Settled::Stayed { found, why },
+            Ok(()) if dropped.is_empty() => Settled::Nothing,
+            Ok(()) => Settled::Removed(dropped),
         }
+    }
+
+    /// The document on disk, read without the lock, or `None` where there is
+    /// none.
+    fn document(&self) -> Result<Option<Document>, AuthError> {
+        if self.secure_existing()?.is_none() {
+            return Ok(None);
+        }
+        let Some(text) = self.read_text()? else {
+            return Ok(None);
+        };
+        document::parse(&text)
+            .map(Some)
+            .map_err(|_| AuthError::Unreadable {
+                path: self.path.clone(),
+            })
     }
 
     /// Every key the store holds.
@@ -182,15 +197,9 @@ impl Store {
     /// [`AuthError`] where the store is there and cannot be read whole: the
     /// store a write would refuse to replace, said before anything is asked.
     pub fn holding(&self) -> Result<Vec<Held>, AuthError> {
-        if self.secure_existing()?.is_none() {
-            return Ok(Vec::new());
-        }
-        let Some(text) = self.read_text()? else {
+        let Some(document) = self.document()? else {
             return Ok(Vec::new());
         };
-        let document = document::parse(&text).map_err(|_| AuthError::Unreadable {
-            path: self.path.clone(),
-        })?;
         let stored = StoredCredentials::from_document(self.clone(), document);
         Ok(self
             .names
@@ -199,7 +208,8 @@ impl Store {
             .collect())
     }
 
-    /// Writes `key` down as `provider`'s, replacing one already there.
+    /// Writes `key` under `name`, a row's stored name, replacing one already
+    /// there.
     ///
     /// # Errors
     ///
@@ -222,8 +232,8 @@ impl Store {
         Ok(dropped)
     }
 
-    /// Writes a completed subscription login and removes an API key previously
-    /// selected for the same provider.
+    /// Writes a completed sign-in under `name`, taking out every other
+    /// credential its provider holds in the same write, and says what went.
     pub(crate) fn keep_subscription(
         &self,
         name: &str,
@@ -273,16 +283,9 @@ impl Store {
     /// The installation identity `name`'s sign-ins present, where one is
     /// kept. Reads and writes nothing else.
     pub(crate) fn identity(&self, name: &str) -> Result<Option<String>, AuthError> {
-        if self.secure_existing()?.is_none() {
-            return Ok(None);
-        }
-        let Some(text) = self.read_text()? else {
-            return Ok(None);
-        };
-        let document = document::parse(&text).map_err(|_| AuthError::Unreadable {
-            path: self.path.clone(),
-        })?;
-        Ok(document.identities.get(name).cloned())
+        Ok(self
+            .document()?
+            .and_then(|document| document.identities.get(name).cloned()))
     }
 
     /// Forgets `provider`'s key. `false` when there was none to forget.
@@ -429,7 +432,17 @@ impl Store {
         let mut text = String::new();
         file.take((MAX_STORE + 1) as u64)
             .read_to_string(&mut text)
-            .map_err(AuthError::at(&self.path))?;
+            .map_err(|problem| {
+                // A file that opens and holds something other than text is
+                // there and cannot be read, which is not a permissions matter.
+                if problem.kind() == std::io::ErrorKind::InvalidData {
+                    AuthError::Unreadable {
+                        path: self.path.clone(),
+                    }
+                } else {
+                    AuthError::at(&self.path)(problem)
+                }
+            })?;
         if text.len() > MAX_STORE {
             return Err(AuthError::TooLarge {
                 path: self.path.clone(),
@@ -439,6 +452,29 @@ impl Store {
 
         Ok(Some(text))
     }
+}
+
+/// Takes out of `document` every provider's second credential, where its bare
+/// name holds one, and says what went.
+fn seconds(document: &mut Document, names: &Names) -> Vec<Dropped> {
+    let providers: BTreeSet<String> = document
+        .keys
+        .keys()
+        .chain(document.subscriptions.keys())
+        .map(|name| provider_of(name).to_owned())
+        .collect();
+    let mut dropped = Vec::new();
+    for provider in providers {
+        if document.holds(&provider).is_none() {
+            continue;
+        }
+        for name in names.of(&provider) {
+            if name != provider {
+                dropped.extend(document.take(name, None));
+            }
+        }
+    }
+    dropped
 }
 
 /// What taking a rotation found.

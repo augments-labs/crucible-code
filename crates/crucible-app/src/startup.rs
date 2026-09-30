@@ -788,14 +788,14 @@ fn credential(
 /// same credential and the line says so without claiming anything went.
 #[must_use]
 pub fn settle(store: &crucible_auth::Store, rows: &crate::providers::Rows) -> Option<String> {
-    let settled = store.settle();
-    if settled.dropped.is_empty() {
-        return None;
-    }
+    let (dropped, removed) = match store.settle() {
+        crucible_auth::Settled::Nothing => return None,
+        crucible_auth::Settled::Removed(dropped) => (dropped, true),
+        crucible_auth::Settled::Stayed { found, .. } => (found, false),
+    };
     let read = store.read();
     let mut said = Vec::new();
-    let providers: std::collections::BTreeSet<&str> = settled
-        .dropped
+    let providers: std::collections::BTreeSet<&str> = dropped
         .iter()
         .map(|dropped| crucible_auth::provider_of(&dropped.name))
         .collect();
@@ -803,8 +803,7 @@ pub fn settle(store: &crucible_auth::Store, rows: &crate::providers::Rows) -> Op
         let kept = rows
             .held(provider, &read)
             .map_or_else(|| provider.to_owned(), crate::providers::Row::credential);
-        let went: Vec<String> = settled
-            .dropped
+        let went: Vec<String> = dropped
             .iter()
             .filter(|dropped| crucible_auth::provider_of(&dropped.name) == provider)
             .map(|dropped| {
@@ -813,7 +812,7 @@ pub fn settle(store: &crucible_auth::Store, rows: &crate::providers::Rows) -> Op
             })
             .collect();
         let went = went.join(" and the ");
-        said.push(if settled.unwritten.is_none() {
+        said.push(if removed {
             format!(
                 "two credentials were stored for {provider}; the {went} was removed, and the {kept} is used"
             )

@@ -94,11 +94,21 @@ impl Held {
 pub type Dropped = Held;
 
 /// What settling the store did at a start.
-#[derive(Debug, Default)]
-pub struct Settled {
-    /// What was taken out, or would have been had the write been made.
-    pub dropped: Vec<Dropped>,
-    /// Why the write could not be made, where it could not; what was found
-    /// stays, and the next start tries again.
-    pub unwritten: Option<crate::error::AuthError>,
+///
+/// An enum a start has to match, so that finding two credentials and being
+/// unable to take one out cannot read as having found nothing.
+#[derive(Debug)]
+pub enum Settled {
+    /// No provider holds a second credential.
+    Nothing,
+    /// Each provider's second credential was taken out.
+    Removed(Vec<Dropped>),
+    /// A provider holds a second credential and the write that would take it
+    /// out could not be made: it stays, and the next start tries again.
+    Stayed {
+        /// What would have been taken out.
+        found: Vec<Dropped>,
+        /// Why it could not be.
+        why: crate::error::AuthError,
+    },
 }

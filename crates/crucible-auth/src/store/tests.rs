@@ -757,9 +757,11 @@ fn a_start_that_finds_two_for_a_provider_keeps_the_bare_one_and_says_which_went(
 
     let settled = store.settle();
 
-    assert!(settled.unwritten.is_none(), "{settled:?}");
+    let Settled::Removed(dropped) = settled else {
+        panic!("{settled:?}");
+    };
     assert_eq!(
-        settled.dropped,
+        dropped,
         vec![Dropped {
             kind: Kind::Account,
             name: "moonshot@kimi.ai".to_owned()
@@ -772,7 +774,7 @@ fn a_start_that_finds_two_for_a_provider_keeps_the_bare_one_and_says_which_went(
     // The installation's identity outlives the credential it was made for.
     assert!(on_disk(&scratch).contains("00000000-0000-4000-8000-000000000000"));
     // And a second start finds nothing to do.
-    assert!(store.settle().dropped.is_empty());
+    assert!(matches!(store.settle(), Settled::Nothing));
 }
 
 #[test]
@@ -787,8 +789,10 @@ fn a_start_that_cannot_write_goes_on_with_the_bare_one_and_leaves_the_file() {
 
     let settled = store.settle();
 
-    assert!(settled.unwritten.is_some(), "{settled:?}");
-    assert_eq!(settled.dropped.len(), 1, "{settled:?}");
+    assert!(
+        matches!(&settled, Settled::Stayed { found, .. } if found.len() == 1),
+        "{settled:?}"
+    );
     assert_eq!(on_disk(&scratch), before);
     assert_eq!(
         store.read().held("moonshot").map(|held| held.kind),
@@ -844,4 +848,74 @@ fn a_store_that_cannot_be_read_whole_is_said_before_anything_is_marked() {
     let nothing = Scratch::new("holding-nothing");
     let store = Store::in_home(nothing.home()).naming(named());
     assert_eq!(store.holding().ok(), Some(Vec::new()));
+}
+
+/// Holds the store's lock the way another crucible writing does, until
+/// dropped.
+fn another_crucible_writing(scratch: &Scratch) -> Lock {
+    Lock::take(&scratch.home().join(LOCK), &scratch.home().join(FILE))
+        .expect("the lock, taken first")
+}
+
+#[test]
+fn a_start_meeting_another_crucibles_lock_still_finds_the_second_credential() {
+    let scratch = Scratch::new("settle-busy");
+    let store = scratch.holding(TWO_HELD).naming(named());
+    let _ = store.read();
+    let before = on_disk(&scratch);
+    let _held = another_crucible_writing(&scratch);
+
+    let settled = store.settle();
+
+    assert!(
+        matches!(
+            &settled,
+            Settled::Stayed { found, why: AuthError::Busy { .. } }
+                if found == &[Dropped { kind: Kind::Account, name: "moonshot@kimi.ai".to_owned() }]
+        ),
+        "{settled:?}"
+    );
+    assert_eq!(on_disk(&scratch), before);
+}
+
+#[test]
+fn a_start_with_one_credential_each_waits_on_no_lock() {
+    let scratch = Scratch::new("settle-idle");
+    let store = scratch
+        .holding(r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key","openai":"fabricated-openai-key"},"subscriptions":{}}"#)
+        .naming(named());
+    let _ = store.read();
+    let _held = another_crucible_writing(&scratch);
+
+    let started = std::time::Instant::now();
+    let settled = store.settle();
+
+    assert!(matches!(settled, Settled::Nothing), "{settled:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_store_that_is_not_text_is_one_that_cannot_be_read_rather_than_reached() {
+    // The file is there and opens; what it holds is not UTF-8. Moving it aside
+    // is the way back in, not fixing permissions that are fine.
+    let scratch = Scratch::new("holding-not-text");
+    fs::write(scratch.home().join(FILE), [0x7b, 0xff, 0xfe, 0x7d]).expect("a store");
+    let store = Store::in_home(scratch.home()).naming(named());
+
+    assert!(
+        matches!(store.holding(), Err(AuthError::Unreadable { .. })),
+        "{:?}",
+        store.holding()
+    );
+    assert!(
+        matches!(
+            store.keep("openai", "fabricated-openai-key"),
+            Err(AuthError::Unreadable { .. })
+        ),
+        "a write refuses it the same way"
+    );
 }

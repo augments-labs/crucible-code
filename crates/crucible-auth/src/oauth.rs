@@ -368,7 +368,8 @@ pub trait SubscriptionLogin: Send + Sync + fmt::Debug {
     fn provider(&self) -> &'static str;
 
     /// The name the store writes this sign-in under: the provider's own name
-    /// unless the provider has more than one sign-in.
+    /// for a sign-in 0.43.3 knows; another sign-in of the same provider names
+    /// its own, as `moonshot@kimi.ai` does.
     fn name(&self) -> &'static str {
         self.provider()
     }

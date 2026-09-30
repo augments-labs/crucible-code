@@ -83,7 +83,8 @@ pub(crate) struct Due {
     /// The account's scope, which with the provider keys the one rotation in
     /// flight.
     pub(crate) scope: CredentialScopeId,
-    /// The provider the store holds the rotation under.
+    /// The name the store holds the rotation under: the provider's, or
+    /// `provider@site` for a sign-in 0.43.3 does not know.
     pub(crate) provider: &'static str,
     pub(crate) store: Store,
     /// Whether the rotation the store holds is still due, decided inside the

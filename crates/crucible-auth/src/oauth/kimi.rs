@@ -5,7 +5,9 @@
 //! request; it never inherits Kimi Code's identity. A random installation id
 //! is kept in the protected auth document, written with the first sign-in that
 //! completes and never before it, and copied into the credential's opaque
-//! details so every later request presents the same host identity. The
+//! details so every later request presents the same host identity. Where two
+//! first sign-ins complete at once, the store keeps the first one's id and the
+//! second's credential presents its own until its next sign-in. The
 //! token service and browser authorization page have different fixed origins;
 //! both are checked before a response can reach the terminal or browser.
 //!
