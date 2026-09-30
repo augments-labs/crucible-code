@@ -10,7 +10,9 @@
 
 use std::fmt;
 
-use crucible_auth::{Held, Kind, Names, StoredCredentials};
+/// What the credential store holds, as a provider is set up from it.
+pub use crucible_auth::StoredCredentials;
+use crucible_auth::{Held, Kind, Names};
 use crucible_config::Settings;
 use crucible_models::{Effort, FastForm, ModelCapabilities, ModelError, ModelLimits, Provider};
 use crucible_provider::{Anthropic, Endpoint, Google, HttpTurns, Moonshot, OpenAi};

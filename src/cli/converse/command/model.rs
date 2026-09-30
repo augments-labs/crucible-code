@@ -89,7 +89,7 @@ fn row_form(
     served: Served,
     model: &str,
     settings: &crucible_config::Settings,
-    stored: &crucible_auth::StoredCredentials,
+    stored: &crucible_app::providers::StoredCredentials,
 ) -> FastForm {
     routed(
         served,
