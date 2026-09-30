@@ -28,8 +28,8 @@ use std::marker::PhantomData;
 
 use crucible_credentials::{Credential, Outgoing};
 use crucible_models::{
-    Delta, DeltaStream, Effort, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError,
-    Request,
+    Delta, DeltaStream, Effort, FastForm, PromptCacheCapabilities, PromptCacheRoute, Provider,
+    ProviderError, Request,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{CredentialScopeId, Modalities, PromptCacheEncoding};
@@ -83,6 +83,14 @@ pub trait Dialect: Send + Sync + 'static {
     /// What the vendor's cache is known to do for `model`, at one of its own
     /// addresses.
     fn prompt_cache(model: &str) -> PromptCacheCapabilities;
+
+    /// How `model` is asked to answer fast, at one of the vendor's own
+    /// addresses. None, by default: the answer of a vendor that serves no
+    /// fast form on this wire.
+    fn fast(model: &str) -> FastForm {
+        let _ = model;
+        FastForm::None
+    }
 }
 
 /// A Chat Completions provider, speaking `D`'s dialect.
@@ -184,6 +192,14 @@ impl<D: Dialect> Provider for Chat<D> {
             account: None,
             project: None,
             request_shape_version: D::SHAPE,
+        }
+    }
+
+    fn fast(&self, model: &str) -> FastForm {
+        if self.vendor() {
+            D::fast(model)
+        } else {
+            FastForm::None
         }
     }
 
