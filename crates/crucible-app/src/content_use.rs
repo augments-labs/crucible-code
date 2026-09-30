@@ -23,11 +23,14 @@
 //! nothing walks around.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::sync::{Arc, PoisonError, RwLock};
 
+use crucible_auth::{Dropped, LettingGo};
+use crucible_config::Settings;
 use crucible_http::{Hold, Origin};
 
-use crate::providers::{List, Row};
+use crate::providers::{List, Row, Rows};
 
 /// What a vendor says about one route, and where it says it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,6 +338,8 @@ pub struct Consent {
 struct State {
     /// Routes the user's own file says yes to.
     recorded: BTreeSet<String>,
+    /// Whether the file's yes has been read this run.
+    read: bool,
     /// Routes a `/login` choice said yes to, not written down until the
     /// credential is stored.
     given: BTreeSet<String>,
@@ -366,10 +371,15 @@ impl Consent {
         (!state.recorded.contains(route) && !state.given.contains(route)).then_some(warned)
     }
 
-    /// Takes the routes the user's file says yes to, in place of any read
-    /// before.
+    /// Takes the routes the user's file says yes to, the first time it is
+    /// told this run; later tellings are ignored, since a yes the run has
+    /// taken out since must not come back from settings read before it was.
     pub fn recorded(&self, routes: impl IntoIterator<Item = String>) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
+        if state.read {
+            return;
+        }
+        state.read = true;
         state.recorded = routes.into_iter().collect();
     }
 
@@ -456,6 +466,53 @@ impl Hold for Consent {
             .find(|warned| sent_to(warned) && !said(warned.route))
             .map(|warned| warned.route.into())
     }
+}
+
+/// What a store asks before a write takes a credential out: the yes of the
+/// row it was given on, of every model route of its provider, and of the
+/// route its provider's `baseUrl` answers for, taken out of the user's own
+/// file `file` and then out of `consent`.
+///
+/// Changing or removing a `baseUrl` moves no yes; the address is read from
+/// `settings` once, here, as the run was started with it.
+#[must_use]
+pub fn letting_go(consent: &Consent, file: PathBuf, rows: Rows, settings: &Settings) -> LettingGo {
+    let consent = consent.clone();
+    let based: BTreeMap<&'static str, &'static str> = rows
+        .all()
+        .iter()
+        .filter_map(|row| {
+            let route = recognised(settings.base_url(row.provider)?)?;
+            Some((row.provider, route))
+        })
+        .collect();
+    Arc::new(move |going: &[Dropped]| {
+        let mut routes = BTreeSet::new();
+        let mut providers = BTreeSet::new();
+        for held in going {
+            let provider = crucible_auth::provider_of(&held.name).to_owned();
+            if let Some(row) = rows.of(held.kind, &held.name) {
+                routes.insert(row_route(row));
+            }
+            if let Some(route) = based.get(provider.as_str()) {
+                routes.insert((*route).to_owned());
+            }
+            providers.insert(provider);
+        }
+        let gone = |route: &str| {
+            routes.contains(route)
+                || providers
+                    .iter()
+                    .any(|provider| route.starts_with(&model_route(provider, "")))
+        };
+        crate::remember::forgetting(&file, gone).map_err(|problem| {
+            Box::<str>::from(format!(
+                "the yes that goes with it could not be taken out: {problem}"
+            ))
+        })?;
+        consent.forget(gone);
+        Ok(())
+    })
 }
 
 #[cfg(test)]

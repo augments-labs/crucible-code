@@ -5,7 +5,7 @@ use crucible_http::{Hold, Origin};
 use crucible_provider::{Google, Moonshot, MoonshotWeb, OpenAi};
 
 use super::*;
-use crate::providers::Rows;
+use crate::sample::Sample;
 
 fn origin(url: &str) -> Origin {
     Origin::of(url).unwrap()
@@ -271,5 +271,109 @@ fn a_route_nobody_warns_about_is_never_asked_and_an_unknown_yes_means_nothing() 
     consent.recorded(["key:nobody".to_owned(), "model:nobody/x".to_owned()]);
     assert!(consent.asks("key:anthropic").is_none());
     assert!(consent.asks("key:nobody").is_none());
+    assert!(consent.asks("key:google").is_some());
+}
+
+/// A credential taken out takes its row's yes with it, every model route of
+/// its provider, and the route its provider's `baseUrl` answers for: out of
+/// the user's file before the store is written, and out of what this run
+/// holds. Another row's yes, and another provider's, stay.
+#[test]
+fn a_credential_taken_out_takes_the_yes_that_went_with_it() {
+    let sample = Sample::new("letting-go-yes");
+    let settings =
+        sample.user(r#"{"providers": {"moonshot": {"baseUrl": "https://api.moonshot.ai/v1"}}}"#);
+    let file = sample.user_file();
+    let said = r#"{"contentUse": {"accepted": ["key:moonshot", "subscription:moonshot@kimi.ai", "model:moonshot/k3", "api.moonshot.ai", "key:google", "model:google/gemini"]}}"#;
+    std::fs::write(&file, said).unwrap();
+    let consent = Consent::new(Routes::production());
+    let settings_now = sample.user(said);
+    consent.recorded(
+        settings_now
+            .content_accepted()
+            .into_iter()
+            .map(str::to_owned),
+    );
+
+    let rows = Rows::production();
+    let store = sample
+        .store()
+        .letting_go(letting_go(&consent, file.clone(), rows, &settings));
+    store.keep("moonshot", "fabricated-kimi-com-key").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        said,
+        "nothing went"
+    );
+
+    // The key row replaced by another row's key.
+    store
+        .keep("moonshot@kimi.ai", "fabricated-kimi-ai-key")
+        .unwrap();
+
+    let left = sample.user(&std::fs::read_to_string(&file).unwrap());
+    assert_eq!(
+        left.content_accepted(),
+        [
+            "subscription:moonshot@kimi.ai",
+            "key:google",
+            "model:google/gemini"
+        ]
+    );
+    for gone in ["key:moonshot", "api.moonshot.ai"] {
+        assert!(consent.asks(gone).is_some(), "{gone}");
+    }
+    assert!(consent.asks("key:google").is_none());
+
+    // Forgotten: the row it was on goes too.
+    store.forget("moonshot").unwrap();
+    let left = sample.user(&std::fs::read_to_string(&file).unwrap());
+    assert_eq!(
+        left.content_accepted(),
+        [
+            "subscription:moonshot@kimi.ai",
+            "key:google",
+            "model:google/gemini"
+        ]
+    );
+}
+
+/// A yes that could not be taken out stops the write: the credential stays,
+/// and the file is as it was.
+#[test]
+fn a_yes_that_cannot_be_taken_out_leaves_the_credential() {
+    let sample = Sample::new("letting-go-stuck");
+    sample.user("{}");
+    let file = sample.user_file();
+    let consent = Consent::new(Routes::production());
+    let plain = sample.store();
+    plain.keep("moonshot", "fabricated-kimi-com-key").unwrap();
+    let store = sample.store().letting_go(letting_go(
+        &consent,
+        file.clone(),
+        Rows::production(),
+        &Settings::default(),
+    ));
+
+    // A file that is not configuration cannot have a yes taken out of it.
+    std::fs::write(&file, "{ not configuration").unwrap();
+    let forgotten = store.forget("moonshot");
+
+    assert!(forgotten.is_err(), "{forgotten:?}");
+    assert!(plain.read().held("moonshot").is_some());
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "{ not configuration"
+    );
+}
+
+/// What the file said at the start is read once: a yes the run took out since
+/// does not come back from settings read before it was.
+#[test]
+fn the_yes_read_at_the_start_is_read_once() {
+    let consent = Consent::new(Routes::production());
+    consent.recorded(["key:google".to_owned()]);
+    consent.forget(|route| route == "key:google");
+    consent.recorded(["key:google".to_owned()]);
     assert!(consent.asks("key:google").is_some());
 }
