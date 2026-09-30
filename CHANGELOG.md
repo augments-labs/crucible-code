@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **`/release-notes` prints what changed in each release.** Older releases get
+  a row each with how many entries they added, changed and fixed, the ten
+  newest are printed in full, and the one you are running is marked `this
+  version`; `/release-notes 0.41.1` prints one alone. The notes are the
+  changelog the binary was built from, so they need no network.
+
 ### Changed
 
 - **A line that opens with a path is sent as a prompt, and a mistyped command

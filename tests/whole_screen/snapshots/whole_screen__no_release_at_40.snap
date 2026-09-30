@@ -1,0 +1,30 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 2069
+expression: window.picture()
+---
+40x24 cursor 20,4 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|                                        |
+|Warning: No models available. Use /login|
+|or set an API key environment variable. |
+|Then use /model to select a model.      |
+|                                        |
+|› /release-notes 0.0.0                  |
+|                                        |
+|! no release 0.0.0 · newest is ######   |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|╭──────────────────────────────────────╮|
+|│ ›                                    │|
+|╰──────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)        |
+|                       transcript map → |

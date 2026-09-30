@@ -97,7 +97,20 @@ const KEYS: [&str; 71] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 4] = ["unwritten", "variable", "version", "why"];
+const MORE_KEYS: [&str; 12] = [
+    "count",
+    "date",
+    "groups",
+    "newest",
+    "notes",
+    "release",
+    "releases",
+    "running",
+    "unwritten",
+    "variable",
+    "version",
+    "why",
+];
 
 /// What a field name may not say, whatever else it says.
 ///
@@ -220,6 +233,10 @@ fn commands() -> Vec<Command> {
         Command::Theme(Theme::Drawing(Palette::Dark)),
         Command::Theme(Theme::Syntax(name("base16"))),
         Command::Help,
+        Command::ReleaseNotes { version: None },
+        Command::ReleaseNotes {
+            version: Some(name("v0.41.1")),
+        },
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
@@ -295,6 +312,25 @@ fn login_outcomes() -> Vec<Outcome> {
     ]
 }
 
+/// A release, with its words where there are some.
+fn release(text: Option<Text>) -> Release {
+    Release {
+        version: name("0.41.1"),
+        date: name("2026-09-14"),
+        groups: vec![
+            Group {
+                kind: name("security"),
+                count: 1,
+            },
+            Group {
+                kind: name("fixed"),
+                count: 3,
+            },
+        ],
+        text,
+    }
+}
+
 fn outcomes() -> Vec<Outcome> {
     let mut outcomes = vec![
         Outcome::Room(RoomOutcome::Made { replaced: 12 }),
@@ -364,6 +400,18 @@ fn outcomes() -> Vec<Outcome> {
         Outcome::Theme(ThemeOutcome::Remembered),
         Outcome::Theme(ThemeOutcome::Unwritten(problem())),
         Outcome::help(),
+        Outcome::Notes(NotesOutcome::Listed {
+            releases: vec![release(None), release(Some(marked()))],
+            running: name("0.43.3"),
+            truncated: true,
+        }),
+        Outcome::Notes(NotesOutcome::One(release(Some(marked())))),
+        Outcome::Notes(NotesOutcome::Unknown {
+            newest: name("0.43.3"),
+        }),
+        Outcome::Notes(NotesOutcome::NotAVersion {
+            newest: name("0.43.3"),
+        }),
         Outcome::Leaving,
     ];
     outcomes.extend(login_outcomes());
@@ -550,29 +598,31 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 21),
-        Command::Compact => (1, 21),
-        Command::Cancel => (2, 21),
-        Command::Decide(_) => (3, 21),
-        Command::Clear => (4, 21),
-        Command::Resume(_) => (5, 21),
+        Command::Prompt(_) => (0, 23),
+        Command::Compact => (1, 23),
+        Command::Cancel => (2, 23),
+        Command::Decide(_) => (3, 23),
+        Command::Clear => (4, 23),
+        Command::Resume(_) => (5, 23),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 21),
-        Command::SelectModel { effort: None, .. } => (7, 21),
-        Command::SetEffort(_) => (8, 21),
-        Command::SetMode(_) => (9, 21),
-        Command::CycleMode => (10, 21),
-        Command::Login { .. } => (11, 21),
-        Command::Logout { .. } => (12, 21),
-        Command::InspectCache => (13, 21),
-        Command::CleanCache => (14, 21),
-        Command::Sandbox { enabled: true } => (15, 21),
-        Command::Sandbox { enabled: false } => (16, 21),
-        Command::Theme(Theme::Drawing(_)) => (17, 21),
-        Command::Theme(Theme::Syntax(_)) => (18, 21),
-        Command::Help => (19, 21),
-        Command::Exit => (20, 21),
+        } => (6, 23),
+        Command::SelectModel { effort: None, .. } => (7, 23),
+        Command::SetEffort(_) => (8, 23),
+        Command::SetMode(_) => (9, 23),
+        Command::CycleMode => (10, 23),
+        Command::Login { .. } => (11, 23),
+        Command::Logout { .. } => (12, 23),
+        Command::InspectCache => (13, 23),
+        Command::CleanCache => (14, 23),
+        Command::Sandbox { enabled: true } => (15, 23),
+        Command::Sandbox { enabled: false } => (16, 23),
+        Command::Theme(Theme::Drawing(_)) => (17, 23),
+        Command::Theme(Theme::Syntax(_)) => (18, 23),
+        Command::Help => (19, 23),
+        Command::ReleaseNotes { version: None } => (20, 23),
+        Command::ReleaseNotes { version: Some(_) } => (21, 23),
+        Command::Exit => (22, 23),
     }
 }
 
@@ -669,6 +719,12 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         Outcome::Theme(theme) => match theme {
             ThemeOutcome::Remembered => (0, 2),
             ThemeOutcome::Unwritten(_) => (1, 2),
+        },
+        Outcome::Notes(notes) => match notes {
+            NotesOutcome::Listed { .. } => (0, 4),
+            NotesOutcome::One(_) => (1, 4),
+            NotesOutcome::Unknown { .. } => (2, 4),
+            NotesOutcome::NotAVersion { .. } => (3, 4),
         },
     }
 }
@@ -1535,7 +1591,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 17_913_927_481_741_580_016),
+        (1, 3_089_840_839_402_477_783),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

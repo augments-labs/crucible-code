@@ -48,6 +48,7 @@ mod effort;
 mod login;
 mod logout;
 mod model;
+pub(crate) mod notes;
 mod resume;
 mod sandbox;
 mod theme;
@@ -60,6 +61,8 @@ mod theme;
 pub(super) enum Command {
     /// What these are.
     Help,
+    /// Every release crucible has had, or one of them in full.
+    ReleaseNotes,
     /// Which model answers.
     Model,
     /// How hard it is asked to think.
@@ -91,8 +94,9 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 13] = [
+const EVERY: [Command; 14] = [
     Command::Help,
+    Command::ReleaseNotes,
     Command::Model,
     Command::Effort,
     Command::Login,
@@ -266,6 +270,7 @@ impl Command {
     const fn name(self) -> &'static str {
         match self {
             Self::Help => "/help",
+            Self::ReleaseNotes => "/release-notes",
             Self::Model => "/model",
             Self::Effort => "/effort",
             Self::Login => "/login",
@@ -285,6 +290,7 @@ impl Command {
     const fn says(self, glyphs: Glyphs) -> &'static str {
         match self {
             Self::Help => "what these are",
+            Self::ReleaseNotes => "what changed in each release",
             Self::Model => "pick which model answers",
             Self::Effort => "pick how hard it thinks",
             // How you are signed in, rather than what crucible signs with. A
@@ -354,6 +360,12 @@ impl Command {
             }
             Self::Clear => MidTurn::Refused("starts a new session, leaving the one being answered"),
             Self::Exit => MidTurn::Refused("ends the session, turn and all"),
+            // Refused rather than printed under the tail: a thousand rows
+            // would part the answer being written, and they will be there to
+            // print once it is done.
+            Self::ReleaseNotes => {
+                MidTurn::Refused("prints a thousand rows into the answer being written")
+            }
         }
     }
 }
@@ -663,6 +675,20 @@ pub(super) fn run<T: Terminal>(
         return Ok(Ran::Leave);
     }
 
+    // The one answer not hung off the line that asked: a timeline has a rail
+    // of its own down the left, and a thousand rows indented under a mark
+    // would be a second one beside it. One release and the refusals are set
+    // apart the same way, as the list's look draws them.
+    if let Wanted::Known {
+        command: Command::ReleaseNotes,
+        rest,
+    } = wanted
+    {
+        notes::run(rest, renderer, terms.style().glyphs())?;
+        renderer.commit("")?;
+        return Ok(Ran::Again);
+    }
+
     // Directly under the line that asked, with nothing between: the answer is
     // hung off that line by the mark in front of it, and a blank row between
     // the two would leave the mark pointing at nothing. The blank goes after,
@@ -689,11 +715,13 @@ fn answer<T: Terminal>(
     let glyphs = style.glyphs();
 
     match wanted {
-        // Answered by `run`, which returns before this is reached. Spelled out
-        // rather than left to a wildcard, so a command added later stops the
-        // build here instead of running and saying nothing.
+        // Answered by `run`, which returns before this is reached: `/exit`
+        // ends the conversation, and `/release-notes` is printed without being
+        // hung under the line that asked. Spelled out rather than left to a
+        // wildcard, so a command added later stops the build here instead of
+        // running and saying nothing.
         Wanted::Known {
-            command: Command::Exit,
+            command: Command::Exit | Command::ReleaseNotes,
             ..
         } => {}
 

@@ -6,12 +6,12 @@
 use serde_json::Value;
 
 use super::{
-    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, LoginOutcome, LogoutOutcome,
-    ModelOutcome, Problem, Resource, ResumeOutcome, Retained, RoomOutcome, SandboxOutcome,
-    Standing, Stop, ThemeOutcome, TurnOutcome, maybe_problem,
+    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Group, LoginOutcome, LogoutOutcome,
+    ModelOutcome, NotesOutcome, Problem, Release, Resource, ResumeOutcome, Retained, RoomOutcome,
+    SandboxOutcome, Standing, Stop, ThemeOutcome, TurnOutcome, maybe_problem,
 };
 use crate::error::{ErrorCode, Refusal};
-use crate::wire::{Fields, Writing};
+use crate::wire::{self, Fields, Writing};
 
 /// `object`, with `problem` under `key` where there is one.
 fn noting(object: Writing, key: &str, problem: Option<&Problem>) -> Writing {
@@ -445,5 +445,103 @@ impl ThemeOutcome {
         };
         fields.done()?;
         Ok(theme)
+    }
+}
+
+impl Group {
+    fn written(&self) -> Value {
+        Writing::new()
+            .with("kind", self.kind.as_str())
+            .with("count", self.count)
+            .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let group = Self {
+            kind: fields.name("kind")?,
+            count: fields.number("count")?,
+        };
+        fields.done()?;
+        Ok(group)
+    }
+}
+
+impl Release {
+    fn written(&self) -> Value {
+        Writing::new()
+            .with("version", self.version.as_str())
+            .with("date", self.date.as_str())
+            .with(
+                "groups",
+                self.groups.iter().map(Group::written).collect::<Vec<_>>(),
+            )
+            .maybe("text", self.text.as_ref().map(wire::written))
+            .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let release = Self {
+            version: fields.name("version")?,
+            date: fields.name("date")?,
+            groups: fields
+                .list("groups")?
+                .into_iter()
+                .map(Group::read)
+                .collect::<Result<_, _>>()?,
+            text: fields.maybe("text").map(wire::text).transpose()?,
+        };
+        fields.done()?;
+        Ok(release)
+    }
+}
+
+impl NotesOutcome {
+    pub(super) fn written(&self) -> Value {
+        match self {
+            Self::Listed {
+                releases,
+                running,
+                truncated,
+            } => Writing::kind("listed")
+                .with(
+                    "releases",
+                    releases.iter().map(Release::written).collect::<Vec<_>>(),
+                )
+                .with("running", running.as_str())
+                .with("truncated", *truncated),
+            Self::One(release) => Writing::kind("one").with("release", release.written()),
+            Self::Unknown { newest } => Writing::kind("unknown").with("newest", newest.as_str()),
+            Self::NotAVersion { newest } => {
+                Writing::kind("not_a_version").with("newest", newest.as_str())
+            }
+        }
+        .finish()
+    }
+
+    pub(super) fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let notes = match fields.kind()?.as_str() {
+            "listed" => Self::Listed {
+                releases: fields
+                    .list("releases")?
+                    .into_iter()
+                    .map(Release::read)
+                    .collect::<Result<_, _>>()?,
+                running: fields.name("running")?,
+                truncated: fields.flag("truncated")?,
+            },
+            "one" => Self::One(Release::read(fields.take("release")?)?),
+            "unknown" => Self::Unknown {
+                newest: fields.name("newest")?,
+            },
+            "not_a_version" => Self::NotAVersion {
+                newest: fields.name("newest")?,
+            },
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(notes)
     }
 }

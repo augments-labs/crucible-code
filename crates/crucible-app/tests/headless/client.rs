@@ -15,8 +15,8 @@ use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_client_api::{
     Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Mode,
-    ModelOutcome, Name, Outcome, Palette, Pending, PendingId, Progress, Prompt, Refusal, Request,
-    Response, ResumeOutcome, Ruling, Snapshot, Stop, Theme, TurnOutcome,
+    ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending, PendingId, Progress, Prompt,
+    Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, Theme, TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Runner, Tools};
@@ -124,6 +124,25 @@ const READ: &str = "a theme this host reads";
 /// Whether the host in these tests reads code in `named`.
 fn reads(named: &str) -> bool {
     named == READ
+}
+
+/// The release the host in these tests has had.
+const RELEASED: &str = "0.1.0";
+
+/// What the host in these tests answers for its release notes: no release
+/// where none is named, with `RELEASED` as the version running, and a version
+/// named said back as it arrived.
+fn notes(version: Option<&str>) -> Result<NotesOutcome, Refusal> {
+    Ok(match version {
+        None => NotesOutcome::Listed {
+            releases: Vec::new(),
+            running: Name::new(RELEASED)?,
+            truncated: false,
+        },
+        Some(named) => NotesOutcome::Unknown {
+            newest: Name::new(named)?,
+        },
+    })
 }
 
 /// Requests numbered in the order they were made, each one read back off the
@@ -417,6 +436,7 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
         id: PendingId::new(1),
@@ -446,6 +466,7 @@ fn a_decision_on_its_own_is_answered_the_same_at_every_door() -> Result<(), Fail
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
         id: PendingId::new(1),
@@ -487,6 +508,7 @@ fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> R
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
     let mut wire = Wire::default();
     let invalid = Outcome::Refused(ErrorCode::InvalidArgument.into());
@@ -524,6 +546,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
     let mut wire = Wire::default();
     let mut answered = |conversation: &mut Conversation, command: Command| {
@@ -628,6 +651,7 @@ fn a_cache_that_cannot_be_retired_holds_the_model_where_it_was() -> Result<(), F
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
 
     let request = Wire::default().sent(haiku()?)?;
@@ -665,6 +689,7 @@ fn a_choice_that_could_not_be_written_down_is_still_taken_and_says_so() -> Resul
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
 
     let request = Wire::default().sent(haiku()?)?;
@@ -703,6 +728,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
     let before = client::snapshot(&conversation);
     let nobody = crucible_client_api::Name::new("nobody-by-this-name")?;
@@ -754,6 +780,48 @@ fn only_a_cancel_interrupts_and_it_does_so_through_the_turn_s_own_control() -> R
 }
 
 #[test]
+fn the_release_notes_are_what_the_host_answers_and_wait_for_the_turn() -> Result<(), Failed> {
+    let tree = Tree::new("client-release-notes")?;
+    let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        notes,
+    };
+    let mut wire = Wire::default();
+    let before = client::snapshot(&conversation);
+
+    for version in [None, Some("v0.41.1")] {
+        let command = Command::ReleaseNotes {
+            version: version.map(Name::new).transpose()?,
+        };
+        let request = wire.sent(command.clone())?;
+        let performed =
+            super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
+        // The version reaches the host as the client wrote it, `v` and all.
+        assert_eq!(
+            received(&performed.response(&request))?.outcome,
+            Outcome::Notes(notes(version)?)
+        );
+
+        // While a turn has the conversation, it is asked again afterwards.
+        let request = wire.sent(command)?;
+        let busy = Outcome::Refused(ErrorCode::Busy.into());
+        assert_eq!(client::keep(&request, &desk).outcome(), busy);
+        assert_eq!(client::interrupt(&request, &Cancel::new()), busy);
+    }
+
+    assert_eq!(client::snapshot(&conversation), before);
+    assert!(standing.reached().is_empty());
+    Ok(())
+}
+
+#[test]
 fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Result<(), Failed> {
     let tree = Tree::new("client-palettes")?;
     let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
@@ -765,6 +833,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        notes,
     };
     let mut wire = Wire::default();
     let mut read = Vec::new();

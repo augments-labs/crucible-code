@@ -179,6 +179,7 @@ impl Terms {
             sessions: &self.sessions,
             workspace: &self.workspace,
             reads: |named| crucible_tui::syntax::colours(named).is_some(),
+            notes: super::converse::command::notes::answered,
         }
     }
 }

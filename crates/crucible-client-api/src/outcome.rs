@@ -393,6 +393,55 @@ pub enum ThemeOutcome {
     Unwritten(Problem),
 }
 
+/// How many entries of one kind a release held.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Group {
+    /// The kind, as the changelog heads it, in lower case: `fixed`. Entries
+    /// above any heading are counted as `changed`.
+    pub kind: Name,
+    /// How many.
+    pub count: u64,
+}
+
+/// One release, as the notes tell it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    /// Its number: `0.43.3`.
+    pub version: Name,
+    /// The day it was cut.
+    pub date: Name,
+    /// How many entries of each kind it held, in the order they are told.
+    pub groups: Vec<Group>,
+    /// Its words in markdown, where it is told in full, cut to the ceiling.
+    pub text: Option<Text>,
+}
+
+/// How asking for the release notes ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotesOutcome {
+    /// Every release, oldest first, the newest told in full.
+    Listed {
+        /// The releases, the newest up to the list ceiling.
+        releases: Vec<Release>,
+        /// The version the host is running.
+        running: Name,
+        /// Whether older releases were left out to keep under the ceiling.
+        truncated: bool,
+    },
+    /// The release asked for, told in full.
+    One(Release),
+    /// No release has that number.
+    Unknown {
+        /// The newest release there is.
+        newest: Name,
+    },
+    /// What was asked for is not written as a version.
+    NotAVersion {
+        /// The newest release there is, which is how one is written.
+        newest: Name,
+    },
+}
+
 /// What came of one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -428,6 +477,8 @@ pub enum Outcome {
     Theme(ThemeOutcome),
     /// The commands that ship, by the word each crosses as.
     Help(Vec<Name>),
+    /// Asking for the release notes ended.
+    Notes(NotesOutcome),
     /// The client is leaving; the host closes what it owns.
     Leaving,
 }
@@ -496,7 +547,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 17] = [
+    pub const KINDS: [&'static str; 18] = [
         "refused",
         "turn",
         "room",
@@ -513,6 +564,7 @@ impl Outcome {
         "sandbox",
         "theme",
         "help",
+        "notes",
         "leaving",
     ];
 
@@ -536,6 +588,7 @@ impl Outcome {
             Self::Sandbox(_) => "sandbox",
             Self::Theme(_) => "theme",
             Self::Help(_) => "help",
+            Self::Notes(_) => "notes",
             Self::Leaving => "leaving",
         }
     }
@@ -562,6 +615,7 @@ impl Outcome {
                 "commands",
                 commands.iter().map(Name::as_str).collect::<Vec<_>>(),
             ),
+            Self::Notes(notes) => object.with("notes", notes.written()),
         }
         .finish()
     }
@@ -592,6 +646,7 @@ impl Outcome {
                     .map(|value| Name::new(value.as_str().unwrap_or_default()))
                     .collect::<Result<_, _>>()?,
             ),
+            "notes" => Self::Notes(NotesOutcome::read(fields.take("notes")?)?),
             "leaving" => Self::Leaving,
             _ => return Err(ErrorCode::Malformed.into()),
         };

@@ -150,7 +150,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "b19d9b9c423a8a8011ae762fcb411c2505697961a8fe352686a47b980604388c"
+      "sha256": "5f673557452479283255b2ca69fa5cb469c920a6e7ca38e267dffeb8043f39a9"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -158,7 +158,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "8bead24d3161d0e182ac5dafa74dc8e3c6238a4b87f1f423d70afe932d75b048"
+      "sha256": "1e5c5eb765a6433789285184916f80ddb28f161bf55e8f5faabd8dd21e5e010c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -314,6 +314,70 @@
       "sha256": "29687c5dd710e38a3f4a54de7a363c16697dff87ed0542d69438580fad073aae"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",
+      "case": "a_version_that_is_no_release_is_refused_naming_the_newest",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-none-{columns}\"), columns, 24)"
+      ],
+      "sha256": "ed96e2c5eb367c1067782f9e454a4e2fa22d370bc52795ae4e747acbb62d7df6"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_80.snap",
+      "case": "a_version_that_is_no_release_is_refused_naming_the_newest",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-none-{columns}\"), columns, 24)"
+      ],
+      "sha256": "bb44f2163e8187de2bad03602bb752031a76e23fc349d2596537dc3bc8d3f560"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__no_release_in_ascii_at_40.snap",
+      "case": "a_version_that_is_no_release_is_refused_the_same_in_ascii",
+      "opened": [
+        "Watched::configured( &format!(\"release-notes-none-ascii-{columns}\"), columns, 24, &config, false, )"
+      ],
+      "sha256": "7dbf2a5cd03f64197035eafea725ea1a39dd390b8765da0c61d1f463298cc584"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__no_release_in_ascii_at_80.snap",
+      "case": "a_version_that_is_no_release_is_refused_the_same_in_ascii",
+      "opened": [
+        "Watched::configured( &format!(\"release-notes-none-ascii-{columns}\"), columns, 24, &config, false, )"
+      ],
+      "sha256": "1a09b357c7f84c8c71d8e5ef3b926e6804208288d5836a3e109c0d28e4525dee"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__one_release_at_40.snap",
+      "case": "one_release_is_printed_in_full_with_no_rail",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-one-{columns}\"), columns, 24)"
+      ],
+      "sha256": "d972900651925e34e03d14ef7d4fd02251dfaf2afa8cb8aebd1618a135503a45"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__one_release_at_80.snap",
+      "case": "one_release_is_printed_in_full_with_no_rail",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-one-{columns}\"), columns, 24)"
+      ],
+      "sha256": "e51ebb85da9f0bd5074815e8a3360bd65ec35230ef82add0fcce3a398a61e5f7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__one_release_in_ascii_at_40.snap",
+      "case": "one_release_is_printed_in_full_in_ascii",
+      "opened": [
+        "Watched::configured( &format!(\"release-notes-one-ascii-{columns}\"), columns, 24, &config, false, )"
+      ],
+      "sha256": "26b94568d32595014a722316e5a94b20e39a66235f592b4b78cb6b53b839f036"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__one_release_in_ascii_at_80.snap",
+      "case": "one_release_is_printed_in_full_in_ascii",
+      "opened": [
+        "Watched::configured( &format!(\"release-notes-one-ascii-{columns}\"), columns, 24, &config, false, )"
+      ],
+      "sha256": "dcc9a5efa2984c97dc158f967585ce6b78e0794a04f34d89524be3051fafd77c"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__openai_account_login_offers_browser_and_device_code_methods.snap",
       "case": "openai_account_login_offers_browser_and_device_code_methods",
       "opened": [
@@ -329,6 +393,14 @@
         "Watched::asking_on_resume(\"resume-asks\", 80, 24, &vendor)"
       ],
       "sha256": "4c3485b23fdf47a61b1cf1392d4e37fd08afc7ecb5f6f2c6b4922221800fdbba"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_mid_turn_are_refused_on_the_panel.snap",
+      "case": "release_notes_mid_turn_are_refused_on_the_panel",
+      "opened": [
+        "Watched::allowing(\"release-notes-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "9d45c2d8962817da215e61765e3d29273566ef5d3d4a2a31b5f67c07864191e4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill.snap",

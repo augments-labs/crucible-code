@@ -1193,10 +1193,11 @@ sandbox
 set_mode'
 decided=''
 kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
-# The five were picked out of the eighteen commands there were. One more is one
-# nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 18)); then
-    printf '    FAIL the client contract no longer has the 18 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 18 in this check\n'
+# The five were picked out of the eighteen commands there were, and asking for
+# the release notes, the nineteenth, changes nothing a session may do. One more
+# is one nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 19)); then
+    printf '    FAIL the client contract no longer has the 19 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 19 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1288,6 +1289,30 @@ while IFS= read -r file; do
         failed=1
     fi
 done <<<"$naming"
+
+section "the release notes reach nothing outside the binary"
+# `/release-notes` reads the changelog the binary was built with, and so opens
+# no socket and reads no file, which is what lets it be asked with no network
+# and no credential. The module is held to what it takes values from, written
+# down whole in the reader, since most crates of this workspace reach a
+# provider, a server or a file one way or another. The reader reads the source
+# as Rust is read, strings, characters and comments taken out first, because a
+# pattern over the raw text has twice been shown to read code as a string or a
+# string as code; its self-test holds every such shape.
+notes_owner=src/cli/converse/command/notes.rs
+if ! PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/notes-reach.py --self-test; then
+    printf '    FAIL the release notes reader failed its self-test\n'
+    failed=1
+fi
+if [[ ! -f "$notes_owner" ]]; then
+    printf '    FAIL %s is missing; the release notes check measured nothing\n' "$notes_owner"
+    failed=1
+elif ! notes_reached=$(PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/notes-reach.py "$notes_owner"); then
+    while IFS= read -r said; do
+        printf '    FAIL %s %s; the release notes are read from the binary alone\n' "$notes_owner" "$said"
+    done <<<"${notes_reached:-was not read}"
+    failed=1
+fi
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then
