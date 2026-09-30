@@ -47,6 +47,12 @@ pub enum TransportError {
     /// The request could not be sent, or the connection failed.
     #[error("{0}")]
     Unreachable(Box<str>),
+
+    /// The client held the request back until the person answers for the
+    /// route it would have gone to: nothing was sent, and asking again sends
+    /// nothing either.
+    #[error("{0}")]
+    Held(Box<str>),
 }
 
 impl TransportError {
@@ -61,6 +67,9 @@ impl TransportError {
                     .into(),
             },
             Self::Unreachable(problem) => ProviderError::Transport { provider, problem },
+            // Said as a provider with nothing to send on yet: not retried, and
+            // known to have reached no host.
+            Self::Held(problem) => ProviderError::Unconfigured(format!("{provider}: {problem}").into()),
         }
     }
 }
@@ -585,5 +594,24 @@ mod tests {
         let problem = TransportError::Cancelled.for_provider("test");
 
         assert!(matches!(problem, ProviderError::Cancelled("test")));
+    }
+}
+
+#[cfg(test)]
+mod held_tests {
+    use super::*;
+
+    /// A request held back is not a network that failed for a moment: it is
+    /// not retried, and it is known to have been sent nowhere.
+    #[test]
+    fn a_held_request_is_not_retried_and_was_sent_nowhere() {
+        let said = "nothing was sent: key:google waits for an answer";
+        let error = TransportError::Held(said.into()).for_provider("google");
+        assert!(!error.transient(), "{error:?}");
+        assert!(
+            matches!(&error, ProviderError::Unconfigured(_)),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains(said), "{error}");
     }
 }

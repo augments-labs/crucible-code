@@ -121,7 +121,7 @@ fn request_problem(problem: &HttpError) -> TransportError {
         HttpError::Stalled(_) => TransportError::Unreachable("request timed out".into()),
         // Said whole: it names the route the request waits on, which is the
         // one thing the reader can act on, and no address or credential.
-        HttpError::Held(_) => TransportError::Unreachable(problem.to_string().into()),
+        HttpError::Held(_) => TransportError::Held(problem.to_string().into()),
         HttpError::Exchange(_) => problem.connect().map_or_else(
             || TransportError::Unreachable("HTTP request failed".into()),
             connection_problem,
