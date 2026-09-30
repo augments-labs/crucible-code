@@ -291,3 +291,49 @@ fn a_planted_temporary_symlink_is_not_followed() {
     assert_eq!(problem.kind(), io::ErrorKind::AlreadyExists);
     assert_eq!(fs::read_to_string(victim).unwrap(), "keep me");
 }
+
+/// A yes one crucible records is not lost when another writes its model to
+/// the same file at the same moment, and the other way round.
+#[test]
+fn a_yes_and_a_model_written_at_once_are_both_kept() {
+    let sample = Sample::new("remember-yes-and-model");
+    let file = sample.user_file();
+    let ready = std::sync::Arc::new(std::sync::Barrier::new(9));
+
+    std::thread::scope(|scope| {
+        let mut writes = Vec::new();
+        for number in 0..8 {
+            let ready = std::sync::Arc::clone(&ready);
+            let file = file.clone();
+            writes.push(scope.spawn(move || {
+                ready.wait();
+                again_while_busy(|| {
+                    if number % 2 == 0 {
+                        accepting(&file, &format!("key:route-{number}"))
+                    } else {
+                        choosing(&file, &format!("provider-{number}"), "model")
+                    }
+                })
+            }));
+        }
+        ready.wait();
+        for write in writes {
+            write.join().expect("a writer did not panic").unwrap();
+        }
+    });
+
+    let written = fs::read_to_string(&file).expect("every answer was written");
+    for number in 0..8 {
+        let said = if number % 2 == 0 {
+            format!("key:route-{number}")
+        } else {
+            format!("provider-{number}")
+        };
+        assert!(written.contains(&said), "{said} was lost from {written}");
+    }
+
+    forgetting(&file, &["key:route-0", "key:route-4"]).unwrap();
+    let written = fs::read_to_string(&file).unwrap();
+    assert!(!written.contains("key:route-0") && !written.contains("key:route-4"));
+    assert!(written.contains("key:route-2") && written.contains("provider-1"));
+}
