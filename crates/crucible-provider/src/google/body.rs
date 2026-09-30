@@ -15,9 +15,19 @@ use crate::json::{Json, described};
 use crucible_models::{ProviderError, Request};
 use crucible_types::ContinuationScope;
 
+#[cfg(test)]
 pub(super) fn serialize(
     request: &Request<'_>,
     scope: ContinuationScope,
+) -> Result<String, ProviderError> {
+    serialize_at(request, scope, false)
+}
+
+/// [`serialize`], asking for the priority tier where `fast`.
+pub(super) fn serialize_at(
+    request: &Request<'_>,
+    scope: ContinuationScope,
+    fast: bool,
 ) -> Result<String, ProviderError> {
     if matches!(
         request.effort,
@@ -31,6 +41,9 @@ pub(super) fn serialize(
     let mut outcome = Ok(());
     json.object(|body| {
         body.text("model", request.model);
+        if fast {
+            body.text("service_tier", super::fast::TIER);
+        }
         body.boolean("stream", true);
         body.boolean("store", false);
         if let Some(system) = request.system {

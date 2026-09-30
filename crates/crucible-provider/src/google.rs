@@ -124,9 +124,20 @@ impl Provider for Google {
     fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
         cache::encoding(request)
     }
+    fn fast(&self, model: &str) -> crucible_models::FastForm {
+        fast::form(self.endpoint == VENDOR, model)
+    }
     fn stream<'a>(
         &'a self,
         request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        self.stream_at(request, crucible_models::Speed::Standard, cancel)
+    }
+    fn stream_at<'a>(
+        &'a self,
+        request: Request<'a>,
+        speed: crucible_models::Speed,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         Box::pin(async move {
@@ -134,7 +145,10 @@ impl Provider for Google {
                 return Err(ProviderError::Cancelled(NAME));
             }
             let scope = ContinuationScope::new(self.credential_scope, self.endpoint.as_str());
-            let body = body::serialize(&request, scope)?;
+            // Fast only where it was asked and this model at this address has
+            // a form the request carries.
+            let fast = speed == crucible_models::Speed::Fast && self.fast(request.model).switched();
+            let body = body::serialize_at(&request, scope, fast)?;
             let wire = wire::Interactions::new(request.model, scope)?;
             let mut outgoing = crucible_credentials::Outgoing::new();
             outgoing.set_header("content-type", "application/json");
@@ -191,5 +205,8 @@ fn protocol(problem: &'static str) -> crucible_models::ProviderError {
     }
 }
 
+mod fast;
+#[cfg(test)]
+mod fast_tests;
 #[cfg(test)]
 mod tests;

@@ -25,6 +25,8 @@ pub(crate) struct Interactions {
     completed: bool,
     done: bool,
     budget: Budget,
+    /// The tier the completed interaction said it was served at.
+    served: crucible_models::Served,
 }
 
 impl Interactions {
@@ -104,6 +106,9 @@ impl Interactions {
     }
 
     fn completed(&mut self, payload: &Value) -> Result<Vec<Delta>, ProviderError> {
+        if let Some(served) = super::fast::served(payload) {
+            self.served = served;
+        }
         if !self.steps.is_empty() || self.next != self.started {
             return Err(protocol("interaction completed with unfinished steps"));
         }
@@ -139,6 +144,9 @@ impl Interactions {
 
 impl Wire for Interactions {
     const PROVIDER: &'static str = super::NAME;
+    fn served(&self) -> crucible_models::Served {
+        self.served
+    }
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
         if event.name == "ping" {
             return Ok(Vec::new());
