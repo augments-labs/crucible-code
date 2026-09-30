@@ -114,6 +114,13 @@ impl<D: Dialect> fmt::Debug for Chat<D> {
 }
 
 impl<D: Dialect> Chat<D> {
+    /// How `model` is asked to answer fast at the vendor's own address:
+    /// what a list of models says before any provider is set up.
+    #[must_use]
+    pub fn fast_at_vendor(model: &str) -> crucible_models::FastForm {
+        D::fast(model)
+    }
+
     /// A provider that authenticates with `credential`, sends over `transport`
     /// and posts to `endpoint`.
     ///

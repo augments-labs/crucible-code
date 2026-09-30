@@ -508,3 +508,26 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
         "claude-sonnet-5 · high"
     );
 }
+
+#[test]
+fn a_row_says_no_rung_before_it_says_fast_and_fast_for_either_kind_of_form() {
+    let cost = crucible_models::Cost {
+        price: "2x the price",
+        caveat: None,
+    };
+    let rungs = [Effort::High];
+
+    assert_eq!(
+        super::note(&rungs, crucible_models::FastForm::Field(cost)),
+        "fast"
+    );
+    assert_eq!(
+        super::note(&rungs, crucible_models::FastForm::Own(cost)),
+        "fast"
+    );
+    assert_eq!(super::note(&rungs, crucible_models::FastForm::None), "");
+    assert_eq!(
+        super::note(&[], crucible_models::FastForm::Field(cost)),
+        "no rung"
+    );
+}

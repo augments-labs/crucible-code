@@ -56,6 +56,13 @@ impl Google {
     /// Default Google Developer API SSE route.
     pub const VENDOR: Endpoint = VENDOR;
 
+    /// How `model` is asked to answer fast at the vendor's own address:
+    /// what a list of models says before any provider is set up.
+    #[must_use]
+    pub fn fast_at_vendor(model: &str) -> crucible_models::FastForm {
+        fast::form(true, model)
+    }
+
     /// Constructs a provider at an already checked recipient.
     #[must_use]
     pub fn at(

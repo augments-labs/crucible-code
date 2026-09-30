@@ -12,8 +12,8 @@ use std::fmt;
 
 use crucible_auth::{Held, Kind, Names, StoredCredentials};
 use crucible_config::Settings;
-use crucible_models::{Effort, ModelCapabilities, ModelError, ModelLimits, Provider};
-use crucible_provider::{Endpoint, HttpTurns, Moonshot, OpenAi};
+use crucible_models::{Effort, FastForm, ModelCapabilities, ModelError, ModelLimits, Provider};
+use crucible_provider::{Anthropic, Endpoint, Google, HttpTurns, Moonshot, OpenAi};
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
@@ -52,6 +52,7 @@ const PROVIDERS: [Served; 4] = [
         build: startup::anthropic,
         reach: startup::anthropic_web,
         window: 200_000,
+        fast: Anthropic::fast_at_vendor,
         models: &[
             Model::shown("claude-fable-5-1", "Claude Fable 5.1", EVERY),
             Model::new("claude-fable-5", EVERY),
@@ -70,6 +71,7 @@ const PROVIDERS: [Served; 4] = [
         key: "GEMINI_API_KEY",
         build: startup::google,
         reach: startup::google_web,
+        fast: Google::fast_at_vendor,
         // The model's full input capacity is available through configuration;
         // starting below the long-context pricing boundary keeps it deliberate.
         window: 200_000,
@@ -87,6 +89,7 @@ const PROVIDERS: [Served; 4] = [
         build: startup::moonshot,
         reach: startup::moonshot_web,
         window: 262_144,
+        fast: Moonshot::fast_at_vendor,
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
         // names and does not serve the second of these at all, so a key from
@@ -110,6 +113,7 @@ const PROVIDERS: [Served; 4] = [
         build: startup::openai,
         reach: startup::openai_web,
         window: 272_000,
+        fast: OpenAi::fast_at_vendor,
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
@@ -482,6 +486,10 @@ pub struct Served {
     /// otherwise. Conservative on purpose: long context is available, and
     /// using it is a choice rather than the starting behavior.
     pub window: u32,
+    /// How each of its models is asked to answer fast at the vendor's own
+    /// address, for a list read before any provider is set up. A provider set
+    /// up answers for itself; a test holds the two to one answer.
+    pub fast: fn(&str) -> FastForm,
 }
 
 /// Why the built-in providers could not be assembled.

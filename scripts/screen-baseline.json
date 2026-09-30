@@ -295,7 +295,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "83c994bdbcd7a5375ab323fa585b514a04dce82033d34100cdc9b5de4126d822"
+      "sha256": "6b5bb98b2a77ca745138f466dbeb7a0798d66ce7818106a913361cfde280f972"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_model_effort_80.snap",
@@ -303,7 +303,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "b31616b39914fe5c0f0cf2318083351cf2e2da2a456c6654f1395b7421449d36"
+      "sha256": "81374a8b0dc5afb35c346277991f4ef323971522ef309f11494db85941e40890"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",

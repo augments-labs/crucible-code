@@ -23,7 +23,7 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::switching::Switched;
 use crucible_client_api::{Command, Name};
-use crucible_models::Effort;
+use crucible_models::{Effort, FastForm};
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
     clip, fold, label,
@@ -66,6 +66,20 @@ fn nothing(glyphs: Glyphs) -> String {
 
 /// What the row of a model whose provider serves no rung says at its end.
 const NO_RUNG: &str = "no rung";
+
+/// What the row of a model with a fast form says at its end.
+const FAST: &str = "fast";
+
+/// The one note a model's row has room for: `no rung` before `fast`.
+fn note(rungs: &[Effort], form: FastForm) -> &'static str {
+    if rungs.is_empty() {
+        NO_RUNG
+    } else if form == FastForm::None {
+        ""
+    } else {
+        FAST
+    }
+}
 
 /// What the strip says where the marked model serves no rung.
 ///
@@ -458,7 +472,19 @@ fn stood<T: Terminal>(
                 .models
                 .iter()
                 .zip(&windows)
-                .map(|(one, window)| Stocked {
+                .map(|(one, window)| {
+                    let now = Some(one.provider.name) == current.provider
+                        && one.model.name == current.model;
+                    // The model in force by the provider set up for it, which
+                    // knows the credential; the rest by the vendor's address.
+                    let form = if now {
+                        current.fast.0
+                    } else {
+                        (one.provider.fast)(one.model.name)
+                    };
+                    (one, window, now, form)
+                })
+                .map(|(one, window, now, form)| Stocked {
                     name: one.model.name,
                     // Who serves it, until the shelf is one provider's — at
                     // which point the pane beside it is already saying so, once
@@ -469,13 +495,8 @@ fn stood<T: Terminal>(
                         ""
                     },
                     window,
-                    note: if one.model.rungs.is_empty() {
-                        NO_RUNG
-                    } else {
-                        ""
-                    },
-                    now: Some(one.provider.name) == current.provider
-                        && one.model.name == current.model,
+                    note: note(one.model.rungs, form),
+                    now,
                 })
                 .collect();
 
