@@ -1,3 +1,5 @@
+use crucible_tui::{Glyphs, RECORDED, Renderer, Row};
+
 use super::*;
 
 /// A changelog made of `sections`, in the order given, each section being a
@@ -15,13 +17,21 @@ fn changelog(sections: &[(&str, &str, &str)]) -> String {
     text
 }
 
+/// A release's groups as an older release's row says them:
+/// `8 added · 2 changed · 18 fixed`.
+fn said(release: &Release<'_>) -> String {
+    release
+        .groups()
+        .iter()
+        .map(|(name, count)| format!("{count} {name}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// The one release `body` makes, as counted.
 fn counted(body: &str) -> String {
     let text = changelog(&[("0.1.0", "2026-01-02", body)]);
-    releases(&text)
-        .first()
-        .map(Release::counted)
-        .expect("one release")
+    releases(&text).first().map(said).expect("one release")
 }
 
 #[test]
@@ -101,7 +111,7 @@ fn the_four_real_sections_that_break_the_usual_shape_are_counted_by_the_rule() {
     let of = |version: &str| {
         read.iter()
             .find(|release| release.version == version)
-            .map(Release::counted)
+            .map(said)
             .unwrap_or_else(|| panic!("no release {version}"))
     };
 
@@ -163,4 +173,172 @@ fn a_version_is_three_numbers_with_or_without_a_leading_v() {
     ] {
         assert_eq!(asked(word), None, "{word}");
     }
+}
+
+/// What the rows say, one after another, with the spaces taken out: what a
+/// row folded to one column still says once its pieces are put back.
+fn squeezed(rows: &[Row]) -> String {
+    rows.iter()
+        .map(Row::text)
+        .collect::<String>()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+#[test]
+fn the_whole_list_keeps_its_first_row_and_counts_what_it_left_out_at_every_width() {
+    let read = releases(CHANGELOG);
+    let older = read.len() - FULL;
+
+    for columns in [1, 8, 40, 80] {
+        let rows = whole(&read, columns, Glyphs::Unicode);
+        let at = format!("{columns} columns");
+        assert!(rows.len() < RECORDED, "{at}: {} rows", rows.len());
+
+        // Printed, the first row is still in the record after the last.
+        let mut renderer = Renderer::new(crucible_tui::Recording::new(columns, 24));
+        renderer.present(&rows).expect("a recording cannot fail");
+        renderer.commit("").expect("a recording cannot fail");
+        let kept = renderer.tail(RECORDED * 2);
+        let first = rows.first().map(Row::text).expect("a first row");
+        assert!(
+            kept.iter().any(|row| row.text() == first),
+            "{at}: the first row went: {first:?}"
+        );
+
+        // What the closing row says went is what went.
+        let hollow = rows
+            .iter()
+            .filter(|row| row.text().starts_with('◇'))
+            .count();
+        let filled = rows
+            .iter()
+            .filter(|row| row.text().starts_with('◆'))
+            .count();
+        // A release told in full that had to be cut to a row is hollow too.
+        let told = FULL - filled;
+        let left = older - (hollow - told);
+        let closing = squeezed(
+            rows.get(
+                rows.iter()
+                    .rposition(|row| row.text().contains('⎿'))
+                    .expect("a closing row")..,
+            )
+            .unwrap_or_default(),
+        );
+        if columns >= 40 {
+            assert_eq!((hollow, filled), (older, FULL), "{at}");
+        }
+        if columns == 1 {
+            assert!(closing.contains("incomplete"), "{at}: {closing}");
+        }
+        if left + told == 0 {
+            assert!(!closing.contains("incomplete"), "{at}: {closing}");
+        } else {
+            assert!(closing.contains("incomplete"), "{at}: {closing}");
+            if left > 0 {
+                assert!(
+                    closing.contains(&format!("{left}oftheolderrowsleftout")),
+                    "{at}: {closing}"
+                );
+            }
+            if told > 0 {
+                assert!(
+                    closing.contains(&format!("{told}toldinaroweach")),
+                    "{at}: {closing}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn no_key_tag_or_bold_marker_reaches_the_screen_and_a_number_points_at_crucible() {
+    let read = releases(CHANGELOG);
+    let rows = whole(&read, 80, Glyphs::Unicode);
+    for row in &rows {
+        for (slot, text) in row.spans() {
+            assert!(
+                !text.contains("<kbd") && !text.contains("</kbd"),
+                "{:?}",
+                row.text()
+            );
+            if slot != crucible_tui::Slot::Code {
+                assert!(!text.contains("**"), "{:?}", row.text());
+            }
+        }
+    }
+
+    // A number in a release is counted against crucible's own repository.
+    let text = changelog(&[(
+        "0.2.0",
+        "2026-02-03",
+        "### Fixed\n\n- **Fixed.** As #45 asked.",
+    )]);
+    let read = releases(&text);
+    let rows = whole(&read, 80, Glyphs::Unicode);
+    let palette = crucible_tui::Palette::resolve(true, crucible_tui::Theme::Dark, None, &|name| {
+        (name == "COLORTERM").then(|| "truecolor".to_owned())
+    })
+    .addressing(true);
+    let number = rows
+        .iter()
+        .find(|row| row.text().contains("#45"))
+        .expect("the number");
+    assert!(
+        number
+            .paint(&palette)
+            .contains("https://github.com/augments-labs/crucible-code/issues/45"),
+        "{:?}",
+        number.text()
+    );
+}
+
+#[test]
+fn one_release_is_told_in_full_with_no_rail() {
+    let read = releases(CHANGELOG);
+    let release = read
+        .iter()
+        .find(|release| release.version == "0.41.1")
+        .expect("0.41.1");
+    let rows = alone(release, 40, Glyphs::Unicode);
+    let lines: Vec<String> = rows.iter().map(Row::text).collect();
+
+    assert!(
+        lines
+            .first()
+            .is_some_and(|line| line.starts_with("◆ 0.41.1 · 2026-09-14")),
+        "{lines:#?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.starts_with('│') && !line.contains('⎿')),
+        "{lines:#?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.trim() == "Security"),
+        "{lines:#?}"
+    );
+}
+
+#[test]
+fn lines_the_changelog_wrapped_are_joined_and_every_other_break_is_kept() {
+    let body = "**The lead.** A summary\nover two lines.\n\n### Fixed\n\n\
+                - **One.** A bullet that\n  goes on here\n  and here.\n  - a nested one\n\
+                - **Two.** Short.\n\n| a | b |\n| --- | --- |\n| c | d |\n\n\
+                ```\nkept\nas it is\n```";
+    let text = changelog(&[("0.1.0", "2026-01-02", body)]);
+    let read = releases(&text);
+
+    assert_eq!(
+        read.first().map(Release::text).as_deref(),
+        Some(
+            "**The lead.** A summary over two lines.\n\n### Fixed\n\n\
+             - **One.** A bullet that goes on here and here.\n  - a nested one\n\
+             - **Two.** Short.\n\n| a | b |\n| --- | --- |\n| c | d |\n\n\
+             ```\nkept\nas it is\n```"
+        )
+    );
 }

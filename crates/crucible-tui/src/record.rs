@@ -41,7 +41,11 @@ use crate::row::Row;
 /// draws as one block. At roughly the width of a window this is a few megabytes
 /// and tens of screens of scrolling, deeper than a terminal's own default and
 /// far inside the peak budget.
-const MOST: usize = 20_000;
+///
+/// Public as [`RECORDED`](crate::RECORDED), for a caller printing more rows at
+/// once than it can be sure fit: what it prints past this is dropped from the
+/// top as the rest arrives.
+pub(crate) const MOST: usize = 20_000;
 
 /// Bytes of retained responsive source charged as one ordinary record line.
 ///

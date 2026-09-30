@@ -7,8 +7,152 @@
 //! socket and reads no file. Nothing here is read or laid out until the
 //! command runs.
 
+use crucible_tui::{Brief, Forge, Glyphs, RECORDED, Renderer, Row, Terminal, Timeline, Told};
+
+use crate::cli::Fatal;
+
 /// The changelog of the tree this binary was built from.
 pub(super) const CHANGELOG: &str = include_str!("../../../../CHANGELOG.md");
+
+/// The version this binary is.
+const RUNNING: &str = env!("CARGO_PKG_VERSION");
+
+/// How many of the newest releases are told in full.
+const FULL: usize = 10;
+
+/// What the closing row ends on: how to have one release on its own.
+const ONE: &str = "/release-notes <version> prints one";
+
+/// Where a bare number in the changelog points: crucible's own repository,
+/// never whatever the reader is standing in.
+fn forge() -> Forge {
+    Forge::new(
+        "https://github.com",
+        "augments-labs/crucible-code",
+        "/issues/",
+    )
+}
+
+/// Runs `/release-notes`: every release with nothing after it, and the one
+/// named with a version after it.
+///
+/// Printed into the transcript, where it is read by scrolling and copied like
+/// anything else there, rather than stood over the box.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be drawn on.
+pub(super) fn run<T: Terminal>(
+    rest: &str,
+    renderer: &mut Renderer<T>,
+    glyphs: Glyphs,
+) -> Result<(), Fatal> {
+    let releases = releases(CHANGELOG);
+    let columns = renderer.columns();
+    let newest = releases.last().map_or(RUNNING, |release| release.version);
+    let dot = glyphs.dot();
+
+    renderer.apart()?;
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    match words.as_slice() {
+        [] => renderer.present(&whole(&releases, columns, glyphs))?,
+        [word] => match asked(word) {
+            Some(version) => match releases.iter().find(|release| release.version == version) {
+                Some(release) => renderer.present(&alone(release, columns, glyphs))?,
+                None => {
+                    renderer.commit(&format!("! no release {version} {dot} newest is {newest}"))?
+                }
+            },
+            None => {
+                renderer.commit(&format!(
+                    "! not a version: {word} {dot} write it as {newest}"
+                ))?;
+            }
+        },
+        _ => renderer.commit(&format!(
+            "! not a version: {} {dot} write it as {newest}",
+            rest.trim()
+        ))?,
+    }
+    Ok(())
+}
+
+/// Every release on the rail: the oldest a row each, the newest ten in full.
+///
+/// No more rows than the transcript keeps, less the blank row the command
+/// ends on, so the first row printed is still there after the last.
+pub(super) fn whole(releases: &[Release<'_>], columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let split = releases.len().saturating_sub(FULL);
+    let groups: Vec<Vec<(String, usize)>> = releases.iter().map(Release::groups).collect();
+    let counted: Vec<Vec<(&str, usize)>> = groups
+        .iter()
+        .map(|groups| {
+            groups
+                .iter()
+                .map(|(kind, count)| (kind.as_str(), *count))
+                .collect()
+        })
+        .collect();
+    let briefs: Vec<Brief<'_>> = releases
+        .iter()
+        .zip(&counted)
+        .map(|(release, counted)| Brief {
+            version: release.version,
+            date: release.date,
+            counted,
+        })
+        .collect();
+    let texts: Vec<String> = releases.iter().skip(split).map(Release::text).collect();
+    let told: Vec<Told<'_>> = briefs
+        .iter()
+        .skip(split)
+        .zip(&texts)
+        .map(|(brief, text)| Told {
+            brief: *brief,
+            text,
+        })
+        .collect();
+    let forge = forge();
+
+    Timeline {
+        older: briefs.get(..split).unwrap_or_default(),
+        told: &told,
+        running: Some(RUNNING),
+        forge: Some(&forge),
+        closing: Some(ONE),
+        most: RECORDED.saturating_sub(1),
+    }
+    .rows(columns, glyphs)
+}
+
+/// One release in full, with no rail and nothing after it.
+pub(super) fn alone(release: &Release<'_>, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let counted: Vec<(String, usize)> = release.groups();
+    let counted: Vec<(&str, usize)> = counted
+        .iter()
+        .map(|(kind, count)| (kind.as_str(), *count))
+        .collect();
+    let text = release.text();
+    let told = [Told {
+        brief: Brief {
+            version: release.version,
+            date: release.date,
+            counted: &counted,
+        },
+        text: &text,
+    }];
+    let forge = forge();
+
+    Timeline {
+        older: &[],
+        told: &told,
+        running: Some(RUNNING),
+        forge: Some(&forge),
+        closing: None,
+        most: RECORDED.saturating_sub(1),
+    }
+    .rows(columns, glyphs)
+}
 
 /// One release, as the changelog records it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,24 +294,68 @@ impl Release<'_> {
         counted
     }
 
-    /// The groups as the row of an older release says them:
-    /// `8 added · 2 changed · 18 fixed`.
-    pub(super) fn counted(&self) -> String {
-        self.groups()
-            .iter()
-            .map(|(name, count)| format!("{count} {name}"))
-            .collect::<Vec<_>>()
-            .join(" · ")
-    }
-
     /// The release's words as they are drawn in full.
     ///
     /// The changelog is markdown, which the transcript reads as it reads an
-    /// answer, with one mark of its own on top: a key written between
-    /// `<kbd>` tags. The key's name is what a reader wants, so the tags go.
+    /// answer, with two habits of its own. Its prose is wrapped at eighty
+    /// columns in the file, which is where the file is read and not where the
+    /// words are drawn, so a line that only carries a paragraph or an entry on
+    /// is joined to the one before it; a blank line, a heading, a new entry, a
+    /// table and a block of code each keep their breaks. And a key is written
+    /// between `<kbd>` tags, where what a reader wants is the key's name.
     pub(super) fn text(&self) -> String {
-        self.body.replace("<kbd>", "").replace("</kbd>", "")
+        let mut text = String::with_capacity(self.body.len());
+        let mut fenced = false;
+        let mut open = false;
+
+        for line in self.body.lines() {
+            let trimmed = line.trim_start();
+            let fence = trimmed.starts_with("```");
+            let carries = open && !fenced && !fence && !starts_a_block(trimmed);
+
+            if carries {
+                text.push(' ');
+                text.push_str(trimmed);
+            } else {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(line);
+            }
+
+            if fence {
+                fenced = !fenced;
+            }
+            open = !fenced && !fence && !trimmed.is_empty() && !is_rowed(trimmed);
+        }
+
+        text.replace("<kbd>", "").replace("</kbd>", "")
     }
+}
+
+/// Whether a line of the changelog opens something of its own rather than
+/// carrying on the line above: a blank, a heading, an entry, a table row.
+fn starts_a_block(line: &str) -> bool {
+    line.is_empty()
+        || line.starts_with('#')
+        || line.starts_with("- ")
+        || line.starts_with("* ")
+        || is_rowed(line)
+        || numbered(line)
+}
+
+/// Whether a line is a row of a table, which keeps its own break.
+fn is_rowed(line: &str) -> bool {
+    line.starts_with('|')
+}
+
+/// Whether a line opens a numbered entry: `1. `.
+fn numbered(line: &str) -> bool {
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0
+        && line
+            .get(digits..)
+            .is_some_and(|rest| rest.starts_with(". "))
 }
 
 /// The version a word asks for, where it is one: `0.41.1`, or `v0.41.1`.

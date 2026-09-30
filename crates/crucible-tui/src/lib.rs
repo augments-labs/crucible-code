@@ -78,6 +78,8 @@ pub use panel::{Offered, Panel};
 pub use picker::{Hit, Kept, Picker};
 pub use plan::{Plan, State, Task};
 pub use prompt::{CommandCount, Draft, Prompt, Recalled, Remaining};
+/// The most units of the transcript kept at once; a row put down whole costs one.
+pub const RECORDED: usize = record::MOST;
 pub use render::{Aimed, Caret, PromptRows, Renderer};
 pub use row::Row;
 pub use running::{Command, Running};

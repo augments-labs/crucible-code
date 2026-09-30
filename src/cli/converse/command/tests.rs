@@ -141,6 +141,16 @@ fn a_line_is_a_command_only_where_its_first_word_names_one() {
             Comes::Runs(Command::Model, "gpt-6-sol".into()),
         ),
         ("/model", Comes::Runs(Command::Model, String::new())),
+        (
+            "/release-notes 0.41.1",
+            Comes::Runs(Command::ReleaseNotes, "0.41.1".into()),
+        ),
+        (
+            "/release-notes",
+            Comes::Runs(Command::ReleaseNotes, String::new()),
+        ),
+        ("/release-nots", Comes::Refused),
+        ("/relase-notes", Comes::Refused),
         ("/", Comes::Refused),
         ("/modle", Comes::Refused),
         ("/modle  ", Comes::Refused),
@@ -185,6 +195,14 @@ fn the_nearest_names_are_at_most_three_and_the_nearest_first() {
     assert_eq!(nearest(&commands, "/hlep").first(), Some(&"/help"));
     assert!(nearest(&commands, "/zzz").is_empty());
     assert!(nearest(&commands, "/Model").contains(&"/model"));
+    assert_eq!(
+        nearest(&commands, "/release-nots").first(),
+        Some(&"/release-notes")
+    );
+    assert_eq!(
+        nearest(&commands, "/relase-notes").first(),
+        Some(&"/release-notes")
+    );
 
     // A slip of one letter anywhere in any name is offered that name first.
     for command in EVERY {
@@ -257,6 +275,8 @@ fn a_bare_slash_opens_the_whole_list() {
 fn what_has_been_typed_is_what_is_left_on_the_list() {
     assert_eq!(shown("/m"), ["/model", "/mode"]);
     assert_eq!(shown("/mod"), ["/model", "/mode"]);
+    assert_eq!(shown("/release-"), ["/release-notes"]);
+    assert_eq!(shown("/release-note"), ["/release-notes"]);
     assert_eq!(shown("/e"), ["/effort", "/exit"]);
 
     // A finished name that is also the start of a longer one keeps both. The
@@ -355,19 +375,20 @@ fn help_answers_with_a_name_and_what_it_does() {
     assert_eq!(
         art(&listing(&commands(), 60, Glyphs::Unicode)),
         [
-            "/help      what these are",
-            "/model     pick which model answers",
-            "/effort    pick how hard it thinks",
-            "/login     sign in to a provider account",
-            "/logout    remove a stored account or API key",
-            "/mode      ask · allowEdits · fullAccess",
-            "/sandbox   inspect or configure sandbox confinement",
-            "/theme     pick the colours crucible draws with",
-            "/resume    pick up an earlier session here",
-            "/cache     inspect or clean prompt-cache state",
-            "/compact   replace what is behind you with notes on it",
-            "/clear     start a new session, leaving this one",
-            "/exit      leave",
+            "/help            what these are",
+            "/release-notes   what changed in each release",
+            "/model           pick which model answers",
+            "/effort          pick how hard it thinks",
+            "/login           sign in to a provider account",
+            "/logout          remove a stored account or API key",
+            "/mode            ask · allowEdits · fullAccess",
+            "/sandbox         inspect or configure sandbox confinement",
+            "/theme           pick the colours crucible draws with",
+            "/resume          pick up an earlier session here",
+            "/cache           inspect or clean prompt-cache state",
+            "/compact         replace what is behind you with notes on it",
+            "/clear           start a new session, leaving this one",
+            "/exit            leave",
         ]
     );
 }
@@ -377,19 +398,20 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
     assert_eq!(
         art(&listing(&commands(), 60, Glyphs::Ascii)),
         [
-            "/help      what these are",
-            "/model     pick which model answers",
-            "/effort    pick how hard it thinks",
-            "/login     sign in to a provider account",
-            "/logout    remove a stored account or API key",
-            "/mode      ask, allowEdits, fullAccess",
-            "/sandbox   inspect or configure sandbox confinement",
-            "/theme     pick the colours crucible draws with",
-            "/resume    pick up an earlier session here",
-            "/cache     inspect or clean prompt-cache state",
-            "/compact   replace what is behind you with notes on it",
-            "/clear     start a new session, leaving this one",
-            "/exit      leave",
+            "/help            what these are",
+            "/release-notes   what changed in each release",
+            "/model           pick which model answers",
+            "/effort          pick how hard it thinks",
+            "/login           sign in to a provider account",
+            "/logout          remove a stored account or API key",
+            "/mode            ask, allowEdits, fullAccess",
+            "/sandbox         inspect or configure sandbox confinement",
+            "/theme           pick the colours crucible draws with",
+            "/resume          pick up an earlier session here",
+            "/cache           inspect or clean prompt-cache state",
+            "/compact         replace what is behind you with notes on it",
+            "/clear           start a new session, leaving this one",
+            "/exit            leave",
         ]
     );
 }
@@ -559,4 +581,24 @@ fn the_sandbox_menu_tracks_the_choice_without_rebuilding_the_registry() {
             .contains("enabled")
     );
     assert!(matches!(Command::Sandbox.mid_turn(), MidTurn::Refused(_)));
+}
+
+#[test]
+fn release_notes_typed_while_a_turn_runs_is_refused_on_the_panel_with_its_reason() {
+    let commands = commands();
+    let asked = owned(&commands, "/release-notes").expect("a command");
+    let MidTurn::Refused(why) = asked.class() else {
+        panic!("/release-notes is refused while a turn runs");
+    };
+    let rows = art(&refusing(&asked, why, 60, Glyphs::Unicode));
+
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("prints a thousand rows into the answer being written")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("esc to close")),
+        "{rows:#?}"
+    );
 }
