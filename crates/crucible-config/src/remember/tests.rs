@@ -529,3 +529,69 @@ fn sandbox_choice_is_a_boolean_and_preserves_every_other_setting() {
     }
     assert!(super::sandboxing(r#"{"sandbox":{"mode":"required"}}"#, "test", true).is_err());
 }
+
+/// What the file says yes to, as the settings read it.
+fn accepted(text: &str) -> Vec<String> {
+    let settings = Settings::resolve(vec![Document::sample(text, Origin::User)]);
+    settings
+        .content_accepted()
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn a_yes_is_written_into_a_file_that_is_not_there_yet() {
+    let written = accepting("", FILE, "key:google").unwrap();
+    assert_eq!(accepted(&written), ["key:google"]);
+    assert_eq!(
+        written,
+        "{\n  \"contentUse\": {\n    \"accepted\": [\n      \"key:google\"\n    ]\n  }\n}\n"
+    );
+}
+
+#[test]
+fn a_yes_is_added_beside_what_the_file_already_says_and_only_once() {
+    let text =
+        "{\n  \"provider\":   \"google\",\n  \"contentUse\": {\"accepted\": [\"key:google\"]}\n}\n";
+    let written = accepting(text, FILE, "api.moonshot.ai").unwrap();
+    assert_eq!(accepted(&written), ["key:google", "api.moonshot.ai"]);
+    assert!(written.starts_with("{\n  \"provider\":   \"google\",\n"));
+    assert_eq!(accepting(&written, FILE, "key:google").unwrap(), written);
+
+    let bare = "{\"provider\": \"google\"}";
+    let written = accepting(bare, FILE, "key:google").unwrap();
+    assert_eq!(accepted(&written), ["key:google"]);
+    let block = "{\"contentUse\": {}}";
+    assert_eq!(
+        accepted(&accepting(block, FILE, "key:google").unwrap()),
+        ["key:google"]
+    );
+}
+
+#[test]
+fn forgetting_takes_out_the_named_routes_and_nothing_else() {
+    let text = "{\n  \"provider\": \"moonshot\",\n  \"contentUse\": {\n    \"accepted\": [\"key:google\", \"key:moonshot\", \"api.moonshot.ai\"]\n  }\n}\n";
+    let written = forgetting(
+        text,
+        FILE,
+        &["key:moonshot", "api.moonshot.ai", "key:nobody"],
+    )
+    .unwrap();
+    assert_eq!(accepted(&written), ["key:google"]);
+    assert!(
+        written.starts_with(
+            "{\n  \"provider\": \"moonshot\",\n  \"contentUse\": {\n    \"accepted\": "
+        )
+    );
+    assert_eq!(
+        forgetting(&written, FILE, &["key:moonshot"]).unwrap(),
+        written
+    );
+    for untouched in ["", "{}", "{\"provider\": \"google\"}"] {
+        assert_eq!(
+            forgetting(untouched, FILE, &["key:google"]).unwrap(),
+            untouched
+        );
+    }
+}

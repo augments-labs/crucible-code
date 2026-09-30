@@ -57,6 +57,31 @@
       },
       "type": "object"
     },
+    "contentUse": {
+      "additionalProperties": false,
+      "description": "What you have said about vendors that may use what is sent to them",
+      "properties": {
+        "$comment": {
+          "type": "string"
+        },
+        "$schema": {
+          "type": "string"
+        },
+        "accepted": {
+          "description": "Routes you have said yes to sending on, though their vendor says it may use what is sent to train or improve its models; crucible writes this when you choose Use it anyway. Read only from the configuration file in your home directory",
+          "items": {
+            "examples": [
+              "key:google",
+              "subscription:moonshot@kimi.ai"
+            ],
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "type": "object"
+    },
     "env": {
       "additionalProperties": {
         "type": "string"
