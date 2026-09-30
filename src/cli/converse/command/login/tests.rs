@@ -566,7 +566,6 @@ fn fabricated() -> Rows {
             mark: None,
             stored: "fabricated",
             environment: false,
-            known: false,
             address: None,
         },
     );
@@ -580,7 +579,6 @@ fn fabricated() -> Rows {
         mark: None,
         stored: "fabricated",
         environment: false,
-        known: false,
         address: None,
     });
     Rows::new(rows)

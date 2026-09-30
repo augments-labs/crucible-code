@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crucible_auth::{
     KimiOAuth, KimiSite, Kind, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Renewals, Store,
-    StoredCredentials, SubscriptionLogin,
+    StoredCredentials, SubscriptionLogin, provider_of,
 };
 use crucible_credentials::Credential;
 use crucible_provider::{Endpoint, Moonshot, OpenAi};
@@ -46,7 +46,6 @@ pub struct Account {
 /// One authorization method inside a provider account.
 #[derive(Debug, Clone, Copy)]
 pub struct Route {
-    provider: &'static str,
     /// The name the sign-in it starts is written under.
     name: &'static str,
     method: LoginMethod,
@@ -111,7 +110,6 @@ impl Subscriptions {
             ]),
             routes: Arc::new([
                 Route {
-                    provider: "openai",
                     name: "openai",
                     method: OpenAiOAuth::BROWSER,
                     title: "Log in to ChatGPT",
@@ -119,7 +117,6 @@ impl Subscriptions {
                     says: "sign in to ChatGPT on this device",
                 },
                 Route {
-                    provider: "openai",
                     name: "openai",
                     method: OpenAiOAuth::DEVICE,
                     title: "Log in to ChatGPT",
@@ -127,7 +124,6 @@ impl Subscriptions {
                     says: "sign in to ChatGPT from another device",
                 },
                 Route {
-                    provider: "moonshot",
                     name: KimiSite::Ai.name(),
                     method: KimiOAuth::DEVICE,
                     title: "Log in to Kimi Code",
@@ -135,7 +131,6 @@ impl Subscriptions {
                     says: "authorize the Kimi Code plan in a browser",
                 },
                 Route {
-                    provider: "moonshot",
                     name: KimiSite::Com.name(),
                     method: KimiOAuth::DEVICE,
                     title: "Log in to Kimi Code",
@@ -144,6 +139,33 @@ impl Subscriptions {
                 },
             ]),
         }
+    }
+
+    /// A registry of `logins`, each paired with the one address its tokens
+    /// may be sent to, started through `routes`.
+    ///
+    /// The seam an implementation other than this build's own comes in
+    /// through, such as one a test stands up; [`Subscriptions::production`] is
+    /// the registry this build ships.
+    #[must_use]
+    pub fn new(logins: Vec<(Arc<dyn SubscriptionLogin>, Endpoint)>, routes: Vec<Route>) -> Self {
+        Self {
+            providers: logins
+                .into_iter()
+                .map(|(login, endpoint)| Registered { login, endpoint })
+                .collect(),
+            accounts: Arc::new([]),
+            routes: routes.into(),
+        }
+    }
+
+    /// Every registered login's stored name and the one address it is sent
+    /// to, for the test that holds the rows to this registry.
+    #[cfg(test)]
+    pub(crate) fn registered(&self) -> impl Iterator<Item = (&'static str, &Endpoint)> {
+        self.providers
+            .iter()
+            .map(|registered| (registered.login.name(), &registered.endpoint))
     }
 
     /// Provider accounts in their stable display order.
@@ -203,16 +225,36 @@ impl Subscriptions {
 }
 
 impl Route {
+    /// A way to start the sign-in written under `name`, as a registry of
+    /// logins other than this build's own offers it.
+    #[must_use]
+    pub const fn new(
+        name: &'static str,
+        method: LoginMethod,
+        title: &'static str,
+        shown: &'static str,
+        says: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            method,
+            title,
+            shown,
+            says,
+        }
+    }
+
     /// The name the sign-in it starts is written under.
     #[must_use]
     pub const fn name(self) -> &'static str {
         self.name
     }
 
-    /// The provider selected after this route completes.
+    /// The provider selected after this route completes: the part of its
+    /// name before any `@`.
     #[must_use]
-    pub const fn provider(self) -> &'static str {
-        self.provider
+    pub fn provider(self) -> &'static str {
+        provider_of(self.name)
     }
 
     /// The account product named above a running login.

@@ -28,7 +28,7 @@ use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, HttpTurns, Moonshot, MoonshotWeb, OpenAi,
-    OpenAiWeb, Unavailable,
+    OpenAiWeb, Transport, Unavailable,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
@@ -992,15 +992,26 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
         return Reaching::nothing();
     };
 
-    // Each site's services take that site's credential, and a session sent
-    // anywhere else by a setting gets none rather than a pair that refuse it.
-    let transport = Box::new(wiring.http.clone());
-    if endpoint == Moonshot::CODING {
-        Reaching::both(Arc::new(MoonshotWeb::new(credential, transport)))
-    } else if endpoint == Moonshot::CODING_AI {
-        Reaching::both(Arc::new(MoonshotWeb::global(credential, transport)))
+    moonshot_site(&endpoint, credential, Box::new(wiring.http.clone()))
+        .map_or_else(Reaching::nothing, |source| Reaching::both(Arc::new(source)))
+}
+
+/// The web services of the Kimi site a credential sent to `endpoint` belongs
+/// to.
+///
+/// Each site's services take that site's credential, and a session sent
+/// anywhere else by a setting gets none rather than a pair that refuse it.
+fn moonshot_site(
+    endpoint: &Endpoint,
+    credential: Box<dyn Credential>,
+    transport: Box<dyn Transport>,
+) -> Option<MoonshotWeb> {
+    if *endpoint == Moonshot::CODING {
+        Some(MoonshotWeb::new(credential, transport))
+    } else if *endpoint == Moonshot::CODING_AI {
+        Some(MoonshotWeb::global(credential, transport))
     } else {
-        Reaching::nothing()
+        None
     }
 }
 

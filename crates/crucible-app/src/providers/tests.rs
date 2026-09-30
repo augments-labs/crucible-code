@@ -1198,7 +1198,6 @@ fn every_row_is_named_once_in_its_map_and_its_name_gives_it_back() {
 fn only_a_row_0_43_3_knows_is_written_under_the_bare_name() {
     let rows = Rows::production();
     for row in rows.all() {
-        assert_eq!(row.stored == row.provider, row.known, "{row:?}");
         // Under a name 0.43.3 serves sits only what 0.43.3 sends to the same
         // hosts: under `moonshot`, a kimi.com credential.
         if row.stored == "moonshot" {
@@ -1208,7 +1207,7 @@ fn only_a_row_0_43_3_knows_is_written_under_the_bare_name() {
     let known: Vec<(crucible_auth::Kind, &str)> = rows
         .all()
         .iter()
-        .filter(|row| row.known)
+        .filter(|row| row.known())
         .map(|row| (row.kind, row.stored))
         .collect();
     assert_eq!(known.len(), 6, "{known:?}");
@@ -1225,6 +1224,13 @@ fn every_provider_has_one_environment_row_and_every_row_a_served_provider() {
             .collect();
         assert_eq!(environment.len(), 1, "{}", served.name);
         assert!(environment.iter().all(|row| row.list == List::Key));
+        // Opened by `/login <provider>` or chosen from the list, its key is
+        // written under one name: the provider's own.
+        assert!(
+            environment.iter().all(|row| row.stored == row.provider),
+            "{}",
+            served.name
+        );
     }
     for row in rows.all() {
         assert!(
@@ -1232,4 +1238,40 @@ fn every_provider_has_one_environment_row_and_every_row_a_served_provider() {
             "{row:?}"
         );
     }
+}
+
+#[test]
+fn every_sign_in_row_is_one_the_subscription_registry_starts_and_sends_to_its_address() {
+    let rows = Rows::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let registered: Vec<(&str, &Endpoint)> = subscriptions.registered().collect();
+
+    for row in rows
+        .all()
+        .iter()
+        .filter(|row| row.kind == crucible_auth::Kind::Account)
+    {
+        assert!(!subscriptions.routes(row.stored).is_empty(), "{row:?}");
+        let logins: Vec<&&Endpoint> = registered
+            .iter()
+            .filter(|(name, _)| *name == row.stored)
+            .map(|(_, endpoint)| endpoint)
+            .collect();
+        assert_eq!(logins.len(), 1, "{row:?}");
+        assert_eq!(
+            row.address.as_ref(),
+            logins.first().copied().copied(),
+            "{row:?}"
+        );
+    }
+    for (name, _) in &registered {
+        assert!(
+            rows.of(crucible_auth::Kind::Account, name).is_some(),
+            "{name} is registered and no row gives it"
+        );
+    }
+    let mut names: Vec<&str> = registered.iter().map(|(name, _)| *name).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), registered.len(), "{registered:?}");
 }

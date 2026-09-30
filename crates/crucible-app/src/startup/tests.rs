@@ -1467,3 +1467,34 @@ fn a_start_that_cannot_remove_the_second_says_so_and_claims_nothing_went() {
     assert!(!said.contains("was removed"), "{said}");
     assert!(sample.store().read().has_subscription("moonshot@kimi.ai"));
 }
+
+#[test]
+fn each_kimi_site_answers_the_web_tools_of_the_credential_sent_to_it_and_no_other() {
+    let lookup = |_: &str| Some("fabricated".to_owned());
+    let key = || -> Box<dyn crucible_credentials::Credential> {
+        Box::new(crucible_credentials::HeaderKey::new(
+            crucible_credentials::ApiKey::from_lookup("K", lookup).expect("a key"),
+            crucible_credentials::Header::bearer(),
+        ))
+    };
+    let transport =
+        || -> Box<dyn crucible_provider::Transport> { Box::new(HttpTurns::unavailable()) };
+
+    for (endpoint, site, other) in [
+        (Moonshot::CODING_AI, "api.kimi.ai", "api.kimi.com"),
+        (Moonshot::CODING, "api.kimi.com", "api.kimi.ai"),
+    ] {
+        let source = moonshot_site(&endpoint, key(), transport()).expect("that site's services");
+        let said = format!("{source:?}");
+        // The paths are redacted from what is printed; the provider's own
+        // tests hold them. Both services stand on the site's host.
+        assert_eq!(
+            said.matches(&format!("https://{site}/")).count(),
+            2,
+            "{said}"
+        );
+        assert!(!said.contains(other), "{said}");
+    }
+    let custom = Endpoint::parse("https://proxy.invalid/v1/chat/completions").unwrap();
+    assert!(moonshot_site(&custom, key(), transport()).is_none());
+}

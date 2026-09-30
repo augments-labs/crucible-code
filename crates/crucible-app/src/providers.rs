@@ -163,13 +163,19 @@ pub struct Row {
     /// Whether a key from the provider's variable belongs to it: one key row
     /// of each provider.
     pub environment: bool,
-    /// Whether 0.43.3 has it, and so reads its credential under the bare name.
-    pub known: bool,
-    /// Where its requests go, where that is not the provider's own address.
+    /// Where its requests go when no setting names an address; `None` sends
+    /// them to the provider's default one.
     pub address: Option<Endpoint>,
 }
 
 impl Row {
+    /// Whether 0.43.3 has it: its credential is written under the bare
+    /// provider name, where 0.43.3 reads it.
+    #[must_use]
+    pub fn known(&self) -> bool {
+        self.stored == self.provider
+    }
+
     /// What its credential is called: `OpenAI sign-in`, `MoonshotAI · kimi.com
     /// key`.
     #[must_use]
@@ -197,7 +203,6 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "openai",
         environment: false,
-        known: true,
         address: Some(OpenAi::SUBSCRIPTION),
     },
     Row {
@@ -210,7 +215,6 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "moonshot@kimi.ai",
         environment: false,
-        known: false,
         address: Some(Moonshot::CODING_AI),
     },
     Row {
@@ -223,7 +227,6 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "moonshot",
         environment: false,
-        known: true,
         address: Some(Moonshot::CODING),
     },
     Row {
@@ -236,7 +239,6 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "anthropic",
         environment: true,
-        known: true,
         address: None,
     },
     Row {
@@ -249,7 +251,6 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "google",
         environment: true,
-        known: true,
         address: None,
     },
     Row {
@@ -262,7 +263,6 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "moonshot@kimi.ai",
         environment: false,
-        known: false,
         address: Some(Moonshot::CODING_AI),
     },
     Row {
@@ -275,7 +275,6 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "moonshot",
         environment: true,
-        known: true,
         address: Some(Moonshot::CODING),
     },
     Row {
@@ -288,15 +287,14 @@ const ROWS: [Row; 8] = [
         mark: None,
         stored: "openai",
         environment: true,
-        known: true,
         address: None,
     },
 ];
 
 /// The rows `/login` offers and the store's names come from.
 ///
-/// One value handed around rather than the table read where it is needed, so a
-/// screen can be handed rows it was not built with and draw them all the same.
+/// A value the functions that list, match and resolve rows take, so a test can
+/// hand them rows this build does not ship and read them back the same way.
 #[derive(Debug, Clone)]
 pub struct Rows {
     rows: std::sync::Arc<[Row]>,

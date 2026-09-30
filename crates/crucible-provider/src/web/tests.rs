@@ -1794,6 +1794,8 @@ fn kimi_ai_web_tools_reach_the_global_hosts_alone() {
         Box::new(Arc::clone(&replay)),
     );
     let _ = source.answered_search("serde", &Cancel::new());
-
     assert_eq!(replay.sent().url, MoonshotWeb::SEARCH_AI.as_str());
+
+    let _ = source.answered_fetch("https://example.com/", &Cancel::new());
+    assert_eq!(replay.sent().url, MoonshotWeb::FETCH_AI.as_str());
 }
