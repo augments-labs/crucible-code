@@ -76,9 +76,6 @@ impl Sample {
     }
 
     /// The disposable user-home root, a directory outside the workspace.
-    ///
-    /// Only a Unix test still asks for it, so elsewhere it is not compiled.
-    #[cfg(unix)]
     pub(crate) fn home(&self) -> PathBuf {
         self.base.join("home")
     }
