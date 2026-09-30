@@ -48,7 +48,7 @@ mod effort;
 mod login;
 mod logout;
 mod model;
-mod notes;
+pub(crate) mod notes;
 mod resume;
 mod sandbox;
 mod theme;
@@ -714,11 +714,13 @@ fn answer<T: Terminal>(
     let glyphs = style.glyphs();
 
     match wanted {
-        // Answered by `run`, which returns before this is reached. Spelled out
-        // rather than left to a wildcard, so a command added later stops the
-        // build here instead of running and saying nothing.
+        // Answered by `run`, which returns before this is reached: `/exit`
+        // ends the conversation, and `/release-notes` is printed without being
+        // hung under the line that asked. Spelled out rather than left to a
+        // wildcard, so a command added later stops the build here instead of
+        // running and saying nothing.
         Wanted::Known {
-            command: Command::Exit,
+            command: Command::Exit | Command::ReleaseNotes,
             ..
         } => {}
 
@@ -726,13 +728,6 @@ fn answer<T: Terminal>(
             command: Command::Help,
             ..
         } => renderer.present(&listing(&terms.commands.snapshot(), columns, glyphs))?,
-
-        // Answered by `run`, which prints it without hanging it under the line
-        // that asked and returns before this is reached.
-        Wanted::Known {
-            command: Command::ReleaseNotes,
-            ..
-        } => {}
 
         // Nothing is drawn for it here. What it asks for is run above, where a
         // request is run, and everything a reader sees of one comes from there.

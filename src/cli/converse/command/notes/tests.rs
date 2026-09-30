@@ -1,3 +1,7 @@
+use std::fmt::Write as _;
+
+use crucible_client_api::bounds::{ITEMS, TEXT_BYTES};
+use crucible_client_api::{Name, Outcome, Response};
 use crucible_tui::{Glyphs, RECORDED, Renderer, Row};
 
 use super::*;
@@ -9,7 +13,7 @@ fn changelog(sections: &[(&str, &str, &str)]) -> String {
         "# Changelog\n\nNotable changes.\n\n## [Unreleased]\n\n### Added\n\n- not yet\n",
     );
     for (version, date, body) in sections {
-        text.push_str(&format!("\n## [{version}] - {date}\n\n{body}\n"));
+        let _ = write!(text, "\n## [{version}] - {date}\n\n{body}\n");
     }
     text.push_str(
         "\n[Unreleased]: https://example.invalid/compare\n[0.0.1]: https://example.invalid/tag\n",
@@ -111,8 +115,7 @@ fn the_four_real_sections_that_break_the_usual_shape_are_counted_by_the_rule() {
     let of = |version: &str| {
         read.iter()
             .find(|release| release.version == version)
-            .map(said)
-            .unwrap_or_else(|| panic!("no release {version}"))
+            .map_or_else(|| panic!("no release {version}"), said)
     };
 
     assert_eq!(of("0.28.2"), "");
@@ -341,4 +344,156 @@ fn lines_the_changelog_wrapped_are_joined_and_every_other_break_is_kept() {
              ```\nkept\nas it is\n```"
         )
     );
+}
+
+/// `word` as the contract names it.
+fn name(word: &str) -> Name {
+    Name::new(word).expect("a name")
+}
+
+/// The releases of a list answer, or a failure saying what came instead.
+fn listed(answer: NotesOutcome) -> (Vec<crucible_client_api::Release>, Name, bool) {
+    match answer {
+        NotesOutcome::Listed {
+            releases,
+            running,
+            truncated,
+        } => (releases, running, truncated),
+        other => panic!("not a list: {other:?}"),
+    }
+}
+
+#[test]
+fn a_client_is_answered_every_release_oldest_first_and_the_newest_ten_in_words() {
+    let read = releases(CHANGELOG);
+    let (told, running, truncated) = listed(answered(None).expect("an answer"));
+
+    assert_eq!(running, name(RUNNING));
+    assert!(!truncated, "{} releases", read.len());
+    assert_eq!(
+        told.iter()
+            .map(|release| (release.version.as_str(), release.date.as_str()))
+            .collect::<Vec<_>>(),
+        read.iter()
+            .map(|release| (release.version, release.date))
+            .collect::<Vec<_>>()
+    );
+    for (release, from) in told.iter().zip(&read) {
+        assert_eq!(
+            release
+                .groups
+                .iter()
+                .map(|group| (group.kind.as_str().to_owned(), group.count))
+                .collect::<Vec<_>>(),
+            from.groups()
+                .into_iter()
+                .map(|(kind, count)| (kind, count as u64))
+                .collect::<Vec<_>>(),
+            "{}",
+            from.version
+        );
+    }
+    let worded = told.len() - FULL;
+    assert!(
+        told.iter()
+            .take(worded)
+            .all(|release| release.text.is_none())
+    );
+    for (release, from) in told.iter().zip(&read).skip(worded) {
+        let text = release.text.as_ref().expect("the words of a newer release");
+        // Some releases say more than one value may carry, and are cut.
+        let words = from.text();
+        assert!(words.starts_with(text.as_str()), "{}", from.version);
+        assert_eq!(
+            text.truncated(),
+            words.len() > TEXT_BYTES,
+            "{}",
+            from.version
+        );
+    }
+
+    // And the answer travels: the whole of it fits in one frame.
+    let response = Response {
+        correlation: None,
+        outcome: Outcome::Notes(answered(None).expect("an answer")),
+    };
+    assert!(response.encode().is_ok());
+}
+
+#[test]
+fn a_client_names_a_release_with_or_without_its_v_and_is_told_it_in_words() {
+    for word in ["0.41.1", "v0.41.1"] {
+        match answered(Some(word)).expect("an answer") {
+            NotesOutcome::One(release) => {
+                assert_eq!(release.version, name("0.41.1"));
+                assert_eq!(release.date, name("2026-09-14"));
+                assert!(
+                    release
+                        .text
+                        .is_some_and(|text| text.as_str().contains("### "))
+                );
+            }
+            other => panic!("{word}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_client_is_told_the_newest_release_when_it_names_none_there_is() {
+    let newest = releases(CHANGELOG)
+        .last()
+        .map(|release| name(release.version))
+        .expect("a release");
+
+    assert_eq!(
+        answered(Some("0.0.0")).expect("an answer"),
+        NotesOutcome::Unknown {
+            newest: newest.clone()
+        }
+    );
+    for word in ["latest", "0.41", "0.41.1 0.41.0"] {
+        assert_eq!(
+            answered(Some(word)).expect("an answer"),
+            NotesOutcome::NotAVersion {
+                newest: newest.clone()
+            },
+            "{word}"
+        );
+    }
+}
+
+#[test]
+fn past_the_contract_s_ceilings_the_oldest_are_left_out_and_long_words_cut_and_both_said() {
+    let long = format!("### Fixed\n\n- {}", "word ".repeat(TEXT_BYTES / 4));
+    let mut sections: Vec<(String, String, String)> = (0..ITEMS + 2)
+        .map(|at| {
+            (
+                format!("0.{at}.0"),
+                "2026-01-02".to_owned(),
+                "### Added\n\n- one".to_owned(),
+            )
+        })
+        .collect();
+    if let Some(newest) = sections.last_mut() {
+        newest.2.clone_from(&long);
+    }
+    sections.reverse();
+    let sections: Vec<(&str, &str, &str)> = sections
+        .iter()
+        .map(|(version, date, body)| (version.as_str(), date.as_str(), body.as_str()))
+        .collect();
+    let text = changelog(&sections);
+
+    let (told, _, truncated) = listed(answer(&text, None).expect("an answer"));
+    assert!(truncated);
+    assert_eq!(told.len(), ITEMS);
+    assert_eq!(
+        told.first().map(|release| release.version.as_str()),
+        Some("0.2.0")
+    );
+    let newest = told.last().expect("the newest");
+    assert_eq!(newest.version.as_str(), format!("0.{}.0", ITEMS + 1));
+    let words = newest.text.as_ref().expect("its words");
+    assert!(words.truncated());
+    assert!(words.as_str().len() <= TEXT_BYTES);
 }

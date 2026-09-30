@@ -79,6 +79,7 @@ pub async fn turn(
         | Command::CleanCache
         | Command::Sandbox { .. }
         | Command::Help
+        | Command::ReleaseNotes { .. }
         | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -114,6 +115,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::CleanCache
         | Command::Sandbox { .. }
         | Command::Help
+        | Command::ReleaseNotes { .. }
         | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }

@@ -1193,10 +1193,11 @@ sandbox
 set_mode'
 decided=''
 kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
-# The five were picked out of the eighteen commands there were. One more is one
-# nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 18)); then
-    printf '    FAIL the client contract no longer has the 18 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 18 in this check\n'
+# The five were picked out of the eighteen commands there were, and asking for
+# the release notes, the nineteenth, changes nothing a session may do. One more
+# is one nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 19)); then
+    printf '    FAIL the client contract no longer has the 19 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 19 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1288,6 +1289,40 @@ while IFS= read -r file; do
         failed=1
     fi
 done <<<"$naming"
+
+section "the release notes reach nothing outside the binary"
+# `/release-notes` reads the changelog the binary was built with, and so opens
+# no socket and reads no file, which is what lets it be asked with no network
+# and no credential. The module is held to the crates it takes values from,
+# written down whole: a crate added to it is one somebody looked at, since most
+# crates of this workspace reach a provider, a server or a file one way or
+# another.
+notes_owner=src/cli/converse/command/notes.rs
+notes_takes='crucible_client_api
+crucible_tui
+crate::cli::Fatal'
+if [[ ! -f "$notes_owner" ]]; then
+    printf '    FAIL %s is missing; the release notes check measured nothing\n' "$notes_owner"
+    failed=1
+fi
+notes_named=$(grep -ohE '(crucible_[a-z_]+|crate::[A-Za-z_:]+)' "$notes_owner" 2>/dev/null | sort -u || true)
+if ! grep -Fxq crucible_client_api <<<"$notes_named"; then
+    printf '    FAIL %s names no crate this check knows it takes; it measured nothing\n' "$notes_owner"
+    failed=1
+fi
+while IFS= read -r named; do
+    [[ -z "$named" ]] && continue
+    if ! grep -Fxq "$named" <<<"$notes_takes"; then
+        printf '    FAIL %s names %s; the release notes are read from the binary alone\n' "$notes_owner" "$named"
+        failed=1
+    fi
+done <<<"$notes_named"
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    printf '    FAIL %s reaches outside the binary; the release notes are read from the binary alone\n' "$line"
+    failed=1
+done < <(grep -nE 'std::(net|fs|process|env)|std::os::unix::net|include_bytes!|include_str!' "$notes_owner" 2>/dev/null |
+    grep -vF 'include_str!("../../../../CHANGELOG.md")' | cut -d: -f1 | sed "s|^|$notes_owner:|" || true)
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

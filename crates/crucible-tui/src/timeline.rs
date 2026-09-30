@@ -6,6 +6,8 @@
 //! last of them, and nothing hangs under it: the rail ends where the program
 //! the reader is using is.
 
+use std::fmt::Write as _;
+
 use crate::color::Slot;
 use crate::forge::Forge;
 use crate::glyphs::Glyphs;
@@ -78,60 +80,60 @@ impl Timeline<'_> {
             .max()
             .unwrap_or(0);
 
-        let older: Vec<Vec<Row>> = self
-            .older
-            .iter()
-            .map(|brief| summed(brief, pad, columns, glyphs))
-            .collect();
-        let briefly: Vec<Vec<Row>> = self
-            .told
-            .iter()
-            .map(|told| summed(&told.brief, pad, columns, glyphs))
-            .collect();
         let newest = self.told.len().saturating_sub(1);
-        let full: Vec<Vec<Row>> = self
-            .told
-            .iter()
-            .enumerate()
-            .map(|(at, told)| self.full(told, at == newest, columns, glyphs))
-            .collect();
+        let drawn = Drawn {
+            older: self
+                .older
+                .iter()
+                .map(|brief| summed(brief, pad, columns, glyphs))
+                .collect(),
+            briefly: self
+                .told
+                .iter()
+                .map(|told| summed(&told.brief, pad, columns, glyphs))
+                .collect(),
+            full: self
+                .told
+                .iter()
+                .enumerate()
+                .map(|(at, told)| self.full(told, at == newest, columns, glyphs))
+                .collect(),
+        };
 
         // The fewest left out that fits: older rows first, then the oldest
         // told in full, down to the newest alone.
         let mut left = Left::default();
         loop {
-            let laid = self.lay(&older, &briefly, &full, left, columns, glyphs);
+            let laid = self.lay(&drawn, left, columns, glyphs);
             if laid.len() <= self.most {
                 return laid;
             }
-            if left.older < older.len() {
+            if left.older < drawn.older.len() {
                 left.older += 1;
             } else if left.briefly < newest {
                 left.briefly += 1;
             } else {
                 left.cut = true;
-                let laid = self.lay(&older, &briefly, &full, left, columns, glyphs);
+                let laid = self.lay(&drawn, left, columns, glyphs);
                 return laid;
             }
         }
     }
 
     /// The whole with `left` left out.
-    fn lay(
-        &self,
-        older: &[Vec<Row>],
-        briefly: &[Vec<Row>],
-        full: &[Vec<Row>],
-        left: Left,
-        columns: usize,
-        glyphs: Glyphs,
-    ) -> Vec<Row> {
-        let mut rows: Vec<Row> = older.iter().skip(left.older).flatten().cloned().collect();
-        rows.extend(briefly.iter().take(left.briefly).flatten().cloned());
+    fn lay(&self, drawn: &Drawn, left: Left, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+        let mut rows: Vec<Row> = drawn
+            .older
+            .iter()
+            .skip(left.older)
+            .flatten()
+            .cloned()
+            .collect();
+        rows.extend(drawn.briefly.iter().take(left.briefly).flatten().cloned());
 
         let closing = self.closing(left, columns, glyphs);
-        let told = full.len();
-        for (at, words) in full.iter().enumerate().skip(left.briefly) {
+        let told = drawn.full.len();
+        for (at, words) in drawn.full.iter().enumerate().skip(left.briefly) {
             if !rows.is_empty() {
                 rows.push(rail(glyphs));
             }
@@ -212,18 +214,15 @@ impl Timeline<'_> {
         if left.briefly > 0 {
             gone.push(format!("{} told in a row each", left.briefly));
         }
-        if left.cut {
-            if let Some(newest) = self.told.last() {
-                gone.push(format!("the end of {} left out", newest.brief.version));
-            }
+        if left.cut
+            && let Some(newest) = self.told.last()
+        {
+            gone.push(format!("the end of {} left out", newest.brief.version));
         }
         if !gone.is_empty() {
-            said.push_str(&format!(
-                " {dot} incomplete at this width: {}",
-                gone.join(", ")
-            ));
+            let _ = write!(said, " {dot} incomplete at this width: {}", gone.join(", "));
         }
-        said.push_str(&format!(" {dot} {hint}"));
+        let _ = write!(said, " {dot} {hint}");
 
         let row = Row::new()
             .then(Slot::Quiet, format!("  {} ", glyphs.hangs()))
@@ -232,6 +231,14 @@ impl Timeline<'_> {
         rows.extend(hung(&Spans::of(&row), columns, 4));
         rows
     }
+}
+
+/// Every release drawn each way it can be told: the older a row each, the
+/// newest a row each, and the newest in full.
+struct Drawn {
+    older: Vec<Vec<Row>>,
+    briefly: Vec<Vec<Row>>,
+    full: Vec<Vec<Row>>,
 }
 
 /// How much of the whole is left out.

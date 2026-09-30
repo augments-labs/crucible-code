@@ -80,13 +80,18 @@ pub enum Command {
     Theme(Theme),
     /// Name the commands that ship.
     Help,
+    /// Every release, or the one of this number.
+    ReleaseNotes {
+        /// The release asked for, as it was written, or every release.
+        version: Option<Name>,
+    },
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 18] = [
+    pub const KINDS: [&'static str; 19] = [
         "prompt",
         "compact",
         "cancel",
@@ -104,6 +109,7 @@ impl Command {
         "sandbox",
         "theme",
         "help",
+        "release_notes",
         "exit",
     ];
 
@@ -128,6 +134,7 @@ impl Command {
             Self::Sandbox { .. } => "sandbox",
             Self::Theme(_) => "theme",
             Self::Help => "help",
+            Self::ReleaseNotes { .. } => "release_notes",
             Self::Exit => "exit",
         }
     }
@@ -153,6 +160,9 @@ impl Command {
             }
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
+            Self::ReleaseNotes { version } => {
+                object.maybe("version", version.as_ref().map(Name::as_str))
+            }
             Self::Compact
             | Self::Cancel
             | Self::Clear
@@ -199,6 +209,12 @@ impl Command {
                 Self::Theme(Theme::read(&part, &fields.string("name")?)?)
             }
             "help" => Self::Help,
+            "release_notes" => Self::ReleaseNotes {
+                version: fields
+                    .maybe("version")
+                    .map(|value| Name::new(value.as_str().ok_or(ErrorCode::Malformed)?))
+                    .transpose()?,
+            },
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
         };

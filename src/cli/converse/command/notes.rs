@@ -6,7 +6,14 @@
 //! history of the very tree the program came from, and asking for it opens no
 //! socket and reads no file. Nothing here is read or laid out until the
 //! command runs.
+//!
+//! A client with no terminal is answered from here too, in the contract's
+//! bounded values rather than rows: the application lends it the host's
+//! [`answered`], since the changelog is the host's and its format is this
+//! module's.
 
+use crucible_client_api::bounds::ITEMS;
+use crucible_client_api::{Group, Name, NotesOutcome, Refusal, Text};
 use crucible_tui::{Brief, Forge, Glyphs, RECORDED, Renderer, Row, Terminal, Timeline, Told};
 
 use crate::cli::Fatal;
@@ -60,7 +67,7 @@ pub(super) fn run<T: Terminal>(
             Some(version) => match releases.iter().find(|release| release.version == version) {
                 Some(release) => renderer.present(&alone(release, columns, glyphs))?,
                 None => {
-                    renderer.commit(&format!("! no release {version} {dot} newest is {newest}"))?
+                    renderer.commit(&format!("! no release {version} {dot} newest is {newest}"))?;
                 }
             },
             None => {
@@ -75,6 +82,52 @@ pub(super) fn run<T: Terminal>(
         ))?,
     }
     Ok(())
+}
+
+/// The release notes a client asked for: every release where it named none,
+/// and otherwise the release of the version it named.
+///
+/// # Errors
+///
+/// What the contract refuses a value for, where the changelog holds one it
+/// cannot carry.
+pub(crate) fn answered(version: Option<&str>) -> Result<NotesOutcome, Refusal> {
+    answer(CHANGELOG, version)
+}
+
+/// [`answered`], from `changelog`.
+///
+/// Every release is the newest [`ITEMS`] of them, which is all a list may
+/// hold, with the oldest left out past that and the answer saying so. The
+/// newest ten carry their words, as the terminal tells them in full; words
+/// past the contract's ceiling are cut, and say so.
+fn answer(changelog: &str, version: Option<&str>) -> Result<NotesOutcome, Refusal> {
+    let releases = releases(changelog);
+    let newest = Name::new(releases.last().map_or(RUNNING, |release| release.version))?;
+
+    Ok(match version {
+        None => {
+            let left = releases.len().saturating_sub(ITEMS);
+            let worded = releases.len().saturating_sub(FULL);
+            NotesOutcome::Listed {
+                releases: releases
+                    .iter()
+                    .enumerate()
+                    .skip(left)
+                    .map(|(at, release)| release.answered(at >= worded))
+                    .collect::<Result<_, _>>()?,
+                running: Name::new(RUNNING)?,
+                truncated: left > 0,
+            }
+        }
+        Some(word) => match asked(word) {
+            Some(version) => match releases.iter().find(|release| release.version == version) {
+                Some(release) => NotesOutcome::One(release.answered(true)?),
+                None => NotesOutcome::Unknown { newest },
+            },
+            None => NotesOutcome::NotAVersion { newest },
+        },
+    })
 }
 
 /// Every release on the rail: the oldest a row each, the newest ten in full.
@@ -238,6 +291,25 @@ fn is_link(line: &str) -> bool {
 }
 
 impl Release<'_> {
+    /// The release as a client is told it, with its words where `worded`.
+    fn answered(&self, worded: bool) -> Result<crucible_client_api::Release, Refusal> {
+        Ok(crucible_client_api::Release {
+            version: Name::new(self.version)?,
+            date: Name::new(self.date)?,
+            groups: self
+                .groups()
+                .into_iter()
+                .map(|(kind, count)| {
+                    Ok(Group {
+                        kind: Name::new(&kind)?,
+                        count: u64::try_from(count).unwrap_or(u64::MAX),
+                    })
+                })
+                .collect::<Result<_, Refusal>>()?,
+            text: worded.then(|| Text::cut(&self.text())),
+        })
+    }
+
     /// How many entries each group holds, in the order the row says them.
     ///
     /// An entry is a bullet at the start of a line under the group's heading;
@@ -265,10 +337,11 @@ impl Release<'_> {
                 if let Some((_, bullets, _)) = groups.last_mut() {
                     *bullets += 1;
                 }
-            } else if blank && !line.starts_with(' ') {
-                if let Some((_, _, paragraphs)) = groups.last_mut() {
-                    *paragraphs += 1;
-                }
+            } else if blank
+                && !line.starts_with(' ')
+                && let Some((_, _, paragraphs)) = groups.last_mut()
+            {
+                *paragraphs += 1;
             }
             blank = false;
         }

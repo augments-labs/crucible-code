@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crucible_client_api::{
     CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, LoginOutcome,
-    LogoutOutcome, ModelOutcome, Outcome, Palette, Problem, Refusal, Request, Resource, Response,
-    ResumeOutcome, SandboxOutcome, Standing, Theme, ThemeOutcome,
+    LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem, Refusal, Request,
+    Resource, Response, ResumeOutcome, SandboxOutcome, Standing, Theme, ThemeOutcome,
 };
 use crucible_runner::PromptCacheCleanup;
 use crucible_runtime::Cancel;
@@ -22,8 +22,8 @@ use crate::remember::{self, RememberError};
 use crate::switching::{LoggedIn, LoggedOut, Rung, Switched, Switching};
 
 /// What the host lends a command: the registry generation and files a switch
-/// is decided from, where sessions are kept, the workspace they belong to, and
-/// which syntax themes there are.
+/// is decided from, where sessions are kept, the workspace they belong to,
+/// which syntax themes there are, and the release notes.
 ///
 /// Lent by whoever stands on the host and never read out of a request, which
 /// is what keeps a request a set of names: the provider it names is looked up
@@ -42,6 +42,13 @@ pub struct Desk<'a> {
     /// Asked before a name a client sent is written down. The themes belong to
     /// whatever draws, which this crate does not reach, so the host answers.
     pub reads: fn(&str) -> bool,
+    /// The release notes: every release where no version is named, and
+    /// otherwise the release of the version named, as it was written.
+    ///
+    /// The changelog is the one the host was built from, and its format
+    /// belongs to the host, so the host answers, in the contract's bounded
+    /// values, or refuses where it cannot put them in those.
+    pub notes: fn(Option<&str>) -> Result<NotesOutcome, Refusal>,
 }
 
 /// What came of `/clear`.
@@ -111,6 +118,8 @@ pub enum Performed {
     Theme(Result<(), RememberError>),
     /// `/help`.
     Help,
+    /// `/release-notes`, as the host answered it.
+    Notes(NotesOutcome),
     /// `/exit`.
     Leaving,
 }
@@ -189,6 +198,12 @@ pub async fn perform(
         },
         Command::Theme(_) => keep(request, desk),
         Command::Help => Performed::Help,
+        Command::ReleaseNotes { version } => {
+            match (desk.notes)(version.as_ref().map(Name::as_str)) {
+                Ok(notes) => Performed::Notes(notes),
+                Err(refused) => Performed::Refused(refused),
+            }
+        }
         Command::Exit => Performed::Leaving,
     }
 }
@@ -234,6 +249,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::CleanCache
         | Command::Sandbox { .. }
         | Command::Help
+        | Command::ReleaseNotes { .. }
         | Command::Exit => Performed::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -349,6 +365,7 @@ impl Performed {
                 Err(problem) => ThemeOutcome::Unwritten(Problem::failed(problem)),
             }),
             Self::Help => Outcome::help(),
+            Self::Notes(notes) => Outcome::Notes(notes.clone()),
             Self::Leaving => Outcome::Leaving,
         }
     }
