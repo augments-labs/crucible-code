@@ -453,3 +453,79 @@ fn an_unknown_method_is_rejected_before_a_worker_starts() {
         .unwrap_err();
     assert!(matches!(problem, OAuthError::Method));
 }
+
+#[test]
+fn a_kimi_ai_sign_in_sends_the_browser_only_to_www_kimi_ai() {
+    // The global site's hosts, as Kimi's own client names them for accounts
+    // outside mainland China; the client id is shared with kimi.com.
+    assert_eq!(KimiSite::Ai.host(), "https://auth.kimi.ai");
+    assert_eq!(KimiSite::Ai.verify(), "https://www.kimi.ai");
+    assert!(within(
+        KimiSite::Ai.verify(),
+        "https://www.kimi.ai/code?user_code=ABCD-EFGH"
+    ));
+    for address in [
+        "https://www.kimi.ai.evil.example/code",
+        "https://www.kimi.ai@evil.example/code",
+        "http://www.kimi.ai/code",
+        // Neither site's sign-in opens the other's page.
+        "https://www.kimi.com/code?user_code=ABCD-EFGH",
+    ] {
+        assert!(
+            !within(KimiSite::Ai.verify(), address),
+            "accepted {address}"
+        );
+    }
+    assert!(!within(
+        KimiSite::Com.verify(),
+        "https://www.kimi.ai/code?user_code=ABCD-EFGH"
+    ));
+}
+
+#[test]
+fn each_kimi_site_writes_its_sign_in_under_a_name_of_its_own() {
+    assert_eq!(KimiSite::Com.name(), "moonshot");
+    assert_eq!(KimiSite::Ai.name(), "moonshot@kimi.ai");
+    assert_eq!(
+        KimiOAuth::at(Renewals::new(), KimiSite::Ai).name(),
+        "moonshot@kimi.ai"
+    );
+    assert_eq!(KimiOAuth::new(Renewals::new()).name(), "moonshot");
+}
+
+#[test]
+fn a_kimi_ai_device_response_is_read_against_www_kimi_ai() {
+    let (base, requests, server) = server(|_| {
+        vec![(
+            200,
+            serde_json::json!({
+                "device_code": "device-code",
+                "user_code": "ABCD-EFGH",
+                "verification_uri_complete": "https://www.kimi.ai/code?user_code=ABCD-EFGH",
+                "expires_in": 600,
+                "interval": 5,
+            })
+            .to_string(),
+        )]
+    });
+    let runtime = runtime();
+    let flow = Flow::at(
+        renewing(&runtime),
+        &base,
+        KimiSite::Ai.verify(),
+        PATIENCE,
+        PATIENCE,
+        Duration::from_millis(1),
+    );
+    let identity = Identity::new("01234567-89ab-4cde-8fab-0123456789ab".to_owned()).unwrap();
+
+    let device = runtime.block_on(flow.request_device(&identity)).unwrap();
+
+    let request = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert_eq!(request.target, "/api/oauth/device_authorization");
+    assert_eq!(
+        device.complete.as_ref(),
+        "https://www.kimi.ai/code?user_code=ABCD-EFGH"
+    );
+}

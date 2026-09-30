@@ -27,12 +27,61 @@ use crate::{Store, StoredCredentials};
 
 const HOST: &str = "https://auth.kimi.com";
 const VERIFY: &str = "https://www.kimi.com";
+/// The global site's hosts, as Kimi's own client (`MoonshotAI/kimi-code`,
+/// `packages/oauth/src/region.ts`, read 2026-09-29) names them for its
+/// `global` region beside `mainland-cn`; that file says the client id is shared
+/// across regions.
+const HOST_AI: &str = "https://auth.kimi.ai";
+const VERIFY_AI: &str = "https://www.kimi.ai";
 const CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const LOGIN_LIFETIME: Duration = Duration::from_mins(15);
 const REQUEST_LIFETIME: Duration = Duration::from_secs(30);
 const MINIMUM_REFRESH: u64 = 5 * 60;
 const DEVICE_ID: &str = "device_id";
 const EXPIRES_IN: &str = "expires_in";
+
+/// Where a Kimi account is held.
+///
+/// Kimi runs two deployments of one service: kimi.com for accounts in
+/// mainland China and kimi.ai for the rest. An account belongs to one, which
+/// decides the host its tokens are issued by, the page its sign-in opens and
+/// the address its requests go to. The client id is shared between the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KimiSite {
+    /// kimi.com, the mainland China deployment.
+    Com,
+    /// kimi.ai, the global deployment.
+    Ai,
+}
+
+impl KimiSite {
+    /// The host that issues and renews its tokens.
+    #[must_use]
+    pub const fn host(self) -> &'static str {
+        match self {
+            Self::Com => HOST,
+            Self::Ai => HOST_AI,
+        }
+    }
+
+    /// The only origin its sign-in may send the browser to.
+    #[must_use]
+    pub const fn verify(self) -> &'static str {
+        match self {
+            Self::Com => VERIFY,
+            Self::Ai => VERIFY_AI,
+        }
+    }
+
+    /// The name its sign-in is written under in the store.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Com => "moonshot",
+            Self::Ai => "moonshot@kimi.ai",
+        }
+    }
+}
 
 /// `MoonshotAI`'s Kimi account login.
 #[derive(Clone)]
@@ -49,12 +98,18 @@ impl KimiOAuth {
     /// Device authorization in a browser.
     pub const DEVICE: LoginMethod = LoginMethod::new("device");
 
-    /// Production Kimi login, renewing through `renewals`.
+    /// Production Kimi login on kimi.com, renewing through `renewals`.
     #[must_use]
     pub fn new(renewals: Renewals) -> Self {
+        Self::at(renewals, KimiSite::Com)
+    }
+
+    /// Production Kimi login on `site`, renewing through `renewals`.
+    #[must_use]
+    pub fn at(renewals: Renewals, site: KimiSite) -> Self {
         Self {
             shared: Arc::new(Shared {
-                flow: Flow::production(renewals),
+                flow: Flow::production(renewals, site),
                 worker: LoginSlot::new(),
             }),
         }
@@ -90,7 +145,7 @@ impl KimiOAuth {
     }
 
     fn stored_credential(&self, stored: &StoredCredentials) -> Option<Box<dyn Credential>> {
-        let (store, tokens) = stored.subscription(self.provider())?;
+        let (store, tokens) = stored.subscription(self.name())?;
         Some(Box::new(KimiCredential::new(
             store,
             tokens,
@@ -108,6 +163,10 @@ impl fmt::Debug for KimiOAuth {
 impl SubscriptionLogin for KimiOAuth {
     fn provider(&self) -> &'static str {
         "moonshot"
+    }
+
+    fn name(&self) -> &'static str {
+        self.shared.flow.name
     }
 
     fn start(&self, method: LoginMethod, store: Store) -> Result<LoginAttempt, OAuthError> {
@@ -151,7 +210,7 @@ impl Credential for KimiCredential {
             {
                 let mut tokens = held(&self.tokens);
                 if needs_refresh(&tokens, now())
-                    && let Some(latest) = self.flow.renewals.latest("moonshot", self.scope)
+                    && let Some(latest) = self.flow.renewals.latest(self.flow.name, self.scope)
                     && !needs_refresh(&latest, now())
                 {
                     *tokens = latest;
@@ -171,7 +230,7 @@ impl Credential for KimiCredential {
                 .renewals
                 .renew(Due {
                     scope,
-                    provider: "moonshot",
+                    provider: self.flow.name,
                     store: self.store.clone(),
                     needs_refresh,
                     refresh: Box::new(move |current| {
@@ -238,18 +297,27 @@ struct Flow {
     token: Box<str>,
     minimum_interval: Duration,
     login_lifetime: Duration,
+    /// The name the store holds this site's sign-in and identity under.
+    name: &'static str,
 }
 
 impl Flow {
-    fn production(renewals: Renewals) -> Self {
+    fn production(renewals: Renewals, site: KimiSite) -> Self {
         Self::at(
             renewals,
-            HOST,
-            VERIFY,
+            site.host(),
+            site.verify(),
             REQUEST_LIFETIME,
             LOGIN_LIFETIME,
             Duration::from_secs(1),
         )
+        .named(site.name())
+    }
+
+    /// The same flow, writing under `name`.
+    fn named(mut self, name: &'static str) -> Self {
+        self.name = name;
+        self
     }
 
     // Six settings of one flow, each a different kind of thing and each named
@@ -272,6 +340,7 @@ impl Flow {
             token: format!("{host}/api/oauth/token").into(),
             minimum_interval: interval,
             login_lifetime: login,
+            name: KimiSite::Com.name(),
         }
     }
 
@@ -288,7 +357,7 @@ impl Flow {
     }
 
     async fn login(&self, store: &Store, updates: &LoginUpdates) -> Result<(), OAuthError> {
-        let identity = Identity::for_login(&self.renewals, store).await?;
+        let identity = Identity::for_login(&self.renewals, store, self.name).await?;
         let started = Instant::now();
         loop {
             if started.elapsed() >= self.login_lifetime {
@@ -308,8 +377,9 @@ impl Flow {
             let time = LoginTime { started, issued };
             if let Some(tokens) = self.poll(&device, &identity, time).await? {
                 let store = store.clone();
+                let name = self.name;
                 self.renewals
-                    .login_store(move || store.keep_subscription("moonshot", tokens))
+                    .login_store(move || store.keep_subscription(name, tokens))
                     .await?;
                 return updates.send(Ok(LoginUpdate::Complete));
             }
@@ -448,11 +518,15 @@ struct Identity {
 }
 
 impl Identity {
-    async fn for_login(renewals: &Renewals, store: &Store) -> Result<Self, OAuthError> {
+    async fn for_login(
+        renewals: &Renewals,
+        store: &Store,
+        name: &'static str,
+    ) -> Result<Self, OAuthError> {
         let candidate = random_id()?;
         let store = store.clone();
         let device_id = renewals
-            .login_store(move || store.identity("moonshot", &candidate))
+            .login_store(move || store.identity(name, &candidate))
             .await?;
         Self::new(device_id)
     }

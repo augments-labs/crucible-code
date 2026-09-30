@@ -34,7 +34,7 @@ use tokio::task::JoinHandle;
 
 use crate::{AuthError, Store, StoredCredentials};
 
-pub use kimi::{KimiCredential, KimiOAuth};
+pub use kimi::{KimiCredential, KimiOAuth, KimiSite};
 pub use openai::{OpenAiCredential, OpenAiOAuth};
 pub use renewal::{Renewals, Unjoined};
 
@@ -364,8 +364,14 @@ impl fmt::Debug for LoginUpdates {
 /// use crucible_auth::Tokens;
 /// ```
 pub trait SubscriptionLogin: Send + Sync + fmt::Debug {
-    /// The provider name used by configuration and the auth store.
+    /// The provider name used by configuration.
     fn provider(&self) -> &'static str;
+
+    /// The name the store writes this sign-in under: the provider's own name
+    /// unless the provider has more than one sign-in.
+    fn name(&self) -> &'static str {
+        self.provider()
+    }
 
     /// Starts one implementation-owned authorization method.
     ///
