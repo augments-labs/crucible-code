@@ -153,8 +153,9 @@ pub(crate) struct Script {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct FastFixture {
-    /// Whether every request asked at [`Speed::Fast`] is refused for it.
-    refused: bool,
+    /// How many requests are answered before every one asked at
+    /// [`Speed::Fast`] is refused for it; `None` refuses none.
+    refused_after: Option<usize>,
     /// What each answer says about the speed it was served at.
     serves: Served,
 }
@@ -210,7 +211,13 @@ impl Script {
     /// a vendor refuses a plan that does not include it, and answers every
     /// other one from the script.
     pub(crate) const fn refusing_fast(mut self) -> Self {
-        self.fast.refused = true;
+        self.fast.refused_after = Some(0);
+        self
+    }
+
+    /// The same, once `answered` requests have been answered.
+    pub(crate) const fn refusing_fast_after(mut self, answered: usize) -> Self {
+        self.fast.refused_after = Some(answered);
         self
     }
 
@@ -611,7 +618,9 @@ impl Provider for Script {
                 steer.say(line.into());
             }
 
-            if self.fast.refused && speed == Speed::Fast {
+            let before = self.sent.lock().unwrap().len().saturating_sub(1);
+            if speed == Speed::Fast && self.fast.refused_after.is_some_and(|after| before >= after)
+            {
                 return Err(ProviderError::FastRefused {
                     provider: SCRIPT,
                     message: "your plan does not include fast".into(),

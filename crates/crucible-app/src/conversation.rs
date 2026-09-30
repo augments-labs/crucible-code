@@ -164,7 +164,10 @@ impl Conversation {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        self.runner.compact(why, run, spent).await
+        let asked = self.runner.speed();
+        let made = self.runner.compact(why, run, spent).await;
+        self.refusal_written(asked);
+        made
     }
 
     /// The persistent prompt-cache resources this conversation remembers

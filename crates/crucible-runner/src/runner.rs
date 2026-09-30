@@ -1656,7 +1656,8 @@ impl Runner {
                 prompt_cache: Some(&cache),
                 ..request
             };
-            let streamed = fast::sent(&*self.provider, &mut self.pace, request, listening).await;
+            let streamed =
+                fast::sent(&*self.provider, &mut self.pace, request, listening.run).await;
             // Recorded and reported before a failure ends the turn.
             let disposition = request_disposition(&streamed);
             if let Some(attempt) = self

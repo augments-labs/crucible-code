@@ -11,8 +11,8 @@
 
 use crucible_models::{DeltaStream, Provider, ProviderError, Request, Served, Speed};
 
-use super::{Listening, Runner};
-use crate::Event;
+use super::Runner;
+use crate::{Event, RunContext};
 
 /// The speed asked for, and what the last answer said it was served at.
 #[derive(Debug, Clone, Copy, Default)]
@@ -50,7 +50,12 @@ impl Runner {
 }
 
 /// Sends `request` at the speed `pace` asks for, and once more at standard
-/// speed where the vendor refused the fast form.
+/// speed where the vendor refused the fast form: a turn's request and a
+/// compaction's alike.
+///
+/// The refusal turns the speed off and forgets what the last answer was served
+/// at, whatever the second send then does. The line saying so is posted once
+/// the second send is out; one a stop kept from going says nothing was sent.
 ///
 /// Over the two fields it needs rather than the runner, because the request
 /// borrows the runner's model while it is out.
@@ -58,20 +63,24 @@ pub(super) async fn sent(
     provider: &dyn Provider,
     pace: &mut Pace,
     request: Request<'_>,
-    listening: &Listening<'_>,
+    run: &RunContext<'_>,
 ) -> Result<Box<dyn DeltaStream>, ProviderError> {
-    let cancel = listening.run.cancel();
+    let cancel = run.cancel();
     match provider.stream_at(request, pace.asked, cancel).await {
         Err(ProviderError::FastRefused {
             provider: named,
             message,
         }) => {
             pace.asked = Speed::Standard;
-            listening.run.reporting().post(Event::FastRefused {
-                provider: named,
-                reason: message,
-            });
-            provider.stream_at(request, Speed::Standard, cancel).await
+            pace.served = Served::Unsaid;
+            let again = provider.stream_at(request, Speed::Standard, cancel).await;
+            if !matches!(again, Err(ProviderError::Cancelled(_))) {
+                run.reporting().post(Event::FastRefused {
+                    provider: named,
+                    reason: message,
+                });
+            }
+            again
         }
         sent => sent,
     }

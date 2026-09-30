@@ -440,3 +440,70 @@ fn a_client_with_no_terminal_sets_the_speed_and_reads_what_was_served() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn a_refusal_of_fast_while_making_room_is_written_down_as_standard() -> Result<(), Failed> {
+    let tree = Tree::new("speed-refused-compacting")?;
+    let provider = Fastened::new(FIELD).refusing();
+    let speeds = Arc::clone(&provider.speeds);
+    let desk = Desk::new(&tree, &["openai"])?;
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(desk.choosing.clone());
+    // A budget that keeps only the turn in hand, so two turns have a middle
+    // for the compaction to replace, and it sends a request.
+    let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
+    let agent = AgentBuilder::new(
+        AgentId::new("test"),
+        Model {
+            name: "script".into(),
+            max_tokens: 64,
+            window: None,
+            accepts: None,
+            effort: None,
+        },
+    );
+    let work = tree.0.join("work");
+    let mut conversation = Conversation::recording(session, Some("openai"), |session| {
+        Runner::new(
+            Box::new(provider),
+            Tools::new(),
+            agent.build(),
+            crucible_context::ContextInputs::new(work),
+            session,
+        )
+        .under(crucible_runner::RunPolicy {
+            compaction: crucible_runner::Compaction {
+                keep_tokens: 1,
+                ..crucible_runner::Compaction::default()
+            },
+            ..crucible_runner::RunPolicy::default()
+        })
+    })
+    .consenting(consent);
+    turn(&mut conversation, "something to make room from")?;
+    turn(&mut conversation, "and a middle to replace")?;
+    let _ = conversation.hasten(Speed::Fast, &desk.with());
+    assert_eq!(written(&tree)?.speed("openai"), Speed::Fast);
+
+    let (events, _reported) = mpsc::channel::<EventEnvelope>();
+    let (cancel, steer, aside) = (Cancel::new(), Steer::new(), Aside::new());
+    let run = conversation
+        .runner()
+        .starting(&events, &cancel, &steer, &aside);
+    let mut spent = crucible_types::Spend::default();
+    let _ = runtime()?.block_on(conversation.compact(
+        crucible_types::Compacting::Asked,
+        &run,
+        &mut spent,
+    ));
+
+    let asked = speeds.lock().map_err(|_| "poisoned")?.clone();
+    assert_eq!(
+        asked.get(2..),
+        Some(&[Speed::Fast, Speed::Standard][..]),
+        "{asked:?}"
+    );
+    assert_eq!(conversation.runner().speed(), Speed::Standard);
+    assert_eq!(written(&tree)?.speed("openai"), Speed::Standard);
+    Ok(())
+}

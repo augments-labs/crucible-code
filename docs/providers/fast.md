@@ -67,7 +67,8 @@ A request carries the fast form only where all of these hold: your file says
 `fast` for the provider, the model in force has a fast form in the table below
 for the credential in force, and no `baseUrl` is set for the provider. A
 `fast` left in the file where one of these does not hold is left there and
-asks for standard. A compaction always asks for standard.
+asks for standard. Making room in the model's window asks at the same speed
+as a turn.
 
 ## When it goes back to standard
 

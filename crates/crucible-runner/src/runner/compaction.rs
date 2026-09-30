@@ -647,7 +647,7 @@ impl Runner {
             prompt_cache: Some(&cache),
             ..request
         };
-        let asked = self.provider.stream(request, cancel).await;
+        let asked = super::fast::sent(&*self.provider, &mut self.pace, request, run).await;
         // Recorded and reported before a failure ends the compaction, as a
         // turn's own request is.
         let disposition = super::request_disposition(&asked);

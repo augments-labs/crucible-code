@@ -141,3 +141,63 @@ fn another_speed_forgets_what_the_last_answer_was_served_at() {
     scripted.runner.hasten(Speed::Standard);
     assert_eq!(scripted.runner.served(), Served::Unsaid);
 }
+
+#[test]
+fn a_refusal_forgets_the_speed_the_last_answer_was_served_at_whatever_the_second_send_does() {
+    // The label reads what was served: after a line saying fast is off, a
+    // second send that fails must not leave it saying `fast`.
+    let script = Script::new(vec![saying("first")])
+        .serving(Served::Fast)
+        .refusing_fast_after(1)
+        .cancelling_when_exhausted();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.hasten(Speed::Fast);
+    scripted.turn("one").expect("a turn");
+    assert_eq!(scripted.runner.served(), Served::Fast);
+
+    let _ = scripted.turn("two");
+
+    assert_eq!(scripted.runner.speed(), Speed::Standard);
+    assert_eq!(scripted.runner.served(), Served::Unsaid);
+}
+
+#[test]
+fn a_second_send_that_was_stopped_is_not_said_to_have_been_sent() {
+    let script = Script::new(Vec::new())
+        .refusing_fast()
+        .cancelling_when_exhausted();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Allow);
+    scripted.runner.hasten(Speed::Fast);
+
+    let _ = scripted.turn("go");
+
+    assert!(refusals(&scripted.events()).is_empty());
+    assert_eq!(scripted.runner.speed(), Speed::Standard);
+}
+
+#[test]
+fn a_compaction_is_asked_at_the_speed_the_turns_are_and_sent_again_when_refused() {
+    let script = Script::new(vec![
+        saying("first"),
+        saying("second"),
+        recap("notes to self"),
+    ])
+    .refusing_fast_after(2);
+    let compacting = Compaction {
+        keep_tokens: 1,
+        ..Compaction::default()
+    };
+    let mut scripted = Scripted::within(script, 200_000, compacting);
+    scripted.runner.hasten(Speed::Fast);
+    scripted.turn("first").expect("a turn to compact from");
+    scripted.turn("second").expect("a middle to replace");
+
+    scripted.compacting().expect("a structured recap");
+
+    assert_eq!(
+        speeds(&scripted),
+        [Speed::Fast, Speed::Fast, Speed::Fast, Speed::Standard]
+    );
+    assert_eq!(scripted.runner.speed(), Speed::Standard);
+    assert_eq!(refusals(&scripted.events()).len(), 1);
+}
