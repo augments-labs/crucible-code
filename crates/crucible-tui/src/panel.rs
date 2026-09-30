@@ -76,9 +76,10 @@ pub struct Offered<'a> {
 }
 
 /// A list as it stands after scrolling: what is on screen, which of that carries
-/// the mark, and how many entries are out of sight below it.
+/// the mark, how many entries are out of sight below it, and the headings
+/// standing in it.
 ///
-/// One value rather than three arguments, because the three only ever move
+/// One value rather than four arguments, because the four only ever move
 /// together — a slice with somebody else's index against it is the defect this
 /// shape makes unwriteable.
 #[derive(Clone)]

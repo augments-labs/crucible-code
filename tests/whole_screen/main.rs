@@ -1421,6 +1421,23 @@ fn escape_in_a_list_goes_back_to_the_first_panel_with_its_mark_where_it_was() {
 }
 
 #[test]
+fn escape_in_a_key_box_goes_back_to_its_list_with_the_mark_on_the_row_it_came_from() {
+    let mut window = Watched::open("login-back-to-google", 80, 24);
+
+    keyed(&mut window, "Google");
+    window.types_until("\x1b", "Choose the provider whose API key you have.");
+
+    let picture = window.picture();
+    assert!(
+        picture
+            .lines()
+            .any(|row| row.trim_matches('|').trim_end() == "› Google"),
+        "{picture}"
+    );
+    assert!(picture.contains("esc to go back"), "{picture}");
+}
+
+#[test]
 fn a_key_for_a_provider_holding_a_credential_says_what_it_replaces_and_replaces_it_once_stored() {
     // Key over sign-in, and one Kimi site's key over the other's: the box
     // says which credential goes, and the store keeps it until the new key
@@ -1500,6 +1517,15 @@ fn words_that_leave_one_key_row_open_its_box_and_words_that_leave_none_say_so() 
     window.types_until("/login openai key\r", "OpenAI API key");
     assert!(
         window.picture().contains("esc to cancel"),
+        "{}",
+        window.picture()
+    );
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    // A key row of a provider with two opens a box that names its site.
+    window.types_until("/login moonshot key kimi.com\r", "API key");
+    assert!(
+        window.picture().contains("MoonshotAI · kimi.com API key"),
         "{}",
         window.picture()
     );

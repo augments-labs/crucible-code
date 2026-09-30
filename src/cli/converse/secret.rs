@@ -106,7 +106,9 @@ struct Boxed<'a> {
     leaves: &'a str,
 }
 
-/// A box a command opened for `provider`, replacing nothing.
+/// A box a command opened for `provider`, replacing nothing: how this
+/// module's tests stand one.
+#[cfg(test)]
 impl<'a> From<&'a str> for Boxed<'a> {
     fn from(provider: &'a str) -> Self {
         Self {

@@ -750,29 +750,42 @@ fn what_a_choice_replaces_is_named_by_the_row_it_was_given_on() {
     let anthropic = way(&rows, List::Key, "Anthropic");
 
     assert_eq!(
-        replaced(&openai_key, &held(List::Subscription, "OpenAI")).as_deref(),
+        replaced(
+            &openai_key,
+            &held(List::Subscription, "OpenAI"),
+            Glyphs::Unicode
+        )
+        .as_deref(),
         Some("the sign-in held for OpenAI")
     );
     assert_eq!(
-        replaced(&openai_plan, &held(List::Key, "OpenAI")).as_deref(),
+        replaced(&openai_plan, &held(List::Key, "OpenAI"), Glyphs::Unicode).as_deref(),
         Some("the API key held for OpenAI")
     );
     assert_eq!(
-        replaced(&kimi_ai, &held(List::Subscription, "Kimi Code · kimi.com")).as_deref(),
+        replaced(
+            &kimi_ai,
+            &held(List::Subscription, "Kimi Code · kimi.com"),
+            Glyphs::Unicode
+        )
+        .as_deref(),
         Some("the sign-in held for Kimi Code · kimi.com")
     );
     assert_eq!(
-        replaced(&anthropic, &held(List::Key, "Anthropic")).as_deref(),
+        replaced(&anthropic, &held(List::Key, "Anthropic"), Glyphs::Unicode).as_deref(),
         Some("the API key held for Anthropic")
     );
-    assert_eq!(replaced(&anthropic, &held(List::Key, "OpenAI")), None);
+    assert_eq!(
+        replaced(&anthropic, &held(List::Key, "OpenAI"), Glyphs::Unicode),
+        None
+    );
 
     assert_eq!(
-        unchanged(&openai_plan, &held(List::Key, "OpenAI")),
+        unchanged(&openai_plan, &held(List::Key, "OpenAI"), Glyphs::Unicode),
         "! sign-in did not complete; the API key stored for OpenAI is unchanged"
     );
     assert_eq!(
-        unchanged(&kimi_ai, &[]),
+        unchanged(&kimi_ai, &[], Glyphs::Unicode),
         "! sign-in did not complete; nothing was stored"
     );
 }
@@ -848,4 +861,201 @@ fn a_window_with_no_room_for_a_panel_is_given_every_row_as_the_line_to_type() {
         );
         assert!(!written.contains(TITLE), "{columns}: {written}");
     }
+}
+
+#[test]
+fn row_names_are_drawn_with_the_glyph_sets_own_dot() {
+    // A terminal set to ASCII is sent no middle dot: not in a row's name, not
+    // in the sentence naming what a choice replaces.
+    let rows = production();
+    let providers = crucible_app::providers::providers()
+        .expect("the built-in providers register")
+        .snapshot();
+    let kimi_com = way(&rows, List::Subscription, "Kimi Code · kimi.com");
+    let kimi_ai = way(&rows, List::Subscription, "Kimi Code · kimi.ai");
+
+    let listed: Vec<&Way> = rows.all().iter().collect();
+    let ascii = entries(
+        &listed,
+        std::slice::from_ref(&kimi_com),
+        &providers,
+        Glyphs::Ascii,
+    );
+    for (name, says) in &ascii {
+        assert!(name.is_ascii(), "{name}");
+        assert!(says.is_ascii(), "{says}");
+    }
+    assert!(
+        ascii.iter().any(|(name, _)| name == "Kimi Code - kimi.ai"),
+        "{ascii:?}"
+    );
+    assert_eq!(
+        replaced(&kimi_ai, std::slice::from_ref(&kimi_com), Glyphs::Ascii).as_deref(),
+        Some("the sign-in held for Kimi Code - kimi.com")
+    );
+    assert!(unchanged(&kimi_ai, &[kimi_com], Glyphs::Ascii).is_ascii());
+
+    let unicode = entries(&listed, &[], &providers, Glyphs::Unicode);
+    assert!(
+        unicode
+            .iter()
+            .any(|(name, _)| name == "Kimi Code · kimi.ai"),
+        "{unicode:?}"
+    );
+}
+
+#[test]
+fn rows_narrowed_by_words_stand_under_the_heading_of_their_own_kind() {
+    // A registry that lists a sign-in row after key rows, as one a later
+    // release adds a row to may: each still stands under its own kind.
+    let mut listed = production().all().to_vec();
+    let late = listed.remove(0);
+    listed.push(late);
+    let rows = Rows::new(listed);
+    let matched = matching(&["openai"], &rows);
+
+    let (ordered, headings) = kinds(&matched);
+
+    let names: Vec<(&str, List)> = ordered.iter().map(|way| (way.shown, way.list)).collect();
+    assert_eq!(
+        names,
+        [("OpenAI", List::Subscription), ("OpenAI", List::Key)]
+    );
+    let at: Vec<(usize, &str)> = headings.iter().map(|one| (one.before, one.name)).collect();
+    assert_eq!(at, [(0, "Subscription"), (1, "API key")]);
+}
+
+/// A sign-in that is refused the moment it starts: the one way a test can
+/// see what the sign-in view says when a flow does not complete.
+struct Refused {
+    slot: crucible_auth::LoginSlot,
+}
+
+impl std::fmt::Debug for Refused {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("Refused")
+    }
+}
+
+impl crucible_auth::SubscriptionLogin for Refused {
+    fn provider(&self) -> &'static str {
+        "openai"
+    }
+
+    fn start(
+        &self,
+        _method: crucible_auth::LoginMethod,
+        _store: Store,
+    ) -> Result<crucible_auth::LoginAttempt, crucible_auth::OAuthError> {
+        self.slot
+            .start(&crate::cli::fake::runtime(), |updates| async move {
+                let _ = updates.send(Err(crucible_auth::OAuthError::Denied));
+            })
+    }
+
+    fn credential(
+        &self,
+        _stored: &crucible_auth::StoredCredentials,
+    ) -> Option<Box<dyn crucible_credentials::Credential>> {
+        None
+    }
+}
+
+/// The one route to [`Refused`].
+const REFUSED: Route = Route::new(
+    "openai",
+    crucible_auth::LoginMethod::new("refused"),
+    "Log in to ChatGPT",
+    "Refused",
+    "refused at once",
+);
+
+#[test]
+fn a_refused_sign_in_names_what_it_would_have_replaced_and_says_it_is_unchanged() {
+    let sample = Sample::new("login-refused");
+    let mut terms = named(&sample);
+    terms.subscriptions = crucible_app::subscription::Subscriptions::new(
+        vec![(
+            Arc::new(Refused {
+                slot: crucible_auth::LoginSlot::new(),
+            }),
+            crucible_provider::OpenAi::SUBSCRIPTION,
+        )],
+        vec![REFUSED],
+    );
+    let rows = production();
+    let held = [way(&rows, List::Key, "OpenAI")];
+    let mut conversation = asking("claude-test-1");
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let plan = way(&rows, List::Subscription, "OpenAI");
+    let mut walk = Walk {
+        renderer: &mut renderer,
+        conversation: &mut conversation,
+        terms: &terms,
+        held: &held,
+    };
+
+    let closed = subscribed(REFUSED, &plan, Opened::Directly, &mut walk).expect("the terminal");
+
+    assert_eq!(closed, Closed::Done);
+    let written = renderer.terminal().written().to_string();
+    assert!(
+        written.contains("Signing in replaces the API key held for OpenAI once it completes."),
+        "{written}"
+    );
+    assert!(
+        written.contains("! account login was not authorized"),
+        "{written}"
+    );
+    assert!(
+        written.contains("! sign-in did not complete; the API key stored for OpenAI is unchanged"),
+        "{written}"
+    );
+}
+
+#[test]
+fn a_sign_in_row_nothing_is_registered_for_says_so_rather_than_standing_an_empty_panel() {
+    let sample = Sample::new("login-unregistered");
+    let mut terms = named(&sample);
+    terms.subscriptions = crucible_app::subscription::Subscriptions::new(Vec::new(), Vec::new());
+    let rows = production();
+    let mut conversation = asking("claude-test-1");
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let plan = way(&rows, List::Subscription, "Kimi Code · kimi.ai");
+    let mut walk = Walk {
+        renderer: &mut renderer,
+        conversation: &mut conversation,
+        terms: &terms,
+        held: &[],
+    };
+
+    let closed = screen(&plan, Opened::Directly, &mut walk).expect("the terminal");
+
+    assert_eq!(closed, Closed::Done);
+    let said = renderer.terminal().picture().said().join(" ");
+    assert!(
+        said.contains("! no subscription login for Kimi Code · kimi.ai"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_key_only_the_environment_holds_marks_no_row() {
+    // The marks are read from the store and nothing else: a key exported in
+    // the shell is not one this command stored or can replace.
+    let sample = Sample::new("login-environment-only");
+    let mut terms = named(&sample);
+    terms.environment = Box::new(|_| Some("fabricated-exported-key".to_owned()));
+    let rows = production();
+    let providers = terms.providers.snapshot();
+
+    let held = holding(&rows, &terms).expect("an empty store");
+    let listed: Vec<&Way> = rows.all().iter().collect();
+    let drawn = entries(&listed, &held, &providers, Glyphs::Unicode);
+
+    assert!(held.is_empty(), "{held:?}");
+    assert!(
+        drawn.iter().all(|(_, says)| !says.starts_with("signed in")),
+        "{drawn:?}"
+    );
 }

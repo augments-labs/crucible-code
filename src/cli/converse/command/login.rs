@@ -6,7 +6,8 @@
 //! the rows of that kind, read off the row registry, and a row that holds the
 //! credential serving its provider says `signed in`. Only which row holds one
 //! is read: the store is asked for names and kinds before anything is drawn,
-//! and a store that cannot be read is said instead of a panel. Below the first
+//! and a store that is there and cannot be parsed is said instead of a panel.
+//! Row names are drawn with the glyph set's dot. Below the first
 //! screen Escape goes back one level, with the mark where it was; at the first
 //! screen, and at one opened directly by words, it cancels.
 //!
@@ -17,7 +18,9 @@
 //!
 //! A row whose provider holds a credential says on its next screen what will be
 //! replaced. Nothing is replaced until the new one is stored, so a sign-in that
-//! does not complete leaves the store as it was and says what is unchanged.
+//! fails, is refused or expires leaves the store as it was and says what is
+//! unchanged. A sign-in stopped by Escape is asked about again, since tokens
+//! that arrived as it was pressed may already be written.
 //!
 //! A real subscription implementation starts its login as a task on the
 //! application's runtime and reports the page the user must visit; the terminal
@@ -254,10 +257,11 @@ pub(super) fn run<T: Terminal>(
 /// Which row holds the credential serving each provider: names and kinds, read
 /// before anything is drawn, and no key or token.
 ///
-/// A store that is there and cannot be read is one a write would refuse to
-/// replace, so it comes back to be said before anything is asked. One that
-/// cannot be reached at all marks no row, and the write that meets it says
-/// why, as it always has.
+/// A store that is there and cannot be parsed, holds something other than
+/// text or is past its size limit is one a write would refuse to replace, so
+/// it comes back to be said before anything is asked. One the system will not
+/// open, or whose home cannot be reached, marks no row, and the write that
+/// meets it says why, as it always has.
 fn holding(rows: &Rows, terms: &Terms) -> Result<Vec<Way>, AuthError> {
     let held = match terms.logins.holding() {
         Ok(held) => held,
@@ -373,22 +377,11 @@ fn listed(rows: &Rows, list: List) -> Vec<&Way> {
 /// The rows words left, under the headings of their kinds, opened by the
 /// command: Escape cancels.
 fn narrowed<T: Terminal>(matched: &[&Way], walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
-    let accounts = matched
-        .iter()
-        .filter(|way| way.list == List::Subscription)
-        .count();
-    let headings: Vec<Heading<'_>> = [
-        (0, ACCOUNT_HEADING, accounts > 0),
-        (accounts, KEY_HEADING, accounts < matched.len()),
-    ]
-    .into_iter()
-    .filter(|(_, _, any)| *any)
-    .map(|(before, name, _)| Heading { before, name })
-    .collect();
+    let (ordered, headings) = kinds(matched);
 
     let listing = Listing {
         said: NARROWED,
-        ways: matched,
+        ways: &ordered,
         headings: &headings,
         footer: CANCEL,
     };
@@ -399,6 +392,27 @@ fn narrowed<T: Terminal>(matched: &[&Way], walk: &mut Walk<'_, T>) -> Result<Clo
         }
         closed => Ok(closed),
     }
+}
+
+/// `matched` with each kind's rows together, and the headings that stand over
+/// them.
+fn kinds<'r>(matched: &[&'r Way]) -> (Vec<&'r Way>, Vec<Heading<'static>>) {
+    let mut ordered = matched.to_vec();
+    // Stable: within a kind, the registry's order stands.
+    ordered.sort_by_key(|way| way.list == List::Key);
+    let accounts = ordered
+        .iter()
+        .filter(|way| way.list == List::Subscription)
+        .count();
+    let headings = [
+        (0, ACCOUNT_HEADING, accounts > 0),
+        (accounts, KEY_HEADING, accounts < ordered.len()),
+    ]
+    .into_iter()
+    .filter(|(_, _, any)| *any)
+    .map(|(before, name, _)| Heading { before, name })
+    .collect();
+    (ordered, headings)
 }
 
 /// A list of rows to choose one from.
@@ -415,19 +429,10 @@ impl Listing<'_> {
     fn stand<T: Terminal>(&self, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
         let providers = walk.terms.providers.snapshot();
         let glyphs = walk.terms.style().glyphs();
-        let says: Vec<String> = self
-            .ways
+        let entries = entries(self.ways, walk.held, &providers, glyphs);
+        let shown: Vec<Offered<'_>> = entries
             .iter()
-            .map(|way| described(way, walk.held, &providers, glyphs))
-            .collect();
-        let shown: Vec<Offered<'_>> = self
-            .ways
-            .iter()
-            .zip(&says)
-            .map(|(way, says)| Offered {
-                name: way.shown,
-                says,
-            })
+            .map(|(name, says)| Offered { name, says })
             .collect();
 
         let mut at = 0;
@@ -458,6 +463,35 @@ impl Listing<'_> {
             }
         }
     }
+}
+
+/// Each row's name and what it says beneath it, as a list draws them.
+fn entries(
+    ways: &[&Way],
+    held: &[Way],
+    providers: &Providers,
+    glyphs: Glyphs,
+) -> Vec<(String, String)> {
+    ways.iter()
+        .map(|way| {
+            (
+                drawn(way.shown, glyphs).into_owned(),
+                described(way, held, providers, glyphs),
+            )
+        })
+        .collect()
+}
+
+/// A row's name as the glyph set draws it.
+///
+/// The registry writes a name the way the design does, `Kimi Code · kimi.ai`;
+/// a terminal set to ASCII is sent the set's own dot in its place.
+fn drawn(shown: &str, glyphs: Glyphs) -> Cow<'_, str> {
+    const DOT: &str = "·";
+    if glyphs.dot() == DOT || !shown.contains(DOT) {
+        return Cow::Borrowed(shown);
+    }
+    Cow::Owned(shown.replace(DOT, glyphs.dot()))
 }
 
 /// What a row says beneath its name.
@@ -497,14 +531,20 @@ fn variable_row(one: &Served) -> String {
 
 /// What choosing `way` replaces: the credential its provider holds, on any row
 /// of it, that one included.
-fn replaced(way: &Way, held: &[Way]) -> Option<String> {
+fn replaced(way: &Way, held: &[Way], glyphs: Glyphs) -> Option<String> {
     held.iter()
         .find(|one| one.provider == way.provider)
-        .map(|one| format!("the {} held for {}", credential(one), one.shown))
+        .map(|one| {
+            format!(
+                "the {} held for {}",
+                credential(one),
+                drawn(one.shown, glyphs)
+            )
+        })
 }
 
 /// What a sign-in that did not complete says: nothing was replaced.
-fn unchanged(way: &Way, held: &[Way]) -> String {
+fn unchanged(way: &Way, held: &[Way], glyphs: Glyphs) -> String {
     held.iter()
         .find(|one| one.provider == way.provider)
         .map_or_else(
@@ -513,7 +553,7 @@ fn unchanged(way: &Way, held: &[Way]) -> String {
                 format!(
                     "! sign-in did not complete; the {} stored for {} is unchanged",
                     credential(one),
-                    one.shown
+                    drawn(one.shown, glyphs)
                 )
             },
         )
@@ -533,7 +573,10 @@ fn screen<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Res
     let Some(named) = offered(&served).find(|one| one.name == way.provider) else {
         say(
             walk.renderer,
-            &format!("! {} is not served by this build", way.shown),
+            &format!(
+                "! {} is not served by this build",
+                drawn(way.shown, walk.terms.style().glyphs())
+            ),
         )?;
         return Ok(Closed::Done);
     };
@@ -556,11 +599,12 @@ fn keyed<T: Terminal>(
     opened: Opened,
     walk: &mut Walk<'_, T>,
 ) -> Result<Closed, Fatal> {
-    let replaces = replaced(way, walk.held);
+    let glyphs = walk.terms.style().glyphs();
+    let replaces = replaced(way, walk.held, glyphs);
     let asked = secret::ask(
         walk.renderer,
         walk.terms.style(),
-        way.shown,
+        &drawn(way.shown, glyphs),
         replaces.as_deref(),
         opened.leaves(),
     )?;
@@ -577,8 +621,18 @@ fn keyed<T: Terminal>(
 /// view the sign-in runs under.
 fn signed<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Result<Closed, Fatal> {
     let routes = walk.terms.subscriptions.routes(way.stored);
-    if let [route] = routes.as_slice() {
-        return subscribed(*route, way, opened, walk);
+    match routes.as_slice() {
+        [] => {
+            let glyphs = walk.terms.style().glyphs();
+            let named = drawn(way.shown, glyphs);
+            say(
+                walk.renderer,
+                &format!("! no subscription login for {named}"),
+            )?;
+            return Ok(Closed::Done);
+        }
+        [route] => return subscribed(*route, way, opened, walk),
+        _ => {}
     }
 
     let shown: Vec<Offered<'_>> = routes
@@ -588,10 +642,11 @@ fn signed<T: Terminal>(way: &Way, opened: Opened, walk: &mut Walk<'_, T>) -> Res
             says: route.says,
         })
         .collect();
+    let title = drawn(way.shown, walk.terms.style().glyphs());
     let mut at = 0;
     loop {
         let panel = Panel {
-            title: way.shown,
+            title: &title,
             said: Some("Choose where to finish account authorization."),
             shown: &shown,
             chosen: at,
@@ -659,8 +714,9 @@ fn line(way: &Way, rows: &Rows, providers: &Providers, glyphs: Glyphs) -> String
 /// Runs a registered subscription flow and switches this session on success.
 ///
 /// Escape stops the flow. Opened below another screen it goes back there;
-/// opened by the command it ends the command, and says, as a flow that fails
-/// does, that nothing held was replaced.
+/// opened by the command it cancels it, as Escape on any screen the command
+/// opened does. A flow that fails, is refused or expires says what went wrong
+/// and that nothing held was replaced.
 fn subscribed<T: Terminal>(
     route: Route,
     way: &Way,
@@ -674,6 +730,7 @@ fn subscribed<T: Terminal>(
         held,
     } = walk;
     let (terms, held) = (*terms, *held);
+    let glyphs = terms.style().glyphs();
     let provider = route.provider();
     if !terms.subscriptions.supports(provider) {
         say(renderer, &format!("! no subscription login for {provider}"))?;
@@ -681,7 +738,7 @@ fn subscribed<T: Terminal>(
     }
     let failed = |renderer: &mut Renderer<T>, problem: &dyn std::fmt::Display| {
         say(renderer, &format!("! {problem}"))?;
-        say(renderer, &unchanged(way, held))?;
+        say(renderer, &unchanged(way, held, glyphs))?;
         Ok(Closed::Done)
     };
     let attempt = match terms.subscriptions.start(route, terms.logins.clone()) {
@@ -692,8 +749,8 @@ fn subscribed<T: Terminal>(
     // Read once: nothing a login does moves where a key is read from.
     let providers = terms.providers.snapshot();
     let withheld: Vec<&str> = key_variables(&providers, &terms.settings).collect();
-    let glyphs = terms.style().glyphs();
-    let mut view = LoginView::new(glyphs).opened(opened.leaves(), replaced(way, held), glyphs);
+    let mut view =
+        LoginView::new(glyphs).opened(opened.leaves(), replaced(way, held, glyphs), glyphs);
     view.show(renderer, terms, route.title())?;
     loop {
         match attempt.wait(Duration::from_millis(50)) {
@@ -720,10 +777,23 @@ fn subscribed<T: Terminal>(
         match arrived {
             Pressed::Escape | Pressed::Key(Key::Interrupt | Key::Eof) => {
                 attempt.cancel();
+                // Tokens that arrived as Escape was pressed may already be
+                // written, and stopping the flow does not take them back:
+                // the store is asked again rather than told nothing changed.
+                if landed(way, held, terms) {
+                    let Some(named) =
+                        offered(&terms.providers.snapshot()).find(|one| one.name == provider)
+                    else {
+                        say(renderer, "! the signed-in provider is unavailable")?;
+                        return Ok(Closed::Done);
+                    };
+                    taken(named, renderer, conversation, terms)?;
+                    return Ok(Closed::Done);
+                }
                 if opened == Opened::Below {
                     return Ok(Closed::Back);
                 }
-                say(renderer, &unchanged(way, held))?;
+                say(renderer, LEFT)?;
                 return Ok(Closed::Done);
             }
             Pressed::Resized => renderer.resized()?,
@@ -735,6 +805,12 @@ fn subscribed<T: Terminal>(
         }
         view.show(renderer, terms, route.title())?;
     }
+}
+
+/// Whether `way`'s credential is in the store now where it was not when the
+/// walk began: a sign-in that completed as it was being stopped.
+fn landed(way: &Way, held: &[Way], terms: &Terms) -> bool {
+    !held.contains(way) && holding(&Rows::production(), terms).is_ok_and(|now| now.contains(way))
 }
 
 struct LoginView {
@@ -951,16 +1027,12 @@ fn given<T: Terminal>(
         Ok(held) => held,
         Err(failed) => return say(renderer, &format!("! {}", remedy(&failed))),
     };
-    let replaces = rows
-        .environment(named.name)
-        .and_then(|way| replaced(way, &held));
-    let asked = secret::ask(
-        renderer,
-        terms.style(),
-        named.shown,
-        replaces.as_deref(),
-        CANCEL,
-    )?;
+    let glyphs = terms.style().glyphs();
+    let way = rows.environment(named.name);
+    let replaces = way.and_then(|way| replaced(way, &held, glyphs));
+    // The row's name, which says the site where the provider has two.
+    let shown = way.map_or(Cow::Borrowed(named.shown), |way| drawn(way.shown, glyphs));
+    let asked = secret::ask(renderer, terms.style(), &shown, replaces.as_deref(), CANCEL)?;
     match asked {
         Asked::Key(key) => written(named, &key, renderer, conversation, terms),
         Asked::Left => say(renderer, LEFT),

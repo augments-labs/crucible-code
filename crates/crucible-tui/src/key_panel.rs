@@ -14,7 +14,7 @@
 //!
 //! **What clips and what folds.** The sentence is prose and folds. The
 //! breadcrumb, the title and the label are labels and are cut at the width;
-//! the footer shortens its action before sacrificing the cancel hint. The
+//! the footer shortens its action before sacrificing the Escape hint. The
 //! label leaves the border altogether when it does not fit
 //! beside the rule on either side of it, because a border with half a label
 //! on it reads as a broken frame. The dots stop at the frame's right edge, and
@@ -174,8 +174,6 @@ impl KeyPanel<'_> {
         (rows, Some(caret))
     }
 
-    /// The way here: the mark, the provider and the row taken on the first
-    /// panel, so the screen says what it is a step of.
     /// The sentence: where the key goes, or what it replaces where the
     /// provider holds a credential already.
     fn said(&self) -> Cow<'static, str> {
@@ -186,6 +184,8 @@ impl KeyPanel<'_> {
         })
     }
 
+    /// The way here: the mark, the provider and the row taken on the first
+    /// panel, so the screen says what it is a step of.
     fn breadcrumb(&self, columns: usize, glyphs: Glyphs) -> Row {
         let mark = glyphs.caret();
         let Some(room) = columns.checked_sub(wide(mark) + 1) else {
