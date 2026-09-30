@@ -1,43 +1,33 @@
-//! The `MoonshotAI` provider.
+//! The `MoonshotAI` provider: Kimi, as a dialect of Chat Completions.
 //!
-//! Four parts, and the split is the direction data travels: [`body`] builds a
-//! request, [`wire`] reads one event of a response, [`stream`] delivers a whole
-//! one, and this file is the request itself — the headers and the status.
+//! The wire is [`crate::completions`], which writes the request, reads the
+//! response and sends one for the other. What is Kimi's is here: its
+//! addresses, the name it is told crucible goes by, how it counts a cached
+//! prompt, and what its cache is known to do. [`body`], [`wire`] and [`stream`]
+//! hand the shared wire this dialect and keep Kimi's tests where they were.
 //!
-//! Only two of those are this vendor's. Delivering a response is the same job
-//! whoever sent it, so the loop that does it lives in `crate::stream` and
-//! [`stream`] is where this protocol is handed to it.
-//!
-//! Chat Completions, and a module of its own rather than a second address for
-//! [`crate::openai`], which posts to Responses and reads a narration this
-//! endpoint does not send. The two are OpenAI's protocols in the way two
-//! releases of a format are the same format: the fields, the framing and the
-//! shape of a transcript all differ, and a reader for one finds nothing it
-//! recognises in the other. This is the endpoint the compatible vendors serve.
-//!
-//! It names no HTTP client and no credential kind. A [`Transport`] is handed in
-//! and so is a [`Credential`], which is what lets the whole protocol be tested
-//! against recorded bytes.
+//! It names no HTTP client and no credential kind. A [`crate::Transport`] is
+//! handed in and so is a [`crucible_credentials::Credential`], which is what
+//! lets the whole protocol be tested against recorded bytes.
 
 mod body;
 mod stream;
 mod wire;
 
-use crucible_credentials::{Credential, Outgoing};
+use crucible_credentials::Outgoing;
 use crucible_models::{
-    DeltaStream, PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
-    PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request,
-    StatefulTransportCapability,
+    Delta, PromptCacheCapabilities, PromptCacheContent, PromptCacheMechanismCapability,
+    PromptCacheProvenance, ProviderError, StatefulTransportCapability,
 };
-use crucible_runtime::{BoxFuture, Cancel};
-use crucible_types::{
-    CredentialScopeId, Modalities, Modality, PromptCacheRetentionClass, PromptCacheUsageReporting,
-};
+#[cfg(test)]
+use crucible_models::{Provider, Request};
+#[cfg(test)]
+use crucible_runtime::Cancel;
+use crucible_types::{Modalities, Modality, PromptCacheRetentionClass, PromptCacheUsageReporting};
+use serde_json::Value;
 
+use crate::completions::{Chat, Dialect};
 use crate::endpoint::Endpoint;
-use crate::moonshot::stream::Stream;
-use crate::refusal::refused;
-use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "moonshot";
@@ -66,91 +56,17 @@ const MOONSHOT_CACHE_CONTENT: &[PromptCacheContent] = &[
 /// crucible is what is calling.
 const AGENT: &str = concat!("crucible/", env!("CARGO_PKG_VERSION"));
 
-/// `MoonshotAI`'s Chat Completions API.
+/// Kimi's dialect of Chat Completions.
 #[derive(Debug)]
-pub struct Moonshot {
-    credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
-    endpoint: Endpoint,
-    credential_scope: CredentialScopeId,
-}
+pub struct Kimi;
 
-impl Moonshot {
-    /// Where a key from the Kimi Code console is served.
-    ///
-    /// Two addresses rather than one, and which of them a key belongs to is
-    /// decided when the key is issued rather than by anything visible in it.
-    /// Sent to the other, a key is refused in the vendor's own words, and those
-    /// words do not mention that the key was fine and the address was not — so
-    /// the pairing is named here, where whoever wires a key up can see both.
-    pub const CODING: Endpoint = CODING;
+impl Dialect for Kimi {
+    const NAME: &'static str = NAME;
+    const TITLE: &'static str = "Moonshot";
+    const ADDRESSES: &'static [Endpoint] = &[CODING, CODING_AI, PLATFORM];
+    const SHAPE: &'static str = "moonshot-chat-completions-v1";
 
-    /// Where a key from the Open Platform console is served.
-    pub const PLATFORM: Endpoint = PLATFORM;
-
-    /// Where a Kimi Code key or sign-in of kimi.ai is served: the global site
-    /// has a coding address of its own, and a credential of one site is
-    /// refused by the other's.
-    pub const CODING_AI: Endpoint = CODING_AI;
-
-    /// Whether requests go to one of the vendor's own addresses rather than
-    /// one a setting named.
-    fn vendor(&self) -> bool {
-        [CODING, CODING_AI, PLATFORM].contains(&self.endpoint)
-    }
-
-    /// A provider that authenticates with `credential`, sends over `transport`
-    /// and posts to `endpoint`.
-    ///
-    /// The address is named by the caller rather than defaulted here, because
-    /// the wiring is where a decision like that belongs and there is one
-    /// constructor rather than a defaulting one beside an explicit one. It is
-    /// an [`Endpoint`] rather than a string because what decides who receives
-    /// the key is checked before it is one.
-    #[must_use]
-    pub fn at(
-        endpoint: Endpoint,
-        credential: Box<dyn Credential>,
-        transport: Box<dyn Transport>,
-    ) -> Self {
-        let credential_scope = credential.scope();
-        Self {
-            credential,
-            transport,
-            endpoint,
-            credential_scope,
-        }
-    }
-
-    /// The headers every request carries, including the secret.
-    async fn headers(&self, cancel: &Cancel) -> Result<Outgoing, ProviderError> {
-        let mut outgoing = Outgoing::new();
-        outgoing.set_header("content-type", "application/json");
-        outgoing.set_header("accept", "text/event-stream");
-        outgoing.set_header("user-agent", AGENT);
-
-        // Raced against the turn's cancel: a credential renewing its token
-        // waits for a renewal that is the renewal's own work, so a turn
-        // stopped meanwhile stops waiting here and leaves it to finish.
-        cancel
-            .race(self.credential.authorize(&mut outgoing))
-            .await
-            .ok_or(ProviderError::Cancelled(NAME))?
-            .map_err(|source| ProviderError::Credential {
-                provider: NAME,
-                source,
-            })?;
-
-        Ok(outgoing)
-    }
-}
-
-impl Provider for Moonshot {
-    fn name(&self) -> &'static str {
-        NAME
-    }
-
-    fn spells(&self) -> Modalities {
+    fn spells() -> Modalities {
         // `chat/completions` carries pictures and videos as nested URL parts,
         // each holding a base64 `data:` URL. They are the two attachment shapes
         // this module writes, so they are the two it offers.
@@ -160,10 +76,15 @@ impl Provider for Moonshot {
             .insert(Modality::Video)
     }
 
-    fn prompt_cache_capabilities(&self, model: &str) -> PromptCacheCapabilities {
-        if !self.vendor() {
-            return PromptCacheCapabilities::unknown("custom endpoint");
-        }
+    fn headers(outgoing: &mut Outgoing) {
+        outgoing.set_header("user-agent", AGENT);
+    }
+
+    fn usage(payload: &Value) -> Result<Option<Delta>, ProviderError> {
+        wire::usage(payload)
+    }
+
+    fn prompt_cache(model: &str) -> PromptCacheCapabilities {
         let revision = match model {
             "k3" => "k3",
             "k3-256k" => "k3-256k",
@@ -191,57 +112,28 @@ impl Provider for Moonshot {
             PromptCacheUsageReporting::ReadTokens,
         )
     }
+}
 
-    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
-        PromptCacheRoute {
-            protocol: "openai-chat-completions",
-            endpoint: self.endpoint.as_str(),
-            custom_endpoint: !self.vendor(),
-            credential_scope: self.credential_scope,
-            account: None,
-            project: None,
-            request_shape_version: "moonshot-chat-completions-v1",
-        }
-    }
+/// `MoonshotAI`'s Chat Completions API.
+pub type Moonshot = Chat<Kimi>;
 
-    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
-        body::prompt_cache_encoding(request)
-    }
+impl Chat<Kimi> {
+    /// Where a key from the Kimi Code console is served.
+    ///
+    /// Two addresses rather than one, and which of them a key belongs to is
+    /// decided when the key is issued rather than by anything visible in it.
+    /// Sent to the other, a key is refused in the vendor's own words, and those
+    /// words do not mention that the key was fine and the address was not, so
+    /// the pairing is named here, where whoever wires a key up can see both.
+    pub const CODING: Endpoint = CODING;
 
-    fn stream<'a>(
-        &'a self,
-        request: Request<'a>,
-        cancel: &'a Cancel,
-    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
-        Box::pin(async move {
-            // Nothing is sent for a turn the user has already abandoned. Once the
-            // request is away, cancelling is the stream's business.
-            if cancel.requested() {
-                return Err(ProviderError::Cancelled(NAME));
-            }
+    /// Where a key from the Open Platform console is served.
+    pub const PLATFORM: Endpoint = PLATFORM;
 
-            let mut outgoing = self.headers(cancel).await?;
-            let body = body::serialize(&request);
-
-            let response = self
-                .transport
-                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
-                .await;
-            let redactions = outgoing.redactions();
-            let response =
-                response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
-
-            if response.status() != 200 {
-                return Err(refused(NAME, response.status(), response, &redactions, cancel).await);
-            }
-
-            Ok(Box::new(Stream::new(
-                response.into_reader(),
-                cancel.clone(),
-                redactions,
-            )) as Box<dyn DeltaStream>)
-        })
-    }
+    /// Where a Kimi Code key or sign-in of kimi.ai is served: the global site
+    /// has a coding address of its own, and a credential of one site is
+    /// refused by the other's.
+    pub const CODING_AI: Endpoint = CODING_AI;
 }
 
 #[cfg(test)]
