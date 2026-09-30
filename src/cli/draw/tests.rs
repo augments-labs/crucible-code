@@ -1991,3 +1991,5 @@ fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
 // as it was agreed, which the formatter would otherwise re-wrap.
 #[rustfmt::skip]
 mod row_position;
+
+mod fast;

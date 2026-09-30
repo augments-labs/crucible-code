@@ -170,6 +170,7 @@ fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::FastRefused { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::Steered { .. }
@@ -1540,6 +1541,7 @@ fn every_call_reports_that_it_finished() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::FastRefused { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::Steered { .. }

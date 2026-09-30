@@ -75,7 +75,9 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
             call: Text::cut(call.as_str()),
             failed: output.is_failed(),
         },
-        Event::Retrying => Progress::Retrying,
+        // Sent once more before anything was answered, as a retry is; the
+        // speed it leaves in force is the snapshot's to say.
+        Event::Retrying | Event::FastRefused { .. } => Progress::Retrying,
         Event::Compacting { part, .. } => Progress::Compacting {
             part: u64::from(*part),
         },

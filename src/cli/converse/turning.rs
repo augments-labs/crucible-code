@@ -713,6 +713,7 @@ impl Turning {
             | Event::Steered { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
+            | Event::FastRefused { .. }
             | Event::Retrying => Vec::new(),
         };
 
@@ -751,7 +752,8 @@ impl Turning {
             // does: waiting on the model, with the next request not yet asked.
             Event::ToolFinished { .. } if !self.calling.is_empty() => Doing::Running,
             Event::ToolFinished { .. } | Event::Compacted { .. } => Doing::Thinking,
-            Event::Retrying => Doing::Retrying,
+            // The same request going out again, this time at standard speed.
+            Event::Retrying | Event::FastRefused { .. } => Doing::Retrying,
             Event::Compacting { .. } => Doing::Compacting,
             Event::TurnStarted { .. }
             | Event::PromptCache { .. }

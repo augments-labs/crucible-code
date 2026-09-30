@@ -251,6 +251,7 @@ fn a_call_is_announced_before_it_runs_with_what_it_is_about() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::FastRefused { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::Steered { .. }
@@ -289,6 +290,7 @@ fn a_call_is_announced_with_its_execution_capabilities() {
         | Event::Compacting { .. }
         | Event::Compacted { .. }
         | Event::Retrying
+        | Event::FastRefused { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
         | Event::Steered { .. }
@@ -441,6 +443,7 @@ fn a_diff_reaches_the_reader_and_stops_before_the_transcript() {
             | Event::Compacting { .. }
             | Event::Compacted { .. }
             | Event::Retrying
+            | Event::FastRefused { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::Steered { .. }

@@ -1804,6 +1804,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Steered { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
+            | Event::FastRefused { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => true,
         },

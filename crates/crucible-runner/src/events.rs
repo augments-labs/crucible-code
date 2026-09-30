@@ -328,6 +328,16 @@ pub enum Event {
     /// socket the provider closed while the tools ran.
     Retrying,
 
+    /// The vendor refused the fast form a request asked for, before it
+    /// answered anything. The same request goes once more at standard speed,
+    /// and the speed asked for is standard from here on.
+    FastRefused {
+        /// Which provider refused it.
+        provider: &'static str,
+        /// The vendor's reason, as it gave it.
+        reason: Box<str>,
+    },
+
     /// How much usable room remains before compaction, where a window is known.
     ///
     /// The room reserved for the answer and its tool results is outside this
@@ -480,6 +490,11 @@ impl std::fmt::Debug for Event {
                 .field("receipt", receipt)
                 .finish(),
             Self::Retrying => f.write_str("Retrying"),
+            Self::FastRefused { provider, reason } => f
+                .debug_struct("FastRefused")
+                .field("provider", provider)
+                .field("reason", reason)
+                .finish(),
             Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),
             Self::Compacting { why, part } => f
                 .debug_struct("Compacting")

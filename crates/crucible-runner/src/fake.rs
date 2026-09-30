@@ -12,7 +12,7 @@ use crucible_models::{
     Delta, DeltaStream, Effort, PriceRate, PromptCacheCapabilities, PromptCachePricing,
     PromptCacheRates, PromptCacheResourceCreate, PromptCacheResourceCreated,
     PromptCacheResourceDeadline, PromptCacheResourceLifecycle, PromptCacheResourceRemote,
-    PromptCacheRoute, Provider, ProviderError, Request, UsageRate,
+    PromptCacheRoute, Provider, ProviderError, Request, Served, Speed, UsageRate,
 };
 use crucible_runtime::BoxFuture;
 use crucible_runtime::{Cancel, Steer};
@@ -80,6 +80,8 @@ pub(crate) struct SentRequest {
     pub(crate) cache_identity: Option<crucible_models::PromptCacheIdentity>,
     pub(crate) cache_selection: Option<crucible_models::PromptCacheSelection>,
     pub(crate) cache_resource: bool,
+    /// The speed the request was asked at.
+    pub(crate) speed: Speed,
 }
 
 /// Owned evidence of one borrowed provider projection.
@@ -145,6 +147,16 @@ pub(crate) struct Script {
     cache: CacheFixture,
     /// Result of an explicit persistent-resource deletion.
     resource_delete: ResourceDelete,
+    /// How this fixture answers the speed a request is asked at.
+    fast: FastFixture,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FastFixture {
+    /// Whether every request asked at [`Speed::Fast`] is refused for it.
+    refused: bool,
+    /// What each answer says about the speed it was served at.
+    serves: Served,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -190,7 +202,22 @@ impl Script {
             resource_delete: ResourceDelete::Deleted,
             restricts: None,
             reach: Reach::Model,
+            fast: FastFixture::default(),
         }
+    }
+
+    /// A provider that refuses every request asked at [`Speed::Fast`] the way
+    /// a vendor refuses a plan that does not include it, and answers every
+    /// other one from the script.
+    pub(crate) const fn refusing_fast(mut self) -> Self {
+        self.fast.refused = true;
+        self
+    }
+
+    /// A provider whose every answer says it was served at `served`.
+    pub(crate) const fn serving(mut self, served: Served) -> Self {
+        self.fast.serves = served;
+        self
     }
 
     /// Sets the provider name reported by this script.
@@ -510,6 +537,15 @@ impl Provider for Script {
     fn stream<'a>(
         &'a self,
         request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        self.stream_at(request, Speed::Standard, cancel)
+    }
+
+    fn stream_at<'a>(
+        &'a self,
+        request: Request<'a>,
+        speed: Speed,
         _cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         Box::pin(async move {
@@ -566,12 +602,20 @@ impl Provider for Script {
                     .prompt_cache
                     .and_then(|cache| cache.resource)
                     .is_some(),
+                speed,
             });
 
             // Before anything is answered: the line is meant to arrive while the
             // request is out, not once it has been read.
             if let Some((steer, line)) = self.types.lock().unwrap().take() {
                 steer.say(line.into());
+            }
+
+            if self.fast.refused && speed == Speed::Fast {
+                return Err(ProviderError::FastRefused {
+                    provider: SCRIPT,
+                    message: "your plan does not include fast".into(),
+                });
             }
 
             if self.over_window {
@@ -600,6 +644,7 @@ impl Provider for Script {
                         .into_iter()
                         .collect(),
                     breaks: true,
+                    served: Served::Unsaid,
                 }) as Box<dyn DeltaStream>);
             }
             drop(drops);
@@ -611,11 +656,13 @@ impl Provider for Script {
                 return Ok(Box::new(Recited {
                     deltas: VecDeque::new(),
                     breaks: self.breaks,
+                    served: self.fast.serves,
                 }) as Box<dyn DeltaStream>);
             };
             Ok(Box::new(Recited {
                 deltas: round.into(),
                 breaks: self.breaks,
+                served: self.fast.serves,
             }) as Box<dyn DeltaStream>)
         })
     }
@@ -765,9 +812,15 @@ struct Recited {
     /// Whether running out of deltas is a broken connection rather than the end
     /// of the answer.
     breaks: bool,
+    /// What the answer says about the speed it was served at.
+    served: Served,
 }
 
 impl DeltaStream for Recited {
+    fn served(&self) -> Served {
+        self.served
+    }
+
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
         Box::pin(async move {
             if let Some(delta) = self.deltas.pop_front() {
