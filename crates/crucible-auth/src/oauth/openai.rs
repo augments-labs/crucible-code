@@ -53,6 +53,10 @@ struct Shared {
 }
 
 impl OpenAiOAuth {
+    /// The host that issues and renews `ChatGPT` tokens, which every request
+    /// of this sign-in and its renewals is sent to.
+    pub const ISSUER: &'static str = ISSUER;
+
     /// Browser PKCE through a local loopback callback.
     pub const BROWSER: LoginMethod = LoginMethod::new("browser");
     /// Device authorization for remote or headless terminals.
