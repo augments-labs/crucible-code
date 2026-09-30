@@ -40,7 +40,7 @@ of the shell that launched it.
 The command line is a fourth layer and is nearer than all three: `--model
 openai/gpt-5.6-terra` wins over anything a file says.
 
-When `/model`, `/effort` or `/login` changes the user file, crucible prepares an
+When `/model`, `/effort`, `/fast` or `/login` changes the user file, crucible prepares an
 owner-only sibling and replaces the complete document atomically. A failed
 write before that commit leaves the previous file whole. An owner-only lock
 spans the bounded reread through the commit, so simultaneous crucible processes
@@ -80,6 +80,7 @@ Keyed by provider name: `anthropic`, `google`, `moonshot`, `openai`.
 | --- | --- |
 | `model` | The model to ask when `--model` does not name one. |
 | `effort` | How hard to think before answering, when `--effort` does not say. |
+| `fast` | `true` asks the model in force for its vendor's fast form, at its price. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
 | `contextWindow` | The session's context-window size in tokens, keyed by model name. |
@@ -90,6 +91,11 @@ provider because which rungs exist is the vendor's business. A rung chosen for
 the one serving it says nothing about the one that would refuse it. Left out,
 crucible asks for no rung at all and the vendor's own default for that model
 applies. See [Providers and models](../providers/providers.md).
+
+`fast` is written by `/fast` and read only from the configuration file in your
+home directory, because it costs more on every request. It reaches a request
+only where the model in force has a fast form and no `baseUrl` is set; see
+[Fast](../providers/fast.md).
 
 `apiKeyEnv` takes a **name**, never a key. The credential wiring reads its value
 at startup and does not copy it into a document, diagnostic or session message.
@@ -686,11 +692,12 @@ is still not a way to ship somebody's key.
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
-`provider` and `contentUse.accepted`. The last five are not permissions, and
-they are here for the same reason: they replace the instructions that say to
-ask, choose which credential is read and who receives it, or answer for you
-whether a vendor that trains on what is sent may be sent anything, and nothing
-on those paths stops to ask.
+`providers.<name>.fast`, `provider` and `contentUse.accepted`. The last six are
+not permissions, and they are here for the same reason: they replace the
+instructions that say to ask, choose which credential is read and who receives
+it, spend more of your money on every request, or answer for you whether a
+vendor that trains on what is sent may be sent anything, and nothing on those
+paths stops to ask.
 Each is read only from your home file and refused in both files under the
 workspace.
 

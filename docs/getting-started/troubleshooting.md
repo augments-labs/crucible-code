@@ -168,6 +168,14 @@ yes into. Delete the `contentUse` block from the configuration file in your
 home directory, then start the older crucible again. A later crucible asks the
 question again the next time you send on such a route.
 
+### `crucible: <home>/config.json: providers.openai.fast is not a setting crucible has at line <n>, column <m>`
+
+This is 0.43.3 or earlier reading a configuration file a later crucible wrote a
+speed into; the provider named may be another. Delete `"fast": true` from each
+provider in the configuration file in your home directory, then start the older
+crucible again. A later crucible asks at standard speed until `/fast` is chosen
+again.
+
 ### `anthropic: HTTP 401: check the Anthropic API key and its model access`
 
 The provider refused the request with that status. For Anthropic's

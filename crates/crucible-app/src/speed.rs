@@ -122,3 +122,6 @@ impl Conversation {
         let _ = remember::hastening(file, provider, Speed::Standard);
     }
 }
+
+#[cfg(test)]
+mod tests;

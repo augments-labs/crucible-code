@@ -138,6 +138,7 @@ Useful commands:
 
 ```text
 /model       choose a provider, model and effort
+/fast        ask the model for its vendor's fast form, at its price
 /login       add an account or API-key credential
 /mode        inspect or change the permission mode
 /resume      continue an earlier session in this workspace

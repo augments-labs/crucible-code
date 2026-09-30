@@ -176,6 +176,13 @@ impl OpenAi {
         fast::form(Some(Serving::Api), model)
     }
 
+    /// How `model` is asked to answer fast under the `ChatGPT` sign-in: what a
+    /// list of models says before any provider is set up.
+    #[must_use]
+    pub fn fast_signed_in(model: &str) -> crucible_models::FastForm {
+        fast::form(Some(Serving::Subscription), model)
+    }
+
     /// The fixed endpoint that accepts a `ChatGPT` subscription credential.
     ///
     /// Kept distinct from [`OpenAi::VENDOR`]: an API key may be redirected to a
