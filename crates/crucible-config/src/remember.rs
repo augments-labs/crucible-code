@@ -104,7 +104,7 @@ pub fn accepting(text: &str, file: &str, route: &str) -> Result<String, ConfigEr
     Ok(splice::insert(text, accepted, |_| written.clone()))
 }
 
-/// The text of a configuration file with no yes to any of `routes`.
+/// The text of a configuration file with no yes to any route `gone` picks.
 ///
 /// Only the `accepted` list is written over, with the routes left in it in
 /// the order they stood; every other byte stays where it was. A file that
@@ -115,7 +115,11 @@ pub fn accepting(text: &str, file: &str, route: &str) -> Result<String, ConfigEr
 /// [`ConfigError::Malformed`] when the text is not JSON, and
 /// [`ConfigError::Unremovable`] when it is JSON the list cannot be found in
 /// without rewriting.
-pub fn forgetting(text: &str, file: &str, routes: &[&str]) -> Result<String, ConfigError> {
+pub fn forgetting(
+    text: &str,
+    file: &str,
+    gone: impl Fn(&str) -> bool,
+) -> Result<String, ConfigError> {
     if text.trim().is_empty() {
         return Ok(text.to_owned());
     }
@@ -129,7 +133,7 @@ pub fn forgetting(text: &str, file: &str, routes: &[&str]) -> Result<String, Con
     };
     let kept: Vec<&Value> = held
         .iter()
-        .filter(|one| !one.as_str().is_some_and(|route| routes.contains(&route)))
+        .filter(|one| !one.as_str().is_some_and(&gone))
         .collect();
     if kept.len() == held.len() {
         return Ok(text.to_owned());

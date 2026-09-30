@@ -572,11 +572,9 @@ fn a_yes_is_added_beside_what_the_file_already_says_and_only_once() {
 #[test]
 fn forgetting_takes_out_the_named_routes_and_nothing_else() {
     let text = "{\n  \"provider\": \"moonshot\",\n  \"contentUse\": {\n    \"accepted\": [\"key:google\", \"key:moonshot\", \"api.moonshot.ai\"]\n  }\n}\n";
-    let written = forgetting(
-        text,
-        FILE,
-        &["key:moonshot", "api.moonshot.ai", "key:nobody"],
-    )
+    let written = forgetting(text, FILE, |route| {
+        ["key:moonshot", "api.moonshot.ai", "key:nobody"].contains(&route)
+    })
     .unwrap();
     assert_eq!(accepted(&written), ["key:google"]);
     assert!(
@@ -585,12 +583,12 @@ fn forgetting_takes_out_the_named_routes_and_nothing_else() {
         )
     );
     assert_eq!(
-        forgetting(&written, FILE, &["key:moonshot"]).unwrap(),
+        forgetting(&written, FILE, |route| route == "key:moonshot").unwrap(),
         written
     );
     for untouched in ["", "{}", "{\"provider\": \"google\"}"] {
         assert_eq!(
-            forgetting(untouched, FILE, &["key:google"]).unwrap(),
+            forgetting(untouched, FILE, |route| route == "key:google").unwrap(),
             untouched
         );
     }

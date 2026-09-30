@@ -124,16 +124,16 @@ pub fn accepting(file: &Path, route: &str) -> Result<(), RememberError> {
     })
 }
 
-/// Takes the yes to each of `routes` out of the file.
+/// Takes the yes to every route `gone` picks out of the file.
 ///
 /// # Errors
 ///
 /// [`RememberError::Busy`] when another crucible holds the file,
 /// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
 /// [`RememberError::Unusable`] when what it already says is not configuration.
-pub fn forgetting(file: &Path, routes: &[&str]) -> Result<(), RememberError> {
+pub fn forgetting(file: &Path, gone: impl Fn(&str) -> bool) -> Result<(), RememberError> {
     answering(file, |text, named| {
-        crucible_config::forgetting(text, named, routes)
+        crucible_config::forgetting(text, named, &gone)
     })
 }
 

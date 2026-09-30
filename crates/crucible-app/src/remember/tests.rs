@@ -332,7 +332,10 @@ fn a_yes_and_a_model_written_at_once_are_both_kept() {
         assert!(written.contains(&said), "{said} was lost from {written}");
     }
 
-    forgetting(&file, &["key:route-0", "key:route-4"]).unwrap();
+    forgetting(&file, |route| {
+        ["key:route-0", "key:route-4"].contains(&route)
+    })
+    .unwrap();
     let written = fs::read_to_string(&file).unwrap();
     assert!(!written.contains("key:route-0") && !written.contains("key:route-4"));
     assert!(written.contains("key:route-2") && written.contains("provider-1"));

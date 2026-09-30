@@ -394,13 +394,11 @@ impl Consent {
         state.given.remove(route);
     }
 
-    /// Forgets the yes of each of `routes`, given or recorded.
-    pub fn forget<'a>(&self, routes: impl IntoIterator<Item = &'a str>) {
+    /// Forgets the yes of every route `gone` picks, given or recorded.
+    pub fn forget(&self, gone: impl Fn(&str) -> bool) {
         let mut state = self.state.write().unwrap_or_else(PoisonError::into_inner);
-        for route in routes {
-            state.given.remove(route);
-            state.recorded.remove(route);
-        }
+        state.given.retain(|route| !gone(route));
+        state.recorded.retain(|route| !gone(route));
     }
 
     /// Takes what each provider's requests go on, in place of what was

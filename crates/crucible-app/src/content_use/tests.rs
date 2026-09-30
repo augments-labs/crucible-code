@@ -195,7 +195,7 @@ fn a_warned_origin_is_held_until_its_route_has_a_yes() {
     assert_eq!(consent.held(&google), None);
     assert!(consent.asks("key:google").is_none());
 
-    consent.forget(["key:google"]);
+    consent.forget(|route| route == "key:google");
     assert_eq!(consent.held(&google).as_deref(), Some("key:google"));
 
     for unwarned in [
