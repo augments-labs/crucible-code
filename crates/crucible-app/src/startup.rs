@@ -787,8 +787,8 @@ fn credential(
     }
 }
 
-/// What `named`'s requests are sent on, resolved in the order [`credential`]
-/// and [`key`] choose a credential: a stored sign-in where no address is
+/// What `named`'s requests are sent on, resolved in the order `credential`
+/// and `key` choose a credential: a stored sign-in where no address is
 /// configured, then the variable's key, then a stored key. `None` where no
 /// credential would be found, so nothing would be sent.
 ///
