@@ -14,6 +14,7 @@ fn standing(from: usize, end: usize) -> View {
         was: 0,
         over: Over::Everything(0),
         back: Vec::new(),
+        refused: None,
     }
 }
 
@@ -617,5 +618,101 @@ fn a_step_past_a_result_read_back_moves_the_rows_by_that_step() {
         read.len() >= 2,
         "the walk crossed {} results read back",
         read.len()
+    );
+}
+
+/// A log that says where a result went only once the test says it has been
+/// written, and counts every read.
+#[derive(Debug, Default)]
+struct Late {
+    went: std::rc::Rc<std::cell::RefCell<Vec<(crucible_types::ToolId, u64)>>>,
+    reads: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl crate::cli::kept::Log for Late {
+    fn landed(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        self.went.take()
+    }
+
+    fn settled(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        self.went.take()
+    }
+
+    fn read(&self, call: &crucible_types::ToolId, _: u64) -> Option<Box<str>> {
+        self.reads.set(self.reads.get() + 1);
+        Some(said(call.as_str()).into())
+    }
+}
+
+#[test]
+fn a_result_whose_batch_is_not_written_yet_is_read_once_it_is() {
+    // A turn draws its results before it writes them, so the view can reach a
+    // result the log has not placed yet. It says it will read it back, not
+    // that it cannot, and reads it on the frame after the log has it.
+    let late = Late::default();
+    let went = std::rc::Rc::clone(&late.went);
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(late)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.finished(&call, said(call.as_str()).into(), at);
+    }
+
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    let before = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    let before: Vec<String> = before.iter().map(Row::text).collect();
+    assert!(!before.iter().any(|row| row.contains(UNREAD)), "{before:?}");
+
+    went.borrow_mut()
+        .push((crucible_types::ToolId::new("call-000"), 0));
+    let after = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    assert!(
+        after
+            .iter()
+            .any(|row| row.text().contains("call-000 line 0001")),
+        "{after:?}"
+    );
+}
+
+#[test]
+fn a_result_left_for_later_is_not_read_again_while_the_window_stands_still() {
+    // Two results let go of in one window come to more than the view reads
+    // back at once, so the second waits. Drawing the same window again reads
+    // nothing more from the log.
+    let late = Late::default();
+    let reads = std::rc::Rc::clone(&late.reads);
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(late)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, u64::try_from(at).unwrap());
+        kept.gathered(&call, said(call.as_str()).into(), Some(0));
+    }
+
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    opened(&mut standing).from = kept.newest().count() * (LINES + 3) - 40;
+    loop {
+        let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+        if rows.iter().any(|row| row.text().contains(LATER)) {
+            break;
+        }
+        assert!(
+            standing.against(Pressed::Scrolled { back: false }, 30),
+            "the walk never reached two results let go of"
+        );
+    }
+
+    let read = reads.get();
+    for _ in 0..5 {
+        laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    }
+    assert_eq!(
+        reads.get(),
+        read,
+        "the window stood still and the log was read again"
     );
 }

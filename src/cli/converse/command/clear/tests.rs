@@ -463,10 +463,9 @@ fn a_result_let_go_of_after_a_clear_is_read_back_from_the_session_it_started() {
         .older()
         .last()
         .expect("the store let the first result go");
-    let text = held
-        .kept
-        .read_back(first)
-        .expect("the result is read back from the new session's log");
+    let crate::cli::kept::Back::Said(text) = held.kept.read_back(first) else {
+        panic!("the result is not read back from the new session's log");
+    };
     assert!(
         text.starts_with("result 0 of the session the clear started"),
         "{:?}",

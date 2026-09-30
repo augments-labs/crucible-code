@@ -42,7 +42,7 @@ use crucible_tui::{Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, 
 use crucible_types::TOOL_RESULT_BYTES;
 
 use crate::cli::Fatal;
-use crate::cli::kept::{Kept, Mark, Placed, Whole};
+use crate::cli::kept::{Back, Kept, Mark, Placed, Whole};
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
@@ -91,6 +91,9 @@ pub(super) struct View {
     /// the log could not give it back. No more than [`BEYOND`] of it, and held
     /// only while the view stands.
     back: Vec<(Mark, Option<Box<str>>)>,
+    /// A result the window reached that did not fit beside what was read
+    /// back, and where the window was: not read again until the window moves.
+    refused: Option<(usize, Mark)>,
 }
 
 impl View {
@@ -102,6 +105,7 @@ impl View {
             was: 0,
             over,
             back: Vec::new(),
+            refused: None,
         }
     }
 }
@@ -449,7 +453,7 @@ fn reaching(
             .collect();
 
         let had: Vec<Mark> = view.back.iter().map(|(mark, _)| mark.clone()).collect();
-        let back = reading(kept, std::mem::take(&mut view.back), &reached);
+        let back = reading(kept, view, &reached);
         let has: Vec<Mark> = back.iter().map(|(mark, _)| mark.clone()).collect();
         view.back = back;
         if has == had {
@@ -577,20 +581,33 @@ fn starts(heights: &[usize]) -> Vec<usize> {
 /// What the view holds read back for the results the window `reached`:
 /// what it held already of them, and the rest read from the log, in the
 /// order the window reaches them and no more than [`BEYOND`] of it.
-fn reading(
-    kept: &Kept,
-    mut held: Vec<(Mark, Option<Box<str>>)>,
-    reached: &[&Placed],
-) -> Vec<(Mark, Option<Box<str>>)> {
+///
+/// A result the log has not placed yet is left out, to be asked for again on
+/// the next frame. One that did not fit is remembered with where the window
+/// was, and not read again until the window moves.
+fn reading(kept: &Kept, view: &mut View, reached: &[&Placed]) -> Vec<(Mark, Option<Box<str>>)> {
+    let mut held = std::mem::take(&mut view.back);
     let mut back = Vec::new();
     let mut bytes = 0_usize;
     for placed in reached {
         let text = match held.iter().position(|(mark, _)| placed.is(mark)) {
             Some(at) => held.swap_remove(at).1,
-            None => kept.read_back(placed),
+            None if view
+                .refused
+                .as_ref()
+                .is_some_and(|(from, mark)| *from == view.from && placed.is(mark)) =>
+            {
+                break;
+            }
+            None => match kept.read_back(placed) {
+                Back::Said(text) => Some(text),
+                Back::Unread => None,
+                Back::Unplaced => continue,
+            },
         };
         let size = text.as_ref().map_or(0, |text| text.len());
         if !back.is_empty() && bytes.saturating_add(size) > BEYOND {
+            view.refused = Some((view.from, placed.mark()));
             break;
         }
         bytes = bytes.saturating_add(size);

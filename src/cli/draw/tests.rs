@@ -1912,10 +1912,25 @@ fn a_row_that_stops_offering_keeps_its_count_and_loses_the_key() {
             WIDE,
             Style::plain(),
         ),
-        Row::new()
-            .then(Slot::Plain, "Update(a.rs) +1 -1")
-            .then(Slot::Cut, " (ctrl+o to expand)"),
+        finished_rows(
+            &Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+                1,
+                Change::Added,
+                "a",
+            )]))),
+            WIDE,
+            Style::plain(),
+            true,
+        )
+        .into_iter()
+        .next()
+        .expect("the change's own row"),
     ];
+    assert!(
+        rows.iter()
+            .all(|row| row.text().contains("ctrl+o to expand")),
+        "a row made no offer; the test says nothing: {rows:?}"
+    );
     unoffered(&mut rows);
 
     let said: Vec<String> = rows.iter().map(Row::text).collect();
@@ -1925,7 +1940,11 @@ fn a_row_that_stops_offering_keeps_its_count_and_loses_the_key() {
             .is_some_and(|row| row.starts_with("  ⎿ page text") && !row.contains('(')),
         "{said:?}"
     );
-    assert_eq!(said.get(2).map(String::as_str), Some("Update(a.rs) +1 -1"));
+    assert!(
+        said.get(2)
+            .is_some_and(|row| !row.contains("ctrl+o") && !row.ends_with('(')),
+        "{said:?}"
+    );
     for row in &rows {
         assert!(row.kinds().all(|slot| slot != Slot::Cut), "{row:?}");
     }

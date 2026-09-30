@@ -1268,9 +1268,11 @@ pub(crate) fn came_back<T: Terminal>(
 
 /// Takes the offer off every row the store can no longer open.
 ///
-/// A session with no log has nowhere to read a result back from, so a row
-/// whose result the store let go of has nothing behind it: it keeps its place
-/// and its words, and stops naming the key and lighting under the pointer.
+/// The store says which: a row whose result it let go of in a session with no
+/// log to read it back from, a row let go of whose place the ceiling then
+/// dropped too, and a row let go of under a log the store no longer reads. Each
+/// has nothing behind it, so it keeps its place and its words, and stops
+/// naming the key and lighting under the pointer.
 ///
 /// # Errors
 ///
@@ -1331,12 +1333,23 @@ fn unoffered(rows: &mut [Row]) {
                 }
             }
             match slot {
-                Slot::Cut if at == last && text.starts_with(" (") => None,
+                Slot::Cut if at == last && change_offer(text) => None,
                 Slot::Cut => Some((Slot::Quiet, text.to_owned())),
                 _ => Some((slot, text.to_owned())),
             }
         });
     }
+}
+
+/// Whether `text` is a change's own offer as [`finished`] writes it: the key's
+/// name in brackets, flattened and clipped to the room the row had, so it may
+/// have lost its end to an ellipsis.
+fn change_offer(text: &str) -> bool {
+    let bare = text.trim().trim_end_matches(['…', '.']);
+    bare.strip_prefix('(').is_some_and(|inner| {
+        let inner = inner.strip_suffix(')').unwrap_or(inner);
+        !inner.is_empty() && EXPAND.starts_with(inner)
+    })
 }
 
 /// One finished result on its way to the screen, and the lines only the reader

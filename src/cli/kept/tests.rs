@@ -407,6 +407,14 @@ fn forty_placed(replayed: bool) -> Kept {
     cut
 }
 
+/// The words a read back came to, where it came to any.
+fn said(back: &Back) -> Option<&str> {
+    match back {
+        Back::Said(text) => Some(text),
+        Back::Unread | Back::Unplaced => None,
+    }
+}
+
 /// The row let go of that `at` offered.
 fn let_go(cut: &Kept, at: usize) -> &Placed {
     cut.older()
@@ -432,14 +440,10 @@ fn a_result_let_go_of_is_still_offered_and_read_back_from_the_log() {
 
         let oldest = let_go(&cut, 0);
         assert_eq!(oldest.called(), "Read(0)");
-        assert_eq!(
-            cut.read_back(oldest).as_deref(),
-            Some("result 0"),
-            "{replayed}"
-        );
+        assert_eq!(said(&cut.read_back(oldest)), Some("result 0"), "{replayed}");
         for placed in cut.older() {
             assert!(
-                cut.read_back(placed).is_some(),
+                matches!(cut.read_back(placed), Back::Said(_)),
                 "row {} ({replayed})",
                 placed.at()
             );
@@ -466,7 +470,7 @@ fn a_read_that_fails_says_so_and_the_row_still_offers() {
         );
     }
 
-    assert_eq!(cut.read_back(let_go(&cut, 0)), None);
+    assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unread);
     assert!(cut.offered(0), "a failed read leaves the row as it was");
 }
 
@@ -543,7 +547,7 @@ fn a_result_arriving_takes_what_the_log_has_placed_and_waits_for_nothing() {
 
     // Every row let go of was placed without waiting, so reading one back
     // does not wait either.
-    assert!(cut.read_back(let_go(&cut, 0)).is_none());
+    assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unread);
     assert_eq!(settles.get(), 0);
 }
 
@@ -564,7 +568,7 @@ fn a_row_let_go_of_before_its_place_came_waits_for_it_when_read() {
 
     went.borrow_mut()
         .push((crucible_types::ToolId::new("call-0"), 9));
-    assert_eq!(cut.read_back(placed).as_deref(), Some("said"));
+    assert_eq!(said(&cut.read_back(placed)), Some("said"));
     assert_eq!(settles.get(), 1);
 }
 
@@ -598,7 +602,7 @@ fn a_place_for_a_result_that_had_no_row_is_not_taken_by_a_later_call_of_the_same
     }
 
     assert_eq!(
-        cut.read_back(let_go(&cut, 10)).as_deref(),
+        said(&cut.read_back(let_go(&cut, 10))),
         Some("the second said this")
     );
 }
@@ -669,4 +673,78 @@ fn one_result_past_the_ceiling_on_its_own_lets_every_row_before_it_go() {
     gone.sort_unstable();
     assert_eq!(gone, before);
     assert!(cut.offered(40));
+}
+
+#[test]
+fn a_result_drawn_with_no_call_line_takes_its_own_place_and_not_the_next_ones() {
+    // A replayed result whose call was never drawn still had its place said
+    // before it; that place is its own, and a later result of the same name
+    // opens on the place said for it.
+    let call = crucible_types::ToolId::new("functions.read:0");
+    let logged = Logged {
+        held: [
+            ((call.clone(), 100), "the first said this".into()),
+            ((call.clone(), 200), "the second said this".into()),
+        ]
+        .into(),
+        ..Logged::default()
+    };
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(logged)));
+
+    cut.placing(&call, 100);
+    cut.answered(&call);
+    cut.calling(call.clone(), "Read(second)".to_owned());
+    cut.placing(&call, 200);
+    cut.finished(&call, "x".repeat(HELD / 2).into(), 10);
+    for turn in 0..4 {
+        kept(&mut cut, &format!("Read({turn})"), HELD / 2);
+    }
+
+    assert_eq!(
+        said(&cut.read_back(let_go(&cut, 10))),
+        Some("the second said this")
+    );
+}
+
+#[test]
+fn a_row_let_go_of_before_its_batch_was_written_is_not_placed_yet_rather_than_unreadable() {
+    // A turn draws its results before it writes their batch, so a row can be
+    // let go of while the log has nothing to say about it. That is not a log
+    // that lost it, and a later read finds it.
+    let logged = Logged {
+        held: [((crucible_types::ToolId::new("call-0"), 9), "said".into())].into(),
+        ..Logged::default()
+    };
+    let went = std::rc::Rc::clone(&logged.went);
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(logged)));
+    for turn in 0..4 {
+        kept(&mut cut, &format!("Read({turn})"), HELD / 3);
+    }
+
+    assert_eq!(cut.read_back(let_go(&cut, 0)), Back::Unplaced);
+    went.borrow_mut()
+        .push((crucible_types::ToolId::new("call-0"), 9));
+    assert_eq!(said(&cut.read_back(let_go(&cut, 0))), Some("said"));
+}
+
+#[test]
+fn letting_go_of_results_smaller_than_their_place_does_not_empty_the_store() {
+    // A row let go of keeps its call's line and its place, which can weigh
+    // more than a short result did. Placing such a result would raise what is
+    // held rather than lower it, and one arrival would then let go of every
+    // result held.
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(Logged::default())));
+    for _ in 0..15_000 {
+        kept(&mut cut, "R", 40);
+    }
+
+    assert!(cut.held <= HELD, "{} held", cut.held);
+    assert!(
+        cut.newest().count() > 10_000,
+        "{} results still held",
+        cut.newest().count()
+    );
 }

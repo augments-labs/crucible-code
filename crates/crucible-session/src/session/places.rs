@@ -17,7 +17,8 @@
 //!
 //! Reading back is one record at one position, bounded as every record is,
 //! and accepted only where that record holds the call the place names. Nothing
-//! is written, and what is read is what the log holds: the words the result
+//! is added to the log, though what the session has queued is written first,
+//! and what is read is what the log holds: the words the result
 //! held when it arrived, whatever a pruning or a restriction has since cleared
 //! from what the model is sent.
 
@@ -76,8 +77,9 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// [`SessionError::Log`] where the log cannot be opened or read there, or
-    /// holds no result of that call at that place.
+    /// [`SessionError::Log`] where the session records nothing, where its
+    /// writer has stopped, where the log cannot be opened or read there, or
+    /// where it holds no result of that call at that place.
     pub fn read_back(&self, place: &Place) -> Result<RecordedToolOutput, SessionError> {
         let trouble = |source| SessionError::Log {
             at: self.path.display().to_string().into(),

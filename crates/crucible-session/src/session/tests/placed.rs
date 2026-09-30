@@ -446,3 +446,42 @@ fn a_place_is_handed_over_once_by_whichever_take_reaches_it() {
     let calls: Vec<&str> = taken.iter().map(|place| place.call().as_str()).collect();
     assert_eq!(calls, ["call-1", "call-2"]);
 }
+
+#[test]
+fn every_place_a_replay_reports_reads_back_across_the_records_it_does_not_hand_over() {
+    // A log holds more than messages: the record of each call as it ran, a
+    // pruning's notice and a compaction's. The replay steps over them or holds
+    // them back, and the place of every result after them is still its own.
+    let sample = Sample::new("placed-across-records");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    session.append(&said("look at all three"));
+    for (at, id) in ["call-1", "call-2", "call-3"].into_iter().enumerate() {
+        session.append(&calling(id, "bash", "{}"));
+        ran(
+            &session,
+            &call(id),
+            RecordedToolOutput::ok(format!("what {id} said")),
+        );
+        session.append(&results_of(&[id]));
+        match at {
+            0 => session.pruned(10, &[ToolId::new(id)]),
+            1 => session.compacted(4, "what happened so far"),
+            _ => {}
+        }
+    }
+    drop(session);
+    let session = Session::resume(&sample.logs(), &sample.workspace())
+        .expect("the session")
+        .0;
+
+    let places = replayed_places(&session);
+    let calls: Vec<&str> = places.iter().map(|place| place.call().as_str()).collect();
+    assert_eq!(calls, ["call-1", "call-2", "call-3"]);
+    for place in &places {
+        assert_eq!(
+            session.read_back(place).expect("read"),
+            RecordedToolOutput::ok(format!("what {} said", place.call().as_str())),
+            "{place:?}"
+        );
+    }
+}
