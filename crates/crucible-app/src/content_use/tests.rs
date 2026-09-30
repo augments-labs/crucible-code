@@ -577,3 +577,35 @@ fn a_base_url_changed_and_changed_back_moves_no_yes() {
         Some("api.moonshot.cn")
     );
 }
+
+/// What a provider was served on goes with its credential: after a drop,
+/// nothing is asked about the route that credential was on, whether or not
+/// the provider was the one answering, until it is set up again.
+#[test]
+fn a_credential_taken_out_takes_what_its_provider_was_served_on() {
+    let sample = Sample::new("letting-go-served");
+    sample.user("{}");
+    let consent = Consent::new(Routes::production());
+    consent.served("openai", Some(serving("subscription:openai")));
+    consent.served("google", Some(serving("key:google")));
+    let store = sample.store().letting_go(letting_go(
+        &consent,
+        sample.user_file(),
+        Rows::production(),
+        &Settings::default(),
+    ));
+    sample
+        .store()
+        .keep("openai", "fabricated-openai-key")
+        .unwrap();
+
+    store.forget("openai").unwrap();
+
+    assert_eq!(consent.unanswered("openai", "gpt-6-astra"), None);
+    assert_eq!(
+        consent
+            .unanswered("google", "gemini-3.8-flash")
+            .map(|one| one.route),
+        Some("key:google")
+    );
+}

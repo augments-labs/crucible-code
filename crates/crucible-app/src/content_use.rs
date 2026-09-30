@@ -542,7 +542,8 @@ impl Hold for Consent {
 /// What a store asks before a write takes a credential out: the yes of the
 /// row it was given on, of every model route of its provider, and of the
 /// route its provider's `baseUrl` answers for, taken out of the user's own
-/// file `file` and then out of `consent`.
+/// file `file` and then out of `consent`, which also forgets what that
+/// provider was served on.
 ///
 /// Changing or removing a `baseUrl` moves no yes; the address is read from
 /// `settings` once, here, as the run was started with it.
@@ -582,6 +583,12 @@ pub fn letting_go(consent: &Consent, file: PathBuf, rows: Rows, settings: &Setti
             ))
         })?;
         consent.forget(gone);
+        // What each provider was served on went with its credential, and
+        // stays unknown until the provider is set up again: a question asked
+        // before then would be about a credential that is gone.
+        for provider in &providers {
+            consent.served(provider, None);
+        }
         Ok(())
     })
 }
