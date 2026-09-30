@@ -330,8 +330,8 @@ fn write_result<D: Dialect>(
     }
 
     // The words lead, which is the other way round from a prompt: there the
-    // picture is what the vendor reads better first, and here the words are
-    // what say which file is which.
+    // picture is what the wire's first vendor reads better first, and here the
+    // words are what say which file is which.
     message.array("content", |content| {
         if failed {
             content.object(|part| {

@@ -21,13 +21,21 @@ fn kimi(endpoint: Endpoint) -> Moonshot {
 
 #[test]
 fn kimi_is_shown_under_its_own_name_with_the_fields_it_always_had() {
+    // Each field as it shows itself, made again rather than read back out of
+    // the provider: the whole text is the name and those four, in that order,
+    // as the struct Kimi was before its wire was shared printed it.
+    let credential = HeaderKey::new(ApiKey::new("fabricated-kimi-key"), Header::bearer());
+    let expected = format!(
+        "Moonshot {{ credential: {credential:?}, transport: {:?}, endpoint: {:?}, \
+         credential_scope: {:?} }}",
+        Replay::new(200, ""),
+        Moonshot::CODING,
+        crucible_credentials::Credential::scope(&credential),
+    );
+
     let shown = format!("{:?}", kimi(Moonshot::CODING));
 
-    assert!(shown.starts_with("Moonshot { credential: "), "{shown}");
-    for field in ["transport: ", "endpoint: ", "credential_scope: "] {
-        assert!(shown.contains(field), "{shown}");
-    }
-    assert!(!shown.contains("dialect"), "{shown}");
+    assert_eq!(shown, expected);
     assert!(!shown.contains("fabricated-kimi-key"), "{shown}");
 }
 
