@@ -413,3 +413,13 @@ fn a_send_asks_about_the_route_its_provider_is_served_on() {
     assert_eq!(consent.unanswered("moonshot", "k3"), None);
     assert_eq!(consent.unanswered("anthropic", "claude-fable-5-1"), None);
 }
+
+/// A caution is short enough to stand whole after `signed in` on a row at
+/// forty columns, whatever of the row's own words is cut after it.
+#[test]
+fn every_caution_fits_after_signed_in_at_forty_columns() {
+    for warned in WARNED {
+        let row = format!("signed in · {}…", warned.warning.caution);
+        assert!(row.chars().count() <= 38, "{}: {row}", warned.route);
+    }
+}

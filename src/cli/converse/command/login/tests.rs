@@ -652,23 +652,33 @@ fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_scre
         [
             (
                 "OpenAI",
-                "signed in · ChatGPT plan usage with Plus, Pro, Business and Enterprise".to_owned()
+                "signed in · may train on what is sent · ChatGPT plan usage with Plus, Pro, \
+                 Business and Enterprise"
+                    .to_owned()
             ),
             (
                 "Kimi Code · kimi.ai",
-                "Kimi Code plan usage, accounts outside mainland China".to_owned()
+                "may train on what is sent · Kimi Code plan usage, accounts outside mainland \
+                 China"
+                    .to_owned()
             ),
             (
                 "Kimi Code · kimi.com",
-                "Kimi Code plan usage, mainland China accounts".to_owned()
+                "may use what is sent · Kimi Code plan usage, mainland China accounts".to_owned()
             ),
             ("Anthropic", "set ANTHROPIC_API_KEY".to_owned()),
-            ("Google", "set GEMINI_API_KEY".to_owned()),
+            (
+                "Google",
+                "uses what is sent · set GEMINI_API_KEY".to_owned()
+            ),
             (
                 "MoonshotAI · kimi.ai",
-                "signed in with a stored key".to_owned()
+                "signed in · may train on what is sent".to_owned()
             ),
-            ("MoonshotAI · kimi.com", "set MOONSHOT_API_KEY".to_owned()),
+            (
+                "MoonshotAI · kimi.com",
+                "may use what is sent · set MOONSHOT_API_KEY".to_owned()
+            ),
             ("OpenAI", "set OPENAI_API_KEY".to_owned()),
         ]
     );
@@ -712,7 +722,7 @@ fn signed_in_is_kept_at_forty_columns_where_the_plan_words_are_cut() {
         .collect();
 
     assert!(
-        drawn.contains(&"  signed in · ChatGPT plan usage with P…".to_owned()),
+        drawn.contains(&"  signed in · may train on what is sent…".to_owned()),
         "{drawn:?}"
     );
 }
@@ -1097,4 +1107,58 @@ fn a_sign_in_being_stopped_says_so_while_it_waits() {
             .any(|row| row == "stopping; waiting for anything being stored…"),
         "{text:?}"
     );
+}
+
+/// A warned row says its caution after `signed in` and before its own words,
+/// so a window of forty columns cuts those rather than it; a row whose vendor
+/// says nothing carries none.
+#[test]
+fn a_warned_row_keeps_its_caution_at_forty_columns() {
+    let sample = Sample::new("login-caution-narrow");
+    std::fs::write(sample.root().join("auth.json"), HELD).expect("a store");
+    let terms = named(&sample);
+    let rows = production();
+    let providers = terms.providers.snapshot();
+    let held = holding(&rows, &terms).expect("a store that reads whole");
+
+    for list in [List::Subscription, List::Key] {
+        let listed = listed(&rows, list);
+        let drawn = entries(&listed, &held, &providers, Glyphs::Unicode);
+        let shown: Vec<Offered<'_>> = drawn
+            .iter()
+            .map(|(name, says)| Offered { name, says })
+            .collect();
+        let panel = Panel {
+            source: None,
+            title: TITLE,
+            said: None,
+            shown: &shown,
+            chosen: 0,
+            footer: BACK,
+        };
+        let picture: Vec<String> = panel
+            .rows(40, Glyphs::Unicode)
+            .iter()
+            .map(|row| row.text().trim_end().to_owned())
+            .collect();
+        for way in &listed {
+            let route = crucible_app::content_use::row_route(way);
+            let at = picture
+                .iter()
+                .position(|row| row.trim_start().trim_start_matches("› ") == way.shown)
+                .unwrap_or_else(|| panic!("{} is not drawn: {picture:?}", way.shown));
+            let under = picture.get(at + 1).cloned().unwrap_or_default();
+            match terms.consent.routes().warned(&route) {
+                Some(warned) => {
+                    assert!(under.contains(warned.warning.caution), "{route}: {under}");
+                    let signed = under.find("signed in").unwrap_or(0);
+                    assert!(
+                        under.find(warned.warning.caution) >= Some(signed),
+                        "{under}"
+                    );
+                }
+                None => assert!(!under.contains("sent"), "{route}: {under}"),
+            }
+        }
+    }
 }

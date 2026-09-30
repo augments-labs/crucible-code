@@ -47,6 +47,8 @@ pub struct Warning {
     pub link: &'static str,
     /// The day it was read, or the day of the archived copy it rests on.
     pub read: &'static str,
+    /// A `/login` row's few words for it, in the vendor's own verb.
+    pub caution: &'static str,
 }
 
 impl Warning {
@@ -80,6 +82,7 @@ const OPENAI_PLANS: Warning = Warning {
     source: "OpenAI Help Center, archived copy",
     link: "https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance",
     read: "28 Sep 2026",
+    caution: "may train on what is sent",
 };
 
 const GEMINI_UNPAID: Warning = Warning {
@@ -90,6 +93,7 @@ const GEMINI_UNPAID: Warning = Warning {
     source: "Gemini API terms",
     link: "https://ai.google.dev/gemini-api/terms",
     read: "30 Sep 2026",
+    caution: "uses what is sent",
 };
 
 const KIMI_AI: Warning = Warning {
@@ -99,6 +103,7 @@ const KIMI_AI: Warning = Warning {
     source: "kimi.ai terms of service",
     link: "https://www.kimi.ai/user/agreement/modelUse?version=v2",
     read: "30 Sep 2026",
+    caution: "may train on what is sent",
 };
 
 const KIMI_COM: Warning = Warning {
@@ -108,6 +113,7 @@ const KIMI_COM: Warning = Warning {
     source: "kimi.com user agreement",
     link: "https://www.kimi.com/user/agreement/modelUse?version=v2",
     read: "30 Sep 2026",
+    caution: "may use what is sent",
 };
 
 const PLATFORM_AI: Warning = Warning {
@@ -117,6 +123,7 @@ const PLATFORM_AI: Warning = Warning {
     source: "Kimi open platform terms",
     link: "https://platform.kimi.ai/docs/agreement/modeluse",
     read: "30 Sep 2026",
+    caution: "may train on what is sent",
 };
 
 const PLATFORM_CN: Warning = Warning {
@@ -125,6 +132,7 @@ const PLATFORM_CN: Warning = Warning {
     source: "Kimi open platform terms, platform.kimi.com",
     link: "https://platform.kimi.com/docs/agreement/modeluse",
     read: "30 Sep 2026",
+    caution: "may use what is sent",
 };
 
 /// Every warned route this build has.
