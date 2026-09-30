@@ -325,7 +325,19 @@ fn a_credential_taken_out_takes_the_yes_that_went_with_it() {
     }
     assert!(consent.asks("key:google").is_none());
 
-    // Forgotten: the row it was on goes too.
+    // Forgotten: the yes to the row it was on, and to the provider's models,
+    // go with it.
+    let before = std::fs::read_to_string(&file).unwrap().replace(
+        "\"subscription:moonshot@kimi.ai\"",
+        "\"key:moonshot@kimi.ai\", \"model:moonshot/k3\", \"subscription:moonshot@kimi.ai\"",
+    );
+    std::fs::write(&file, &before).unwrap();
+    assert!(
+        sample
+            .user(&before)
+            .content_accepted()
+            .contains(&"key:moonshot@kimi.ai")
+    );
     store.forget("moonshot").unwrap();
     let left = sample.user(&std::fs::read_to_string(&file).unwrap());
     assert_eq!(

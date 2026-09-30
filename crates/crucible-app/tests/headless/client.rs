@@ -931,6 +931,51 @@ fn a_send_on_a_warned_route_is_put_to_the_client_and_only_a_yes_sends_it() -> Re
     Ok(())
 }
 
+/// A compaction asks the model too, so on a warned route it is put to the
+/// client the same way, and going back sends nothing.
+#[test]
+fn a_compaction_on_a_warned_route_is_put_to_the_client_first() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("client-warned-compact")?;
+    let script = Script::new(vec![saying("summary")]);
+    let asked = Arc::clone(&script.asked);
+    let (conversation, _) = asking_on(&tree, script, Some("google"))?;
+    let consent = Consent::new(Routes::production());
+    consent.keeps_in(tree.0.join("config.json"));
+    let mut conversation = conversation.consenting(consent.clone());
+    consent.served(
+        "google",
+        Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }),
+    );
+    let mut remote = Remote::new(vec![Saying::Heeding(false)]);
+    let request = Wire::default().sent(Command::Compact)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut remote)?;
+
+    assert_eq!(asked.load(Ordering::Relaxed), 0);
+    assert!(
+        matches!(
+            remote.put.as_slice(),
+            [Pending::Warning { route, .. }] if route.as_str() == "key:google"
+        ),
+        "{:?}",
+        remote.put
+    );
+    assert!(
+        matches!(
+            &response.outcome,
+            Outcome::Turn(TurnOutcome::Warned { route, .. }) if route.as_str() == "key:google"
+        ),
+        "{:?}",
+        response.outcome
+    );
+    Ok(())
+}
+
 /// A yes on the wire that cannot be written down is not a going back: the turn
 /// fails naming why, and nothing is sent.
 #[test]
