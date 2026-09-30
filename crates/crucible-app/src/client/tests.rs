@@ -605,3 +605,20 @@ fn a_client_that_never_said_it_answers_permissions_is_not_put_a_warning() {
     assert!(!heeded(&mut front, without));
     assert!(front.put.is_empty(), "the yes it had ready was never heard");
 }
+
+#[test]
+fn a_refusal_of_fast_is_retrying_only_where_the_request_went_again() {
+    // A stop that kept the second send is no retry; the speed now in force is
+    // the snapshot's to say, as the terminal's line says fast is off.
+    let refused = |resent| crucible_runner::Event::FastRefused {
+        provider: "openai",
+        reason: "refused".into(),
+        resent,
+    };
+
+    assert_eq!(
+        progress(Capabilities::every(), &refused(true)),
+        Some(Progress::Retrying)
+    );
+    assert_eq!(progress(Capabilities::every(), &refused(false)), None);
+}
