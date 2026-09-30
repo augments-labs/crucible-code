@@ -566,3 +566,38 @@ fn a_row_has_the_fast_form_of_the_route_its_provider_is_served_on() {
         crucible_models::FastForm::None
     );
 }
+
+#[test]
+fn a_row_reads_its_route_off_the_settings_and_the_store_in_force() {
+    // What the shelf hands the route: a `baseUrl` from the settings, and a
+    // sign-in from the store, each changing what a row says.
+    let catalogue = catalogue();
+    let openai = offered(&catalogue)
+        .find(|served| served.name == "openai")
+        .expect("openai is offered");
+    let plain = crucible_config::Settings::default();
+    let nothing = crucible_auth::StoredCredentials::default();
+    assert!(super::row_form(openai, "gpt-5.5", &plain, &nothing).switched());
+
+    let sample = Sample::new("row-route");
+    let based =
+        sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
+    assert_eq!(
+        super::row_form(openai, "gpt-5.5", &based, &nothing),
+        crucible_models::FastForm::None
+    );
+
+    let home = sample.found();
+    std::fs::create_dir_all(home.path()).expect("a home");
+    std::fs::write(
+        home.path().join("auth.json"),
+        r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#,
+    )
+    .expect("a store");
+    let signed = sample.store().read();
+    assert_eq!(
+        super::row_form(openai, "gpt-5.5", &plain, &signed),
+        crucible_models::FastForm::None
+    );
+    assert!(super::row_form(openai, "gpt-5.6-sol", &plain, &signed).switched());
+}

@@ -83,6 +83,22 @@ fn routed(served: Served, model: &str, based: bool, signed_in: bool) -> FastForm
     }
 }
 
+/// The fast form a row's model has on its provider's route, as the settings
+/// and the credential store say that route is.
+fn row_form(
+    served: Served,
+    model: &str,
+    settings: &crucible_config::Settings,
+    stored: &crucible_auth::StoredCredentials,
+) -> FastForm {
+    routed(
+        served,
+        model,
+        settings.base_url(served.name).is_some(),
+        stored.has_subscription(served.name),
+    )
+}
+
 /// The one note a model's row has room for: `no rung` before `fast`.
 fn note(rungs: &[Effort], form: FastForm) -> &'static str {
     if rungs.is_empty() {
@@ -496,13 +512,7 @@ fn stood<T: Terminal>(
                     let form = if now {
                         current.pace.form
                     } else {
-                        let name = one.provider.name;
-                        routed(
-                            one.provider,
-                            one.model.name,
-                            terms.settings.base_url(name).is_some(),
-                            stored.has_subscription(name),
-                        )
+                        row_form(one.provider, one.model.name, &terms.settings, &stored)
                     };
                     (one, window, now, form)
                 })
