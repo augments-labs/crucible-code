@@ -396,7 +396,8 @@ pub enum ThemeOutcome {
 /// How many entries of one kind a release held.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
-    /// The kind, as the changelog heads it, in lower case: `fixed`.
+    /// The kind, as the changelog heads it, in lower case: `fixed`. Entries
+    /// above any heading are counted as `changed`.
     pub kind: Name,
     /// How many.
     pub count: u64,

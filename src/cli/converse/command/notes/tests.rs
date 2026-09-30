@@ -199,15 +199,20 @@ fn the_whole_list_keeps_its_first_row_and_counts_what_it_left_out_at_every_width
         let at = format!("{columns} columns");
         assert!(rows.len() < RECORDED, "{at}: {} rows", rows.len());
 
-        // Printed, the first row is still in the record after the last.
+        // Printed, every row is still in the record after the last, in order:
+        // at one column many rows read alike, so they are matched as a run.
         let mut renderer = Renderer::new(crucible_tui::Recording::new(columns, 24));
         renderer.present(&rows).expect("a recording cannot fail");
         renderer.commit("").expect("a recording cannot fail");
-        let kept = renderer.tail(RECORDED * 2);
-        let first = rows.first().map(Row::text).expect("a first row");
+        let kept: Vec<String> = renderer.tail(RECORDED * 2).iter().map(Row::text).collect();
+        let printed: Vec<String> = rows.iter().map(Row::text).collect();
         assert!(
-            kept.iter().any(|row| row.text() == first),
-            "{at}: the first row went: {first:?}"
+            kept.len() > printed.len()
+                && kept.get(kept.len() - printed.len() - 1..kept.len() - 1)
+                    == Some(printed.as_slice()),
+            "{at}: {} rows printed, {} kept",
+            printed.len(),
+            kept.len()
         );
 
         // What the closing row says went is what went.
@@ -365,11 +370,16 @@ fn listed(answer: NotesOutcome) -> (Vec<crucible_client_api::Release>, Name, boo
 
 #[test]
 fn a_client_is_answered_every_release_oldest_first_and_the_newest_ten_in_words() {
-    let read = releases(CHANGELOG);
+    // The newest a list may hold, and whether any went: read from the file,
+    // so a later release changes nothing here.
+    let every = releases(CHANGELOG);
+    let read = every
+        .get(every.len().saturating_sub(ITEMS)..)
+        .unwrap_or_default();
     let (told, running, truncated) = listed(answered(None).expect("an answer"));
 
     assert_eq!(running, name(RUNNING));
-    assert!(!truncated, "{} releases", read.len());
+    assert_eq!(truncated, every.len() > ITEMS, "{} releases", every.len());
     assert_eq!(
         told.iter()
             .map(|release| (release.version.as_str(), release.date.as_str()))
@@ -378,7 +388,7 @@ fn a_client_is_answered_every_release_oldest_first_and_the_newest_ten_in_words()
             .map(|release| (release.version, release.date))
             .collect::<Vec<_>>()
     );
-    for (release, from) in told.iter().zip(&read) {
+    for (release, from) in told.iter().zip(read) {
         assert_eq!(
             release
                 .groups
@@ -399,7 +409,7 @@ fn a_client_is_answered_every_release_oldest_first_and_the_newest_ten_in_words()
             .take(worded)
             .all(|release| release.text.is_none())
     );
-    for (release, from) in told.iter().zip(&read).skip(worded) {
+    for (release, from) in told.iter().zip(read).skip(worded) {
         let text = release.text.as_ref().expect("the words of a newer release");
         // Some releases say more than one value may carry, and are cut.
         let words = from.text();
@@ -496,4 +506,27 @@ fn past_the_contract_s_ceilings_the_oldest_are_left_out_and_long_words_cut_and_b
     let words = newest.text.as_ref().expect("its words");
     assert!(words.truncated());
     assert!(words.as_str().len() <= TEXT_BYTES);
+}
+
+#[test]
+fn a_link_definition_inside_a_release_ends_nothing_and_those_at_the_foot_belong_to_none() {
+    let text = changelog(&[
+        (
+            "0.2.0",
+            "2026-02-03",
+            "### Fixed\n\n- See [the notes][n].\n\n[n]: https://example.invalid/n\n\n- And one more.",
+        ),
+        ("0.1.0", "2026-01-02", "### Added\n\n- the first"),
+    ]);
+    let read = releases(&text);
+    let newest = read.last().expect("the newest");
+
+    assert!(
+        newest.text().ends_with("- And one more."),
+        "{}",
+        newest.text()
+    );
+    assert_eq!(said(newest), "2 fixed");
+    let oldest = read.first().expect("the oldest");
+    assert_eq!(oldest.text(), "### Added\n\n- the first");
 }

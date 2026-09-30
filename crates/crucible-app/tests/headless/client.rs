@@ -129,8 +129,9 @@ fn reads(named: &str) -> bool {
 /// The release the host in these tests has had.
 const RELEASED: &str = "0.1.0";
 
-/// What the host in these tests answers for its release notes: its one
-/// release where none is named, and a version named said back as it arrived.
+/// What the host in these tests answers for its release notes: no release
+/// where none is named, with `RELEASED` as the version running, and a version
+/// named said back as it arrived.
 fn notes(version: Option<&str>) -> Result<NotesOutcome, Refusal> {
     Ok(match version {
         None => NotesOutcome::Listed {

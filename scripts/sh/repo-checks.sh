@@ -1298,30 +1298,60 @@ section "the release notes reach nothing outside the binary"
 # crates of this workspace reach a provider, a server or a file one way or
 # another.
 notes_owner=src/cli/converse/command/notes.rs
-notes_takes='crucible_client_api
+# Every path the module names starts at one of these, and a path a crate or a
+# module is reached by starts at a lower-case word, so each such word is read
+# and has to be one of them: `super`, `self`, `tokio`, a brace of `std` and any
+# other crate are refused as well as a crate of this workspace.
+notes_roots_allowed='crucible_client_api
 crucible_tui
-crate::cli::Fatal'
+crate
+std
+u8
+u16
+u32
+u64
+usize
+char
+str
+bool'
+notes_paths_allowed='crate::cli::Fatal
+std::cmp
+std::fmt'
 if [[ ! -f "$notes_owner" ]]; then
     printf '    FAIL %s is missing; the release notes check measured nothing\n' "$notes_owner"
     failed=1
 fi
-notes_named=$(grep -ohE '(crucible_[a-z_]+|crate::[A-Za-z_:]+)' "$notes_owner" 2>/dev/null | sort -u || true)
-if ! grep -Fxq crucible_client_api <<<"$notes_named"; then
+# Comments are words about the code, not paths it takes.
+notes_code=$(sed 's|//.*||' "$notes_owner" 2>/dev/null || true)
+notes_roots=$({
+    grep -oE '(^|[^A-Za-z0-9_:.])[a-z_][a-z0-9_]*::' <<<"$notes_code" | sed -E 's/^[^a-z_]//; s/::$//'
+    grep -oE '(^|[^A-Za-z0-9_])use[[:space:]]+[a-z_][a-z0-9_]*' <<<"$notes_code" | awk '{ print $NF }'
+    grep -oE '(^|[^A-Za-z0-9_])extern[[:space:]]+crate[[:space:]]+[a-z_][a-z0-9_]*' <<<"$notes_code" | awk '{ print $NF }'
+} | sort -u || true)
+if ! grep -Fxq crucible_client_api <<<"$notes_roots"; then
     printf '    FAIL %s names no crate this check knows it takes; it measured nothing\n' "$notes_owner"
     failed=1
 fi
+while IFS= read -r root; do
+    [[ -z "$root" ]] && continue
+    if ! grep -Fxq "$root" <<<"$notes_roots_allowed"; then
+        printf '    FAIL %s names %s; the release notes are read from the binary alone\n' "$notes_owner" "$root"
+        failed=1
+    fi
+done <<<"$notes_roots"
 while IFS= read -r named; do
     [[ -z "$named" ]] && continue
-    if ! grep -Fxq "$named" <<<"$notes_takes"; then
+    if ! grep -Fxq "$named" <<<"$notes_paths_allowed"; then
         printf '    FAIL %s names %s; the release notes are read from the binary alone\n' "$notes_owner" "$named"
         failed=1
     fi
-done <<<"$notes_named"
+done < <(grep -oE '(^|[^A-Za-z0-9_:])(crate|std)::[A-Za-z_{]+(::[A-Za-z_]+)?' <<<"$notes_code" |
+    sed -E 's/^[^cs]//' | sed -E 's/^(std::[a-z_{]+)::.*/\1/' | sort -u || true)
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     printf '    FAIL %s reaches outside the binary; the release notes are read from the binary alone\n' "$line"
     failed=1
-done < <(grep -nE 'std::(net|fs|process|env)|std::os::unix::net|include_bytes!|include_str!' "$notes_owner" 2>/dev/null |
+done < <(grep -nE 'include_bytes!|include_str!' "$notes_owner" 2>/dev/null |
     grep -vF 'include_str!("../../../../CHANGELOG.md")' | cut -d: -f1 | sed "s|^|$notes_owner:|" || true)
 
 section "workspace inheritance"

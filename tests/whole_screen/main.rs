@@ -2027,7 +2027,7 @@ fn in_ascii() -> String {
 
 /// The last word of 0.41.1 in the changelog: the one release these pictures
 /// are of, which no later release changes.
-const RELEASE_ENDS: &str = "RUSTSEC-2026-0285";
+const RELEASE_ENDS: &str = "rule.";
 
 #[test]
 fn one_release_is_printed_in_full_with_no_rail() {
@@ -2090,12 +2090,31 @@ fn a_version_that_is_no_release_is_refused_the_same_in_ascii() {
     }
 }
 
+/// Rows enough to hold the newest release of the changelog built in, whole, at
+/// `columns`, with the box and the closing row under it.
+///
+/// Its words hang five columns in, and a row is never less than half full,
+/// since a word that does not fit is carried whole to the next: so each line
+/// of the section takes at most its length over half that room, and one more.
+fn holding_the_newest(columns: u16) -> u16 {
+    const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
+    let newest = CHANGELOG
+        .split("\n## [")
+        .nth(2)
+        .expect("a release under Unreleased");
+    let newest = newest.split("\n[").next().unwrap_or(newest);
+    let half = (usize::from(columns) - 5) / 2;
+    let rows: usize = newest.lines().map(|line| line.len() / half + 1).sum();
+    u16::try_from(rows + 40).expect("a window a terminal can be")
+}
+
 #[test]
 fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
     // Read rather than pictured: the list is the changelog built in, which every
-    // release adds to. The window is tall enough to hold the newest release
-    // whole, so the rows under its head are all on screen.
-    for (columns, rows) in [(40, 320), (80, 200)] {
+    // release adds to. The window is sized from the newest release, so the rows
+    // under its head are all on screen whatever that release says.
+    for columns in [40, 80] {
+        let rows = holding_the_newest(columns);
         let mut window = Watched::open(&format!("release-notes-whole-{columns}"), columns, rows);
         window.types_until("/release-notes\r", "newest in full");
         let picture = window.picture();

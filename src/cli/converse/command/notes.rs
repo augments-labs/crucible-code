@@ -133,7 +133,9 @@ fn answer(changelog: &str, version: Option<&str>) -> Result<NotesOutcome, Refusa
 /// Every release on the rail: the oldest a row each, the newest ten in full.
 ///
 /// No more rows than the transcript keeps, less the blank row the command
-/// ends on, so the first row printed is still there after the last.
+/// ends on, so the first row printed is still there after the last. The least
+/// the timeline can be told in, ten rows and the closing row, is far under that
+/// at any width.
 pub(super) fn whole(releases: &[Release<'_>], columns: usize, glyphs: Glyphs) -> Vec<Row> {
     let split = releases.len().saturating_sub(FULL);
     let groups: Vec<Vec<(String, usize)>> = releases.iter().map(Release::groups).collect();
@@ -265,15 +267,19 @@ impl<'a> Release<'a> {
     /// close the file.
     fn of(version: &'a str, date: &'a str, body: Option<&'a str>) -> Self {
         let body = body.unwrap_or_default();
-        let end = body
-            .split_inclusive('\n')
-            .scan(0, |at, line| {
-                let starts = *at;
-                *at += line.len();
-                Some((starts, line))
-            })
-            .find(|(_, line)| is_link(line))
-            .map_or(body.len(), |(starts, _)| starts);
+        // Where the run of link lines that nothing but blank lines follow
+        // begins: a link defined inside a release is part of its words.
+        let mut foot = None;
+        let mut at = 0;
+        for line in body.split_inclusive('\n') {
+            if is_link(line) {
+                foot = foot.or(Some(at));
+            } else if !line.trim().is_empty() {
+                foot = None;
+            }
+            at += line.len();
+        }
+        let end = foot.unwrap_or(body.len());
         Self {
             version,
             date,
@@ -282,7 +288,7 @@ impl<'a> Release<'a> {
     }
 }
 
-/// Whether `line` is one of the link definitions at the foot of the file:
+/// Whether `line` is a link definition, as the foot of the file is made of:
 /// `[0.43.3]: https://...`.
 fn is_link(line: &str) -> bool {
     line.strip_prefix('[')

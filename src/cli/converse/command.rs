@@ -677,7 +677,8 @@ pub(super) fn run<T: Terminal>(
 
     // The one answer not hung off the line that asked: a timeline has a rail
     // of its own down the left, and a thousand rows indented under a mark
-    // would be a second one beside it.
+    // would be a second one beside it. One release and the refusals are set
+    // apart the same way, as the list's look draws them.
     if let Wanted::Known {
         command: Command::ReleaseNotes,
         rest,
