@@ -10,7 +10,7 @@
 //! consumed once, here, and a struct per shape would be more code to say the
 //! same thing while still needing a fallback for what it does not know.
 //!
-//! Events are unnamed — the SSE `event:` line is never sent — so what an event
+//! Events are unnamed (the SSE `event:` line is never sent), so what an event
 //! is is decided by what its payload holds rather than by a word beside it.
 //!
 //! What the counts in the last event mean is the one thing vendors on this
@@ -176,7 +176,7 @@ fn calls<D: Dialect>(
             let Some(id) = text(call, "id").filter(|id| !id.is_empty()) else {
                 // Skipped instead, nothing opens and the fragments that follow
                 // are assembled onto the call before it, while the call that
-                // was half announced leaves no trace — so the turn ends looking
+                // was half announced leaves no trace, so the turn ends looking
                 // like a clean finish with a tool the model asked for never run.
                 return Err(ProviderError::Protocol {
                     provider: D::NAME,

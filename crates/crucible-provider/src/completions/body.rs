@@ -101,8 +101,8 @@ pub(crate) fn prompt_cache_encoding(request: &Request<'_>) -> PromptCacheEncodin
 /// The transcript, as the list of messages this endpoint reads.
 ///
 /// Standing instructions go in front of it as a message of their own, which is
-/// the only place this wire has for them. It is a weaker promise than a field —
-/// the model may answer the instructions rather than obey them — and it is the
+/// the only place this wire has for them. It is a weaker promise than a field (the
+/// model may answer the instructions rather than obey them), and it is the
 /// one this endpoint offers.
 fn write_messages<D: Dialect>(messages: &mut Array<'_>, request: &Request<'_>) {
     let mut history = crate::history::LegacyHistory::default();
@@ -178,7 +178,7 @@ fn append<D: Dialect>(
             // with neither is one the API refuses.
             // Nothing said and nothing asked for: a turn cancelled or filtered
             // before the model's first word. It is recorded, so it would be
-            // sent on every turn after it — one bad turn making the session
+            // sent on every turn after it: one bad turn making the session
             // refuse to continue at all.
             if text.is_empty() && calls.is_empty() {
                 return;
@@ -199,7 +199,7 @@ fn append<D: Dialect>(
             });
 
             // A message of its own after the answer. Left off, the model reads
-            // its own half-sentence as a turn it chose to end — on the next
+            // its own half-sentence as a turn it chose to end, on the next
             // turn of this session and on every turn of a continued one.
             //
             // It cannot follow a message that carries tool calls: this wire
@@ -240,7 +240,7 @@ fn append<D: Dialect>(
 /// own wording would be a fourth.
 ///
 /// The URL is an object of its own rather than the string the neighbouring
-/// protocol takes — one nesting deeper, for the same bytes, which is why the
+/// protocol takes: one nesting deeper, for the same bytes, which is why the
 /// three of these are written out separately instead of shared. The provider's
 /// declared modalities and the runner's intersection make every byte attachment
 /// here an image or video. If that invariant is ever broken, a valid diagnostic

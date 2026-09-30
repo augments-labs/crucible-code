@@ -392,6 +392,21 @@ elif [[ "$built" != "$decided" ]]; then
     failed=1
 fi
 
+section "the shared Chat Completions wire names no vendor"
+# A vendor on this wire supplies a dialect; the wire itself, and the tests that
+# hold it, are every vendor's. A vendor's name here would be one vendor's case
+# written into all of them, so it belongs in that vendor's dialect instead.
+shared=$(git ls-files 'crates/crucible-provider/src/completions.rs' \
+    'crates/crucible-provider/src/completions/*')
+if [[ -z "$shared" ]]; then
+    printf '    FAIL the shared Chat Completions module was not found; this check measured nothing\n'
+    failed=1
+elif named=$(printf '%s\n' "$shared" | xargs grep -n -i -E 'moonshot|kimi'); then
+    printf '%s\n' "$named" | sed 's/^/    /'
+    printf '    FAIL the shared Chat Completions wire names a vendor; move it into the dialect\n'
+    failed=1
+fi
+
 section "accepted screens"
 # The whole-screen suite proves a capture matches its accepted picture. It
 # cannot prove the picture is still the one a reviewer accepted, because a

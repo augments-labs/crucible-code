@@ -67,6 +67,14 @@ change in any release with no deprecation period.
 - **Enter on a lone `/` while a turn runs leaves it in the box.** It was queued
   and sent to the model as a prompt once the turn ended.
 
+### Internal
+
+- **Chat Completions is one module that names no vendor.** Kimi is its first
+  dialect, supplying its addresses, its headers, how it counts a response and
+  how it spells effort, so a second vendor on that wire adds a dialect rather
+  than a copy. Nothing Kimi is sent or reads changed: its requests, responses
+  and allocations are held to what the code produced before the move.
+
 ## [0.43.3] - 2026-09-29
 
 **The browser `/login` opens no longer carries your provider keys, and a mode
