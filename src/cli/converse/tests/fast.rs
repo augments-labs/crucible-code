@@ -14,7 +14,7 @@ use super::*;
 /// A provider whose model has `form` for a fast form: it records the speed
 /// each request asked at, says each answer was served at `serves`, and where it
 /// `refuses`, refuses fast.
-struct Fastened {
+pub(super) struct Fastened {
     form: FastForm,
     refuses: bool,
     serves: Served,
@@ -23,7 +23,7 @@ struct Fastened {
 }
 
 impl Fastened {
-    fn new(form: FastForm) -> Self {
+    pub(super) fn new(form: FastForm) -> Self {
         Self {
             form,
             refuses: false,
@@ -115,7 +115,7 @@ impl DeltaStream for Answered {
     }
 }
 
-const FIELD: FastForm = FastForm::Field(Cost {
+pub(super) const FIELD: FastForm = FastForm::Field(Cost {
     price: "2x the price",
     caveat: Some("OpenAI may serve a fast request at standard speed."),
 });

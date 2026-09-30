@@ -894,21 +894,23 @@ fn ran<T: Terminal>(
     let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
     let mut conversation = took.conversation;
 
-    // A model picked and a mode stepped to while the work ran are put on the
+    // A speed, a model and a mode taken while the work ran are put on the
     // runner now, the moment it is this side's again, so the row between turns
     // and the next turn agree, and a step made between them moves from the
     // mode the row shows. After the reply above, which answered the line that
-    // asked for this work. A session leaving drops both, a confirmed `/model`
-    // pick included: it has no next turn, and the pick is not written down.
+    // asked for this work. The speed goes first: its price was the model in
+    // force's, and another model taken over the same turn resets it. A session
+    // leaving drops all three, a confirmed `/model` pick included: it has no
+    // next turn, and the pick is not written down.
     let model = terms.pending_model.take();
     let mode = terms.pending_mode.take();
     let speed = terms.pending_speed.take();
     if !leaving {
-        if let Some((provider, name)) = model {
-            command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
-        }
         if let Some(speed) = speed {
             command::apply_speed(renderer, &mut conversation, terms, speed)?;
+        }
+        if let Some((provider, name)) = model {
+            command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
         }
         if let Some(mode) = mode {
             let asked = Command::SetMode(crucible_app::client::mode(mode));
