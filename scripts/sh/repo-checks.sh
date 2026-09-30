@@ -1293,72 +1293,26 @@ done <<<"$naming"
 section "the release notes reach nothing outside the binary"
 # `/release-notes` reads the changelog the binary was built with, and so opens
 # no socket and reads no file, which is what lets it be asked with no network
-# and no credential. The module is held to the crates it takes values from,
-# written down whole: a crate added to it is one somebody looked at, since most
-# crates of this workspace reach a provider, a server or a file one way or
-# another.
+# and no credential. The module is held to what it takes values from, written
+# down whole in the reader, since most crates of this workspace reach a
+# provider, a server or a file one way or another. The reader reads the source
+# as Rust is read, strings, characters and comments taken out first, because a
+# pattern over the raw text has twice been shown to read code as a string or a
+# string as code; its self-test holds every such shape.
 notes_owner=src/cli/converse/command/notes.rs
-# Every path the module names starts at one of these, and a path a crate or a
-# module is reached by starts at a lower-case word, written with a leading `::`
-# or without, so each such word is read and has to be one of them: `super`,
-# `self`, `tokio`, a brace of `std` and any other crate are refused as well as a
-# crate of this workspace. Words inside a string or a comment are no path, so
-# those are taken out first, strings before comments so that a `//` inside a
-# string ends nothing.
-notes_roots_allowed='crucible_client_api
-crucible_tui
-crate
-std
-u8
-u16
-u32
-u64
-usize
-char
-str
-bool'
-notes_paths_allowed='crate::cli::Fatal
-std::cmp
-std::fmt'
+if ! PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/notes-reach.py --self-test; then
+    printf '    FAIL the release notes reader failed its self-test\n'
+    failed=1
+fi
 if [[ ! -f "$notes_owner" ]]; then
     printf '    FAIL %s is missing; the release notes check measured nothing\n' "$notes_owner"
     failed=1
-fi
-notes_code=$(sed -E \
-    -e 's/r(#*)"[^"]*"\1/""/g' \
-    -e 's/"([^"\\]|\\.)*"/""/g' \
-    -e "s/'([^'\\]|\\.)'/''/g" \
-    -e 's|//.*||' "$notes_owner" 2>/dev/null || true)
-notes_roots=$({
-    grep -oE '(^|[^A-Za-z0-9_:.>])(::)?[a-z_][a-z0-9_]*::' <<<"$notes_code" | sed -E 's/^[^a-z_:]//; s/^:://; s/::$//'
-    grep -oE '(^|[^A-Za-z0-9_])use[[:space:]]+[a-z_][a-z0-9_]*' <<<"$notes_code" | awk '{ print $NF }'
-    grep -oE '(^|[^A-Za-z0-9_])extern[[:space:]]+crate[[:space:]]+[a-z_][a-z0-9_]*' <<<"$notes_code" | awk '{ print $NF }'
-} | sort -u || true)
-if ! grep -Fxq crucible_client_api <<<"$notes_roots"; then
-    printf '    FAIL %s names no crate this check knows it takes; it measured nothing\n' "$notes_owner"
+elif ! notes_reached=$(PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/notes-reach.py "$notes_owner"); then
+    while IFS= read -r said; do
+        printf '    FAIL %s %s; the release notes are read from the binary alone\n' "$notes_owner" "$said"
+    done <<<"${notes_reached:-was not read}"
     failed=1
 fi
-while IFS= read -r root; do
-    [[ -z "$root" ]] && continue
-    if ! grep -Fxq "$root" <<<"$notes_roots_allowed"; then
-        printf '    FAIL %s names %s; the release notes are read from the binary alone\n' "$notes_owner" "$root"
-        failed=1
-    fi
-done <<<"$notes_roots"
-while IFS= read -r named; do
-    [[ -z "$named" ]] && continue
-    if ! grep -Fxq "$named" <<<"$notes_paths_allowed"; then
-        printf '    FAIL %s names %s; the release notes are read from the binary alone\n' "$notes_owner" "$named"
-        failed=1
-    fi
-done < <(grep -oE '(^|[^A-Za-z0-9_:>])(::)?(crate|std)::[A-Za-z_{]+(::[A-Za-z_]+)?' <<<"$notes_code" |
-    sed -E 's/^[^cs:]//; s/^:://' | sed -E 's/^(std::[a-z_{]+)::.*/\1/' | sort -u || true)
-while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    printf '    FAIL %s reaches outside the binary; the release notes are read from the binary alone\n' "$line"
-    failed=1
-done < <(grep -nE 'include[a-z_]*!' "$notes_owner" 2>/dev/null |
-    grep -vF 'include_str!("../../../../CHANGELOG.md")' | cut -d: -f1 | sed "s|^|$notes_owner:|" || true)
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

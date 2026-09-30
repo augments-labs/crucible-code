@@ -2094,9 +2094,10 @@ fn a_version_that_is_no_release_is_refused_the_same_in_ascii() {
 /// `columns`, with the box and the closing row under it.
 ///
 /// Its words hang five columns in, and a word that does not fit is carried
-/// whole to the next row, so any two rows together hold more than the room:
-/// each line of the section takes at most its length over half that room, and
-/// one more. A quarter more again, and the box and the closing row, is margin.
+/// whole to the next row, so a row and the one after it together hold more
+/// than the room: each line of the section takes at most its length over half
+/// that room, and one more. A quarter more again, and the box and the closing
+/// row, is margin.
 fn holding_the_newest(columns: u16) -> u16 {
     const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
     let newest = CHANGELOG
