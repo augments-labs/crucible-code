@@ -14,7 +14,9 @@
 #                      byte-identical logs;
 #   command behaviour: --sandbox and --extensions agree past the home's name;
 #   a yes kept:        the prior binary stops on the contentUse block a
-#                      recorded yes leaves in the user's file, and names it.
+#                      recorded yes leaves in the user's file, and names it;
+#   a speed kept:      the prior binary stops on the fast key a chosen speed
+#                      leaves in the user's file, and names it.
 #
 # Every fixture is planted under a header the candidate itself recorded, read
 # back from a session it wrote in a home of its own. A log is picked up only
@@ -391,6 +393,24 @@ status=$(headless "$prior" "$yhome")
 [[ $status == 1 ]] || fail "the prior binary over a yes exited $status"
 has "$stage/err" 'contentUse is not a setting crucible has' 'the prior binary did not name contentUse'
 printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$yhome|HOME|")"
+
+echo '==> the prior binary stops on a speed the candidate keeps'
+# A speed chosen with /fast is kept under providers.<provider>.fast in the
+# user's own file. 0.43.3 has no such key and stops before drawing anything,
+# naming it; the changelog and the troubleshooting page say to delete it before
+# rolling back. The drill takes no turn, so it chooses no speed itself: the file
+# is the one the candidate writes when fast is chosen into a home like these,
+# which a test beside the candidate's writer holds byte for byte.
+fast_file='{ "updates": { "check": "never" }, "providers": {"openai": {"fast": true}} }'
+fhome=$stage/fast-home
+mkdir -p "$fhome/sessions"
+printf '%s\n' "$fast_file" >"$fhome/config.json"
+status=$(headless "$candidate" "$fhome")
+[[ $status == 0 ]] || fail "the candidate over a speed exited $status"
+status=$(headless "$prior" "$fhome")
+[[ $status == 1 ]] || fail "the prior binary over a speed exited $status"
+has "$stage/err" 'providers.openai.fast is not a setting crucible has' 'the prior binary did not name providers.openai.fast'
+printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$fhome|HOME|")"
 
 if ((failed)); then
     echo 'rollback drill gates failed'

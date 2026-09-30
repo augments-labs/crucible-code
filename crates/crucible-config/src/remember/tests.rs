@@ -713,3 +713,25 @@ fn the_roll_back_drill_meets_the_file_a_recorded_yes_leaves() {
     .expect("a file a yes can be written into");
     assert_eq!(written, format!("{planted}\n"));
 }
+
+/// The file the roll back drill starts the prior binary over is the file this
+/// build writes when fast is chosen into a home that turned the update check
+/// off, byte for byte, so the step proves what a roll back meets.
+#[test]
+fn the_roll_back_drill_meets_the_file_a_chosen_speed_leaves() {
+    const DRILL: &str = include_str!("../../../../scripts/sh/rollback-drill.sh");
+    let planted = DRILL
+        .lines()
+        .find_map(|line| line.strip_prefix("fast_file='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("the drill plants a fast file");
+
+    let written = hastening(
+        "{ \"updates\": { \"check\": \"never\" } }\n",
+        FILE,
+        "openai",
+        Speed::Fast,
+    )
+    .expect("a file a speed can be written into");
+    assert_eq!(written, format!("{planted}\n"));
+}
