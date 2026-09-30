@@ -260,6 +260,7 @@ fn under_the_box(provider: &str, model: &str, effort: Option<&str>, glyphs: Glyp
         model,
         provider,
         effort,
+        speed: None,
         asking: None,
         commands: crucible_tui::CommandCount::new(0, false),
         room: 10,
@@ -317,6 +318,10 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
                         provider: Some(served.name),
                         model: model.name,
                         effort: effort.map(Effort::as_str),
+                        fast: (
+                            crucible_models::FastForm::None,
+                            crucible_models::Speed::Standard,
+                        ),
                     };
                     assert_eq!(
                         titled(current, glyphs),
@@ -455,6 +460,10 @@ fn the_shelf_stood_while_a_turn_runs_names_the_rung_in_force() {
         provider: Some("anthropic"),
         model: "claude-sonnet-5",
         effort: Some("high"),
+        fast: (
+            crucible_models::FastForm::None,
+            crucible_models::Speed::Standard,
+        ),
     };
 
     assert_eq!(
@@ -480,6 +489,10 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
         provider: None,
         model: "claude-sonnet-5",
         effort: Some("high"),
+        fast: (
+            crucible_models::FastForm::None,
+            crucible_models::Speed::Standard,
+        ),
     };
 
     assert_eq!(

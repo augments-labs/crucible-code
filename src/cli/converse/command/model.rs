@@ -145,6 +145,7 @@ pub(super) fn run<T: Terminal>(
             provider: conversation.serving(),
             model: runner.model(),
             effort: runner.effort().map(Effort::as_str),
+            fast: (runner.provider().fast(runner.model()), runner.speed()),
         };
         let mut on = None;
         loop {

@@ -222,6 +222,8 @@ pub(crate) struct Terms {
     /// ends, when the runner is this side's again, so the row between turns
     /// names the model the next one is asked under.
     pub(crate) pending_model: Cell<Option<(Served, String)>>,
+    /// A speed taken off `/fast` mid-turn, held the same way.
+    pub(crate) pending_speed: Cell<Option<crucible_models::Speed>>,
     /// A mode shift+tab stepped to mid-turn, held for the turn the loop starts
     /// next.
     ///
@@ -900,9 +902,13 @@ fn ran<T: Terminal>(
     // pick included: it has no next turn, and the pick is not written down.
     let model = terms.pending_model.take();
     let mode = terms.pending_mode.take();
+    let speed = terms.pending_speed.take();
     if !leaving {
         if let Some((provider, name)) = model {
             command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
+        }
+        if let Some(speed) = speed {
+            command::apply_speed(renderer, &mut conversation, terms, speed)?;
         }
         if let Some(mode) = mode {
             let asked = Command::SetMode(crucible_app::client::mode(mode));
@@ -1308,13 +1314,18 @@ impl Turn<'_, '_> {
             provider: self.serving,
             model: &model,
             effort: self.says.effort,
+            fast: self.says.fast,
         };
         let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })?;
-        if let Some(command::Kept::Model(provider, name)) = picked {
-            self.terms.pending_model.set(Some((provider, name)));
+        match picked {
+            Some(command::Kept::Model(provider, name)) => {
+                self.terms.pending_model.set(Some((provider, name)));
+            }
+            Some(command::Kept::Speed(speed)) => self.terms.pending_speed.set(Some(speed)),
+            None => {}
         }
         Ok(())
     }

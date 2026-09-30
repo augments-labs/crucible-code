@@ -748,6 +748,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // And no mode is stepped to mid-turn: the slot is empty until a
         // shift+tab over a running turn fills it.
         pending_mode: Cell::new(None),
+        pending_speed: Cell::new(None),
         settings: settings.clone(),
         choosing: crucible_config::user(&home),
 

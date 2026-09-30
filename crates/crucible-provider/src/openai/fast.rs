@@ -5,7 +5,7 @@
 //! Read on 2026-09-30 from the vendor's fast mode guide, error codes page,
 //! API reference, pricing page, and the `ChatGPT` speed page.
 
-use crucible_models::{FastForm, Served};
+use crucible_models::{Cost, FastForm, Served};
 use serde_json::Value;
 
 use super::Serving;
@@ -14,15 +14,28 @@ use super::Serving;
 /// evaluates it as this one.
 pub(super) const TIER: &str = "priority";
 
+/// What the vendor's fast mode guide says of a fast request with an API key.
+const DOWNGRADED: &str = "OpenAI may serve a fast request at standard speed when fast capacity is short; it is then billed at the standard price.";
+
 /// What `Fast` costs with an API key, for the models priced at twice the
 /// standard rate.
-const TWICE: &str = "2x the price";
+const TWICE: Cost = Cost {
+    price: "2x the price",
+    caveat: Some(DOWNGRADED),
+};
 
 /// What `Fast` costs with an API key for `gpt-5.5`.
-const TWO_AND_A_HALF: &str = "2.5x the price";
+const TWO_AND_A_HALF: Cost = Cost {
+    price: "2.5x the price",
+    caveat: Some(DOWNGRADED),
+};
 
-/// What `Fast` costs under the `ChatGPT` sign-in.
-const PLAN: &str = "2.5x your plan's usage; 2x purchased credits";
+/// What `Fast` costs under the `ChatGPT` sign-in. The speed page says nothing
+/// of a fast request served at standard speed.
+const PLAN: Cost = Cost {
+    price: "2.5x your plan's usage; 2x purchased credits",
+    caveat: None,
+};
 
 /// How `model` is asked to answer fast on `serving`, or on a configured
 /// address, `None`: what a gateway does with the field is not the vendor's to

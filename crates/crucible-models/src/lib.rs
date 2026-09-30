@@ -94,5 +94,5 @@ pub use provider::{
     Attached, Content, Delta, DeltaStream, Effort, EffortError, Provider, ProviderError,
     ProviderLimit, Request, RequestPurpose,
 };
-pub use speed::{FastForm, Served, Speed};
+pub use speed::{Cost, FastForm, Served, Speed};
 pub use transfer::{Transfer, transfer};

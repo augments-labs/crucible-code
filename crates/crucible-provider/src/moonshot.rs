@@ -58,7 +58,10 @@ const MOONSHOT_CACHE_CONTENT: &[PromptCacheContent] = &[
 const AGENT: &str = concat!("crucible/", env!("CARGO_PKG_VERSION"));
 
 /// What Kimi Code's highspeed model costs, in the vendor's words.
-const HIGHSPEED: &str = "6x the speed for 3x the quota";
+const HIGHSPEED: crucible_models::Cost = crucible_models::Cost {
+    price: "6x the speed for 3x the quota",
+    caveat: None,
+};
 
 /// Kimi's dialect of Chat Completions.
 #[derive(Debug)]

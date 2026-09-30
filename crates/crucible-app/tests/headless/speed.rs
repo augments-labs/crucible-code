@@ -3,7 +3,7 @@
 
 use crucible_app::content_use::{Consent, Routes};
 use crucible_app::speed::{self as speeds, Hastened};
-use crucible_models::{FastForm, Speed};
+use crucible_models::{Cost, FastForm, Speed};
 
 use super::*;
 
@@ -96,7 +96,15 @@ impl Provider for Fastened {
     }
 }
 
-const FIELD: FastForm = FastForm::Field("2x the price");
+const FIELD: FastForm = FastForm::Field(Cost {
+    price: "2x the price",
+    caveat: None,
+});
+
+const OWN: FastForm = FastForm::Own(Cost {
+    price: "6x the speed for 3x the quota",
+    caveat: None,
+});
 
 /// A conversation asking `provider` as OpenAI, under a desk whose user file
 /// is the one a yes would be written to.
@@ -134,10 +142,7 @@ fn fast_is_asked_where_the_model_has_a_fast_form_and_is_written_down() -> Result
 
 #[test]
 fn a_model_with_no_fast_form_or_one_of_its_own_changes_nothing() -> Result<(), Failed> {
-    for (form, answer) in [
-        (FastForm::None, "unsupported"),
-        (FastForm::Own("6x the speed for 3x the quota"), "own"),
-    ] {
+    for (form, answer) in [(FastForm::None, "unsupported"), (OWN, "own")] {
         let tree = Tree::new("speed-none")?;
         let (mut conversation, desk) = fastened(&tree, Fastened::new(form))?;
 
@@ -173,10 +178,7 @@ fn the_speed_in_the_file_is_asked_only_where_the_model_has_a_fast_form() -> Resu
     for (form, asked) in [
         (FIELD, Speed::Fast),
         (FastForm::None, Speed::Standard),
-        (
-            FastForm::Own("6x the speed for 3x the quota"),
-            Speed::Standard,
-        ),
+        (OWN, Speed::Standard),
     ] {
         let tree = Tree::new("speed-file")?;
         let (mut conversation, desk) = fastened(&tree, Fastened::new(form))?;

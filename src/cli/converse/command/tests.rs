@@ -47,7 +47,7 @@ fn every_command_is_reached_by_the_name_it_is_listed_under() {
 #[test]
 fn every_command_decides_what_it_can_do_mid_turn() {
     let live = [Command::Help, Command::Theme];
-    let deferred = [Command::Model, Command::Mode];
+    let deferred = [Command::Model, Command::Mode, Command::Fast];
 
     for command in EVERY {
         match command.mid_turn() {
@@ -379,6 +379,7 @@ fn help_answers_with_a_name_and_what_it_does() {
             "/release-notes   what changed in each release",
             "/model           pick which model answers",
             "/effort          pick how hard it thinks",
+            "/fast            pick how fast it answers",
             "/login           sign in to a provider account",
             "/logout          remove a stored account or API key",
             "/mode            ask · allowEdits · fullAccess",
@@ -402,6 +403,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
             "/release-notes   what changed in each release",
             "/model           pick which model answers",
             "/effort          pick how hard it thinks",
+            "/fast            pick how fast it answers",
             "/login           sign in to a provider account",
             "/logout          remove a stored account or API key",
             "/mode            ask, allowEdits, fullAccess",

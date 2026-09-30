@@ -288,6 +288,9 @@ pub struct Prompt<'a> {
     /// name, and a rung drawn here that was never sent is the one thing a
     /// status row must never be.
     pub effort: Option<&'a str>,
+    /// How fast the last answer was served, after the rung: `fast` only while
+    /// the vendor said it served one fast, and `None` otherwise.
+    pub speed: Option<&'a str>,
     /// A row under the status, for something waiting on the very next key.
     ///
     /// `None` in the ordinary state, and then the component is the height it
@@ -898,10 +901,11 @@ impl Prompt<'_> {
         (row, drew_counted)
     }
 
-    /// Whose model it is, which model, and the rung it is being asked on, as
-    /// [`label`] says them everywhere the model is drawn.
+    /// Whose model it is, which model, the rung it is being asked on and how
+    /// fast it was served, as [`label`] says them everywhere the model is
+    /// drawn.
     fn asked(&self, glyphs: Glyphs) -> String {
-        label(self.provider, self.model, self.effort, None, glyphs)
+        label(self.provider, self.model, self.effort, self.speed, glyphs)
     }
 
     /// The usable-window fact in its full spelling, or nothing while no

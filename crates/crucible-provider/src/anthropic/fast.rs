@@ -8,14 +8,18 @@
 //! which match the message a refusal carries.
 
 use crucible_credentials::Outgoing;
-use crucible_models::{FastForm, Served};
+use crucible_models::{Cost, FastForm, Served};
 use serde_json::Value;
 
 /// The beta a fast request carries.
 const BETA: &str = "fast-mode-2026-02-01";
 
-/// What `Fast` costs, in the vendor's words, for the model priced so.
-const PRICE: &str = "$10 / $50 per million input / output tokens, a research preview";
+/// What `Fast` costs, in the vendor's words, for the model priced so, and
+/// who may use it.
+const PRICE: Cost = Cost {
+    price: "$10 / $50 per million input / output tokens",
+    caveat: Some("Fast mode is a research preview; Anthropic turns it on per organization."),
+};
 
 /// How `model` is asked to answer fast on the vendor's own address, and on
 /// a configured one, `None`.

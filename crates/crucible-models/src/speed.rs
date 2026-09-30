@@ -59,18 +59,27 @@ impl Served {
     }
 }
 
+/// What a fast form costs, and what its vendor says of it that somebody
+/// choosing it should read first, each in the vendor's words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cost {
+    /// What fast costs beside standard.
+    pub price: &'static str,
+    /// Who may use it, or when the vendor serves a fast request at standard
+    /// speed, where the vendor says either.
+    pub caveat: Option<&'static str>,
+}
+
 /// How one model is asked to answer fast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FastForm {
     /// The vendor serves no fast form of this model.
     #[default]
     None,
-    /// A field or a header of the request asks for it; what `Fast` costs, in
-    /// the vendor's words.
-    Field(&'static str),
-    /// The model is itself a fast id with no standard form; what it costs, in
-    /// the vendor's words.
-    Own(&'static str),
+    /// A field or a header of the request asks for it, at this cost.
+    Field(Cost),
+    /// The model is itself a fast id with no standard form, at this cost.
+    Own(Cost),
 }
 
 impl FastForm {
