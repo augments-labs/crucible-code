@@ -1376,13 +1376,10 @@ fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
     window.types_until("/login\r", "Provide your own API key");
     takes(&mut window, "Your account with subscription");
     window.types_until("", "Choose the account whose plan pays");
-    let accounts = window.picture();
-    assert!(
-        accounts.contains("signed in · ChatGPT plan usage"),
-        "{accounts}"
-    );
-    assert!(accounts.contains("esc to go back"), "{accounts}");
-    insta::assert_snapshot!("login_accounts_signed_in_40", accounts);
+    let plans = window.picture();
+    assert!(plans.contains("signed in · ChatGPT plan usage"), "{plans}");
+    assert!(plans.contains("esc to go back"), "{plans}");
+    insta::assert_snapshot!("login_accounts_signed_in_40", plans);
 
     window.types_until("\x1b", "Choose how usage is paid for.");
     takes(&mut window, "Provide your own API key");
@@ -1395,7 +1392,7 @@ fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
     );
     insta::assert_snapshot!("login_keys_signed_in_40", keys);
 
-    for picture in [&accounts, &keys] {
+    for picture in [&plans, &keys] {
         assert!(!picture.contains("fabricated"), "{picture}");
     }
 }
