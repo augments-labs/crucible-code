@@ -601,7 +601,17 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // error, and the sentence is drawn under the welcome: a file that is only
     // ever an alternative to an exported variable must not be what ends a run
     // that never needed it.
-    let keys = Store::in_home(home.path()).read();
+    //
+    // A second credential for one provider, which only 0.43.3 writing after a
+    // roll back leaves, is taken out first and said in the same place.
+    let rows = crucible_app::providers::Rows::production();
+    let store = Store::in_home(home.path()).naming(rows.names());
+    let settled = startup::settle(&store, &rows);
+    let keys = store.read();
+    let trouble = match (settled, keys.trouble()) {
+        (Some(settled), Some(read)) => Some(format!("{settled}; {read}")),
+        (settled, read) => settled.or_else(|| read.map(str::to_owned)),
+    };
     let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
@@ -722,7 +732,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // being picked up is one of this directory's, and which directory that
         // is was decided before the first prompt.
         // The same directory the keys above were read from.
-        logins: Store::in_home(home.path()),
+        logins: Store::in_home(home.path()).naming(rows.names()),
         // The account logins `/login` can start, the same registry the launch
         // resolved stored subscriptions through.
         subscriptions: subscriptions.clone(),
@@ -779,7 +789,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         &Opening {
             model: launch.model.as_deref(),
             unasked: launch.unasked,
-            trouble: keys.trouble(),
+            trouble: trouble.as_deref(),
             workspace: &workspace,
             sessions: &sessions,
             update: update.as_ref(),

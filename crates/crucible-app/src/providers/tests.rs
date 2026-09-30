@@ -1162,3 +1162,74 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         );
     }
 }
+
+#[test]
+fn every_row_is_named_once_in_its_map_and_its_name_gives_it_back() {
+    let rows = Rows::production();
+    let all = rows.all();
+    for row in all {
+        assert_eq!(rows.of(row.kind, row.stored), Some(row), "{row:?}");
+        assert_eq!(
+            crucible_auth::provider_of(row.stored),
+            row.provider,
+            "{row:?}"
+        );
+        assert!(
+            row.stored
+                .chars()
+                .all(|character| character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || matches!(character, '.' | '-' | '@'))
+                && row.stored.matches('@').count() <= 1,
+            "{row:?}"
+        );
+    }
+    for (at, one) in all.iter().enumerate() {
+        for other in all.iter().skip(at + 1) {
+            assert!(
+                !(one.kind == other.kind && one.stored == other.stored),
+                "{one:?} and {other:?} share a name"
+            );
+        }
+    }
+}
+
+#[test]
+fn only_a_row_0_43_3_knows_is_written_under_the_bare_name() {
+    let rows = Rows::production();
+    for row in rows.all() {
+        assert_eq!(row.stored == row.provider, row.known, "{row:?}");
+        // Under a name 0.43.3 serves sits only what 0.43.3 sends to the same
+        // hosts: under `moonshot`, a kimi.com credential.
+        if row.stored == "moonshot" {
+            assert_eq!(row.site, Some("kimi.com"), "{row:?}");
+        }
+    }
+    let known: Vec<(crucible_auth::Kind, &str)> = rows
+        .all()
+        .iter()
+        .filter(|row| row.known)
+        .map(|row| (row.kind, row.stored))
+        .collect();
+    assert_eq!(known.len(), 6, "{known:?}");
+}
+
+#[test]
+fn every_provider_has_one_environment_row_and_every_row_a_served_provider() {
+    let rows = Rows::production();
+    for served in every() {
+        let environment: Vec<&Row> = rows
+            .all()
+            .iter()
+            .filter(|row| row.provider == served.name && row.environment)
+            .collect();
+        assert_eq!(environment.len(), 1, "{}", served.name);
+        assert!(environment.iter().all(|row| row.list == List::Key));
+    }
+    for row in rows.all() {
+        assert!(
+            every().iter().any(|served| served.name == row.provider),
+            "{row:?}"
+        );
+    }
+}

@@ -737,15 +737,29 @@ fn credential(
     {
         return Ok((subscribed.endpoint, subscribed.credential));
     }
+    // A key is sent to the address of the row it was given on: the variable's
+    // to its provider's environment row, a stored one to the row its name
+    // says. A configured address takes either, as it always has.
+    let rows = crate::providers::Rows::production();
+    let address = |row: Option<&crate::providers::Row>| row.and_then(|row| row.address.clone());
     match ApiKey::from_lookup(audience.variable, auth.from) {
         Ok(exported) => Ok((
-            sending.unwrap_or(audience.vendor),
+            sending
+                .or_else(|| address(rows.environment(audience.provider)))
+                .unwrap_or(audience.vendor),
             Box::new(HeaderKey::new(exported, Header::bearer())),
         )),
         Err(absent) => {
-            if let Some(written) = auth.stored.get(audience.provider) {
+            if let Some(held) = auth
+                .stored
+                .held(audience.provider)
+                .filter(|held| held.kind == crucible_auth::Kind::Key)
+                && let Some(written) = auth.stored.get(&held.name)
+            {
                 return Ok((
-                    sending.unwrap_or(audience.vendor),
+                    sending
+                        .or_else(|| address(rows.of(held.kind, &held.name)))
+                        .unwrap_or(audience.vendor),
                     Box::new(HeaderKey::new(written, Header::bearer())),
                 ));
             }
@@ -763,6 +777,53 @@ fn credential(
             Err(absent.into())
         }
     }
+}
+
+/// Takes out, at a start, a second credential a provider holds, and says what
+/// that did in one line; nothing where there was none.
+///
+/// Only a write by 0.43.3 after a roll back leaves two. The one under the bare
+/// name is the one 0.43.3 wrote and is used; the other is taken out in one
+/// locked write. Where that write cannot be made the start goes on with the
+/// same credential and the line says so without claiming anything went.
+#[must_use]
+pub fn settle(store: &crucible_auth::Store, rows: &crate::providers::Rows) -> Option<String> {
+    let settled = store.settle();
+    if settled.dropped.is_empty() {
+        return None;
+    }
+    let read = store.read();
+    let mut said = Vec::new();
+    let providers: std::collections::BTreeSet<&str> = settled
+        .dropped
+        .iter()
+        .map(|dropped| crucible_auth::provider_of(&dropped.name))
+        .collect();
+    for provider in providers {
+        let kept = rows
+            .held(provider, &read)
+            .map_or_else(|| provider.to_owned(), crate::providers::Row::credential);
+        let went: Vec<String> = settled
+            .dropped
+            .iter()
+            .filter(|dropped| crucible_auth::provider_of(&dropped.name) == provider)
+            .map(|dropped| {
+                rows.of(dropped.kind, &dropped.name)
+                    .map_or_else(|| dropped.name.clone(), crate::providers::Row::credential)
+            })
+            .collect();
+        let went = went.join(" and the ");
+        said.push(if settled.unwritten.is_none() {
+            format!(
+                "two credentials were stored for {provider}; the {went} was removed, and the {kept} is used"
+            )
+        } else {
+            format!(
+                "two credentials are stored for {provider}; the {kept} is used, and the {went} stays in the store until a start can remove it"
+            )
+        });
+    }
+    Some(said.join("; "))
 }
 
 /// What answers the two web tools, where this session has anything to.
@@ -932,14 +993,16 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
         return Reaching::nothing();
     };
 
-    if endpoint.as_str() != Moonshot::CODING.as_str() {
-        return Reaching::nothing();
+    // Each site's services take that site's credential, and a session sent
+    // anywhere else by a setting gets none rather than a pair that refuse it.
+    let transport = Box::new(wiring.http.clone());
+    if endpoint == Moonshot::CODING {
+        Reaching::both(Arc::new(MoonshotWeb::new(credential, transport)))
+    } else if endpoint == Moonshot::CODING_AI {
+        Reaching::both(Arc::new(MoonshotWeb::global(credential, transport)))
+    } else {
+        Reaching::nothing()
     }
-
-    Reaching::both(Arc::new(MoonshotWeb::new(
-        credential,
-        Box::new(wiring.http.clone()),
-    )))
 }
 
 /// Where a setting says this provider's requests should go, where one does.

@@ -14,7 +14,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crucible_auth::{
-    KimiOAuth, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Renewals, Store,
+    KimiOAuth, KimiSite, Kind, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Renewals, Store,
     StoredCredentials, SubscriptionLogin,
 };
 use crucible_credentials::Credential;
@@ -47,6 +47,8 @@ pub struct Account {
 #[derive(Debug, Clone, Copy)]
 pub struct Route {
     provider: &'static str,
+    /// The name the sign-in it starts is written under.
+    name: &'static str,
     method: LoginMethod,
     title: &'static str,
     /// The short name at the left of the picker.
@@ -87,6 +89,10 @@ impl Subscriptions {
                     endpoint: OpenAi::SUBSCRIPTION,
                 },
                 Registered {
+                    login: Arc::new(KimiOAuth::at(renewals.clone(), KimiSite::Ai)),
+                    endpoint: Moonshot::CODING_AI,
+                },
+                Registered {
                     login: Arc::new(KimiOAuth::new(renewals.clone())),
                     endpoint: Moonshot::CODING,
                 },
@@ -106,6 +112,7 @@ impl Subscriptions {
             routes: Arc::new([
                 Route {
                     provider: "openai",
+                    name: "openai",
                     method: OpenAiOAuth::BROWSER,
                     title: "Log in to ChatGPT",
                     shown: "Continue in browser",
@@ -113,6 +120,7 @@ impl Subscriptions {
                 },
                 Route {
                     provider: "openai",
+                    name: "openai",
                     method: OpenAiOAuth::DEVICE,
                     title: "Log in to ChatGPT",
                     shown: "Use a device code",
@@ -120,6 +128,15 @@ impl Subscriptions {
                 },
                 Route {
                     provider: "moonshot",
+                    name: KimiSite::Ai.name(),
+                    method: KimiOAuth::DEVICE,
+                    title: "Log in to Kimi Code",
+                    shown: "Use a device code",
+                    says: "authorize the Kimi Code plan in a browser",
+                },
+                Route {
+                    provider: "moonshot",
+                    name: KimiSite::Com.name(),
                     method: KimiOAuth::DEVICE,
                     title: "Log in to Kimi Code",
                     shown: "Use a device code",
@@ -135,19 +152,21 @@ impl Subscriptions {
         &self.accounts
     }
 
-    /// The login methods registered for one provider.
-    pub fn routes(&self, provider: &str) -> Vec<Route> {
+    /// The login methods registered for the sign-in written under `name`.
+    pub fn routes(&self, name: &str) -> Vec<Route> {
         self.routes
             .iter()
             .copied()
-            .filter(move |route| route.provider == provider)
+            .filter(move |route| route.name == name)
             .collect()
     }
 
     /// Whether this build can sign in to `provider` with a subscription.
     #[must_use]
     pub fn supports(&self, provider: &str) -> bool {
-        self.find(provider).is_some()
+        self.providers
+            .iter()
+            .any(|registered| registered.login.provider() == provider)
     }
 
     /// Starts one route from this registry.
@@ -156,30 +175,40 @@ impl Subscriptions {
     ///
     /// [`OAuthError`] from the selected implementation.
     pub fn start(&self, route: Route, store: Store) -> Result<LoginAttempt, OAuthError> {
-        self.find(route.provider)
+        self.find(route.name)
             .ok_or(OAuthError::Method)?
             .login
             .start(route.method, store)
     }
 
-    /// Resolves a stored subscription without exposing its token.
+    /// Resolves the sign-in `provider` holds without exposing its token,
+    /// paired with the one address its site serves it at.
     #[must_use]
     pub fn credential(&self, provider: &str, stored: &StoredCredentials) -> Option<Resolved> {
-        let registered = self.find(provider)?;
+        let held = stored
+            .held(provider)
+            .filter(|held| held.kind == Kind::Account)?;
+        let registered = self.find(&held.name)?;
         Some(Resolved {
             credential: registered.login.credential(stored)?,
             endpoint: registered.endpoint.clone(),
         })
     }
 
-    fn find(&self, provider: &str) -> Option<&Registered> {
+    fn find(&self, name: &str) -> Option<&Registered> {
         self.providers
             .iter()
-            .find(|registered| registered.login.provider() == provider)
+            .find(|registered| registered.login.name() == name)
     }
 }
 
 impl Route {
+    /// The name the sign-in it starts is written under.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        self.name
+    }
+
     /// The provider selected after this route completes.
     #[must_use]
     pub const fn provider(self) -> &'static str {

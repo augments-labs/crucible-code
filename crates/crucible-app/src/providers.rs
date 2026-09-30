@@ -10,10 +10,10 @@
 
 use std::fmt;
 
-use crucible_auth::StoredCredentials;
+use crucible_auth::{Held, Kind, Names, StoredCredentials};
 use crucible_config::Settings;
 use crucible_models::{Effort, ModelCapabilities, ModelError, ModelLimits, Provider};
-use crucible_provider::HttpTurns;
+use crucible_provider::{Endpoint, HttpTurns, Moonshot, OpenAi};
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
@@ -124,6 +124,237 @@ const PROVIDERS: [Served; 4] = [
         ],
     },
 ];
+
+/// The `/login` list a row stands in: what pays for what is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum List {
+    /// An account whose plan includes the usage.
+    Subscription,
+    /// A key, billed by what is sent.
+    Key,
+}
+
+/// One way to sign in: a kind of credential, a provider, and a site where the
+/// provider has more than one.
+///
+/// Its stored name is written into files people keep, so it never changes once
+/// shipped; its shown name may. The row a credential was given on is read off
+/// the map it is in and that name, and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    /// The list it stands in.
+    pub list: List,
+    /// Its name in that list: `Kimi Code · kimi.ai`.
+    pub shown: &'static str,
+    /// The provider's typed name: `moonshot`.
+    pub provider: &'static str,
+    /// What tells it from the provider's other rows, where there are others.
+    pub site: Option<&'static str>,
+    /// Its own words beneath its name, where they are not the variable to
+    /// set: a key row that reads from a variable says that instead.
+    pub says: Option<&'static str>,
+    /// The map its credential is written into.
+    pub kind: Kind,
+    /// The prefix every key of this row starts with, where one is known.
+    pub mark: Option<&'static str>,
+    /// The name its credential is written under: the bare provider name for
+    /// a row 0.43.3 also knows, the provider, `@` and its site for the rest.
+    pub stored: &'static str,
+    /// Whether a key from the provider's variable belongs to it: one key row
+    /// of each provider.
+    pub environment: bool,
+    /// Whether 0.43.3 has it, and so reads its credential under the bare name.
+    pub known: bool,
+    /// Where its requests go, where that is not the provider's own address.
+    pub address: Option<Endpoint>,
+}
+
+impl Row {
+    /// What its credential is called: `OpenAI sign-in`, `MoonshotAI · kimi.com
+    /// key`.
+    #[must_use]
+    pub fn credential(&self) -> String {
+        match self.kind {
+            Kind::Account => format!("{} sign-in", self.shown),
+            Kind::Key => format!("{} key", self.shown),
+        }
+    }
+}
+
+/// Every row this build signs in with.
+///
+/// Subscription rows in the order the vendors are grouped; key rows by shown
+/// name, since that list is long and looked up by name. A provider's rows share
+/// its typed name, and each carries the name its credential is stored under.
+const ROWS: [Row; 8] = [
+    Row {
+        list: List::Subscription,
+        shown: "OpenAI",
+        provider: "openai",
+        site: None,
+        says: Some("ChatGPT plan usage with Plus, Pro, Business and Enterprise"),
+        kind: Kind::Account,
+        mark: None,
+        stored: "openai",
+        environment: false,
+        known: true,
+        address: Some(OpenAi::SUBSCRIPTION),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Kimi Code · kimi.ai",
+        provider: "moonshot",
+        site: Some("kimi.ai"),
+        says: Some("Kimi Code plan usage, accounts outside mainland China"),
+        kind: Kind::Account,
+        mark: None,
+        stored: "moonshot@kimi.ai",
+        environment: false,
+        known: false,
+        address: Some(Moonshot::CODING_AI),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Kimi Code · kimi.com",
+        provider: "moonshot",
+        site: Some("kimi.com"),
+        says: Some("Kimi Code plan usage, mainland China accounts"),
+        kind: Kind::Account,
+        mark: None,
+        stored: "moonshot",
+        environment: false,
+        known: true,
+        address: Some(Moonshot::CODING),
+    },
+    Row {
+        list: List::Key,
+        shown: "Anthropic",
+        provider: "anthropic",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "anthropic",
+        environment: true,
+        known: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "Google",
+        provider: "google",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "google",
+        environment: true,
+        known: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "MoonshotAI · kimi.ai",
+        provider: "moonshot",
+        site: Some("kimi.ai"),
+        says: Some("a Kimi Code Console key, accounts outside mainland China"),
+        kind: Kind::Key,
+        mark: None,
+        stored: "moonshot@kimi.ai",
+        environment: false,
+        known: false,
+        address: Some(Moonshot::CODING_AI),
+    },
+    Row {
+        list: List::Key,
+        shown: "MoonshotAI · kimi.com",
+        provider: "moonshot",
+        site: Some("kimi.com"),
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "moonshot",
+        environment: true,
+        known: true,
+        address: Some(Moonshot::CODING),
+    },
+    Row {
+        list: List::Key,
+        shown: "OpenAI",
+        provider: "openai",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "openai",
+        environment: true,
+        known: true,
+        address: None,
+    },
+];
+
+/// The rows `/login` offers and the store's names come from.
+///
+/// One value handed around rather than the table read where it is needed, so a
+/// screen can be handed rows it was not built with and draw them all the same.
+#[derive(Debug, Clone)]
+pub struct Rows {
+    rows: std::sync::Arc<[Row]>,
+}
+
+impl Rows {
+    /// The rows this build ships.
+    #[must_use]
+    pub fn production() -> Self {
+        Self::new(ROWS.to_vec())
+    }
+
+    /// Any rows, for a caller that builds its own.
+    #[must_use]
+    pub fn new(rows: Vec<Row>) -> Self {
+        Self { rows: rows.into() }
+    }
+
+    /// Every row, in the order the lists show them.
+    #[must_use]
+    pub fn all(&self) -> &[Row] {
+        &self.rows
+    }
+
+    /// The rows of one list.
+    pub fn listed(&self, list: List) -> impl Iterator<Item = &Row> {
+        self.rows.iter().filter(move |row| row.list == list)
+    }
+
+    /// The names the store writes credentials under.
+    #[must_use]
+    pub fn names(&self) -> Names {
+        Names::new(self.rows.iter().map(|row| row.stored))
+    }
+
+    /// The row a credential held in `kind`'s map under `name` was given on.
+    #[must_use]
+    pub fn of(&self, kind: Kind, name: &str) -> Option<&Row> {
+        self.rows
+            .iter()
+            .find(|row| row.kind == kind && row.stored == name)
+    }
+
+    /// The row a key from `provider`'s variable belongs to.
+    #[must_use]
+    pub fn environment(&self, provider: &str) -> Option<&Row> {
+        self.rows
+            .iter()
+            .find(|row| row.provider == provider && row.environment)
+    }
+
+    /// The row of the credential `provider` is served by from the store.
+    #[must_use]
+    pub fn held(&self, provider: &str, stored: &StoredCredentials) -> Option<&Row> {
+        let Held { kind, name } = stored.held(provider)?;
+        self.of(kind, &name)
+    }
+}
 
 /// What the generated table knows about a model's limits, if it knows anything.
 ///
@@ -666,9 +897,10 @@ pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option
         stored,
         subscriptions,
     } = auth;
+    let held = stored.held(one.name);
     if settings.base_url(one.name).is_none()
         && subscriptions.supports(one.name)
-        && stored.has_subscription(one.name)
+        && held.as_ref().is_some_and(|held| held.kind == Kind::Account)
     {
         return Some(CredentialSource::Subscription);
     }
@@ -676,7 +908,7 @@ pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option
     if from(variable).is_some_and(|value| !value.trim().is_empty()) {
         return Some(CredentialSource::Environment(variable.into()));
     }
-    if stored.has_key(one.name) {
+    if held.is_some_and(|held| held.kind == Kind::Key) {
         return Some(CredentialSource::StoredKey);
     }
     None
