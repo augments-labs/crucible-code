@@ -120,9 +120,11 @@ cd ~/code/my-project
 crucible
 ```
 
-You can instead start without an environment key and use `/login`. Authentication
-does not silently choose a model; `/model` selects the provider, model and
-supported reasoning effort explicitly.
+You can instead start without an environment key and use `/login`, which asks
+how usage is paid for: your account with a subscription (OpenAI, or Kimi Code on
+kimi.ai or kimi.com), or your own API key. Authentication does not silently
+choose a model; `/model` selects the provider, model and supported reasoning
+effort explicitly.
 
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
 accept API keys only, not product subscription logins.

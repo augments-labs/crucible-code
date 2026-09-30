@@ -76,9 +76,6 @@ impl Sample {
     }
 
     /// The disposable user-home root, a directory outside the workspace.
-    ///
-    /// Only a Unix test still asks for it, so elsewhere it is not compiled.
-    #[cfg(unix)]
     pub(crate) fn home(&self) -> PathBuf {
         self.base.join("home")
     }
@@ -106,7 +103,7 @@ impl Sample {
     pub(crate) fn subscribed(&self, provider: &str) -> StoredCredentials {
         let home = self.base.join("home");
         fs::create_dir_all(&home).expect("a temporary home");
-        let details = if provider == "moonshot" {
+        let details = if provider.starts_with("moonshot") {
             r#"{"device_id":"01234567-89ab-4cde-8fab-0123456789ab","expires_in":"3600"}"#
         } else {
             r#"{"account_id":"test-account"}"#
@@ -156,7 +153,16 @@ impl Sample {
     /// The store this tree keeps, which is the file `/login` writes and
     /// `/logout` takes a name back out of.
     pub(crate) fn store(&self) -> Store {
-        Store::in_home(&self.base.join("home"))
+        Store::in_home(&self.base.join("home")).naming(crate::providers::Rows::production().names())
+    }
+
+    /// The store this tree holds, with `text` on the disk as its file.
+    pub(crate) fn holding(&self, text: &str) -> StoredCredentials {
+        let home = self.base.join("home");
+        fs::create_dir_all(&home).expect("a temporary home");
+        fs::write(home.join("auth.json"), text).expect("a writable store");
+
+        self.store().read()
     }
 
     /// Resolves `document`, written as the project's `.crucible/<file>`.

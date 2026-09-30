@@ -559,3 +559,380 @@ fn a_second_crucible_writing_at_the_same_time_loses_nobody_a_login() {
         "a write that read the file before another finished would have dropped one"
     );
 }
+
+/// What is on the disk, as text. Every value in these tests is fabricated.
+fn on_disk(scratch: &Scratch) -> String {
+    fs::read_to_string(scratch.home().join(FILE)).expect("a store on the disk")
+}
+
+#[test]
+fn a_write_keeps_every_name_this_build_does_not_serve_and_drops_a_field_it_does_not_know() {
+    let scratch = Scratch::new("kept-names");
+    let store = scratch.holding(
+        r#"{"version":2,"keys":{"qwen@coding-plan.aliyun.com":"fabricated-plan-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{"moonshot@kimi.ai":"00000000-0000-4000-8000-000000000000"},"rows":{"added":"field"}}"#,
+    );
+
+    let read = store.read();
+    // A file this test wrote with the default mode is tightened on its first
+    // read, and the store says so once. Nothing else may be said.
+    assert!(
+        read.trouble().is_none_or(|said| said.contains("tightened")),
+        "the store was read whole"
+    );
+    assert_eq!(read.providers().count(), 2, "both names were read");
+
+    store.keep("openai", "fabricated-openai-key").unwrap();
+    let text = on_disk(&scratch);
+    assert!(text.contains(r#""qwen@coding-plan.aliyun.com":"fabricated-plan-key""#));
+    assert!(text.contains(r#""moonshot@kimi.ai":{"access_token":"fabricated-access""#));
+    assert!(text.contains("00000000-0000-4000-8000-000000000000"));
+    assert!(text.contains(r#""openai":"fabricated-openai-key""#));
+    assert!(text.contains(r#""version":2"#));
+    assert!(
+        !text.contains("rows"),
+        "a field this build does not know is gone"
+    );
+
+    // A key for the provider whose other row is held: 0.43.3 stores it
+    // beside that row rather than in its place.
+    store.keep("moonshot", "fabricated-moonshot-key").unwrap();
+    let text = on_disk(&scratch);
+    assert!(text.contains(r#""moonshot":"fabricated-moonshot-key""#));
+    assert!(text.contains(r#""moonshot@kimi.ai":{"access_token":"fabricated-access""#));
+    assert!(store.read().trouble().is_none());
+
+    // And forgetting the provider leaves the other name where it was.
+    assert!(store.forget("moonshot").unwrap());
+    let text = on_disk(&scratch);
+    assert!(!text.contains("fabricated-moonshot-key"));
+    assert!(text.contains(r#""moonshot@kimi.ai""#));
+}
+
+/// The names a build with two Kimi sites writes under, and one provider with a
+/// single row. Every value in the tests below is fabricated.
+fn named() -> Names {
+    Names::new(["moonshot", "moonshot@kimi.ai", "openai", "anthropic"])
+}
+
+/// Every row of `named`, by the map its credential sits in and its name.
+fn rows() -> Vec<(Kind, &'static str)> {
+    let mut rows = Vec::new();
+    for name in ["moonshot", "moonshot@kimi.ai", "openai", "anthropic"] {
+        rows.push((Kind::Key, name));
+        rows.push((Kind::Account, name));
+    }
+    rows
+}
+
+/// Writes `row`'s credential the way `/login` does.
+fn give(store: &Store, (kind, name): (Kind, &str), canary: &str) -> Vec<Dropped> {
+    match kind {
+        Kind::Key => store.keep(name, &format!("key-{canary}")),
+        Kind::Account => store.keep_subscription(name, subscription(canary)),
+    }
+    .expect("a writable store")
+}
+
+/// Every credential on the disk, by map and name, parsed the way 0.43.3
+/// parses a store: the parser is the one it shipped.
+fn on_the_disk(scratch: &Scratch) -> Vec<(Kind, String)> {
+    let text = on_disk(scratch);
+    assert!(text.len() <= MAX_STORE, "{} bytes", text.len());
+    let document = document::parse(&text).expect("a file 0.43.3 reads whole");
+    assert!(text.contains(r#""version":2"#), "{text}");
+    document
+        .keys
+        .keys()
+        .map(|name| (Kind::Key, name.clone()))
+        .chain(
+            document
+                .subscriptions
+                .keys()
+                .map(|name| (Kind::Account, name.clone())),
+        )
+        .collect()
+}
+
+#[test]
+fn every_pair_of_rows_leaves_a_provider_one_credential_and_says_which_went() {
+    for first in rows() {
+        for second in rows() {
+            if provider_of(first.1) != provider_of(second.1) {
+                continue;
+            }
+            let scratch = Scratch::new("one-each");
+            let store = Store::in_home(scratch.home()).naming(named());
+            give(&store, first, "first");
+            let dropped = give(&store, second, "second");
+
+            let held = on_the_disk(&scratch);
+            let at = format!("{first:?} then {second:?}: {held:?}");
+            assert_eq!(held, vec![(second.0, second.1.to_owned())], "{at}");
+            let wanted: Vec<Dropped> = (first != second)
+                .then(|| Dropped {
+                    kind: first.0,
+                    name: first.1.to_owned(),
+                })
+                .into_iter()
+                .collect();
+            assert_eq!(dropped, wanted, "{at}");
+        }
+    }
+}
+
+#[test]
+fn a_write_for_one_provider_leaves_every_other_providers_credential() {
+    let scratch = Scratch::new("others-kept");
+    let store = Store::in_home(scratch.home()).naming(named());
+    give(&store, (Kind::Key, "openai"), "openai");
+    give(&store, (Kind::Account, "moonshot@kimi.ai"), "kimi");
+    give(&store, (Kind::Key, "moonshot"), "moonshot");
+
+    assert_eq!(
+        on_the_disk(&scratch),
+        vec![
+            (Kind::Key, "moonshot".to_owned()),
+            (Kind::Key, "openai".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn where_two_are_held_the_one_under_the_bare_name_serves_the_provider() {
+    let scratch = Scratch::new("bare-wins");
+    let store = scratch
+        .holding(
+            r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{}}"#,
+        )
+        .naming(named());
+
+    assert_eq!(
+        store.read().held("moonshot"),
+        Some(Held {
+            kind: Kind::Key,
+            name: "moonshot".to_owned()
+        })
+    );
+}
+
+#[test]
+fn a_name_this_build_does_not_write_is_never_used_and_never_removed() {
+    let scratch = Scratch::new("unknown-name");
+    let store = scratch
+        .holding(
+            r#"{"version":2,"keys":{"moonshot@kimi.cn":"fabricated-later-key"},"subscriptions":{},"identities":{}}"#,
+        )
+        .naming(named());
+
+    assert_eq!(store.read().held("moonshot"), None);
+
+    give(&store, (Kind::Account, "moonshot@kimi.ai"), "kimi");
+    assert!(store.forget("moonshot").expect("a writable store"));
+    let text = on_disk(&scratch);
+    assert!(text.contains("fabricated-later-key"), "{text}");
+    assert!(!text.contains("access-kimi"), "{text}");
+}
+
+#[test]
+fn forgetting_a_provider_holding_two_takes_both_out_in_one_write() {
+    let scratch = Scratch::new("forget-both");
+    let store = scratch
+        .holding(
+            r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{}}"#,
+        )
+        .naming(named());
+
+    assert!(store.forget("moonshot").expect("a writable store"));
+    assert_eq!(on_the_disk(&scratch), Vec::new());
+}
+
+/// A store as 0.43.3 leaves one after a roll back: its own `moonshot` key
+/// beside the kimi.ai sign-in the new release wrote.
+const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}},"identities":{"moonshot@kimi.ai":"00000000-0000-4000-8000-000000000000"}}"#;
+
+#[test]
+fn a_start_that_finds_two_for_a_provider_keeps_the_bare_one_and_says_which_went() {
+    let scratch = Scratch::new("settled");
+    let store = scratch.holding(TWO_HELD).naming(named());
+
+    let settled = store.settle();
+
+    let Settled::Removed(dropped) = settled else {
+        panic!("{settled:?}");
+    };
+    assert_eq!(
+        dropped,
+        vec![Dropped {
+            kind: Kind::Account,
+            name: "moonshot@kimi.ai".to_owned()
+        }]
+    );
+    assert_eq!(
+        on_the_disk(&scratch),
+        vec![(Kind::Key, "moonshot".to_owned())]
+    );
+    // The installation's identity outlives the credential it was made for.
+    assert!(on_disk(&scratch).contains("00000000-0000-4000-8000-000000000000"));
+    // And a second start finds nothing to do.
+    assert!(matches!(store.settle(), Settled::Nothing));
+}
+
+#[test]
+fn a_start_that_cannot_write_goes_on_with_the_bare_one_and_leaves_the_file() {
+    let scratch = Scratch::new("settle-unwritable");
+    let store = scratch.holding(TWO_HELD).naming(named());
+    // Read once so the file is tightened, then stand a directory where the
+    // write puts its temporary: the write is refused, as a full disk would.
+    let _ = store.read();
+    let before = on_disk(&scratch);
+    fs::create_dir(scratch.home().join(PARTIAL)).expect("a directory this test made");
+
+    let settled = store.settle();
+
+    assert!(
+        matches!(&settled, Settled::Stayed { found, .. } if found.len() == 1),
+        "{settled:?}"
+    );
+    assert_eq!(on_disk(&scratch), before);
+    assert_eq!(
+        store.read().held("moonshot").map(|held| held.kind),
+        Some(Kind::Key)
+    );
+}
+
+#[test]
+fn what_a_provider_holds_is_read_by_name_and_kind_alone() {
+    let scratch = Scratch::new("holding");
+    let store = scratch.holding(TWO_HELD).naming(named());
+    store
+        .keep("openai", "fabricated-openai-key")
+        .expect("a writable store");
+
+    let holding = store.holding().expect("a store that reads whole");
+
+    assert_eq!(
+        holding,
+        vec![
+            Held {
+                kind: Kind::Key,
+                name: "moonshot".to_owned(),
+            },
+            Held {
+                kind: Kind::Key,
+                name: "openai".to_owned(),
+            },
+        ]
+    );
+    let said = format!("{holding:?}");
+    assert!(!said.contains("fabricated"), "{said}");
+}
+
+#[test]
+fn a_store_that_cannot_be_read_whole_is_said_before_anything_is_marked() {
+    let unreadable = Scratch::new("holding-unreadable");
+    let store = unreadable.holding("not json {").naming(named());
+    assert!(
+        matches!(store.holding(), Err(AuthError::Unreadable { .. })),
+        "{:?}",
+        store.holding()
+    );
+
+    let large = Scratch::new("holding-large");
+    let store = large.holding(&"x".repeat(MAX_STORE + 1)).naming(named());
+    assert!(
+        matches!(store.holding(), Err(AuthError::TooLarge { .. })),
+        "{:?}",
+        store.holding()
+    );
+
+    let nothing = Scratch::new("holding-nothing");
+    let store = Store::in_home(nothing.home()).naming(named());
+    assert_eq!(store.holding().ok(), Some(Vec::new()));
+}
+
+/// Holds the store's lock the way another crucible writing does, until
+/// dropped.
+fn another_crucible_writing(scratch: &Scratch) -> Lock {
+    Lock::take(&scratch.home().join(LOCK), &scratch.home().join(FILE))
+        .expect("the lock, taken first")
+}
+
+#[test]
+fn a_start_meeting_another_crucibles_lock_still_finds_the_second_credential() {
+    let scratch = Scratch::new("settle-busy");
+    let store = scratch.holding(TWO_HELD).naming(named());
+    let _ = store.read();
+    let before = on_disk(&scratch);
+    let _held = another_crucible_writing(&scratch);
+
+    let settled = store.settle();
+
+    assert!(
+        matches!(
+            &settled,
+            Settled::Stayed { found, why: AuthError::Busy { .. } }
+                if found == &[Dropped { kind: Kind::Account, name: "moonshot@kimi.ai".to_owned() }]
+        ),
+        "{settled:?}"
+    );
+    assert_eq!(on_disk(&scratch), before);
+}
+
+#[test]
+fn a_start_with_one_credential_each_waits_on_no_lock() {
+    let scratch = Scratch::new("settle-idle");
+    let store = scratch
+        .holding(r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key","openai":"fabricated-openai-key"},"subscriptions":{}}"#)
+        .naming(named());
+    let _ = store.read();
+    let _held = another_crucible_writing(&scratch);
+
+    let started = std::time::Instant::now();
+    let settled = store.settle();
+
+    assert!(matches!(settled, Settled::Nothing), "{settled:?}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_store_that_is_not_text_is_one_that_cannot_be_read_rather_than_reached() {
+    // The file is there and opens; what it holds is not UTF-8. Moving it aside
+    // is the way back in, not fixing permissions that are fine.
+    let scratch = Scratch::new("holding-not-text");
+    fs::write(scratch.home().join(FILE), [0x7b, 0xff, 0xfe, 0x7d]).expect("a store");
+    let store = Store::in_home(scratch.home()).naming(named());
+
+    assert!(
+        matches!(store.holding(), Err(AuthError::Unreadable { .. })),
+        "{:?}",
+        store.holding()
+    );
+    assert!(
+        matches!(
+            store.keep("openai", "fabricated-openai-key"),
+            Err(AuthError::Unreadable { .. })
+        ),
+        "a write refuses it the same way"
+    );
+}
+
+#[test]
+fn a_store_past_its_limit_is_too_large_wherever_the_limit_falls() {
+    // The limit falls inside a two-byte character: what is read stops half
+    // way through it, and the store is still one too large, not one that
+    // cannot be read.
+    let scratch = Scratch::new("too-large-mid-character");
+    let mut text = "x".repeat(MAX_STORE);
+    text.push('é');
+    let store = scratch.holding(&text).naming(named());
+
+    assert!(
+        matches!(store.holding(), Err(AuthError::TooLarge { .. })),
+        "{:?}",
+        store.holding()
+    );
+}

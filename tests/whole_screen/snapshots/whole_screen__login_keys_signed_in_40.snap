@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: keys
+---
+40x30 cursor 28,0 scrolled 0
+|                                        |
+|Warning: No models available. Use /login|
+|or set an API key environment variable. |
+|Then use /model to select a model.      |
+|                                        |
+|› /login                                |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Choose the provider whose API key you   |
+|have.                                   |
+|                                        |
+|› Anthropic                             |
+|  signed in with a stored key           |
+|                                        |
+|  Google                                |
+|  set GEMINI_API_KEY                    |
+|                                        |
+|  MoonshotAI · kimi.ai                  |
+|  a Kimi Code Console key, accounts out…|
+|                                        |
+|  MoonshotAI · kimi.com                 |
+|  signed in with a stored key           |
+|                                        |
+|  OpenAI                                |
+|  set OPENAI_API_KEY                    |
+|                                        |
+|esc to go back                          |
+|                                        |

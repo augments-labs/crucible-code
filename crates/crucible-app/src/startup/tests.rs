@@ -1308,3 +1308,198 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
 
 mod conformance;
 mod lending;
+
+/// Where `stored` sends a Moonshot request, with `exported` in its variable
+/// and `sending` configured, if anything.
+fn moonshot_address(
+    stored: &StoredCredentials,
+    exported: Option<&str>,
+    sending: Option<Endpoint>,
+) -> Result<Endpoint, AppError> {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let from = |name: &str| {
+        (name == "MOONSHOT_API_KEY")
+            .then(|| exported.map(str::to_owned))
+            .flatten()
+    };
+    credential(
+        ApiAudience {
+            provider: "moonshot",
+            variable: "MOONSHOT_API_KEY",
+            vendor: Moonshot::CODING,
+        },
+        sending,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &from,
+            stored,
+            subscriptions: &subscriptions,
+        },
+    )
+    .map(|(endpoint, _)| endpoint)
+}
+
+#[test]
+fn each_kimi_row_sends_its_credential_to_its_own_site_and_to_no_other() {
+    for (name, signed_in, wanted) in [
+        ("moonshot@kimi.ai", true, Moonshot::CODING_AI),
+        ("moonshot", true, Moonshot::CODING),
+        ("moonshot@kimi.ai", false, Moonshot::CODING_AI),
+        ("moonshot", false, Moonshot::CODING),
+    ] {
+        let sample = Sample::new("kimi-row-address");
+        let stored = if signed_in {
+            sample.subscribed(name)
+        } else {
+            sample.stored(name)
+        };
+
+        let address = moonshot_address(&stored, None, None).expect("a stored credential");
+        assert_eq!(address, wanted, "{name} signed in {signed_in}");
+    }
+}
+
+#[test]
+fn a_configured_address_takes_a_kimi_ai_key_and_never_its_sign_in() {
+    let custom = Endpoint::parse("https://proxy.invalid/v1/chat/completions").unwrap();
+
+    let sample = Sample::new("kimi-ai-key-custom");
+    let stored = sample.stored("moonshot@kimi.ai");
+    assert_eq!(
+        moonshot_address(&stored, None, Some(custom.clone())).expect("a stored key"),
+        custom
+    );
+
+    let sample = Sample::new("kimi-ai-sign-in-custom");
+    let stored = sample.subscribed("moonshot@kimi.ai");
+    assert!(matches!(
+        moonshot_address(&stored, None, Some(custom)),
+        Err(AppError::SubscriptionAddress { .. })
+    ));
+}
+
+#[test]
+fn a_key_from_the_variable_goes_to_its_own_row_whatever_the_store_holds() {
+    // The variable's key belongs to kimi.com; a kimi.ai key in the store is
+    // not sent to kimi.com, and the variable's key is not sent to kimi.ai.
+    let sample = Sample::new("kimi-variable-row");
+    let stored = sample.stored("moonshot@kimi.ai");
+
+    assert_eq!(
+        moonshot_address(&stored, Some("exported-key"), None).expect("an exported key"),
+        Moonshot::CODING
+    );
+}
+
+#[test]
+fn a_store_0_43_3_wrote_signs_in_where_it_did() {
+    let sample = Sample::new("store-of-0-43-3");
+    let stored = sample.holding(
+        r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key","anthropic":"fabricated-anthropic-key"},"subscriptions":{"openai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{"account_id":"test-account"},"expires_at":18446744073709551615,"refreshed_at":1}},"identities":{}}"#,
+    );
+    let rows = crate::providers::Rows::production();
+
+    assert_eq!(
+        rows.held("moonshot", &stored).map(|row| row.shown),
+        Some("MoonshotAI · kimi.com")
+    );
+    assert_eq!(
+        rows.held("openai", &stored).map(|row| row.list),
+        Some(crate::providers::List::Subscription)
+    );
+    assert_eq!(
+        rows.held("anthropic", &stored).map(|row| row.shown),
+        Some("Anthropic")
+    );
+    assert_eq!(
+        moonshot_address(&stored, None, None).expect("the kimi.com key"),
+        Moonshot::CODING
+    );
+}
+
+/// A store as 0.43.3 leaves one after a roll back: its own `moonshot` key
+/// beside the kimi.ai sign-in the new release wrote.
+const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{"device_id":"01234567-89ab-4cde-8fab-0123456789ab","expires_in":"3600"},"expires_at":18446744073709551615,"refreshed_at":1}},"identities":{}}"#;
+
+#[test]
+fn after_a_roll_back_the_credential_0_43_3_wrote_is_the_one_sent() {
+    let sample = Sample::new("rolled-back");
+    let stored = sample.holding(TWO_HELD);
+
+    assert_eq!(
+        moonshot_address(&stored, None, None).expect("the kimi.com key"),
+        Moonshot::CODING
+    );
+}
+
+#[test]
+fn a_start_that_finds_two_says_which_went_in_one_line() {
+    let sample = Sample::new("settle-line");
+    let _ = sample.holding(TWO_HELD);
+    let rows = crate::providers::Rows::production();
+
+    let said = settle(&sample.store(), &rows, "·").expect("a line");
+
+    assert_eq!(
+        said,
+        "two credentials were stored for moonshot; the Kimi Code · kimi.ai sign-in was removed, \
+         and the MoonshotAI · kimi.com key is used"
+    );
+    assert!(!sample.store().read().has_subscription("moonshot@kimi.ai"));
+    assert_eq!(settle(&sample.store(), &rows, "·"), None);
+}
+
+#[test]
+fn a_start_that_cannot_remove_the_second_says_so_and_claims_nothing_went() {
+    let sample = Sample::new("settle-unwritten");
+    let _ = sample.holding(TWO_HELD);
+    std::fs::create_dir(sample.home().join("auth.json.new")).expect("a directory this test made");
+    let rows = crate::providers::Rows::production();
+
+    let said = settle(&sample.store(), &rows, "·").expect("a line");
+
+    assert!(
+        said.starts_with(
+            "two credentials are stored for moonshot; the MoonshotAI · kimi.com key is used"
+        ),
+        "{said}"
+    );
+    assert!(!said.contains("was removed"), "{said}");
+    // It comes back at every start, so it says why.
+    assert!(
+        said.contains("stays in the store until a start can remove it: "),
+        "{said}"
+    );
+    assert!(sample.store().read().has_subscription("moonshot@kimi.ai"));
+}
+
+#[test]
+fn each_kimi_site_answers_the_web_tools_of_the_credential_sent_to_it_and_no_other() {
+    let lookup = |_: &str| Some("fabricated".to_owned());
+    let key = || -> Box<dyn crucible_credentials::Credential> {
+        Box::new(crucible_credentials::HeaderKey::new(
+            crucible_credentials::ApiKey::from_lookup("K", lookup).expect("a key"),
+            crucible_credentials::Header::bearer(),
+        ))
+    };
+    let transport =
+        || -> Box<dyn crucible_provider::Transport> { Box::new(HttpTurns::unavailable()) };
+
+    for (endpoint, site, other) in [
+        (Moonshot::CODING_AI, "api.kimi.ai", "api.kimi.com"),
+        (Moonshot::CODING, "api.kimi.com", "api.kimi.ai"),
+    ] {
+        let source = moonshot_site(&endpoint, key(), transport()).expect("that site's services");
+        let said = format!("{source:?}");
+        // The paths are redacted from what is printed; the provider's own
+        // tests hold them. Both services stand on the site's host.
+        assert_eq!(
+            said.matches(&format!("https://{site}/")).count(),
+            2,
+            "{said}"
+        );
+        assert!(!said.contains(other), "{said}");
+    }
+    let custom = Endpoint::parse("https://proxy.invalid/v1/chat/completions").unwrap();
+    assert!(moonshot_site(&custom, key(), transport()).is_none());
+}

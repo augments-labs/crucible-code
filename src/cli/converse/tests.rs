@@ -1386,6 +1386,7 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
 
 mod command;
 mod held;
+mod login;
 mod question;
 mod release_notes;
 mod restricted;

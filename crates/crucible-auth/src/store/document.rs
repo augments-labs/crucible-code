@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::oauth::Tokens;
 
+use super::names::{Held, Kind, Names, provider_of};
 use super::{FILE, VERSION};
 
 const MAX_DETAILS: usize = 16;
@@ -21,6 +22,45 @@ pub(super) struct Document {
     pub(super) keys: BTreeMap<String, String>,
     pub(super) subscriptions: BTreeMap<String, Tokens>,
     pub(super) identities: BTreeMap<String, String>,
+}
+
+impl Document {
+    /// Takes the credential under `name` out of either map, but the one in
+    /// `keep`, and says what went.
+    pub(super) fn take(&mut self, name: &str, keep: Option<Kind>) -> Vec<Held> {
+        let mut taken = Vec::new();
+        if keep != Some(Kind::Key) && self.keys.remove(name).is_some() {
+            taken.push(Held::new(Kind::Key, name));
+        }
+        if keep != Some(Kind::Account) && self.subscriptions.remove(name).is_some() {
+            taken.push(Held::new(Kind::Account, name));
+        }
+        taken
+    }
+
+    /// Takes out every credential of `name`'s provider this build writes, but
+    /// the one about to be written under `name` in `kind`'s map.
+    pub(super) fn clear(&mut self, names: &Names, name: &str, kind: Kind) -> Vec<Held> {
+        let mut taken = Vec::new();
+        for other in names.of(provider_of(name)) {
+            if other != name {
+                taken.extend(self.take(other, None));
+            }
+        }
+        taken.extend(self.take(name, Some(kind)));
+        taken
+    }
+
+    /// Whether the provider's bare name holds a credential.
+    pub(super) fn holds(&self, provider: &str) -> Option<Kind> {
+        if self.subscriptions.contains_key(provider) {
+            Some(Kind::Account)
+        } else if self.keys.contains_key(provider) {
+            Some(Kind::Key)
+        } else {
+            None
+        }
+    }
 }
 
 /// The stored document, or a sentence saying why there is none.

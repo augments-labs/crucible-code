@@ -98,6 +98,7 @@ impl Sample {
     /// `/logout` takes a name back out of.
     pub(super) fn store(&self) -> Store {
         Store::in_home(&self.base.join("home"))
+            .naming(crucible_app::providers::Rows::production().names())
     }
 
     /// Resolves `document`, written as the project's `.crucible/<file>`.

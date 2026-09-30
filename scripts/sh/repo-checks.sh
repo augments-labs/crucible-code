@@ -347,6 +347,28 @@ else
     fi
 fi
 
+section "whole-screen cases reach /login rows by name"
+# A case that walks to a /login row by pressing Down a counted number of times
+# lands on another row the moment one is added above it, and still passes if
+# that row opens the same screen. Each case reaches a row by what it says,
+# through the one helper that does, so a row added moves no case.
+screens=tests/whole_screen/main.rs
+if ! grep -q '/login' "$screens"; then
+    printf '    FAIL %s types no /login; this check measured nothing\n' "$screens"
+    failed=1
+else
+    counted=$(awk '
+        /^fn |^    fn / { login = 0 }
+        /\/login/ { login = 1 }
+        login && (/\\x1b\[B.*\\x1b\[B/ || /\\x1b\[B"\.repeat/) { print FILENAME ":" FNR ": " $0 }
+    ' "$screens")
+    if [[ -n "$counted" ]]; then
+        printf '%s\n' "$counted"
+        printf '    FAIL the lines above walk to a /login row by counting Down keys; use takes()\n'
+        failed=1
+    fi
+fi
+
 section "accepted screens"
 # The whole-screen suite proves a capture matches its accepted picture. It
 # cannot prove the picture is still the one a reviewer accepted, because a

@@ -160,6 +160,34 @@ fn a_turn_still_running() -> Vendor {
     )
 }
 
+/// Moves the mark of the panel standing to the entry named `name` and takes
+/// it: a row is reached by what it says, never by how far down it stands,
+/// so a row added above it moves no case.
+fn takes(window: &mut Watched, name: &str) {
+    let marked = format!("› {name}");
+    for _ in 0..24 {
+        let picture = window.picture();
+        if picture
+            .lines()
+            .any(|row| row.trim_matches('|').trim_end() == marked)
+        {
+            window.types("\r");
+            return;
+        }
+        window.types("\x1b[B");
+    }
+    panic!("no entry reads {name}: {}", window.picture());
+}
+
+/// Walks `/login` to the key box of the provider named `name`.
+fn keyed(window: &mut Watched, name: &str) {
+    window.types_until("/login\r", "Provide your own API key");
+    takes(window, "Provide your own API key");
+    window.types_until("", "Choose the provider whose API key you have.");
+    takes(window, name);
+    window.types_until("", "paste or type your API key");
+}
+
 /// The row directly under the one that reads `› {command}`, without the
 /// picture's edges.
 fn under(picture: &str, command: &str) -> String {
@@ -220,21 +248,19 @@ fn every_onboarding_state_can_be_left_for_the_same_clean_prompt() {
     first.types_until("/login\r", "Provide your own API key");
     first.types_until("\x1b", "cancelled, nothing signed in");
 
+    // Below the first panel Escape goes back one screen at a time, so each
+    // state is left by as many presses as it stands deep.
     let mut provider = Watched::open("login-leave-provider", 80, 24);
     provider.types_until("/login\r", "Provide your own API key");
-    provider.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
+    takes(&mut provider, "Provide your own API key");
+    provider.types_until("", "Choose the provider whose API key you have.");
+    provider.types_until("\x1b", "Choose how usage is paid for.");
     provider.types_until("\x1b", "cancelled, nothing signed in");
 
     let mut secret = Watched::open("login-leave-secret", 80, 24);
-    secret.types_until("/login\r", "Provide your own API key");
-    secret.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    secret.types_until("\r", "paste or type your API key");
+    keyed(&mut secret, "Anthropic");
+    secret.types_until("\x1b", "Choose the provider whose API key you have.");
+    secret.types_until("\x1b", "Choose how usage is paid for.");
     secret.types_until("\x1b", "cancelled, nothing signed in");
 
     for picture in [first.picture(), provider.picture(), secret.picture()] {
@@ -1257,11 +1283,7 @@ fn the_provider_panel_reaches_a_turn_without_a_provider_being_named() {
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Watched::keyless("login-walked", 80, 24, &vendor);
 
-    window.types("/login\r");
-    // Down twice to the console account, past the two plans; Enter opens the
-    // panel asking whose console, and Enter again takes the one under the mark.
-    window.types("\x1b[B\x1b[B\r");
-    window.types("\r");
+    keyed(&mut window, "Anthropic");
     window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
     window.types("/model claude-test-1\r");
     window.types_until("what is 2+2\r", "Two plus two is four.");
@@ -1283,9 +1305,7 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Watched::keyless("login-written", 80, 24, &vendor);
 
-    window.types("/login\r");
-    window.types("\x1b[B\x1b[B\r");
-    window.types("\r");
+    keyed(&mut window, "Anthropic");
     window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
 
     let held = std::fs::read_to_string(window.home().join("config.json"))
@@ -1300,16 +1320,220 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
 
 #[test]
 fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own() {
-    // The first panel is a choice between things the reader has: a ChatGPT or
-    // Kimi Code subscription, or an API key of their own. Each row is named
-    // for that and the row under it says whose plan or whose bill it is —
-    // never "console", which names a vendor's product rather than what is in
-    // the reader's hands.
-    let mut window = Watched::open("login-ways", 80, 24);
+    // The first panel is a choice between two ways to pay: an account whose
+    // plan includes the usage, or a key billed by what is sent. It is the
+    // same two rows whatever the store holds, at either width; what is held
+    // is said on the lists they lead to.
+    for columns in [80, 40] {
+        let mut panels = Vec::new();
+        for (held, store) in [
+            ("empty", None),
+            ("key", Some(KEY_HELD)),
+            ("sign-in", Some(SIGN_IN_HELD)),
+        ] {
+            let mut window = Watched::open(&format!("login-ways-{held}-{columns}"), columns, 24);
+            if let Some(store) = store {
+                std::fs::write(window.home().join("auth.json"), store).expect("a store");
+            }
+            window.types_until("/login\r", "Provide your own API key");
+            let picture = window.picture();
+            let panel: Vec<&str> = picture
+                .lines()
+                .skip_while(|row| !row.contains("Log in"))
+                .collect();
+            panels.push(panel.join("\n"));
+            if store.is_none() {
+                if columns == 80 {
+                    insta::assert_snapshot!(picture);
+                } else {
+                    insta::assert_snapshot!("the_login_panel_at_40", picture);
+                }
+            }
+        }
+        let first = panels.first().expect("the panel over an empty store");
+        assert!(panels.iter().all(|panel| panel == first), "{panels:?}");
+        assert!(first.contains("Choose how usage is paid for."), "{first}");
+    }
+}
+
+/// A store holding an Anthropic key and nothing else, fabricated.
+const KEY_HELD: &str =
+    r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key"},"subscriptions":{}}"#;
+
+/// A store holding an OpenAI sign-in and nothing else, fabricated.
+const SIGN_IN_HELD: &str = r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+
+/// A store holding an OpenAI sign-in, an Anthropic key and a kimi.com key.
+const HELD_THREE: &str = r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key","moonshot":"fabricated-kimi-com-key"},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+
+#[test]
+fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
+    // The mark opens the row's description, so the narrowest window cuts the
+    // plan words and keeps it. Nothing of the credential itself is drawn.
+    let mut window = Watched::open("login-signed-in-40", 40, 30);
+    std::fs::write(window.home().join("auth.json"), HELD_THREE).expect("a store");
 
     window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Your account with subscription");
+    window.types_until("", "Choose the account whose plan pays");
+    let plans = window.picture();
+    assert!(plans.contains("signed in · ChatGPT plan usage"), "{plans}");
+    assert!(plans.contains("esc to go back"), "{plans}");
+    insta::assert_snapshot!("login_accounts_signed_in_40", plans);
 
-    insta::assert_snapshot!(window.picture());
+    window.types_until("\x1b", "Choose how usage is paid for.");
+    takes(&mut window, "Provide your own API key");
+    window.types_until("", "Choose the provider whose API key");
+    let keys = window.picture();
+    assert_eq!(
+        keys.matches("signed in with a stored key").count(),
+        2,
+        "{keys}"
+    );
+    insta::assert_snapshot!("login_keys_signed_in_40", keys);
+
+    for picture in [&plans, &keys] {
+        assert!(!picture.contains("fabricated"), "{picture}");
+    }
+}
+
+#[test]
+fn escape_in_a_list_goes_back_to_the_first_panel_with_its_mark_where_it_was() {
+    let mut window = Watched::open("login-back", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Provide your own API key");
+    window.types_until("", "Choose the provider whose API key you have.");
+    assert!(
+        window.picture().contains("esc to go back"),
+        "{}",
+        window.picture()
+    );
+    window.types_until("\x1b", "Choose how usage is paid for.");
+
+    let picture = window.picture();
+    assert!(picture.contains("› Provide your own API key"), "{picture}");
+    assert!(picture.contains("esc to cancel"), "{picture}");
+    assert!(!picture.contains("cancelled"), "{picture}");
+}
+
+#[test]
+fn escape_in_a_key_box_goes_back_to_its_list_with_the_mark_on_the_row_it_came_from() {
+    let mut window = Watched::open("login-back-to-google", 80, 24);
+
+    keyed(&mut window, "Google");
+    window.types_until("\x1b", "Choose the provider whose API key you have.");
+
+    let picture = window.picture();
+    assert!(
+        picture
+            .lines()
+            .any(|row| row.trim_matches('|').trim_end() == "› Google"),
+        "{picture}"
+    );
+    assert!(picture.contains("esc to go back"), "{picture}");
+}
+
+#[test]
+fn a_key_for_a_provider_holding_a_credential_says_what_it_replaces_and_replaces_it_once_stored() {
+    // Key over sign-in, and one Kimi site's key over the other's: the box
+    // says which credential goes, and the store keeps it until the new key
+    // is written.
+    for (row, replaced, held_name, map) in [
+        (
+            "OpenAI",
+            "the sign-in held for OpenAI",
+            "openai",
+            "subscriptions",
+        ),
+        (
+            "MoonshotAI · kimi.ai",
+            "the API key held for MoonshotAI · kimi.com",
+            "moonshot",
+            "keys",
+        ),
+    ] {
+        let mut window = Watched::open("login-replaces", 80, 30);
+        let store = window.home().join("auth.json");
+        std::fs::write(&store, HELD_THREE).expect("a store");
+
+        keyed(&mut window, row);
+        let picture = window.picture();
+        let sentence = picture.replace("|\n|", " ").replace("  ", " ");
+        assert!(
+            sentence.contains(&format!("It replaces {replaced}")),
+            "{picture}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&store).expect("the store"),
+            HELD_THREE,
+            "nothing replaced before the key is stored"
+        );
+
+        window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&store).expect("the store"))
+                .expect("a store in its format");
+        let held = written.get(map).and_then(|map| map.get(held_name));
+        assert!(held.is_none(), "{written}");
+        let anthropic = written.get("keys").and_then(|keys| keys.get("anthropic"));
+        assert!(
+            anthropic.is_some_and(serde_json::Value::is_string),
+            "{written}"
+        );
+    }
+}
+
+#[test]
+fn words_after_login_narrow_the_rows_and_stand_them_under_their_kinds() {
+    for columns in [80, 40] {
+        let mut window = Watched::open(&format!("login-narrowed-{columns}"), columns, 30);
+
+        window.types_until("/login kimi\r", "Choose the account or key");
+        let picture = window.picture();
+        for heading in ["Subscription", "API key"] {
+            assert!(
+                picture
+                    .lines()
+                    .any(|row| row.trim_matches('|').trim_end() == heading),
+                "{picture}"
+            );
+        }
+        assert!(picture.contains("esc to cancel"), "{picture}");
+        insta::assert_snapshot!(format!("login_narrowed_{columns}"), picture);
+
+        // Opened by words, so Escape cancels.
+        window.types_until("\x1b", "cancelled, nothing signed in");
+    }
+}
+
+#[test]
+fn words_that_leave_one_key_row_open_its_box_and_words_that_leave_none_say_so() {
+    let mut window = Watched::open("login-one-row", 80, 24);
+
+    window.types_until("/login openai key\r", "OpenAI API key");
+    assert!(
+        window.picture().contains("esc to cancel"),
+        "{}",
+        window.picture()
+    );
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    // A key row of a provider with two opens a box that names its site.
+    window.types_until("/login moonshot key kimi.com\r", "API key");
+    assert!(
+        window.picture().contains("MoonshotAI · kimi.com API key"),
+        "{}",
+        window.picture()
+    );
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    window.types_until("/login nope\r", "no sign-in matches");
+    let picture = window.picture();
+    assert!(
+        picture.contains(r#"! no sign-in matches "nope"; /login lists them"#),
+        "{picture}"
+    );
 }
 
 #[test]
@@ -1321,12 +1545,7 @@ fn the_key_box_stands_empty_under_the_provider_it_is_for() {
     // model, no map — because a key box is not a turn.
     let mut window = Watched::open("login-key-empty", 80, 24);
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
 
     let picture = window.picture();
     assert!(!picture.contains("window"), "{picture}");
@@ -1398,12 +1617,7 @@ fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
     let key = format!("sk-ant-{}", "k".repeat(55));
     let mut window = Watched::open("login-key-pasted", 80, 24);
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
     window.types_until(&format!("\x1b[200~{key}\x1b[201~"), "enter to save");
 
     let picture = window.picture();
@@ -1416,17 +1630,15 @@ fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
 
 #[test]
 fn leaving_the_key_box_says_nothing_was_signed_in() {
-    // Escape in the box is the same leaving as escape on either panel before
-    // it, and is answered on the same row: hung under the command, one
+    // Escape in the box goes back to the list it was chosen from, and from
+    // there to the first panel; the Escape that leaves is answered on the
+    // same row as leaving the first panel: hung under the command, one
     // sentence, nothing about what was or was not typed.
     let mut window = Watched::open("login-key-left", 80, 24);
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
+    window.types_until("\x1b", "Choose the provider whose API key you have.");
+    window.types_until("\x1b", "Choose how usage is paid for.");
     window.types_until("\x1b", "cancelled, nothing signed in");
 
     let picture = window.picture();
@@ -1444,12 +1656,7 @@ fn a_key_that_cannot_be_written_down_is_said_without_a_path() {
     std::fs::create_dir_all(window.home().join("auth.json"))
         .expect("a directory where the store's file goes");
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
     window.types_until(&format!("\x1b[200~{key}\x1b[201~\r"), "could not be saved");
 
     let picture = window.picture();
@@ -1474,8 +1681,11 @@ fn openai_account_login_offers_browser_and_device_code_methods() {
     // own inline panel rather than a provider's interface.
     let mut window = Watched::open("openai-login-methods", 80, 24);
 
-    window.types("/login\r");
-    window.types("\r");
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Your account with subscription");
+    window.types_until("", "Choose the account whose plan pays for usage.");
+    takes(&mut window, "OpenAI");
+    window.types_until("", "Choose where to finish account authorization.");
 
     insta::assert_snapshot!(window.picture());
 }

@@ -16,6 +16,7 @@
 //! file where a whole one was.
 
 mod document;
+mod names;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -28,6 +29,7 @@ use crate::error::AuthError;
 use crate::oauth::{OAuthError, Tokens};
 
 use self::document::Document;
+pub use self::names::{Dropped, Held, Kind, Names, Settled, provider_of};
 
 /// What the file is called, inside the home directory.
 const FILE: &str = "auth.json";
@@ -60,7 +62,7 @@ const PARTIAL: &str = "auth.json.new";
 /// Five seconds, then: long enough for that queue on a machine under load,
 /// short enough that a crucible which died holding the lock is a sentence
 /// telling them to try again rather than something that looks like a hang.
-const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// What this version of crucible writes, and the highest it can read.
@@ -77,6 +79,8 @@ pub struct Store {
     path: PathBuf,
     /// The directory it lives in, which may not exist yet.
     home: PathBuf,
+    /// The names this build writes each provider's credential under.
+    names: Names,
 }
 
 impl Store {
@@ -90,7 +94,67 @@ impl Store {
         Self {
             path: home.join(FILE),
             home: home.to_path_buf(),
+            names: Names::default(),
         }
+    }
+
+    /// The same store, told the names this build writes each provider's
+    /// credential under.
+    #[must_use]
+    pub fn naming(mut self, names: Names) -> Self {
+        self.names = names;
+        self
+    }
+
+    /// Takes out, in one locked write, every second credential a provider
+    /// holds, keeping the one under its bare name.
+    ///
+    /// Only a write by 0.43.3, rolled back to, leaves two. The store is looked
+    /// at without the lock first, so a start that finds one credential for
+    /// each provider takes no lock and waits on no other crucible; only a
+    /// start that finds two takes it, and looks again under it. What was found
+    /// comes back whether or not the write could be made, so the start can
+    /// say it either way; the next start tries again.
+    ///
+    /// Read the store first ([`Store::read`]): that read tightens a store left
+    /// readable by others and says so, and this one finds it private.
+    #[must_use]
+    pub fn settle(&self) -> Settled {
+        let names = self.names.clone();
+        let found = match self.document() {
+            Ok(Some(mut document)) => seconds(&mut document, &names),
+            Ok(None) | Err(_) => Vec::new(),
+        };
+        if found.is_empty() {
+            return Settled::Nothing;
+        }
+
+        let mut dropped = Vec::new();
+        let written = self.change(|document| {
+            dropped = seconds(document, &names);
+            !dropped.is_empty()
+        });
+        match written {
+            Err(why) => Settled::Stayed { found, why },
+            Ok(()) if dropped.is_empty() => Settled::Nothing,
+            Ok(()) => Settled::Removed(dropped),
+        }
+    }
+
+    /// The document on disk, read without the lock, or `None` where there is
+    /// none.
+    fn document(&self) -> Result<Option<Document>, AuthError> {
+        if self.secure_existing()?.is_none() {
+            return Ok(None);
+        }
+        let Some(text) = self.read_text()? else {
+            return Ok(None);
+        };
+        document::parse(&text)
+            .map(Some)
+            .map_err(|_| AuthError::Unreadable {
+                path: self.path.clone(),
+            })
     }
 
     /// Every key the store holds.
@@ -125,58 +189,103 @@ impl Store {
         keys
     }
 
-    /// Writes `key` down as `provider`'s, replacing one already there.
+    /// The credential each provider this build names holds, by its map and
+    /// name: what a screen marking rows needs, and no key or token.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] where the store is there and cannot be read whole: the
+    /// store a write would refuse to replace, said before anything is asked.
+    pub fn holding(&self) -> Result<Vec<Held>, AuthError> {
+        let Some(document) = self.document()? else {
+            return Ok(Vec::new());
+        };
+        let stored = StoredCredentials::from_document(self.clone(), document);
+        Ok(self
+            .names
+            .providers()
+            .filter_map(|provider| stored.held(provider))
+            .collect())
+    }
+
+    /// Writes `key` under `name`, a row's stored name, replacing one already
+    /// there.
     ///
     /// # Errors
     ///
     /// [`AuthError`] when the store cannot be read back, when another crucible
     /// holds the lock, or when the file cannot be written.
-    pub fn keep(&self, provider: &str, key: &str) -> Result<(), AuthError> {
+    ///
+    /// Every other credential of the provider, under any name this build
+    /// writes it under and in either map, goes in the same write: a provider
+    /// holds one. What went comes back, so the caller can say which row it was.
+    pub fn keep(&self, name: &str, key: &str) -> Result<Vec<Dropped>, AuthError> {
+        let mut dropped = Vec::new();
+        let names = self.names.clone();
         self.change(|document| {
-            let removed_subscription = document.subscriptions.remove(provider).is_some();
+            dropped = document.clear(&names, name, Kind::Key);
             let changed =
-                document.keys.get(provider).is_none_or(|held| held != key) || removed_subscription;
-            document.keys.insert(provider.to_owned(), key.to_owned());
+                document.keys.get(name).is_none_or(|held| held != key) || !dropped.is_empty();
+            document.keys.insert(name.to_owned(), key.to_owned());
             changed
-        })
+        })?;
+        Ok(dropped)
     }
 
-    /// Writes a completed subscription login and removes an API key previously
-    /// selected for the same provider.
+    /// Writes a completed sign-in under `name`, taking out every other
+    /// credential its provider holds in the same write, and says what went.
     pub(crate) fn keep_subscription(
         &self,
-        provider: &str,
+        name: &str,
         tokens: Tokens,
-    ) -> Result<(), AuthError> {
-        self.change(|document| {
-            document.keys.remove(provider);
-            document.subscriptions.insert(provider.to_owned(), tokens);
-            true
-        })
+    ) -> Result<Vec<Dropped>, AuthError> {
+        self.subscribe(name, tokens, None)
     }
 
-    /// Returns the stable installation identity for one provider, persisting
-    /// `candidate` when this is the first login to need one.
+    /// [`Store::keep_subscription`], keeping `identity` as the installation
+    /// identity `name`'s sign-ins present where none is kept yet, in the same
+    /// write.
     ///
-    /// The read and possible insert share the auth-store lock, so concurrent
-    /// first logins cannot leave two processes identifying the same Crucible
-    /// installation differently.
-    pub(crate) fn identity(&self, provider: &str, candidate: &str) -> Result<String, AuthError> {
-        let mut chosen = None;
+    /// Written with the tokens and not before them, so a sign-in that does not
+    /// complete leaves the store as it found it. Where two first sign-ins
+    /// complete at once, the identity the first wrote stays.
+    pub(crate) fn keep_identified(
+        &self,
+        name: &str,
+        tokens: Tokens,
+        identity: &str,
+    ) -> Result<Vec<Dropped>, AuthError> {
+        self.subscribe(name, tokens, Some(identity))
+    }
+
+    fn subscribe(
+        &self,
+        name: &str,
+        tokens: Tokens,
+        identity: Option<&str>,
+    ) -> Result<Vec<Dropped>, AuthError> {
+        let mut dropped = Vec::new();
+        let names = self.names.clone();
         self.change(|document| {
-            if let Some(existing) = document.identities.get(provider) {
-                chosen = Some(existing.clone());
-                return false;
+            dropped = document.clear(&names, name, Kind::Account);
+            document.subscriptions.insert(name.to_owned(), tokens);
+            if let Some(identity) = identity {
+                document
+                    .identities
+                    .entry(name.to_owned())
+                    .or_insert_with(|| identity.to_owned());
             }
-            document
-                .identities
-                .insert(provider.to_owned(), candidate.to_owned());
-            chosen = Some(candidate.to_owned());
             true
         })?;
-        chosen.ok_or_else(|| AuthError::Unreadable {
-            path: self.path.clone(),
-        })
+        Ok(dropped)
+    }
+
+    /// The installation identity `name`'s sign-ins present, where one is
+    /// kept. Reads and writes nothing else.
+    pub(crate) fn identity(&self, name: &str) -> Result<Option<String>, AuthError> {
+        Ok(self
+            .document()?
+            .and_then(|document| document.identities.get(name).cloned()))
     }
 
     /// Forgets `provider`'s key. `false` when there was none to forget.
@@ -184,11 +293,16 @@ impl Store {
     /// # Errors
     ///
     /// [`AuthError`] as [`Store::keep`].
+    ///
+    /// Every name this build writes the provider's credential under goes, so a
+    /// provider left holding two by a roll back is left holding none.
     pub fn forget(&self, provider: &str) -> Result<bool, AuthError> {
         let mut had = false;
+        let names = self.names.clone();
         self.change(|document| {
-            had = document.keys.remove(provider).is_some()
-                | document.subscriptions.remove(provider).is_some();
+            for name in names.of(provider) {
+                had |= !document.take(name, None).is_empty();
+            }
             had
         })?;
 
@@ -315,19 +429,49 @@ impl Store {
             Err(problem) => return Err(AuthError::at(&self.path)(problem)),
         };
 
-        let mut text = String::new();
+        // Bytes first, so a store past the limit is one too large wherever
+        // the limit falls, even inside a character.
+        let mut bytes = Vec::new();
         file.take((MAX_STORE + 1) as u64)
-            .read_to_string(&mut text)
+            .read_to_end(&mut bytes)
             .map_err(AuthError::at(&self.path))?;
-        if text.len() > MAX_STORE {
+        if bytes.len() > MAX_STORE {
             return Err(AuthError::TooLarge {
                 path: self.path.clone(),
                 maximum: MAX_STORE,
             });
         }
+        // A file that opens and holds something other than text is there and
+        // cannot be read, which is not a permissions matter.
+        let text = String::from_utf8(bytes).map_err(|_| AuthError::Unreadable {
+            path: self.path.clone(),
+        })?;
 
         Ok(Some(text))
     }
+}
+
+/// Takes out of `document` every provider's second credential, where its bare
+/// name holds one, and says what went.
+fn seconds(document: &mut Document, names: &Names) -> Vec<Dropped> {
+    let providers: BTreeSet<String> = document
+        .keys
+        .keys()
+        .chain(document.subscriptions.keys())
+        .map(|name| provider_of(name).to_owned())
+        .collect();
+    let mut dropped = Vec::new();
+    for provider in providers {
+        if document.holds(&provider).is_none() {
+            continue;
+        }
+        for name in names.of(&provider) {
+            if name != provider {
+                dropped.extend(document.take(name, None));
+            }
+        }
+    }
+    dropped
 }
 
 /// What taking a rotation found.
@@ -482,6 +626,28 @@ impl StoredCredentials {
     #[must_use]
     pub fn trouble(&self) -> Option<&str> {
         self.trouble.as_deref()
+    }
+
+    /// The one credential `provider` is served by, and the name it is under.
+    ///
+    /// Among the names this build writes for the provider only: a name it
+    /// does not know is never used. Where two are held, which only a write by
+    /// 0.43.3 can leave, the one under the bare name.
+    #[must_use]
+    pub fn held(&self, provider: &str) -> Option<Held> {
+        let names = self
+            .store
+            .as_ref()
+            .map_or_else(Names::default, |store| store.names.clone());
+        names.of(provider).into_iter().find_map(|name| {
+            if self.subscriptions.contains_key(name) {
+                Some(Held::new(Kind::Account, name))
+            } else if self.keys.contains_key(name) {
+                Some(Held::new(Kind::Key, name))
+            } else {
+                None
+            }
+        })
     }
 }
 

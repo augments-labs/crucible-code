@@ -313,8 +313,9 @@ impl Flow {
             return Err(OAuthError::Method);
         };
         let store = store.clone();
+        let storing = updates.storing();
         self.renewals
-            .login_store(move || store.keep_subscription("openai", tokens))
+            .login_store(move || storing.write(|| store.keep_subscription("openai", tokens)))
             .await?;
         updates.send(Ok(LoginUpdate::Complete))
     }

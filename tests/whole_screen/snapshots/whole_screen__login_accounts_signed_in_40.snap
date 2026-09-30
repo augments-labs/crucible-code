@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: accounts
+---
+40x30 cursor 28,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|                                        |
+|Warning: No models available. Use /login|
+|or set an API key environment variable. |
+|Then use /model to select a model.      |
+|                                        |
+|› /login                                |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Choose the account whose plan pays for  |
+|usage.                                  |
+|                                        |
+|› OpenAI                                |
+|  signed in · ChatGPT plan usage with P…|
+|                                        |
+|  Kimi Code · kimi.ai                   |
+|  Kimi Code plan usage, accounts outsid…|
+|                                        |
+|  Kimi Code · kimi.com                  |
+|  Kimi Code plan usage, mainland China …|
+|                                        |
+|esc to go back                          |
+|                                        |

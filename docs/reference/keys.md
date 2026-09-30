@@ -270,17 +270,30 @@ that row into the transcript. Leaving writes `sandbox settings unchanged`.
 
 ### `/login`
 
+The first panel and each list take the common keys; the arrows pass over the
+`Subscription` and `API key` headings that stand over rows narrowed by words.
+Below the first screen <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd>
+go back one screen with the mark where it was, and the footer reads `esc to go
+back`. On the first screen, and on one that words after `/login` opened
+directly, they cancel with `cancelled, nothing signed in`, and the footer reads
+`esc to cancel`.
+
 The key box shows one mark per character and never the key. Typed characters
 and a paste go in (a paste is trimmed and its control characters dropped),
 <kbd>Backspace</kbd> rubs out the last character, <kbd>Enter</kbd> saves the
 key and does nothing while the box is empty, and <kbd>Esc</kbd>,
-<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> leave with `cancelled, nothing signed
-in`. The arrows do nothing here: there is no cursor to move. A key past 16 KiB
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> leave it as its footer says. The arrows do nothing here: there is no cursor to move. A key past 16 KiB
 is refused whole, and silently. A window too short for the box says `the
 window has no room for the key box; make it taller and try /login again`.
 
 While an account login waits on the browser, <kbd>Esc</kbd>,
-<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> cancels it. Where a code is typed by
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> stops it and goes back; on a sign-in
+that words opened directly it cancels with `cancelled, nothing signed in`.
+Pressed as the sign-in is being stored, it waits for the write, up to ten
+seconds, and ends signed in where the write went through, or says `! the
+sign-in was being stored when it was stopped; /login shows what is stored`. A
+sign-in that fails, is refused or expires ends with `! sign-in did not
+complete` and what stays stored. Where a code is typed by
 hand instead, typing, paste and <kbd>Backspace</kbd> edit it and
 <kbd>Enter</kbd> submits it once it holds something. Past 16 KiB the row
 under the box says `authorization input is limited to 16 KiB`. [Account login

@@ -37,7 +37,7 @@ use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
-use crate::panel::{Offered, Panel};
+use crate::panel::{Heading, Offered, Panel};
 use crate::picker::{Kept, Picker};
 use crate::plan::{Plan, State, Task};
 use crate::prompt::Prompt;
@@ -178,6 +178,51 @@ fn a_panel_fits_the_window_it_stands_in() {
 }
 
 #[test]
+fn a_panel_under_headings_fits_the_window_it_stands_in() {
+    const OFFERED: [Offered<'static>; 3] = [
+        Offered {
+            name: "anthropic",
+            says: PROSE,
+        },
+        Offered {
+            name: LONG,
+            says: "the one with a name nothing can shorten",
+        },
+        Offered {
+            name: "google",
+            says: "",
+        },
+    ];
+    const HEADINGS: [Heading<'static>; 2] = [
+        Heading {
+            before: 0,
+            name: LONG,
+        },
+        Heading {
+            before: 2,
+            name: PROSE,
+        },
+    ];
+
+    for chosen in 0..OFFERED.len() {
+        let panel = Panel {
+            title: PROSE,
+            said: Some(PROSE),
+            shown: &OFFERED,
+            chosen,
+            footer: "enter to take it · esc to leave",
+        }
+        .under(&HEADINGS);
+        across("a panel under headings", |columns, glyphs| {
+            panel.rows(columns, glyphs)
+        });
+        down("a panel under headings", |columns, room, glyphs| {
+            panel.within(columns, room, glyphs)
+        });
+    }
+}
+
+#[test]
 fn the_sandbox_panel_fits_the_window_it_stands_in() {
     const ITEMS: [Offered<'static>; 2] = [
         Offered {
@@ -206,8 +251,19 @@ fn the_sandbox_panel_fits_the_window_it_stands_in() {
 #[test]
 fn a_key_panel_fits_the_window_it_stands_in() {
     // A name too long for any label, and more held than any frame can show.
-    for (provider, held) in [("anthropic", 0), (LONG, 3), (LONG, 4096)] {
-        let panel = KeyPanel { provider, held };
+    for (provider, held, replaces, leaves) in [
+        ("anthropic", 0, None, "esc to cancel"),
+        (LONG, 3, None, "esc to cancel"),
+        (LONG, 4096, None, "esc to cancel"),
+        ("anthropic", 0, Some(PROSE), "esc to go back"),
+        (LONG, 3, Some(LONG), LONG),
+    ] {
+        let panel = KeyPanel {
+            provider,
+            held,
+            replaces,
+            leaves,
+        };
         across("a key panel", |columns, glyphs| panel.rows(columns, glyphs));
         down("a key panel", |columns, room, glyphs| {
             panel.within(columns, room, glyphs).0

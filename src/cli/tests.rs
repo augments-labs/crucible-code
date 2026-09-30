@@ -439,3 +439,130 @@ fn config_check_is_a_read_only_early_action_with_an_optional_json_report() {
         assert!(Cli::try_parse_from(invalid).is_err());
     }
 }
+
+/// A store 0.43.3 left after a roll back: its kimi.com key beside the kimi.ai
+/// sign-in the release after it wrote. Fabricated.
+const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+
+/// A home holding `document` as its store, and the home.
+fn home_holding(case: &str, document: &str) -> std::path::PathBuf {
+    let home = std::env::temp_dir().join(format!("crucible-start-{case}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).expect("a temporary home");
+    std::fs::write(home.join("auth.json"), document).expect("a store");
+    // Owner-only, as crucible leaves it: a store others could read is said,
+    // and only the case about that wants the sentence.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            home.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+    home
+}
+
+#[test]
+fn a_start_over_two_credentials_keeps_the_bare_one_and_says_which_went() {
+    let home = home_holding("two-held", TWO_HELD);
+
+    let (keys, trouble) = stored(
+        &home,
+        &crucible_app::providers::Rows::production(),
+        crucible_tui::Glyphs::Unicode,
+    );
+
+    let said = trouble.expect("a line under the welcome");
+    assert_eq!(
+        said,
+        "two credentials were stored for moonshot; the Kimi Code · kimi.ai sign-in was removed, and the MoonshotAI · kimi.com key is used"
+    );
+    let left = std::fs::read_to_string(home.join("auth.json")).expect("the store");
+    assert!(!left.contains("moonshot@kimi.ai"), "{left}");
+    assert_eq!(
+        keys.held("moonshot").map(|held| held.name),
+        Some("moonshot".to_owned())
+    );
+    // What was taken out is no longer among what the start holds.
+    assert!(!keys.has_subscription("moonshot@kimi.ai"));
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn a_start_finds_a_credential_given_on_a_kimi_ai_row() {
+    let home = home_holding(
+        "kimi-ai",
+        r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{}}"#,
+    );
+
+    let (keys, trouble) = stored(
+        &home,
+        &crucible_app::providers::Rows::production(),
+        crucible_tui::Glyphs::Unicode,
+    );
+
+    assert_eq!(trouble, None);
+    assert_eq!(
+        keys.held("moonshot").map(|held| held.name),
+        Some("moonshot@kimi.ai".to_owned())
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_start_over_a_store_others_could_read_still_says_it_was_tightened() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (case, document) in [
+        (
+            "open-one",
+            r#"{"version":2,"keys":{"openai":"fabricated-openai-key"},"subscriptions":{}}"#,
+        ),
+        ("open-two", TWO_HELD),
+    ] {
+        let home = home_holding(case, document);
+        std::fs::set_permissions(
+            home.join("auth.json"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .expect("a store others can read");
+
+        let (_, trouble) = stored(
+            &home,
+            &crucible_app::providers::Rows::production(),
+            crucible_tui::Glyphs::Unicode,
+        );
+
+        let said = trouble.unwrap_or_default();
+        assert!(said.contains("readable by others"), "{case}: {said}");
+        // Both are said where both happened.
+        assert_eq!(
+            said.contains("was removed"),
+            case == "open-two",
+            "{case}: {said}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[test]
+fn a_start_line_names_its_rows_with_the_glyph_sets_own_dot() {
+    let home = home_holding("two-held-ascii", TWO_HELD);
+
+    let (_, trouble) = stored(
+        &home,
+        &crucible_app::providers::Rows::production(),
+        crucible_tui::Glyphs::Ascii,
+    );
+
+    let said = trouble.expect("a line under the welcome");
+    assert!(said.is_ascii(), "{said}");
+    assert!(
+        said.contains("the Kimi Code - kimi.ai sign-in was removed"),
+        "{said}"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}

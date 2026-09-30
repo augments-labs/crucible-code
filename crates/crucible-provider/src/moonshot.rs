@@ -48,6 +48,9 @@ const CODING: Endpoint = Endpoint::fixed("https://api.kimi.com/coding/v1/chat/co
 /// Where an Open Platform key is served.
 const PLATFORM: Endpoint = Endpoint::fixed("https://api.moonshot.ai/v1/chat/completions");
 
+/// Where a Kimi Code key or sign-in of kimi.ai, the global site, is served.
+const CODING_AI: Endpoint = Endpoint::fixed("https://api.kimi.ai/coding/v1/chat/completions");
+
 const MOONSHOT_CACHE_CONTENT: &[PromptCacheContent] = &[
     PromptCacheContent::Text,
     PromptCacheContent::Tools,
@@ -84,6 +87,17 @@ impl Moonshot {
 
     /// Where a key from the Open Platform console is served.
     pub const PLATFORM: Endpoint = PLATFORM;
+
+    /// Where a Kimi Code key or sign-in of kimi.ai is served: the global site
+    /// has a coding address of its own, and a credential of one site is
+    /// refused by the other's.
+    pub const CODING_AI: Endpoint = CODING_AI;
+
+    /// Whether requests go to one of the vendor's own addresses rather than
+    /// one a setting named.
+    fn vendor(&self) -> bool {
+        [CODING, CODING_AI, PLATFORM].contains(&self.endpoint)
+    }
 
     /// A provider that authenticates with `credential`, sends over `transport`
     /// and posts to `endpoint`.
@@ -147,7 +161,7 @@ impl Provider for Moonshot {
     }
 
     fn prompt_cache_capabilities(&self, model: &str) -> PromptCacheCapabilities {
-        if self.endpoint != CODING && self.endpoint != PLATFORM {
+        if !self.vendor() {
             return PromptCacheCapabilities::unknown("custom endpoint");
         }
         let revision = match model {
@@ -182,7 +196,7 @@ impl Provider for Moonshot {
         PromptCacheRoute {
             protocol: "openai-chat-completions",
             endpoint: self.endpoint.as_str(),
-            custom_endpoint: self.endpoint != CODING && self.endpoint != PLATFORM,
+            custom_endpoint: !self.vendor(),
             credential_scope: self.credential_scope,
             account: None,
             project: None,

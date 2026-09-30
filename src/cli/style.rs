@@ -180,10 +180,7 @@ impl Style {
                 None => Palette::resolve(color, theme, exact, from).addressing(links),
             },
             ground,
-            glyphs: match glyphs.unwrap_or_default() {
-                Wanted::Unicode => Glyphs::Unicode,
-                Wanted::Ascii => Glyphs::Ascii,
-            },
+            glyphs: glyph_set(glyphs),
             detail: detail.unwrap_or_default(),
         }
     }
@@ -315,6 +312,17 @@ impl Style {
         Self::resolve(Output::default(), true, Some(background), None, &|name| {
             (name == "COLORTERM").then(|| "truecolor".to_owned())
         })
+    }
+}
+
+/// The glyph set the `output.glyphs` setting asks for.
+///
+/// Its own function because the start needs it before a style is resolved:
+/// the store is read, and what is said about it written, first.
+pub(crate) fn glyph_set(wanted: Option<Wanted>) -> Glyphs {
+    match wanted.unwrap_or_default() {
+        Wanted::Unicode => Glyphs::Unicode,
+        Wanted::Ascii => Glyphs::Ascii,
     }
 }
 

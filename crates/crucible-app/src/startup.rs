@@ -28,7 +28,7 @@ use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
     Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, HttpTurns, Moonshot, MoonshotWeb, OpenAi,
-    OpenAiWeb, Unavailable,
+    OpenAiWeb, Transport, Unavailable,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
@@ -737,15 +737,29 @@ fn credential(
     {
         return Ok((subscribed.endpoint, subscribed.credential));
     }
+    // A key is sent to the address of the row it was given on: the variable's
+    // to its provider's environment row, a stored one to the row its name
+    // says. A configured address takes either, as it always has.
+    let rows = crate::providers::Rows::production();
+    let address = |row: Option<&crate::providers::Row>| row.and_then(|row| row.address.clone());
     match ApiKey::from_lookup(audience.variable, auth.from) {
         Ok(exported) => Ok((
-            sending.unwrap_or(audience.vendor),
+            sending
+                .or_else(|| address(rows.environment(audience.provider)))
+                .unwrap_or(audience.vendor),
             Box::new(HeaderKey::new(exported, Header::bearer())),
         )),
         Err(absent) => {
-            if let Some(written) = auth.stored.get(audience.provider) {
+            if let Some(held) = auth
+                .stored
+                .held(audience.provider)
+                .filter(|held| held.kind == crucible_auth::Kind::Key)
+                && let Some(written) = auth.stored.get(&held.name)
+            {
                 return Ok((
-                    sending.unwrap_or(audience.vendor),
+                    sending
+                        .or_else(|| address(rows.of(held.kind, &held.name)))
+                        .unwrap_or(audience.vendor),
                     Box::new(HeaderKey::new(written, Header::bearer())),
                 ));
             }
@@ -763,6 +777,68 @@ fn credential(
             Err(absent.into())
         }
     }
+}
+
+/// Takes out, at a start, a second credential a provider holds, and says what
+/// that did in one line; nothing where there was none.
+///
+/// Only a write by 0.43.3 after a roll back leaves two. The one under the bare
+/// name is the one 0.43.3 wrote and is used; the other is taken out in one
+/// locked write. Where that write cannot be made the start goes on with the
+/// same credential and the line says so without claiming anything went, and
+/// why, where that is more than another crucible holding the store for a
+/// moment. Rows are named with `dot`, the glyph set's own, between a name and
+/// its site.
+#[must_use]
+pub fn settle(
+    store: &crucible_auth::Store,
+    rows: &crate::providers::Rows,
+    dot: &str,
+) -> Option<String> {
+    let (dropped, why) = match store.settle() {
+        crucible_auth::Settled::Nothing => return None,
+        crucible_auth::Settled::Removed(dropped) => (dropped, None),
+        crucible_auth::Settled::Stayed { found, why } => (found, Some(why)),
+    };
+    let named = |row: &crate::providers::Row| row.credential().replace('·', dot);
+    let read = store.read();
+    let mut said = Vec::new();
+    let providers: std::collections::BTreeSet<&str> = dropped
+        .iter()
+        .map(|dropped| crucible_auth::provider_of(&dropped.name))
+        .collect();
+    for provider in providers {
+        let kept = rows
+            .held(provider, &read)
+            .map_or_else(|| provider.to_owned(), named);
+        let went: Vec<String> = dropped
+            .iter()
+            .filter(|dropped| crucible_auth::provider_of(&dropped.name) == provider)
+            .map(|dropped| {
+                rows.of(dropped.kind, &dropped.name)
+                    .map_or_else(|| dropped.name.clone(), named)
+            })
+            .collect();
+        let went = went.join(" and the ");
+        said.push(match &why {
+            None => format!(
+                "two credentials were stored for {provider}; the {went} was removed, and the {kept} is used"
+            ),
+            Some(why) => {
+                let stays = format!(
+                    "two credentials are stored for {provider}; the {kept} is used, and the {went} stays in the store until a start can remove it"
+                );
+                // A lock another crucible holds lets go on its own; anything
+                // else comes back at every start, so it is named.
+                if matches!(why, crucible_auth::AuthError::Busy { .. }) {
+                    stays
+                } else {
+                    format!("{stays}: {why}")
+                }
+            }
+        });
+    }
+    Some(said.join("; "))
 }
 
 /// What answers the two web tools, where this session has anything to.
@@ -932,14 +1008,27 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
         return Reaching::nothing();
     };
 
-    if endpoint.as_str() != Moonshot::CODING.as_str() {
-        return Reaching::nothing();
-    }
+    moonshot_site(&endpoint, credential, Box::new(wiring.http.clone()))
+        .map_or_else(Reaching::nothing, |source| Reaching::both(Arc::new(source)))
+}
 
-    Reaching::both(Arc::new(MoonshotWeb::new(
-        credential,
-        Box::new(wiring.http.clone()),
-    )))
+/// The web services of the Kimi site a credential sent to `endpoint` belongs
+/// to.
+///
+/// Each site's services take that site's credential, and a session sent
+/// anywhere else by a setting gets none rather than a pair that refuse it.
+fn moonshot_site(
+    endpoint: &Endpoint,
+    credential: Box<dyn Credential>,
+    transport: Box<dyn Transport>,
+) -> Option<MoonshotWeb> {
+    if *endpoint == Moonshot::CODING {
+        Some(MoonshotWeb::new(credential, transport))
+    } else if *endpoint == Moonshot::CODING_AI {
+        Some(MoonshotWeb::global(credential, transport))
+    } else {
+        None
+    }
 }
 
 /// Where a setting says this provider's requests should go, where one does.

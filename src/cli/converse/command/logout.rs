@@ -55,7 +55,12 @@ pub(super) fn run<T: Terminal>(
 ) -> Result<(), Fatal> {
     let providers = terms.providers.snapshot();
     let stored = terms.logins.read();
-    let names: Vec<&str> = stored.providers().collect();
+    // By provider, under any name a row of theirs writes a credential under,
+    // and never a name this build does not write, which no row here gave.
+    let names: Vec<&str> = offered(&providers)
+        .map(|one| one.name)
+        .filter(|name| stored.held(name).is_some())
+        .collect();
     let held = held(&providers, &names);
 
     // Before anything is drawn: a panel of nothing has no entry to take and no
@@ -122,7 +127,8 @@ pub(super) fn run<T: Terminal>(
     Ok(renderer.present(&rows)?)
 }
 
-/// The providers this build serves that `stored` holds a credential for.
+/// The providers this build serves among `stored`, the providers the store
+/// holds a credential for.
 ///
 /// In registry order rather than the store's, so this list and `/login`'s
 /// read the same way down. A name in the file that this build does not serve is

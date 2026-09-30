@@ -1267,6 +1267,24 @@ impl MoonshotWeb {
     /// Where Kimi Code answers an address.
     pub const FETCH: Endpoint = Endpoint::fixed("https://api.kimi.com/coding/v1/fetch");
 
+    /// Where Kimi Code of kimi.ai, the global site, answers a query.
+    pub const SEARCH_AI: Endpoint = Endpoint::fixed("https://api.kimi.ai/coding/v1/search");
+
+    /// Where Kimi Code of kimi.ai answers an address.
+    pub const FETCH_AI: Endpoint = Endpoint::fixed("https://api.kimi.ai/coding/v1/fetch");
+
+    /// A source reaching the services of kimi.ai with `credential`, which a
+    /// kimi.ai credential is served by and a kimi.com one is refused by.
+    #[must_use]
+    pub fn global(credential: Box<dyn Credential>, transport: Box<dyn Transport>) -> Self {
+        Self {
+            credential,
+            transport: Arc::from(transport),
+            searching: Self::SEARCH_AI,
+            fetching: Self::FETCH_AI,
+        }
+    }
+
     /// A source reaching Kimi Code's services with `credential`.
     #[must_use]
     pub fn new(credential: Box<dyn Credential>, transport: Box<dyn Transport>) -> Self {

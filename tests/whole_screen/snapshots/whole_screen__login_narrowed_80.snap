@@ -2,28 +2,34 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x24 cursor 22,0 scrolled 0
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
+80x30 cursor 28,0 scrolled 0
 |                                                                                |
 |                                                                                |
 |Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
-|› /login                                                                        |
+|› /login kimi                                                                   |
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Log in                                                                          |
 |                                                                                |
-|Choose how usage is paid for.                                                   |
+|Choose the account or key to sign in with.                                      |
 |                                                                                |
-|› Your account with subscription                                                |
-|  Usage included in your paid plan                                              |
+|Subscription                                                                    |
 |                                                                                |
-|  Provide your own API key                                                      |
-|  API usage billing                                                             |
+|› Kimi Code · kimi.ai                                                           |
+|  Kimi Code plan usage, accounts outside mainland China                         |
+|                                                                                |
+|  Kimi Code · kimi.com                                                          |
+|  Kimi Code plan usage, mainland China accounts                                 |
+|                                                                                |
+|API key                                                                         |
+|                                                                                |
+|  MoonshotAI · kimi.ai                                                          |
+|  a Kimi Code Console key, accounts outside mainland China                      |
+|                                                                                |
+|  MoonshotAI · kimi.com                                                         |
+|  set MOONSHOT_API_KEY                                                          |
 |                                                                                |
 |esc to cancel                                                                   |
 |                                                                                |

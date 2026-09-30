@@ -101,7 +101,7 @@ cargo build --release -p crucible-code -p crucible-sandbox-broker
 
 ## Sign in or give it a key
 
-`/login` inside a session can authorize a ChatGPT or Kimi Code account, or keep
+`/login` inside a session can sign in to a ChatGPT or Kimi Code account, or keep
 a provider API key in crucible's protected store. An API key can instead come
 from the environment. [Providers and models](../providers/providers.md) has the
 exact routes and precedence.
@@ -110,18 +110,25 @@ exact routes and precedence.
 export ANTHROPIC_API_KEY=...
 ```
 
-Type `/login` to choose how crucible signs its requests: a ChatGPT plan, a Kimi
-Code plan, or *Provide your own API key*. ChatGPT offers a local browser
-callback and a device code for remote terminals; Kimi Code offers a device code.
-The live panel opens the authorization page, shows only the safe page and
-one-time code, stays cancellable with Escape, which also closes the browser
-callback so the next `/login` can start, and takes a masked paste-back fallback
-for ChatGPT browser login. Anthropic and Google have no account route;
-choose *Provide your own API key*, then the provider from the list. That list
-names each provider with the variable it reads from, `set ANTHROPIC_API_KEY`
-and so on, for anyone who would rather export a key than store one.
+Type `/login` to choose how usage is paid for: *Your account with subscription*,
+usage included in your paid plan, or *Provide your own API key*, billed by API
+usage. The first lists the accounts: OpenAI, and Kimi Code on kimi.ai (accounts
+outside mainland China) or on kimi.com (mainland China accounts). The second
+lists the providers whose key you may hold, each with the variable it reads
+from, `set ANTHROPIC_API_KEY` and so on, for anyone who would rather export a
+key than store one. A row that holds your credential says `signed in`. Escape
+goes back one screen at a time and cancels from the first.
 
-`/login anthropic` and `/login google` are direct API-key shortcuts. Google also
+ChatGPT offers a local browser callback and a device code for remote terminals;
+Kimi Code offers a device code. The live panel opens the authorization page,
+shows only the safe page and one-time code, stays cancellable with Escape, which
+also closes the browser callback so the next `/login` can start, and takes a
+masked paste-back fallback for ChatGPT browser login. Anthropic and Google have
+no account route.
+
+Words after `/login` narrow the rows: `/login openai` shows OpenAI's two,
+`/login kimi.ai` the two on kimi.ai, and words that leave one row open it at
+once. `/login anthropic` and `/login google` open the key box directly. Google also
 reads `GEMINI_API_KEY`; for example, select `google/gemini-3.8-flash` in `/model`
 after exporting that variable or storing a key. The key goes into its own
 labelled box, which takes a paste as readily as typing and draws a dot per
@@ -964,21 +971,26 @@ cannot be written is answered with `the key could not be saved` and what to fix
 that cannot be read and should be moved aside), never with the path or the key.
 A window too short for the box says so instead, and asks for a taller one.
 
-`/login` on its own asks how crucible should sign its requests, which is a
-different question from which vendor: somebody paying for a ChatGPT plan and
-somebody holding an OpenAI console key are two people, and only one of them has a
-key to type. So the panel offers three ways: OpenAI's ChatGPT plan with your
-subscription; MoonshotAI's Kimi Code plan with your subscription; and *Provide
-your own API key*, billed by API usage. The two plans connect: ChatGPT opens a
-browser authorization, or a device code from a terminal with no browser to
-reach, and Kimi Code a device code; either writes a renewable credential to the
-same protected store a key goes to. The key route asks whose key you have before
-opening the box, each provider shown with the variable it reads from, and is the
-route an Anthropic key takes, Anthropic having no account route.
+`/login` on its own asks how usage is paid for, which is a different question
+from which vendor: somebody paying for a ChatGPT plan and somebody holding an
+OpenAI console key are two people, and only one of them has a key to type. So
+the first panel has two rows, whatever is stored: *Your account with
+subscription* and *Provide your own API key*. The accounts connect: ChatGPT
+opens a browser authorization, or a device code from a terminal with no browser
+to reach, and Kimi Code a device code on the site your account belongs to;
+either writes a renewable credential to the same protected store a key goes to.
+The key route asks whose key you have before opening the box, and is the route
+an Anthropic key takes, Anthropic having no account route.
+
+A provider holds one credential. Choosing a row whose provider holds another
+says on the next screen what it replaces, and nothing is replaced until the new
+one is stored: a sign-in that fails, is refused or expires says `sign-in did
+not complete` and names what is unchanged. A store that is there and cannot be
+parsed, is not text, or is past its size limit is said before any row is drawn.
 
 A run with no keyboard to walk that panel (and a window with no room to stand
-one in) gets the provider names as rows instead, with the variable each reads
-from.
+one in) gets each row as the line to type instead: `/login` and the words that
+reach that row alone.
 
 A key that is written lands on the session that took it: the provider is set up
 there and then, from the next turn on. Logging in chooses neither a model nor a

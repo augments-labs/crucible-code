@@ -77,7 +77,9 @@ invariants. Update it when the implementation makes a sentence false.
   plugin routes with tests equivalent to the existing typed-boundary tests.
 - Apply secrets without exposing them. Credential-bearing values redact
   `Debug`, stay out of `Display`, errors and session logs, and register exact
-  outgoing representations for response redaction.
+  outgoing representations for response redaction. A stored credential's name
+  is its `/login` row (the bare provider name for a row 0.43.3 knows, else
+  `provider@site`) and never changes once shipped.
 - Treat model output and checked-out files as hostile input. Validate path
   reach through `Workspace`; process execution is the explicit exception and
   must be classified by what it will run.
