@@ -2,9 +2,11 @@
 //! assembles: today the runtime, the worker tools hand their blocking work
 //! to, the shared HTTP service provider turns and web posts use, the release
 //! check and its cached answer, the owner of account renewals, and the yes
-//! given to each route whose vendor uses what is sent, which both HTTP clients
-//! built here ask before a request leaves, plus whatever later needs to be
-//! owned once per run the same way.
+//! given to each route whose vendor uses what is sent, which the shared client
+//! built here, and the renewals owner's client it is handed to here, ask
+//! before a request leaves (the release check's own client reaches GitHub
+//! alone and is not held), plus whatever later needs to be owned once per run
+//! the same way.
 //!
 //! One value, [`Services`], made once by [`serving`] and lent to everything the
 //! run builds. [`crate::startup::Startup`] carries it, so a factory reaches
@@ -136,8 +138,8 @@ impl Services {
         }
     }
 
-    /// The yes given to each warned route, which every client built here asks
-    /// before a request leaves.
+    /// The yes given to each warned route, which the shared client and the
+    /// renewals owner's client ask before a request leaves.
     #[must_use]
     pub fn consent(&self) -> &Consent {
         &self.consent

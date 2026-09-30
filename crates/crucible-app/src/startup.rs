@@ -830,8 +830,9 @@ pub fn served_on(named: &str, variable: &str, auth: ProviderAuth<'_>) -> Option<
 /// Tells `consent` what every provider this build serves is sent on, as
 /// `auth` resolves it now.
 ///
-/// Called wherever what a request would be sent on can have changed: at the
-/// start, and after a credential is stored or taken out.
+/// Called at the start. After a credential is stored or taken out,
+/// [`providers::re_serving`] tells the consent about the one provider it sets
+/// up again, since replacing the whole map mid-run would forget the others.
 pub fn serve(consent: &Consent, providers: &Providers, auth: ProviderAuth<'_>) {
     let serving = providers::offered(providers)
         .filter_map(|one| {

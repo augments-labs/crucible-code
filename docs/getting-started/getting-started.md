@@ -143,7 +143,7 @@ choices, and `/model` is where they are asked together.
 Some vendors say they may use what you send to train or improve their models:
 a ChatGPT plan, Kimi Code and the Kimi open platform, and a Gemini key on unpaid
 quota. Before the first message on one of those goes, crucible asks you once,
-with the vendor's words and where they are written; **Use it anyway** sends it
+with what the vendor's terms say and where; **Use it anyway** sends it
 and is remembered, **Go back** keeps the message and sends nothing. [Content
 use](../providers/content-use.md) lists each route and what its vendor says.
 

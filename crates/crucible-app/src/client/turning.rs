@@ -25,7 +25,8 @@ pub enum Ended {
     /// A compaction, and what it made room for.
     Room(Result<Room, TurnError>),
     /// Nothing was sent: the route it would go on is one whose vendor uses
-    /// what is sent, and nobody said yes to it.
+    /// what is sent, and no yes to it was given. The question was declined,
+    /// went unanswered, or could not be put to the client.
     Warned(Warned),
     /// Nothing was sent: a yes was given and could not be written down.
     Unrecorded(RememberError),

@@ -15,8 +15,9 @@
 //! out where the page gives one, and the page and the day it was read. A
 //! route whose vendor does not say gets no warning and is never asked about.
 //!
-//! **The hold.** Every HTTP client built outside tests is handed a [`Consent`],
-//! asked before each request leaves. A request to an origin of a warned route
+//! **The hold.** Every HTTP client built outside tests that can reach a vendor
+//! is handed a [`Consent`], asked before each request leaves; the release
+//! check's own, which reaches GitHub alone, is the one that is not. A request to an origin of a warned route
 //! with no yes waits, whichever way the route was reached: `/login`, `/model`,
 //! a key from the environment, configuration, `--model` or a resumed session.
 //! What the front ends ask first is a courtesy on top of that; this is what
@@ -356,7 +357,7 @@ pub struct Serving {
     /// The route, where it has a spelling: a row's, or the one a recognised
     /// `baseUrl` answers for. `None` for an address crucible does not know.
     pub route: Option<String>,
-    /// The origins its requests go to, where they are not the route's own: a
+    /// The origin its requests go to, where it is not the route's own: a
     /// configured `baseUrl`'s.
     pub at: Option<Origin>,
 }
@@ -441,7 +442,8 @@ impl Consent {
     /// The warned route a send by `provider`, asking `model`, would go on
     /// with no yes: the model's own where the model is warned, then the route
     /// that holds an origin the provider is served at, its own or another
-    /// provider's there. `None` where nothing is to be asked.
+    /// provider's there. `None` where nothing is to be asked, and for a
+    /// provider served on nothing, whatever its model.
     #[must_use]
     pub fn unanswered(&self, provider: &str, model: &str) -> Option<Warned> {
         let served = {

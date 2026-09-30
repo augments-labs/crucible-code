@@ -29,11 +29,11 @@ A window too short for the whole panel says so and sends nothing:
 ! this route needs an answer first; make the window taller and send again
 ```
 
-A run with no terminal to ask on ends before sending, with the vendor's words
-and `Nothing was sent; answer it once in a terminal.` on standard error, and
-exit status 1. A client of the application with no terminal is put the same
-question as a pending action; see how a `warning` is answered with an
-`accepted` or `declined` decision.
+A run with no terminal to ask on ends before sending, with what the vendor's
+terms say and `Nothing was sent; answer it once in a terminal.` on standard
+error, and exit status 1. A client of the application with no terminal is put
+the same question as a pending `warning`, answered with an `accepted` or a
+`declined` decision naming it.
 
 Behind the question, every request crucible sends to a host of such a route is
 held until the route has its yes, however the route was reached: `/login`,
@@ -114,7 +114,7 @@ stands, is not asked about.
 that has it, with a line that begins:
 
 ```text
-crucible: <home>/config.json: contentUse is not a setting crucible has at line 1, column 30
+crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>
 ```
 
 Delete the `contentUse` block from the configuration file in your home

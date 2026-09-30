@@ -176,7 +176,9 @@ pub enum TurnOutcome {
     /// what it began is unconfirmed rather than undone.
     Failed(Problem),
     /// Nothing was sent: the route the turn would go on is one whose vendor
-    /// says it uses what is sent, and nobody said yes to it.
+    /// says it uses what is sent, and no yes to it was given. The question
+    /// was declined, went unanswered, or could not be put to this client; a
+    /// yes that could not be written down is [`TurnOutcome::Failed`].
     Warned {
         /// The route, as a yes to it is written down.
         route: Text,

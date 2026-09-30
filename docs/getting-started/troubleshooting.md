@@ -137,10 +137,11 @@ fixed to the vendor's own address and a `baseUrl` needs an API key instead. Fix
 the address, or take it out. See [keys](../providers/providers.md#keys) and
 [account login today](../providers/providers.md#account-login-today).
 
-### `crucible: <route>: <the vendor's words> Nothing was sent; answer it once in a terminal.`
+### `crucible: <name>: <what the vendor's terms say> Nothing was sent; answer it once in a terminal.`
 
-The route this run would send on is one whose vendor says it may use what is
-sent to train or improve its models, nobody has said yes to it, and there is no
+The route this run would send on, named as the question titles it, is one
+whose vendor says it may use what is sent to train or improve its models,
+nobody has said yes to it, and there is no
 terminal to ask on: input or output is redirected. Nothing was sent. Start
 crucible once in a terminal and send anything on that route: choose **Use it
 anyway** and the answer is kept, so later runs, redirected or not, are not

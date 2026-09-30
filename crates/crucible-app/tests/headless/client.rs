@@ -873,7 +873,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
 /// A send on a route whose vendor uses what is sent, with no yes to it, is put
 /// to the client as a pending action before anything is sent. A yes on the
 /// wire is written into the user's own file and the turn goes; going back, or
-/// nobody answering, ends it with the route, the vendor's words and the page,
+/// nobody answering, ends it with the route, what the vendor says and the page,
 /// and sends nothing.
 #[test]
 fn a_send_on_a_warned_route_is_put_to_the_client_and_only_a_yes_sends_it() -> Result<(), Failed> {
