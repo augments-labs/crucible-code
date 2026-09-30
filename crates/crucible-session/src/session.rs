@@ -889,12 +889,18 @@ impl Session {
         // the file cannot be asked, and then nothing is placed.
         let start = std::fs::metadata(&path).ok().map(|held| held.len());
         let placed = Placed::default();
-        let placing = Arc::clone(&placed);
+        let places_for_writer = Arc::clone(&placed);
         let still = Placing::new(true.into());
-        let placing_still = Arc::clone(&still);
+        let still_for_writer = Arc::clone(&still);
 
         let writer = thread::spawn(move || {
-            log::write(sink, lines, &mine, told, (start, placing, placing_still));
+            log::write(
+                sink,
+                lines,
+                &mine,
+                told,
+                (start, places_for_writer, still_for_writer),
+            );
         });
 
         // Read back from the name rather than carried in, so that the two ways

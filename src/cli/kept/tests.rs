@@ -963,3 +963,58 @@ fn a_row_stops_offering_only_with_every_result_it_offered() {
     assert!(cut.older().all(|placed| placed.at() != 0));
     assert!(cut.held <= HELD);
 }
+
+#[test]
+fn the_newest_result_stays_held_when_it_shares_the_oldest_row() {
+    // A replayed run knows its row before it draws it, so its newest result
+    // can share the oldest row there is. That row does not go with it.
+    for (first, bytes) in [("let go of", 200), ("short", 10)] {
+        let mut cut = Kept::default();
+        cut.logging(Some(Box::new(Logged::default())));
+        let member = crucible_types::ToolId::new("member");
+        cut.calling(member.clone(), "Grep(a)".to_owned());
+        cut.gathered(&member, "x".repeat(bytes).into(), Some(0));
+        let big = crucible_types::ToolId::new("big");
+        cut.calling(big.clone(), "Read(big)".to_owned());
+        cut.gathered(&big, "y".repeat(HELD + 1).into(), Some(0));
+
+        assert_eq!(
+            cut.newest().next().map(Whole::called),
+            Some("Read(big)"),
+            "{first}: the newest went"
+        );
+        assert!(cut.offered(0), "{first}: its row stopped offering");
+        assert!(cut.withdrawn().is_empty(), "{first}");
+    }
+}
+
+#[test]
+fn a_held_row_older_than_the_rows_let_go_of_is_the_one_withdrawn() {
+    let mut cut = Kept::default();
+    cut.logging(Some(Box::new(Logged::default())));
+    kept(&mut cut, "R", 10);
+    for _ in 1..5 {
+        kept(&mut cut, "R", HELD / 3);
+    }
+    assert!(cut.newest().any(|whole| whole.at() == Some(0)));
+    assert!(cut.older().count() > 0, "nothing was let go of");
+
+    let mut gone = Vec::new();
+    while gone.is_empty() {
+        kept(&mut cut, "R", 10);
+        gone = cut.withdrawn();
+    }
+    assert_eq!(gone.first(), Some(&0), "{gone:?}");
+}
+
+#[test]
+fn with_no_log_the_oldest_row_goes_first_however_short() {
+    let mut cut = Kept::default();
+    kept(&mut cut, "R", 10);
+    for _ in 1..4 {
+        kept(&mut cut, "R", HELD / 2);
+    }
+
+    assert!(cut.withdrawn().contains(&0));
+    assert!(!cut.offered(0));
+}

@@ -122,8 +122,9 @@ pub(crate) struct Whole {
     call: ToolId,
     /// Where the session log holds it, where that is known yet.
     position: Option<u64>,
-    /// How many results had been cut before it: the order rows were drawn in,
-    /// which the store keeps as rows move between held and let go of.
+    /// How many results had been cut before it: the order results were kept
+    /// in, which the store keeps as they move between held and let go of.
+    /// Nothing for a call still out, which has not been kept yet.
     drawn: usize,
 }
 
@@ -143,7 +144,8 @@ impl Whole {
         self.at
     }
 
-    /// The order it was drawn in among every row the store has.
+    /// The order it was kept in among every result the store has: nothing
+    /// for a call still out, which has not been kept yet.
     pub(crate) const fn drawn(&self) -> usize {
         self.drawn
     }
@@ -242,7 +244,8 @@ impl Placed {
         weighing(&self.called, &self.call)
     }
 
-    /// The order it was drawn in among every row the store has.
+    /// The order it was kept in among every result the store has: nothing
+    /// for a call still out, which has not been kept yet.
     pub(crate) const fn drawn(&self) -> usize {
         self.drawn
     }
@@ -275,7 +278,9 @@ pub(crate) struct Kept {
     /// the other end. This only ever goes up.
     cut: usize,
     /// Rows whose text was let go of while the log still holds it, oldest
-    /// first.
+    /// first by [`Placed::drawn`]: a result is let go of only once every older
+    /// one that would make room has been, and whether one would changes only
+    /// with the log, which empties this.
     placed: VecDeque<Placed>,
     /// Where results are read back from, where the session has a log.
     log: Option<Box<dyn Log>>,
@@ -513,32 +518,28 @@ impl Kept {
 
     /// Takes the oldest row there is, held or let go of, off with every result
     /// it offered, and says whether there was one to take. The newest result
-    /// stays whatever it costs.
+    /// stays whatever it costs, and so does the row it is on: a replayed run
+    /// knows its row before it draws it, so its newest result can share the
+    /// oldest row there is.
+    ///
+    /// A held result no row offers yet is never the one found: letting it go
+    /// always makes room, so it went before this was asked.
     fn withdraw_oldest(&mut self) -> bool {
         let held = self.whole.front().filter(|_| self.whole.len() > 1);
         let oldest = match (self.placed.front(), held) {
-            (Some(placed), Some(whole)) if whole.drawn < placed.drawn => whole.at.ok_or(()),
-            (Some(placed), _) => Ok(placed.at),
-            (None, Some(whole)) => whole.at.ok_or(()),
-            (None, None) => return false,
+            (Some(placed), Some(whole)) if whole.drawn < placed.drawn => whole.at,
+            (Some(placed), _) => Some(placed.at),
+            (None, Some(whole)) => whole.at,
+            (None, None) => None,
         };
-        match oldest {
-            Ok(at) => self.withdraw_row(at),
-            // The oldest held result, which no row offers yet, goes on its own,
-            // its place still its own where it comes.
-            Err(()) => {
-                if let Some(gone) = self.whole.pop_front() {
-                    self.held = self
-                        .held
-                        .saturating_sub(gone.text.len())
-                        .saturating_sub(gone.called.len());
-                    if gone.position.is_none() && self.log.is_some() {
-                        waiting(&mut self.rowless, gone.call);
-                    }
-                }
+        let newest = self.whole.back().and_then(|whole| whole.at);
+        match oldest.filter(|at| Some(*at) != newest) {
+            Some(at) => {
+                self.withdraw_row(at);
+                true
             }
+            None => false,
         }
-        true
     }
 
     /// Takes row `at` off with every result it offered, held or let go of.
@@ -758,8 +759,8 @@ impl Kept {
     /// for nobody.
     ///
     /// The count of what has been cut goes back to nothing with them, because
-    /// what it is for is a view stepping over results that arrived underneath
-    /// it — and none of these can arrive again.
+    /// what it is for is a view leaving out results kept after it opened — and
+    /// none of these can arrive again.
     ///
     /// The log is kept: it belongs to the session rather than to the rows, and
     /// what changes the session sets it again.
@@ -781,10 +782,10 @@ impl Kept {
 
     /// How many results have been cut this session.
     ///
-    /// Read by a view that is standing over them while a turn is still running:
-    /// the difference between this and what it read when it opened is how many
-    /// arrived underneath it, and those are the ones it steps over so that the
-    /// rows being read stay where the reader left them.
+    /// Each result kept takes this count as its [`Whole::drawn`], so a view
+    /// reads it once as it opens and leaves out every result kept after that:
+    /// a turn cutting results underneath it would otherwise slide the rows
+    /// being read down the screen.
     pub(crate) fn cut(&self) -> usize {
         self.cut
     }
@@ -803,9 +804,9 @@ impl Kept {
 
     /// What the call still out has printed, where it has printed anything.
     ///
-    /// Kept apart from [`Kept::newest`] rather than folded into it, because the
-    /// count of what has been cut is what a standing view steps over to keep its
-    /// rows still — and a call that has not answered has not been cut.
+    /// Kept apart from [`Kept::newest`] rather than folded into it, because a
+    /// standing view leaves out what was cut after it opened, and a call that
+    /// has not answered has not been cut.
     pub(crate) fn writing(&self) -> impl DoubleEndedIterator<Item = &Whole> {
         self.pending.iter().filter_map(|one| one.writing.as_ref())
     }

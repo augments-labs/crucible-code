@@ -804,3 +804,30 @@ fn ctrl_o_stands_results_newest_first_when_a_short_one_stays_held() {
     assert_eq!(order, sorted);
     assert_eq!(order.len(), 40);
 }
+
+#[test]
+fn a_folded_row_opens_on_its_results_newest_first_when_a_short_one_stays_held() {
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(Long)));
+    for at in 0..40_u64 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, at);
+        let text = if at == 0 {
+            "short".to_owned()
+        } else {
+            said(call.as_str())
+        };
+        kept.gathered(&call, text.into(), Some(0));
+    }
+    assert!(kept.older().count() > 0, "nothing was let go of");
+
+    let order: Vec<usize> = entries(&kept, &Over::One(0))
+        .iter()
+        .map(Entry::drawn)
+        .collect();
+    let mut sorted = order.clone();
+    sorted.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(order, sorted);
+    assert_eq!(order.len(), 40);
+}

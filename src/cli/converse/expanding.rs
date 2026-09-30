@@ -93,8 +93,7 @@ pub(super) struct View {
     back: Vec<(Mark, Option<Box<str>>)>,
     /// A result the window reached that did not fit beside what was read
     /// back, and where the window was: not read again until the window moves,
-    /// or until it is the first result the window reaches, which is read
-    /// whatever it comes to.
+    /// or until nothing above it in the window has been read back.
     refused: Option<(usize, Mark)>,
 }
 
@@ -122,8 +121,8 @@ const UNREAD: &str = "! this result could not be read back from the session log"
 const LATER: &str = "read back from the session log as the view moves on to it";
 
 /// The most the view reads back at once beyond what the store holds, in
-/// bytes: one result's worth, the most a recorded result can be. The first
-/// result the window reaches is read whatever it comes to.
+/// bytes: one result's worth, the most a recorded result can be. A result
+/// with nothing read back above it is read whatever it comes to.
 const BEYOND: usize = TOOL_RESULT_BYTES;
 
 /// Whether the whole of what was cut is standing, and where over it.
