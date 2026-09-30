@@ -340,6 +340,8 @@ pub struct Serving {
 pub struct Consent {
     routes: Routes,
     state: Arc<RwLock<State>>,
+    /// The user's own configuration file, where a yes is written down.
+    file: Arc<std::sync::OnceLock<PathBuf>>,
 }
 
 #[derive(Debug, Default)]
@@ -362,7 +364,34 @@ impl Consent {
         Self {
             routes,
             state: Arc::default(),
+            file: Arc::default(),
         }
+    }
+
+    /// Writes each yes into `file`, the user's own configuration file. The
+    /// first file given is the one kept.
+    pub fn keeps_in(&self, file: PathBuf) {
+        let _ = self.file.set(file);
+    }
+
+    /// Says yes to `warned`: written into the user's own file, then let go.
+    /// Nothing is let go where the file could not be written.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::remember::RememberError`] where the file could not be
+    /// written, or no file was given to write it in.
+    pub fn accept(&self, warned: &Warned) -> Result<(), crate::remember::RememberError> {
+        let file = self
+            .file
+            .get()
+            .ok_or_else(|| crate::remember::RememberError::Unwritable {
+                file: "the configuration file".into(),
+                source: std::io::Error::new(std::io::ErrorKind::NotFound, "no file was given"),
+            })?;
+        crate::remember::accepting(file, warned.route)?;
+        self.record(warned.route);
+        Ok(())
     }
 
     /// The routes it answers about.

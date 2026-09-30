@@ -175,6 +175,16 @@ pub enum TurnOutcome {
     /// problem gives. Where a step would have had to wait and was dropped,
     /// what it began is unconfirmed rather than undone.
     Failed(Problem),
+    /// Nothing was sent: the route the turn would go on is one whose vendor
+    /// says it uses what is sent, and nobody said yes to it.
+    Warned {
+        /// The route, as a yes to it is written down.
+        route: Text,
+        /// What the vendor says, in English.
+        sentence: Text,
+        /// The page it says it on, and the day that was read.
+        source: Text,
+    },
 }
 
 /// How making room ended.

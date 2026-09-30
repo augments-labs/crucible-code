@@ -53,7 +53,7 @@ use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_client_api::{Command, Prompt, Refusal};
+use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
 use crucible_context::Room;
 use crucible_runner::{Event, Runner, Turned};
 use crucible_runtime::Cancel;
@@ -1551,6 +1551,9 @@ fn sent(
                 Did::Reported
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
+            // Asked about on this side before it was sent, so only a yes
+            // taken back in between lands here; said as nothing sent.
+            Ended::Warned(_) => Did::Unsent(ErrorCode::Abandoned.into()),
         };
 
         (conversation, did)

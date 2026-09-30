@@ -339,7 +339,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     });
     recorded(&mut conversation, &runtime);
 
-    Ok(conversation)
+    Ok(conversation.consenting(startup.services.consent().clone()))
 }
 
 /// Waits on `runtime` for what picking the session up owes it, before the

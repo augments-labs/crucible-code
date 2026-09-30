@@ -12,6 +12,7 @@ use crucible_types::{Attachment, Compacting, Spend};
 use super::deciding::{Deciding, Front};
 use super::reading;
 use crate::Conversation;
+use crate::content_use::Warned;
 
 /// How a command [`turn`] was given ended, in the application's own values.
 #[derive(Debug)]
@@ -22,6 +23,9 @@ pub enum Ended {
     Turn(Result<Turned, TurnError>),
     /// A compaction, and what it made room for.
     Room(Result<Room, TurnError>),
+    /// Nothing was sent: the route it would go on is one whose vendor uses
+    /// what is sent, and nobody said yes to it.
+    Warned(Warned),
 }
 
 /// Takes the turn `request` asks for: a prompt, or a compaction somebody asked
@@ -45,6 +49,21 @@ pub async fn turn(
     front: &mut dyn Front,
     run: &RunContext<'_>,
 ) -> Ended {
+    // Before anything could be sent, and at this door so that every client is
+    // asked the same way: a route whose vendor uses what is sent, with no yes
+    // to it, is put to the front as a pending action, and a yes given there is
+    // written into the user's own file before the turn goes.
+    if matches!(request.command(), Command::Prompt(_) | Command::Compact)
+        && let Some(warned) = unanswered(conversation)
+    {
+        let accepted = super::deciding::warned(request.capabilities(), front, &warned).await;
+        let kept = conversation
+            .consent()
+            .is_some_and(|consent| accepted && consent.accept(&warned).is_ok());
+        if !kept {
+            return Ended::Warned(warned);
+        }
+    }
     match request.command() {
         Command::Prompt(prompt) => {
             let mut ask = Deciding::new(front, request.capabilities());
@@ -82,6 +101,13 @@ pub async fn turn(
         | Command::ReleaseNotes { .. }
         | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
+}
+
+/// The warned route a turn of `conversation` would go on with no yes.
+fn unanswered(conversation: &Conversation) -> Option<Warned> {
+    conversation
+        .consent()?
+        .unanswered(conversation.serving()?, conversation.runner().model())
 }
 
 /// Asks the turn `cancel` belongs to to stop.
@@ -167,6 +193,11 @@ impl Ended {
             Self::Room(Err(problem)) => {
                 Outcome::Room(RoomOutcome::Failed(Problem::failed(problem)))
             }
+            Self::Warned(warned) => Outcome::Turn(TurnOutcome::Warned {
+                route: Text::cut(warned.route),
+                sentence: Text::cut(warned.warning.sentence),
+                source: Text::cut(&warned.warning.cited()),
+            }),
         }
     }
 }

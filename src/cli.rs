@@ -618,6 +618,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // out, here or later, takes its route's yes with it, before the store is
     // written, and a yes this run took out must not come back.
     let rows = crucible_app::providers::Rows::production();
+    services.consent().keeps_in(crucible_config::user(&home));
     services
         .consent()
         .recorded(settings.content_accepted().into_iter().map(str::to_owned));

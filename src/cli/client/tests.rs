@@ -503,6 +503,22 @@ fn renumbered(noted: Vec<Noted>) -> Vec<Noted> {
             Noted::Decided(Decision::Declined { id }) => {
                 Noted::Decided(Decision::Declined { id: ordinal(id) })
             }
+            Noted::Decided(Decision::Accepted { id }) => {
+                Noted::Decided(Decision::Accepted { id: ordinal(id) })
+            }
+            Noted::Put(Pending::Warning {
+                id,
+                route,
+                shown,
+                sentence,
+                source,
+            }) => Noted::Put(Pending::Warning {
+                id: ordinal(id),
+                route,
+                shown,
+                sentence,
+                source,
+            }),
             other @ (Noted::Answered { .. } | Noted::Apart { .. }) => other,
         })
         .collect()
