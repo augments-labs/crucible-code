@@ -218,7 +218,7 @@ fn screen(transcript: Transcript, columns: usize) -> String {
 /// renderer nobody told would be judged with the colour switched off.
 fn painted(transcript: Transcript, columns: usize, style: Style) -> String {
     let runner = resumed(transcript);
-    let session = Session::nowhere();
+    let session = Arc::new(Session::nowhere());
     let mut renderer = Renderer::new(Recording::new(columns, 24));
     renderer.wears(style.palette());
 
@@ -247,7 +247,7 @@ fn holding(transcript: Transcript, columns: usize) -> (Kept, Renderer<Recording>
     replayed(
         &mut renderer,
         &against(&runner, &Pruned::default()),
-        &Session::nowhere(),
+        &Arc::new(Session::nowhere()),
         &mut kept,
     )
     .expect("a recording cannot fail");
@@ -431,7 +431,7 @@ fn a_result_a_pruning_cleared_replays_as_what_the_reader_was_shown() {
     replayed(
         &mut renderer,
         &against(&runner, &pruned),
-        &Session::nowhere(),
+        &Arc::new(Session::nowhere()),
         &mut Kept::default(),
     )
     .expect("a recording cannot fail");
@@ -528,7 +528,7 @@ fn a_session_glimpsed_is_drawn_the_way_picking_it_up_would_draw_it() {
     replayed(
         &mut renderer,
         &against(&runner, &Pruned::default()),
-        &Session::nowhere(),
+        &Arc::new(Session::nowhere()),
         &mut Kept::default(),
     )
     .expect("a recording cannot fail");

@@ -116,7 +116,7 @@ pub(crate) fn event<T: Terminal>(
 ) -> Result<(), TerminalError> {
     let columns = renderer.columns();
 
-    match event {
+    let drawn = match event {
         // The turn number is in the title bar, not in the transcript: a line
         // per turn saying which turn it is crowds out the turn itself. What it
         // is worth here is the row it parts from the prompt above it — the
@@ -242,7 +242,14 @@ pub(crate) fn event<T: Terminal>(
                 .collect();
             renderer.present(&rows)
         }
-    }
+    };
+    drawn?;
+
+    // Whatever it was, a result it brought in may have pushed an older one out
+    // of what is held — a call counted into a run is kept without a row of its
+    // own being drawn — and a row that can no longer open anything stops
+    // saying it can.
+    withdraw(renderer, kept)
 }
 
 /// Writes the line a command that ended on its own leaves behind.
@@ -1161,10 +1168,13 @@ fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) 
         } else {
             format!(" (+{beyond} lines {} ", glyphs.dot())
         },
-        "ctrl+o to expand",
+        EXPAND,
         ")",
     )
 }
+
+/// The words that name the key an offer to expand is made with.
+const EXPAND: &str = "ctrl+o to expand";
 
 /// Every row one answered call comes back as.
 ///
@@ -1253,7 +1263,73 @@ pub(crate) fn came_back<T: Terminal>(
         kept.answered(call);
     }
 
+    withdraw(renderer, kept)
+}
+
+/// Takes the offer off every row the store can no longer open.
+///
+/// A session with no log has nowhere to read a result back from, so a row
+/// whose result the store let go of has nothing behind it: it keeps its place
+/// and its words, and stops naming the key and lighting under the pointer.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be redrawn.
+pub(crate) fn withdraw<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    kept: &mut Kept,
+) -> Result<(), TerminalError> {
+    for at in kept.withdrawn() {
+        renderer.amend(at, unoffered)?;
+    }
     Ok(())
+}
+
+/// A row that offered to expand, without the offer.
+///
+/// What [`finished`] and [`offer`] wrote for it goes: the key's name and the
+/// brackets it stood in, or the whole of a change's offer, which is a cut run
+/// of its own at the end of the row. A count of the lines the row could not
+/// show stays, because it is still true. What was cut stops wearing the slot
+/// that lights under the pointer and reads as the row around it.
+fn unoffered(rows: &mut [Row]) {
+    for row in rows {
+        let spans: Vec<(Slot, String)> = row
+            .spans()
+            .map(|(slot, text)| (slot, text.to_owned()))
+            .collect();
+        let key = spans
+            .iter()
+            .position(|(slot, text)| *slot == Slot::Accent && text == EXPAND);
+        // ` (+2 lines · ` keeps its count and loses the mark after it; a bare
+        // ` (` was only ever the offer's.
+        let counted = key
+            .and_then(|key| key.checked_sub(1))
+            .and_then(|opens| spans.get(opens))
+            .and_then(|(_, opens)| opens.trim_end().rsplit_once(' '))
+            .map(|(count, _)| count.to_owned())
+            .filter(|count| count.contains('+'));
+        let last = spans.len().saturating_sub(1);
+
+        row.rewrite(|at, slot, text| {
+            if let Some(key) = key {
+                if at == key {
+                    return None;
+                }
+                if at + 1 == key {
+                    return counted.clone().map(|count| (Slot::Quiet, count));
+                }
+                if at == key + 1 {
+                    return counted.is_some().then(|| (slot, text.to_owned()));
+                }
+            }
+            match slot {
+                Slot::Cut if at == last && text.starts_with(" (") => None,
+                Slot::Cut => Some((Slot::Quiet, text.to_owned())),
+                _ => Some((slot, text.to_owned())),
+            }
+        });
+    }
 }
 
 /// One finished result on its way to the screen, and the lines only the reader

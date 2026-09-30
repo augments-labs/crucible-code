@@ -347,3 +347,154 @@ fn what_is_held_of_a_running_call_is_its_end_and_is_bounded() {
         writing.text().get(..12)
     );
 }
+
+/// A log that holds what each result said at the place it was written, and
+/// says where results went as the session's writer would.
+#[derive(Debug, Default)]
+struct Logged {
+    /// What is at each place.
+    held: std::collections::HashMap<(crucible_types::ToolId, u64), Box<str>>,
+    /// Where results went since this was last asked.
+    went: std::cell::RefCell<Vec<(crucible_types::ToolId, u64)>>,
+}
+
+impl Log for Logged {
+    fn placed(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        self.went.take()
+    }
+
+    fn read(&self, call: &crucible_types::ToolId, position: u64) -> Option<Box<str>> {
+        self.held.get(&(call.clone(), position)).cloned()
+    }
+}
+
+/// Forty results of a quarter of the ceiling each, every one placed in a log
+/// at the position its number says, and the first fifteen of them let go of.
+fn forty_placed(replayed: bool) -> Kept {
+    let mut logged = Logged::default();
+    for turn in 0..40_u64 {
+        let call = crucible_types::ToolId::new(format!("call-{turn}"));
+        logged
+            .held
+            .insert((call.clone(), turn * 100), format!("result {turn}").into());
+        if !replayed {
+            logged.went.borrow_mut().push((call, turn * 100));
+        }
+    }
+
+    let mut cut = Kept::default();
+    cut.logging(Box::new(logged));
+    for turn in 0..40_u64 {
+        let call = crucible_types::ToolId::new(format!("call-{turn}"));
+        cut.calling(call.clone(), format!("Read({turn})"));
+        if replayed {
+            cut.placing(&call, turn * 100);
+        }
+        let at = usize::try_from(turn).unwrap();
+        cut.finished(&call, format!("result {turn}").repeat(HELD / 40).into(), at);
+    }
+    cut
+}
+
+#[test]
+fn a_result_let_go_of_is_still_offered_and_read_back_from_the_log() {
+    // The ceiling on what is held does not move. What moves is what a row that
+    // lost its text can still do: the log holds the result, so the row still
+    // opens, and what it opens is read back from there.
+    for replayed in [true, false] {
+        let mut cut = forty_placed(replayed);
+
+        assert!(
+            cut.newest().all(|whole| whole.at() != Some(0)),
+            "the oldest result is still held; the test says nothing"
+        );
+        for at in 0..40 {
+            assert!(cut.offered(at), "row {at} stopped offering ({replayed})");
+        }
+
+        let back = cut.read_back(0);
+        assert_eq!(
+            back,
+            vec![Back::Read {
+                called: "Read(0)".to_owned(),
+                text: "result 0".into(),
+            }],
+            "{replayed}"
+        );
+        assert!(
+            cut.withdrawn().is_empty(),
+            "nothing is withdrawn with a log"
+        );
+    }
+}
+
+#[test]
+fn a_read_that_fails_says_so_under_the_call_it_was_for() {
+    let mut cut = Kept::default();
+    cut.logging(Box::new(Logged::default()));
+    for turn in 0..16 {
+        let call = crucible_types::ToolId::new(format!("call-{turn}"));
+        cut.calling(call.clone(), format!("Bash({turn})"));
+        cut.placing(&call, turn);
+        cut.finished(
+            &call,
+            "x".repeat(HELD / 3).into(),
+            usize::try_from(turn).unwrap(),
+        );
+    }
+
+    assert_eq!(
+        cut.read_back(0),
+        vec![Back::Unread {
+            called: "Bash(0)".to_owned()
+        }]
+    );
+    assert!(cut.offered(0), "a failed read leaves the row as it was");
+}
+
+#[test]
+fn with_no_log_a_row_whose_result_was_let_go_of_is_withdrawn() {
+    // Nothing can open it, so the row has to stop saying something can. The
+    // rows that go are handed to what draws them, once.
+    let mut cut = Kept::default();
+    for turn in 0..16 {
+        kept(&mut cut, &format!("Bash({turn})"), HELD / 3);
+    }
+
+    let gone = cut.withdrawn();
+    assert!(
+        !gone.is_empty(),
+        "nothing was let go of; the test says nothing"
+    );
+    for at in &gone {
+        assert!(!cut.offered(*at), "row {at} still offers");
+    }
+    assert!(cut.withdrawn().is_empty(), "handed over once");
+}
+
+#[test]
+fn a_row_let_go_of_holds_no_text_and_one_place_for_each_offer() {
+    // What is held stays under the ceiling however many rows still offer: a
+    // row whose text went keeps where the log holds it and the line of its
+    // call, and nothing of the result.
+    let cut = forty_placed(true);
+
+    assert!(cut.held <= HELD, "{} held", cut.held);
+    assert_eq!(cut.placed.len(), 40 - cut.newest().count());
+}
+
+#[test]
+fn forgetting_keeps_the_log_and_nothing_it_placed() {
+    // `/clear` and `/resume` forget what the rows on screen offered; the log
+    // belongs to the session, which is set again when it changes.
+    let mut cut = forty_placed(true);
+    cut.forget();
+
+    assert!(!cut.offered(0));
+    assert!(cut.placed.is_empty());
+    let call = crucible_types::ToolId::new("again");
+    cut.calling(call.clone(), "Read(again)".to_owned());
+    cut.placing(&call, 7);
+    cut.finished(&call, "said again".into(), 3);
+    assert!(cut.log.is_some());
+}

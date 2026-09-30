@@ -26,6 +26,15 @@
 //! them. The rule above is unchanged by that: what is held is still what a row
 //! somebody can still see has offered.
 //!
+//! What is let go of under the ceiling is not always gone. Where the session
+//! has a log, the result is still in it, so a row whose text was dropped keeps
+//! where the log holds it — the call it answered and the position of its
+//! record, and no text — and opening that row reads the result back from
+//! there, one at a time. The log is reached through [`Log`], which the replay
+//! sets from the session it is putting back, so nothing here names the
+//! storage it is kept in. Where there is no log, a row whose result was let go
+//! of can open nothing, and it is handed to what draws it to stop offering.
+//!
 //! One kind of cut is not here and cannot be. A call that changed a file is
 //! shown as the change itself, and a change too long for the block is cut down
 //! where the change is built rather than where it is drawn — those lines never
@@ -33,7 +42,9 @@
 //! reader to hand over. The row says how many went, which is the whole of what
 //! is still true about them.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::fmt;
 
 use crucible_types::ToolId;
 
@@ -82,6 +93,10 @@ pub(crate) struct Whole {
     /// the record becomes this — or becomes nothing, which is a click on a row
     /// that made no offer.
     at: Option<usize>,
+    /// The call whose result this is.
+    call: ToolId,
+    /// Where the session log holds it, where that is known yet.
+    position: Option<u64>,
 }
 
 impl Whole {
@@ -98,6 +113,61 @@ impl Whole {
     /// Which row of the record offered it, where one did.
     pub(crate) fn at(&self) -> Option<usize> {
         self.at
+    }
+}
+
+/// Where a session's log is read back from, for rows whose results the
+/// ceiling let go of.
+///
+/// A trait here rather than the session itself, so that what holds results
+/// and the view that opens one name no storage: what implements it is set by
+/// the replay, from the session it puts back on the screen.
+pub(crate) trait Log: fmt::Debug {
+    /// Where the results written since this was last asked went: each call,
+    /// and where in the log the record holding its result begins.
+    fn placed(&self) -> Vec<(ToolId, u64)>;
+
+    /// What the result of `call`, in the record beginning at `position`,
+    /// said, or `None` where the log does not hold it there.
+    fn read(&self, call: &ToolId, position: u64) -> Option<Box<str>>;
+}
+
+/// One result a row offered, read back from the log for the view that opened
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Back {
+    /// What it said.
+    Read {
+        /// The call's line.
+        called: String,
+        /// The whole of what came back.
+        text: Box<str>,
+    },
+    /// The log could not give it back: the file is gone, or the line is not
+    /// what it was.
+    Unread {
+        /// The call's line.
+        called: String,
+    },
+}
+
+/// A row whose result the ceiling let go of, and where the log holds it.
+///
+/// No text: the call's line, the call, the row, and the position.
+#[derive(Debug)]
+struct Placed {
+    called: String,
+    call: ToolId,
+    at: usize,
+    position: Option<u64>,
+}
+
+impl Placed {
+    /// What it costs against [`HELD`]: its call's line and its call, and the
+    /// place itself. Counted so that the rows still offering after their text
+    /// went are bounded by the same ceiling the text is.
+    fn weight(&self) -> usize {
+        self.called.len() + self.call.as_str().len() + size_of::<Self>()
     }
 }
 
@@ -125,6 +195,18 @@ pub(crate) struct Kept {
     /// queue's length answers that only until the ceiling starts dropping from
     /// the other end. This only ever goes up.
     cut: usize,
+    /// Rows whose text was let go of while the log still holds it, oldest
+    /// first.
+    placed: VecDeque<Placed>,
+    /// Where results are read back from, where the session has a log.
+    log: Option<Box<dyn Log>>,
+    /// Rows that stopped being able to open anything, for what draws them to
+    /// take the offer off.
+    gone: Vec<usize>,
+    /// Places the log handed over while a row was being read back, which is
+    /// when nothing here may be changed, kept to be filed the next time
+    /// something may.
+    unfiled: RefCell<Vec<(ToolId, u64)>>,
 }
 
 /// One call that has not answered yet.
@@ -133,6 +215,8 @@ struct Pending {
     id: ToolId,
     called: String,
     writing: Option<Whole>,
+    /// Where the log holds its result, where a replay said so first.
+    position: Option<u64>,
 }
 
 impl Kept {
@@ -148,6 +232,7 @@ impl Kept {
                 id: call,
                 called,
                 writing: None,
+                position: None,
             });
         }
     }
@@ -175,6 +260,8 @@ impl Kept {
             called: pending.called.clone(),
             text: String::new().into(),
             at: None,
+            call: pending.id.clone(),
+            position: None,
         });
 
         let mut held = String::from(&*writing.text);
@@ -249,29 +336,166 @@ impl Kept {
         }
     }
 
+    /// Says where the log holds the result of `call`, before it arrives.
+    ///
+    /// A replay knows where it read each result from, so it says so as it
+    /// goes; a turn does not, and those places are learned from the log.
+    pub(crate) fn placing(&mut self, call: &ToolId, position: u64) {
+        if let Some(pending) = self.pending.iter_mut().find(|one| one.id == *call) {
+            pending.position = Some(position);
+        } else {
+            self.pending.push_back(Pending {
+                id: call.clone(),
+                called: String::new(),
+                writing: None,
+                position: Some(position),
+            });
+        }
+    }
+
+    /// Sets where results let go of are read back from: the log of the
+    /// session now on the screen.
+    pub(crate) fn logging(&mut self, log: Box<dyn Log>) {
+        self.log = Some(log);
+    }
+
     /// Keeps one result, pointing wherever the caller can point it.
     fn keep(&mut self, call: &ToolId, text: Box<str>, at: Option<usize>) {
-        let called = self.take(call).map_or_else(String::new, |one| one.called);
+        let (called, position) = self
+            .take(call)
+            .map_or_else(|| (String::new(), None), |one| (one.called, one.position));
 
         self.cut = self.cut.saturating_add(1);
         self.held = self
             .held
             .saturating_add(text.len())
             .saturating_add(called.len());
-        self.whole.push_back(Whole { called, text, at });
+        self.whole.push_back(Whole {
+            called,
+            text,
+            at,
+            call: call.clone(),
+            position,
+        });
 
         // After the push rather than before it, so that the newest result is
         // held whatever it costs. One longer than the ceiling on its own would
         // otherwise be the one thing a reader could never see, and it is the
         // one they are most likely to be asking about.
-        while self.held > HELD && self.whole.len() > 1 {
-            if let Some(gone) = self.whole.pop_front() {
-                self.held = self
-                    .held
-                    .saturating_sub(gone.text.len())
-                    .saturating_sub(gone.called.len());
+        while self.held > HELD {
+            if self.whole.len() > 1 {
+                if let Some(gone) = self.whole.pop_front() {
+                    self.let_go(gone);
+                }
+            } else if let Some(oldest) = self.placed.pop_front() {
+                self.held = self.held.saturating_sub(oldest.weight());
+                self.gone.push(oldest.at);
+            } else {
+                break;
             }
         }
+    }
+
+    /// What becomes of a result the ceiling dropped: a place where the log
+    /// holds it, or a row that has to stop offering where there is no log.
+    fn let_go(&mut self, gone: Whole) {
+        self.held = self
+            .held
+            .saturating_sub(gone.text.len())
+            .saturating_sub(gone.called.len());
+
+        // A result no row offers yet — one of a run whose line is still to be
+        // written — has no row to keep a place for.
+        let Some(at) = gone.at else { return };
+        if self.log.is_none() {
+            self.gone.push(at);
+            return;
+        }
+
+        let placed = Placed {
+            called: gone.called,
+            call: gone.call,
+            at,
+            position: gone.position,
+        };
+        self.held = self.held.saturating_add(placed.weight());
+        self.placed.push_back(placed);
+        self.learn();
+    }
+
+    /// Takes where the log's writer put the results it wrote since last asked,
+    /// and keeps the places of the ones a row still offers.
+    fn learn(&mut self) {
+        let Some(log) = &self.log else { return };
+        let mut learned = std::mem::take(self.unfiled.get_mut());
+        learned.extend(log.placed());
+        for (call, position) in learned {
+            if let Some(whole) = self
+                .whole
+                .iter_mut()
+                .find(|whole| whole.call == call && whole.position.is_none())
+            {
+                whole.position = Some(position);
+            } else if let Some(placed) = self
+                .placed
+                .iter_mut()
+                .find(|placed| placed.call == call && placed.position.is_none())
+            {
+                placed.position = Some(position);
+            }
+        }
+    }
+
+    /// Reads back the results row `at` offered that are no longer held.
+    ///
+    /// Empty where the row's results are all held, and where there is no log.
+    /// Each is read on its own, so one the log cannot give back is said to be
+    /// missing and the others still come.
+    ///
+    /// Asked of a store that is only being looked at, because a view opens on
+    /// what it is shown: places the log hands over now are kept aside and filed
+    /// the next time a result arrives.
+    pub(crate) fn read_back(&self, at: usize) -> Vec<Back> {
+        let Some(log) = &self.log else {
+            return Vec::new();
+        };
+        let mut unfiled = self.unfiled.borrow_mut();
+        unfiled.extend(log.placed());
+
+        self.placed
+            .iter()
+            .filter(|placed| placed.at == at)
+            .map(|placed| {
+                let position = placed.position.or_else(|| {
+                    unfiled
+                        .iter()
+                        .rev()
+                        .find(|(call, _)| *call == placed.call)
+                        .map(|(_, position)| *position)
+                });
+                match position.and_then(|position| log.read(&placed.call, position)) {
+                    Some(text) => Back::Read {
+                        called: placed.called.clone(),
+                        text,
+                    },
+                    None => Back::Unread {
+                        called: placed.called.clone(),
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// The rows that can no longer open anything, handed over once.
+    ///
+    /// A row still offering another result — one line of a folded run, say — is
+    /// not among them.
+    pub(crate) fn withdrawn(&mut self) -> Vec<usize> {
+        let mut gone = std::mem::take(&mut self.gone);
+        gone.retain(|at| !self.offered(*at));
+        gone.sort_unstable();
+        gone.dedup();
+        gone
     }
 
     /// Forgets a call whose complete result fitted on screen.
@@ -302,8 +526,13 @@ impl Kept {
     /// The count of what has been cut goes back to nothing with them, because
     /// what it is for is a view stepping over results that arrived underneath
     /// it — and none of these can arrive again.
+    ///
+    /// The log is kept: it belongs to the session rather than to the rows, and
+    /// what changes the session sets it again.
     pub(crate) fn forget(&mut self) {
+        let log = self.log.take();
         *self = Self::default();
+        self.log = log;
     }
 
     /// Everything still reachable, newest first.
@@ -334,6 +563,7 @@ impl Kept {
     /// still held.
     pub(crate) fn offered(&self, at: usize) -> bool {
         self.whole.iter().any(|whole| whole.at == Some(at))
+            || self.placed.iter().any(|placed| placed.at == at)
     }
 
     /// What the call still out has printed, where it has printed anything.

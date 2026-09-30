@@ -34,7 +34,7 @@
 use crucible_tui::{Caret, Expanded, Glyphs, Key, Pressed, Renderer, Row, Shown, Terminal};
 
 use crate::cli::Fatal;
-use crate::cli::kept::{Kept, Whole};
+use crate::cli::kept::{Back, Kept, Whole};
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
@@ -75,6 +75,11 @@ pub(super) struct View {
     end: usize,
     /// What it is a window over.
     over: Over,
+    /// What the row it opened on offered that the store no longer holds, read
+    /// back from the session log as it opened. Held for as long as the view
+    /// stands and no longer, so opening rows one after another holds one row's
+    /// results beyond the store at most.
+    back: Vec<Back>,
 }
 
 impl View {
@@ -84,9 +89,13 @@ impl View {
             from: 0,
             end: 0,
             over,
+            back: Vec::new(),
         }
     }
 }
+
+/// What stands in place of a result the log could not give back.
+const UNREAD: &str = "! this result could not be read back from the session log";
 
 /// Whether the whole of what was cut is standing, and where over it.
 ///
@@ -148,12 +157,20 @@ impl Standing {
     /// pointer lands wherever it lands, and the answer to a click on a line of
     /// an answer, a blank row or the shell's own output is the screen the
     /// reader was already looking at.
+    ///
+    /// What the row offered and the store let go of is read back from the
+    /// session log now, one result at a time, and a result the log cannot give
+    /// back stands as a line saying so while the others still open.
     pub(super) fn one(&mut self, kept: &Kept, at: usize) {
         if !kept.offered(at) {
             return;
         }
 
-        *self = Self::Open(View::onto(Over::One(at)));
+        let back = kept.read_back(at);
+        *self = Self::Open(View {
+            back,
+            ..View::onto(Over::One(at))
+        });
     }
 
     /// Gives one key to the view, and answers whether a frame is owed.
@@ -260,7 +277,13 @@ pub(super) fn under<T: Terminal>(
 /// reading it — rare, and the honest answer to it is the screen coming back
 /// rather than a frame of chrome with nothing under it.
 fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: usize) -> Vec<Row> {
-    let shown: Vec<Shown<'_>> = match view.over {
+    let View {
+        from,
+        end,
+        over,
+        back,
+    } = view;
+    let shown: Vec<Shown<'_>> = match *over {
         // Stepped over rather than counted up to, because the end that gives is
         // the other one: what arrived after the view opened is at the front of
         // `newest`, and what was dropped to stay under the ceiling has gone
@@ -285,6 +308,13 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
             .newest()
             .filter(|whole| whole.at() == Some(at))
             .map(showing)
+            .chain(back.iter().map(|back| match back {
+                Back::Read { called, text } => Shown { called, text },
+                Back::Unread { called } => Shown {
+                    called,
+                    text: UNREAD,
+                },
+            }))
             .collect(),
     };
 
@@ -294,13 +324,13 @@ fn laying(kept: &Kept, view: &mut View, glyphs: Glyphs, columns: usize, rows: us
 
     let expanded = Expanded {
         shown: &shown,
-        from: view.from,
+        from: *from,
     };
 
     // Written before the rows are asked for, so the key pressed against this
     // picture is clamped to what this picture could reach.
-    view.end = expanded.end(columns, rows);
-    view.from = view.from.min(view.end);
+    *end = expanded.end(columns, rows);
+    *from = (*from).min(*end);
 
     expanded.within(columns, rows, glyphs)
 }
