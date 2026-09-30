@@ -35,7 +35,8 @@ pub(super) enum Request {
     /// Append one message line that holds the results of `calls`, keep where
     /// it went, and acknowledge `taken` where there is one to tell.
     Results {
-        /// The line, which may open with a format guard of its own.
+        /// The message's line. A message of results is written with no guard
+        /// before it, so where the line begins is where its record does.
         line: Box<str>,
         /// The calls whose results the message holds.
         calls: Box<[ToolId]>,
@@ -78,12 +79,18 @@ pub(super) type Placed = Arc<Mutex<VecDeque<Place>>>;
 /// fragment onward nothing more is written: the file ends at the fragment,
 /// which the replay reads as a log torn at the tail, whole up to its last
 /// line.
+///
+/// Counting is also what places a result. `start` is how long the file was
+/// when this began, and from there the line of each message of results lands
+/// at a count this knows, which is kept in `placed` until it is taken. Where
+/// the length could not be read there is no count to trust, and nothing is
+/// placed.
 pub(super) fn write<W: io::Write>(
     mut sink: W,
     lines: Receiver<Request>,
     trouble: &Trouble,
     room: Arc<Notify>,
-    (start, placed): (u64, Placed),
+    (start, placed): (Option<u64>, Placed),
 ) {
     let queue = Closing {
         lines: Some(lines),
@@ -92,8 +99,9 @@ pub(super) fn write<W: io::Write>(
     let Some(lines) = queue.lines.as_ref() else {
         return;
     };
+    let placing = start;
     let mut tail = Tail {
-        written: start,
+        written: start.unwrap_or(0),
         ..Tail::default()
     };
 
@@ -114,11 +122,11 @@ pub(super) fn write<W: io::Write>(
                 let _ = done.send(());
             }
             Request::Results { line, calls, taken } => {
-                if let Some(at) = tail.append(&mut sink, &line, trouble) {
-                    // The message is the last line of what was queued, after
-                    // any guard written with it as one request.
-                    let into = line.rfind('\n').map_or(0, |guard| guard + 1);
-                    let begins = at.saturating_add(u64::try_from(into).unwrap_or(u64::MAX));
+                let begins = tail.append(&mut sink, &line, trouble);
+                // Only where the file's length was known when the writer
+                // started: a count begun anywhere else would name places the
+                // log does not bear out.
+                if let Some(begins) = begins.filter(|_| placing.is_some()) {
                     let mut held = placed.lock().unwrap_or_else(PoisonError::into_inner);
                     for call in calls {
                         held.push_back(Place::new(call, begins));

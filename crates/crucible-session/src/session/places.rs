@@ -3,14 +3,17 @@
 //!
 //! What a screen keeps of a result it had to cut is a place rather than the
 //! words: the call the result answered, and where in the log the record
-//! holding it begins. The log is only ever added to, so a position stays true
-//! for as long as the file does, through every compaction, pruning and
-//! restriction, each of which adds a line and changes none.
+//! holding it begins. A running session only adds to its log, so a position
+//! stays true through every compaction, pruning and restriction, each of which
+//! adds a line and changes none. Picking a session up can cut a torn tail off
+//! first, but that is before anything is read or written here, and the only
+//! places it could move are the ones that tail held.
 //!
 //! A place is handed out two ways. Replaying a log for the reader says where
 //! each message it hands over was read from — see
 //! [`super::DisplayHistory::placed`] — and the thread that appends to the log
-//! keeps where each result it wrote landed, for [`Session::take_placed`].
+//! keeps where each result it wrote landed, for [`Session::take_landed`] and
+//! [`Session::take_placed`].
 //!
 //! Reading back is one record at one position, bounded as every record is,
 //! and accepted only where that record holds the call the place names. Nothing
@@ -41,8 +44,9 @@ impl Place {
     /// The result of `call`, in the record that begins `position` bytes into
     /// the log.
     ///
-    /// Anybody may make one: a place the log does not bear out reads nothing,
-    /// so there is nothing a made-up one can reach.
+    /// Anybody may make one. A place the log does not bear out reads nothing,
+    /// and one it does reads only what the log holds for that call: a made-up
+    /// place reaches no further than a result of that call in this log.
     #[must_use]
     pub const fn new(call: ToolId, position: u64) -> Self {
         Self { call, position }
@@ -115,17 +119,28 @@ impl Session {
     }
 
     /// The places of the results this session's writer appended since this
-    /// was last asked, oldest first.
+    /// was last asked, oldest first, once everything queued before this has
+    /// been written.
     ///
-    /// Behind whatever was queued before it, so every result appended so far
-    /// has a place. Taken rather than read: whatever draws the session keeps
-    /// the ones it offered and lets the rest go, and what is left here is
-    /// bounded by the writer however long nobody asks.
+    /// Waiting makes every result appended so far have a place, which is what
+    /// opening a row asks for. Taken rather than read: each place is handed
+    /// over once, and what is left here is bounded by the writer however long
+    /// nobody asks.
     #[must_use]
     pub fn take_placed(&self) -> Vec<Place> {
         if self.to.is_none() || !self.caught_up() {
             return Vec::new();
         }
+        self.take_landed()
+    }
+
+    /// The places of the results this session's writer has already written
+    /// since this was last asked, oldest first, waiting for nothing.
+    ///
+    /// What a screen asks as each result arrives: a result still queued has
+    /// no place yet and is handed over by a later take.
+    #[must_use]
+    pub fn take_landed(&self) -> Vec<Place> {
         self.placed
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

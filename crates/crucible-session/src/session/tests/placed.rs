@@ -240,3 +240,209 @@ fn a_result_cut_to_the_ceiling_reads_back_with_the_note_it_was_cut_with() {
     let place = replayed_places(&session).remove(0);
     assert_eq!(session.read_back(&place).expect("read"), output);
 }
+
+/// The results of `calls`, each saying which call it answered.
+fn results_of(calls: &[&str]) -> Message {
+    Message::ToolResults(
+        calls
+            .iter()
+            .map(|call| crucible_types::ToolResult {
+                id: ToolId::new(*call),
+                output: RecordedToolOutput::ok(format!("what {call} said")),
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn a_result_appended_after_a_pick_up_is_placed_past_everything_already_there() {
+    // The writer of a session picked up counts from the end of the log as it
+    // was found, header and every turn, so what it places reads back.
+    let sample = Sample::new("placed-after-resume");
+    record(
+        &sample,
+        &[
+            said("look"),
+            calling("call-1", "read", r#"{"path":"a.rs"}"#),
+            answered("call-1", RecordedToolOutput::ok("what a.rs held")),
+            answering("read"),
+        ],
+    );
+    let session = Session::resume(&sample.logs(), &sample.workspace())
+        .expect("the session")
+        .0;
+
+    session.append(&said("and again"));
+    session.append(&calling("call-2", "read", r#"{"path":"b.rs"}"#));
+    session.append(&results_of(&["call-2"]));
+
+    let places = session.take_placed();
+    let calls: Vec<&str> = places.iter().map(|place| place.call().as_str()).collect();
+    assert_eq!(calls, ["call-2"]);
+    for place in &places {
+        assert_eq!(
+            session.read_back(place).expect("read"),
+            RecordedToolOutput::ok("what call-2 said")
+        );
+    }
+}
+
+#[test]
+fn a_result_placed_from_the_start_of_a_new_log_counts_its_header() {
+    // A fresh log opens with its header, and the writer's count starts after
+    // it: a result appended first reads back from where it was placed.
+    let sample = Sample::new("placed-first");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+
+    session.append(&results_of(&["call-1", "call-2"]));
+
+    let places = session.take_placed();
+    assert_eq!(places.len(), 2);
+    assert!(
+        places.iter().all(|place| place.position() > 0),
+        "{places:?}"
+    );
+    for place in &places {
+        assert!(session.read_back(place).is_ok(), "{place:?}");
+    }
+}
+
+/// Where each place `written` holds begins, as the line of results there says.
+fn landed_at(written: &Written, places: &[Place]) -> Vec<String> {
+    let log = written.lock().expect("the writer is gone").clone();
+    places
+        .iter()
+        .map(|place| {
+            let from = usize::try_from(place.position()).expect("a short log");
+            let line = log
+                .get(from..)
+                .and_then(|rest| rest.split(|byte| *byte == b'\n').next())
+                .expect("a line at the place");
+            let text = std::str::from_utf8(line).expect("text");
+            match wire::message(text) {
+                Some(Message::ToolResults(results)) => results
+                    .iter()
+                    .map(|result| result.id.as_str().to_owned())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                other => panic!("no results at {}: {other:?} {text:?}", place.position()),
+            }
+        })
+        .collect()
+}
+
+/// A file with nothing in it, for a writer whose sink is not that file to
+/// take its length from.
+fn empty(sample: &Sample, name: &str) -> PathBuf {
+    let path = sample.logs().join(name);
+    std::fs::create_dir_all(sample.logs()).expect("the directory");
+    std::fs::write(&path, b"").expect("the file");
+    path
+}
+
+#[test]
+fn a_line_whose_newline_did_not_land_is_not_placed_and_the_next_one_is() {
+    // The disk took the line and refused its newline: the record is ended
+    // before the next one starts, so the place of the next one counts that
+    // newline too. The line cut short is placed nowhere.
+    let sample = Sample::new("placed-torn");
+    let written = Written::default();
+    let session = Session::writing(
+        empty(&sample, "torn.jsonl"),
+        Filling {
+            written: Arc::clone(&written),
+            writes: 0,
+            // The newline of the first line.
+            fails_at: 2,
+        },
+    );
+
+    session.append(&results_of(&["call-1"]));
+    session.append(&results_of(&["call-2"]));
+    session.append(&results_of(&["call-3"]));
+    let places = session.take_placed();
+    drop(session);
+
+    assert_eq!(landed_at(&written, &places), ["call-2", "call-3"]);
+}
+
+#[test]
+fn nothing_is_placed_after_a_fragment_ends_the_log() {
+    let sample = Sample::new("placed-fragment");
+    let written = Written::default();
+    let session = Session::writing(
+        empty(&sample, "fragment.jsonl"),
+        Fragmenting {
+            written: Arc::clone(&written),
+            writes: 0,
+            takes: 5,
+        },
+    );
+
+    session.append(&results_of(&["call-1"]));
+    session.append(&results_of(&["call-2"]));
+
+    assert!(session.take_placed().is_empty());
+}
+
+#[test]
+fn a_writer_that_could_not_find_where_the_file_ends_places_nothing() {
+    // A count started anywhere but the file's end names places the log does
+    // not bear out, so where its length could not be read nothing is placed.
+    let written = Written::default();
+    let session = Session::writing(
+        PathBuf::from("no-such-directory/unmeasured.jsonl"),
+        Filling {
+            written: Arc::clone(&written),
+            writes: 0,
+            fails_at: usize::MAX,
+        },
+    );
+
+    session.append(&results_of(&["call-1"]));
+
+    assert!(session.take_placed().is_empty());
+    assert!(
+        !written.lock().expect("the writer").is_empty(),
+        "nothing was written"
+    );
+}
+
+#[test]
+fn the_writer_keeps_the_newest_places_when_nobody_takes_them() {
+    let sample = Sample::new("placed-bounded");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+
+    let calls: Vec<String> = (0..1100).map(|call| format!("call-{call}")).collect();
+    for call in &calls {
+        session.append(&results_of(&[call.as_str()]));
+    }
+
+    let places = session.take_placed();
+    assert_eq!(places.len(), super::super::log::PLACED);
+    assert_eq!(
+        places.first().map(|place| place.call().as_str()),
+        Some("call-76")
+    );
+    assert_eq!(
+        places.last().map(|place| place.call().as_str()),
+        Some("call-1099")
+    );
+}
+
+#[test]
+fn a_place_is_handed_over_once_by_whichever_take_reaches_it() {
+    // Taking without waiting hands over what has landed; taking after waiting
+    // hands over the rest. Neither hands a place over twice.
+    let sample = Sample::new("placed-landed");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+
+    session.append(&results_of(&["call-1"]));
+    session.append(&results_of(&["call-2"]));
+    let mut taken = session.take_landed();
+    taken.extend(session.take_placed());
+    taken.extend(session.take_landed());
+
+    let calls: Vec<&str> = taken.iter().map(|place| place.call().as_str()).collect();
+    assert_eq!(calls, ["call-1", "call-2"]);
+}

@@ -882,8 +882,9 @@ impl Session {
         let told = Arc::clone(&room);
 
         // Where the next line lands: the file as it stands, header and all,
-        // which is what the writer counts every byte on from.
-        let start = std::fs::metadata(&path).map_or(0, |held| held.len());
+        // which is what the writer counts every byte on from. Unknown where
+        // the file cannot be asked, and then nothing is placed.
+        let start = std::fs::metadata(&path).ok().map(|held| held.len());
         let placed = Placed::default();
         let placing = Arc::clone(&placed);
 
