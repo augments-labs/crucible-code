@@ -21,7 +21,9 @@ fn refusals(events: &[Event]) -> Vec<(&'static str, &str)> {
     events
         .iter()
         .filter_map(|event| match event {
-            Event::FastRefused { provider, reason } => Some((*provider, &**reason)),
+            Event::FastRefused {
+                provider, reason, ..
+            } => Some((*provider, &**reason)),
             _ => None,
         })
         .collect()
@@ -162,7 +164,9 @@ fn a_refusal_forgets_the_speed_the_last_answer_was_served_at_whatever_the_second
 }
 
 #[test]
-fn a_second_send_that_was_stopped_is_not_said_to_have_been_sent() {
+fn a_second_send_that_was_stopped_is_said_to_have_turned_fast_off_and_nothing_more() {
+    // The file loses its fast as well, so the line is owed; what it may not
+    // say is that the message went out again.
     let script = Script::new(Vec::new())
         .refusing_fast()
         .cancelling_when_exhausted();
@@ -171,7 +175,15 @@ fn a_second_send_that_was_stopped_is_not_said_to_have_been_sent() {
 
     let _ = scripted.turn("go");
 
-    assert!(refusals(&scripted.events()).is_empty());
+    let resent: Vec<bool> = scripted
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            Event::FastRefused { resent, .. } => Some(*resent),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(resent, [false]);
     assert_eq!(scripted.runner.speed(), Speed::Standard);
 }
 

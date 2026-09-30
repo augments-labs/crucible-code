@@ -210,7 +210,11 @@ pub(crate) fn event<T: Terminal>(
         // The vendor would not serve the request fast and it has gone out again
         // at standard speed. Something that happened to the session rather
         // than a state it is in, so it is written down, once, where it happened.
-        Event::FastRefused { provider, reason } => refused_fast(renderer, provider, &reason, style),
+        Event::FastRefused {
+            provider,
+            reason,
+            resent,
+        } => refused_fast(renderer, (provider, &reason), resent, style),
 
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.
@@ -260,13 +264,14 @@ pub(crate) fn event<T: Terminal>(
 /// Says that the vendor refused to serve a request fast, and what became of it.
 ///
 /// Hung under the turn the way a result is rather than drawn as a failure: the
-/// turn goes on, at standard speed, and the row says so along with how to ask
-/// again. The vendor's reason is folded flat first, as a failed turn's is, so
-/// where one row ends and the next begins is this program's to choose.
+/// turn goes on at standard speed, and the row says so, or says only that fast
+/// is off where a stop kept the message from going again. The vendor's reason
+/// is folded flat first, as a failed turn's is, so where one row ends and the
+/// next begins is this program's to choose.
 fn refused_fast<T: Terminal>(
     renderer: &mut Renderer<T>,
-    provider: &str,
-    reason: &str,
+    (provider, reason): (&str, &str),
+    resent: bool,
     style: Style,
 ) -> Result<(), TerminalError> {
     let glyphs = style.glyphs();
@@ -275,8 +280,13 @@ fn refused_fast<T: Terminal>(
     lead.push(Slot::Quiet, " ");
 
     let reason = flattened(reason);
+    let then = if resent {
+        "Sent again at standard speed; fast is off."
+    } else {
+        "Fast is off."
+    };
     let said = format!(
-        "{provider} refused fast: {}. Sent again at standard speed; fast is off.",
+        "{provider} refused fast: {}. {then}",
         reason.trim_end_matches('.')
     );
     let room = renderer.columns().saturating_sub(lead.columns());

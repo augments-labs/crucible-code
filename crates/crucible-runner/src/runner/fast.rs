@@ -55,7 +55,7 @@ impl Runner {
 ///
 /// The refusal turns the speed off and forgets what the last answer was served
 /// at, whatever the second send then does. The line saying so is posted once
-/// the second send is out; one a stop kept from going says nothing was sent.
+/// the second send is out, and says whether it went: a stop can keep it.
 ///
 /// Over the two fields it needs rather than the runner, because the request
 /// borrows the runner's model while it is out.
@@ -74,12 +74,11 @@ pub(super) async fn sent(
             pace.asked = Speed::Standard;
             pace.served = Served::Unsaid;
             let again = provider.stream_at(request, Speed::Standard, cancel).await;
-            if !matches!(again, Err(ProviderError::Cancelled(_))) {
-                run.reporting().post(Event::FastRefused {
-                    provider: named,
-                    reason: message,
-                });
-            }
+            run.reporting().post(Event::FastRefused {
+                provider: named,
+                reason: message,
+                resent: !matches!(again, Err(ProviderError::Cancelled(_))),
+            });
             again
         }
         sent => sent,

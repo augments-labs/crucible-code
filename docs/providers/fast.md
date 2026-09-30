@@ -96,6 +96,9 @@ off, and says why in one line:
 ⎿ openai refused fast: Invalid service_tier argument: The requested service tier is not allowed for this project. Sent again at standard speed; fast is off.
 ```
 
+Stopping the turn before the message goes again leaves the line ending `Fast is
+off.` instead, and nothing is sent again.
+
 Any other error is reported as it would be at standard speed, and nothing is
 sent again. What counts as a refusal of fast:
 

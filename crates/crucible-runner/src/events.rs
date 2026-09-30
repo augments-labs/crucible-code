@@ -329,13 +329,15 @@ pub enum Event {
     Retrying,
 
     /// The vendor refused the fast form a request asked for, before it
-    /// answered anything. The same request goes once more at standard speed,
-    /// and the speed asked for is standard from here on.
+    /// answered anything. The speed asked for is standard from here on, and the
+    /// same request goes once more at standard speed unless a stop kept it.
     FastRefused {
         /// Which provider refused it.
         provider: &'static str,
         /// The vendor's reason, as it gave it.
         reason: Box<str>,
+        /// Whether the same request went out again at standard speed.
+        resent: bool,
     },
 
     /// How much usable room remains before compaction, where a window is known.
@@ -490,10 +492,15 @@ impl std::fmt::Debug for Event {
                 .field("receipt", receipt)
                 .finish(),
             Self::Retrying => f.write_str("Retrying"),
-            Self::FastRefused { provider, reason } => f
+            Self::FastRefused {
+                provider,
+                reason,
+                resent,
+            } => f
                 .debug_struct("FastRefused")
                 .field("provider", provider)
                 .field("reason", reason)
+                .field("resent", resent)
                 .finish(),
             Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),
             Self::Compacting { why, part } => f
