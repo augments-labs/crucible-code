@@ -17,6 +17,9 @@ mod continuation;
 #[cfg(test)]
 mod continuation_tests;
 mod diagnostics;
+mod fast;
+#[cfg(test)]
+mod fast_tests;
 mod stream;
 mod wire;
 
@@ -34,7 +37,7 @@ use crucible_types::{
 
 use crate::anthropic::stream::Stream;
 use crate::endpoint::Endpoint;
-use crate::refusal::refused;
+use crate::refusal::{FastRule, refused_at};
 use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
@@ -120,7 +123,7 @@ impl Anthropic {
     }
 
     /// The headers every request carries, including the secret.
-    async fn headers(&self, model: &str) -> Result<Outgoing, ProviderError> {
+    async fn headers(&self, model: &str, fast: bool) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("anthropic-version", VERSION);
@@ -130,6 +133,9 @@ impl Anthropic {
                 "anthropic-beta",
                 "thinking-binding-controls-2026-08-01,mid-conversation-output-config-2026-07-01",
             );
+        }
+        if fast {
+            fast::beta(&mut outgoing);
         }
 
         self.credential
@@ -326,9 +332,22 @@ impl Provider for Anthropic {
         body::prompt_cache_encoding(request)
     }
 
+    fn fast(&self, model: &str) -> crucible_models::FastForm {
+        fast::form(self.endpoint == VENDOR, model)
+    }
+
     fn stream<'a>(
         &'a self,
         request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        self.stream_at(request, crucible_models::Speed::Standard, cancel)
+    }
+
+    fn stream_at<'a>(
+        &'a self,
+        request: Request<'a>,
+        speed: crucible_models::Speed,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         Box::pin(async move {
@@ -338,12 +357,16 @@ impl Provider for Anthropic {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let mut outgoing = self.headers(request.model).await?;
+            // Fast only where it was asked and this model at this address has
+            // a form the request carries.
+            let fast = speed == crucible_models::Speed::Fast && self.fast(request.model).switched();
+            let mut outgoing = self.headers(request.model, fast).await?;
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,
                 self.endpoint.as_str(),
             );
-            let body = body::serialize(&request, (request.model == FABLE_51).then_some(scope))?;
+            let body =
+                body::serialize_at(&request, (request.model == FABLE_51).then_some(scope), fast)?;
 
             let response = self
                 .transport
@@ -354,7 +377,8 @@ impl Provider for Anthropic {
                 response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
             if response.status() != 200 {
-                let error = refused(NAME, response.status(), response, &redactions, cancel).await;
+                let rule = fast.then_some(fast::refused as FastRule);
+                let error = refused_at(NAME, rule, response, &redactions, cancel).await;
                 return Err(if request.model == FABLE_51 {
                     diagnostics::refusal(error)
                 } else {

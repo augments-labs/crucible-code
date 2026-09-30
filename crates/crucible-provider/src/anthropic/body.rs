@@ -24,9 +24,19 @@ use serde_json::json;
 use crate::json::{Array, Json, Object, described, object};
 
 /// The whole request body.
+#[cfg(test)]
 pub(super) fn serialize(
     request: &Request<'_>,
     scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
+    serialize_at(request, scope, false)
+}
+
+/// [`serialize`], asking for the fast speed where `fast`.
+pub(super) fn serialize_at(
+    request: &Request<'_>,
+    scope: Option<ContinuationScope>,
+    fast: bool,
 ) -> Result<String, ProviderError> {
     let automatic = automatic_retention(request);
     let explicit = explicit_placement(request);
@@ -42,6 +52,9 @@ pub(super) fn serialize(
     json.object(|body| {
         body.text("model", request.model);
         body.number("max_tokens", request.max_tokens);
+        if fast {
+            body.text("speed", "fast");
+        }
         body.boolean("stream", true);
         if request.model == super::FABLE_51 {
             // Intentional system/tool/history edits must not strand a session
