@@ -667,7 +667,7 @@
             "type": "string"
           },
           "fast": {
-            "description": "Whether to ask this provider's model in force to answer fast, where its vendor serves a fast form at a higher price. Left off, standard speed",
+            "description": "Whether to ask the model named beside it to answer fast, where its vendor serves a fast form at a higher price. Read only with that model in force; left off, standard speed",
             "type": "boolean"
           },
           "model": {

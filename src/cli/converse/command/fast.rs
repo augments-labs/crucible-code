@@ -3,10 +3,9 @@
 //!
 //! Two rows over the model in force, standard and fast, with the vendor's
 //! price and speed beneath fast and whatever the vendor says of it first above
-//! both. The
-//! words are the provider's, for this model on this credential: a price read
-//! off another model, or off another way of signing in, is a price somebody
-//! pays without having been shown it.
+//! both. The words are the provider's, for this model on this credential: a
+//! price read off another model, or off another way of signing in, is a price
+//! somebody pays without having been shown it.
 //!
 //! A model with no fast form, and one that is itself a fast model, are told so
 //! on one line rather than offered a panel with one row that could be taken.

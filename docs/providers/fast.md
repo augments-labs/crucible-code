@@ -8,9 +8,9 @@ before you choose it.
 
 `/fast` opens a panel over the model in force: its provider, its name and the
 credential it is served by, what the vendor says of fast, and two rows,
-`Standard` and `Fast`, with the price and the vendor's speed beneath `Fast`. The mark opens on the
-speed in force, so Enter changes nothing by accident; Escape leaves it as it
-was.
+`Standard` and `Fast`, with the price and the vendor's speed beneath `Fast`.
+The mark opens on the speed in force, so Enter changes nothing by accident;
+Escape leaves it as it was.
 
 ```text
 Speed · openai · gpt-6-astra · OpenAI key
@@ -60,6 +60,10 @@ chosen at that model's price, and `/fast off` takes `fast` out:
 { "providers": { "openai": { "model": "gpt-6-astra", "fast": true } } }
 ```
 
+The model written is the one in force, even where `--model` or a project's
+file chose it, so it becomes the one a plain start asks for, and `/fast off`
+leaves it there.
+
 Only that file is read for it. A project file that sets `fast` stops crucible
 before it draws anything, as every key a checkout may not set does: fast costs
 more on every request, and a repository could otherwise spend your money.
@@ -67,10 +71,9 @@ more on every request, and a repository could otherwise spend your money.
 A request carries the fast form only where all of these hold: your file says
 `fast` for the provider beside the model in force; the model in force has a
 fast form in the table below for the credential in force; and no `baseUrl` is
-set for the provider. A
-`fast` left in the file where one of these does not hold is left there and
-asks for standard. Making room in the model's window asks at the same speed
-as a turn.
+set for the provider. A `fast` left in the file where one of these does not
+hold is left there and asks for standard. Making room in the model's window
+asks at the same speed as a turn.
 
 ## When it goes back to standard
 
@@ -96,8 +99,8 @@ off, and says why in one line:
 ⎿ openai refused fast: Invalid service_tier argument: The requested service tier is not allowed for this project. Sent again at standard speed; fast is off.
 ```
 
-Stopping the turn before the message goes again leaves the line ending `Fast is
-off.` instead, and nothing is sent again.
+Stopping the turn while the message goes again leaves the line ending `Fast is
+off.` instead.
 
 Any other error is reported as it would be at standard speed, and nothing is
 sent again. What counts as a refusal of fast:

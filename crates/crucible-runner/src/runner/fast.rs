@@ -55,7 +55,7 @@ impl Runner {
 ///
 /// The refusal turns the speed off and forgets what the last answer was served
 /// at, whatever the second send then does. The line saying so is posted once
-/// the second send is out, and says whether it went: a stop can keep it.
+/// the second send is out, and says whether it came back unstopped.
 ///
 /// Over the two fields it needs rather than the runner, because the request
 /// borrows the runner's model while it is out.

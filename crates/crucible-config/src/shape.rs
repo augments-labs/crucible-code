@@ -227,10 +227,11 @@ const PROVIDER: Shape = Shape::Fields(&[
     // user's own file may ask: a clone that could turn it on would be spending
     // somebody else's money. Whether the model in force has a fast form is
     // decided where the request is built, and a `true` where it has none asks
-    // for standard.
+    // for standard. It is read only beside the `model` it was chosen for: with
+    // no model, or with another model in force, it asks for standard too.
     Field {
         name: "fast",
-        about: "Whether to ask this provider's model in force to answer fast, where its vendor serves a fast form at a higher price. Left off, standard speed",
+        about: "Whether to ask the model named beside it to answer fast, where its vendor serves a fast form at a higher price. Read only with that model in force; left off, standard speed",
         shape: Shape::Flag,
         examples: &[],
         usual: None,

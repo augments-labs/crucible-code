@@ -22,7 +22,7 @@ fn a_refusal_of_fast_says_whose_it_was_why_and_what_became_of_the_message() {
 }
 
 #[test]
-fn a_refusal_whose_second_send_was_stopped_says_fast_is_off_and_nothing_was_sent() {
+fn a_refusal_whose_second_send_was_stopped_says_only_that_fast_is_off() {
     let screen = posted(Event::FastRefused {
         provider: "openai",
         reason: "The requested service tier is not allowed for this project.".into(),

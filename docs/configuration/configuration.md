@@ -80,7 +80,7 @@ Keyed by provider name: `anthropic`, `google`, `moonshot`, `openai`.
 | --- | --- |
 | `model` | The model to ask when `--model` does not name one. |
 | `effort` | How hard to think before answering, when `--effort` does not say. |
-| `fast` | `true` asks the model in force for its vendor's fast form, at its price. |
+| `fast` | `true` asks the `model` beside it for its vendor's fast form, at its price. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
 | `contextWindow` | The session's context-window size in tokens, keyed by model name. |
@@ -94,7 +94,8 @@ applies. See [Providers and models](../providers/providers.md).
 
 `fast` is written by `/fast` and read only from the configuration file in your
 home directory, because it costs more on every request. It reaches a request
-only where the model in force has a fast form and no `baseUrl` is set; see
+only where the file's `model` is the model in force, that model has a fast form
+and no `baseUrl` is set; see
 [Fast](../providers/fast.md).
 
 `apiKeyEnv` takes a **name**, never a key. The credential wiring reads its value

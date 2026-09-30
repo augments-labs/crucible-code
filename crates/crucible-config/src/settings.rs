@@ -183,8 +183,10 @@ impl Settings {
     /// The speed the user's own file asks this provider for.
     ///
     /// Fast only where the file says `true`; anything else, the key's absence
-    /// included, is standard. Whether the model in force can be asked for it
-    /// is not this file's to know, and is decided where the request is built.
+    /// included, is standard. It holds only for the `model` beside it, which
+    /// `hastened` reads with it. Whether the model in force can be asked for
+    /// it is not this file's to know, and is decided where the request is
+    /// built.
     #[must_use]
     pub fn speed(&self, provider: &str) -> Speed {
         let fast = self

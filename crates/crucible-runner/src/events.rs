@@ -336,7 +336,8 @@ pub enum Event {
         provider: &'static str,
         /// The vendor's reason, as it gave it.
         reason: Box<str>,
-        /// Whether the same request went out again at standard speed.
+        /// Whether the second send at standard speed came back unstopped. A
+        /// stop that lands while it is out can still leave it with the vendor.
         resent: bool,
     },
 

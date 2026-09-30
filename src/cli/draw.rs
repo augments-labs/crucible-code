@@ -265,7 +265,7 @@ pub(crate) fn event<T: Terminal>(
 ///
 /// Hung under the turn the way a result is rather than drawn as a failure: the
 /// turn goes on at standard speed, and the row says so, or says only that fast
-/// is off where a stop kept the message from going again. The vendor's reason
+/// is off where a stop ended the second send. The vendor's reason
 /// is folded flat first, as a failed turn's is, so where one row ends and the
 /// next begins is this program's to choose.
 fn refused_fast<T: Terminal>(

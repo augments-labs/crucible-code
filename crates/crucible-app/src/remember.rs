@@ -155,8 +155,9 @@ pub fn asking(file: &Path, provider: &str) -> Result<(), RememberError> {
 
 /// Writes `model` down as the one to ask `provider` for.
 ///
-/// Everything already in the file stays where it was, byte for byte. A file
-/// that is not there yet becomes one holding the choice and nothing else.
+/// The rung and the speed chosen for another model are taken out; everything
+/// else already in the file stays where it was, byte for byte. A file that is
+/// not there yet becomes one holding the choice and nothing else.
 ///
 /// # Errors
 ///
