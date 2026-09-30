@@ -405,3 +405,57 @@ fn acknowledged_lines_survive_the_process_being_killed() {
         "a write acknowledged before the kill is missing from the log"
     );
 }
+
+#[test]
+fn a_batch_of_results_through_the_store_answers_only_once_the_log_has_its_line() {
+    // The runner writes results this way, and goes on to its next request once
+    // it is answered: an answer before the line lands is a batch the next
+    // request can outrun.
+    let (session, open, written, _) = gated("gated-results.jsonl");
+    let message = answered(
+        "call-1",
+        RecordedToolOutput::ok("kept before the next request"),
+    );
+
+    let mut appending = pin!(SessionStore::append_message(&session, &message));
+
+    assert!(
+        asked_once(appending.as_mut()).is_pending(),
+        "the write answered while the log had not taken its line"
+    );
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        asked_once(appending.as_mut()).is_pending(),
+        "the write answered while its line was held at the gate"
+    );
+    drop(open);
+    waited(appending);
+    assert_eq!(
+        lines(&written),
+        1,
+        "the write answered before its line reached the log"
+    );
+}
+
+#[test]
+fn a_batch_of_results_through_the_store_has_its_place_once_it_is_answered() {
+    // Answered means written, so where it went is there to take without
+    // waiting on the writer, and it reads back.
+    let sample = crate::sample::Sample::new("acknowledged-placed");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).expect("a session");
+    waited(SessionStore::append_message(
+        &session,
+        &answered(
+            "call-1",
+            RecordedToolOutput::ok("placed as it was answered"),
+        ),
+    ));
+
+    let places = session.take_landed();
+    let place = places.first().expect("the batch has its place");
+    assert_eq!(place.call().as_str(), "call-1");
+    assert_eq!(
+        session.read_back(place).expect("read"),
+        RecordedToolOutput::ok("placed as it was answered")
+    );
+}

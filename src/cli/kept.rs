@@ -12,7 +12,9 @@
 //! It is bounded, because a session is not. [`HELD`] is the ceiling
 //! on how much is held at once and the oldest result is dropped to stay under
 //! it, so what this costs is the same after four hundred turns as after four —
-//! the rule the whole renderer is built to keep.
+//! the rule the whole renderer is built to keep. A row whose text was dropped
+//! and still offers counts against the same ceiling, and the places waiting
+//! for a row are bounded by [`UNCLAIMED`].
 //!
 //! It does not outlive the rows that made the offers. `/clear` and `/resume`
 //! both empty the transcript — what follows either is a different conversation
@@ -26,6 +28,29 @@
 //! them. The rule above is unchanged by that: what is held is still what a row
 //! somebody can still see has offered.
 //!
+//! What is let go of under the ceiling is not always gone. Where the session
+//! has a log, the result is still in it, so a row whose text was dropped keeps
+//! where the log holds it (the call it answered and the position of its
+//! record, and no text), and a view that reaches that row reads the result
+//! back from there. The log is reached through [`Log`], which is set from the
+//! session on the screen, so nothing here names the storage it is kept in.
+//! Where there is no log, a row whose result was let go of can open nothing,
+//! and it is handed to what draws it to stop offering. A row can also stop
+//! offering with a log: a row whose text went counts its place against the
+//! ceiling, so a short result, cheaper held than placed, stays held, and where
+//! nothing held would make room the oldest row goes with every result it
+//! offered.
+//!
+//! Where a result went is learned two ways. A replay says so before it draws
+//! the result. A turn does not know: the log's writer says where each result
+//! landed once it has written it, which can be before the screen has drawn
+//! that result or long after. So each place is filed as a result arrives,
+//! without waiting for the writer, against the oldest thing that has none of
+//! its call: a row, a result that had no row, a call still out. A place that
+//! arrives before anything of its call waits for its result, and a result
+//! that arrives with no row to keep a place for takes its place when it comes
+//! rather than leaving it for a later call of the same name.
+//!
 //! One kind of cut is not here and cannot be. A call that changed a file is
 //! shown as the change itself, and a change too long for the block is cut down
 //! where the change is built rather than where it is drawn — those lines never
@@ -33,11 +58,14 @@
 //! reader to hand over. The row says how many went, which is the whole of what
 //! is still true about them.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::fmt;
 
 use crucible_types::ToolId;
 
-/// The most text held at once, in bytes.
+/// The most held at once, in bytes: the text of the results still held, and
+/// what a row whose text was let go of keeps instead.
 ///
 /// Half a mebibyte, against a process budgeted 35. One result is bounded far
 /// below this by the tools themselves, so the ceiling is really on how many
@@ -61,6 +89,14 @@ const HELD: usize = 512 * 1024;
 /// bounded answer, which marks its own gap.
 const WRITING: usize = 64 * 1024;
 
+/// The most places waiting for a result, and the most results waiting for a
+/// place, each.
+///
+/// As many as the log's writer keeps for this to take, so that a screen
+/// behind by that much still files every place it is handed. The oldest goes
+/// first; a row it belonged to then says its result could not be read back.
+const UNCLAIMED: usize = 8 * 128;
+
 /// One result the transcript had to cut down to a row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Whole {
@@ -82,6 +118,14 @@ pub(crate) struct Whole {
     /// the record becomes this — or becomes nothing, which is a click on a row
     /// that made no offer.
     at: Option<usize>,
+    /// The call whose result this is.
+    call: ToolId,
+    /// Where the session log holds it, where that is known yet.
+    position: Option<u64>,
+    /// How many results had been cut before it: the order results were kept
+    /// in, which the store keeps as they move between held and let go of.
+    /// Nothing for a call still out, which has not been kept yet.
+    drawn: usize,
 }
 
 impl Whole {
@@ -99,14 +143,122 @@ impl Whole {
     pub(crate) fn at(&self) -> Option<usize> {
         self.at
     }
+
+    /// The order it was kept in among every result the store has: nothing
+    /// for a call still out, which has not been kept yet.
+    pub(crate) const fn drawn(&self) -> usize {
+        self.drawn
+    }
 }
 
-/// Every result still reachable, oldest first.
+/// Where a session's log is read back from, for rows whose results the
+/// ceiling let go of.
+///
+/// A trait here rather than the session itself, so that what holds results
+/// and the view that opens one name no storage: what implements it is set for
+/// the session on the screen, when a run starts, on `/resume` and on `/clear`.
+pub(crate) trait Log: fmt::Debug {
+    /// Takes where the results written since this was last asked went: each
+    /// call, and where in the log the record holding its result begins.
+    ///
+    /// Waits for nothing, so a result still queued for the log is not among
+    /// them yet; a later take hands it over.
+    fn landed(&self) -> Vec<(ToolId, u64)>;
+
+    /// Takes them as [`Log::landed`] does, once everything queued before this
+    /// has been written. Empty where the writer has stopped, which
+    /// [`Log::places`] tells apart from nothing new.
+    fn settled(&self) -> Vec<(ToolId, u64)>;
+
+    /// Whether what is written to the log from now on is still placed: not
+    /// once its writer has stopped, or has stopped placing for good.
+    fn places(&self) -> bool;
+
+    /// What the result of `call`, in the record beginning at `position`,
+    /// said, or `None` where the log does not hold it there.
+    fn read(&self, call: &ToolId, position: u64) -> Option<Box<str>>;
+}
+
+/// What reading one let-go result back from the log came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Back {
+    /// What it said.
+    Said(Box<str>),
+    /// The log cannot give it back: the file is gone or changed, the record
+    /// is not the one placed there, or no place for it is ever coming.
+    Unread,
+    /// The log has not said where it is yet, and still may: the turn has not
+    /// written its batch, and nothing written after it has been placed.
+    Unplaced,
+}
+
+/// A row whose result the ceiling let go of, and where the log holds it.
+///
+/// No text: the call's line, the call, the row, and the position.
+#[derive(Debug)]
+pub(crate) struct Placed {
+    called: String,
+    call: ToolId,
+    at: usize,
+    position: Option<u64>,
+    /// How many results had been cut before it, as [`Whole`] says.
+    drawn: usize,
+}
+
+/// Which let-go result a view has read back: the row that offered it and the
+/// call it answered, which together name one result however the store moves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Mark {
+    at: usize,
+    call: ToolId,
+}
+
+impl Placed {
+    /// The call's line.
+    pub(crate) fn called(&self) -> &str {
+        &self.called
+    }
+
+    /// Which row of the record offered it.
+    pub(crate) fn at(&self) -> usize {
+        self.at
+    }
+
+    /// What names it to a view that read it back.
+    pub(crate) fn mark(&self) -> Mark {
+        Mark {
+            at: self.at,
+            call: self.call.clone(),
+        }
+    }
+
+    /// Whether it is the one `mark` names.
+    pub(crate) fn is(&self, mark: &Mark) -> bool {
+        self.at == mark.at && self.call == mark.call
+    }
+
+    /// What it costs against [`HELD`]: its call's line, its call and the
+    /// place itself. Counted so that the rows still offering after their text
+    /// went are bounded by the same ceiling the text is.
+    fn weight(&self) -> usize {
+        weighing(&self.called, &self.call)
+    }
+
+    /// The order it was kept in among every result the store has: nothing
+    /// for a call still out, which has not been kept yet.
+    pub(crate) const fn drawn(&self) -> usize {
+        self.drawn
+    }
+}
+
+/// Every result still reachable, oldest first: held whole, or let go of with
+/// where the log holds it.
 #[derive(Debug, Default)]
 pub(crate) struct Kept {
     /// What is held, oldest at the front because that is the end that gives.
     whole: VecDeque<Whole>,
-    /// How many bytes of headings and result text `whole` holds, added up.
+    /// How many bytes of headings and result text `whole` holds, and what the
+    /// rows in `placed` weigh, added up.
     ///
     /// Carried rather than counted per push: the number is wanted on the path a
     /// result arrives on, and a walk over the whole queue there would be work
@@ -125,6 +277,27 @@ pub(crate) struct Kept {
     /// queue's length answers that only until the ceiling starts dropping from
     /// the other end. This only ever goes up.
     cut: usize,
+    /// Rows whose text was let go of while the log still holds it, oldest
+    /// first by [`Placed::drawn`]: a result is let go of only once every older
+    /// one that would make room has been, and whether one would changes only
+    /// with the log, which empties this.
+    placed: VecDeque<Placed>,
+    /// Where results are read back from, where the session has a log.
+    log: Option<Box<dyn Log>>,
+    /// Rows that stopped being able to open anything, for what draws them to
+    /// take the offer off.
+    gone: Vec<usize>,
+    /// Places the log handed over while a result was being read back, which
+    /// is when nothing here may be changed, kept to be filed the next time
+    /// something may.
+    unfiled: RefCell<VecDeque<(ToolId, u64)>>,
+    /// Places that came before anything of their call, oldest first, waiting
+    /// for the result they belong to.
+    early: VecDeque<(ToolId, u64)>,
+    /// Results that arrived with no row to keep a place for and whose place
+    /// has not come, oldest first, so that it is not taken for a later call
+    /// of the same name.
+    rowless: VecDeque<ToolId>,
 }
 
 /// One call that has not answered yet.
@@ -133,6 +306,8 @@ struct Pending {
     id: ToolId,
     called: String,
     writing: Option<Whole>,
+    /// Where the log holds its result, where a replay said so first.
+    position: Option<u64>,
 }
 
 impl Kept {
@@ -148,6 +323,7 @@ impl Kept {
                 id: call,
                 called,
                 writing: None,
+                position: None,
             });
         }
     }
@@ -175,6 +351,9 @@ impl Kept {
             called: pending.called.clone(),
             text: String::new().into(),
             at: None,
+            call: pending.id.clone(),
+            position: None,
+            drawn: 0,
         });
 
         let mut held = String::from(&*writing.text);
@@ -249,39 +428,319 @@ impl Kept {
         }
     }
 
+    /// Says where the log holds the result of `call`, just before it arrives.
+    ///
+    /// A replay knows where it read each result from, so it says so as it
+    /// goes, and the result drawn next takes it; a turn does not, and those
+    /// places are learned from the log.
+    pub(crate) fn placing(&mut self, call: &ToolId, position: u64) {
+        waiting(&mut self.early, (call.clone(), position));
+    }
+
+    /// Sets where results let go of are read back from: the log of the
+    /// session now on the screen, or nowhere where it has none.
+    ///
+    /// Whatever was learned from the log before goes: a place is a position
+    /// in one file and says nothing about another. A row already let go of
+    /// was placed in that file, so it stops offering.
+    pub(crate) fn logging(&mut self, log: Option<Box<dyn Log>>) {
+        self.log = log;
+        self.unfiled.get_mut().clear();
+        self.early.clear();
+        self.rowless.clear();
+        for whole in &mut self.whole {
+            whole.position = None;
+        }
+        for pending in &mut self.pending {
+            pending.position = None;
+        }
+        for placed in std::mem::take(&mut self.placed) {
+            self.held = self.held.saturating_sub(placed.weight());
+            self.gone.push(placed.at);
+        }
+    }
+
     /// Keeps one result, pointing wherever the caller can point it.
     fn keep(&mut self, call: &ToolId, text: Box<str>, at: Option<usize>) {
-        let called = self.take(call).map_or_else(String::new, |one| one.called);
+        self.file();
+        let (called, position) = self
+            .take(call)
+            .map_or_else(|| (String::new(), None), |one| (one.called, one.position));
+        let position = position.or_else(|| self.claim(call));
 
+        let drawn = self.cut;
         self.cut = self.cut.saturating_add(1);
         self.held = self
             .held
             .saturating_add(text.len())
             .saturating_add(called.len());
-        self.whole.push_back(Whole { called, text, at });
+        self.whole.push_back(Whole {
+            called,
+            text,
+            at,
+            call: call.clone(),
+            position,
+            drawn,
+        });
 
         // After the push rather than before it, so that the newest result is
         // held whatever it costs. One longer than the ceiling on its own would
         // otherwise be the one thing a reader could never see, and it is the
         // one they are most likely to be asking about.
-        while self.held > HELD && self.whole.len() > 1 {
-            if let Some(gone) = self.whole.pop_front() {
-                self.held = self
-                    .held
-                    .saturating_sub(gone.text.len())
-                    .saturating_sub(gone.called.len());
+        //
+        // What goes first is the oldest result whose place weighs less than it
+        // does, because letting it go is what makes room. A short result costs
+        // less held than its place would, so it stays held; only where nothing
+        // held would make room does a row stop offering, and then it is the
+        // oldest row, held or let go of, with every result it offered.
+        while self.held > HELD {
+            let newest = self.whole.len().saturating_sub(1);
+            let freeing = self
+                .whole
+                .iter()
+                .take(newest)
+                .position(|whole| self.frees(whole));
+            if let Some(gone) = freeing.and_then(|at| self.whole.remove(at)) {
+                self.let_go(gone);
+            } else if !self.withdraw_oldest() {
+                break;
             }
         }
     }
 
+    /// Whether letting `whole` go leaves less held: where there is no log or
+    /// no row, the whole of it goes; where there is, its place stays.
+    fn frees(&self, whole: &Whole) -> bool {
+        self.log.is_none()
+            || whole.at.is_none()
+            || whole.text.len() + whole.called.len() > weighing(&whole.called, &whole.call)
+    }
+
+    /// Takes the oldest row there is, held or let go of, off with every result
+    /// it offered, and says whether there was one to take. The newest result
+    /// stays whatever it costs, and so does the row it is on: a replayed run
+    /// knows its row before it draws it, so its newest result can share the
+    /// oldest row there is.
+    ///
+    /// A held result no row offers yet is never the one found: letting it go
+    /// always makes room, so it went before this was asked.
+    fn withdraw_oldest(&mut self) -> bool {
+        let held = self.whole.front().filter(|_| self.whole.len() > 1);
+        let oldest = match (self.placed.front(), held) {
+            (Some(placed), Some(whole)) if whole.drawn < placed.drawn => whole.at,
+            (Some(placed), _) => Some(placed.at),
+            (None, Some(whole)) => whole.at,
+            (None, None) => None,
+        };
+        let newest = self.whole.back().and_then(|whole| whole.at);
+        match oldest.filter(|at| Some(*at) != newest) {
+            Some(at) => {
+                self.withdraw_row(at);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Takes row `at` off with every result it offered, held or let go of.
+    fn withdraw_row(&mut self, at: usize) {
+        let mut freed = 0_usize;
+        self.whole.retain(|whole| {
+            let offered = whole.at == Some(at);
+            if offered {
+                freed = freed
+                    .saturating_add(whole.text.len())
+                    .saturating_add(whole.called.len());
+            }
+            !offered
+        });
+        self.placed.retain(|placed| {
+            let offered = placed.at == at;
+            if offered {
+                freed = freed.saturating_add(placed.weight());
+            }
+            !offered
+        });
+        self.held = self.held.saturating_sub(freed);
+        self.gone.push(at);
+    }
+
+    /// What becomes of a result the ceiling dropped: a place where the log
+    /// holds it, or a row that has to stop offering where there is no log.
+    fn let_go(&mut self, gone: Whole) {
+        self.held = self
+            .held
+            .saturating_sub(gone.text.len())
+            .saturating_sub(gone.called.len());
+
+        // A result no row offers yet (one of a run whose line is still to be
+        // written) has no row to keep a place for. Its place may still be
+        // coming, and it is this result's rather than a later call's.
+        let Some(at) = gone.at else {
+            if gone.position.is_none() && self.log.is_some() {
+                waiting(&mut self.rowless, gone.call);
+            }
+            return;
+        };
+        if self.log.is_none() {
+            self.gone.push(at);
+            return;
+        }
+
+        let placed = Placed {
+            called: gone.called,
+            call: gone.call,
+            at,
+            position: gone.position,
+            drawn: gone.drawn,
+        };
+        self.held = self.held.saturating_add(placed.weight());
+        self.placed.push_back(placed);
+    }
+
+    /// Files where the log's writer put the results it has written since this
+    /// was last asked, waiting for nothing.
+    ///
+    /// Asked as every result arrives, which is what keeps what the writer
+    /// holds for this short however long a result stays held before it is
+    /// let go of.
+    fn file(&mut self) {
+        let Some(log) = &self.log else { return };
+        let mut landed = std::mem::take(self.unfiled.get_mut());
+        landed.extend(log.landed());
+        for (call, position) in landed {
+            self.place(call, position);
+        }
+    }
+
+    /// Gives one place to the oldest thing of its call that has none: a row
+    /// let go of, a row still held, a result that had no row, a call still
+    /// out. Where there is none yet, it waits for its result.
+    fn place(&mut self, call: ToolId, position: u64) {
+        if let Some(placed) = self
+            .placed
+            .iter_mut()
+            .find(|placed| placed.call == call && placed.position.is_none())
+        {
+            placed.position = Some(position);
+        } else if let Some(whole) = self
+            .whole
+            .iter_mut()
+            .find(|whole| whole.call == call && whole.position.is_none())
+        {
+            whole.position = Some(position);
+        } else if let Some(at) = self.rowless.iter().position(|rowless| *rowless == call) {
+            self.rowless.remove(at);
+        } else if let Some(pending) = self
+            .pending
+            .iter_mut()
+            .find(|pending| pending.id == call && pending.position.is_none())
+        {
+            pending.position = Some(position);
+        } else {
+            waiting(&mut self.early, (call, position));
+        }
+    }
+
+    /// Takes the place that came for `call` before its result did.
+    fn claim(&mut self, call: &ToolId) -> Option<u64> {
+        let at = self.early.iter().position(|(early, _)| early == call)?;
+        self.early.remove(at).map(|(_, position)| position)
+    }
+
+    /// Forgets a call that answered with no row to keep a place for, and
+    /// makes sure its place, where it has not come yet, goes nowhere else.
+    fn unrowed(&mut self, call: &ToolId) {
+        self.file();
+        let placed = self.take(call).and_then(|pending| pending.position);
+        // A place said for it before it arrived is its own, whether or not its
+        // call was ever drawn.
+        if placed.is_some() || self.log.is_none() || self.claim(call).is_some() {
+            return;
+        }
+        waiting(&mut self.rowless, call.clone());
+    }
+
+    /// Whether a row drawn after `placed` has been placed already.
+    fn passed(&self, placed: &Placed) -> bool {
+        let unfiled = self.unfiled.borrow();
+        let mut later = self
+            .placed
+            .iter()
+            .map(|one| (&one.call, one.position, one.drawn))
+            .chain(
+                self.whole
+                    .iter()
+                    .map(|whole| (&whole.call, whole.position, whole.drawn)),
+            )
+            .filter(|(_, _, drawn)| *drawn > placed.drawn);
+        later.any(|(call, position, _)| {
+            position.is_some() || unfiled.iter().any(|(landed, _)| landed == call)
+        })
+    }
+
+    /// Every row whose text was let go of and that still offers, newest
+    /// first. A short result can stay held after a longer one drawn later was
+    /// let go of, so [`Placed::drawn`] rather than this and [`Kept::newest`]
+    /// says which of two rows came first.
+    pub(crate) fn older(&self) -> impl Iterator<Item = &Placed> {
+        self.placed.iter().rev()
+    }
+
+    /// Reads back from the log what the row `placed` offered.
+    ///
+    /// Asked of a store that is only being looked at, because a view reads
+    /// what it is standing over. Where the place has not been filed yet, what
+    /// the log has written by now is taken, waiting for it, and kept aside to
+    /// be filed the next time a result arrives.
+    pub(crate) fn read_back(&self, placed: &Placed) -> Back {
+        let Some(log) = self.log.as_ref() else {
+            return Back::Unread;
+        };
+        let position = placed.position.or_else(|| {
+            let mut unfiled = self.unfiled.borrow_mut();
+            for landed in log.settled() {
+                waiting(&mut *unfiled, landed);
+            }
+            unfiled
+                .iter()
+                .find(|(call, _)| *call == placed.call)
+                .map(|(_, position)| *position)
+        });
+        let Some(position) = position else {
+            // No place is coming where the log has stopped placing, or where a
+            // row drawn after this one has one already: the writer places what
+            // it writes in the order it writes it.
+            return if log.places() && !self.passed(placed) {
+                Back::Unplaced
+            } else {
+                Back::Unread
+            };
+        };
+        log.read(&placed.call, position)
+            .map_or(Back::Unread, Back::Said)
+    }
+
+    /// The rows that can no longer open anything, handed over once.
+    ///
+    /// A row still offering another result (one line of a folded run, say) is
+    /// not among them.
+    pub(crate) fn withdrawn(&mut self) -> Vec<usize> {
+        let mut gone = std::mem::take(&mut self.gone);
+        gone.retain(|at| !self.offered(*at));
+        gone.sort_unstable();
+        gone.dedup();
+        gone
+    }
+
     /// Forgets a call whose complete result fitted on screen.
     pub(crate) fn answered(&mut self, call: &ToolId) {
-        self.take(call);
+        self.unrowed(call);
     }
 
     /// Forgets a call that reached a terminal turn event without a result.
     pub(crate) fn abandoned(&mut self, call: &ToolId) {
-        self.take(call);
+        self.unrowed(call);
     }
 
     /// Takes one pending call by identity without disturbing its neighbours.
@@ -300,13 +759,19 @@ impl Kept {
     /// for nobody.
     ///
     /// The count of what has been cut goes back to nothing with them, because
-    /// what it is for is a view stepping over results that arrived underneath
-    /// it — and none of these can arrive again.
+    /// what it is for is a view leaving out results kept after it opened, and
+    /// none of these can arrive again.
+    ///
+    /// The log is kept: it belongs to the session rather than to the rows, and
+    /// what changes the session sets it again.
     pub(crate) fn forget(&mut self) {
+        let log = self.log.take();
         *self = Self::default();
+        self.log = log;
     }
 
-    /// Everything still reachable, newest first.
+    /// Every result still held, newest first. The rows whose text was let go
+    /// of are [`Kept::older`].
     ///
     /// Newest first because that is the order a reader is looking for them in:
     /// the result somebody wants to see is almost always the one that just went
@@ -317,10 +782,10 @@ impl Kept {
 
     /// How many results have been cut this session.
     ///
-    /// Read by a view that is standing over them while a turn is still running:
-    /// the difference between this and what it read when it opened is how many
-    /// arrived underneath it, and those are the ones it steps over so that the
-    /// rows being read stay where the reader left them.
+    /// Each result kept takes this count as its [`Whole::drawn`], so a view
+    /// reads it once as it opens and leaves out every result kept after that:
+    /// a turn cutting results underneath it would otherwise slide the rows
+    /// being read down the screen.
     pub(crate) fn cut(&self) -> usize {
         self.cut
     }
@@ -334,13 +799,14 @@ impl Kept {
     /// still held.
     pub(crate) fn offered(&self, at: usize) -> bool {
         self.whole.iter().any(|whole| whole.at == Some(at))
+            || self.placed.iter().any(|placed| placed.at == at)
     }
 
     /// What the call still out has printed, where it has printed anything.
     ///
-    /// Kept apart from [`Kept::newest`] rather than folded into it, because the
-    /// count of what has been cut is what a standing view steps over to keep its
-    /// rows still — and a call that has not answered has not been cut.
+    /// Kept apart from [`Kept::newest`] rather than folded into it, because a
+    /// standing view leaves out what was cut after it opened, and a call that
+    /// has not answered has not been cut.
     pub(crate) fn writing(&self) -> impl DoubleEndedIterator<Item = &Whole> {
         self.pending.iter().filter_map(|one| one.writing.as_ref())
     }
@@ -348,10 +814,24 @@ impl Kept {
     /// Whether nothing has been cut.
     ///
     /// Which is the whole of what the key asking for this has to know: with
-    /// nothing held there was no offer on screen to have prompted it, so the
-    /// answer is no frame rather than an empty one.
+    /// nothing reachable there was no offer on screen to have prompted it, so
+    /// the answer is no frame rather than an empty one.
     pub(crate) fn is_empty(&self) -> bool {
-        self.whole.is_empty() && self.writing().next().is_none()
+        self.whole.is_empty() && self.placed.is_empty() && self.writing().next().is_none()
+    }
+}
+
+/// What a row let go of weighs: its call's line, its call, and the place.
+fn weighing(called: &str, call: &ToolId) -> usize {
+    called.len() + call.as_str().len() + size_of::<Placed>()
+}
+
+/// Adds `one` at the back of a queue bounded by [`UNCLAIMED`], letting the
+/// oldest go.
+fn waiting<T>(queue: &mut VecDeque<T>, one: T) {
+    queue.push_back(one);
+    while queue.len() > UNCLAIMED {
+        queue.pop_front();
     }
 }
 

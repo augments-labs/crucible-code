@@ -249,7 +249,8 @@ row still says how much it left over, still stands out from the rows with
 nothing behind them, and still opens on
 [<kbd>Ctrl+O</kbd> or a click](../getting-started/getting-started.md). The
 lines are read back out of the log rather than out of the run that produced
-them.
+them, and a result too old to still be held is read back from the log when the
+view reaches it.
 
 How much of the window is left comes back with it. A log records what each
 request carried, so a session picked up says so straight away rather than

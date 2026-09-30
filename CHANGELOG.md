@@ -19,6 +19,15 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **A row that offers to expand opens once its result is no longer in memory.**
+  Past the half mebibyte of results held in memory, older rows still offered
+  `ctrl+o to expand` and opened nothing, after a resume or late in a long
+  session. <kbd>Ctrl+O</kbd> and a click now read such a result back from the
+  session log when the view reaches it, and a row that can no longer open
+  anything stops offering.
+- **A click on a changed file's result opens it.** The result was held against
+  a line above the row that offered it, so the row named the key and a click on
+  it opened nothing.
 - **A mistyped command typed while a turn runs is said back as you typed it.**
   The panel it stood was headed `/exit`, the command an unknown word was taken
   for, over `names no command`.

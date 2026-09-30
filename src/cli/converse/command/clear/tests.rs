@@ -429,3 +429,46 @@ fn clearing_forgets_the_tools_that_were_looked_up() {
 
     assert!(!terms.revealed.holds("web_search"));
 }
+
+#[test]
+fn a_result_let_go_of_after_a_clear_is_read_back_from_the_session_it_started() {
+    // The rows on screen after a clear belong to the session it started, so a
+    // result the store lets go of is read back from that session's log, not
+    // from the one that was left.
+    let sample = Sample::new("clear-reads-the-new-log");
+    let mut conversation = talking(&sample, "what was said before");
+    let terms = terms(&sample, &Ledger::new(), &Plan::new());
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = std::io::empty();
+    let opening = standing(&sample);
+    let mut held = lent(&mut input, &opening);
+    crate::cli::converse::replaying::logging(&mut held.kept, conversation.session());
+
+    run(&mut renderer, &mut conversation, &mut held, &terms).expect("the terminal to be written");
+
+    let session = Arc::clone(conversation.session());
+    for number in 0..40 {
+        let id = crucible_types::ToolId::new(format!("after-{number}"));
+        let said = format!("result {number} of the session the clear started\n").repeat(600);
+        held.kept.calling(id.clone(), format!("Bash({number})"));
+        held.kept.finished(&id, said.clone().into(), number);
+        session.append(&Message::ToolResults(vec![crucible_types::ToolResult {
+            id,
+            output: crucible_types::RecordedToolOutput::ok(said),
+        }]));
+    }
+
+    let first = held
+        .kept
+        .older()
+        .last()
+        .expect("the store let the first result go");
+    let crate::cli::kept::Back::Said(text) = held.kept.read_back(first) else {
+        panic!("the result is not read back from the new session's log");
+    };
+    assert!(
+        text.starts_with("result 0 of the session the clear started"),
+        "{:?}",
+        text.get(..80)
+    );
+}

@@ -11,7 +11,10 @@ fn standing(from: usize, end: usize) -> View {
     View {
         from,
         end,
+        was: 0,
         over: Over::Everything(0),
+        back: Vec::new(),
+        refused: None,
     }
 }
 
@@ -383,4 +386,448 @@ fn nothing_else_moves_it() {
         );
         assert_eq!(open, standing(3, 20));
     }
+}
+
+/// A log that gives back, at any place, a result as long as any a log keeps,
+/// every line of it naming the call it answered and its own number.
+#[derive(Debug)]
+struct Long;
+
+impl crate::cli::kept::Log for Long {
+    fn landed(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        Vec::new()
+    }
+
+    fn settled(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        Vec::new()
+    }
+
+    fn places(&self) -> bool {
+        true
+    }
+
+    fn read(&self, call: &crucible_types::ToolId, _: u64) -> Option<Box<str>> {
+        Some(said(call.as_str()).into())
+    }
+}
+
+/// Lines in each result below, of sixty-four bytes: as long as a recorded
+/// result may be once it is encoded, near enough.
+const LINES: usize = 400;
+
+/// What the result of `call` said.
+fn said(call: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut text = String::with_capacity(LINES * 64);
+    for line in 1..=LINES {
+        let _ = writeln!(text, "{:-<63}", format!("{call} line {line:04} "));
+    }
+    text
+}
+
+/// Forty results of the length above, the store reading back the ones it lets
+/// go of, each offered by row `at` where `at` names a row per result, or all
+/// of them by row 0 where they are one folded run.
+fn forty(folded: bool) -> Kept {
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(Long)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, u64::try_from(at).unwrap());
+        if folded {
+            kept.gathered(&call, said(call.as_str()).into(), Some(0));
+        } else {
+            kept.finished(&call, said(call.as_str()).into(), at);
+        }
+    }
+    kept
+}
+
+/// What the view holds read back, in bytes.
+fn read_back(view: &View) -> usize {
+    view.back
+        .iter()
+        .map(|(_, text)| text.as_ref().map_or(0, |text| text.len()))
+        .sum()
+}
+
+/// What the store holds, in bytes.
+fn held(kept: &Kept) -> usize {
+    kept.newest()
+        .map(|whole| whole.text().len() + whole.called().len())
+        .sum()
+}
+
+#[test]
+fn opening_every_row_in_turn_holds_one_result_beyond_the_store_at_most() {
+    // What is read back is held by the view for as long as it stands, and a
+    // row opened after it takes its place: however many rows are opened, what
+    // is held is what the store holds and one result more.
+    let kept = forty(false);
+    let mut read = 0;
+
+    for at in 0..40 {
+        let mut standing = Standing::default();
+        standing.one(&kept, at);
+        let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+        assert!(!rows.is_empty(), "row {at} opened nothing");
+        let view = opened(&mut standing);
+
+        assert!(held(&kept) <= 512 * 1024, "row {at}: {} held", held(&kept));
+        assert!(
+            read_back(view) <= BEYOND,
+            "row {at}: {} read back",
+            read_back(view)
+        );
+        read += usize::from(read_back(view) > 0);
+    }
+    assert!(read > 0, "no row was read back; the test says nothing");
+}
+
+/// Walks `standing` from its top to its end, `step` rows at a time, and says
+/// what each frame showed and how much was read back at the most.
+fn walked(kept: &Kept, standing: &mut Standing, step: usize) -> (Vec<Vec<String>>, usize) {
+    let mut frames = Vec::new();
+    let mut most = 0;
+    loop {
+        let rows = laying(kept, opened(standing), Glyphs::Unicode, 80, 40);
+        assert!(!rows.is_empty(), "the view closed");
+        frames.push(rows.iter().map(Row::text).collect());
+        most = most.max(read_back(opened(standing)));
+        if !standing.against(Pressed::Scrolled { back: false }, step) {
+            return (frames, most);
+        }
+    }
+}
+
+#[test]
+fn ctrl_o_stands_every_result_and_reads_back_one_at_a_time() {
+    // The key names no result, so it stands every one the rows offer, the ones
+    // the store let go of among them, and reads each back as the window
+    // reaches it rather than all of them when it opens.
+    let kept = forty(false);
+    assert!(kept.older().count() > 0, "nothing was let go of");
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let (frames, most) = walked(&kept, &mut standing, 30);
+
+    let shown = frames.concat().join("\n");
+    for at in 0..40 {
+        let line = format!("call-{at:03} line 0200");
+        assert!(shown.contains(&line), "{line} was never shown");
+    }
+    assert!(!shown.contains(UNREAD), "a result could not be read back");
+    assert!(most > 0 && most <= BEYOND, "{most} read back at once");
+}
+
+#[test]
+fn a_row_counting_a_run_reads_its_results_back_one_at_a_time() {
+    // One row can offer many results, and opening it reads back what the
+    // window reaches of them, not all of them at once.
+    let kept = forty(true);
+    assert!(kept.older().count() > 1, "the run was not let go of");
+
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    let (frames, most) = walked(&kept, &mut standing, 30);
+
+    let shown = frames.concat().join("\n");
+    for at in 0..40 {
+        let line = format!("call-{at:03} line 0400");
+        assert!(shown.contains(&line), "{line} was never shown");
+    }
+    assert!(most <= BEYOND, "{most} read back at once");
+}
+
+/// The rows of a frame between the rule and the blank above them and the
+/// blank and footer below, as far as the first result not read back yet,
+/// whose words are the one thing a step may change.
+fn text(rows: &[String]) -> &[String] {
+    let rows = rows
+        .get(2..rows.len().saturating_sub(2))
+        .unwrap_or_default();
+    let later = rows
+        .iter()
+        .position(|row| row.contains(LATER))
+        .unwrap_or(rows.len());
+    rows.get(..later).unwrap_or_default()
+}
+
+#[test]
+fn a_step_past_a_result_read_back_moves_the_rows_by_that_step() {
+    // Letting go of what the window has left, and reading back what it has
+    // reached, changes how long the results above the window are. The rows the
+    // reader sees move by the step they asked for and no more, down across
+    // the results the store let go of and back up again.
+    let kept = forty(true);
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    // Straight to the end of what the store holds, and on until a result let
+    // go of is read back with the next one waiting under it.
+    opened(&mut standing).from = kept.newest().count() * (LINES + 3) - 40;
+    loop {
+        let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+        if rows.iter().any(|row| row.text().contains(LATER)) {
+            break;
+        }
+        assert!(
+            standing.against(Pressed::Scrolled { back: false }, 30),
+            "the walk never reached a result let go of"
+        );
+    }
+
+    let mut last: Vec<String> = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40)
+        .iter()
+        .map(Row::text)
+        .collect();
+    let mut read: Vec<Mark> = Vec::new();
+    for back in [false, true] {
+        for step in 0..60 {
+            assert!(
+                standing.against(Pressed::Scrolled { back }, 1),
+                "stuck at {step}"
+            );
+            let now: Vec<String> = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40)
+                .iter()
+                .map(Row::text)
+                .collect();
+            for (mark, _) in &opened(&mut standing).back {
+                if !read.contains(mark) {
+                    read.push(mark.clone());
+                }
+            }
+
+            let (was, is) = (text(&last), text(&now));
+            let (kept_on, came) = if back {
+                (was.get(..was.len().saturating_sub(1)), is.get(1..))
+            } else {
+                (was.get(1..), is.get(..is.len().saturating_sub(1)))
+            };
+            let shorter = kept_on
+                .map_or(0, <[String]>::len)
+                .min(came.map_or(0, <[String]>::len));
+            assert_eq!(
+                kept_on.and_then(|rows| rows.get(..shorter)),
+                came.and_then(|rows| rows.get(..shorter)),
+                "step {step} {}",
+                if back { "up" } else { "down" }
+            );
+            last = now;
+        }
+    }
+    assert!(
+        read.len() >= 2,
+        "the walk crossed {} results read back",
+        read.len()
+    );
+}
+
+/// A log that says where a result went only once the test says it has been
+/// written, and counts every read.
+#[derive(Debug, Default)]
+struct Late {
+    went: std::rc::Rc<std::cell::RefCell<Vec<(crucible_types::ToolId, u64)>>>,
+    reads: std::rc::Rc<std::cell::Cell<usize>>,
+    stopped: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl crate::cli::kept::Log for Late {
+    fn landed(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        self.went.take()
+    }
+
+    fn settled(&self) -> Vec<(crucible_types::ToolId, u64)> {
+        self.went.take()
+    }
+
+    fn places(&self) -> bool {
+        !self.stopped.get()
+    }
+
+    fn read(&self, call: &crucible_types::ToolId, _: u64) -> Option<Box<str>> {
+        self.reads.set(self.reads.get() + 1);
+        Some(said(call.as_str()).into())
+    }
+}
+
+#[test]
+fn a_result_whose_batch_is_not_written_yet_is_read_once_it_is() {
+    // A turn draws its results before it writes them, so the view can reach a
+    // result the log has not placed yet. It says it will read it back, not
+    // that it cannot, and reads it on the frame after the log has it.
+    let late = Late::default();
+    let went = std::rc::Rc::clone(&late.went);
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(late)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.finished(&call, said(call.as_str()).into(), at);
+    }
+
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    let before = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    let before: Vec<String> = before.iter().map(Row::text).collect();
+    assert!(!before.iter().any(|row| row.contains(UNREAD)), "{before:?}");
+
+    went.borrow_mut()
+        .push((crucible_types::ToolId::new("call-000"), 0));
+    let after = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    assert!(
+        after
+            .iter()
+            .any(|row| row.text().contains("call-000 line 0001")),
+        "{after:?}"
+    );
+}
+
+#[test]
+fn a_result_left_for_later_is_not_read_again_while_the_window_stands_still() {
+    // Two results let go of in one window come to more than the view reads
+    // back at once, so the second waits. Drawing the same window again reads
+    // nothing more from the log.
+    let late = Late::default();
+    let reads = std::rc::Rc::clone(&late.reads);
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(late)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, u64::try_from(at).unwrap());
+        kept.gathered(&call, said(call.as_str()).into(), Some(0));
+    }
+
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    opened(&mut standing).from = kept.newest().count() * (LINES + 3) - 40;
+    loop {
+        let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+        if rows.iter().any(|row| row.text().contains(LATER)) {
+            break;
+        }
+        assert!(
+            standing.against(Pressed::Scrolled { back: false }, 30),
+            "the walk never reached two results let go of"
+        );
+    }
+
+    let read = reads.get();
+    for _ in 0..5 {
+        laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    }
+    assert_eq!(
+        reads.get(),
+        read,
+        "the window stood still and the log was read again"
+    );
+}
+
+#[test]
+fn a_result_the_log_will_never_place_says_it_cannot_be_read_back() {
+    let late = Late::default();
+    late.stopped.set(true);
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(late)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.finished(&call, said(call.as_str()).into(), at);
+    }
+
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    assert!(
+        rows.iter().any(|row| row.text().contains(UNREAD)),
+        "{:?}",
+        rows.iter().map(Row::text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn the_first_result_the_window_reaches_is_read_whatever_was_refused_before() {
+    // A result left for later is left only beside something read back: with
+    // nothing above it, as after a resize, it is read.
+    let kept = forty(false);
+    let mut standing = Standing::default();
+    standing.one(&kept, 0);
+    let mark = kept
+        .older()
+        .find(|placed| placed.at() == 0)
+        .map(Placed::mark)
+        .expect("row 0 was let go of");
+    opened(&mut standing).refused = Some((0, mark));
+
+    let rows = laying(&kept, opened(&mut standing), Glyphs::Unicode, 80, 40);
+    assert!(
+        rows.iter()
+            .any(|row| row.text().contains("call-000 line 0001")),
+        "{:?}",
+        rows.iter().map(Row::text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ctrl_o_stands_results_newest_first_when_a_short_one_stays_held() {
+    // A short result costs less held than let go of, so it can outlast longer
+    // ones drawn after it. The view still reads newest first.
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(Long)));
+    for at in 0..40 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, u64::try_from(at).unwrap());
+        let text = if at == 0 {
+            "short".to_owned()
+        } else {
+            said(call.as_str())
+        };
+        kept.finished(&call, text.into(), at);
+    }
+    assert!(
+        kept.newest().any(|whole| whole.at() == Some(0)),
+        "the short result was let go of; the test says nothing"
+    );
+
+    let mut standing = Standing::default();
+    standing.open(&kept);
+    let order: Vec<usize> = entries(&kept, &opened(&mut standing).over)
+        .iter()
+        .map(Entry::drawn)
+        .collect();
+    let mut sorted = order.clone();
+    sorted.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(order, sorted);
+    assert_eq!(order.len(), 40);
+}
+
+#[test]
+fn a_folded_row_opens_on_its_results_newest_first_when_a_short_one_stays_held() {
+    let mut kept = Kept::default();
+    kept.logging(Some(Box::new(Long)));
+    for at in 0..40_u64 {
+        let call = crucible_types::ToolId::new(format!("call-{at:03}"));
+        kept.calling(call.clone(), format!("Bash({at})"));
+        kept.placing(&call, at);
+        let text = if at == 0 {
+            "short".to_owned()
+        } else {
+            said(call.as_str())
+        };
+        kept.gathered(&call, text.into(), Some(0));
+    }
+    assert!(kept.older().count() > 0, "nothing was let go of");
+
+    let order: Vec<usize> = entries(&kept, &Over::One(0))
+        .iter()
+        .map(Entry::drawn)
+        .collect();
+    let mut sorted = order.clone();
+    sorted.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(order, sorted);
+    assert_eq!(order.len(), 40);
 }

@@ -784,7 +784,7 @@ fn a_file_sent_with_a_prompt_is_marked_under_it_whichever_way_it_reached_the_scr
             pruned: &Pruned::default(),
             style,
         },
-        &Session::nowhere(),
+        &Arc::new(Session::nowhere()),
         &mut Kept::default(),
     )
     .expect("a recording cannot fail");

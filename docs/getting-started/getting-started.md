@@ -523,18 +523,23 @@ the closing parenthesis when arguments were clipped: `Bash(cat …)`.
 A recent long command stays expandable even when it produced no
 output; an individual call with only horizontally clipped text offers
 `(ctrl+o to expand)` without a count of extra lines.
-Expansion keeps a bounded history and drops the oldest details as newer
-results arrive. Background completion notices also shorten long commands,
+What is held in memory for expansion is bounded, and the oldest results are let
+go as newer ones arrive. Where the session has a log, a row whose result was let
+go of still opens: the result is read back from the log when the view reaches
+it. A row with nothing left to open stops offering. Background completion
+notices also shorten long commands,
 preserving their exit status and output line count.
 
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
 accent, and what the result said reads as the quiet the rest of the transcript
 is in until you point at it. Clicking it opens the same view the key does, for
-the one result it belongs to. The key reaches further than the pointer does:
-<kbd>Ctrl+O</kbd> stands
-every result that was cut this way where the box was, newest first, each under
-the line of the call it answers. Arrow keys move one row at a time; the mouse
+the one result it belongs to. <kbd>Ctrl+O</kbd> stands every result the rows
+offer where the box was, newest first, each under the line of the call it
+answers. A result no longer held in memory is read back from the session log
+when the view reaches it; one the log cannot give back says
+`! this result could not be read back from the session log` in its place.
+Arrow keys move one row at a time; the mouse
 wheel uses `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` (six rows per notch by default).
 Long headings and output lines wrap here so their ends remain readable.
 <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes

@@ -218,7 +218,7 @@ fn screen(transcript: Transcript, columns: usize) -> String {
 /// renderer nobody told would be judged with the colour switched off.
 fn painted(transcript: Transcript, columns: usize, style: Style) -> String {
     let runner = resumed(transcript);
-    let session = Session::nowhere();
+    let session = Arc::new(Session::nowhere());
     let mut renderer = Renderer::new(Recording::new(columns, 24));
     renderer.wears(style.palette());
 
@@ -247,7 +247,7 @@ fn holding(transcript: Transcript, columns: usize) -> (Kept, Renderer<Recording>
     replayed(
         &mut renderer,
         &against(&runner, &Pruned::default()),
-        &Session::nowhere(),
+        &Arc::new(Session::nowhere()),
         &mut kept,
     )
     .expect("a recording cannot fail");
@@ -431,7 +431,7 @@ fn a_result_a_pruning_cleared_replays_as_what_the_reader_was_shown() {
     replayed(
         &mut renderer,
         &against(&runner, &pruned),
-        &Session::nowhere(),
+        &Arc::new(Session::nowhere()),
         &mut Kept::default(),
     )
     .expect("a recording cannot fail");
@@ -528,7 +528,7 @@ fn a_session_glimpsed_is_drawn_the_way_picking_it_up_would_draw_it() {
     replayed(
         &mut renderer,
         &against(&runner, &Pruned::default()),
-        &Session::nowhere(),
+        &Arc::new(Session::nowhere()),
         &mut Kept::default(),
     )
     .expect("a recording cannot fail");
@@ -909,3 +909,96 @@ fn no_row_of_it_is_wider_than_the_terminal_it_was_drawn_for() {
         }
     }
 }
+
+#[test]
+fn a_replayed_change_is_held_at_the_row_that_offers_it() {
+    // The log kept the change it previewed, so the replay draws it back the way
+    // the turn did: one line of the record, the change under its header, and a
+    // call heading too long for its row. The row naming the key is the line a
+    // click lands on, and the result has to be held against that line.
+    use crucible_storage::{InvocationRecord, RunItem, ToolEffect};
+    use crucible_types::{Ancestry, Change, Diff, Line};
+
+    let sample = crate::cli::sample::Sample::new("replay-preview-row");
+    let session = Session::start(&sample.logs(), &sample.workspace(), None).unwrap();
+    let call = ToolCall {
+        id: ToolId::new("change-1"),
+        name: "read".into(),
+        args: ToolArgs::new(format!(r#"{{"path":"{}release.yml"}}"#, "deep/".repeat(40))),
+    };
+    session.append(&Message::said("change it"));
+    session.append(&Message::Agent {
+        continuation: None,
+        text: "on it".into(),
+        calls: vec![call.clone()],
+        stop: Some(StopReason::WantsTools),
+    });
+    let changed = crucible_tools::ToolOutput::ok("changed release.yml").showing(Diff::new(
+        (1..=10).map(|number| Line::new(number, Change::Added, "a line that changed")),
+    ));
+    let preview = changed.diff().cloned();
+    let recorded = changed.into_recorded();
+    let mut invocation =
+        InvocationRecord::new(call.clone(), Ancestry::new(), ToolEffect::ReadOnly, None);
+    invocation
+        .finish(crucible_tools::ToolOutcome::Succeeded, recorded.clone())
+        .unwrap();
+    session.append_journal(&RunItem::Invocation {
+        record: invocation,
+        preview,
+    });
+    session.append(&Message::ToolResults(vec![ToolResult {
+        id: call.id.clone(),
+        output: recorded,
+    }]));
+
+    let runner = resumed(Transcript::default());
+    let mut renderer = Renderer::new(Recording::new(200, 60));
+    assert!(
+        renderer.is_terminal(),
+        "a change is drawn whole on a terminal"
+    );
+    for line in 1..=20 {
+        renderer.commit(&format!("earlier line {line}")).unwrap();
+    }
+    let mut kept = Kept::default();
+    let history = session.display_history().unwrap().unwrap();
+    streamed(
+        &mut renderer,
+        history,
+        &against(&runner, &Pruned::default()),
+        &session,
+        &mut kept,
+    )
+    .unwrap();
+
+    let shown = renderer.tail(60);
+    assert!(
+        shown
+            .iter()
+            .any(|row| row.text().contains("a line that changed")),
+        "the change was drawn from the preview the log kept"
+    );
+    let offering: Vec<usize> = shown
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.text().contains("ctrl+o to expand"))
+        .filter_map(|(at, _)| match renderer.aimed(at) {
+            Some(crucible_tui::Aimed::Line(line)) => Some(line),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offering.len(), 1, "one row names the key: {offering:?}");
+    for line in offering {
+        assert!(
+            kept.offered(line),
+            "a click on the row naming the key lands on line {line}, and the result is held \
+             at {:?}",
+            kept.newest().next().and_then(Whole::at)
+        );
+    }
+}
+
+/// Every row a session put back offers to expand opens, from the log where it
+/// has one.
+mod opened;

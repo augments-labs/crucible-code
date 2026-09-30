@@ -56,6 +56,7 @@ readonly BUDGETS=(
     "startup|bench-first-input|first input <= 60 ms p95"
     "startup|bench-cli-exit|help and version process exit <= 12 ms p95"
     "startup|bench-resume-preview|resume picker, deepest session previewed <= 20 ms p95"
+    "startup|bench-read-back|a result read back from the deepest session's log <= 20 ms p95"
     "tools|bench-tools|deterministic read, glob, edit, write and sandbox medians <= 40 ms"
     "mem|bench-session-rss|peak and retained RSS after a long session <= 35 MB"
     "grep|bench-grep|grep worst paired median within 1.25x the rg binary"

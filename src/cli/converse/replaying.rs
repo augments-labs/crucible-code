@@ -11,9 +11,10 @@
 //! does not create a second session-sized transcript in memory.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crucible_runner::Runner;
-use crucible_session::{DisplayHistory, DisplayItem, Pruned, Session, SessionError};
+use crucible_session::{DisplayHistory, DisplayItem, Place, Pruned, Session, SessionError};
 use crucible_tui::{Recording, Renderer, Row, Slot, Terminal, clip};
 use crucible_types::{Diff, Message, RECAP, ToolId};
 
@@ -21,7 +22,7 @@ use crate::cli::Fatal;
 use crate::cli::converse::Terms;
 use crate::cli::draw;
 use crate::cli::gathering::Gathering;
-use crate::cli::kept::Kept;
+use crate::cli::kept::{Kept, Log};
 use crate::cli::style::Style;
 
 /// What stands over the notes a compaction left.
@@ -44,9 +45,10 @@ const NOTES: &str = "notes on everything before this";
 pub(super) fn replayed<T: Terminal>(
     renderer: &mut Renderer<T>,
     against: &Replay<'_>,
-    session: &Session,
+    session: &Arc<Session>,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
+    logging(kept, session);
     if let Some(history) = session.display_history()? {
         let pruned = Pruned::default();
         let original = Replay {
@@ -65,6 +67,58 @@ pub(super) fn replayed<T: Terminal>(
     )
 }
 
+/// Sets where the rows of `session` read their results back from: its log,
+/// or nowhere where it has none.
+///
+/// Every way a session comes onto the screen passes here (the command line,
+/// `/resume`), and `/clear` asks for it when it starts another, so the store
+/// always reads from the session whose rows it holds. A session with no log
+/// gives it nothing to read from, and its rows stop offering as their results
+/// are let go of.
+pub(super) fn logging(kept: &mut Kept, session: &Arc<Session>) {
+    let log: Option<Box<dyn Log>> = session
+        .id()
+        .is_some()
+        .then(|| Box::new(Logged(Arc::clone(session))) as Box<dyn Log>);
+    kept.logging(log);
+}
+
+/// A session with a log, as the store reads results back from it.
+#[derive(Debug)]
+struct Logged(Arc<Session>);
+
+impl Log for Logged {
+    fn landed(&self) -> Vec<(ToolId, u64)> {
+        placed(self.0.take_landed())
+    }
+
+    fn settled(&self) -> Vec<(ToolId, u64)> {
+        placed(self.0.take_placed())
+    }
+
+    fn places(&self) -> bool {
+        self.0.places()
+    }
+
+    fn read(&self, call: &ToolId, position: u64) -> Option<Box<str>> {
+        // What the row was drawn from, in the words the store would have held:
+        // the result as the log recorded it, whatever a clearing has since
+        // taken out of what the model is sent. Drawn and nothing else.
+        self.0
+            .read_back(&Place::new(call.clone(), position))
+            .ok()
+            .map(|output| draw::Shown::replayed(output, None).into_text())
+    }
+}
+
+/// Each place as the store keeps it: the call, and the record's position.
+fn placed(places: Vec<Place>) -> Vec<(ToolId, u64)> {
+    places
+        .into_iter()
+        .map(|place| (place.call().clone(), place.position()))
+        .collect()
+}
+
 /// The change lines a log kept for one batch of results, for the reader alone.
 ///
 /// Empty for a transcript replayed without its log, and for a log written
@@ -76,19 +130,28 @@ type Previews = HashMap<ToolId, Diff>;
 /// Grouping needs that one-message lookahead to distinguish failed calls.
 fn streamed<T: Terminal>(
     renderer: &mut Renderer<T>,
-    history: DisplayHistory,
+    mut history: DisplayHistory,
     against: &Replay<'_>,
     session: &Session,
     kept: &mut Kept,
 ) -> Result<(), Fatal> {
     let mut pending: Option<(Message, Previews)> = None;
-    for item in history {
+    while let Some(item) = history.next() {
         let item = item.map_err(|source| SessionError::Log {
             at: session.path().display().to_string().into(),
             source,
         })?;
         match item {
             DisplayItem::Message { message, previews } => {
+                // Where the log holds each result, said before any of them is
+                // drawn, so what the store lets go of later it can read back.
+                if let (Message::ToolResults(results), Some(position)) =
+                    (&message, history.placed())
+                {
+                    for result in results {
+                        kept.placing(&result.id, position);
+                    }
+                }
                 if let Some((earlier, mut kept_previews)) = pending.take() {
                     if matches!(&earlier, Message::Agent { calls, .. } if !calls.is_empty())
                         && matches!(&message, Message::ToolResults(_))
@@ -405,6 +468,9 @@ fn said<T: Terminal>(
 
                 draw::came_back(renderer, kept, &result.id, output, style)?;
             }
+            // A result kept for a run's line draws no row of its own, so what
+            // it pushed out of the store is taken off the screen here.
+            draw::withdraw(renderer, kept)?;
         }
     }
 

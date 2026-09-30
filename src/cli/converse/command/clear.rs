@@ -97,8 +97,10 @@ pub(super) fn run<T: Terminal>(
     // context is what was asked for — a screen still holding it would read as a
     // conversation the agent under the box has no memory of. What was held of
     // that session's results goes with the rows that offered them: a key
-    // opening what is behind a row nobody can see is worse than no offer.
+    // opening what is behind a row nobody can see is worse than no offer. What
+    // results are read back from is the session now in hand.
     held.kept.forget();
+    super::super::replaying::logging(&mut held.kept, conversation.session());
 
     // The images pasted go too: the markers naming them were in prompts of the
     // session just left, and the numbering starts over with the session. Held

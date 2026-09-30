@@ -1899,3 +1899,95 @@ fn a_panic_on_another_thread_is_said_in_the_transcript_a_line_each() {
         "{rows:?}"
     );
 }
+
+#[test]
+fn a_row_that_stops_offering_keeps_its_count_and_loses_the_key() {
+    // What goes is the offer: the key's name, the brackets it stood in, and a
+    // change's offer of its own. A count of what the row could not show is
+    // still true and stays, and nothing is left lighting under the pointer.
+    let mut rows = [
+        one(&ToolOutput::ok("one\ntwo\nthree"), WIDE, Style::plain()),
+        one(
+            &ToolOutput::ok("page text ".repeat(200)),
+            WIDE,
+            Style::plain(),
+        ),
+        finished_rows(
+            &Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+                1,
+                Change::Added,
+                "a",
+            )]))),
+            WIDE,
+            Style::plain(),
+            true,
+        )
+        .into_iter()
+        .next()
+        .expect("the change's own row"),
+    ];
+    assert!(
+        rows.iter()
+            .all(|row| row.text().contains("ctrl+o to expand")),
+        "a row made no offer; the test says nothing: {rows:?}"
+    );
+    unoffered(&mut rows);
+
+    let said: Vec<String> = rows.iter().map(Row::text).collect();
+    assert_eq!(said.first().map(String::as_str), Some("  ⎿ one (+2 lines)"));
+    assert!(
+        said.get(1)
+            .is_some_and(|row| row.starts_with("  ⎿ page text") && !row.contains('(')),
+        "{said:?}"
+    );
+    assert!(
+        said.get(2)
+            .is_some_and(|row| !row.contains("ctrl+o") && !row.ends_with('(')),
+        "{said:?}"
+    );
+    for row in &rows {
+        assert!(row.kinds().all(|slot| slot != Slot::Cut), "{row:?}");
+    }
+}
+
+#[test]
+fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
+    let change = Shown::live(ToolOutput::ok("changed a.rs").showing(Diff::new([Line::new(
+        1,
+        Change::Added,
+        "a",
+    )])));
+    let mut clipped = 0;
+    for width in 12..40 {
+        let mut rows = finished_rows(&change, width, Style::plain(), true);
+        rows.truncate(1);
+        let Some(offer) = rows
+            .first()
+            .and_then(|row| row.spans().last().map(|(_, text)| text.to_owned()))
+            .filter(|offer| offer.starts_with("(c") && !offer.ends_with(')'))
+        else {
+            continue;
+        };
+        clipped += 1;
+        unoffered(&mut rows);
+        let row = rows.first().expect("the row");
+        assert!(
+            !row.text().contains("(c"),
+            "{width}: {offer:?} left {:?}",
+            row.text()
+        );
+        assert!(
+            row.kinds().all(|slot| slot != Slot::Cut),
+            "{width}: {row:?}"
+        );
+    }
+    assert!(
+        clipped > 0,
+        "no width clipped the offer; the test says nothing"
+    );
+}
+
+// Where a result is held against the row it was written on. Its text is kept
+// as it was agreed, which the formatter would otherwise re-wrap.
+#[rustfmt::skip]
+mod row_position;

@@ -6,15 +6,19 @@
 //! session *is* stays one level up — this is the part that would otherwise
 //! spread out across all three.
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use crucible_types::ToolId;
 use tokio::sync::{Notify, oneshot};
 
 use super::SessionError;
+use super::places::Place;
 
 /// Where the first write that failed is left for the main thread to find.
 pub(super) type Trouble = Arc<Mutex<Option<Box<str>>>>;
@@ -29,7 +33,33 @@ pub(super) enum Request {
     Acknowledged(Box<str>, oneshot::Sender<()>),
     /// Flush every earlier line before acknowledging the caller.
     Barrier(SyncSender<()>),
+    /// Append one message line that holds the results of `calls`, keep where
+    /// it went, and acknowledge `taken` where there is one to tell.
+    Results {
+        /// The message's line. A message of results is written with no guard
+        /// before it, so where the line begins is where its record does.
+        line: Box<str>,
+        /// The calls whose results the message holds.
+        calls: Box<[ToolId]>,
+        /// Told once the line is taken, where the sender waits.
+        taken: Option<oneshot::Sender<()>>,
+    },
 }
+
+/// The most places kept for the session to hand over, oldest let go first.
+///
+/// Eight passes of the most calls one pass may make. The screen takes them as
+/// each result arrives, so this bounds a screen that falls that far behind,
+/// and a session nothing draws, rather than a number an ordinary run reaches.
+pub(super) const PLACED: usize = 8 * 128;
+
+/// Where the results the writer appended went, waiting to be taken.
+pub(super) type Placed = Arc<Mutex<VecDeque<Place>>>;
+
+/// Whether the writer still places what it writes: it stops for good where it
+/// could not tell how long the file was, once a batch of results fails to land
+/// whole, and once a fragment ends the log.
+pub(super) type Placing = Arc<AtomicBool>;
 
 /// Appends every line that arrives until the session is dropped, telling
 /// `room` each time one is taken off the queue.
@@ -55,11 +85,18 @@ pub(super) enum Request {
 /// fragment onward nothing more is written: the file ends at the fragment,
 /// which the replay reads as a log torn at the tail, whole up to its last
 /// line.
+///
+/// Counting is also what places a result. `start` is how long the file was
+/// when this began, and from there the line of each message of results lands
+/// at a count this knows, which is kept in `placed` until it is taken. Where
+/// the length could not be read there is no count to trust, and nothing is
+/// placed.
 pub(super) fn write<W: io::Write>(
     mut sink: W,
     lines: Receiver<Request>,
     trouble: &Trouble,
     room: Arc<Notify>,
+    (start, placed, still): (Option<u64>, Placed, Placing),
 ) {
     let queue = Closing {
         lines: Some(lines),
@@ -68,12 +105,27 @@ pub(super) fn write<W: io::Write>(
     let Some(lines) = queue.lines.as_ref() else {
         return;
     };
-    let mut tail = Tail::default();
+    let counting = start.is_some();
+    if !counting {
+        still.store(false, Ordering::Release);
+    }
+    let mut tail = Tail {
+        written: start.unwrap_or(0),
+        ..Tail::default()
+    };
 
     for request in lines {
         queue.room.notify_waiters();
+        // Whatever the last request was, a fragment it left ends placing, and
+        // this is said before the next request is answered, a barrier among
+        // them.
+        if tail.dead {
+            still.store(false, Ordering::Release);
+        }
         match request {
-            Request::Line(line) => tail.append(&mut sink, &line, trouble),
+            Request::Line(line) => {
+                tail.append(&mut sink, &line, trouble);
+            }
             Request::Acknowledged(line, taken) => {
                 tail.append(&mut sink, &line, trouble);
                 flushed(&mut sink, trouble);
@@ -83,6 +135,30 @@ pub(super) fn write<W: io::Write>(
             Request::Barrier(done) => {
                 flushed(&mut sink, trouble);
                 let _ = done.send(());
+            }
+            Request::Results { line, calls, taken } => {
+                let begins = tail.append(&mut sink, &line, trouble);
+                // Only where the file's length was known when the writer
+                // started: a count begun anywhere else would name places the
+                // log does not bear out. A batch the log did not take whole is
+                // placed nowhere, and nothing says which calls it held, so
+                // from here on nothing unplaced is coming.
+                if begins.is_none() || tail.dead {
+                    still.store(false, Ordering::Release);
+                }
+                if let Some(begins) = begins.filter(|_| counting) {
+                    let mut held = placed.lock().unwrap_or_else(PoisonError::into_inner);
+                    for call in calls {
+                        held.push_back(Place::new(call, begins));
+                    }
+                    while held.len() > PLACED {
+                        held.pop_front();
+                    }
+                }
+                if let Some(taken) = taken {
+                    flushed(&mut sink, trouble);
+                    let _ = taken.send(());
+                }
             }
         }
     }
@@ -110,37 +186,62 @@ struct Tail {
     torn: bool,
     /// A fragment landed mid-line, and the file must end where it ends.
     dead: bool,
+    /// How long the file is, counting every byte that landed.
+    written: u64,
 }
 
 impl Tail {
     /// Appends `line` and the newline that ends it, as far as what earlier
-    /// failures left allows.
-    fn append<W: io::Write>(&mut self, sink: &mut W, line: &str, trouble: &Trouble) {
+    /// failures left allows, and says where `line` began where all of it and
+    /// its newline landed.
+    fn append<W: io::Write>(&mut self, sink: &mut W, line: &str, trouble: &Trouble) -> Option<u64> {
         if self.dead {
-            return;
+            return None;
         }
 
         if self.torn {
-            if let (_, Some(problem)) = append(sink, b"\n") {
+            if let Some(problem) = self.counted(append(sink, b"\n")) {
                 record(trouble, &problem);
-                return;
+                return None;
             }
             self.torn = false;
         }
 
+        let begins = self.written;
         match append(sink, line.as_bytes()) {
-            (_, None) => {
-                if let (_, Some(problem)) = append(sink, b"\n") {
+            (landed, None) => {
+                self.count(landed);
+                if let Some(problem) = self.counted(append(sink, b"\n")) {
                     self.torn = true;
                     record(trouble, &problem);
+                    return None;
                 }
+                Some(begins)
             }
-            (0, Some(problem)) => record(trouble, &problem),
-            (_, Some(problem)) => {
+            (0, Some(problem)) => {
+                record(trouble, &problem);
+                None
+            }
+            (landed, Some(problem)) => {
+                self.count(landed);
                 self.dead = true;
                 record(trouble, &problem);
+                None
             }
         }
+    }
+
+    /// Adds what landed to the length of the file.
+    fn count(&mut self, landed: usize) {
+        self.written = self
+            .written
+            .saturating_add(u64::try_from(landed).unwrap_or(u64::MAX));
+    }
+
+    /// Counts what one write landed and hands back what stopped it.
+    fn counted(&mut self, (landed, problem): (usize, Option<io::Error>)) -> Option<io::Error> {
+        self.count(landed);
+        problem
     }
 }
 

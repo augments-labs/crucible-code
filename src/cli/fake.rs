@@ -62,6 +62,10 @@ pub(crate) type Asked = Arc<AtomicUsize>;
 /// this fixture observe what the model actually read across that boundary.
 pub(crate) type Under = Arc<Mutex<Vec<String>>>;
 
+/// What every tool result in each request said, one entry per request, in
+/// order: what the model was sent of what its tools returned.
+pub(crate) type Sent = Arc<Mutex<Vec<Vec<String>>>>;
+
 /// Answers each request with the next batch of deltas it was given.
 #[derive(Debug)]
 pub(crate) struct Script {
@@ -69,6 +73,7 @@ pub(crate) struct Script {
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Asked,
     under: Under,
+    sent: Sent,
     /// Refuses every request, for the path where the provider itself fails
     /// rather than the transcript going wrong inside a response.
     refusing: bool,
@@ -81,6 +86,7 @@ impl Script {
             rounds: Mutex::new(rounds.into_iter()),
             asked: Asked::default(),
             under: Under::default(),
+            sent: Sent::default(),
             refusing: false,
         }
     }
@@ -103,6 +109,12 @@ impl Script {
     /// there is anything to read.
     pub(crate) fn under(&self) -> Under {
         Arc::clone(&self.under)
+    }
+
+    /// A handle on what each request sent of its tools' results, taken the
+    /// same way.
+    pub(crate) fn sent(&self) -> Sent {
+        Arc::clone(&self.sent)
     }
 }
 
@@ -168,6 +180,21 @@ impl Provider for Script {
                     assembled.push_str(fragment.text());
                 }
                 under.push(assembled);
+            }
+            if let Ok(mut sent) = self.sent.lock() {
+                sent.push(
+                    request
+                        .transcript
+                        .messages()
+                        .iter()
+                        .filter_map(|message| match message {
+                            Message::ToolResults(results) => Some(results),
+                            _ => None,
+                        })
+                        .flatten()
+                        .map(|result| result.output.text().to_owned())
+                        .collect(),
+                );
             }
 
             if self.refusing {

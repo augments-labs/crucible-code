@@ -102,6 +102,25 @@ impl Expanded<'_> {
         rows
     }
 
+    /// How many rows of results `room` rows show at once: what the rule, the
+    /// blanks and the footer leave.
+    #[must_use]
+    pub const fn seen(room: usize) -> usize {
+        room.saturating_sub(CHROME)
+    }
+
+    /// How many rows the whole of it comes to at this width, before any
+    /// window is taken.
+    ///
+    /// Asked one result at a time by a caller that has to know where each
+    /// begins. Each is laid out on its own, and one blank row parts it from
+    /// the result above, so the rows of a list are those of its results and a
+    /// blank between each two.
+    #[must_use]
+    pub fn length(&self, columns: usize) -> usize {
+        self.laid(columns).len()
+    }
+
     /// How far down [`Expanded::from`] may go at this size.
     ///
     /// Zero where the whole of it fits, which is what closes the window as well

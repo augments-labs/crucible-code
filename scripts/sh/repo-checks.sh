@@ -1142,6 +1142,9 @@ src/bin/bench-grep.rs crucible_tools
 src/bin/bench-grep.rs crucible_types
 src/bin/bench-grep.rs crucible_workspace
 src/bin/bench-live-burst.rs crucible_tui
+src/bin/bench-read-back.rs crucible_session
+src/bin/bench-read-back.rs crucible_types
+src/bin/bench-read-back.rs crucible_workspace
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
