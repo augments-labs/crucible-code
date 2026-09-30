@@ -6,8 +6,8 @@
 //! the log rather than from memory, one result at a time, when somebody opens
 //! them.
 //!
-//! So the log read is the fixture's deepest session — the one the resume picker
-//! previews, worked in for an afternoon — and the result is its first turn's,
+//! So the log read is the fixture's deepest session, the one the resume picker
+//! previews, worked in for an afternoon, and the result is its first turn's,
 //! the one furthest from where the session ended. Twenty milliseconds is the
 //! budget, for the reason the preview's is: a view asked for by a key either
 //! looks like it was already there or looks like it was fetched.

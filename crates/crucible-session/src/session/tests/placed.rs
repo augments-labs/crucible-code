@@ -187,8 +187,8 @@ fn a_session_that_records_nothing_has_no_places_and_reads_nothing() {
 
 #[test]
 fn a_line_still_being_written_reads_nothing_until_it_is_whole() {
-    // Another writer mid-line — a turn appending to the same log while a row is
-    // opened — leaves a record with no end yet. What is read there is the whole
+    // Another writer mid-line, a turn appending to the same log while a row is
+    // opened, leaves a record with no end yet. What is read there is the whole
     // record or nothing, never the part that has landed.
     let sample = Sample::new("placed-half-written");
     let session = two_results(&sample);

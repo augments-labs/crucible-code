@@ -10,8 +10,8 @@
 //! places it could move are the ones that tail held.
 //!
 //! A place is handed out two ways. Replaying a log for the reader says where
-//! each message it hands over was read from — see
-//! [`super::DisplayHistory::placed`] — and the thread that appends to the log
+//! each message it hands over was read from (see
+//! [`super::DisplayHistory::placed`]), and the thread that appends to the log
 //! keeps where each result it wrote landed, for [`Session::take_landed`] and
 //! [`Session::take_placed`].
 //!

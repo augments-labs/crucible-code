@@ -70,8 +70,8 @@ pub(super) fn replayed<T: Terminal>(
 /// Sets where the rows of `session` read their results back from: its log,
 /// or nowhere where it has none.
 ///
-/// Every way a session comes onto the screen passes here — the command line,
-/// `/resume` — and `/clear` asks for it when it starts another, so the store
+/// Every way a session comes onto the screen passes here (the command line,
+/// `/resume`), and `/clear` asks for it when it starts another, so the store
 /// always reads from the session whose rows it holds. A session with no log
 /// gives it nothing to read from, and its rows stop offering as their results
 /// are let go of.

@@ -30,8 +30,8 @@
 //!
 //! What is let go of under the ceiling is not always gone. Where the session
 //! has a log, the result is still in it, so a row whose text was dropped keeps
-//! where the log holds it — the call it answered and the position of its
-//! record, and no text — and a view that reaches that row reads the result
+//! where the log holds it (the call it answered and the position of its
+//! record, and no text), and a view that reaches that row reads the result
 //! back from there. The log is reached through [`Log`], which is set from the
 //! session on the screen, so nothing here names the storage it is kept in.
 //! Where there is no log, a row whose result was let go of can open nothing,
@@ -573,8 +573,8 @@ impl Kept {
             .saturating_sub(gone.text.len())
             .saturating_sub(gone.called.len());
 
-        // A result no row offers yet — one of a run whose line is still to be
-        // written — has no row to keep a place for. Its place may still be
+        // A result no row offers yet (one of a run whose line is still to be
+        // written) has no row to keep a place for. Its place may still be
         // coming, and it is this result's rather than a later call's.
         let Some(at) = gone.at else {
             if gone.position.is_none() && self.log.is_some() {
@@ -723,7 +723,7 @@ impl Kept {
 
     /// The rows that can no longer open anything, handed over once.
     ///
-    /// A row still offering another result — one line of a folded run, say — is
+    /// A row still offering another result (one line of a folded run, say) is
     /// not among them.
     pub(crate) fn withdrawn(&mut self) -> Vec<usize> {
         let mut gone = std::mem::take(&mut self.gone);
@@ -759,7 +759,7 @@ impl Kept {
     /// for nobody.
     ///
     /// The count of what has been cut goes back to nothing with them, because
-    /// what it is for is a view leaving out results kept after it opened — and
+    /// what it is for is a view leaving out results kept after it opened, and
     /// none of these can arrive again.
     ///
     /// The log is kept: it belongs to the session rather than to the rows, and

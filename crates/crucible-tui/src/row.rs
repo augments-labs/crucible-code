@@ -357,8 +357,8 @@ impl Row {
     ///
     /// `each` is handed each span's place in the row, its slot and its words,
     /// and answers what stands there instead, or `None` to take it out. A span
-    /// handed back with its own words keeps everything else it carried — art
-    /// kept out of a selection, an address — and one given other words carries
+    /// handed back with its own words keeps everything else it carried (art
+    /// kept out of a selection, an address), and one given other words carries
     /// none of it, since that belonged to the words replaced.
     ///
     /// For a row already written that has to say less than it did.

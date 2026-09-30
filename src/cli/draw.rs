@@ -246,8 +246,8 @@ pub(crate) fn event<T: Terminal>(
     drawn?;
 
     // Whatever it was, a result it brought in may have pushed an older one out
-    // of what is held — a call counted into a run is kept without a row of its
-    // own being drawn — and a row that can no longer open anything stops
+    // of what is held (a call counted into a run is kept without a row of its
+    // own being drawn), and a row that can no longer open anything stops
     // saying it can.
     withdraw(renderer, kept)
 }

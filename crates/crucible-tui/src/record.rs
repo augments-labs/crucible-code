@@ -622,7 +622,7 @@ impl Record {
     /// Edits the rows line `at` was written as, now and at every width it is
     /// laid out at again.
     ///
-    /// For a row that has to say less than it did when it was written — an
+    /// For a row that has to say less than it did when it was written: an
     /// offer whose result has gone. The line keeps its place and its share of
     /// the record; only its rows change. A line no longer held, or not written
     /// yet, is left alone, and so is every other line.
