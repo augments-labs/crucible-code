@@ -247,6 +247,13 @@ fn answering(
     }
 
     let written = splice(&text, &named)?;
+    // An answer already written, or a yes taken out of a file that holds
+    // none, changes nothing, and a file nothing changed is not written: one
+    // that was not there would otherwise be left empty, which is not
+    // configuration.
+    if written == text {
+        return Ok(());
+    }
 
     put(file, &written).map_err(unwritable)
 }
