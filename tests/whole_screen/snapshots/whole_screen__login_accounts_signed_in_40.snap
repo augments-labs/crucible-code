@@ -1,6 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
-expression: accounts
+expression: plans
 ---
 40x30 cursor 28,0 scrolled 0
 |CRUCIBLE                                |
@@ -23,13 +23,13 @@ expression: accounts
 |usage.                                  |
 |                                        |
 |› OpenAI                                |
-|  signed in · ChatGPT plan usage with P…|
+|  signed in · may train on what is sent…|
 |                                        |
 |  Kimi Code · kimi.ai                   |
-|  Kimi Code plan usage, accounts outsid…|
+|  may train on what is sent · Kimi Code…|
 |                                        |
 |  Kimi Code · kimi.com                  |
-|  Kimi Code plan usage, mainland China …|
+|  may use what is sent · Kimi Code plan…|
 |                                        |
 |esc to go back                          |
 |                                        |

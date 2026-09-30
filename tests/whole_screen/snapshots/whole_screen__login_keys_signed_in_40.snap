@@ -20,13 +20,13 @@ expression: keys
 |  signed in with a stored key           |
 |                                        |
 |  Google                                |
-|  set GEMINI_API_KEY                    |
+|  uses what is sent · set GEMINI_API_KEY|
 |                                        |
 |  MoonshotAI · kimi.ai                  |
-|  a Kimi Code Console key, accounts out…|
+|  may train on what is sent · a Kimi Co…|
 |                                        |
 |  MoonshotAI · kimi.com                 |
-|  signed in with a stored key           |
+|  signed in · may use what is sent      |
 |                                        |
 |  OpenAI                                |
 |  set OPENAI_API_KEY                    |

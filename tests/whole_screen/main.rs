@@ -33,6 +33,7 @@
 
 mod screen;
 mod vendor;
+mod warning;
 mod watched;
 
 use std::fmt::Write as _;
@@ -179,13 +180,23 @@ fn takes(window: &mut Watched, name: &str) {
     panic!("no entry reads {name}: {}", window.picture());
 }
 
-/// Walks `/login` to the key box of the provider named `name`.
+/// Walks `/login` to the key box of the provider named `name`, saying yes on
+/// the way where its route's vendor uses what is sent.
 fn keyed(window: &mut Watched, name: &str) {
     window.types_until("/login\r", "Provide your own API key");
     takes(window, "Provide your own API key");
     window.types_until("", "Choose the provider whose API key you have.");
     takes(window, name);
+    answers(window);
     window.types_until("", "paste or type your API key");
+}
+
+/// Says yes to the question a route whose vendor uses what is sent puts, where
+/// it stands.
+fn answers(window: &mut Watched) {
+    if window.picture().contains("Use it anyway") {
+        window.types("\r");
+    }
 }
 
 /// The row directly under the one that reads `› {command}`, without the
@@ -1377,7 +1388,10 @@ fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
     takes(&mut window, "Your account with subscription");
     window.types_until("", "Choose the account whose plan pays");
     let plans = window.picture();
-    assert!(plans.contains("signed in · ChatGPT plan usage"), "{plans}");
+    assert!(
+        plans.contains("signed in · may train on what is sent"),
+        "{plans}"
+    );
     assert!(plans.contains("esc to go back"), "{plans}");
     insta::assert_snapshot!("login_accounts_signed_in_40", plans);
 
@@ -1385,11 +1399,14 @@ fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
     takes(&mut window, "Provide your own API key");
     window.types_until("", "Choose the provider whose API key");
     let keys = window.picture();
+    // Anthropic's row, and the kimi.com key row, whose caution stands where
+    // the words about the key would.
     assert_eq!(
         keys.matches("signed in with a stored key").count(),
-        2,
+        1,
         "{keys}"
     );
+    assert!(keys.contains("signed in · may use what is sent"), "{keys}");
     insta::assert_snapshot!("login_keys_signed_in_40", keys);
 
     for picture in [&plans, &keys] {
@@ -1519,8 +1536,10 @@ fn words_that_leave_one_key_row_open_its_box_and_words_that_leave_none_say_so() 
     );
     window.types_until("\x1b", "cancelled, nothing signed in");
 
-    // A key row of a provider with two opens a box that names its site.
-    window.types_until("/login moonshot key kimi.com\r", "API key");
+    // A key row of a provider with two opens a box that names its site, once
+    // its route has its yes.
+    window.types_until("/login moonshot key kimi.com\r", "Use it anyway");
+    window.types_until("\r", "API key");
     assert!(
         window.picture().contains("MoonshotAI · kimi.com API key"),
         "{}",
@@ -1582,7 +1601,10 @@ fn model_picker_rows_show_wire_ids_instead_of_display_names() {
 fn google_login_and_model_selection_keep_keys_private_and_offer_three_efforts() {
     for columns in [40, 80] {
         let mut window = Watched::open(&format!("google-login-{columns}"), columns, 24);
-        window.types_until("/login google\r", "Google API key");
+        // The Google key row's vendor uses what is sent on unpaid quota, so it
+        // is asked about before its box stands.
+        window.types_until("/login google\r", "Use it anyway");
+        window.types_until("\r", "Google API key");
         let login = window.picture();
         assert!(login.contains("Google"));
         assert!(!login.contains("ChatGPT"));
@@ -1685,6 +1707,7 @@ fn openai_account_login_offers_browser_and_device_code_methods() {
     takes(&mut window, "Your account with subscription");
     window.types_until("", "Choose the account whose plan pays for usage.");
     takes(&mut window, "OpenAI");
+    answers(&mut window);
     window.types_until("", "Choose where to finish account authorization.");
 
     insta::assert_snapshot!(window.picture());
@@ -2392,4 +2415,307 @@ fn release_notes_mid_turn_are_refused_on_the_panel() {
     assert!(refused.contains("esc to close"), "{refused}");
     assert!(!refused.contains("newest in full"), "{refused}");
     insta::assert_snapshot!(refused);
+}
+
+#[test]
+fn a_send_on_a_warned_route_stands_the_question_and_sends_nothing_before_the_yes() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-send",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+
+    // Enter twice in one write: the first sends, and the second is in hand
+    // before the panel is drawn, so it does not answer it.
+    window.types_until("hello\r\r", "Use it anyway");
+    let asked = window.picture();
+    assert!(asked.contains("Use it anyway"), "{asked}");
+    assert!(
+        asked.contains("On unpaid quota, Google uses what you send"),
+        "{asked}"
+    );
+    assert!(asked.contains("Gemini API terms, 30 Sep 2026"), "{asked}");
+    assert!(
+        asked.contains("enter to choose · esc to go back"),
+        "{asked}"
+    );
+    assert!(!asked.contains(warning::KEY), "{asked}");
+    insta::assert_snapshot!("question_at_send_80", asked);
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "sent before the yes");
+
+    // Going back keeps the message, and the question stands again at the
+    // next send.
+    window.types_until("\x1b", "nothing was sent; your message is back");
+    let back = window.picture();
+    assert!(back.contains("hello"), "{back}");
+    assert!(!back.contains("Use it anyway"), "{back}");
+    window.types_until("\r", "Use it anyway");
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "sent before the yes");
+
+    // The yes sends it, to its route's host alone (the transport asks again
+    // after the refusal, as it does after any connection that failed), and is
+    // written into the user's own file.
+    window.types("\r");
+    let reached = proxy.reached(1);
+    assert!(!reached.is_empty(), "{}", window.picture());
+    assert!(
+        reached.iter().all(|host| host == warning::GEMINI_HOST),
+        "{reached:?}"
+    );
+    assert!(
+        warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+}
+
+#[test]
+fn the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set() {
+    for (columns, ascii) in [(40, false), (40, true), (80, true)] {
+        let proxy = warning::Proxy::new();
+        let glyphs = if ascii {
+            warning::GOOGLE.replace(
+                "  \"updates\"",
+                "  \"output\": {\"glyphs\": \"ascii\"},\n  \"updates\"",
+            )
+        } else {
+            warning::GOOGLE.to_owned()
+        };
+        let case = format!("warning-{columns}-{ascii}");
+        let mut window = warning::through(&case, (columns, 30), &glyphs, &proxy, (&[], None));
+        window.types_until("hello\r", "Use it anyway");
+        let picture = window.picture();
+        assert!(picture.contains("Gemini API terms, 30 Sep"), "{picture}");
+        let set = if ascii { "ascii" } else { "unicode" };
+        insta::assert_snapshot!(format!("warning_at_send_{columns}_{set}"), picture);
+        assert_eq!(proxy.asked(), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn a_yes_holds_for_the_next_run_on_the_same_home() {
+    let first = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-once",
+        (80, 30),
+        warning::GOOGLE,
+        &first,
+        (&[], None),
+    );
+    window.types_until("hello\r", "Use it anyway");
+    window.types("\r");
+    assert!(
+        first
+            .reached(1)
+            .iter()
+            .all(|host| host == warning::GEMINI_HOST)
+    );
+    let document = warning::said(&window);
+    assert!(document.contains("key:google"), "{document}");
+
+    let second = warning::Proxy::new();
+    let home = window.home();
+    let mut again = warning::through(
+        "warning-once-again",
+        (80, 30),
+        &document,
+        &second,
+        (&[], Some(&home)),
+    );
+    again.types("again\r");
+    assert!(
+        !again.picture().contains("Use it anyway"),
+        "{}",
+        again.picture()
+    );
+    let reached = second.reached(1);
+    assert!(
+        !reached.is_empty() && reached.iter().all(|host| host == warning::GEMINI_HOST),
+        "{reached:?}"
+    );
+}
+
+#[test]
+fn a_route_reached_by_the_command_line_is_asked_about_before_the_first_send() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-flag",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&["--model", "google/gemini-3.8-flash"], None),
+    );
+    window.types_until("hello\r", "Use it anyway");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn no_room_for_the_question_keeps_the_message_and_sends_nothing() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-short",
+        (80, 12),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("hello\r", "make the window taller and send again");
+    let picture = window.picture();
+    assert!(picture.contains("hello"), "{picture}");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+
+    let mut window = warning::through(
+        "warning-short-login",
+        (80, 12),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until(
+        "/login kimi code kimi.ai\r",
+        "make the window taller and choose again",
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn choosing_a_model_of_a_warned_route_asks_first_and_going_back_returns_to_it() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-model",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types("/model\r");
+    window.types("gemini-3.7");
+    window.types_until(
+        "\r",
+        "Takes this choice; this route is not asked about again",
+    );
+
+    window.types_until("\x1b", "› gemini-3.7-flash");
+    let shelf = window.picture();
+    assert!(!shelf.contains("Use it anyway"), "{shelf}");
+
+    window.types_until("\r", "Use it anyway");
+    window.types_until("\r", "gemini-3.7-flash");
+    assert!(
+        warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a choice sends nothing"
+    );
+}
+
+#[test]
+fn a_warned_row_reached_by_words_asks_first_and_going_back_cancels() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-login-words",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login google\r", "Takes this choice");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn a_sign_in_waits_for_the_yes_and_a_sign_in_that_fails_records_none() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-sign-in",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login kimi code kimi.ai\r", "Use it anyway");
+    let asked = window.picture();
+    assert!(asked.contains("Kimi Code · kimi.ai"), "{asked}");
+    assert!(
+        asked.contains("kimi.ai terms of service, 30 Sep 2026"),
+        "{asked}"
+    );
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a sign-in began before the yes"
+    );
+
+    // The yes lets the sign-in's first request go, and the proxy refuses it,
+    // so the sign-in fails and nothing is written down.
+    window.types("\r");
+    assert_eq!(
+        proxy.reached(1),
+        ["auth.kimi.ai:443"],
+        "{}",
+        window.picture()
+    );
+    assert!(
+        !warning::said(&window).contains("kimi.ai"),
+        "{}",
+        warning::said(&window)
+    );
+
+    // Asked again the next time the row is chosen.
+    window.types_until("\x1b", "");
+    window.types_until("/login kimi code kimi.ai\r", "Use it anyway");
+}
+
+#[test]
+fn a_credential_taken_out_takes_its_yes_and_the_question_stands_again() {
+    let proxy = warning::Proxy::new();
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-logout-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store =
+        r#"{"version":2,"keys":{"google":"fabricated-stored-google-key"},"subscriptions":{}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+
+    let mut window = warning::through(
+        "warning-logout",
+        (80, 30),
+        warning::GOOGLE_SAID,
+        &proxy,
+        (&[], Some(&earlier)),
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+    window.types_until(
+        "/logout google\r",
+        "removed the stored credential for google",
+    );
+    assert!(
+        !warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+
+    // The key from the environment still serves the route, and it is asked
+    // about again.
+    window.types_until("hello\r", "Use it anyway");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
 }
