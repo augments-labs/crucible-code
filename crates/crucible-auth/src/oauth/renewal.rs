@@ -436,6 +436,7 @@ impl fmt::Debug for Renewals {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.debug_struct("Renewals")
             .field("runtime", &self.0.runtime.get().is_some())
+            .field("held", &self.0.hold.get().is_some())
             .field("running", &*lock(&self.0.running))
             .finish_non_exhaustive()
     }

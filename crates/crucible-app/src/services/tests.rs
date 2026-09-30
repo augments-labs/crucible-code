@@ -301,3 +301,15 @@ fn the_shared_client_sends_a_warned_route_nothing_until_its_yes() {
     assert!(heard.load(Ordering::SeqCst) > 0);
     drop(services);
 }
+
+/// The renewals owner is handed the run's consent before anything could be
+/// sent, so every sign-in and renewal request it makes asks it first. What the
+/// hold then does to a request is the renewals owner's own test; this is the
+/// run handing it over.
+#[test]
+fn the_renewals_owner_is_held_by_the_run_s_consent_from_the_start() {
+    let (asked, stopped) = serving(|services| format!("{:?}", services.renewals()));
+
+    assert!(asked.contains("held: true"), "{asked}");
+    assert_eq!(stopped, Ok(()));
+}
