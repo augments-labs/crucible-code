@@ -104,7 +104,7 @@ of it. The commands themselves are under
 | --- | --- |
 | <kbd>Shift-Tab</kbd> | Steps the permission mode on the press: `ask`, `allowEdits`, `fullAccess`, then `ask` again. See [Stepping it while you type](../permissions/modes.md#stepping-it-while-you-type). |
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. |
-| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
+| <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short that are still held. Nothing while none were cut. |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
 | <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+Q</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
@@ -332,8 +332,9 @@ the list, and <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> close the whole thing.
 
 ### Results cut short
 
-<kbd>Ctrl+O</kbd> stands every result the transcript cut, newest first, and a
-click on a result's ` (ctrl+o to expand)` offer stands that one. Between
+<kbd>Ctrl+O</kbd> stands every result the transcript cut that is still held,
+newest first, and a click on a result's ` (ctrl+o to expand)` offer stands that
+one, read back from the session log where it is no longer held. Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.
 The footer reads `esc to close`, or `esc to close · ↑↓ to see more` where
