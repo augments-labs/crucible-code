@@ -14,6 +14,11 @@ change in any release with no deprecation period.
   refused.** When a stop could not be confirmed in time, as on a busy Mac,
   the command kept its refused mark after crucible had found it ended. Only a
   command that is still running is marked refused now.
+- **At a terminal, a prompt for a model nothing serves is no longer recorded.**
+  `crucible --model foo` with no provider set up took a turn for typed and
+  queued prompts and wrote them into the session before refusing them. Each now
+  gets the warning a session with no model gives and takes no turn, and a line
+  queued with no model does the same.
 
 ## [0.44.0] - 2026-10-01
 
