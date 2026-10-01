@@ -11,9 +11,19 @@
 //! migrated by name as text instead, which puts every name the oldest builds
 //! wrote above every uuid name and, past [`ENTRIES`] logs, can leave newer
 //! sessions out entirely. So the order is restored wherever the index is read,
-//! and an index found without the [`ORDERED`] mark beside it is merged once
-//! with a scan of the directory. The file format is unchanged: a build that
-//! knows nothing of the order or the mark reads what this one writes.
+//! and an index this build did not write last is merged once with a scan of
+//! the directory. What says which build wrote it last is the [`ORDERED`] mark:
+//! every write here leaves the index's digest in it, under the same lock, so an
+//! index an older build wrote or rebuilt since no longer matches its mark and
+//! is merged again, while one this build wrote is never scanned twice. The file
+//! format is unchanged: a build that knows nothing of the order or the mark
+//! reads what this one writes.
+//!
+//! The window keeps the [`ENTRIES`] newest sessions, with one exception: the
+//! session being recorded is always kept. A clock gone back can date a new
+//! session before everything a full window holds, and dropping it would leave
+//! the session just started out of every listing, with nowhere for its count or
+//! title to go; the oldest other entry makes room instead.
 //!
 //! The index is replaced whole under an operating-system lock. The replacement
 //! is synced before its rename and the directory is synced afterwards, so a
@@ -36,9 +46,13 @@ use super::replay::logs as legacy_logs;
 /// What the index file is called. Its suffix deliberately cannot be a log's.
 const NAME: &str = "recent.sessions";
 
-/// Beside the index once it has been put in start-time order against a scan
-/// of every log, so that scan happens once per directory. It holds nothing.
+/// Beside the index, holding the digest of the index this build last wrote,
+/// so the scan that puts an index in order happens once per index rather than
+/// once per start.
 const ORDERED: &str = "recent.sessions.ordered";
+
+/// More than a digest's hex and a newline. A mark is never read past this.
+const MARK_BYTES: u64 = 128;
 
 /// The first line, so an incompatible index is refused rather than guessed at.
 const FORMAT: &str = "crucible-session-index-2";
@@ -84,12 +98,12 @@ impl Entry {
 /// one an earlier build ordered by name with what is on disk, once.
 pub(super) fn ensure(directory: &Path) -> Result<(), SessionError> {
     let path = named(directory);
-    let ordered = directory.join(ORDERED);
     let _held = claim::exclusive(&path).map_err(|source| problem(&path, source))?;
-    let held = read(&path)?;
-    if held.is_some() && ordered.is_file() {
-        return Ok(());
-    }
+    let held = match text(&path)? {
+        Some(text) if vouched(directory, &text) => return Ok(()),
+        Some(text) => Some(parse(&path, &text)?),
+        None => None,
+    };
 
     // The one unbounded read this module makes: once per directory, after the
     // first frame, and through the same name listing `--continue` uses. Every
@@ -114,12 +128,7 @@ pub(super) fn ensure(directory: &Path) -> Result<(), SessionError> {
     }
     newest_first(&mut entries);
     entries.truncate(ENTRIES);
-    replace(&path, &entries)?;
-
-    // Only after the index it vouches for is durable. Failing to leave it
-    // costs one more scan at the next start, never a session.
-    let _ = super::privacy::mark(&ordered);
-    Ok(())
+    replace(&path, &entries, true)
 }
 
 /// Puts entries newest first by the start time their names carry, as
@@ -140,7 +149,7 @@ fn newest_first(entries: &mut [Entry]) {
 pub(super) fn record(directory: &Path, id: &SessionId) -> Result<(), SessionError> {
     let path = named(directory);
     let _held = claim::exclusive(&path).map_err(|source| problem(&path, source))?;
-    let mut entries = read(&path)?.unwrap_or_default();
+    let (mut entries, vouched) = held(&path)?;
 
     let known = entries.iter().position(|held| &held.id == id);
     let entry = match known {
@@ -149,8 +158,16 @@ pub(super) fn record(directory: &Path, id: &SessionId) -> Result<(), SessionErro
     };
     entries.insert(0, entry);
     newest_first(&mut entries);
-    entries.truncate(ENTRIES);
-    replace(&path, &entries)
+
+    // Past the window, the oldest entry that is not this one goes: the session
+    // being recorded is the one somebody just started.
+    while entries.len() > ENTRIES {
+        let Some(oldest) = entries.iter().rposition(|held| &held.id != id) else {
+            break;
+        };
+        entries.remove(oldest);
+    }
+    replace(&path, &entries, vouched)
 }
 
 /// Records how many conversation messages the session's log now holds.
@@ -182,13 +199,13 @@ fn amend(
 ) -> Result<(), SessionError> {
     let path = named(directory);
     let _held = claim::exclusive(&path).map_err(|source| problem(&path, source))?;
-    let mut entries = read(&path)?.unwrap_or_default();
+    let (mut entries, vouched) = held(&path)?;
 
     let Some(entry) = entries.iter_mut().find(|held| &held.id == id) else {
         return Ok(());
     };
     change(entry);
-    replace(&path, &entries)
+    replace(&path, &entries, vouched)
 }
 
 /// The newest indexed entries, newest first and at most `maximum`.
@@ -200,6 +217,19 @@ pub(super) fn entries(directory: &Path, maximum: usize) -> Result<Vec<Entry>, Se
     Ok(entries)
 }
 
+/// What the index holds, and whether the mark vouches for it, so a change
+/// written over it vouches for the result only where the mark already did: an
+/// index no scan has put in order yet stays one the next start scans.
+fn held(path: &Path) -> Result<(Vec<Entry>, bool), SessionError> {
+    let Some(text) = text(path)? else {
+        return Ok((Vec::new(), false));
+    };
+    let vouched = path
+        .parent()
+        .is_some_and(|directory| vouched(directory, &text));
+    Ok((parse(path, &text)?, vouched))
+}
+
 /// Reads a complete index, newest first, `None` where migration has not made
 /// one yet.
 ///
@@ -207,6 +237,11 @@ pub(super) fn entries(directory: &Path, maximum: usize) -> Result<Vec<Entry>, Se
 /// earlier build kept by name is listed as one timeline and rewritten as one
 /// the next time anything changes it.
 fn read(path: &Path) -> Result<Option<Vec<Entry>>, SessionError> {
+    text(path)?.map(|text| parse(path, &text)).transpose()
+}
+
+/// The index file's text, bounded, `None` where there is none yet.
+fn text(path: &Path) -> Result<Option<String>, SessionError> {
     let opened = match File::open(path) {
         Ok(file) => file,
         Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -228,6 +263,11 @@ fn read(path: &Path) -> Result<Option<Vec<Entry>>, SessionError> {
         ));
     }
 
+    Ok(Some(text))
+}
+
+/// An index's text as its entries, newest first.
+fn parse(path: &Path, text: &str) -> Result<Vec<Entry>, SessionError> {
     let mut lines = text.lines();
     let entries = match lines.next() {
         Some(FORMAT) => lines.map(entry).collect::<Option<Vec<_>>>(),
@@ -260,7 +300,7 @@ fn read(path: &Path) -> Result<Option<Vec<Entry>>, SessionError> {
     }
 
     newest_first(&mut entries);
-    Ok(Some(entries))
+    Ok(entries)
 }
 
 /// One format 2 line as the entry it records, or `None` if it is not one.
@@ -284,32 +324,69 @@ fn entry(line: &str) -> Option<Entry> {
     })
 }
 
-/// Replaces the index with one whole, durable version.
-fn replace(path: &Path, entries: &[Entry]) -> Result<(), SessionError> {
+/// Replaces the index with one whole, durable version, and where `vouch` says
+/// so, leaves its digest in the mark.
+fn replace(path: &Path, entries: &[Entry], vouch: bool) -> Result<(), SessionError> {
     let directory = path.parent().ok_or_else(|| {
         problem(
             path,
             io::Error::other("session index has no parent directory"),
         )
     })?;
-    let mut beside = Beside::new(directory, "recent").map_err(|source| problem(path, source))?;
 
+    let mut text = format!("{FORMAT}\n");
+    for entry in entries {
+        text.push_str(entry.id.as_str());
+        text.push('\t');
+        text.push_str(&entry.messages.to_string());
+        text.push('\t');
+        text.push_str(entry.title.as_deref().unwrap_or_default());
+        text.push('\n');
+    }
+
+    let mut beside = Beside::new(directory, "recent").map_err(|source| problem(path, source))?;
     {
         let file = beside.file().map_err(|source| problem(path, source))?;
-        writeln!(file, "{FORMAT}").map_err(|source| problem(path, source))?;
-        for entry in entries {
-            writeln!(
-                file,
-                "{}\t{}\t{}",
-                entry.id.as_str(),
-                entry.messages,
-                entry.title.as_deref().unwrap_or_default(),
-            )
+        file.write_all(text.as_bytes())
             .map_err(|source| problem(path, source))?;
-        }
         file.sync_all().map_err(|source| problem(path, source))?;
     }
-    beside.over(path).map_err(|source| problem(path, source))
+    beside.over(path).map_err(|source| problem(path, source))?;
+
+    // Only once the index it vouches for is in place. A mark that could not be
+    // left costs one more scan at the next start, never a session.
+    if vouch {
+        let _ = leave_mark(directory, &text);
+    }
+    Ok(())
+}
+
+/// What the mark holds for an index whose text is `text`.
+fn digest(text: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    use std::fmt::Write as _;
+
+    let mut hex = String::with_capacity(65);
+    for byte in Sha256::digest(text.as_bytes()) {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex.push('\n');
+    hex
+}
+
+/// Whether the mark says this build wrote `text` last.
+fn vouched(directory: &Path, text: &str) -> bool {
+    let mut held = String::new();
+    File::open(directory.join(ORDERED))
+        .and_then(|mark| mark.take(MARK_BYTES).read_to_string(&mut held))
+        .is_ok_and(|_| held == digest(text))
+}
+
+/// Leaves the digest of the index just written in the mark.
+fn leave_mark(directory: &Path, text: &str) -> io::Result<()> {
+    let mut mark = super::privacy::mark(&directory.join(ORDERED))?;
+    mark.set_len(0)?;
+    mark.write_all(digest(text).as_bytes())
 }
 
 fn named(directory: &Path) -> PathBuf {
@@ -346,7 +423,7 @@ mod tests {
         let sample = Sample::new("session-index-window");
         let path = named(&sample.logs());
         let initial: Vec<Entry> = (0..ENTRIES).map(|nth| Entry::new(id(nth))).rev().collect();
-        replace(&path, &initial).expect("the initial index");
+        replace(&path, &initial, false).expect("the initial index");
 
         let newest = id(ENTRIES);
         record(&sample.logs(), &newest).expect("the next session");
@@ -530,13 +607,67 @@ mod tests {
         by_name(&path, &[id(1)]);
         ensure(&sample.logs()).expect("the index repaired");
 
+        // What this build writes afterwards keeps the mark with the index.
+        record(&sample.logs(), &id(2)).expect("a session recorded");
+
         // A log the index was never told about: only a scan could find it, and
         // the startup after a repair does fixed work.
         on_disk(&sample.logs(), &[uuid(0)]);
         ensure(&sample.logs()).expect("the index already repaired");
         let read = entries(&sample.logs(), ENTRIES).expect("the index");
 
-        assert_eq!(read.len(), 1);
+        assert_eq!(read.len(), 2);
+    }
+
+    #[test]
+    fn a_session_recorded_older_than_a_full_window_is_still_kept() {
+        // A clock gone back can date a new session before everything a full
+        // window holds. It is the session just started, so it stays, and the
+        // oldest other entry makes room for it.
+        let sample = Sample::new("session-index-clock-back");
+        let path = named(&sample.logs());
+        let initial: Vec<Entry> = (0..ENTRIES).map(|nth| Entry::new(id(nth))).collect();
+        replace(&path, &initial, false).expect("the initial index");
+        let behind = SessionId::from_str("1600000000000-abcdef").expect("a session identifier");
+
+        record(&sample.logs(), &behind).expect("the session recorded");
+        let read = entries(&sample.logs(), ENTRIES).expect("the index");
+
+        assert_eq!(read.len(), ENTRIES);
+        assert!(read.iter().any(|entry| entry.id == behind), "dropped");
+        assert!(
+            !read.iter().any(|entry| entry.id == id(0)),
+            "kept the oldest"
+        );
+        tally(&sample.logs(), &behind, 4).expect("the count kept");
+        let counted = entries(&sample.logs(), ENTRIES).expect("the index");
+        assert!(
+            counted
+                .iter()
+                .any(|entry| entry.id == behind && entry.messages == 4)
+        );
+    }
+
+    #[test]
+    fn an_index_an_earlier_build_rebuilt_by_name_is_repaired_again() {
+        // A rollback to a build that knows nothing of the order, and an index
+        // deleted while it ran: that build rebuilds the index by name, under a
+        // mark this one left for a different index.
+        let sample = Sample::new("session-index-rebuilt-by-name");
+        let legacy: Vec<SessionId> = (0..ENTRIES).map(id).collect();
+        let newer = [uuid(0), uuid(1)];
+        on_disk(&sample.logs(), &legacy);
+        on_disk(&sample.logs(), &newer);
+        let path = named(&sample.logs());
+        ensure(&sample.logs()).expect("the index built");
+
+        fs::remove_file(&path).expect("the index deleted");
+        by_name(&path, &legacy);
+        ensure(&sample.logs()).expect("the index repaired");
+        let read = entries(&sample.logs(), ENTRIES).expect("the index");
+        let order: Vec<&SessionId> = read.iter().map(|entry| &entry.id).collect();
+
+        assert_eq!(order.get(..2), Some([&newer[1], &newer[0]].as_slice()));
     }
 
     #[test]
