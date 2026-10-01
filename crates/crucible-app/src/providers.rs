@@ -1246,6 +1246,44 @@ pub fn re_serving(
     })
 }
 
+/// Builds what answers the two web tools for one provider and model, from the
+/// credentials in hand, the way the launch built this run's.
+///
+/// Kept beside [`Serving`] for the same reason: a switch of model or provider
+/// builds the sources again, so a search names the model the session asks now
+/// and is signed with the credential of the provider it reaches.
+pub type Sourcing = Box<dyn Fn(Served, &str, &StoredCredentials) -> startup::Reaching>;
+
+/// The [`Sourcing`] a switch builds the web sources again through, resolving
+/// each provider's credential as [`re_serving`] resolves the provider's own.
+///
+/// Owned for the reason [`re_serving`]'s values are. `consent` holds a source
+/// for a model whose route is warned until that route's yes.
+pub fn re_sourcing(
+    settings: Settings,
+    subscriptions: Subscriptions,
+    from: Lookup,
+    http: HttpTurns,
+    consent: Consent,
+) -> Sourcing {
+    Box::new(
+        move |named: Served, model: &str, stored: &StoredCredentials| {
+            startup::reached(
+                named,
+                model,
+                startup::ProviderAuth {
+                    settings: &settings,
+                    from: &*from,
+                    stored,
+                    subscriptions: &subscriptions,
+                },
+                &http,
+                &consent,
+            )
+        },
+    )
+}
+
 /// The [`crate::content_use::Resolver`] a run's consent reads a provider
 /// again through: what it is served on, from `store` as it is when asked and
 /// the environment `from` reads.

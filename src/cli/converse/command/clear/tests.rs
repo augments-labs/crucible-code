@@ -90,6 +90,7 @@ fn terms(sample: &Sample, ledger: &Ledger, plan: &Plan) -> Terms {
                 has: named.name.into(),
             })
         }),
+        sourcing: Box::new(|_, _, _| crucible_app::startup::Reaching::nothing()),
         environment: Box::new(|_| None),
         sessions: sample.logs(),
         workspace: sample.workspace(),

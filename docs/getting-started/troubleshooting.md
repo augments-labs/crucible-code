@@ -172,12 +172,17 @@ from `/login` or `/model`, where nothing was chosen.
 
 A request was about to leave on a route whose vendor uses what is sent, before
 that route had its yes. It was held, and nothing was sent. Send a message on
-the route in a terminal to be asked: for a route named `model:<provider>/<model>`,
-choose that model with `/model` first, since a web search keeps the model the
-run started with. To keep searches off that model instead, choose the model you
-want and start crucible again: the next run starts on it, where no project
-file or `--model` names another. Or see [content
+the route in a terminal to be asked. For a route named `model:<provider>/<model>`,
+a web search names the model the session is asking now: to keep searches off
+that model, choose another with `/model`. Or see [content
 use](../providers/content-use.md).
+
+### `<provider>: nothing was sent: the provider in force serves no web search`
+
+The session moved with `/model` to a provider that serves no web search (or no
+web fetch, for the line ending that way), so the tool sent nothing. Which web
+tools a session offers is settled when it starts. Switch back to a provider that
+serves the tool, or see [reaching the web](../tools/web.md).
 
 ### `crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>`
 

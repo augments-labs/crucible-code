@@ -48,7 +48,7 @@ use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
 use crucible_app::client::Ended;
-use crucible_app::providers::{Lookup, Served, Serving, available};
+use crucible_app::providers::{Lookup, Served, Serving, Sourcing, available};
 use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
@@ -258,6 +258,9 @@ pub(crate) struct Terms {
     /// the session asks from the next turn is what the next run here would ask,
     /// resolved once and out of the same files.
     pub(crate) serving: Serving,
+    /// Builds the web sources again for the provider and model a switch takes,
+    /// from the credential that provider is set up with.
+    pub(crate) sourcing: Sourcing,
     /// Reads a variable from the environment the launch was started in, which
     /// is where a key can be exported rather than stored.
     ///
@@ -315,6 +318,7 @@ impl Terms {
             providers,
             settings: &self.settings,
             serving: &self.serving,
+            sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
         }
