@@ -48,7 +48,7 @@ impl Dialect for MiniMaxChat {
     // time, and compacting for a rate would shorten a session for nothing.
     // Its overflow is `2013` "invalid params" with words about the window, and
     // `2013` is every refused parameter, so it is read as that code and those
-    // words together: see [`outgrew`].
+    // words together: see [`refused_outgrown`], and [`outgrew`] behind it.
     const OVERLONG: Option<fn(u16, &Value) -> bool> = Some(refused_outgrown);
     type Kept = Thought;
 
@@ -110,17 +110,25 @@ impl Dialect for MiniMaxChat {
     }
 }
 
-/// The words of `MiniMax`'s refusal of a request too large for the model.
-const OUTGROWN: &str = "context window exceeds limit";
+/// How `MiniMax`'s refusal of a request too large for the model opens.
+///
+/// No page of `MiniMax`'s prints this refusal. The wording is taken from
+/// another client's handling of `MiniMax`'s overflow (the Pi coding agent's
+/// overflow matcher) and is unconfirmed: if the vendor words it otherwise,
+/// the refusal is not recognised and ends the turn as any other `2013` does,
+/// which loses the turn but never compacts a session for the wrong reason.
+const OUTGROWN: &str = "invalid params, context window exceeds limit";
 
 /// Whether a status `MiniMax` reports is its refusal of a request too large
 /// for the model.
 ///
 /// It sends no code for that refusal alone, so it is read as the code every
 /// refused parameter has, `2013` under `base_resp.status_code`, together with
-/// [`OUTGROWN`] in its `status_msg`, exactly and in this case. The same code
-/// with other words, such as the refusal of thinking switched off, and the
-/// same words under any other code, stay the failures they were.
+/// a `status_msg` that opens with [`OUTGROWN`], exactly and in this case.
+/// Reading only the opening keeps a refusal that quotes those words back from
+/// what was sent from reading as this one. The same code with other words,
+/// such as the refusal of thinking switched off, and the same words under any
+/// other code, stay the failures they were.
 fn outgrew(payload: &Value) -> bool {
     let Some(status) = payload.get("base_resp") else {
         return false;
@@ -129,7 +137,7 @@ fn outgrew(payload: &Value) -> bool {
         && status
             .get("status_msg")
             .and_then(Value::as_str)
-            .is_some_and(|said| said.contains(OUTGROWN))
+            .is_some_and(|said| said.starts_with(OUTGROWN))
 }
 
 /// [`outgrew`], for a refused body: the status it came with says nothing the

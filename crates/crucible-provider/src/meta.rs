@@ -95,13 +95,21 @@ impl Dialect for Muse {
 /// error page prints them, and of none of its other documented refusals.
 const OUTGROWN: &str = "the model's context length is only";
 
+/// How the message of that refusal opens, as its error page prints it.
+const OPENS: &str = "You passed ";
+
+/// How the message of that refusal ends, as its error page prints it.
+const ENDS: &str = "Please reduce the length of the input prompt";
+
 /// Whether a refusal is Meta's of a request too large for the model.
 ///
 /// Meta sends no code for it, so the shape is read first and the words only
 /// then: a 400 of the type every refused request has, naming no parameter and
-/// no code, whose message says, exactly and in this case, [`OUTGROWN`]. Every
-/// other refusal its page prints names the parameter it is about, and stays a
-/// refusal in Meta's words.
+/// no code, whose message opens with [`OPENS`], ends with [`ENDS`] and says
+/// [`OUTGROWN`] between them, exactly and in this case. Anchoring both ends
+/// keeps a refusal that quotes those words back from what was sent from
+/// reading as this one. Every other refusal its page prints names the
+/// parameter it is about, and stays a refusal in Meta's words.
 fn outgrew(status: u16, body: &Value) -> bool {
     let Some(error) = body.get("error") else {
         return false;
@@ -113,6 +121,8 @@ fn outgrew(status: u16, body: &Value) -> bool {
         && error
             .get("message")
             .and_then(Value::as_str)
+            .and_then(|said| said.strip_prefix(OPENS))
+            .and_then(|said| said.strip_suffix(ENDS))
             .is_some_and(|said| said.contains(OUTGROWN))
 }
 

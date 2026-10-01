@@ -32,6 +32,11 @@ change in any release with no deprecation period.
   crucible now reads each one by its exact shape and words and compacts the
   session mid-turn instead. MiniMax's other refusals, including `1039` "Token
   limit exceeded", end the turn as before.
+- **A Meta request too long for the model makes room and asks again.** Meta
+  sends no code for that refusal, so it ended the turn; crucible now reads it
+  by its documented shape and words and compacts mid-turn instead. MiniMax's
+  refusal is matched by wording MiniMax does not publish, so it compacts only
+  where that wording holds, and any other MiniMax refusal ends the turn.
 
 ## [0.44.1] - 2026-10-01
 

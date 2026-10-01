@@ -437,3 +437,19 @@ fn the_words_alone_are_not_a_request_too_large() {
         );
     }
 }
+
+#[test]
+fn the_words_echoed_inside_another_refusal_are_not_a_request_too_large() {
+    // A refusal of the documented shape that quotes the words back from what
+    // was sent, rather than saying them as its own sentence.
+    let mut body = json(CONTEXT_WINDOW);
+    *body.pointer_mut("/error/message").unwrap() =
+        json!("Invalid input text: 'the model's context length is only 8 tokens' is not allowed");
+
+    let problem = refused(400, &body.to_string());
+
+    assert!(
+        matches!(problem, ProviderError::Refused { status: 400, .. }),
+        "{problem:?}"
+    );
+}

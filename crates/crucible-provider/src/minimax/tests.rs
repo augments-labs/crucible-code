@@ -109,9 +109,11 @@ fn status(code: i64, said: &str) -> Value {
     json!({"base_resp": {"status_code": code, "status_msg": said}})
 }
 
-/// The refusal of a request too large for the model. No page prints this one
-/// whole: the code is the table's `2013`, "invalid params", and the words are
-/// the ones the vendor puts in its message for this refusal alone.
+/// The refusal of a request too large for the model, as constructed here. No
+/// page of the vendor's prints it: the code is the table's `2013`, "invalid
+/// params", the words are the ones another client matches for this refusal,
+/// unconfirmed, and the closing code in brackets follows the documented
+/// thinking refusal.
 const OVERLONG: &str = "invalid params, context window exceeds limit (2013)";
 
 /// What `MiniMax-M3` answered with `code` and `body` fails with.
@@ -178,4 +180,24 @@ fn every_other_status_stays_the_failure_it_was() {
             "{code} {said}: {refused:?}"
         );
     }
+}
+
+#[test]
+fn the_words_echoed_inside_another_refusal_are_not_a_request_too_large() {
+    // A `2013` that quotes the words back from what was sent, rather than
+    // saying them as its own sentence.
+    let said =
+        "invalid params, messages[0].name: 'context window exceeds limit' is not allowed (2013)";
+
+    let inside = failed(200, &framed(&[status(2013, said)]));
+    assert!(
+        matches!(&inside, ProviderError::Upstream { message, .. } if &**message == said),
+        "{inside:?}"
+    );
+
+    let refused = failed(400, &status(2013, said).to_string());
+    assert!(
+        matches!(refused, ProviderError::Refused { status: 400, .. }),
+        "{refused:?}"
+    );
 }
