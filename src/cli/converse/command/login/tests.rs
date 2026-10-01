@@ -851,13 +851,16 @@ fn opened_into(columns: usize, height: usize, keys: bool) -> String {
 fn a_window_with_no_room_for_a_panel_is_given_every_row_as_the_line_to_type() {
     // A run with no keyboard stands no panel: it is given one line per row,
     // `/login` and the words that leave that row alone, whole at forty
-    // columns too.
+    // columns too, folded only where the words are wider than the window.
     let rows = production();
     for columns in [80, 40] {
         let written = opened_into(columns, 40, false);
+        let unfolded = crucible_tui::Picture::of(&written, columns, 200)
+            .said()
+            .join(" ");
         for way in rows.all() {
             let typed = format!("/login {} —", reaching(way, &rows));
-            assert!(written.contains(&typed), "{columns}: {typed}: {written}");
+            assert!(unfolded.contains(&typed), "{columns}: {typed}: {written}");
         }
         assert_eq!(
             written.matches("/login ").count(),
