@@ -8,6 +8,14 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **A MiniMax plan key is named apart from a MiniMax API key.** The
+  subscription rows of `/login` read `MiniMax Token Plan · minimax.io` and
+  `MiniMax Token Plan · minimaxi.com`, so `/model`'s heading and what `/login`
+  says a key replaces tell a plan key from a pay-as-you-go one. A key already
+  stored stays where it is.
+
 ### Fixed
 
 - **A background command that ended after a refused stop no longer reads as

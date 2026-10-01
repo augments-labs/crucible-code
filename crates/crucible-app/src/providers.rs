@@ -404,7 +404,7 @@ const ROWS: [Row; 24] = [
     },
     Row {
         list: List::Subscription,
-        shown: "MiniMax · minimax.io",
+        shown: "MiniMax Token Plan · minimax.io",
         provider: "minimax",
         site: Some("minimax.io"),
         says: Some("MiniMax Token Plan usage, accounts outside mainland China"),
@@ -417,7 +417,7 @@ const ROWS: [Row; 24] = [
     },
     Row {
         list: List::Subscription,
-        shown: "MiniMax · minimaxi.com",
+        shown: "MiniMax Token Plan · minimaxi.com",
         provider: "minimax",
         site: Some("minimaxi.com"),
         says: Some("MiniMax Token Plan usage, mainland China accounts"),

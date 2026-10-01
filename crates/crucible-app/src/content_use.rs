@@ -230,13 +230,13 @@ pub const WARNED: [Warned; 17] = [
     },
     Warned {
         route: "subscription:minimax@token-plan.minimax.io",
-        shown: "MiniMax · minimax.io",
+        shown: "MiniMax Token Plan · minimax.io",
         warning: MINIMAX_IO,
         origins: &["https://api.minimax.io"],
     },
     Warned {
         route: "subscription:minimax@token-plan.minimaxi.com",
-        shown: "MiniMax · minimaxi.com",
+        shown: "MiniMax Token Plan · minimaxi.com",
         warning: MINIMAX_CN,
         origins: &["https://api.minimax.cn"],
     },

@@ -191,8 +191,8 @@ xAI.
 
 | Row | List | Its keys | Address | Models the vendor serves there |
 | --- | --- | --- | --- | --- |
-| MiniMax · minimax.io | subscription | start `sk-cp-` | `https://api.minimax.io/v1` | both |
-| MiniMax · minimaxi.com | subscription | start `sk-cp-` | `https://api.minimax.cn/v1` | both |
+| MiniMax Token Plan · minimax.io | subscription | start `sk-cp-` | `https://api.minimax.io/v1` | both |
+| MiniMax Token Plan · minimaxi.com | subscription | start `sk-cp-` | `https://api.minimax.cn/v1` | both |
 | Qwen Coding Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://coding-intl.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
 | Qwen Coding Plan · aliyun.com | subscription | start `sk-sp-` | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
 | Qwen Token Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
