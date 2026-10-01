@@ -261,6 +261,37 @@ pub trait Replay: fmt::Debug + Send + Sized + 'static {
     }
 }
 
+/// No items handed back: every turn is written from the transcript.
+#[derive(Debug, Default)]
+pub struct Plain;
+
+impl Replay for Plain {
+    fn replays(model: &str) -> bool {
+        let _ = model;
+        false
+    }
+
+    fn reading(request: &Request<'_>, scope: ContinuationScope) -> Result<Self, ProviderError> {
+        let _ = (request, scope);
+        Ok(Self)
+    }
+
+    fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        let _ = event;
+        Ok(Vec::new())
+    }
+
+    fn write(
+        body: &mut Object<'_>,
+        request: &Request<'_>,
+        scope: ContinuationScope,
+        explicit: Option<usize>,
+    ) -> Result<(), ProviderError> {
+        let _ = (body, request, scope, explicit);
+        Ok(())
+    }
+}
+
 /// A Responses provider, speaking `D`'s dialect.
 pub struct Responses<D: Dialect> {
     credential: Box<dyn Credential>,
