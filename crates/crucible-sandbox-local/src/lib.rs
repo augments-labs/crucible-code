@@ -36,6 +36,12 @@ mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+// How the Windows broker is started holds no Windows call, so its tests run on
+// every platform.
+#[cfg(any(target_os = "windows", test))]
+#[path = "windows/helper.rs"]
+mod windows_helper;
+
 pub use local::LocalSandbox;
 
 #[cfg(test)]
