@@ -258,15 +258,23 @@ fn rows<'a>(found: &[Found<'a>]) -> Result<BTreeMap<(&'a str, &'a str), Row>, St
             return Err(format!("{provider}/{key} states a limit too large to hold"));
         };
 
+        // The whole window an answer is written into, which counts the answer
+        // where the input limit does not.
+        let whole = limit
+            .get("context")
+            .and_then(Value::as_u64)
+            .and_then(|whole| u32::try_from(whole).ok())
+            .unwrap_or(window);
+
         // A model served at a fraction of the listed window is written at that
         // fraction, the divisor stated beside it rather than read from anywhere.
-        let window = match one.divisor {
-            Some(by) if by > 1 => window / by,
-            _ => window,
+        let (window, whole) = match one.divisor {
+            Some(by) if by > 1 => (window / by, whole / by),
+            _ => (window, whole),
         };
-        // And no answer runs longer than the window it is written into,
+        // And no answer runs longer than the whole window it is written into,
         // whatever the database lists beside a window it serves whole.
-        let output = output.min(window);
+        let output = output.min(whole);
         let accepts = accepts(one.entry).map_err(|why| format!("{provider}/{key} {why}"))?;
         rows.insert(
             (provider, one.model),
@@ -420,6 +428,31 @@ mod tests {
             table.ends_with("    },\n];\n"),
             "the table closes after a row"
         );
+    }
+
+    #[test]
+    fn an_answer_is_held_within_the_whole_window_and_not_the_input_alone() {
+        let entry = |limit: Value| json!({ "limit": limit, "modalities": { "input": ["text"] } });
+        let row = |entry: &Value, divisor: Option<u32>| {
+            let found = [Found {
+                provider: "fabricated",
+                model: "m",
+                key: "m",
+                divisor,
+                entry,
+            }];
+            rows(&found).map(|rows| {
+                rows.get(&("fabricated", "m"))
+                    .map(|row| (row.window, row.output))
+            })
+        };
+
+        // An input limit apart from the window leaves the answer its own room.
+        let split = entry(json!({ "context": 200_000, "input": 72_000, "output": 128_000 }));
+        assert_eq!(row(&split, None), Ok(Some((72_000, 128_000))));
+        // A window served at a fraction holds no answer longer than itself.
+        let whole = entry(json!({ "context": 1_048_576, "output": 1_048_576 }));
+        assert_eq!(row(&whole, Some(4)), Ok(Some((262_144, 262_144))));
     }
 
     #[test]
