@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 3360
 expression: picture
 ---
 80x24 cursor 4,10 scrolled 0
@@ -12,7 +11,7 @@ expression: picture
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
-|│  Providers          │  openai · OpenAI sign-in                       7 of 41 │|
+|│  Providers          │  openai · ChatGPT sign-in                      7 of 41 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
 |│   Anthropic       7 │ › gpt-6-astra                            272k  fast    │|
 |│   DeepSeek        2 │   gpt-6.1-sol                            272k  fast    │|

@@ -181,7 +181,8 @@ pub struct Shelf<'a> {
     pub pointer: Option<(usize, usize)>,
     /// What heads the pane of models where it is narrowed to one provider:
     /// the provider and the credential its models are served by. `None` heads
-    /// it `Models`.
+    /// it `Models`. A folded shelf draws it in place of the providers while
+    /// the models pane is marked.
     pub heading: Option<&'a str>,
     /// A quiet row under the models that says what another credential would
     /// add, and how; it never takes the mark.
@@ -472,15 +473,51 @@ impl Shelf<'_> {
         rows
     }
 
-    /// The providers, on the one header row a folded shelf has left for them.
+    /// The one header row a folded shelf has: whose models these are, where
+    /// one provider is marked and the models are what is being read, else
+    /// the providers, from the first whose run still reaches the marked one.
     fn folded(&self, inside: usize, glyphs: Glyphs) -> Row {
+        if let (Some(heading), Pane::Models) = (self.heading, self.pane) {
+            let mut row = Row::new();
+            row.push(Slot::Quiet, clip(&format!("  {heading}"), inside));
+            return row;
+        }
+
         let (opens, closes) = glyphs.bracketing();
+        let dot = format!(" {} ", glyphs.dot());
+        let more = format!("{} ", glyphs.ellipsis());
+        let named = |at: usize| {
+            let marked = if at == self.provider {
+                wide(opens) + wide(closes)
+            } else {
+                0
+            };
+            self.providers
+                .get(at)
+                .map_or(0, |provider| wide(provider.name) + marked)
+        };
+        // Those in front of the marked one give way first, each leaving a mark
+        // that something stands before what is left.
+        let mut from = 0;
+        while from < self.provider {
+            let lead = if from == 0 { 2 } else { wide(&more) };
+            let reach: usize = (from..=self.provider).map(named).sum::<usize>()
+                + wide(&dot) * (self.provider - from);
+            if lead + reach <= inside {
+                break;
+            }
+            from += 1;
+        }
 
         let mut row = Row::new();
-        row.push(Slot::Plain, "  ");
-        for (at, provider) in self.providers.iter().enumerate() {
-            if at > 0 {
-                row.push(Slot::Quiet, format!(" {} ", glyphs.dot()));
+        if from == 0 {
+            row.push(Slot::Plain, "  ");
+        } else {
+            row.push(Slot::Quiet, more);
+        }
+        for (at, provider) in self.providers.iter().enumerate().skip(from) {
+            if at > from {
+                row.push(Slot::Quiet, dot.as_str());
             }
             let marked = at == self.provider;
             if marked {

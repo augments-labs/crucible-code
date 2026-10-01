@@ -3343,6 +3343,8 @@ fn signed_in_models(columns: u16) -> String {
         }
         window.types("\x1b[B");
     }
+    // Back to the models, which are what the heading names.
+    window.types_until("\t", "openai · ChatGPT sign-in");
     window.picture()
 }
 
@@ -3351,11 +3353,10 @@ fn a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add() {
     for columns in [40, 80] {
         let picture = signed_in_models(columns);
 
-        // At forty the providers fold into the frame's top row and the pane
-        // keeps its models and its closing row, which never takes the mark.
-        if columns == 80 {
-            assert!(picture.contains("openai · OpenAI sign-in"), "{picture}");
-        }
+        // At forty the heading takes the frame's top row from the providers,
+        // and the pane keeps its models and its closing row, which never
+        // takes the mark.
+        assert!(picture.contains("openai · ChatGPT sign-in"), "{picture}");
         assert!(picture.contains("1 more with an API key"), "{picture}");
         assert!(picture.contains("gpt-6.1-sol"), "{picture}");
         assert!(!picture.contains("gpt-5.5 "), "{picture}");

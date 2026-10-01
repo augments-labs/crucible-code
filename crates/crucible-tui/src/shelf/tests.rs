@@ -838,3 +838,57 @@ fn the_closing_row_stands_under_the_models_and_never_takes_the_mark() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn a_folded_shelf_keeps_the_marked_provider_and_its_heading_in_view() {
+    let names = [
+        "All", "Anthropic", "DeepSeek", "Google", "Meta", "MiMo", "MiniMax", "MoonshotAI",
+        "OpenAI", "Qwen", "xAI", "Z.ai",
+    ];
+    let providers: Vec<Serving<'_>> = names
+        .iter()
+        .map(|name| Serving {
+            name,
+            count: Some(1),
+        })
+        .collect();
+    let models = stocked();
+    let marked = names.iter().position(|name| *name == "OpenAI").unwrap_or(0);
+    let header = |shelf: &Shelf<'_>, glyphs: Glyphs| {
+        shelf
+            .within(40, 24, glyphs)
+            .iter()
+            .map(Row::text)
+            .nth(HEADER)
+            .unwrap_or_default()
+    };
+
+    // Walking the providers: the one marked is on the strip, whatever came
+    // before it that no longer fits.
+    let walking = Shelf {
+        provider: marked,
+        pane: Pane::Providers,
+        heading: Some("openai · ChatGPT sign-in"),
+        ..shelf(&providers, &models)
+    };
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let strip = header(&walking, glyphs);
+        assert!(strip.contains("OpenAI"), "{strip}");
+        assert!(!strip.contains("All "), "{strip}");
+    }
+
+    // In the models, whose they are, as the pane says it apart.
+    let reading = Shelf {
+        pane: Pane::Models,
+        ..walking
+    };
+    let headed = header(&reading, Glyphs::Unicode);
+    assert!(headed.contains("openai · ChatGPT sign-in"), "{headed}");
+
+    // And with nothing to head it, the strip.
+    let plain = Shelf {
+        heading: None,
+        ..reading
+    };
+    assert!(header(&plain, Glyphs::Unicode).contains("OpenAI"));
+}

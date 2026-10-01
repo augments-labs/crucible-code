@@ -319,7 +319,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "e72c23d8c8b7f8433a45942c6b272542e5a41ef019be7296590e0173afbf9f1d"
+      "sha256": "93afcecfd7e7e2b671d9f5f3895448ac4089da43148c7e4237162c674c06c8fd"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_ascii_80.snap",
@@ -327,7 +327,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "7f0b9ca57fc66a61672f39c9f50bca2f52edafd0b95a3170acd656b65271efd4"
+      "sha256": "354c848af64933f4984a38740702f7b1a1b11737fe34e00e7b5b2bd61f976062"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_unicode_40.snap",
@@ -335,7 +335,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "6290b7d9c8d3198cf980f224123fb198f604db0ac251de592c9139b9eaf9caa7"
+      "sha256": "316004b0a5237c0b33e2cdfe8838702eab2ad53395fe38997d2588bfd484625a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_unicode_80.snap",
@@ -343,7 +343,7 @@
       "opened": [
         "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
       ],
-      "sha256": "cfa9a15a0e93e7b52624fd4f4bfcf26f1d11fc32038b1989ee2274fda08fe325"
+      "sha256": "f9340edddaf765afdbeab974116a2a4745ef8ecafdfd31f8d5ab032f4826a78d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_api_key_login_40.snap",
@@ -421,13 +421,13 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_40.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
       "opened": [],
-      "sha256": "974606f872716a882c2b5424d95fa7f57bc6de3fd3e1de52c46400c028088b55"
+      "sha256": "d4c9fdbf910ed8e761b40f7ebe6a2ba2f22327f9764eb1b5d6b1f84f7e0d1574"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_80.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
       "opened": [],
-      "sha256": "307c6fb308f37d5c7368f5fad9ff0551bfc3a15a5c98b73344321adb5e4d1409"
+      "sha256": "87a56c0827b29f3cc7f3d2bba39ecb46f0f9372ca75b9a80f9fc65c44a99f023"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_trains_80.snap",
