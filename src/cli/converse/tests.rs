@@ -20,6 +20,7 @@ use crucible_workspace::Workspace;
 
 use crucible_tui::Key;
 
+use super::queueing::batched;
 use super::*;
 use crate::cli::fake::{Fixed, Script, Stalling, changing, running, runtime};
 use crate::cli::sample::Sample;

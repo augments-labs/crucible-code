@@ -29,6 +29,7 @@
 
 use std::collections::VecDeque;
 
+use crucible_app::Conversation;
 use crucible_runtime::Steer;
 use crucible_tui::{Caret, Editor, Key, Pressed, Renderer, Row, Terminal};
 
@@ -37,7 +38,9 @@ use crate::cli::draw;
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
-use super::{QUEUED_BYTES, QUEUED_LINES};
+use super::{
+    Held, QUEUED_BYTES, QUEUED_LINES, Terms, Work, answerable, attaching, ran, unanswered,
+};
 
 /// Prompts finished while a turn is still running.
 ///
@@ -163,6 +166,55 @@ pub(super) fn batched(queued: &mut Prompts, steer: &Steer) -> Option<String> {
     }
 
     Some(said)
+}
+
+/// Runs the lines queued during the last turn as the next turn, all of them at
+/// once: the oldest is its prompt and the rest are offered to it.
+///
+/// They are committed here rather than where they were typed: at that moment
+/// the answer above them was still arriving, and a line written into the middle
+/// of one is a line in the wrong place.
+///
+/// `None` beside the conversation where nothing was waiting, and otherwise
+/// whether the session is leaving, as [`ran`] says it.
+pub(super) fn taken<T: Terminal>(
+    conversation: Conversation,
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+    held: &mut Held<'_>,
+    style: Style,
+) -> Result<(Conversation, Option<bool>), Fatal> {
+    // Each line gets what it would have got typed at the box with nobody to
+    // ask: its row, the warning, and no turn. Not one turn for the batch,
+    // because no turn is what is owed, and not one warning, because each line
+    // is somebody's prompt that was not sent.
+    if held.queued.waiting_count() > 0 && !answerable(&conversation) {
+        while let Some(said) = held.queued.pop() {
+            draw::queued(renderer, &said, style)?;
+            unanswered(&conversation, renderer, terms)?;
+        }
+        return Ok((conversation, Some(false)));
+    }
+
+    let Some(said) = batched(&mut held.queued, &terms.steer) else {
+        return Ok((conversation, None));
+    };
+    draw::queued(renderer, &said, style)?;
+
+    let imported = attaching::imported(held);
+    let attached = attaching::beside(
+        renderer,
+        attaching::Asking::of(conversation.runner(), imported.as_deref()),
+        &terms.workspace,
+        attaching::Sent {
+            prompt: &said,
+            images: &held.images,
+        },
+        style,
+    )?;
+    let work = Work::Turn(said, attached);
+    let (back, leaving) = ran(conversation, renderer, terms, work, held)?;
+    Ok((back, Some(leaving)))
 }
 
 /// What the view acts on, held together so that one call carries all of it.
