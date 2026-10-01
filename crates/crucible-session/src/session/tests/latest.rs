@@ -105,3 +105,31 @@ fn two_sessions_started_in_the_same_millisecond_go_by_name() {
     assert_eq!(&*id, "1735689600000-abcdef");
     assert_eq!(messages, [said("the legacy name")]);
 }
+
+#[test]
+fn a_listing_an_earlier_build_indexed_by_name_shows_the_newest_first() {
+    // Earlier builds migrated a directory into the index by name as text, so
+    // an install upgraded since keeps an index with every legacy name above
+    // every uuid one. The welcome and `/resume` read that index as it is.
+    let sample = Sample::new("latest-listing-old-index");
+    planted(&sample, "1685577600000-abcdef", "from 2023");
+    planted(&sample, "01941f29-7c00-7000-8000-000000000000", "from 2025");
+    fs::write(
+        sample.logs().join("recent.sessions"),
+        "crucible-session-index-2\n\
+         1685577600000-abcdef\t1\t\n\
+         01941f29-7c00-7000-8000-000000000000\t1\t\n",
+    )
+    .expect("a writable temporary directory");
+
+    let listed = recent(&sample.logs(), &sample.workspace(), 2);
+    let order: Vec<&str> = listed.iter().map(|row| row.id().as_str()).collect();
+
+    assert_eq!(
+        order,
+        [
+            "01941f29-7c00-7000-8000-000000000000",
+            "1685577600000-abcdef"
+        ]
+    );
+}

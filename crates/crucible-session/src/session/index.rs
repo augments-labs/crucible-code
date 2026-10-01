@@ -6,6 +6,15 @@
 //! installation builds the index after that frame by scanning the flat log
 //! directory once; every later startup performs fixed work.
 //!
+//! Entries are kept newest first by the start time each name carries, the
+//! order [`super::replay::logs`] puts a directory in. Builds before this one
+//! migrated by name as text instead, which puts every name the oldest builds
+//! wrote above every uuid name and, past [`ENTRIES`] logs, can leave newer
+//! sessions out entirely. So the order is restored wherever the index is read,
+//! and an index found without the [`ORDERED`] mark beside it is merged once
+//! with a scan of the directory. The file format is unchanged: a build that
+//! knows nothing of the order or the mark reads what this one writes.
+//!
 //! The index is replaced whole under an operating-system lock. The replacement
 //! is synced before its rename and the directory is synced afterwards, so a
 //! crash leaves either complete version. A newly minted identifier is indexed
@@ -26,6 +35,10 @@ use super::replay::logs as legacy_logs;
 
 /// What the index file is called. Its suffix deliberately cannot be a log's.
 const NAME: &str = "recent.sessions";
+
+/// Beside the index once it has been put in start-time order against a scan
+/// of every log, so that scan happens once per directory. It holds nothing.
+const ORDERED: &str = "recent.sessions.ordered";
 
 /// The first line, so an incompatible index is refused rather than guessed at.
 const FORMAT: &str = "crucible-session-index-2";
@@ -67,11 +80,14 @@ impl Entry {
     }
 }
 
-/// Builds the index once for flat logs written before it existed.
+/// Builds the index once for flat logs written before it existed, and merges
+/// one an earlier build ordered by name with what is on disk, once.
 pub(super) fn ensure(directory: &Path) -> Result<(), SessionError> {
     let path = named(directory);
+    let ordered = directory.join(ORDERED);
     let _held = claim::exclusive(&path).map_err(|source| problem(&path, source))?;
-    if read(&path)?.is_some() {
+    let held = read(&path)?;
+    if held.is_some() && ordered.is_file() {
         return Ok(());
     }
 
@@ -80,21 +96,47 @@ pub(super) fn ensure(directory: &Path) -> Result<(), SessionError> {
     // startup after it reads only the fixed index written here. Message counts
     // start at zero — counting would mean reading every log — and are repaired
     // the next time each session is continued, when replay knows the number.
-    let entries = legacy_logs(directory)?
+    //
+    // What an existing index holds is kept, counts and titles with it, and so
+    // is a name it holds with no log yet: that is a session being started
+    // this instant, between its entry and its header.
+    let mut entries = held.unwrap_or_default();
+    let found = legacy_logs(directory)?
         .into_iter()
         .rev()
         .take(ENTRIES)
         .filter_map(|path| SessionId::from_str(path.file_stem()?.to_str()?).ok())
-        .map(Entry::new)
         .collect::<Vec<_>>();
-    replace(&path, &entries)
+    for id in found {
+        if !entries.iter().any(|entry| entry.id == id) {
+            entries.push(Entry::new(id));
+        }
+    }
+    newest_first(&mut entries);
+    entries.truncate(ENTRIES);
+    replace(&path, &entries)?;
+
+    // Only after the index it vouches for is durable. Failing to leave it
+    // costs one more scan at the next start, never a session.
+    let _ = super::privacy::mark(&ordered);
+    Ok(())
 }
 
-/// Puts a newly minted identifier first, retaining a fixed newest window.
+/// Puts entries newest first by the start time their names carry, as
+/// [`super::replay::logs`] orders logs: two that start in the same millisecond
+/// go by name.
+fn newest_first(entries: &mut [Entry]) {
+    entries.sort_unstable_by(|one, other| {
+        (other.id.started(), &other.id).cmp(&(one.id.started(), &one.id))
+    });
+}
+
+/// Adds a newly minted identifier where its start time puts it, retaining a
+/// fixed newest window.
 ///
 /// A name the index already holds keeps what it earned: the count and the
-/// title move to the front with it, so picking a session back up does not
-/// erase what the picker shows for it.
+/// title stay with it, so recording a session again does not erase what the
+/// picker shows for it.
 pub(super) fn record(directory: &Path, id: &SessionId) -> Result<(), SessionError> {
     let path = named(directory);
     let _held = claim::exclusive(&path).map_err(|source| problem(&path, source))?;
@@ -106,6 +148,7 @@ pub(super) fn record(directory: &Path, id: &SessionId) -> Result<(), SessionErro
         None => Entry::new(id.clone()),
     };
     entries.insert(0, entry);
+    newest_first(&mut entries);
     entries.truncate(ENTRIES);
     replace(&path, &entries)
 }
@@ -157,7 +200,12 @@ pub(super) fn entries(directory: &Path, maximum: usize) -> Result<Vec<Entry>, Se
     Ok(entries)
 }
 
-/// Reads a complete index, `None` where migration has not made one yet.
+/// Reads a complete index, newest first, `None` where migration has not made
+/// one yet.
+///
+/// Put in start-time order here, whatever order the file is in, so an index an
+/// earlier build kept by name is listed as one timeline and rewritten as one
+/// the next time anything changes it.
 fn read(path: &Path) -> Result<Option<Vec<Entry>>, SessionError> {
     let opened = match File::open(path) {
         Ok(file) => file,
@@ -195,7 +243,7 @@ fn read(path: &Path) -> Result<Option<Vec<Entry>>, SessionError> {
             ));
         }
     };
-    let entries = entries.ok_or_else(|| {
+    let mut entries = entries.ok_or_else(|| {
         problem(
             path,
             io::Error::new(io::ErrorKind::InvalidData, "invalid session index entry"),
@@ -211,6 +259,7 @@ fn read(path: &Path) -> Result<Option<Vec<Entry>>, SessionError> {
         ));
     }
 
+    newest_first(&mut entries);
     Ok(Some(entries))
 }
 
@@ -335,13 +384,16 @@ mod tests {
         retitle(&sample.logs(), &kept, "still mine").expect("the title kept");
         record(&sample.logs(), &id(2)).expect("a newer session");
 
-        record(&sample.logs(), &kept).expect("the session picked back up");
+        record(&sample.logs(), &kept).expect("the session recorded again");
         let read = entries(&sample.logs(), ENTRIES).expect("the index");
-        let front = read.first().expect("the reopened session leads");
+        let order: Vec<&SessionId> = read.iter().map(|entry| &entry.id).collect();
+        let again = read.get(1).expect("the earlier session");
 
-        assert_eq!(front.id, kept);
-        assert_eq!(front.messages, 9);
-        assert_eq!(front.title.as_deref(), Some("still mine"));
+        // Placed by when it started, as every listing is, not by when it was
+        // last recorded.
+        assert_eq!(order, [&id(2), &kept]);
+        assert_eq!(again.messages, 9);
+        assert_eq!(again.title.as_deref(), Some("still mine"));
     }
 
     #[test]
@@ -389,6 +441,102 @@ mod tests {
             read.iter()
                 .all(|entry| entry.messages == 0 && entry.title.is_none())
         );
+    }
+
+    /// A session named the way builds since 0.25 name one, `minutes` after
+    /// 2025-01-01.
+    fn uuid(minutes: u64) -> SessionId {
+        let millis = 1_735_689_600_000_u64 + minutes * 60_000;
+        let hex = format!("{millis:012x}");
+        let (high, low) = hex.split_at(8);
+        SessionId::from_str(&format!("{high}-{low}-7000-8000-000000000000"))
+            .expect("a uuid session identifier")
+    }
+
+    /// An empty file under each name, which is all a scan of names looks at.
+    fn on_disk(directory: &Path, ids: &[SessionId]) {
+        for id in ids {
+            fs::write(
+                directory.join(format!("{}.{}", id.as_str(), super::super::SUFFIX)),
+                "",
+            )
+            .expect("a writable temporary directory");
+        }
+    }
+
+    /// An index exactly as builds before this one migrated a directory that
+    /// held both shapes of name: by name as text, newest last, so every legacy
+    /// name above every uuid one.
+    fn by_name(path: &Path, ids: &[SessionId]) {
+        let mut ordered = ids.to_vec();
+        ordered.sort_unstable();
+        let mut text = format!("{FORMAT}\n");
+        for id in ordered.iter().rev() {
+            text.push_str(id.as_str());
+            text.push_str("\t0\t\n");
+        }
+        fs::write(path, text).expect("a writable temporary directory");
+    }
+
+    #[test]
+    fn an_index_kept_in_name_order_is_read_in_start_order() {
+        let sample = Sample::new("session-index-name-order");
+        // 2023-11-14, named the way older builds named it; then 2025.
+        let old = id(1);
+        let new = uuid(0);
+        by_name(&named(&sample.logs()), &[old.clone(), new.clone()]);
+
+        let read = entries(&sample.logs(), ENTRIES).expect("the index");
+        let order: Vec<&SessionId> = read.iter().map(|entry| &entry.id).collect();
+
+        assert_eq!(order, [&new, &old]);
+    }
+
+    #[test]
+    fn sessions_an_index_kept_in_name_order_left_out_are_indexed_again() {
+        // The old migration took the window by name, so a directory with a
+        // full window of legacy logs kept none of its newer uuid ones.
+        let sample = Sample::new("session-index-name-order-window");
+        let legacy: Vec<SessionId> = (0..ENTRIES).map(id).collect();
+        let newer = [uuid(0), uuid(1)];
+        on_disk(&sample.logs(), &legacy);
+        on_disk(&sample.logs(), &newer);
+        let path = named(&sample.logs());
+        by_name(&path, &legacy);
+        let titled = id(ENTRIES - 1);
+        tally(&sample.logs(), &titled, 3).expect("the count kept");
+        retitle(&sample.logs(), &titled, "kept across the repair").expect("the title kept");
+
+        ensure(&sample.logs()).expect("the index repaired");
+        let read = entries(&sample.logs(), ENTRIES).expect("the index");
+        let order: Vec<&SessionId> = read.iter().map(|entry| &entry.id).collect();
+
+        assert_eq!(read.len(), ENTRIES);
+        assert_eq!(
+            order.get(..3),
+            Some([&newer[1], &newer[0], &titled].as_slice())
+        );
+        assert_eq!(order.last(), Some(&&id(2)), "the oldest two make room");
+        let kept = read.get(2).expect("the newest legacy session");
+        assert_eq!(kept.messages, 3);
+        assert_eq!(kept.title.as_deref(), Some("kept across the repair"));
+    }
+
+    #[test]
+    fn an_index_is_repaired_once_and_then_read_without_a_scan() {
+        let sample = Sample::new("session-index-repaired-once");
+        let path = named(&sample.logs());
+        on_disk(&sample.logs(), &[id(1)]);
+        by_name(&path, &[id(1)]);
+        ensure(&sample.logs()).expect("the index repaired");
+
+        // A log the index was never told about: only a scan could find it, and
+        // the startup after a repair does fixed work.
+        on_disk(&sample.logs(), &[uuid(0)]);
+        ensure(&sample.logs()).expect("the index already repaired");
+        let read = entries(&sample.logs(), ENTRIES).expect("the index");
+
+        assert_eq!(read.len(), 1);
     }
 
     #[test]
