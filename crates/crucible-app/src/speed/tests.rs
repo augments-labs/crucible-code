@@ -43,8 +43,9 @@ fn cell(row: &[String], at: usize) -> &str {
 }
 
 /// Every model the table names has the fast form its row says, in the words
-/// the panel shows, with its source and the day it was read; and every model
-/// this build offers with a fast form has a row.
+/// the panel shows, with its source and the day it was read; every model this
+/// build offers with a fast form has a row; and every provider has a row, one
+/// that names no model saying none of its models has a fast form.
 #[test]
 fn every_fast_form_is_its_row_of_the_docs_table() {
     let catalogue = providers().expect("the built-in providers").snapshot();
@@ -81,6 +82,28 @@ fn every_fast_form_is_its_row_of_the_docs_table() {
             assert_eq!(cost.caveat.unwrap_or_default(), cell(row, 4), "{model}");
             assert_eq!(cost.speed.unwrap_or("Not stated"), cell(row, 5), "{model}");
             documented.push((served.name, credential.to_owned(), model.to_owned()));
+        }
+    }
+
+    // A row that names no model says its provider has none with a fast form
+    // under that credential; every provider this build serves has a row.
+    for served in &every {
+        let own: Vec<&Vec<String>> = table
+            .iter()
+            .filter(|row| cell(row, 0) == served.shown)
+            .collect();
+        assert!(!own.is_empty(), "{} has no row", served.name);
+        for row in own {
+            if named(cell(row, 2)).is_empty() {
+                for model in served.models {
+                    assert_eq!(
+                        form(*served, cell(row, 1), model.name),
+                        FastForm::None,
+                        "{row:?}: {}",
+                        model.name
+                    );
+                }
+            }
         }
     }
 
