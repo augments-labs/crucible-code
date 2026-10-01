@@ -232,6 +232,20 @@ mod tests {
     }
 
     #[test]
+    fn the_schema_offers_the_size_this_falls_back_to() {
+        // The figure is this module's and the schema is the configuration
+        // crate's, so neither can own both. An editor writes the schema's
+        // default into somebody's file; it has to be the one asked about here.
+        let schema: serde_json::Value =
+            serde_json::from_str(&crucible_config::schema()).expect("the schema is JSON");
+        let published = schema
+            .pointer("/properties/compaction/properties/askOnResume/default")
+            .and_then(serde_json::Value::as_u64);
+
+        assert_eq!(published, Some(WORTH_ASKING));
+    }
+
+    #[test]
     fn somebody_who_said_never_is_never_asked_again() {
         // Zero and silence are different answers, and the difference is the
         // whole of what "stop asking" buys: written down as nothing at all it

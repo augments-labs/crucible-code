@@ -90,6 +90,7 @@ fn of(shape: &Shape) -> Value {
         // `pattern` is what an editor checks a string against, so the bounds
         // are spelled as one.
         Shape::Whole(bounds) => json!({ "type": "string", "pattern": pattern(bounds) }),
+        Shape::Pattern(pattern) => json!({ "type": "string", "pattern": pattern }),
         Shape::Fields(_) | Shape::Named { .. } => object(shape),
         // An object and nothing more. No `properties`, because the names are
         // the extension's; and deliberately no `additionalProperties: false`,
@@ -194,6 +195,7 @@ fn described(field: &Field) -> Value {
         | Shape::Limit(_)
         | Shape::Flag
         | Shape::Whole(_)
+        | Shape::Pattern(_)
         | Shape::Fields(_)
         | Shape::Named { .. }
         | Shape::Opaque => Some(&mut described),
@@ -231,6 +233,7 @@ fn stated(shape: &Shape, usual: &str) -> Value {
         Shape::Text
         | Shape::Choice(_)
         | Shape::Whole(_)
+        | Shape::Pattern(_)
         | Shape::Fields(_)
         | Shape::Named { .. }
         | Shape::List { .. }
@@ -316,6 +319,7 @@ fn object(shape: &Shape) -> Value {
         | Shape::Limit(_)
         | Shape::Flag
         | Shape::Whole(_)
+        | Shape::Pattern(_)
         | Shape::List { .. }
         | Shape::TextSet { .. }
         | Shape::Opaque => of(shape),

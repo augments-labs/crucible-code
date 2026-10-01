@@ -62,6 +62,7 @@ fn offering(
         | Shape::TextSet { .. }
         | Shape::Flag
         | Shape::Whole(_)
+        | Shape::Pattern(_)
         | Shape::List { .. }
         | Shape::Opaque => {}
     }
@@ -89,6 +90,7 @@ fn spelled(shape: &Shape, example: &str) -> Value {
         Shape::Text
         | Shape::Choice(_)
         | Shape::Whole(_)
+        | Shape::Pattern(_)
         | Shape::Fields(_)
         | Shape::Named { .. }
         | Shape::Opaque => json!(example),

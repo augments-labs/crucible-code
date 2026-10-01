@@ -85,7 +85,7 @@ impl Reader<'_> {
             // quoting what was written next to it. So the two are one arm — a
             // second arm doing the same thing would be a claim that this layer
             // tells them apart.
-            Shape::Text | Shape::Whole(_) => self.text_at(value, shape, spot),
+            Shape::Text | Shape::Whole(_) | Shape::Pattern(_) => self.text_at(value, shape, spot),
             Shape::Choice(allowed) => self.choice(value, allowed, shape, spot),
             Shape::Count => self.count(value, shape, spot),
             Shape::Limit(maximum) => {
