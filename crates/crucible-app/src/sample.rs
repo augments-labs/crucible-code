@@ -28,9 +28,16 @@ pub(crate) struct Sample {
 }
 
 impl Sample {
-    /// A tree of its own. `name` keeps two tests in one process apart.
+    /// A tree of its own. `name` says whose it is; a number drawn for each
+    /// keeps two alive at once apart, since tests run side by side and two of
+    /// them may ask for one name.
     pub(crate) fn new(name: &str) -> Self {
-        let base = std::env::temp_dir().join(format!("crucible-cli-{name}-{}", std::process::id()));
+        static DRAWN: AtomicUsize = AtomicUsize::new(0);
+        let drawn = DRAWN.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!(
+            "crucible-cli-{name}-{}-{drawn}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("work")).expect("a temporary directory");
 
@@ -241,4 +248,15 @@ pub(crate) fn recording() -> (String, Arc<AtomicUsize>) {
         }
     });
     (url, heard)
+}
+
+#[test]
+fn two_samples_of_one_name_alive_at_once_are_two_trees() {
+    // Tests run side by side, and two of them asking for the same name must
+    // not remove each other's files from under them.
+    let first = Sample::new("one-name");
+    let second = Sample::new("one-name");
+
+    assert_ne!(first.root(), second.root());
+    assert!(first.root().is_dir());
 }
