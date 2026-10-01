@@ -729,6 +729,12 @@ fn unfitting(misfit: &Misfit, glyphs: Glyphs) -> String {
             "! that is a key for {}; choose that row",
             drawn(row, glyphs)
         ),
+        Misfit::Refused(mark) => {
+            format!("! not a key for this row; keys starting {mark} are another kind")
+        }
+        Misfit::Shared(mark) => {
+            format!("! keys starting {mark} are for another row; choose it by its plan and site")
+        }
     }
 }
 

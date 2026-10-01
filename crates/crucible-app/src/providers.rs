@@ -280,6 +280,9 @@ pub struct Row {
     pub kind: Kind,
     /// The prefix every key of this row starts with, where one is known.
     pub mark: Option<&'static str>,
+    /// The prefixes of the vendor's other kinds of key, which this row's
+    /// address refuses, where the row knows no mark of its own.
+    pub refuses: &'static [&'static str],
     /// The name its credential is written under: the bare provider name for
     /// a row 0.43.3 also knows, the provider, `@` and its site for the rest.
     pub stored: &'static str,
@@ -345,6 +348,11 @@ pub enum Misfit {
     Unmarked(&'static str),
     /// The key carries the mark of this other row of the same provider.
     Another(&'static str),
+    /// The key carries this mark, of a kind of key the row's address refuses.
+    Refused(&'static str),
+    /// The key carries this mark, which more than one other row of the same
+    /// provider shares, so no one of them is the key's.
+    Shared(&'static str),
 }
 
 /// Every row this build signs in with.
@@ -361,6 +369,7 @@ const ROWS: [Row; 24] = [
         says: Some("ChatGPT plan usage with Plus, Pro, Business and Enterprise"),
         kind: Kind::Account,
         mark: None,
+        refuses: &[],
         stored: "openai",
         environment: false,
         address: Some(OpenAi::SUBSCRIPTION),
@@ -373,6 +382,7 @@ const ROWS: [Row; 24] = [
         says: Some("Kimi Code plan usage, accounts outside mainland China"),
         kind: Kind::Account,
         mark: None,
+        refuses: &[],
         stored: "moonshot@kimi.ai",
         environment: false,
         address: Some(Moonshot::CODING_AI),
@@ -385,6 +395,7 @@ const ROWS: [Row; 24] = [
         says: Some("Kimi Code plan usage, mainland China accounts"),
         kind: Kind::Account,
         mark: None,
+        refuses: &[],
         stored: "moonshot",
         environment: false,
         address: Some(Moonshot::CODING),
@@ -397,6 +408,7 @@ const ROWS: [Row; 24] = [
         says: Some("MiniMax Token Plan usage, accounts outside mainland China"),
         kind: Kind::Key,
         mark: Some("sk-cp-"),
+        refuses: &[],
         stored: "minimax@token-plan.minimax.io",
         environment: false,
         address: Some(MiniMax::IO),
@@ -409,6 +421,7 @@ const ROWS: [Row; 24] = [
         says: Some("MiniMax Token Plan usage, mainland China accounts"),
         kind: Kind::Key,
         mark: Some("sk-cp-"),
+        refuses: &[],
         stored: "minimax@token-plan.minimaxi.com",
         environment: false,
         address: Some(MiniMax::CN),
@@ -421,6 +434,7 @@ const ROWS: [Row; 24] = [
         says: Some("Qwen Coding Plan usage, the international site"),
         kind: Kind::Key,
         mark: Some("sk-sp-"),
+        refuses: &[],
         stored: "qwen@coding-plan.alibabacloud.com",
         environment: false,
         address: Some(Qwen::CODING_INTL),
@@ -433,6 +447,7 @@ const ROWS: [Row; 24] = [
         says: Some("Qwen Coding Plan usage, the mainland China site"),
         kind: Kind::Key,
         mark: Some("sk-sp-"),
+        refuses: &[],
         stored: "qwen@coding-plan.aliyun.com",
         environment: false,
         address: Some(Qwen::CODING_CN),
@@ -445,6 +460,7 @@ const ROWS: [Row; 24] = [
         says: Some("Qwen Token Plan usage, the international site"),
         kind: Kind::Key,
         mark: Some("sk-sp-"),
+        refuses: &[],
         stored: "qwen@token-plan.alibabacloud.com",
         environment: false,
         address: Some(Qwen::TOKEN_INTL),
@@ -457,6 +473,7 @@ const ROWS: [Row; 24] = [
         says: Some("Qwen Token Plan usage, the mainland China site"),
         kind: Kind::Key,
         mark: Some("sk-sp-"),
+        refuses: &[],
         stored: "qwen@token-plan.aliyun.com",
         environment: false,
         address: Some(Qwen::TOKEN_CN),
@@ -469,6 +486,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "anthropic",
         environment: true,
         address: None,
@@ -481,6 +499,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "deepseek@deepseek.com",
         environment: true,
         address: None,
@@ -493,6 +512,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "google",
         environment: true,
         address: None,
@@ -505,6 +525,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "meta@meta.ai",
         environment: true,
         address: None,
@@ -516,7 +537,10 @@ const ROWS: [Row; 24] = [
         site: None,
         says: None,
         kind: Kind::Key,
-        mark: Some("sk-"),
+        // Its Token Plan keys, the vendor's other kind, which this address
+        // answers with a 401; any other key is the vendor's to answer.
+        mark: None,
+        refuses: &["tp-", "ttp-"],
         stored: "mimo@xiaomimimo.com",
         environment: true,
         address: None,
@@ -529,6 +553,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: Some("sk-api-"),
+        refuses: &[],
         stored: "minimax@minimax.io",
         environment: true,
         address: Some(MiniMax::IO),
@@ -541,6 +566,7 @@ const ROWS: [Row; 24] = [
         says: Some("a pay-as-you-go key, mainland China accounts"),
         kind: Kind::Key,
         mark: Some("sk-api-"),
+        refuses: &[],
         stored: "minimax@minimaxi.com",
         environment: false,
         address: Some(MiniMax::CN),
@@ -553,6 +579,7 @@ const ROWS: [Row; 24] = [
         says: Some("a Kimi Code Console key, accounts outside mainland China"),
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "moonshot@kimi.ai",
         environment: false,
         address: Some(Moonshot::CODING_AI),
@@ -565,6 +592,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "moonshot",
         environment: true,
         address: Some(Moonshot::CODING),
@@ -577,6 +605,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "openai",
         environment: true,
         address: None,
@@ -589,6 +618,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "qwen@alibabacloud.com",
         environment: true,
         address: Some(Qwen::KEY_INTL),
@@ -601,6 +631,7 @@ const ROWS: [Row; 24] = [
         says: Some("a pay-as-you-go key of the mainland China site"),
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "qwen@aliyun.com",
         environment: false,
         address: Some(Qwen::KEY_CN),
@@ -613,6 +644,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "xai@x.ai",
         environment: true,
         address: None,
@@ -625,6 +657,7 @@ const ROWS: [Row; 24] = [
         says: Some("a key of bigmodel.cn, mainland China accounts"),
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "zai@bigmodel.cn",
         environment: false,
         address: Some(Zai::BIGMODEL),
@@ -637,6 +670,7 @@ const ROWS: [Row; 24] = [
         says: None,
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "zai@z.ai",
         environment: true,
         address: Some(Zai::ZAI),
@@ -700,17 +734,26 @@ impl Rows {
 
     /// Why `key` does not fit `row`, or nothing where it may: it does not
     /// start with the row's own mark, or, where the row knows no mark of its
-    /// own, it starts with the mark of another row of the same provider.
+    /// own, it starts with a mark the row refuses or the mark of another row
+    /// of the same provider.
     #[must_use]
     pub fn misfit(&self, row: &Row, key: &str) -> Option<Misfit> {
         if let Some(mark) = row.mark {
             return (!key.starts_with(mark)).then_some(Misfit::Unmarked(mark));
         }
-        self.rows
+        if let Some(mark) = row.refuses.iter().find(|mark| key.starts_with(**mark)) {
+            return Some(Misfit::Refused(mark));
+        }
+        let mut others = self
+            .rows
             .iter()
             .filter(|other| other.provider == row.provider && other != &row)
-            .find(|other| other.mark.is_some_and(|mark| key.starts_with(mark)))
-            .map(|other| Misfit::Another(other.shown))
+            .filter(|other| other.mark.is_some_and(|mark| key.starts_with(mark)));
+        let first = others.next()?;
+        Some(match (others.next(), first.mark) {
+            (Some(_), Some(mark)) => Misfit::Shared(mark),
+            _ => Misfit::Another(first.shown),
+        })
     }
 
     /// The row of the credential `provider` is served by from the store.

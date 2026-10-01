@@ -1573,18 +1573,20 @@ fn a_key_that_does_not_fit_its_row_is_refused_by_the_mark_it_carries() {
         rows.misfit(&qwen_coding, "sk-plain-key"),
         Some(Misfit::Unmarked("sk-sp-"))
     );
+    // A Token Plan key, which the pay-as-you-go address refuses.
     assert_eq!(
         rows.misfit(&mimo, "tp-token-plan-key"),
-        Some(Misfit::Unmarked("sk-"))
+        Some(Misfit::Refused("tp-"))
     );
     assert_eq!(
         rows.misfit(&mimo, "ttp-token-plan-key"),
-        Some(Misfit::Unmarked("sk-"))
+        Some(Misfit::Refused("ttp-"))
     );
-    // A row that knows no mark of its own still refuses another row's.
+    // A row that knows no mark of its own still refuses another row's; four
+    // plan rows carry this one, at two sites, so none of them is named.
     assert_eq!(
         rows.misfit(&qwen_key, "sk-sp-plan-key"),
-        Some(Misfit::Another("Qwen Coding Plan · alibabacloud.com"))
+        Some(Misfit::Shared("sk-sp-"))
     );
 
     for (fits, key) in [
@@ -1596,6 +1598,9 @@ fn a_key_that_does_not_fit_its_row_is_refused_by_the_mark_it_carries() {
         (&qwen_token, "sk-sp-plan-key"),
         (&qwen_key, "sk-plain-key"),
         (&mimo, "sk-mimo-key"),
+        // The key MiMo Code's own sign-in makes, which carries no mark the
+        // row refuses: the vendor answers whether it is served.
+        (&mimo, "mimo-code-cli-key-made-by-a-sign-in"),
     ] {
         assert_eq!(rows.misfit(fits, key), None, "{} {key}", fits.shown);
     }
