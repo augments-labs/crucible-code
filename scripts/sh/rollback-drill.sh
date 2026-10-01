@@ -16,7 +16,10 @@
 #   a yes kept:        the prior binary stops on the contentUse block a
 #                      recorded yes leaves in the user's file, and names it;
 #   a speed kept:      the prior binary stops on the fast key a chosen speed
-#                      leaves in the user's file, and names it.
+#                      leaves in the user's file, and names it;
+#   a vendor chosen:   the prior binary stops on a provider it does not serve
+#                      that a chosen model leaves in the user's file, and
+#                      names it.
 #
 # Every fixture is planted under a header the candidate itself recorded, read
 # back from a session it wrote in a home of its own. A log is picked up only
@@ -74,7 +77,7 @@ while (($#)); do
         fi
         ;;
     -h | --help)
-        sed -n '2,38p' "$0"
+        sed -n '2,41p' "$0"
         exit 0
         ;;
     *)
@@ -180,6 +183,8 @@ headless() {
     shift 2
     local status=0
     (cd "$work" && env -u ANTHROPIC_API_KEY -u GEMINI_API_KEY -u MOONSHOT_API_KEY -u OPENAI_API_KEY \
+        -u DASHSCOPE_API_KEY -u DEEPSEEK_API_KEY -u META_API_KEY -u MIMO_API_KEY -u MINIMAX_API_KEY \
+        -u XAI_API_KEY -u ZAI_API_KEY \
         "CRUCIBLE_CODE_HOME=$home" "$binary" "$@" </dev/null >"$stage/out" 2>"$stage/err") || status=$?
     printf '%s' "$status"
 }
@@ -411,6 +416,26 @@ status=$(headless "$prior" "$fhome")
 [[ $status == 1 ]] || fail "the prior binary over a speed exited $status"
 has "$stage/err" 'providers.openai.fast is not a setting crucible has' 'the prior binary did not name providers.openai.fast'
 printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$fhome|HOME|")"
+
+echo '==> the prior binary stops on a vendor the candidate chose'
+# A model of a vendor 0.43.3 does not serve, chosen with /model, leaves that
+# vendor as the top-level provider in the user's own file and the model under
+# it. 0.43.3, started with no --model, stops before drawing anything on a
+# provider it does not serve, naming it and the four it has; the changelog and
+# the troubleshooting page say what to set provider to before rolling back. The
+# drill takes no turn, so it chooses no model itself: the file is the one the
+# candidate writes when one is chosen into a home like these, which a test
+# beside the candidate's writer holds byte for byte.
+vendor_file='{ "updates": { "check": "never" }, "provider": "qwen", "providers": {"qwen": {"model": "qwen3.8-max"}} }'
+vhome=$stage/vendor-home
+mkdir -p "$vhome/sessions"
+printf '%s\n' "$vendor_file" >"$vhome/config.json"
+status=$(headless "$candidate" "$vhome")
+[[ $status == 0 ]] || fail "the candidate over a new vendor exited $status"
+status=$(headless "$prior" "$vhome")
+[[ $status == 1 ]] || fail "the prior binary over a new vendor exited $status"
+has "$stage/err" 'no provider called qwen; this build has anthropic, google, moonshot, openai' 'the prior binary did not name the provider it does not serve'
+printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$vhome|HOME|")"
 
 if ((failed)); then
     echo 'rollback drill gates failed'
