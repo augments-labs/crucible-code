@@ -433,6 +433,36 @@ fn a_backend_with_no_synchronous_stop_is_refused_and_kept_for_retry() {
     runtime.shutdown_timeout(Duration::from_secs(5));
 }
 
+/// Lets the first stop of `observed` be refused, then has the command end
+/// and every later stop succeed: the macOS shape, where the group kill lands
+/// but the bounded check that nothing in the group still runs gives out first.
+fn dying_after_a_refused_stop(observed: &Arc<Observed>) -> thread::JoinHandle<()> {
+    let dying = Arc::clone(observed);
+    thread::spawn(move || {
+        waiting_until("the first stop", || {
+            dying.stops.load(Ordering::Relaxed) >= 1
+        });
+        dying.exited.store(true, Ordering::Relaxed);
+        dying.cleanup_allowed.store(true, Ordering::Relaxed);
+    })
+}
+
+#[test]
+fn a_stop_refused_while_its_command_is_still_dying_is_finished_by_asking_again() {
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    let number = keep(&left, &observed, false).number();
+    let dying = dying_after_a_refused_stop(&observed);
+
+    crate::bash::tests::stopped(&left, number);
+
+    dying.join().expect("the command ended");
+    assert!(left.running().is_empty());
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
+}
+
 #[test]
 fn reaping_waits_for_cleanup_before_reporting_exactly_one_completion() {
     let runtime = runtime();

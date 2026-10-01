@@ -1872,24 +1872,31 @@ fn a_line_whose_text_does_not_say_what_runs_is_not_read_as_a_poll() {
 
 /// Stops the command running as `number` and waits, up to a ceiling no passing
 /// run comes near, for its owner to have ended it.
-fn stopped(left: &super::Background, number: usize) {
+///
+/// A refused stop is asked again, as the panel's key would ask it: a refusal
+/// is cleanup not yet confirmed, which a loaded machine's bounded kill can
+/// report while the command is still dying. Its owner may then find it ended
+/// rather than stopped, an ending `reap` takes.
+pub(super) fn stopped(left: &super::Background, number: usize) {
     left.stop(number).expect("background cleanup");
     let deadline = Instant::now() + Duration::from_secs(20);
-    while left
-        .running()
-        .iter()
-        .any(|standing| standing.number == number)
-    {
-        assert!(
-            left.running()
-                .iter()
-                .all(|standing| standing.number != number || !standing.refused),
-            "background cleanup was refused"
-        );
+    loop {
+        left.reap();
+        let Some(standing) = left
+            .running()
+            .into_iter()
+            .find(|standing| standing.number == number)
+        else {
+            return;
+        };
         assert!(
             Instant::now() < deadline,
-            "background cleanup never finished"
+            "background cleanup never finished (refused: {})",
+            standing.refused
         );
+        if standing.refused {
+            left.stop(number).expect("background cleanup");
+        }
         thread::sleep(Duration::from_millis(5));
     }
 }
