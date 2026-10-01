@@ -819,8 +819,11 @@ fn unboxed<T: Terminal>(
 /// machine with nothing set up, is the same session: the provider standing in
 /// would refuse the turn, but only after the prompt was recorded as said to a
 /// model nobody asked. A typed prompt and a queued one are both asked this.
+///
+/// The application decides it, so a client with no terminal is refused the
+/// same turns this one is.
 fn answerable(conversation: &Conversation) -> bool {
-    !conversation.runner().model().is_empty() && conversation.runner().provider().reaches_a_model()
+    conversation.missing().is_none()
 }
 
 /// Says that a prompt has nobody to ask, where [`answerable`] said so.
@@ -887,6 +890,11 @@ fn ran<T: Terminal>(
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
         Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
+        // Said as a prompt with nobody to ask says it, read off the
+        // credentials there are now.
+        Did::Unasked => {
+            draw::unconfigured(renderer, terms.unasked(took.conversation.serving()))?;
+        }
     }
 
     // And only the two one-line replies are a reply. A compaction that ran
@@ -1570,6 +1578,9 @@ fn sent(
                 Did::Reported
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
+            // Only `/compact` arrives here: a prompt with no model to ask is
+            // answered by [`answerable`] before any work is sent.
+            Ended::Unasked(_) => Did::Unasked,
             // Not reached from here: every route holding the send is asked
             // about on the drawing thread before the work is sent, each yes
             // is written down there, and nothing on the worker takes one out.
@@ -1617,6 +1628,9 @@ enum Did {
     /// The application would not take it: a prompt longer than any front end
     /// may send. Nothing ran and nothing was posted.
     Unsent(Refusal),
+    /// Room was asked for with no model to ask for a recap. Nothing was
+    /// recorded, sent or posted.
+    Unasked,
 }
 
 /// A turn, and what the keyboard asked for while it ran.

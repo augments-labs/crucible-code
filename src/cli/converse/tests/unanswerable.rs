@@ -367,3 +367,34 @@ fn an_exported_key_counts_toward_which_warning_a_piped_prompt_gets() {
         "{bare:?}"
     );
 }
+
+#[test]
+fn compact_with_no_model_to_ask_is_warned_of_as_a_prompt_is() {
+    // Room is made by asking the model for a recap, so with nobody to ask it
+    // is the same answer a prompt gets: the warning, and nothing recorded.
+    let sample = Sample::new("unserved-compact");
+    let session =
+        Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
+    let conversation = standing_in(&session, "foo");
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/compact\n".to_vec());
+
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to carry on past the warning");
+
+    let said = recorded(&sample, session);
+    assert!(said.is_empty(), "something was recorded: {said:?}");
+    let written = renderer.terminal().written();
+    assert!(written.contains("No models available"), "{written}");
+    assert!(!written.contains("worth replacing"), "{written}");
+}

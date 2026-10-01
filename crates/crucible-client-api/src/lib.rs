@@ -79,8 +79,9 @@ pub use command::{Command, Mode, Pace, Palette, Prompt, Rung, Theme};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{
     CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Group, LoginOutcome, LogoutOutcome,
-    ModelOutcome, NotesOutcome, Outcome, Problem, Release, Resource, Response, ResumeOutcome,
-    Retained, RoomOutcome, SandboxOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
+    Missing, ModelOutcome, NotesOutcome, Outcome, Problem, Release, Resource, Response,
+    ResumeOutcome, Retained, RoomOutcome, SandboxOutcome, SpeedOutcome, Standing, Stop,
+    ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::Progress;

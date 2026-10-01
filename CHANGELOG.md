@@ -8,6 +8,16 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A prompt or `/compact` with no model to ask records nothing, whatever
+  sends it.** A front end with no terminal could take a turn on a session with
+  no model chosen, or with nothing set up to serve the model named, and the
+  prompt was written into the session before it was refused. Both are now
+  answered with what is missing (a credential, a provider or a model) and
+  nothing is recorded or sent; at a terminal, `/compact` gives the warning a
+  prompt does.
+
 ## [0.44.1] - 2026-10-01
 
 **Web search follows `/model`, and a prompt nothing can answer is no longer

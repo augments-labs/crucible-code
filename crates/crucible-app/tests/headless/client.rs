@@ -14,7 +14,7 @@ use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_client_api::{
-    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Mode,
+    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Missing, Mode,
     ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending, PendingId, Progress, Prompt,
     Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, Theme, TurnOutcome,
 };
@@ -1066,5 +1066,170 @@ fn a_yes_that_cannot_be_written_down_fails_the_turn_and_says_why() -> Result<(),
         }
         other => return Err(format!("{other:?}").into()),
     }
+    Ok(())
+}
+
+/// A conversation recording into a session started in `tree`, asking
+/// `provider` for `model` under the registry name `serving`.
+fn unserved(
+    tree: &Tree,
+    provider: impl crucible_models::Provider + 'static,
+    model: &str,
+    serving: Option<&'static str>,
+) -> Result<Conversation, Failed> {
+    let session = Arc::new(Session::start(&tree.sessions(), &tree.workspace()?, None)?);
+    let agent = AgentBuilder::new(
+        AgentId::new("test"),
+        Model {
+            name: model.into(),
+            max_tokens: 64,
+            window: None,
+            accepts: None,
+            effort: None,
+        },
+    );
+    let work = tree.0.join("work");
+
+    Ok(Conversation::recording(session, serving, |session| {
+        Runner::new(
+            Box::new(provider),
+            Tools::new(),
+            agent.build(),
+            crucible_context::ContextInputs::new(work),
+            session,
+        )
+    }))
+}
+
+/// How many prompts and answers the log of `conversation`'s session holds,
+/// read back off the disk once the session has let it go.
+fn recorded(tree: &Tree, conversation: Conversation) -> Result<usize, Failed> {
+    let id = conversation
+        .session()
+        .id()
+        .cloned()
+        .ok_or("a started session has an id")?;
+    drop(conversation);
+    let (_, transcript) = Session::reopen(&tree.sessions(), &tree.workspace()?, &id)?;
+
+    Ok(transcript
+        .messages()
+        .iter()
+        .filter(|message| {
+            matches!(
+                message,
+                crucible_types::Message::User { .. } | crucible_types::Message::Agent { .. }
+            )
+        })
+        .count())
+}
+
+/// A provider chosen and no model of it: the prompt is answered with what is
+/// missing, and nothing is sent or written down.
+#[test]
+fn a_prompt_with_no_model_chosen_is_answered_unasked_and_nothing_is_recorded() -> Result<(), Failed>
+{
+    let tree = Tree::new("client-unasked-model")?;
+    let script = Script::new(vec![saying("never asked")]);
+    let asked = Arc::clone(&script.asked);
+    let mut conversation = unserved(&tree, script, "", Some("anthropic"))?;
+    let request = Wire::default().sent(prompt("hello")?)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    assert_eq!(response.outcome, Outcome::Unasked(Missing::Model));
+    assert_eq!(asked.load(Ordering::Relaxed), 0, "nothing was sent");
+    assert_eq!(recorded(&tree, conversation)?, 0, "nothing was recorded");
+    Ok(())
+}
+
+/// A model named with nothing set up to serve it is the stand-in's to refuse,
+/// and a client is told so before anything is written down.
+#[test]
+fn a_prompt_for_a_model_nothing_serves_is_answered_unasked_and_nothing_is_recorded()
+-> Result<(), Failed> {
+    let tree = Tree::new("client-unasked-stand-in")?;
+    let mut conversation = unserved(
+        &tree,
+        crucible_provider::Unavailable::new(crucible_app::providers::NOTHING_TO_ASK),
+        "foo",
+        None,
+    )?;
+    let request = Wire::default().sent(prompt("hello")?)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    assert_eq!(response.outcome, Outcome::Unasked(Missing::Credential));
+    assert_eq!(recorded(&tree, conversation)?, 0, "nothing was recorded");
+    Ok(())
+}
+
+/// Signed out with other providers reachable is a provider to choose, and
+/// signed out with none is a credential to set up: the two sentences a
+/// terminal says apart are two answers here too.
+#[test]
+fn a_prompt_after_signing_out_says_whether_a_provider_or_a_credential_is_missing()
+-> Result<(), Failed> {
+    for (reachable, missing) in [
+        (&["google"][..], Missing::Provider),
+        (&[][..], Missing::Credential),
+    ] {
+        let tree = Tree::new("client-unasked-signed-out")?;
+        let desk = Standing::new(&tree, reachable)?;
+        desk.logins.keep("anthropic", "a-key-no-vendor-issued")?;
+        let mut conversation = unserved(&tree, Script::named("anthropic"), "m", Some("anthropic"))?;
+        super::runtime()?.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+        let request = Wire::default().sent(prompt("hello")?)?;
+
+        let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+        assert_eq!(response.outcome, Outcome::Unasked(missing), "{reachable:?}");
+        assert_eq!(recorded(&tree, conversation)?, 0, "nothing was recorded");
+    }
+    Ok(())
+}
+
+/// Room is made by asking the model for a recap, so with no model to ask it
+/// is answered the way a prompt is.
+#[test]
+fn a_request_for_room_with_no_model_to_ask_is_answered_unasked() -> Result<(), Failed> {
+    let tree = Tree::new("client-unasked-compact")?;
+    let script = Script::new(vec![saying("never asked")]);
+    let asked = Arc::clone(&script.asked);
+    let mut conversation = unserved(&tree, script, "", Some("anthropic"))?;
+    let request = Wire::default().sent(Command::Compact)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    assert_eq!(response.outcome, Outcome::Unasked(Missing::Model));
+    assert_eq!(asked.load(Ordering::Relaxed), 0, "nothing was sent");
+    assert_eq!(recorded(&tree, conversation)?, 0, "nothing was recorded");
+    Ok(())
+}
+
+/// The guard is about a session nothing can answer, and no other: one with a
+/// provider and a model takes the turn and writes it down.
+#[test]
+fn a_prompt_a_model_can_answer_still_takes_the_turn_and_is_recorded() -> Result<(), Failed> {
+    let tree = Tree::new("client-answered-recorded")?;
+    let script = Script::new(vec![saying("hello")]);
+    let asked = Arc::clone(&script.asked);
+    let mut conversation = unserved(&tree, script, "script", Some("anthropic"))?;
+    let request = Wire::default().sent(prompt("hi")?)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    assert_eq!(
+        response.outcome,
+        Outcome::Turn(TurnOutcome::Ran {
+            stop: Stop::Yielded
+        })
+    );
+    assert_eq!(asked.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        recorded(&tree, conversation)?,
+        2,
+        "the prompt and its answer"
+    );
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! The commands that take a turn's length, and the one that cuts it short.
 
 use crucible_client_api::{
-    Command, ErrorCode, Outcome, Problem, Refusal, Request, Response, RoomOutcome, Text,
+    Command, ErrorCode, Missing, Outcome, Problem, Refusal, Request, Response, RoomOutcome, Text,
     TurnOutcome,
 };
 use crucible_context::Room;
@@ -13,6 +13,7 @@ use super::deciding::{Deciding, Front};
 use super::reading;
 use crate::Conversation;
 use crate::content_use::Warned;
+use crate::providers;
 use crate::remember::RememberError;
 
 /// How a command [`turn`] was given ended, in the application's own values.
@@ -20,6 +21,9 @@ use crate::remember::RememberError;
 pub enum Ended {
     /// It is not one of [`turn`]'s commands; nothing was done.
     Refused(Refusal),
+    /// Nothing was recorded and nothing was sent: there is no model to ask,
+    /// for want of what this names.
+    Unasked(providers::Missing),
     /// A prompt, answered or refused before the model was asked, or failed.
     Turn(Result<Turned, TurnError>),
     /// A compaction, and what it made room for.
@@ -40,6 +44,9 @@ pub enum Ended {
 /// may be attached, and the one read it comes through, are decided on the host
 /// before this is called.
 ///
+/// Where [`Conversation::missing`] says there is no model to ask, neither is
+/// taken: the answer is [`Ended::Unasked`], and the session records nothing.
+///
 /// Every permission question the turn raises is put to `front` under an
 /// identity the application mints, which no caller supplies or can start
 /// again, and settled only by a decision that names it. One handed in here as
@@ -53,6 +60,16 @@ pub async fn turn(
     front: &mut dyn Front,
     run: &RunContext<'_>,
 ) -> Ended {
+    // Before anything else, and at this door so that every client is answered
+    // the same way: a prompt or a request for room with no model to ask is
+    // not a turn, and is answered with what is missing before the session
+    // hears of it. Ahead of the question below, which is about a vendor this
+    // would never reach.
+    if matches!(request.command(), Command::Prompt(_) | Command::Compact)
+        && let Some(missing) = conversation.missing()
+    {
+        return Ended::Unasked(missing);
+    }
     // Before anything could be sent, and at this door so that every client is
     // asked the same way: a route whose vendor uses what is sent, with no yes
     // to it, is put to the front as a pending action, and a yes given there is
@@ -173,6 +190,11 @@ impl Ended {
     pub fn outcome(&self) -> Outcome {
         match self {
             Self::Refused(refusal) => Outcome::Refused(*refusal),
+            Self::Unasked(missing) => Outcome::Unasked(match missing {
+                providers::Missing::Credential => Missing::Credential,
+                providers::Missing::Provider => Missing::Provider,
+                providers::Missing::Model => Missing::Model,
+            }),
             Self::Turn(Ok(Turned::Ran(result))) => Outcome::Turn(TurnOutcome::Ran {
                 stop: reading::stop(result.stop()),
             }),

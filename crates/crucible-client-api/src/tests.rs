@@ -97,10 +97,11 @@ const KEYS: [&str; 71] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 18] = [
+const MORE_KEYS: [&str; 19] = [
     "count",
     "date",
     "groups",
+    "missing",
     "newest",
     "notes",
     "release",
@@ -449,6 +450,7 @@ fn outcomes() -> Vec<Outcome> {
     outcomes.extend(login_outcomes());
     outcomes.extend(turn_outcomes().into_iter().map(Outcome::Turn));
     outcomes.extend(Mode::EVERY.into_iter().map(Outcome::Mode));
+    outcomes.extend(Missing::EVERY.into_iter().map(Outcome::Unasked));
     outcomes.extend(
         ErrorCode::EVERY
             .into_iter()
@@ -698,6 +700,11 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         | Outcome::Help(_)
         | Outcome::Leaving => (0, 1),
         Outcome::Turn(turn) => turn_arm(turn),
+        Outcome::Unasked(missing) => match missing {
+            Missing::Credential => (0, 3),
+            Missing::Provider => (1, 3),
+            Missing::Model => (2, 3),
+        },
         Outcome::Room(room) => match room {
             RoomOutcome::Made { .. } => (0, 4),
             RoomOutcome::Nothing => (1, 4),
@@ -1643,7 +1650,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 7_024_358_126_322_682_185),
+        (1, 1_177_570_555_411_645_176),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

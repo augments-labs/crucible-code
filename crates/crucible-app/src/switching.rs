@@ -357,6 +357,7 @@ impl Conversation {
         self.runner.serve(Box::new(Unavailable::new(warning)));
         self.clearings_recorded().await;
         self.serving = None;
+        self.reachable = reachable;
         self.web.stop();
         LoggedOut::SignedOut { retained }
     }

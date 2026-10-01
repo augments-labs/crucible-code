@@ -14,7 +14,7 @@ use crucible_config::Settings;
 use crucible_context::SystemPrompt;
 
 use super::*;
-use crate::providers::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
+use crate::providers::{Missing, NO_MODEL_CHOSEN, NOTHING_TO_ASK};
 use crate::sample::{Sample, WRITTEN};
 
 /// Drives a future to its answer on a current-thread runtime of its own, the
@@ -581,6 +581,50 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
         "",
         "an unnamed model is the empty name"
     );
+}
+
+#[test]
+fn a_session_with_nothing_chosen_says_whether_a_provider_or_a_credential_is_missing() {
+    // The same credentials the welcome's sentence is chosen from decide what a
+    // turn is missing, so a client is told what the reader at a screen is.
+    for (key, missing) in [
+        (Some("a-key"), Missing::Provider),
+        (None, Missing::Credential),
+    ] {
+        let from = |name: &str| {
+            key.filter(|_| name == "ANTHROPIC_API_KEY")
+                .map(str::to_owned)
+        };
+        let sample = Sample::new("nothing-chosen-missing");
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+
+        let conversation = assemble(&Startup {
+            providers: &catalogue(),
+            provider: None,
+            unasked: missing.sentence(),
+            model: None,
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &from,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("a session with nothing chosen still starts");
+
+        assert_eq!(conversation.missing(), Some(missing));
+    }
 }
 
 /// The specification one startup resolves to, for a model of `anthropic`.

@@ -147,6 +147,44 @@ impl Stop {
     }
 }
 
+/// What a session that cannot take a turn is missing, as this protocol
+/// spells it.
+///
+/// Which of the three it is decides what somebody does next: set a credential
+/// up, choose a provider, or choose a model of the provider chosen. A front end
+/// with a screen says each as its own sentence, and so can a client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Missing {
+    /// The host holds no usable credential for any provider.
+    Credential,
+    /// A provider can be reached and none was chosen.
+    Provider,
+    /// A provider was chosen and no model of it.
+    Model,
+}
+
+impl Missing {
+    /// Every one of them.
+    pub const EVERY: [Self; 3] = [Self::Credential, Self::Provider, Self::Model];
+
+    /// The word it crosses as.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Credential => "credential",
+            Self::Provider => "provider",
+            Self::Model => "model",
+        }
+    }
+
+    fn named(word: &str) -> Result<Self, Refusal> {
+        Self::EVERY
+            .into_iter()
+            .find(|missing| missing.as_str() == word)
+            .ok_or_else(|| ErrorCode::Malformed.into())
+    }
+}
+
 /// How a turn ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnOutcome {
@@ -480,6 +518,9 @@ pub enum Outcome {
     Turn(TurnOutcome),
     /// Making room ended.
     Room(RoomOutcome),
+    /// A prompt or a request for room was not taken, because there is no
+    /// model to ask: nothing was recorded and nothing was sent.
+    Unasked(Missing),
     /// The running turn has been asked to stop.
     Cancelling,
     /// Starting a new session ended.
@@ -578,10 +619,11 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 19] = [
+    pub const KINDS: [&'static str; 20] = [
         "refused",
         "turn",
         "room",
+        "unasked",
         "cancelling",
         "cleared",
         "resumed",
@@ -607,6 +649,7 @@ impl Outcome {
             Self::Refused(_) => "refused",
             Self::Turn(_) => "turn",
             Self::Room(_) => "room",
+            Self::Unasked(_) => "unasked",
             Self::Cancelling => "cancelling",
             Self::Cleared(_) => "cleared",
             Self::Resumed(_) => "resumed",
@@ -632,6 +675,7 @@ impl Outcome {
             Self::Refused(refusal) => object.with("code", refusal.code().as_str()),
             Self::Turn(turn) => object.with("turn", turn.written()),
             Self::Room(room) => object.with("room", room.written()),
+            Self::Unasked(missing) => object.with("missing", missing.as_str()),
             Self::Cancelling | Self::Leaving => object,
             Self::Cleared(cleared) => object.with("cleared", cleared.written()),
             Self::Resumed(resumed) => object.with("resumed", resumed.written()),
@@ -661,6 +705,7 @@ impl Outcome {
             "refused" => Self::Refused(code(&fields.string("code")?)?.into()),
             "turn" => Self::Turn(TurnOutcome::read(fields.take("turn")?)?),
             "room" => Self::Room(RoomOutcome::read(fields.take("room")?)?),
+            "unasked" => Self::Unasked(Missing::named(&fields.string("missing")?)?),
             "cancelling" => Self::Cancelling,
             "cleared" => Self::Cleared(ClearOutcome::read(fields.take("cleared")?)?),
             "resumed" => Self::Resumed(ResumeOutcome::read(fields.take("resumed")?)?),
