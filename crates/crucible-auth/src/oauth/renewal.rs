@@ -455,7 +455,7 @@ async fn rotate(place: &Semaphore, due: Due) -> Result<Tokens, OAuthError> {
     let _place = place.acquire().await.map_err(|_| OAuthError::Abandoned)?;
     let held = match blocking(move || store.take_rotation(provider, needs_refresh)).await? {
         Taken::Fresh(tokens) => return Ok(tokens),
-        Taken::Due(held) => held,
+        Taken::Due(held) => *held,
     };
     let fresh = refresh(held.current().clone()).await?;
     blocking(move || held.persist(fresh)).await

@@ -438,13 +438,13 @@ impl Store {
             return Ok(Taken::Fresh(current));
         }
 
-        Ok(Taken::Due(Rotating {
+        Ok(Taken::Due(Box::new(Rotating {
             store: self.clone(),
             provider: provider.to_owned(),
             document,
             current,
             _lock: lock,
-        }))
+        })))
     }
 
     /// Replaces the complete protected document after its caller took the
@@ -564,7 +564,7 @@ pub(crate) enum Taken {
     /// The rotation the store holds is not due, and the lock is released.
     Fresh(Tokens),
     /// It is due, and the lock is held until it is replaced.
-    Due(Rotating),
+    Due(Box<Rotating>),
 }
 
 /// A rotation being replaced, holding the store lock until it is.
