@@ -314,6 +314,7 @@ impl Moving {
             providers: &self.desk.providers,
             settings: &self.desk.settings,
             serving: &self.serving,
+            sourcing: &self.desk.sourcing,
             logins: &self.logins,
             choosing: &self.desk.choosing,
         }

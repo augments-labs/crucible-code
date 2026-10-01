@@ -949,10 +949,7 @@ fn offered(terminal: bool) -> crucible_runner::Tools {
             subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
         },
         &Settings::default(),
-        Reaching {
-            searching: None,
-            fetching: None,
-        },
+        &crate::following::Following::default(),
         Arc::new(LocalSandbox::new()),
     )
     .expect("the built-in tool roster is valid")
@@ -1380,6 +1377,7 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
 }
 
 mod conformance;
+mod following;
 mod lending;
 
 /// Where `stored` sends a Moonshot request, with `exported` in its variable
@@ -1853,8 +1851,7 @@ fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
 }
 
 /// A web search on a model whose own route is warned waits for that route's
-/// yes as a turn on it does, even once the session has moved to a model that
-/// is not warned: the search was built for the model the run started on.
+/// yes as a turn on it does.
 #[test]
 fn a_search_on_a_warned_model_sends_nothing_until_its_yes() {
     let (url, heard) = crate::sample::recording();

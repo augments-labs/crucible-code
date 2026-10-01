@@ -905,3 +905,77 @@ fn a_source_whose_terms_do_not_fit_a_result_is_never_asked() {
         "the source was asked although its terms could not be carried"
     );
 }
+
+/// A source with nowhere to send: what the session answers through after it
+/// moved to a provider that gives it no source for the tool.
+struct Nowhere;
+
+impl Nowhere {
+    fn why() -> SourceError {
+        SourceError::Transport {
+            named: "nowhere",
+            problem: "nothing was sent: no source".into(),
+        }
+    }
+}
+
+impl Search for Nowhere {
+    fn name(&self) -> &'static str {
+        "nowhere"
+    }
+
+    fn reaches(&self) -> Host {
+        Host::Opaque("nothing".into())
+    }
+
+    fn answering(&self) -> Result<(), SourceError> {
+        Err(Self::why())
+    }
+
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<SearchResponse, SourceError>> {
+        Box::pin(async { Err(Self::why()) })
+    }
+}
+
+impl Fetch for Nowhere {
+    fn name(&self) -> &'static str {
+        "nowhere"
+    }
+
+    fn reaches(&self, url: &str) -> Host {
+        Host::Opaque(url.into())
+    }
+
+    fn answering(&self) -> Result<(), SourceError> {
+        Err(Self::why())
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        _url: &'a str,
+        _cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Page, SourceError>> {
+        Box::pin(async { Err(Self::why()) })
+    }
+}
+
+#[test]
+fn a_call_with_no_source_to_answer_it_is_refused_as_it_is_checked() {
+    // Before the permission question, which a call that can only answer that
+    // nothing was sent has no reason to ask.
+    let searched = WebSearch::new(std::sync::Arc::new(Nowhere))
+        .validate(&ToolArgs::new(r#"{"query":"anything"}"#));
+    let fetched = WebFetch::new(std::sync::Arc::new(Nowhere))
+        .validate(&ToolArgs::new(r#"{"url":"https://example.com/"}"#));
+
+    for checked in [searched, fetched] {
+        assert!(
+            matches!(&checked, Err(ToolError::Unanswered { problem, .. }) if problem.contains("nothing was sent")),
+            "{checked:?}"
+        );
+    }
+}

@@ -31,6 +31,7 @@ pub mod content_use;
 mod conversation;
 mod error;
 pub mod extensions;
+mod following;
 mod models;
 pub mod providers;
 pub mod remember;

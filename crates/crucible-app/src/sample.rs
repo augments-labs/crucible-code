@@ -250,6 +250,53 @@ pub(crate) fn recording() -> (String, Arc<AtomicUsize>) {
     (url, heard)
 }
 
+/// A listener like [`recording`] that keeps the text of each request it is
+/// sent, headers and body, for a test that asks what a request named.
+pub(crate) fn transcribing() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/responses", listener.local_addr().unwrap());
+    let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keeping = Arc::clone(&heard);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !whole(&request) {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(buffer.get(..read).unwrap_or_default()),
+                }
+            }
+            keeping
+                .lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&request).into_owned());
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+        }
+    });
+    (url, heard)
+}
+
+/// Whether `request` holds its headers and as much body as they announce.
+fn whole(request: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(request);
+    let Some(ends) = text.find("\r\n\r\n") else {
+        return false;
+    };
+    let head = text.get(..ends).unwrap_or_default().to_ascii_lowercase();
+    let body = request.len() - ends - 4;
+    if head.contains("transfer-encoding: chunked") {
+        return text.ends_with("0\r\n\r\n");
+    }
+    head.lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|length| length.trim().parse::<usize>().ok())
+        .is_none_or(|length| body >= length)
+}
+
 #[test]
 fn two_samples_of_one_name_alive_at_once_are_two_trees() {
     // Tests run side by side, and two of them asking for the same name must

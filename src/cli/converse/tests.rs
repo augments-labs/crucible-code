@@ -20,6 +20,7 @@ use crucible_workspace::Workspace;
 
 use crucible_tui::Key;
 
+use super::queueing::batched;
 use super::*;
 use crate::cli::fake::{Fixed, Script, Stalling, changing, running, runtime};
 use crate::cli::sample::Sample;
@@ -116,6 +117,7 @@ pub(crate) fn plain() -> Terms {
                 has: named.name.into(),
             })
         }),
+        sourcing: Box::new(|_, _, _| crucible_app::startup::Reaching::nothing()),
 
         // No environment either: a key exported on the machine running the
         // suite is not one any of these sessions was started with.

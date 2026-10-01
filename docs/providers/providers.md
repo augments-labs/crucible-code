@@ -179,7 +179,12 @@ Meta and xAI are spoken to over the Responses protocol, the other five vendors
 new in this release over Chat Completions. crucible sends those seven text
 alone in this release: a picture, a PDF, audio or video stays out of the
 request, whatever the model reads. A refusal from any of them reaches you in
-the vendor's own words.
+the vendor's own words, except Z.ai's refusal of a prompt too long for the
+model, which makes room and asks again as a
+[full window](../sessions/sessions.md#when-the-window-fills) does. The others
+end the turn on that refusal unless it carries a code crucible reads as a full
+window. Meta's carries no code, and MiniMax's `1039` "Token limit exceeded"
+cannot be told apart from a rate limit, so both end the turn.
 
 ### Rows and sites
 
@@ -191,8 +196,8 @@ xAI.
 
 | Row | List | Its keys | Address | Models the vendor serves there |
 | --- | --- | --- | --- | --- |
-| MiniMax · minimax.io | subscription | start `sk-cp-` | `https://api.minimax.io/v1` | both |
-| MiniMax · minimaxi.com | subscription | start `sk-cp-` | `https://api.minimax.cn/v1` | both |
+| MiniMax Token Plan · minimax.io | subscription | start `sk-cp-` | `https://api.minimax.io/v1` | both |
+| MiniMax Token Plan · minimaxi.com | subscription | start `sk-cp-` | `https://api.minimax.cn/v1` | both |
 | Qwen Coding Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://coding-intl.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
 | Qwen Coding Plan · aliyun.com | subscription | start `sk-sp-` | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
 | Qwen Token Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |

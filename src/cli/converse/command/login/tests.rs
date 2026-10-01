@@ -55,6 +55,7 @@ fn in_force(sample: &Sample) -> Terms {
                 source: crucible_app::providers::CredentialSource::Environment(named.key.into()),
             })
         }),
+        sourcing: Box::new(|_, _, _| crucible_app::startup::Reaching::nothing()),
         environment: Box::new(|_| None),
         sessions: sample.logs(),
         workspace: sample.workspace(),
@@ -670,12 +671,12 @@ fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_scre
                 "may use what is sent · Kimi Code plan usage, mainland China accounts".to_owned()
             ),
             (
-                "MiniMax · minimax.io",
+                "MiniMax Token Plan · minimax.io",
                 "may use what is sent · MiniMax Token Plan usage, accounts outside mainland China"
                     .to_owned()
             ),
             (
-                "MiniMax · minimaxi.com",
+                "MiniMax Token Plan · minimaxi.com",
                 "may use what is sent · MiniMax Token Plan usage, mainland China accounts"
                     .to_owned()
             ),
@@ -1254,6 +1255,26 @@ fn the_new_vendors_rows_are_narrowed_and_replaced_by_their_own_words() {
     assert_eq!(
         replaced(&mainland, &[international], Glyphs::Unicode).as_deref(),
         Some("the API key held for Z.ai · z.ai")
+    );
+
+    // A MiniMax plan key and a pay-as-you-go key of one site are told apart
+    // by the plan's name.
+    assert_eq!(
+        left("minimax token plan", &rows),
+        [
+            "MiniMax Token Plan · minimax.io API key",
+            "MiniMax Token Plan · minimaxi.com API key"
+        ]
+    );
+    let plan = way(
+        &rows,
+        List::Subscription,
+        "MiniMax Token Plan · minimaxi.com",
+    );
+    let key = way(&rows, List::Key, "MiniMax · minimaxi.com");
+    assert_eq!(
+        replaced(&key, &[plan], Glyphs::Unicode).as_deref(),
+        Some("the API key held for MiniMax Token Plan · minimaxi.com")
     );
 }
 

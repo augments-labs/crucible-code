@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Headless prior-binary rollback drill.
 #
-# Runs the previous released binary (v0.43.3) over a copy of synthetic session
+# Runs the previous released binary (v0.44.0) over a copy of synthetic session
 # fixtures the candidate has read and recovered, headless with redirected
 # input, and compares replay, pending-action recovery and command behaviour to
 # the preservation contract:
@@ -12,14 +12,7 @@
 #   pending recovery:  both binaries resume a session ending in an unanswered
 #                      tool call, cut the same dangling message, and end with
 #                      byte-identical logs;
-#   command behaviour: --sandbox and --extensions agree past the home's name;
-#   a yes kept:        the prior binary stops on the contentUse block a
-#                      recorded yes leaves in the user's file, and names it;
-#   a speed kept:      the prior binary stops on the fast key a chosen speed
-#                      leaves in the user's file, and names it;
-#   a vendor chosen:   the prior binary stops on a provider it does not serve
-#                      that a chosen model leaves in the user's file, and
-#                      names it.
+#   command behaviour: --sandbox and --extensions agree past the home's name.
 #
 # Every fixture is planted under a header the candidate itself recorded, read
 # back from a session it wrote in a home of its own. A log is picked up only
@@ -47,7 +40,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-readonly PRIOR_TAG=v0.43.3
+readonly PRIOR_TAG=v0.44.0
 readonly CONV_ID=1788000000000-d81101
 readonly PEND_ID=1788000000001-d81102
 readonly CONV_USER='what does the rollback drill replay'
@@ -77,7 +70,7 @@ while (($#)); do
         fi
         ;;
     -h | --help)
-        sed -n '2,41p' "$0"
+        sed -n '2,34p' "$0"
         exit 0
         ;;
     *)
@@ -380,62 +373,6 @@ for command in --sandbox --extensions; do
         fail "$command differs between candidate and prior"
     printf '    %s %s\n' "$command" "$(digest "$stage/prior-$command.out")"
 done
-
-echo '==> the prior binary stops on a yes the candidate keeps'
-# A yes to a vendor that uses what is sent is kept under contentUse.accepted in
-# the user's own file. 0.43.3 has no such key and stops before drawing anything,
-# naming it; the changelog and the troubleshooting page say to delete the block
-# before rolling back. The drill takes no turn, so it records no yes itself:
-# the file is the one the candidate writes when a yes is recorded into a home
-# like these, which a test beside the candidate's writer holds byte for byte.
-yes_file='{ "updates": { "check": "never" }, "contentUse": {"accepted": ["key:google"]} }'
-yhome=$stage/yes-home
-mkdir -p "$yhome/sessions"
-printf '%s\n' "$yes_file" >"$yhome/config.json"
-status=$(headless "$candidate" "$yhome")
-[[ $status == 0 ]] || fail "the candidate over a yes exited $status"
-status=$(headless "$prior" "$yhome")
-[[ $status == 1 ]] || fail "the prior binary over a yes exited $status"
-has "$stage/err" 'contentUse is not a setting crucible has' 'the prior binary did not name contentUse'
-printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$yhome|HOME|")"
-
-echo '==> the prior binary stops on a speed the candidate keeps'
-# A speed chosen with /fast is kept under providers.<provider>.fast in the
-# user's own file. 0.43.3 has no such key and stops before drawing anything,
-# naming it; the changelog and the troubleshooting page say to delete it before
-# rolling back. The drill takes no turn, so it chooses no speed itself: the file
-# is the one the candidate writes when fast is chosen into a home like these,
-# which a test beside the candidate's writer holds byte for byte.
-fast_file='{ "updates": { "check": "never" }, "providers": {"openai": {"model": "gpt-5.6-sol", "fast": true}} }'
-fhome=$stage/fast-home
-mkdir -p "$fhome/sessions"
-printf '%s\n' "$fast_file" >"$fhome/config.json"
-status=$(headless "$candidate" "$fhome")
-[[ $status == 0 ]] || fail "the candidate over a speed exited $status"
-status=$(headless "$prior" "$fhome")
-[[ $status == 1 ]] || fail "the prior binary over a speed exited $status"
-has "$stage/err" 'providers.openai.fast is not a setting crucible has' 'the prior binary did not name providers.openai.fast'
-printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$fhome|HOME|")"
-
-echo '==> the prior binary stops on a vendor the candidate chose'
-# A model of a vendor 0.43.3 does not serve, chosen with /model, leaves that
-# vendor as the top-level provider in the user's own file and the model under
-# it. 0.43.3, started with no --model, stops before drawing anything on a
-# provider it does not serve, naming it and the four it has; the changelog and
-# the troubleshooting page say what to set provider to before rolling back. The
-# drill takes no turn, so it chooses no model itself: the file is the one the
-# candidate writes when one is chosen into a home like these, which a test
-# beside the candidate's writer holds byte for byte.
-vendor_file='{ "updates": { "check": "never" }, "provider": "qwen", "providers": {"qwen": {"model": "qwen3.8-max"}} }'
-vhome=$stage/vendor-home
-mkdir -p "$vhome/sessions"
-printf '%s\n' "$vendor_file" >"$vhome/config.json"
-status=$(headless "$candidate" "$vhome")
-[[ $status == 0 ]] || fail "the candidate over a new vendor exited $status"
-status=$(headless "$prior" "$vhome")
-[[ $status == 1 ]] || fail "the prior binary over a new vendor exited $status"
-has "$stage/err" 'no provider called qwen; this build has anthropic, google, moonshot, openai' 'the prior binary did not name the provider it does not serve'
-printf '    %s\n' "$(head -c 120 "$stage/err" | sed "s|$vhome|HOME|")"
 
 if ((failed)); then
     echo 'rollback drill gates failed'

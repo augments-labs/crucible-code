@@ -8,6 +8,48 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-10-01
+
+**Web search follows `/model`, and a prompt nothing can answer is no longer
+recorded.** Searches and fetches now go to the model, provider and credential
+in force after `/model`, `/login` or `/logout`, holding a contributor model's
+queries until its yes. A Z.ai request too long for the model makes room and
+asks again, MiniMax's plan rows are named apart from its key rows, and a
+background command that ended after a refused stop no longer reads as refused.
+
+### Changed
+
+- **A MiniMax plan key is named apart from a MiniMax API key.** The
+  subscription rows of `/login` read `MiniMax Token Plan · minimax.io` and
+  `MiniMax Token Plan · minimaxi.com`, so `/model`'s heading and what `/login`
+  says a key replaces tell a plan key from a pay-as-you-go one. A key already
+  stored stays where it is.
+
+### Fixed
+
+- **A background command that ended after a refused stop no longer reads as
+  refused.** When a stop could not be confirmed in time, as on a busy Mac,
+  the command kept its refused mark after crucible had found it ended. Only a
+  command that is still running is marked refused now.
+- **At a terminal, a prompt for a model nothing serves is no longer recorded.**
+  `crucible --model foo` with no provider set up took a turn for typed and
+  queued prompts and wrote them into the session before refusing them. Each now
+  gets the warning a session with no model gives and takes no turn, and a line
+  queued with no model does the same.
+- **A Z.ai request too long for the model makes room and asks again.** Z.ai's
+  "Prompt too long" refusal now compacts the session mid-turn and the turn
+  carries on, where it used to end the turn. Meta's refusal of an over-long
+  request carries no code and MiniMax's `1039` "Token limit exceeded" cannot be
+  told apart from a rate limit, so both still end the turn.
+- **Web search follows `/model`.** A search named the model the run started on
+  after the session moved to another, so a run started on a Meta contributor
+  model kept searching on it, and a run that declined one held every search.
+  A search now names the model asked now, from the provider asked now, and is
+  held only while that model's route waits for its yes. After a switch to a
+  provider with no web search, or no usable credential for one, a web call
+  answers that nothing was sent, where before it went to the provider the run
+  started on.
+
 ## [0.44.0] - 2026-10-01
 
 **Seven more vendors, the newest OpenAI and Anthropic models, and `/fast` for
@@ -4669,7 +4711,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...HEAD
+[0.44.1]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...v0.44.0
 [0.43.3]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...v0.43.2

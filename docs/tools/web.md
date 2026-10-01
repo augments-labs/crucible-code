@@ -34,6 +34,15 @@ A tool with nothing to answer it does not appear at all, rather than appearing
 and failing every call. Escape stops a search or fetch at once, even while its
 request is still connecting or reading.
 
+Both tools follow the session. After `/model` moves it to another model, a
+search names that model; after it moves to another provider, the search goes to
+that provider with the credential its turns use, and `/login` or `/logout` on
+it changes the credential searches use too. Which tools appear is settled when
+the run starts: where the provider asked now serves no source for a tool, or its
+credential cannot be used for one, a call is refused before you are asked about
+it and answers that nothing was sent. A run that started on such a provider gets
+neither tool until it is started again on one that serves them.
+
 One difference worth knowing. OpenAI has no standalone fetch (opening a page is
 an action inside its search tool), so `web_fetch` there asks that tool to open
 the one address, confined to its host. What comes back is the model's rendering
@@ -55,9 +64,8 @@ citations in the terminal without redirect rewriting. In accordance with Google'
 [grounding usage terms](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
 each search result records which provider's search answered it, and a result Google
 answered is kept out of the context sent to any other provider's model: when the
-session switches to one, when it is resumed or picked up with `/resume` in a run that
-is using one, and when a search is answered through Google after the session has
-already moved on, since the search keeps the provider the run started with. Only
+session switches to one, and when it is resumed or picked up with `/resume` in a run
+that is using one. Only
 Google's results are cleared, none is cleared while no provider is set up, and the
 outputs stay in the local session log for user history review. Each clearing is
 recorded in the log, so a session resumed later comes back cleared rather than reading
@@ -69,10 +77,10 @@ answered them. They keep the rule those builds applied: every search result is c
 when the session switches away from Google, to another provider or to none, and none
 is cleared when such a session is resumed or picked up under another provider.
 
-Meta and xAI serve search alone on the route crucible speaks to them, and
-their search keeps the model the run started with: a run started on one of
-Meta's contributor models searches on it once its question has its yes, and
-on no other. Meta has no fetch tool, and xAI opens pages only inside its search, with no
+Meta and xAI serve search alone on the route crucible speaks to them, on the
+model the session is asking: on one of Meta's contributor models a search is
+held until that model's question has its yes, and on a standard model it is
+not. Meta has no fetch tool, and xAI opens pages only inside its search, with no
 documented way to ask it to open one address, so neither offers `web_fetch`.
 
 The other five vendors new in this release get neither tool. DeepSeek and

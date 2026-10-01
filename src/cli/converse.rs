@@ -48,7 +48,7 @@ use tokio::sync::oneshot;
 
 use crucible_app::Conversation;
 use crucible_app::client::Ended;
-use crucible_app::providers::{Lookup, Served, Serving, available};
+use crucible_app::providers::{Lookup, Served, Serving, Sourcing, available};
 use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
@@ -75,7 +75,7 @@ use command::Ran;
 use expanding::Standing;
 pub(crate) use first::First;
 use planning::Planning;
-use queueing::{Prompts, Retained, batched};
+use queueing::{Prompts, Retained};
 use recalling::Recalling;
 use turning::Turning;
 use typing::{Asked, Says};
@@ -258,6 +258,9 @@ pub(crate) struct Terms {
     /// the session asks from the next turn is what the next run here would ask,
     /// resolved once and out of the same files.
     pub(crate) serving: Serving,
+    /// Builds the web sources again for the provider and model a switch takes,
+    /// from the credential that provider is set up with.
+    pub(crate) sourcing: Sourcing,
     /// Reads a variable from the environment the launch was started in, which
     /// is where a key can be exported rather than stored.
     ///
@@ -315,6 +318,7 @@ impl Terms {
             providers,
             settings: &self.settings,
             serving: &self.serving,
+            sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
         }
@@ -600,36 +604,18 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        // The lines queued during the last turn are the next turn, all of them
-        // at once: the oldest is its prompt and the rest are offered to it. They
-        // are committed here rather than where they were typed: at that moment
-        // the answer above them was still arriving, and a line written into the
-        // middle of one is a line in the wrong place.
-        if let Some(said) = batched(&mut held.queued, &terms.steer) {
-            draw::queued(renderer, &said, style)?;
+        // The lines queued during the last turn are the next turn, before the
+        // box is asked for another.
+        let (back, taken) = queueing::taken(conversation, renderer, terms, &mut held, style)?;
+        conversation = back;
 
-            let imported = attaching::imported(&held);
-            let attached = attaching::beside(
-                renderer,
-                attaching::Asking::of(conversation.runner(), imported.as_deref()),
-                &terms.workspace,
-                attaching::Sent {
-                    prompt: &said,
-                    images: &held.images,
-                },
-                style,
-            )?;
-            let work = Work::Turn(said, attached);
-            let (back, leaving) = ran(conversation, renderer, terms, work, &mut held)?;
-            conversation = back;
-
-            // Left after the trouble `ran` says rather than instead of it: a
-            // log that stopped recording is worth hearing about on the way out
-            // as much as on the way through.
-            if leaving {
-                break;
-            }
-            continue;
+        // Left after the trouble `ran` says rather than instead of it: a log
+        // that stopped recording is worth hearing about on the way out as much
+        // as on the way through.
+        match taken {
+            Some(true) => break,
+            Some(false) => continue,
+            None => {}
         }
 
         let commands = terms.commands.snapshot();
@@ -699,34 +685,9 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
-        // Before the turn and not inside it, because a turn with no model is
-        // not a turn: the prompt would be recorded, a request would go out
-        // naming nothing, and the vendor's refusal would describe a model name
-        // that was never typed. `/model` is what changes this answer, so it is
-        // said again here rather than only under the welcome the session opened
-        // with — by now that has scrolled away.
-        if conversation.runner().model().is_empty() {
-            let said = terms.unasked(conversation.serving());
-
-            // Down a pipe there is nobody to type `/model`, so carrying on
-            // reads every remaining line and answers none of them — and ends
-            // `Ok`, which is the one thing a script looks at. Said and failed
-            // rather than said and shrugged.
-            if !renderer.is_terminal() {
-                return Err(Fatal::Unanswerable(said));
-            }
-
-            draw::unconfigured(renderer, said)?;
+        if !answerable(&conversation) {
+            unanswered(&conversation, renderer, terms)?;
             continue;
-        }
-
-        // A model named with nobody to ask it of, as `--model foo` is on a
-        // machine with nothing set up: the provider standing in refuses every
-        // turn. At a terminal that refusal is the warning and `/login` is a
-        // key away. Down a pipe it is the run above, unanswerable to the last
-        // line, and it ends the same way rather than `Ok`.
-        if !renderer.is_terminal() && !conversation.runner().provider().reaches_a_model() {
-            return Err(Fatal::Unanswerable(terms.unasked(conversation.serving())));
         }
 
         let imported = attaching::imported(&held);
@@ -847,6 +808,42 @@ fn unboxed<T: Terminal>(
     };
 
     Ok(Some(said))
+}
+
+/// Whether a prompt can be a turn at all.
+///
+/// Asked before the turn and not inside it, because a turn with no model is
+/// not a turn: the prompt would be recorded, a request would go out naming
+/// nothing, and the vendor's refusal would describe a model name that was never
+/// typed. A model named with nobody to ask it of, as `--model foo` is on a
+/// machine with nothing set up, is the same session: the provider standing in
+/// would refuse the turn, but only after the prompt was recorded as said to a
+/// model nobody asked. A typed prompt and a queued one are both asked this.
+fn answerable(conversation: &Conversation) -> bool {
+    !conversation.runner().model().is_empty() && conversation.runner().provider().reaches_a_model()
+}
+
+/// Says that a prompt has nobody to ask, where [`answerable`] said so.
+///
+/// `/model` is what changes this answer, so it is said again here rather than
+/// only under the welcome the session opened with: by now that has scrolled
+/// away.
+fn unanswered<T: Terminal>(
+    conversation: &Conversation,
+    renderer: &mut Renderer<T>,
+    terms: &Terms,
+) -> Result<(), Fatal> {
+    let said = terms.unasked(conversation.serving());
+
+    // Down a pipe there is nobody to type `/model`, so carrying on reads every
+    // remaining line and answers none of them, and ends `Ok`, which is the one
+    // thing a script looks at. Said and failed rather than said and shrugged.
+    if !renderer.is_terminal() {
+        return Err(Fatal::Unanswerable(said));
+    }
+
+    draw::unconfigured(renderer, said)?;
+    Ok(())
 }
 
 /// Runs one piece of work and settles what came back.
@@ -1669,7 +1666,7 @@ struct Held<'a> {
     /// The prompts waiting behind a turn, which the turn adds to as lines are
     /// finished in the box under it. They are the next turn, in the order they
     /// were typed: the whole of the queue goes to one turn rather than a turn
-    /// each, which is what [`batched`] does with it.
+    /// each, which is what [`queueing::batched`] does with it.
     queued: Prompts,
     /// What the transcript had no room to say, waiting for Ctrl+O. Held for the
     /// whole session rather than for a turn: the row offering the key is read

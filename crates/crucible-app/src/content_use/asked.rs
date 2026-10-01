@@ -57,6 +57,10 @@ impl Search for Asked<dyn Search> {
         self.source.restricts()
     }
 
+    fn answering(&self) -> Result<(), SourceError> {
+        self.source.answering()
+    }
+
     fn search<'a>(
         &'a self,
         query: &'a str,
@@ -76,6 +80,10 @@ impl Fetch for Asked<dyn Fetch> {
 
     fn reaches(&self, url: &str) -> Host {
         self.source.reaches(url)
+    }
+
+    fn answering(&self) -> Result<(), SourceError> {
+        self.source.answering()
     }
 
     fn fetch<'a>(

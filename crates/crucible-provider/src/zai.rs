@@ -2,7 +2,8 @@
 //!
 //! The wire is [`crate::completions`]; what is Z.ai's is here: its two
 //! sites, the name it is told crucible goes by, what its cache is known to
-//! do, and the reasons to stop it has words of its own for.
+//! do, the reasons to stop it has words of its own for, and the code it
+//! refuses a request too large for the model with.
 //!
 //! What its references left unsaid is taken the way that asks least of it:
 //! the counts are not asked for, since neither site documents the field that
@@ -35,6 +36,10 @@ impl Dialect for ZaiChat {
     const ADDRESSES: &'static [Endpoint] = &[ZAI, BIGMODEL];
     const SHAPE: &'static str = "zai-chat-completions-v1";
     const USAGE_ASKED: bool = false;
+    // `1261` (400) "Prompt too long", on z.ai's error-code page, which prints
+    // the code as a string under `error`; its OpenAPI reference has it as an
+    // integer at the top level, and both are read.
+    const OUTGREW: &'static [&'static str] = &["1261"];
     // Its reasoning is cleared by the vendor between turns unless asked to
     // keep it, so none is kept here to send back.
     type Kept = ();

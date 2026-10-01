@@ -58,6 +58,9 @@ pub struct Conversation {
     /// run holds one: a turn on such a route with no yes is asked about
     /// before anything is sent.
     consent: Option<crate::content_use::Consent>,
+    /// What the two web tools answer through: built for the provider and model
+    /// being asked, and built again by each switch of either.
+    pub(crate) web: crate::following::Following,
 }
 
 impl Conversation {
@@ -81,7 +84,15 @@ impl Conversation {
             session,
             serving,
             consent: None,
+            web: crate::following::Following::default(),
         }
+    }
+
+    /// The same conversation, its web tools answering through `web`, which a
+    /// switch of model or provider builds again.
+    #[must_use]
+    pub(crate) fn following(self, web: crate::following::Following) -> Self {
+        Self { web, ..self }
     }
 
     /// The same conversation, asking `consent` before a turn goes on a route

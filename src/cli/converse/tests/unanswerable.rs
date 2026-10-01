@@ -1,13 +1,15 @@
-//! A prompt arriving down a pipe with nobody to ask it of.
+//! A prompt with nobody to ask it of.
 //!
 //! Interactively each of these is a warning and the session carries on,
 //! because `/model` or `/login` is a key away. With input and output both
 //! redirected nobody can type either, so the run says why once, takes no
-//! turn, and ends with an error rather than `Ok`.
+//! turn, and ends with an error rather than `Ok`. Neither records the prompt.
 
 use crucible_types::Message;
 
+use crate::cli::converse::{Answers, Held, queueing};
 use crate::cli::sample::Sample;
+use crate::cli::style::Style;
 
 use super::*;
 
@@ -123,6 +125,160 @@ fn a_piped_prompt_for_a_model_nothing_serves_fails_as_one_with_no_model_does() {
     // Said once, by the error: no turn was refused on the screen before it.
     let written = renderer.terminal().written();
     assert!(!written.contains("No models available"), "{written}");
+}
+
+/// A conversation recording into `session`, on `model` and the provider a
+/// machine with nothing set up stands in: it reaches no model.
+fn standing_in(session: &Arc<Session>, model: &str) -> Conversation {
+    Conversation::recording(Arc::clone(session), None, |session| {
+        Runner::new(
+            Box::new(crucible_provider::Unavailable::new(
+                crucible_app::providers::NOTHING_TO_ASK,
+            )),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: model.into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    })
+}
+
+/// The prompts `session` recorded, read back off the disk once it is closed.
+fn recorded(sample: &Sample, session: Arc<Session>) -> Vec<Message> {
+    assert_eq!(session.finish(), None);
+    drop(session);
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    transcript
+        .messages()
+        .iter()
+        .filter(|message| matches!(message, Message::User { .. }))
+        .cloned()
+        .collect()
+}
+
+/// Whether the screen warned of a prompt and took no turn for it.
+///
+/// The warning alone does not tell the two apart: the stand-in refuses a turn
+/// with the same sentence. A turn is what draws the thinking row, so its
+/// absence is the turn that was never taken.
+fn warned_without_a_turn(written: &str) -> bool {
+    written.contains("No models available") && !written.contains("thinking")
+}
+
+#[test]
+fn a_typed_prompt_for_a_model_nothing_serves_is_warned_of_as_one_with_no_model_is() {
+    // At a terminal a session with no model answers a prompt with the warning
+    // and takes no turn. `--model foo` with nothing set up is the same session
+    // with a name in it: the provider standing in would refuse the turn, but
+    // only after the prompt was recorded as said to a model nobody asked.
+    let sample = Sample::new("unserved-typed");
+    let session =
+        Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
+    let conversation = standing_in(&session, "foo");
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"what is 2+2\n".to_vec());
+
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to carry on past the warning");
+
+    let said = recorded(&sample, session);
+    assert!(said.is_empty(), "a prompt was recorded: {said:?}");
+    let written = renderer.terminal().written();
+    assert!(warned_without_a_turn(written), "{written}");
+}
+
+/// What a line queued behind the last turn comes to, on `model` and the
+/// stand-in, with what was recorded and what was drawn.
+fn queued_for(
+    name: &str,
+    model: &str,
+    renderer: &mut Renderer<Recording>,
+) -> (Result<Option<bool>, Fatal>, Vec<Message>) {
+    let sample = Sample::new(name);
+    let session =
+        Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
+    let conversation = standing_in(&session, model);
+
+    let card = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        crucible_builtins::Plan::new(),
+        crucible_tui::Sending::default(),
+        Answers {
+            input: &mut input,
+            keys: false,
+        },
+        &card,
+    );
+    let mut editor = typed("what is 2+2");
+    assert_eq!(held.queued.accept(&mut editor), Retained::Accepted);
+
+    let terms = plain();
+    let taken = queueing::taken(conversation, renderer, &terms, &mut held, Style::plain())
+        .map(|(_, leaving)| leaving);
+    assert_eq!(held.queued.waiting_count(), 0, "the line is still waiting");
+
+    (taken, recorded(&sample, session))
+}
+
+#[test]
+fn a_queued_prompt_for_a_model_nothing_serves_is_warned_of_as_a_typed_one_is() {
+    // A line typed while `/compact` made room is queued and taken as the next
+    // turn without passing the box. It is owed what the same line typed at the
+    // box gets: the warning, and nothing recorded.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let (taken, said) = queued_for("unserved-queued", "foo", &mut renderer);
+
+    assert!(said.is_empty(), "a prompt was recorded: {said:?}");
+    assert!(matches!(taken, Ok(Some(false))), "{taken:?}");
+    let written = renderer.terminal().written();
+    assert!(warned_without_a_turn(written), "{written}");
+}
+
+#[test]
+fn a_queued_prompt_with_no_model_is_warned_of_as_a_typed_one_is() {
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let (taken, said) = queued_for("no-model-queued", "", &mut renderer);
+
+    assert!(said.is_empty(), "a prompt was recorded: {said:?}");
+    assert!(matches!(taken, Ok(Some(false))), "{taken:?}");
+    let written = renderer.terminal().written();
+    assert!(warned_without_a_turn(written), "{written}");
+}
+
+#[test]
+fn a_queued_prompt_nothing_serves_down_a_pipe_fails_as_a_typed_one_does() {
+    let mut renderer = Renderer::new(Recording::redirected(80, 24));
+    let (taken, said) = queued_for("unserved-queued-piped", "foo", &mut renderer);
+
+    assert!(said.is_empty(), "a prompt was recorded: {said:?}");
+    assert!(
+        matches!(
+            taken,
+            Err(Fatal::Unanswerable(crucible_app::providers::NOTHING_TO_ASK))
+        ),
+        "{taken:?}"
+    );
 }
 
 /// What a piped prompt ends the run with, in a session that chose no provider.

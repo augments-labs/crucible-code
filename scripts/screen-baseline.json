@@ -391,7 +391,7 @@
       "opened": [
         "Watched::open(\"login-signed-in-40\", 40, 30)"
       ],
-      "sha256": "6bf64cd820ff2d365bbb02a0f3f078a8d3a92aed55c7685e2f098f2a37b83e32"
+      "sha256": "f77df474426c4394e5f5b27b4f3ef307ef5cfda610ce065215618c54a47b2733"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_keys_signed_in_40.snap",
