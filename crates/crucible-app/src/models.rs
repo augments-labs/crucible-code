@@ -35,56 +35,79 @@ pub(crate) const FACTS: &[Facts] = &[
         model: "claude-fable-5",
         window: 1_000_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-fable-5-1",
         window: 1_000_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-haiku-4-5",
         window: 200_000,
         output: 64_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-opus-5",
         window: 1_000_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-opus-5-5",
         window: 1_000_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-sonnet-5",
         window: 1_000_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "anthropic",
         model: "claude-sonnet-5-5",
         window: 1_000_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "deepseek",
         model: "deepseek-flash",
         window: 1_000_000,
         output: 393_216,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image),
     },
     Facts {
         provider: "deepseek",
@@ -98,70 +121,118 @@ pub(crate) const FACTS: &[Facts] = &[
         model: "gemini-3.1-pro-preview",
         window: 1_048_576,
         output: 65_536,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "google",
         model: "gemini-3.6-flash",
         window: 1_048_576,
         output: 65_536,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "google",
         model: "gemini-3.7-flash",
         window: 1_048_576,
         output: 65_536,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "google",
         model: "gemini-3.8-flash",
         window: 1_048_576,
         output: 65_536,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "meta",
         model: "muse-spark-1.2",
         window: 1_048_576,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "meta",
         model: "muse-spark-1.2-contributor",
         window: 1_048_576,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "meta",
         model: "muse-spark-1.3",
         window: 1_048_576,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "meta",
         model: "muse-spark-1.3-contributor",
         window: 1_048_576,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "mimo",
         model: "mimo-v2.6-flash",
         window: 1_048_576,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "mimo",
         model: "mimo-v2.6-pro",
         window: 1_048_576,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video).insert(Modality::Audio),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video)
+            .insert(Modality::Audio),
     },
     Facts {
         provider: "minimax",
@@ -175,133 +246,191 @@ pub(crate) const FACTS: &[Facts] = &[
         model: "MiniMax-M3",
         window: 1_000_000,
         output: 512_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "moonshot",
         model: "k3",
         window: 1_048_576,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "moonshot",
         model: "k3-256k",
         window: 262_144,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "moonshot",
         model: "kimi-for-coding",
         window: 262_144,
         output: 262_144,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "moonshot",
         model: "kimi-for-coding-highspeed",
         window: 262_144,
         output: 262_144,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.5",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.6-luna",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.6-sol",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-5.6-terra",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-6-astra",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-6-luna",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-6-sol",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "openai",
         model: "gpt-6.1-sol",
         window: 922_000,
         output: 128_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "qwen",
         model: "qwen3.6-plus",
         window: 1_000_000,
         output: 65_536,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "qwen",
         model: "qwen3.7-plus",
         window: 1_000_000,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "qwen",
         model: "qwen3.8-flash",
         window: 1_000_000,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "qwen",
         model: "qwen3.8-max",
         window: 1_000_000,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video),
     },
     Facts {
         provider: "xai",
         model: "grok-4.6",
         window: 500_000,
         output: 500_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "xai",
         model: "grok-4.7",
         window: 500_000,
         output: 500_000,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf),
     },
     Facts {
         provider: "zai",
@@ -322,6 +451,10 @@ pub(crate) const FACTS: &[Facts] = &[
         model: "glm-5.3-flash",
         window: 1_000_000,
         output: 131_072,
-        accepts: Modalities::empty().insert(Modality::Text).insert(Modality::Image).insert(Modality::Pdf).insert(Modality::Video),
+        accepts: Modalities::empty()
+            .insert(Modality::Text)
+            .insert(Modality::Image)
+            .insert(Modality::Pdf)
+            .insert(Modality::Video),
     },
 ];

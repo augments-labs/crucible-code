@@ -16,7 +16,8 @@ use crucible_auth::{Held, Kind, Names};
 use crucible_config::Settings;
 use crucible_models::{Effort, FastForm, ModelCapabilities, ModelError, ModelLimits, Provider};
 use crucible_provider::{
-    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Mimo, MiniMax, Moonshot, OpenAi, Qwen, Zai,
+    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Meta, Mimo, MiniMax, Moonshot, OpenAi, Qwen,
+    Xai, Zai,
 };
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
@@ -48,7 +49,7 @@ use crate::subscription::Subscriptions;
 /// since the build is one nobody picked without the vendor refusing it by name,
 /// and a model released since is typed, which is the path that was there before
 /// any of these were written down.
-const PROVIDERS: [Served; 9] = [
+const PROVIDERS: [Served; 11] = [
     Served {
         name: "anthropic",
         shown: "Anthropic",
@@ -102,6 +103,24 @@ const PROVIDERS: [Served; 9] = [
             Model::shown("gemini-3.7-flash", "Gemini 3.7 Flash", GEMINI),
             Model::shown("gemini-3.6-flash", "Gemini 3.6 Flash", GEMINI),
             Model::shown("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", GEMINI),
+        ],
+    },
+    Served {
+        name: "meta",
+        shown: "Meta",
+        key: "META_API_KEY",
+        build: startup::meta,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Meta::fast_at_vendor,
+        fast_signed_in: None,
+        // `max` on 1.3 is named by some of the vendor's pages and left out by
+        // its parameter lists, so it is not offered until a source settles it.
+        models: &[
+            Model::new("muse-spark-1.3", UP_TO_XHIGH),
+            Model::new("muse-spark-1.3-contributor", UP_TO_XHIGH),
+            Model::new("muse-spark-1.2", UP_TO_XHIGH),
+            Model::new("muse-spark-1.2-contributor", UP_TO_XHIGH),
         ],
     },
     Served {
@@ -177,10 +196,7 @@ const PROVIDERS: [Served; 9] = [
             Model::new("gpt-5.6-terra", EVERY),
             Model::new("gpt-5.6-luna", EVERY),
             // One generation back and one rung short of the others.
-            Model::new(
-                "gpt-5.5",
-                &[Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh],
-            ),
+            Model::new("gpt-5.5", UP_TO_XHIGH),
         ],
     },
     Served {
@@ -197,6 +213,20 @@ const PROVIDERS: [Served; 9] = [
             Model::new("qwen3.8-flash", QWEN),
             Model::new("qwen3.7-plus", NONE),
             Model::new("qwen3.6-plus", NONE),
+        ],
+    },
+    Served {
+        name: "xai",
+        shown: "xAI",
+        key: "XAI_API_KEY",
+        build: startup::xai,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Xai::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("grok-4.7", UP_TO_XHIGH),
+            Model::new("grok-4.6", UP_TO_XHIGH),
         ],
     },
     Served {
@@ -285,7 +315,7 @@ impl Row {
 /// Subscription rows in the order the vendors are grouped; key rows by shown
 /// name, since that list is long and looked up by name. A provider's rows share
 /// its typed name, and each carries the name its credential is stored under.
-const ROWS: [Row; 22] = [
+const ROWS: [Row; 24] = [
     Row {
         list: List::Subscription,
         shown: "OpenAI",
@@ -432,6 +462,18 @@ const ROWS: [Row; 22] = [
     },
     Row {
         list: List::Key,
+        shown: "Meta",
+        provider: "meta",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "meta@meta.ai",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
         shown: "MiMo",
         provider: "mimo",
         site: None,
@@ -525,6 +567,18 @@ const ROWS: [Row; 22] = [
         stored: "qwen@aliyun.com",
         environment: false,
         address: Some(Qwen::KEY_CN),
+    },
+    Row {
+        list: List::Key,
+        shown: "xAI",
+        provider: "xai",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "xai@x.ai",
+        environment: true,
+        address: None,
     },
     Row {
         list: List::Key,
@@ -652,6 +706,9 @@ const KIMI: &[Effort] = &[Effort::Low, Effort::High, Effort::Max];
 /// The three rungs `DeepSeek`'s models and Z.ai's newest serve: the two
 /// between are answered as `high` rather than refused, and so are not offered.
 const LOW_HIGH_MAX: &[Effort] = &[Effort::Low, Effort::High, Effort::Max];
+
+/// Every rung but the top one.
+const UP_TO_XHIGH: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh];
 
 /// The three rungs Qwen's 3.8 models serve.
 const QWEN: &[Effort] = &[Effort::Low, Effort::Medium, Effort::Xhigh];

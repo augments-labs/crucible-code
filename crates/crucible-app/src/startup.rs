@@ -27,8 +27,8 @@ use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
-    Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Mimo, MiniMax,
-    Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Zai,
+    Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Meta, Mimo, MiniMax,
+    Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Xai, Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
@@ -679,6 +679,36 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 pub fn deepseek(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let (endpoint, credential) = keyed(&wiring, DeepSeek::VENDOR)?;
     Ok(Box::new(DeepSeek::at(
+        endpoint,
+        credential,
+        Box::new(wiring.http.clone()),
+    )))
+}
+
+/// Meta's Responses, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn meta(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let (endpoint, credential) = keyed(&wiring, Meta::VENDOR)?;
+    Ok(Box::new(Meta::at(
+        endpoint,
+        credential,
+        Box::new(wiring.http.clone()),
+    )))
+}
+
+/// xAI's Responses, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn xai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let (endpoint, credential) = keyed(&wiring, Xai::VENDOR)?;
+    Ok(Box::new(Xai::at(
         endpoint,
         credential,
         Box::new(wiring.http.clone()),

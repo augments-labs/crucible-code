@@ -733,8 +733,10 @@ fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot(
 #[test]
 fn the_models_table_gives_video_to_moonshot_and_google_and_audio_only_to_google() {
     for facts in models::FACTS {
-        let video = matches!(facts.provider, "moonshot" | "google" | "meta" | "mimo" | "qwen")
-            || matches!(facts.model, "glm-5.3-flash" | "MiniMax-M3");
+        let video = matches!(
+            facts.provider,
+            "moonshot" | "google" | "meta" | "mimo" | "qwen"
+        ) || matches!(facts.model, "glm-5.3-flash" | "MiniMax-M3");
         assert_eq!(
             facts.accepts.contains(Modality::Video),
             video,
@@ -1273,7 +1275,8 @@ fn every_provider_has_one_environment_row_and_every_row_a_served_provider() {
         // written under one name: the provider's own where 0.43.3 serves the
         // provider, and the provider at a site where it does not, since only a
         // credential 0.43.3 can read sits under a bare name.
-        let served_by_0_43_3 = matches!(served.name, "anthropic" | "google" | "moonshot" | "openai");
+        let served_by_0_43_3 =
+            matches!(served.name, "anthropic" | "google" | "moonshot" | "openai");
         assert!(
             environment
                 .iter()
@@ -1445,7 +1448,11 @@ fn the_registry_serves_eleven_providers_each_under_its_name_and_variable() {
 #[test]
 fn openai_and_anthropic_list_their_current_models_before_the_ones_they_replace() {
     let listed = |provider| -> Vec<&str> {
-        serving(provider).models.iter().map(|model| model.name).collect()
+        serving(provider)
+            .models
+            .iter()
+            .map(|model| model.name)
+            .collect()
     };
 
     assert_eq!(
