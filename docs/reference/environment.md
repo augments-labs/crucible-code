@@ -86,11 +86,17 @@ your home directory, or set it in the shell you start crucible in`. See
 
 ## Provider keys
 
-- `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`:
-  the key for the provider of that name, unless `providers.<name>.apiKeyEnv`
+- `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`, `DEEPSEEK_API_KEY`,
+  `GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
+  `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `ZAI_API_KEY`: the key
+  for `anthropic`, `qwen`, `deepseek`, `google`, `meta`, `mimo`, `minimax`,
+  `moonshot`, `openai`, `xai` and `zai` respectively, unless `providers.<name>.apiKeyEnv`
   names another variable to read instead. The value is trimmed, and unset or
   blank is treated as no key, which is how a shell turns a variable off for
-  one run. What a provider is used with is settled in this order: an account
+  one run. A key in `DASHSCOPE_API_KEY`, `MINIMAX_API_KEY` or `ZAI_API_KEY`
+  is sent to the vendor's international site; a key of its mainland China site
+  is given through `/login`, or reaches it with `providers.<name>.baseUrl`.
+  What a provider is used with is settled in this order: an account
   login stored for it (where the provider supports one and no `baseUrl` is
   set), then the variable, then a key stored in `auth.json`. See
   [keys](../providers/providers.md#keys) and

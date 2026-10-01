@@ -74,7 +74,8 @@ repository's choice to make for everyone who clones it.
 
 ### `providers`
 
-Keyed by provider name: `anthropic`, `google`, `moonshot`, `openai`.
+Keyed by provider name: `anthropic`, `deepseek`, `google`, `meta`, `mimo`,
+`minimax`, `moonshot`, `openai`, `qwen`, `xai`, `zai`.
 
 | Key | Means |
 | --- | --- |
@@ -131,7 +132,8 @@ describe the model you had just left:
 ```
 
 Without either setting, the session's context window is 200,000 tokens for
-Anthropic and Google, 272,000 for OpenAI, and 262,144 for Moonshot. A known
+Anthropic, Google, DeepSeek, Meta, MiMo, MiniMax, Qwen, xAI and Z.ai, 272,000
+for OpenAI, and 262,144 for Moonshot. A known
 model with a smaller native limit keeps the smaller figure, and an unknown model
 of a known provider gets that provider's default. Native 1M support therefore
 does not make 1M the session default.

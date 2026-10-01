@@ -53,7 +53,7 @@ invariants. Update it when the implementation makes a sentence false.
 
 - Open extension sets use traits: adding a provider, tool, sandbox, subagent or
   skill loader must not require naming its implementation in the crate that
-  owns its contract.
+  owns its contract. A new vendor is a dialect of a wire that names no vendor.
   Closed domain states use enums, matched exhaustively where new cases require
   every consumer to decide.
 - `crucible-app` composes concrete implementations into trait objects before

@@ -26,6 +26,9 @@ What you get depends on what your vendor serves:
 | OpenAI (API key or ChatGPT plan) | yes | yes |
 | Moonshot (Kimi Code) | yes | yes |
 | Moonshot (open platform) | no | no |
+| Meta | yes | no |
+| xAI | yes | no |
+| DeepSeek, Z.ai, Qwen, MiMo, MiniMax | no | no |
 
 A tool with nothing to answer it does not appear at all, rather than appearing
 and failing every call. Escape stops a search or fetch at once, even while its
@@ -66,6 +69,19 @@ answered them. They keep the rule those builds applied: every search result is c
 when the session switches away from Google, to another provider or to none, and none
 is cleared when such a session is resumed or picked up under another provider.
 
+Meta and xAI serve search alone on the route crucible speaks to them. Meta
+has no fetch tool, and xAI opens pages only inside its search, with no
+documented way to ask it to open one address, so neither offers `web_fetch`.
+
+The other five vendors new in this release get neither tool. DeepSeek and
+MiniMax serve none on the Chat Completions protocol crucible uses for them.
+Z.ai's search on that protocol runs for the whole request rather than as a
+tool the model calls, and its pages disagree on which models take it. Qwen's
+pages disagree on whether these models take search there. MiMo's search must be
+switched on in its console first, and no source shows how a request is refused
+where it is not. Where a source settles the missing fact, a later release can
+add the tool.
+
 Moonshot's two services belong to the Kimi Code platform, which is where
 crucible sends this provider unless you have set `providers.moonshot.baseUrl`
 yourself. A key issued against the open platform is refused by them, so a
@@ -79,7 +95,9 @@ is what lets the rest of this page exist.
 
 A search runs against your own credential and is billed to it. Anthropic and
 OpenAI both charge **$10 per 1 000 searches**, plus the tokens of the request
-that runs one, because on those two the search is run by a model. Kimi Code's
+that runs one, because on those two the search is run by a model. Meta charges
+$2.50 per 1 000 search queries on top of the request's tokens, and xAI $5 per
+1 000 calls, billing only those that succeed. Kimi Code's
 services are plain endpoints and are covered by the plan the credential is for.
 On any subscription, both tools are part of what you already pay for.
 

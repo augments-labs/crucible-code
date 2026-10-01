@@ -53,6 +53,34 @@ constraints for implementation, dependencies and writing. Human contributors
 can read the same guide; remaining skills live under
 [`.agents/skills/`](.agents/skills/).
 
+### Adding a vendor
+
+A vendor's facts come from its own reference, each with its link and the day
+it was read: the address, headers and fields, the stream and error bodies, the
+rungs of each model, the web tool, the cache, the fast form, the key variable,
+and what its terms say of a client that is not its own and of what is sent to
+it. A fact taken only from another harness is marked so. Where no source
+settles one, the vendor ships with the choice that asks least of it (no rung,
+no web tool, no fast form) and the docs say which fact was not settled.
+
+1. Write the vendor as a dialect in `crates/crucible-provider`: a
+   `completions::Dialect` for Chat Completions or a `responses::Dialect` for
+   Responses. The shared wire modules name no vendor, and
+   `scripts/sh/repo-checks.sh` fails one that does.
+2. Register it in `crates/crucible-app/src/providers.rs`: an entry in the
+   provider table, with its key variable, window, fast form and models, and
+   its `/login` rows. A row's stored name is the provider, `@` and its site,
+   and never changes once shipped.
+3. Regenerate the model table with `src/bin/generate-models.rs`; the agreement
+   tests beside the registry say every model offered has a row.
+4. Where its terms say what is sent may train or improve its models, add each
+   route to `crates/crucible-app/src/content_use.rs` with the vendor's sentence,
+   page and day, and every documented address to the recognised ones.
+5. Add its rows to the content-use and fast tables under `docs/providers/`,
+   which agreement tests hold to the code, name its variable in the help text
+   and its accepted copy `tests/differential/command-line.txt`, and update the
+   pages that list the providers.
+
 ## Local gates
 
 ```bash

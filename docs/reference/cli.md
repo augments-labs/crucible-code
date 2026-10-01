@@ -84,9 +84,13 @@ and where nothing says, crucible starts and asks rather than picking one;
 ([Which model](../providers/providers.md#which-model)).
 
 A bare name goes to whichever provider holds a usable credential: a key in one
-of `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MOONSHOT_API_KEY` and
-`OPENAI_API_KEY` (a variable exported empty holds none, so it does not
-compete), or one stored by `/login`. Where more than one is usable, qualify the
+of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`, `DEEPSEEK_API_KEY`,
+`GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
+`MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` and `ZAI_API_KEY` (a
+variable exported empty holds none, so it does not compete), or one stored by
+`/login`. A key in `DASHSCOPE_API_KEY`, `MINIMAX_API_KEY` or `ZAI_API_KEY` is
+sent to the vendor's international site; a key of its mainland China site is
+given through `/login`, or reaches it with that provider's `baseUrl`. Where more than one is usable, qualify the
 name or set `provider` in your configuration; otherwise crucible starts with
 no provider chosen and says so
 ([Which provider](../providers/providers.md#which-provider)). The key is read
@@ -104,7 +108,7 @@ A provider this build does not have is refused at the same point, with the
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, google, moonshot, openai
+crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, moonshot, openai, qwen, xai, zai
 ```
 
 ### `-e`, `--effort <RUNG>`

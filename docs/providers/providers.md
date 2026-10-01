@@ -136,14 +136,148 @@ Naming a provider this build does not have is a startup failure that says which
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, google, moonshot, openai
+crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, moonshot, openai, qwen, xai, zai
 ```
+
+## What each provider serves
+
+This build serves eleven providers. The name in the first column is what
+`--model`, `provider` and `providers.<name>` take, and the models are what
+`/model` offers for it, each with the rungs it takes:
+
+| Provider | Vendor | Models and their rungs | Variable |
+| --- | --- | --- | --- |
+| `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
+| `deepseek` | DeepSeek | `deepseek-flash`, `deepseek-v4-pro`: low, high, max | `DEEPSEEK_API_KEY` |
+| `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
+| `meta` | Meta | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
+| `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
+| `minimax` | MiniMax | `MiniMax-M3`, `MiniMax-M2.7`: none | `MINIMAX_API_KEY` |
+| `moonshot` | MoonshotAI | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
+| `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
+| `qwen` | Qwen | `qwen3.8-max`, `qwen3.8-flash`: low, medium, xhigh; `qwen3.7-plus`, `qwen3.6-plus`: none | `DASHSCOPE_API_KEY` |
+| `xai` | xAI | `grok-4.7`, `grok-4.6`: low, medium, high, xhigh | `XAI_API_KEY` |
+| `zai` | Z.ai | `glm-5.3`, `glm-5.3-flash`: low, high, max; `glm-5.2`: high, max | `ZAI_API_KEY` |
+
+The two Meta models whose names end in `-contributor` are cheaper because Meta
+may train on what is sent to them; crucible asks before the first one is
+chosen or sent to, and the standard two are not asked about. See [content
+use](content-use.md).
+
+Meta and xAI are spoken to over the Responses protocol, the other five vendors
+new in this release over Chat Completions. crucible sends those seven text
+alone in this release: a picture, a PDF, audio or video stays out of the
+request, whatever the model reads. A refusal from any of them reaches you in
+the vendor's own words.
+
+### Rows and sites
+
+Each vendor's credentials are given on rows of `/login`. A row in the
+*subscription* list takes the plan's own key, typed into the same box as an
+API key; nothing is signed in to. With no `baseUrl` set, a row's requests go
+to its address followed by `/chat/completions`, or by `/responses` for Meta and
+xAI.
+
+| Row | List | Its keys start with | Address | Models the vendor serves there |
+| --- | --- | --- | --- | --- |
+| MiniMax · minimax.io | subscription | `sk-cp-` | `https://api.minimax.io/v1` | both |
+| MiniMax · minimaxi.com | subscription | `sk-cp-` | `https://api.minimax.cn/v1` | both |
+| Qwen Coding Plan · alibabacloud.com | subscription | `sk-sp-` | `https://coding-intl.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
+| Qwen Coding Plan · aliyun.com | subscription | `sk-sp-` | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
+| Qwen Token Plan · alibabacloud.com | subscription | `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
+| Qwen Token Plan · aliyun.com | subscription | `sk-sp-` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
+| DeepSeek | API key | | `https://api.deepseek.com` | both |
+| Meta | API key | | `https://api.meta.ai/v1` | all four |
+| MiMo | API key | `sk-` | `https://api.xiaomimimo.com/v1` | both |
+| MiniMax · minimax.io | API key | `sk-api-` | `https://api.minimax.io/v1` | both |
+| MiniMax · minimaxi.com | API key | `sk-api-` | `https://api.minimax.cn/v1` | both |
+| Qwen · alibabacloud.com | API key | | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | all four |
+| Qwen · aliyun.com | API key | | `https://dashscope.aliyuncs.com/compatible-mode/v1` | all four |
+| xAI | API key | | `https://api.x.ai/v1` | both |
+| Z.ai · z.ai | API key | | `https://api.z.ai/api/paas/v4` | all three |
+| Z.ai · bigmodel.cn | API key | | `https://open.bigmodel.cn/api/paas/v4` | all three |
+
+A key in a provider's variable belongs to one row of it: for MiniMax and Qwen
+the international site's API key row, for Z.ai the z.ai row. A key of the
+mainland China site, or a plan's key, is given through `/login`, or reaches
+that site with `providers.<name>.baseUrl` set to its address. Qwen and MiniMax
+bind a key to its site and refuse it at the other; Z.ai does not say what its
+other site makes of one.
+
+A Qwen Coding Plan or Token Plan key starts with `sk-sp-` either way, and
+nothing in it says which plan, or whether a Token Plan key is the Personal or
+the Team edition. The plans are for interactive use in a coding tool;
+Alibaba Cloud's pages say a plan's key used in a script or a backend may be
+suspended. MiniMax sells M Plan in place of Token Plan to new buyers, with one
+key prefix for both, and its M Plan pages list only `MiniMax-M3.1-Flash-Preview`
+as a text model, which this build does not offer. Whether an M Plan key is
+served `MiniMax-M3` and `MiniMax-M2.7` is not settled by any page; the vendor
+answers.
+
+#### Qwen's shared addresses
+
+Alibaba Cloud put the shared `dashscope.aliyuncs.com` domain into maintenance
+on 30 September 2026: what it serves keeps working, and nothing new is added
+to it. Its notice does not say whether `dashscope-intl.aliyuncs.com` is
+included, or whether a model released later reaches either. The two Qwen API
+key rows still send there. Alibaba Cloud asks for the address of your own Model
+Studio workspace wherever possible, which a key row reaches with `baseUrl`, the
+address its requests are posted to:
+
+```json
+{ "providers": { "qwen": { "baseUrl": "https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions" } } }
+```
+
+with your workspace's id for `{WorkspaceId}`, and `cn-beijing` in place of
+`ap-southeast-1` for a mainland China workspace. A request sent to a `baseUrl`
+asks for no fast form and claims no reviewed cache: see [Fast](fast.md) and
+[Prompt caching](prompt-caching.md).
+
+### What each new vendor has, and what no source settled
+
+Where a vendor's pages did not settle a fact, the vendor still ships, with the
+choice that asks least of it, and this says which fact it was.
+
+- **Meta.** Web search through `web_search`, and no fetch: Meta serves none.
+  Provider-managed caching. No fast form: Meta's `service_tier` field has no
+  stated price, speed or behaviour. `max` is not offered on
+  `muse-spark-1.3`, because Meta's pages disagree on whether it takes one.
+  What a failed `web_search` call carries is not documented.
+- **xAI.** Web search through `web_search`, and no fetch: xAI's search item
+  documents no action that opens one page. Provider-managed caching. No fast
+  form: xAI serves a priority tier, but no source shows how it refuses one.
+- **DeepSeek.** No web tool on Chat Completions. Provider-managed caching,
+  with no published smallest prefix. No fast form: DeepSeek serves none.
+  `deepseek-flash` reads pictures; crucible sends it text alone.
+- **Z.ai.** No web tool: its Chat Completions search is not a tool the model
+  calls, and its pages disagree on which models take it. Provider-managed
+  caching, with no stated lifetime. No fast form: no source shows how
+  `glm-5.3-flashx` is refused. Z.ai's and Zhipu's API terms forbid using the
+  service through unauthorised third-party software, without saying whether a
+  client sending your own key is that; accepting those terms is yours.
+- **Qwen.** No web tool: its pages disagree on whether these four models take
+  search on Chat Completions. Provider-managed caching; caching at the plan
+  addresses is not documented. No fast form: no source shows how
+  `qwen3.8-max-prime` is refused or reported. Whether the plan addresses
+  honour a rung is not documented; crucible offers the 3.8 models' rungs
+  there as on a key.
+- **MiMo.** No web tool: MiMo's search must be switched on in its console,
+  and no source shows how a request is refused where it is not. Provider-managed
+  caching. No fast form: no source shows how `mimo-v2.6-pro-ultraspeed` is
+  refused or reported. Xiaomi's agreement forbids tools it has not authorised,
+  without saying what that covers; accepting those terms is yours.
+- **MiniMax.** No web tool on Chat Completions. Provider-managed caching from
+  512 input tokens. No fast form: no source shows how its priority tier or
+  `MiniMax-M2.7-highspeed` is refused, or how a Chat Completions answer says
+  which served it. MiniMax's reference and guide name different fields for the
+  reasoning it sends back.
 
 ## How much context is used
 
 A model's native maximum is not necessarily the session's context window.
-Without an explicit configuration, the window is 200,000 tokens for Anthropic and Google,
-272,000 for OpenAI, and 262,144 for Moonshot. A model with a smaller native limit
+Without an explicit configuration, the window is 200,000 tokens for Anthropic,
+Google and the seven vendors new in this release, 272,000 for OpenAI, and
+262,144 for Moonshot. A model with a smaller native limit
 stays smaller. The compaction reserve is separate and is subtracted when deciding
 whether another exchange fits.
 
@@ -259,10 +393,16 @@ current effort first. Nothing is silently mapped to a different rung.
 | Google | `gemini-3.6-flash` | low, medium, high |
 | Google | `gemini-3.1-pro-preview` | low, medium, high |
 | Anthropic | `claude-fable-5-1` | low, medium, high, xhigh, max |
+| Anthropic | `claude-opus-5-5` | low, medium, high, xhigh, max |
+| Anthropic | `claude-sonnet-5-5` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-astra` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6.1-sol` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6-sol` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6-luna` | low, medium, high, xhigh, max |
 
-No configured effort means no effort field. Fable 5.1 still uses adaptive
-thinking, including the documented preserved-thinking and per-message effort
+No configured effort means no effort field. Opus 5.5 and Sonnet 5.5 are
+asked, and their thinking kept and replayed, as Fable 5.1's is. Fable 5.1 still
+uses adaptive thinking, including the documented preserved-thinking and per-message effort
 controls. Preserved thinking requires a compatible Anthropic workspace data
 retention setting; consult [Anthropic's preserved-thinking guide](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
 Crucible does not change workspace retention on your behalf.
@@ -281,9 +421,20 @@ with. Which variable is read follows from the provider:
 | Provider | Variable | Sent as |
 | --- | --- | --- |
 | `anthropic` | `ANTHROPIC_API_KEY` | `x-api-key` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `authorization: Bearer …` |
 | `google` | `GEMINI_API_KEY` | `x-goog-api-key` |
+| `meta` | `META_API_KEY` | `authorization: Bearer …` |
+| `mimo` | `MIMO_API_KEY` | `authorization: Bearer …` |
+| `minimax` | `MINIMAX_API_KEY` | `authorization: Bearer …` |
 | `moonshot` | `MOONSHOT_API_KEY` | `authorization: Bearer …` |
 | `openai` | `OPENAI_API_KEY` | `authorization: Bearer …` |
+| `qwen` | `DASHSCOPE_API_KEY` | `authorization: Bearer …` |
+| `xai` | `XAI_API_KEY` | `authorization: Bearer …` |
+| `zai` | `ZAI_API_KEY` | `authorization: Bearer …` |
+
+Meta's own reference names `MODEL_API_KEY`, a name another vendor's tool could
+read too; crucible reads `META_API_KEY`, as Meta's own command-line client
+does. A key kept under another name is reached with `apiKeyEnv`.
 
 Only the chosen provider's variable is read. Running `crucible --model
 openai/gpt-5.6-terra` needs `OPENAI_API_KEY` set and does not care whether
@@ -316,8 +467,8 @@ time or broke off after the bound had filled ends in
 ` [cut: crucible stopped reading here]`, because whether that one had more to
 come usually cannot be told. Either way the end of what was kept is dropped
 wherever that end begins a key, since a cut can land in the middle of one.
-Google, Fable 5.1 and Astra answer every refusal with a sentence of crucible's
-own instead.
+Google, Fable 5.1, Opus 5.5, Sonnet 5.5 and Astra answer every refusal with a
+sentence of crucible's own instead.
 
 The exact key crucible sent is removed from a log line, an error message, a
 session file and anything crucible prints. That is the value crucible knows it
@@ -430,9 +581,11 @@ never learn whether it came from an account or a key.
 
 ### Account login today
 
-`/login` offers ChatGPT and Kimi Code accounts. ChatGPT uses browser PKCE or
-device authorization and is fixed to the ChatGPT subscription Responses
-endpoint.
+`/login` offers ChatGPT and Kimi Code accounts. The other rows of its
+subscription list, MiniMax's plan and Qwen's Coding Plan and Token Plan, take a
+plan's key and sign in to nothing; see [rows and sites](#rows-and-sites).
+ChatGPT uses browser PKCE or device authorization and is fixed to the ChatGPT
+subscription Responses endpoint.
 Kimi Code uses RFC 8628 device authorization, with one row for each of Kimi's
 two sites, and an account belongs to one of them:
 
@@ -454,7 +607,11 @@ to receive either token.
 Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
 are not a third-party authentication contract. Anthropic is reached with a
 Console API key instead. The *Provide your own API key* route also stores API
-keys for OpenAI, Google and MoonshotAI. Google accepts a Gemini Developer API
+keys for DeepSeek, Google, Meta, MiMo, MiniMax, MoonshotAI, OpenAI, Qwen, xAI
+and Z.ai. Meta's Muse Code subscription, the Z.ai Coding Plan, MiMo's Token
+Plan and xAI's SuperGrok have no row: Meta keeps the Muse Code credential for
+Muse Code alone, the Z.ai Coding Plan names the tools it may be used in and
+crucible is not one, and the other two are not offered in this release. Google accepts a Gemini Developer API
 key only; Gemini product subscriptions are not an authentication route here.
 
 Google requests use `POST https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse`
@@ -483,7 +640,9 @@ reasoning enabled. The cost is that other vendors serving an "OpenAI-compatible"
 API implement the older
 endpoint and not this one, so `openai` means OpenAI here rather than anything
 that speaks its shape. `moonshot` is that older endpoint, read by a provider of
-its own.
+its own, and so are `deepseek`, `zai`, `qwen`, `mimo` and `minimax`, each with
+its vendor's own ways of asking for reasoning and of reporting usage. `meta` and
+`xai` speak Responses, with what each vendor does differently kept beside it.
 
 Two consequences you can see:
 
@@ -516,8 +675,9 @@ Asking again would spend your time to reach the same sentence.
 
 ## MoonshotAI issues a key against one console or the other
 
-This is the one provider where a working key can still be refused, and the
-refusal does not say why.
+Here a working key can still be refused, and the refusal does not say why.
+A Qwen or MiniMax key given to the other site is refused the same way; see
+[rows and sites](#rows-and-sites).
 
 MoonshotAI sells two products with separate consoles, and a key from one is not
 accepted by the other:

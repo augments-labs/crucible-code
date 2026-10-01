@@ -108,9 +108,16 @@ protocol's half, with each provider under the name a refusal line uses:
 | Provider | Its requests carry |
 | --- | --- |
 | `anthropic` | pictures, PDFs |
+| `deepseek` | nothing but text |
 | `google` | pictures, PDFs, video, audio |
+| `meta` | nothing but text |
+| `mimo` | nothing but text |
+| `minimax` | nothing but text |
 | `moonshot` | pictures, video |
 | `openai` | pictures, PDFs |
+| `qwen` | nothing but text |
+| `xai` | nothing but text |
+| `zai` | nothing but text |
 
 The narrower of the two decides, and it is decided for every request rather
 than once: [switch model](../providers/reading.md#changing-model-in-a-session)
