@@ -1149,8 +1149,12 @@ pub const NO_PROVIDER_CHOSEN: &str =
 /// What a session with no model to ask is missing.
 ///
 /// One value per sentence above, so that a front end with a screen says the
-/// sentence and a client is told the value, and the two cannot disagree about
-/// which piece is missing.
+/// sentence and a client is told the value, each decided by [`missing`].
+///
+/// With nobody chosen, the terminal reads the store each time it says the
+/// sentence, while a client is answered from the store as the conversation
+/// last read it: at the launch and after each `/login` or `/logout`. A key
+/// another process stored or forgot in between is seen by the terminal first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Missing {
     /// Nothing on this machine is set up to answer: [`NOTHING_TO_ASK`].

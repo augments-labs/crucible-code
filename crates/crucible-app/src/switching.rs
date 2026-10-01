@@ -375,8 +375,10 @@ impl Conversation {
     ///
     /// Every path out of [`Self::logged_in`] and [`Self::log_out`] that leaves
     /// nobody chosen ends here or in setting the flag from the same read, so
-    /// what [`Self::missing`] answers is the store as it is after the change,
-    /// as a terminal reading the store again would say it.
+    /// what [`Self::missing`] answers is the store as it was read after the
+    /// change. A terminal reads the store again each time it says what is
+    /// missing; a change another process makes later reaches the answer here
+    /// only at the next `/login` or `/logout`.
     fn reread(&mut self, with: &Switching<'_>) {
         if self.serving.is_none() {
             self.reachable = reachable(with, &with.logins.read());
@@ -409,9 +411,19 @@ impl Conversation {
     }
 }
 
-/// Whether any provider offered can be set up from `stored`.
+/// Whether any provider offered has a credential in `stored` or beside it.
+///
+/// A provider refused for anything but a missing credential, such as an
+/// address a setting names that cannot be sent to, still counts: it is one
+/// [`crate::providers::available`] lists, and the terminal's sentence and a
+/// client's answer are read from that list.
 fn reachable(with: &Switching<'_>, stored: &StoredCredentials) -> bool {
-    offered(with.providers).any(|other| (with.serving)(other, stored).is_ok())
+    offered(with.providers).any(|other| {
+        !matches!(
+            (with.serving)(other, stored),
+            Err(AppError::Authentication { .. })
+        )
+    })
 }
 
 /// Whether `model` on `provider` may be asked at `effort`.

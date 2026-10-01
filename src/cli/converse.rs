@@ -869,6 +869,12 @@ fn ran<T: Terminal>(
     work: Work,
     held: &mut Held<'_>,
 ) -> Result<(Conversation, bool), Fatal> {
+    // Room made because a picked-up session was taken as notes reaches here
+    // without passing the box, so it is asked here as `/compact` is there.
+    if matches!(work, Work::Room(_)) && !answerable(&conversation) {
+        unanswered(&conversation, renderer, terms)?;
+        return Ok((conversation, false));
+    }
     if warning::held(&conversation, renderer, terms, &work, held)? {
         return Ok((conversation, false));
     }

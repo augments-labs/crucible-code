@@ -433,3 +433,81 @@ fn piped_compact_with_no_model_to_ask_fails_as_a_piped_prompt_does() {
         "{problem:?}"
     );
 }
+
+/// A transcript long enough that a recap has an older middle to replace.
+fn long_enough() -> crucible_types::Transcript {
+    let mut transcript = crucible_types::Transcript::new();
+    let said = "a long thing said ".repeat(2_000);
+    for _ in 0..12 {
+        transcript
+            .push(Message::said(said.as_str()))
+            .expect("valid fixture transcript");
+        transcript
+            .push(Message::Agent {
+                continuation: None,
+                text: said.as_str().into(),
+                calls: Vec::new(),
+                stop: Some(StopReason::Yielded),
+            })
+            .expect("valid fixture transcript");
+    }
+    transcript
+}
+
+#[test]
+fn a_resumed_compaction_with_no_model_sends_nothing_and_says_what_is_missing() {
+    // "Carry on from summary" on a session picked up with a provider served
+    // and no model chosen is a recap request naming no model. It is answered
+    // the way `/compact` is: the warning, and no request.
+    let script = Script::new(vec![saying("a recap")]);
+    let asked = script.asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        Runner::new(
+            Box::new(script),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: String::new().into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+        .resuming(long_enough())
+    });
+    let terms = plain();
+    let card = opening();
+    let mut input = Cursor::new(Vec::new());
+    let mut held = Held::new(
+        terms.plan.clone(),
+        terms.sending,
+        Answers {
+            input: &mut input,
+            keys: false,
+        },
+        &card,
+    );
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+
+    let ran = crate::cli::converse::ran(
+        conversation,
+        &mut renderer,
+        &terms,
+        crate::cli::converse::Work::Room(Compacting::Resumed),
+        &mut held,
+    );
+
+    assert!(
+        matches!(ran, Ok((_, false))),
+        "{:?}",
+        ran.map(|(_, left)| left)
+    );
+    assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let written = renderer.terminal().written();
+    assert!(written.contains("No model selected"), "{written}");
+}

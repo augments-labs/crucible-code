@@ -16,7 +16,8 @@ change in any release with no deprecation period.
   prompt was written into the session before it was refused. Both are now
   answered with what is missing (a credential, a provider or a model) and
   nothing is recorded or sent; at a terminal, `/compact` gives the warning a
-  prompt does, and ends a piped run as one does.
+  prompt does and ends a piped run as one does, and "Carry on from summary" on
+  a resumed session gives that warning too.
 
 ## [0.44.1] - 2026-10-01
 

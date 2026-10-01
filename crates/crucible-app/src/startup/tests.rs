@@ -1423,6 +1423,7 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
 mod conformance;
 mod following;
 mod lending;
+mod unserved;
 
 /// Where `stored` sends a Moonshot request, with `exported` in its variable
 /// and `sending` configured, if anything.

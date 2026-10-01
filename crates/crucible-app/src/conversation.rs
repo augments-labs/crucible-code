@@ -58,7 +58,9 @@ pub struct Conversation {
     /// where the provider standing in for nobody is put in place, from the
     /// same credentials the sentence it refuses with was chosen from, read
     /// again after every `/login` and `/logout` that leaves nobody chosen, and
-    /// read only while [`Self::serving`] is `None`.
+    /// read only while [`Self::serving`] is `None`. The store as this
+    /// conversation last read it, so a change another process makes in
+    /// between is not seen until then.
     pub(crate) reachable: bool,
     /// The yes given to each route whose vendor uses what is sent, where the
     /// run holds one: a turn on such a route with no yes is asked about
