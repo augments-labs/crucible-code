@@ -1709,3 +1709,18 @@ fn every_model_a_row_serves_is_one_its_provider_offers() {
         }
     }
 }
+
+/// No model answers at greater length than its window holds, whatever the
+/// database lists for a model served at a fraction of its window.
+#[test]
+fn no_model_in_the_table_answers_longer_than_its_window() {
+    for facts in models::FACTS {
+        assert!(
+            facts.output <= facts.window,
+            "{} answers {} in a window of {}",
+            facts.model,
+            facts.output,
+            facts.window
+        );
+    }
+}

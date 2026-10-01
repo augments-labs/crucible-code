@@ -48,9 +48,9 @@ use serde_json::Value;
 /// vendor serves at a fraction of the size the database lists under the shared
 /// key. It is a fact somebody checked, written down once beside the model —
 /// never a figure read out of the model's own name, which is the guess this
-/// program must never make. The output ceiling is left alone: it is a property
-/// of the model, and the same model answers at the same length whatever slice
-/// of its window a request may use.
+/// program must never make. The output ceiling is otherwise left alone: it is a
+/// property of the model, and the same model answers at the same length
+/// whatever slice of its window a request may use, short of the window itself.
 const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
     (
         "anthropic",
@@ -264,6 +264,9 @@ fn rows<'a>(found: &[Found<'a>]) -> Result<BTreeMap<(&'a str, &'a str), Row>, St
             Some(by) if by > 1 => window / by,
             _ => window,
         };
+        // And no answer runs longer than the window it is written into,
+        // whatever the database lists beside a window it serves whole.
+        let output = output.min(window);
         let accepts = accepts(one.entry).map_err(|why| format!("{provider}/{key} {why}"))?;
         rows.insert(
             (provider, one.model),
