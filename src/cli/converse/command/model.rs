@@ -23,17 +23,22 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::switching::Switched;
 use crucible_client_api::{Command, Name};
-use crucible_models::Effort;
+use crucible_models::{Effort, FastForm};
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
-    clip, fold,
+    fold, label,
 };
 
 use crate::cli::Fatal;
 use crate::cli::choice::Choice;
 use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
-use crucible_app::providers::{Model, NO_MODEL_CHOSEN, Served, offered};
+use crate::cli::converse::warning::{self, Chosen};
+use std::collections::BTreeMap;
+
+use crucible_app::providers::{
+    InUse, Model, NO_MODEL_CHOSEN, Providers, Served, StoredCredentials, offered,
+};
 use crucible_app::startup::served;
 
 use super::{Asked, Terms, about, say};
@@ -65,6 +70,92 @@ fn nothing(glyphs: Glyphs) -> String {
 
 /// What the row of a model whose provider serves no rung says at its end.
 const NO_RUNG: &str = "no rung";
+
+/// What the row of a model with a fast form says at its end.
+const FAST: &str = "fast";
+
+/// The fast form `model` has on the route `served` is served on: none at a
+/// configured address, which is not the vendor's to answer for, and the
+/// sign-in's where a stored sign-in serves the provider.
+fn routed(served: Served, model: &str, based: bool, signed_in: bool) -> FastForm {
+    if based {
+        return FastForm::None;
+    }
+    match served.fast_signed_in.filter(|_| signed_in) {
+        Some(signed) => signed(model),
+        None => (served.fast)(model),
+    }
+}
+
+/// The fast form a row's model has on its provider's route, as the settings
+/// and the credential store say that route is.
+fn row_form(
+    served: Served,
+    model: &str,
+    settings: &crucible_config::Settings,
+    stored: &crucible_app::providers::StoredCredentials,
+) -> FastForm {
+    routed(
+        served,
+        model,
+        settings.base_url(served.name).is_some(),
+        stored.has_subscription(served.name),
+    )
+}
+
+/// The one note a model's row has room for: `no rung` before `fast`.
+fn note(rungs: &[Effort], form: FastForm) -> &'static str {
+    if rungs.is_empty() {
+        NO_RUNG
+    } else if form == FastForm::None {
+        ""
+    } else {
+        FAST
+    }
+}
+
+/// What a model that is itself warned says in the note column.
+const TRAINS: &str = "trains";
+
+/// The note of a row whose model is itself warned, `warned`: `trains` before
+/// anything about its rungs or its speed.
+fn noted(warned: bool, rungs: &[Effort], form: FastForm) -> &'static str {
+    if warned { TRAINS } else { note(rungs, form) }
+}
+
+/// The models of `all` each provider's credential in use serves, from
+/// `using`, the credential each provider is sent with.
+fn narrowed(all: Vec<Selected>, using: &BTreeMap<&str, InUse>) -> Vec<Selected> {
+    all.into_iter()
+        .filter(|one| {
+            using
+                .get(one.provider.name)
+                .and_then(|in_use| in_use.serves)
+                .is_none_or(|serves| serves.contains(&one.model.name))
+        })
+        .collect()
+}
+
+/// What heads the pane narrowed to `provider`: the provider and the words of
+/// the credential its models are served by, or nothing where it has none.
+fn headed(provider: &str, using: &BTreeMap<&str, InUse>, glyphs: Glyphs) -> Option<String> {
+    let dot = glyphs.dot();
+    using
+        .get(provider)
+        .map(|in_use| format!("{provider} {dot} {}", in_use.words.replace('·', dot)))
+}
+
+/// The quiet row under the pane narrowed to `provider`: how many more of its
+/// models another credential would serve, and where it is given.
+fn closing(provider: Served, using: &BTreeMap<&str, InUse>, glyphs: Glyphs) -> Option<String> {
+    let serves = using.get(provider.name)?.serves?;
+    let more = provider
+        .models
+        .iter()
+        .filter(|model| !serves.contains(&model.name))
+        .count();
+    (more > 0).then(|| format!("{more} more with an API key {} /login", glyphs.dot()))
+}
 
 /// What the strip says where the marked model serves no rung.
 ///
@@ -134,7 +225,7 @@ pub(super) fn run<T: Terminal>(
     keys: bool,
 ) -> Result<(), Fatal> {
     if !said.is_empty() {
-        return named(said, renderer, conversation, terms);
+        return named(said, renderer, conversation, terms, keys);
     }
 
     if keys {
@@ -143,15 +234,28 @@ pub(super) fn run<T: Terminal>(
         let current = Asked {
             provider: conversation.serving(),
             model: runner.model(),
+            effort: runner.effort().map(Effort::as_str),
+            pace: super::Pace::of(runner),
         };
-        match stood(renderer, terms, current, track, &mut |_| Ok(()))? {
-            Shelved::Took(selected, rung) => {
-                return applied(selected, rung, renderer, conversation, terms);
+        let mut on = None;
+        loop {
+            match stood(renderer, terms, (current, on), track, &mut |_| Ok(()))? {
+                Shelved::Took(selected, rung) => {
+                    let chose = (selected.provider.name, selected.model.name);
+                    match warning::choosing(renderer, terms, chose, keys, &mut |_| Ok(()))? {
+                        Chosen::Take => {
+                            return applied(selected, rung, renderer, conversation, terms);
+                        }
+                        // Back to the shelf, with the mark where it was.
+                        Chosen::Back => on = Some(chose),
+                        Chosen::Stop(said) => return say(renderer, &said),
+                    }
+                }
+                // Escape asked for the screen that was there before the shelf. A
+                // listing under it would be the same question put a second time.
+                Shelved::Left => return say(renderer, LEFT),
+                Shelved::Cramped => break,
             }
-            // Escape asked for the screen that was there before the shelf. A
-            // listing under it would be the same question put a second time.
-            Shelved::Left => return say(renderer, LEFT),
-            Shelved::Cramped => {}
         }
     }
 
@@ -172,7 +276,13 @@ pub(super) fn picked_while<T: Terminal>(
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Taken<Selected>, Fatal> {
     Ok(
-        match stood(renderer, terms, current, Track::Refused, while_waiting)? {
+        match stood(
+            renderer,
+            terms,
+            (current, None),
+            Track::Refused,
+            while_waiting,
+        )? {
             Shelved::Took(selected, _) => Taken::Took(selected),
             Shelved::Left => Taken::Left,
             Shelved::Cramped => Taken::Cramped,
@@ -211,6 +321,7 @@ pub(super) fn confirmed<T: Terminal>(
     ];
 
     let panel = Panel {
+        source: None,
         title: "Switch model?",
         said: Some(&says),
         shown: &rows,
@@ -231,6 +342,7 @@ fn named<T: Terminal>(
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
     terms: &Terms,
+    keys: bool,
 ) -> Result<(), Fatal> {
     let Some(choice) = Choice::parse(said) else {
         return say(renderer, "! a model cannot have an empty provider");
@@ -270,6 +382,15 @@ fn named<T: Terminal>(
         }
         provider
     };
+
+    // Words name one thing, so going back from the question is leaving it.
+    match warning::choosing(renderer, terms, (provider.name, &model), keys, &mut |_| {
+        Ok(())
+    })? {
+        Chosen::Take => {}
+        Chosen::Back => return say(renderer, LEFT),
+        Chosen::Stop(said) => return say(renderer, &said),
+    }
 
     // Dropped for the same reason `apply` drops it: `/model provider/name`
     // names one thing and takes it or says why not, and there is no second half
@@ -312,35 +433,29 @@ fn keys(glyphs: Glyphs) -> (String, String) {
 fn stood<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    current: Asked<'_>,
+    (current, on): (Asked<'_>, Option<(&str, &str)>),
     track: Track,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Shelved<Selected>, Fatal> {
     let providers = terms.providers.snapshot();
-    let all = narrowing::every(&providers);
     let glyphs = terms.style().glyphs();
     let (long, short) = keys(glyphs);
+    // Read once for the shelf, not once a frame: which providers a stored
+    // sign-in serves decides the fast form a row's model has, and which of
+    // its models each provider's credential in use serves decides its list.
+    let stored = terms.logins.read();
+    let using = in_use(terms, &providers, &stored);
+    let all = narrowed(narrowing::every(&providers), &using);
+    let routes = terms.consent.routes();
 
     // Which model is in force goes on the title row rather than beside an
     // entry: it is one fact about the session, and a pane whose rows all read
     // the same way is one that can be walked without reading each of them.
-    // Labelled, because a slug on its own at the far end of the title row is a
-    // name with nothing saying what it is the name of. The rung rides with it:
+    // Labelled, because a model's label on its own at the far end of the title
+    // row is a name with nothing saying what it is the name of. The rung rides with it:
     // both are what the next turn would be asked under, and the shelf below
     // offers to change either.
-    let asked = match current.model {
-        "" => NOTHING_ASKED.to_owned(),
-        name => {
-            let slug = format!("{}/{name}", current.provider.unwrap_or("unselected"));
-            match track {
-                Track::Offered(Some(effort)) => {
-                    format!("{slug} {} {}", glyphs.dot(), effort.as_str())
-                }
-                _ => slug,
-            }
-        }
-    };
-    let now = format!("now  {asked}");
+    let now = titled(current, glyphs);
     let nothing = nothing(glyphs);
     let norung = match track {
         Track::Offered(_) => serves_none(glyphs),
@@ -350,11 +465,13 @@ fn stood<T: Terminal>(
     // Opened on the one in force, so the first key moves off a known place
     // rather than towards one. A model chosen elsewhere is on no row here, and
     // the title above is where it is named.
+    // Or on the one a question just went back from.
+    let (provider, model) = on.map_or((current.provider, current.model), |(provider, model)| {
+        (Some(provider), model)
+    });
     let at = all
         .iter()
-        .position(|one| {
-            Some(one.provider.name) == current.provider && one.model.name == current.model
-        })
+        .position(|one| Some(one.provider.name) == provider && one.model.name == model)
         .unwrap_or(0);
     let rung = match track {
         Track::Offered(Some(effort)) => all
@@ -437,7 +554,19 @@ fn stood<T: Terminal>(
                 .models
                 .iter()
                 .zip(&windows)
-                .map(|(one, window)| Stocked {
+                .map(|(one, window)| {
+                    let now = Some(one.provider.name) == current.provider
+                        && one.model.name == current.model;
+                    // The model in force by the provider set up for it, which
+                    // knows the credential; the rest by their provider's route.
+                    let form = if now {
+                        current.pace.form
+                    } else {
+                        row_form(one.provider, one.model.name, &terms.settings, &stored)
+                    };
+                    (one, window, now, form)
+                })
+                .map(|(one, window, now, form)| Stocked {
                     name: one.model.name,
                     // Who serves it, until the shelf is one provider's — at
                     // which point the pane beside it is already saying so, once
@@ -448,16 +577,24 @@ fn stood<T: Terminal>(
                         ""
                     },
                     window,
-                    note: if one.model.rungs.is_empty() {
-                        NO_RUNG
-                    } else {
-                        ""
-                    },
-                    now: Some(one.provider.name) == current.provider
-                        && one.model.name == current.model,
+                    note: noted(
+                        routes
+                            .warned(&crucible_app::content_use::model_route(
+                                one.provider.name,
+                                one.model.name,
+                            ))
+                            .is_some(),
+                        one.model.rungs,
+                        form,
+                    ),
+                    now,
                 })
                 .collect();
 
+            let heading = only.and_then(|name| headed(name, &using, glyphs));
+            let closing = only
+                .and_then(|name| served(&providers, name).ok())
+                .and_then(|provider| closing(provider, &using, glyphs));
             let shelf = Shelf {
                 title: "Model",
                 now: &now,
@@ -476,6 +613,8 @@ fn stood<T: Terminal>(
                 keys: (&long, &short),
                 norung: &norung,
                 pointer: standing.pointer,
+                heading: heading.as_deref(),
+                closing: closing.as_deref(),
             };
 
             let rows = shelf.within(columns, room, glyphs);
@@ -624,7 +763,14 @@ fn taken<T: Terminal>(
 
     // The word may have come off the line and was never shape-checked — anything
     // at all can follow `/model ` — so it goes out the way arrived text goes out.
-    renderer.commit(&format!("{provider}/{name}"))?;
+    // The rung asked for with the model where the shelf marked one, which is
+    // put on the runner just after this; otherwise the one kept across it.
+    renderer.commit(&answered(
+        provider,
+        name,
+        effort.or(conversation.runner().effort()),
+        terms.style().glyphs(),
+    ))?;
 
     // Both halves written, and the row above already says what to. Where they
     // went is not news: it is the same file every time, chosen by crucible
@@ -674,32 +820,120 @@ fn listed<T: Terminal>(
 ) -> Result<(), Fatal> {
     // Read out of a configuration file or off the command line either way, so
     // it goes out the way arrived text goes out.
-    match conversation.runner().model() {
+    let runner = conversation.runner();
+    match runner.model() {
         "" => renderer.commit(NO_MODEL_CHOSEN)?,
-        name => renderer.commit(&format!(
-            "{}/{name}",
-            conversation.serving().unwrap_or("unselected")
+        name => renderer.commit(&in_force(
+            conversation.serving(),
+            name,
+            runner.effort(),
+            terms.style().glyphs(),
         ))?,
     }
 
-    let columns = renderer.columns();
-    let rows: Vec<Row> = offered(&terms.providers.snapshot())
-        .flat_map(|provider| provider.models.iter().map(move |model| (provider, model)))
-        .map(|(provider, model)| {
-            let named = if model.shown == model.name {
-                format!("/model {}/{}", provider.name, model.name)
-            } else {
-                about(
-                    &format!("/model {}/{}", provider.name, model.name),
-                    model.shown,
-                    terms.style().glyphs(),
-                )
-            };
-            Row::new().then(Slot::Quiet, clip(&named, columns))
-        })
-        .collect();
+    let providers = terms.providers.snapshot();
+    let stored = terms.logins.read();
+    let lines = lines(
+        narrowing::every(&providers),
+        &in_use(terms, &providers, &stored),
+        terms.consent.routes(),
+        terms.style().glyphs(),
+    );
 
-    Ok(renderer.present(&rows)?)
+    // A line at a time, so each passes through the window on its way up: the
+    // list is taller than a window can be, and laid down at once only the
+    // rows that fit the window are ever drawn. Folded rather than cut where
+    // the window is narrower, since what a line ends with, `trains`, is the
+    // part that must be read.
+    for line in lines {
+        say(renderer, &line)?;
+    }
+    Ok(())
+}
+
+/// The line that asks for each model of `all` the credential in use serves,
+/// for a window with no shelf: the same models the shelf lists, and `trains`
+/// after one that is itself warned, as its row would say.
+fn lines(
+    all: Vec<Selected>,
+    using: &BTreeMap<&str, InUse>,
+    routes: &crucible_app::content_use::Routes,
+    glyphs: Glyphs,
+) -> Vec<String> {
+    narrowed(all, using)
+        .iter()
+        .map(|one| {
+            let (provider, model) = (one.provider, one.model);
+            let asks = format!("/model {}/{}", provider.name, model.name);
+            let named = if model.shown == model.name {
+                asks
+            } else {
+                about(&asks, model.shown, glyphs)
+            };
+            let route = crucible_app::content_use::model_route(provider.name, model.name);
+            if routes.warned(&route).is_some() {
+                about(&named, TRAINS, glyphs)
+            } else {
+                named
+            }
+        })
+        .collect()
+}
+
+/// The credential each offered provider is sent with, read off `stored`
+/// and the environment as a run would read it.
+fn in_use<'a>(
+    terms: &Terms,
+    providers: &'a Providers,
+    stored: &StoredCredentials,
+) -> BTreeMap<&'a str, InUse> {
+    let auth = crucible_app::startup::ProviderAuth {
+        settings: &terms.settings,
+        from: &*terms.environment,
+        stored,
+        subscriptions: &terms.subscriptions,
+    };
+    offered(providers)
+        .filter_map(|provider| {
+            crucible_app::providers::in_use(provider, auth).map(|one| (provider.name, one))
+        })
+        .collect()
+}
+
+/// The model in force as the shelf's title row says it, with the rung in
+/// force: while a turn runs none may be taken here, but one is still being
+/// asked on, and the row under the box names it too.
+fn titled(current: Asked<'_>, glyphs: Glyphs) -> String {
+    match current.model {
+        "" => format!("now  {NOTHING_ASKED}"),
+        name => format!(
+            "now  {}",
+            label(
+                current.provider.unwrap_or_default(),
+                name,
+                current.effort,
+                current.pace.served.then_some("fast"),
+                glyphs
+            )
+        ),
+    }
+}
+
+/// The model a switch took, as the row answering `/model` says it: the same
+/// label the row under the box then draws.
+fn answered(provider: &str, name: &str, effort: Option<Effort>, glyphs: Glyphs) -> String {
+    label(provider, name, effort.map(Effort::as_str), None, glyphs)
+}
+
+/// The model in force, as the list printed where no shelf fits opens.
+fn in_force(provider: Option<&str>, name: &str, effort: Option<Effort>, glyphs: Glyphs) -> String {
+    label(
+        provider.unwrap_or_default(),
+        name,
+        effort.map(Effort::as_str),
+        None,
+        glyphs,
+    )
 }
 
 #[cfg(test)]

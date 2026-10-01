@@ -12,6 +12,8 @@ use crucible_types::{Attachment, Compacting, Spend};
 use super::deciding::{Deciding, Front};
 use super::reading;
 use crate::Conversation;
+use crate::content_use::Warned;
+use crate::remember::RememberError;
 
 /// How a command [`turn`] was given ended, in the application's own values.
 #[derive(Debug)]
@@ -22,6 +24,12 @@ pub enum Ended {
     Turn(Result<Turned, TurnError>),
     /// A compaction, and what it made room for.
     Room(Result<Room, TurnError>),
+    /// Nothing was sent: the route it would go on is one whose vendor uses
+    /// what is sent, and no yes to it was given. The question was declined,
+    /// went unanswered, or could not be put to the client.
+    Warned(Warned),
+    /// Nothing was sent: a yes was given and could not be written down.
+    Unrecorded(RememberError),
 }
 
 /// Takes the turn `request` asks for: a prompt, or a compaction somebody asked
@@ -45,6 +53,27 @@ pub async fn turn(
     front: &mut dyn Front,
     run: &RunContext<'_>,
 ) -> Ended {
+    // Before anything could be sent, and at this door so that every client is
+    // asked the same way: a route whose vendor uses what is sent, with no yes
+    // to it, is put to the front as a pending action, and a yes given there is
+    // written into the user's own file before the turn goes.
+    //
+    // Every route that holds the send is put in turn: two warned routes at
+    // one origin each keep the request back until each has its yes. A yes is
+    // written down before the next is put, so none comes back.
+    while matches!(request.command(), Command::Prompt(_) | Command::Compact)
+        && let Some(warned) = unanswered(conversation)
+    {
+        let accepted = super::deciding::warned(request.capabilities(), front, &warned).await;
+        let Some(consent) = conversation.consent().filter(|_| accepted) else {
+            return Ended::Warned(warned);
+        };
+        // A yes that could not be written down is not a going back: said as
+        // the failure it is, and nothing is sent.
+        if let Err(problem) = consent.accept(&warned) {
+            return Ended::Unrecorded(problem);
+        }
+    }
     match request.command() {
         Command::Prompt(prompt) => {
             let mut ask = Deciding::new(front, request.capabilities());
@@ -71,6 +100,7 @@ pub async fn turn(
         | Command::Resume(_)
         | Command::SelectModel { .. }
         | Command::SetEffort(_)
+        | Command::SetSpeed(_)
         | Command::SetMode(_)
         | Command::CycleMode
         | Command::Login { .. }
@@ -79,8 +109,16 @@ pub async fn turn(
         | Command::CleanCache
         | Command::Sandbox { .. }
         | Command::Help
+        | Command::ReleaseNotes { .. }
         | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
+}
+
+/// The warned route a turn of `conversation` would go on with no yes.
+fn unanswered(conversation: &Conversation) -> Option<Warned> {
+    conversation
+        .consent()?
+        .unanswered(conversation.serving()?, conversation.runner().model())
 }
 
 /// Asks the turn `cancel` belongs to to stop.
@@ -106,6 +144,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::Resume(_)
         | Command::SelectModel { .. }
         | Command::SetEffort(_)
+        | Command::SetSpeed(_)
         | Command::SetMode(_)
         | Command::CycleMode
         | Command::Login { .. }
@@ -114,6 +153,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::CleanCache
         | Command::Sandbox { .. }
         | Command::Help
+        | Command::ReleaseNotes { .. }
         | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -165,6 +205,14 @@ impl Ended {
             Self::Room(Err(problem)) => {
                 Outcome::Room(RoomOutcome::Failed(Problem::failed(problem)))
             }
+            Self::Unrecorded(problem) => {
+                Outcome::Turn(TurnOutcome::Failed(Problem::failed(problem)))
+            }
+            Self::Warned(warned) => Outcome::Turn(TurnOutcome::Warned {
+                route: Text::cut(warned.route),
+                sentence: Text::cut(warned.warning.sentence),
+                source: Text::cut(&warned.warning.cited()),
+            }),
         }
     }
 }

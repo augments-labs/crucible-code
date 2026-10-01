@@ -53,7 +53,7 @@ use crucible_app::startup::ProviderAuth;
 use crucible_app::subscription::Subscriptions;
 use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
-use crucible_client_api::{Command, Prompt, Refusal};
+use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
 use crucible_context::Room;
 use crucible_runner::{Event, Runner, Turned};
 use crucible_runtime::Cancel;
@@ -100,6 +100,7 @@ mod resuming;
 mod secret;
 mod turning;
 mod typing;
+mod warning;
 
 /// How long the loop waits on the turn before looking at the keyboard.
 ///
@@ -221,6 +222,8 @@ pub(crate) struct Terms {
     /// ends, when the runner is this side's again, so the row between turns
     /// names the model the next one is asked under.
     pub(crate) pending_model: Cell<Option<(Served, String)>>,
+    /// A speed taken off `/fast` mid-turn, held the same way.
+    pub(crate) pending_speed: Cell<Option<crucible_models::Speed>>,
     /// A mode shift+tab stepped to mid-turn, held for the turn the loop starts
     /// next.
     ///
@@ -246,6 +249,9 @@ pub(crate) struct Terms {
     pub(crate) logins: Store,
     /// Subscription implementations compiled into this binary.
     pub(crate) subscriptions: Subscriptions,
+    /// The yes given to each route whose vendor uses what is sent, which the
+    /// clients this run sends through ask before a request leaves.
+    pub(crate) consent: crucible_app::content_use::Consent,
     /// Sets a provider up the way the launch set this run's up.
     ///
     /// `/login` is what calls it, handing back the keys it just wrote — so what
@@ -714,6 +720,15 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
+        // A model named with nobody to ask it of, as `--model foo` is on a
+        // machine with nothing set up: the provider standing in refuses every
+        // turn. At a terminal that refusal is the warning and `/login` is a
+        // key away. Down a pipe it is the run above, unanswerable to the last
+        // line, and it ends the same way rather than `Ok`.
+        if !renderer.is_terminal() && !conversation.runner().provider().reaches_a_model() {
+            return Err(Fatal::Unanswerable(terms.unasked(conversation.serving())));
+        }
+
         let imported = attaching::imported(&held);
         let attached = attaching::beside(
             renderer,
@@ -848,6 +863,9 @@ fn ran<T: Terminal>(
     work: Work,
     held: &mut Held<'_>,
 ) -> Result<(Conversation, bool), Fatal> {
+    if warning::held(&conversation, renderer, terms, &work, held)? {
+        return Ok((conversation, false));
+    }
     // Only a line somebody typed has a reply to hang under it, which is why
     // this asks who asked rather than what ran: room made because the window
     // filled, or because a resumed session was picked up as notes, was nobody's
@@ -885,15 +903,21 @@ fn ran<T: Terminal>(
     let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
     let mut conversation = took.conversation;
 
-    // A model picked and a mode stepped to while the work ran are put on the
+    // A speed, a model and a mode taken while the work ran are put on the
     // runner now, the moment it is this side's again, so the row between turns
     // and the next turn agree, and a step made between them moves from the
     // mode the row shows. After the reply above, which answered the line that
-    // asked for this work. A session leaving drops both, a confirmed `/model`
-    // pick included: it has no next turn, and the pick is not written down.
+    // asked for this work. The speed goes first: its price was the model in
+    // force's, and another model taken over the same turn resets it. A session
+    // leaving drops all three, a confirmed `/model` pick included: it has no
+    // next turn, and the pick is not written down.
     let model = terms.pending_model.take();
     let mode = terms.pending_mode.take();
+    let speed = terms.pending_speed.take();
     if !leaving {
+        if let Some(speed) = speed {
+            command::apply_speed(renderer, &mut conversation, terms, speed)?;
+        }
         if let Some((provider, name)) = model {
             command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
         }
@@ -1238,7 +1262,7 @@ impl Turn<'_, '_> {
             command::MidTurn::Live => self.live(renderer, command),
             command::MidTurn::Deferred => self.deferred(renderer, command),
             command::MidTurn::Refused(why) => {
-                command::refused(renderer, command.command(), why, self.terms.style()).map(|_| ())
+                command::refused(renderer, command, why, self.terms.style()).map(|_| ())
             }
         }
     }
@@ -1300,13 +1324,19 @@ impl Turn<'_, '_> {
         let current = command::Asked {
             provider: self.serving,
             model: &model,
+            effort: self.says.effort,
+            pace: self.says.pace,
         };
         let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })?;
-        if let Some(command::Kept::Model(provider, name)) = picked {
-            self.terms.pending_model.set(Some((provider, name)));
+        match picked {
+            Some(command::Kept::Model(provider, name)) => {
+                self.terms.pending_model.set(Some((provider, name)));
+            }
+            Some(command::Kept::Speed(speed)) => self.terms.pending_speed.set(Some(speed)),
+            None => {}
         }
         Ok(())
     }
@@ -1342,7 +1372,7 @@ fn take<T: Terminal>(
     // The model beside it for the same two reasons: the row says it, and only
     // `/model` and `/effort` change it — neither of which can be run while the
     // turn they would change is the one running.
-    let mut says = typing::under(conversation.runner());
+    let mut says = typing::under(conversation.runner()).naming(&terms.commands.snapshot());
     let serving = conversation.serving();
 
     // And what ended while nothing was running goes into the aside rather than
@@ -1543,6 +1573,10 @@ fn sent(
                 Did::Reported
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
+            // Not reached from here: every route holding the send is asked
+            // about on the drawing thread before the work is sent, each yes
+            // is written down there, and nothing on the worker takes one out.
+            Ended::Warned(_) | Ended::Unrecorded(_) => Did::Unsent(ErrorCode::Abandoned.into()),
         };
 
         (conversation, did)
@@ -1792,6 +1826,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Steered { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
+            | Event::FastRefused { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => true,
         },

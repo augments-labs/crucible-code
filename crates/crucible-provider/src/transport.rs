@@ -47,6 +47,12 @@ pub enum TransportError {
     /// The request could not be sent, or the connection failed.
     #[error("{0}")]
     Unreachable(Box<str>),
+
+    /// The client held the request back until the person answers for the
+    /// route it would have gone to: nothing was sent, and asking again sends
+    /// nothing either.
+    #[error("{0}")]
+    Held(Box<str>),
 }
 
 impl TransportError {
@@ -61,6 +67,39 @@ impl TransportError {
                     .into(),
             },
             Self::Unreachable(problem) => ProviderError::Transport { provider, problem },
+            // Its own failure: not retried, and known to have reached no host.
+            Self::Held(problem) => ProviderError::Held(format!("{provider}: {problem}").into()),
+        }
+    }
+}
+
+/// The response header a vendor says the tier that served a request in: the
+/// one header a provider reads, kept where it arrives. Every other header is
+/// left where it arrived.
+pub(crate) const SERVED_TIER: &str = "x-gemini-service-tier";
+
+/// What a response's [`SERVED_TIER`] header said.
+///
+/// A byte rather than the words: it sits in the room the status leaves, so a
+/// response of every other provider is no larger for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tier {
+    /// No such header.
+    Unsaid,
+    /// `priority`, the tier a fast request asks for.
+    Priority,
+    /// Any other tier.
+    Other,
+}
+
+impl Tier {
+    /// What a [`SERVED_TIER`] header of `value` said, or none where there is
+    /// no such header.
+    pub(crate) fn read(value: Option<&str>) -> Self {
+        match value {
+            None => Self::Unsaid,
+            Some("priority") => Self::Priority,
+            Some(_) => Self::Other,
         }
     }
 }
@@ -69,6 +108,8 @@ impl TransportError {
 pub struct PostResponse {
     status: u16,
     body: PostBody,
+    /// What the [`SERVED_TIER`] header said.
+    tier: Tier,
 }
 
 /// The body behind a [`PostResponse`].
@@ -87,6 +128,7 @@ impl PostResponse {
         Self {
             status,
             body: PostBody::Reader(Box::new(body)),
+            tier: Tier::Unsaid,
         }
     }
 
@@ -95,7 +137,18 @@ impl PostResponse {
         Self {
             status,
             body: PostBody::Network(body),
+            tier: Tier::Unsaid,
         }
+    }
+
+    /// The same response, its [`SERVED_TIER`] header having said `tier`.
+    pub(crate) fn with_tier(self, tier: Tier) -> Self {
+        Self { tier, ..self }
+    }
+
+    /// What its [`SERVED_TIER`] header said.
+    pub(crate) const fn tier(&self) -> Tier {
+        self.tier
     }
 
     /// The response status. Every status is an answer to the protocol reading it.
@@ -131,6 +184,7 @@ impl fmt::Debug for PostResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PostResponse")
             .field("status", &self.status)
+            .field("tier", &self.tier)
             .finish_non_exhaustive()
     }
 }
@@ -300,6 +354,7 @@ pub trait Transport: Send + Sync + fmt::Debug {
 pub(crate) struct Replay {
     status: u16,
     body: String,
+    tier: Option<String>,
     sent: std::sync::Mutex<Vec<Sent>>,
 }
 
@@ -319,7 +374,16 @@ impl Replay {
         Self {
             status,
             body: body.into(),
+            tier: None,
             sent: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The same, answering with `tier` in the [`SERVED_TIER`] header.
+    pub(crate) fn tiered(self, tier: &str) -> Self {
+        Self {
+            tier: Some(tier.to_owned()),
+            ..self
         }
     }
 
@@ -391,7 +455,8 @@ impl Transport for Replay {
             Ok(PostResponse::recorded(
                 self.status,
                 std::io::Cursor::new(self.body.clone().into_bytes()),
-            ))
+            )
+            .with_tier(Tier::read(self.tier.as_deref())))
         })
     }
 }
@@ -585,5 +650,21 @@ mod tests {
         let problem = TransportError::Cancelled.for_provider("test");
 
         assert!(matches!(problem, ProviderError::Cancelled("test")));
+    }
+}
+
+#[cfg(test)]
+mod held_tests {
+    use super::*;
+
+    /// A request held back is not a network that failed for a moment: it is
+    /// not retried, and it is known to have been sent nowhere.
+    #[test]
+    fn a_held_request_is_not_retried_and_was_sent_nowhere() {
+        let said = "nothing was sent: key:google waits for an answer";
+        let error = TransportError::Held(said.into()).for_provider("google");
+        assert!(!error.transient(), "{error:?}");
+        assert!(matches!(&error, ProviderError::Held(_)), "{error:?}");
+        assert!(error.to_string().contains(said), "{error}");
     }
 }

@@ -48,9 +48,9 @@ use serde_json::Value;
 /// vendor serves at a fraction of the size the database lists under the shared
 /// key. It is a fact somebody checked, written down once beside the model —
 /// never a figure read out of the model's own name, which is the guess this
-/// program must never make. The output ceiling is left alone: it is a property
-/// of the model, and the same model answers at the same length whatever slice
-/// of its window a request may use.
+/// program must never make. The output ceiling is otherwise left alone: it is a
+/// property of the model, and the same model answers at the same length
+/// whatever slice of its window a request may use, short of the window itself.
 const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
     (
         "anthropic",
@@ -59,7 +59,19 @@ const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
         None,
     ),
     ("anthropic", "claude-fable-5", Some("claude-fable-5"), None),
+    (
+        "anthropic",
+        "claude-opus-5-5",
+        Some("claude-opus-5-5"),
+        None,
+    ),
     ("anthropic", "claude-opus-5", Some("claude-opus-5"), None),
+    (
+        "anthropic",
+        "claude-sonnet-5-5",
+        Some("claude-sonnet-5-5"),
+        None,
+    ),
     (
         "anthropic",
         "claude-sonnet-5",
@@ -93,11 +105,43 @@ const OFFERED: &[(&str, &str, Option<&str>, Option<u32>)] = &[
         Some("kimi-k2.7-code-highspeed"),
         None,
     ),
+    ("deepseek", "deepseek-flash", Some("deepseek-flash"), None),
+    ("deepseek", "deepseek-v4-pro", Some("deepseek-v4-pro"), None),
+    ("meta", "muse-spark-1.3", Some("muse-spark-1.3"), None),
+    (
+        "meta",
+        "muse-spark-1.3-contributor",
+        Some("muse-spark-1.3-contributor"),
+        None,
+    ),
+    ("meta", "muse-spark-1.2", Some("muse-spark-1.2"), None),
+    (
+        "meta",
+        "muse-spark-1.2-contributor",
+        Some("muse-spark-1.2-contributor"),
+        None,
+    ),
+    ("mimo", "mimo-v2.6-pro", Some("mimo-v2.6-pro"), None),
+    ("mimo", "mimo-v2.6-flash", Some("mimo-v2.6-flash"), None),
+    ("minimax", "MiniMax-M3", Some("MiniMax-M3"), None),
+    ("minimax", "MiniMax-M2.7", Some("MiniMax-M2.7"), None),
     ("openai", "gpt-6-astra", Some("gpt-6-astra"), None),
+    ("openai", "gpt-6.1-sol", Some("gpt-6.1-sol"), None),
+    ("openai", "gpt-6-sol", Some("gpt-6-sol"), None),
+    ("openai", "gpt-6-luna", Some("gpt-6-luna"), None),
     ("openai", "gpt-5.6-sol", Some("gpt-5.6-sol"), None),
     ("openai", "gpt-5.6-terra", Some("gpt-5.6-terra"), None),
     ("openai", "gpt-5.6-luna", Some("gpt-5.6-luna"), None),
     ("openai", "gpt-5.5", Some("gpt-5.5"), None),
+    ("qwen", "qwen3.8-max", Some("qwen3.8-max"), None),
+    ("qwen", "qwen3.8-flash", Some("qwen3.8-flash"), None),
+    ("qwen", "qwen3.7-plus", Some("qwen3.7-plus"), None),
+    ("qwen", "qwen3.6-plus", Some("qwen3.6-plus"), None),
+    ("xai", "grok-4.7", Some("grok-4.7"), None),
+    ("xai", "grok-4.6", Some("grok-4.6"), None),
+    ("zai", "glm-5.3", Some("glm-5.3"), None),
+    ("zai", "glm-5.3-flash", Some("glm-5.3-flash"), None),
+    ("zai", "glm-5.2", Some("glm-5.2"), None),
 ];
 
 /// The table this writes.
@@ -107,6 +151,11 @@ const TABLE: &str = "crates/crucible-app/src/models.rs";
 fn listed(provider: &'static str) -> &'static str {
     match provider {
         "moonshot" => "moonshotai",
+        // The pay-as-you-go listing; a plan serves the same models under the
+        // same names, and some of them with a smaller ceiling, which the
+        // window crucible starts at is far below either way.
+        "qwen" => "alibaba",
+        "mimo" => "xiaomi",
         other => other,
     }
 }
@@ -209,12 +258,27 @@ fn rows<'a>(found: &[Found<'a>]) -> Result<BTreeMap<(&'a str, &'a str), Row>, St
             return Err(format!("{provider}/{key} states a limit too large to hold"));
         };
 
+        // The whole window an answer is written into, which counts the answer
+        // where the input limit does not.
+        let whole = match limit
+            .get("context")
+            .and_then(Value::as_u64)
+            .filter(|whole| *whole > 0)
+        {
+            Some(whole) => u32::try_from(whole)
+                .map_err(|_| format!("{provider}/{key} states a limit too large to hold"))?,
+            None => window,
+        };
+
         // A model served at a fraction of the listed window is written at that
         // fraction, the divisor stated beside it rather than read from anywhere.
-        let window = match one.divisor {
-            Some(by) if by > 1 => window / by,
-            _ => window,
+        let (window, whole) = match one.divisor {
+            Some(by) if by > 1 => (window / by, whole / by),
+            _ => (window, whole),
         };
+        // And no answer runs longer than the whole window it is written into,
+        // whatever the database lists beside a window it serves whole.
+        let output = output.min(whole);
         let accepts = accepts(one.entry).map_err(|why| format!("{provider}/{key} {why}"))?;
         rows.insert(
             (provider, one.model),
@@ -368,6 +432,39 @@ mod tests {
             table.ends_with("    },\n];\n"),
             "the table closes after a row"
         );
+    }
+
+    #[test]
+    fn an_answer_is_held_within_the_whole_window_and_not_the_input_alone() {
+        let entry = |limit: Value| json!({ "limit": limit, "modalities": { "input": ["text"] } });
+        let row = |entry: &Value, divisor: Option<u32>| {
+            let found = [Found {
+                provider: "fabricated",
+                model: "m",
+                key: "m",
+                divisor,
+                entry,
+            }];
+            rows(&found).map(|rows| {
+                rows.get(&("fabricated", "m"))
+                    .map(|row| (row.window, row.output))
+            })
+        };
+
+        // An input limit apart from the window leaves the answer its own room.
+        let split = entry(json!({ "context": 200_000, "input": 72_000, "output": 128_000 }));
+        assert_eq!(row(&split, None), Ok(Some((72_000, 128_000))));
+        // A window served at a fraction holds no answer longer than itself.
+        let whole = entry(json!({ "context": 1_048_576, "output": 1_048_576 }));
+        assert_eq!(row(&whole, Some(4)), Ok(Some((262_144, 262_144))));
+        // A whole window of nothing is no window stated, as an input limit of
+        // nothing is, and one too large to hold stops the run as the window
+        // would, rather than falling back to the input limit unsaid.
+        let nothing = entry(json!({ "context": 0, "input": 72_000, "output": 128_000 }));
+        assert_eq!(row(&nothing, None), Ok(Some((72_000, 72_000))));
+        let huge =
+            entry(json!({ "context": 5_000_000_000_u64, "input": 72_000, "output": 128_000 }));
+        assert!(row(&huge, None).is_err());
     }
 
     #[test]

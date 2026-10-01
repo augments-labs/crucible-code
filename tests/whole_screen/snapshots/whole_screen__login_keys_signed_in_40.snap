@@ -1,0 +1,36 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 1422
+expression: keys
+---
+40x30 cursor 28,0 scrolled 0
+|                                        |
+|› /login                                |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|  Google                                |
+|  uses what is sent · set GEMINI_API_KEY|
+|                                        |
+|  Meta                                  |
+|  set META_API_KEY                      |
+|                                        |
+|  MiMo                                  |
+|  set MIMO_API_KEY                      |
+|                                        |
+|  MiniMax · minimax.io                  |
+|  may use what is sent · set MINIMAX_AP…|
+|                                        |
+|  MiniMax · minimaxi.com                |
+|  may use what is sent · a pay-as-you-g…|
+|                                        |
+|  MoonshotAI · kimi.ai                  |
+|  may train on what is sent · a Kimi Co…|
+|                                        |
+|› MoonshotAI · kimi.com                 |
+|  signed in · may use what is sent      |
+|  · 8 more                              |
+|                                        |
+|esc to go back                          |
+|                                        |

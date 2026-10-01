@@ -37,7 +37,7 @@ use crate::key_panel::KeyPanel;
 use crate::ladder::Ladder;
 use crate::menu::{Listed, Menu};
 use crate::notice::Notice;
-use crate::panel::{Offered, Panel};
+use crate::panel::{Heading, Offered, Panel};
 use crate::picker::{Kept, Picker};
 use crate::plan::{Plan, State, Task};
 use crate::prompt::Prompt;
@@ -45,6 +45,7 @@ use crate::row::Row;
 use crate::running::{Command, Running};
 use crate::sandbox_panel::{SandboxPanel, SandboxTab};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
+use crate::timeline::{Brief, Timeline, Told};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
 
@@ -164,6 +165,7 @@ fn a_panel_fits_the_window_it_stands_in() {
     ];
 
     let panel = Panel {
+        source: None,
         title: PROSE,
         said: Some(PROSE),
         shown: &OFFERED,
@@ -171,9 +173,65 @@ fn a_panel_fits_the_window_it_stands_in() {
         footer: "enter to take it · esc to leave",
     };
     across("a panel", |columns, glyphs| panel.rows(columns, glyphs));
+    let cited = Panel {
+        source: Some(PROSE),
+        ..panel
+    };
+    across("a panel citing its source", |columns, glyphs| {
+        cited.rows(columns, glyphs)
+    });
+    down("a panel citing its source", |columns, room, glyphs| {
+        cited.within(columns, room, glyphs)
+    });
     down("a panel", |columns, room, glyphs| {
         panel.within(columns, room, glyphs)
     });
+}
+
+#[test]
+fn a_panel_under_headings_fits_the_window_it_stands_in() {
+    const OFFERED: [Offered<'static>; 3] = [
+        Offered {
+            name: "anthropic",
+            says: PROSE,
+        },
+        Offered {
+            name: LONG,
+            says: "the one with a name nothing can shorten",
+        },
+        Offered {
+            name: "google",
+            says: "",
+        },
+    ];
+    const HEADINGS: [Heading<'static>; 2] = [
+        Heading {
+            before: 0,
+            name: LONG,
+        },
+        Heading {
+            before: 2,
+            name: PROSE,
+        },
+    ];
+
+    for chosen in 0..OFFERED.len() {
+        let panel = Panel {
+            source: None,
+            title: PROSE,
+            said: Some(PROSE),
+            shown: &OFFERED,
+            chosen,
+            footer: "enter to take it · esc to leave",
+        }
+        .under(&HEADINGS);
+        across("a panel under headings", |columns, glyphs| {
+            panel.rows(columns, glyphs)
+        });
+        down("a panel under headings", |columns, room, glyphs| {
+            panel.within(columns, room, glyphs)
+        });
+    }
 }
 
 #[test]
@@ -205,8 +263,19 @@ fn the_sandbox_panel_fits_the_window_it_stands_in() {
 #[test]
 fn a_key_panel_fits_the_window_it_stands_in() {
     // A name too long for any label, and more held than any frame can show.
-    for (provider, held) in [("anthropic", 0), (LONG, 3), (LONG, 4096)] {
-        let panel = KeyPanel { provider, held };
+    for (provider, held, replaces, leaves) in [
+        ("anthropic", 0, None, "esc to cancel"),
+        (LONG, 3, None, "esc to cancel"),
+        (LONG, 4096, None, "esc to cancel"),
+        ("anthropic", 0, Some(PROSE), "esc to go back"),
+        (LONG, 3, Some(LONG), LONG),
+    ] {
+        let panel = KeyPanel {
+            provider,
+            held,
+            replaces,
+            leaves,
+        };
         across("a key panel", |columns, glyphs| panel.rows(columns, glyphs));
         down("a key panel", |columns, room, glyphs| {
             panel.within(columns, room, glyphs).0
@@ -272,12 +341,21 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
         model: "claude-opus-5",
         provider: "anthropic",
         effort: Some("high"),
+        speed: Some("fast"),
         asking: Some("queued"),
         commands: crate::CommandCount::new(2, true),
         room: 6,
+        named: &["/model", "/help"],
     };
     across("the prompt box", |columns, glyphs| {
         prompt.rows(columns, glyphs)
+    });
+    let commanding = Prompt {
+        draft: crate::Draft::at("/model claude-opus-5", 20),
+        ..prompt
+    };
+    across("the prompt box with a command typed", |columns, glyphs| {
+        commanding.rows(columns, glyphs)
     });
     across("a committed prompt", |columns, glyphs| {
         Prompt::committed(PROSE, columns, glyphs, true)
@@ -524,9 +602,21 @@ fn a_shelf_fits_the_window_it_stands_in() {
         keys: (PROSE, LONG),
         norung: LONG,
         pointer: None,
+        heading: Some(LONG),
+        closing: Some(PROSE),
     };
     down("a shelf", |columns, room, glyphs| {
         shelf.within(columns, room, glyphs)
+    });
+
+    // Walking the providers, where a folded shelf windows its strip to keep
+    // the marked one, past two that cannot fit, in view.
+    let walking = Shelf {
+        pane: Pane::Providers,
+        ..shelf
+    };
+    down("a shelf walking its providers", |columns, room, glyphs| {
+        walking.within(columns, room, glyphs)
     });
 
     let bare = Shelf {
@@ -603,5 +693,55 @@ fn a_picker_fits_the_window_it_stands_in() {
     };
     down("a picker with nothing on it", |columns, room, glyphs| {
         bare.within(columns, room, glyphs)
+    });
+}
+
+#[test]
+fn the_release_timeline_fits_the_window_it_is_printed_into() {
+    const COUNTED: [(&str, usize); 3] = [("added", 18), ("known limits", 6), (LONG, 1)];
+    const OLDER: [Brief<'static>; 2] = [
+        Brief {
+            version: "0.0.1",
+            date: "2026-08-08",
+            counted: &COUNTED,
+        },
+        Brief {
+            version: LONG,
+            date: LONG,
+            counted: &[],
+        },
+    ];
+    let words = format!(
+        "**{PROSE}** {LONG}\n\n### Fixed\n\n- **{PROSE}** {LONG} `{LONG}`\n\n\
+         | Key | {LONG} |\n| --- | --- |\n| `a` | {PROSE} |\n\n```\n{LONG}{LONG}\n```\n"
+    );
+    let told = [
+        Told {
+            brief: Brief {
+                version: "0.41.1",
+                date: "2026-09-14",
+                counted: &COUNTED,
+            },
+            text: &words,
+        },
+        Told {
+            brief: Brief {
+                version: LONG,
+                date: LONG,
+                counted: &COUNTED,
+            },
+            text: &words,
+        },
+    ];
+    let timeline = Timeline {
+        older: &OLDER,
+        told: &told,
+        running: Some(LONG),
+        forge: None,
+        closing: Some(PROSE),
+        most: 20_000,
+    };
+    across("the release timeline", |columns, glyphs| {
+        timeline.rows(columns, glyphs)
     });
 }

@@ -78,6 +78,7 @@ pub mod attachments;
 mod cleanup;
 mod clearing;
 mod compaction;
+mod fast;
 mod load;
 mod passes;
 mod record;
@@ -191,6 +192,8 @@ pub struct Runner {
     /// The worker every call is lent for its blocking work, where the wiring
     /// gave one.
     worker: Option<ToolWorker>,
+    /// The speed asked for, and the speed the last answer was served at.
+    pace: fast::Pace,
 }
 
 /// What `agent` would be advertised out of `tools`, between turns.
@@ -294,6 +297,7 @@ impl Runner {
             prompt_cache_store: None,
             sandbox_audits: SandboxAuditRegistry::new(),
             worker: None,
+            pace: fast::Pace::default(),
         };
         runner.state.load.requesting(
             runner.agent.instructions(),
@@ -1652,7 +1656,8 @@ impl Runner {
                 prompt_cache: Some(&cache),
                 ..request
             };
-            let streamed = self.provider.stream(request, listening.run.cancel()).await;
+            let streamed =
+                fast::sent(&*self.provider, &mut self.pace, request, listening.run).await;
             // Recorded and reported before a failure ends the turn.
             let disposition = request_disposition(&streamed);
             if let Some(attempt) = self
@@ -1691,6 +1696,7 @@ impl Runner {
 
         self.hear(stream.as_mut(), answer, listening, cache_observation)
             .await?;
+        self.pace.served = stream.served();
         // EOF is itself a read. Cancellation can arrive during that read even
         // when the stream returns no final delta, so check the run's authority
         // again before making any native state or tool call replayable.
@@ -1918,7 +1924,9 @@ fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheReque
         Err(
             ProviderError::Cancelled(_)
             | ProviderError::Credential { .. }
-            | ProviderError::Unconfigured(_),
+            | ProviderError::Unconfigured(_)
+            | ProviderError::Held(_)
+            | ProviderError::FastRefused { .. },
         ) => PromptCacheRequestDisposition::NotSent,
         Err(ProviderError::Refused { .. } | ProviderError::WindowExceeded { .. }) => {
             PromptCacheRequestDisposition::Rejected

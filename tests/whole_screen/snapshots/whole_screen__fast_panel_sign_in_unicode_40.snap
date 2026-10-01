@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+40x24 cursor 22,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /fast                                 |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Speed · openai · gpt-5.6-sol · ChatGPT s|
+|                                        |
+|› Standard                              |
+|  The standard price and speed          |
+|                                        |
+|  Fast                                  |
+|  2.5x your plan's usage; 2x purchased …|
+|                                        |
+|enter to choose · esc to cancel         |
+|                                        |

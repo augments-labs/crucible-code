@@ -70,13 +70,27 @@ A file written by a later crucible gets this sentence rather than a silent fall
 back to whichever key is exported. See [which
 provider](../providers/providers.md#which-provider).
 
+### `crucible: no provider called qwen; this build has anthropic, google, moonshot, openai`
+
+This is 0.43.3 or earlier started with no `--model` over a configuration file
+in which 0.44 or later wrote `provider` as one of the providers 0.43.3 does not
+have: `deepseek`, `meta`, `mimo`, `minimax`, `qwen`, `xai` or `zai`. `/model`
+writes it when one of them is chosen, and so does a `/login` that sets the
+session up. Before rolling back to
+0.43.3, set `provider` in the configuration file in your home directory to
+`anthropic`, `google`, `moonshot` or `openai`, or delete it. Keys and plan keys
+stored for the new providers stay in `auth.json` under names 0.43.3 leaves
+alone, and are used again by a later crucible.
+
 ## Keys and models
 
 ### `Warning: No models available. Use /login or set an API key environment variable. Then use /model to select a model.`
 
 Said under the welcome, and again at a prompt, when no provider holds a
-credential: none of `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MOONSHOT_API_KEY`
-or `OPENAI_API_KEY` is exported with a value, and `/login` has stored nothing.
+credential: none of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
+`DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`,
+`MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` or
+`ZAI_API_KEY` is exported with a value, and `/login` has stored nothing.
 An exported variable that is empty holds no key. Everything but a turn works in
 this state, so export a key or run `/login`, then `/model`.
 
@@ -137,12 +151,56 @@ fixed to the vendor's own address and a `baseUrl` needs an API key instead. Fix
 the address, or take it out. See [keys](../providers/providers.md#keys) and
 [account login today](../providers/providers.md#account-login-today).
 
+### `crucible: <name>: <what the vendor's terms say> Nothing was sent; answer it once in a terminal.`
+
+The route this run would send on, named as the question titles it, is one
+whose vendor says it may use what is sent to train or improve its models,
+nobody has said yes to it, and there is no
+terminal to ask on: input or output is redirected. Nothing was sent. Start
+crucible once in a terminal and send anything on that route: choose **Use it
+anyway** and the answer is kept, so later runs, redirected or not, are not
+asked. See [content use](../providers/content-use.md).
+
+### `! this route needs an answer first; make the window taller and send again`
+
+The panel asking about a route whose vendor uses what is sent did not fit the
+window, so nothing was sent and your message is still in the prompt box. Make
+the window taller and send it again. The same line ending `choose again` comes
+from `/login` or `/model`, where nothing was chosen.
+
+### `<provider>: nothing was sent: <route> waits for an answer`
+
+A request was about to leave on a route whose vendor uses what is sent, before
+that route had its yes. It was held, and nothing was sent. Send a message on
+the route in a terminal to be asked: for a route named `model:<provider>/<model>`,
+choose that model with `/model` first, since a web search keeps the model the
+run started with. To keep searches off that model instead, choose the model you
+want and start crucible again: the next run starts on it, where no project
+file or `--model` names another. Or see [content
+use](../providers/content-use.md).
+
+### `crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>`
+
+This is 0.43.3 or earlier reading a configuration file a later crucible wrote a
+yes into. Delete the `contentUse` block from the configuration file in your
+home directory, then start the older crucible again. A later crucible asks the
+question again the next time you send on such a route.
+
+### `crucible: <home>/config.json: providers.openai.fast is not a setting crucible has at line <n>, column <m>`
+
+This is 0.43.3 or earlier reading a configuration file a later crucible wrote a
+speed into; the provider named may be another. Delete `"fast": true` from each
+provider in the configuration file in your home directory, then start the older
+crucible again. A later crucible asks at standard speed until `/fast` is chosen
+again.
+
 ### `anthropic: HTTP 401: check the Anthropic API key and its model access`
 
 The provider refused the request with that status. For Anthropic's
-`claude-fable-5-1`, OpenAI's `gpt-6-astra` and every Google model the message
-is a sentence of crucible's own, chosen by status; for any other model, and
-for MoonshotAI, it is the service's own words, read for at most 8 KiB and
+`claude-fable-5-1`, `claude-opus-5-5` and `claude-sonnet-5-5`, OpenAI's
+`gpt-6-astra` and every Google model the message is a sentence of crucible's
+own, chosen by status; for any other model, and for every other provider, it is
+the service's own words, read for at most 8 KiB and
 ending in ` [cut: the reply was longer than crucible reads]` or
 ` [cut: crucible stopped reading here]` where it was cut.
 
@@ -156,30 +214,41 @@ ending in ` [cut: the reply was longer than crucible reads]` or
 A 401 from MoonshotAI in its own words, with a key you know is good, is
 usually a key from the other console: a Kimi Code key is accepted at
 `https://api.kimi.com/coding/v1`, an Open Platform key only at
-`https://api.moonshot.ai/v1`, which is set with `providers.moonshot.baseUrl`.
+`https://api.moonshot.ai/v1`, which is set with `providers.moonshot.baseUrl` as
+`https://api.moonshot.ai/v1/chat/completions`, the whole address requests are
+posted to.
 See [when a response goes
 away](../providers/providers.md#when-a-response-goes-away) and [MoonshotAI
 issues a key against one console or the
 other](../providers/providers.md#moonshotai-issues-a-key-against-one-console-or-the-other).
 
+The same holds for the other vendors that bind a key to a site. A Qwen or
+MiniMax key is refused at the other site's address, and a Qwen plan's key
+anywhere but its plan's address; a key from `DASHSCOPE_API_KEY` or
+`MINIMAX_API_KEY` goes to the international site, and one from `ZAI_API_KEY` to
+z.ai, so a bigmodel.cn key there may be refused too. Give a mainland China key
+on its own row in `/login`, or set `baseUrl` to the whole address its site's
+requests go to, ending `/chat/completions`. See [rows and
+sites](../providers/providers.md#rows-and-sites).
+
 ### `anthropic: overloaded_error: Anthropic could not finish this request; private details omitted`
 
 The request was accepted and the failure arrived inside the answer:
 `overloaded_error`, `api_error`, `timeout_error` or `rate_limit_error`. The
-sentence is crucible's own for `claude-fable-5-1`; any other Anthropic model
-shows the service's words after the kind, as in `anthropic: overloaded_error:
-Overloaded`. It is about the moment, not the request, so crucible asked again
-twice, a quarter and then half a second later, with `retrying` in the row above
+sentence is crucible's own for `claude-fable-5-1`, `claude-opus-5-5` and
+`claude-sonnet-5-5`; any other Anthropic model shows the service's words after
+the kind, as in `anthropic: overloaded_error: Overloaded`. It is about the
+moment, not the request, so crucible asked again twice, a quarter and then half a second later, with `retrying` in the row above
 the box, before reporting it. Ask again; nothing about the prompt needs to
 change. See [when a response goes
 away](../providers/providers.md#when-a-response-goes-away).
 
 ### `anthropic: unexpected response: Anthropic reported a message failure; private details omitted`
 
-The other failure `claude-fable-5-1` reports from inside an answer: Anthropic
-put an error in the stream whose kind is none of the four above. crucible
-keeps neither the kind nor the words, because a Fable response can carry the
-model's private history, and it does not ask again: a kind outside those four
+The other failure `claude-fable-5-1`, `claude-opus-5-5` and `claude-sonnet-5-5`
+report from inside an answer: Anthropic put an error in the stream whose kind
+is none of the four above. crucible keeps neither the kind nor the words,
+because a response from one of these can carry the model's private history, and it does not ask again: a kind outside those four
 is read as being about the request rather than the moment, so the same
 request would get the same answer. Any other Anthropic model shows every
 failure inside an answer as `anthropic: <kind>: <words>`, and is asked again.

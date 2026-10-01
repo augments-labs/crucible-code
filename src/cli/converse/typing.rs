@@ -481,7 +481,7 @@ pub(crate) fn ask<T: Terminal>(
     // inside one.
     planning.moved();
 
-    let mut says = saying(conversation.runner());
+    let mut says = saying(conversation.runner()).naming(commands);
     says.running = left.count();
 
     // A local, because where the mark was in it is not worth keeping: a list of
@@ -664,7 +664,7 @@ pub(crate) fn ask<T: Terminal>(
             Pressed::Cycle => {
                 terms.perform(conversation, Command::CycleMode);
 
-                says = saying(conversation.runner());
+                says = saying(conversation.runner()).naming(commands);
                 true
             }
 
@@ -775,6 +775,9 @@ pub(super) struct Says {
     pub(super) provider: &'static str,
     /// How hard it is being asked to think. `None` where no rung is in force.
     pub(super) effort: Option<&'static str>,
+    /// How fast the model is asked to answer, and was last served: the
+    /// label says `fast` after an answer served fast.
+    pub(super) pace: super::command::Pace,
     /// What the border and the sentence are both drawn in.
     pub(super) tone: Slot,
     /// A row under that, for something waiting on the very next key. `None` in
@@ -795,6 +798,9 @@ pub(super) struct Says {
     /// reads the mode rather than the sentence — which is why the value is
     /// kept beside its words instead of the words being parsed back.
     pub(crate) running_mode: Mode,
+    /// The commands a line may open with, by name, so the box can draw the one
+    /// it opens with in the accent. Told once a prompt, by [`Says::naming`].
+    pub(super) named: Vec<&'static str>,
 }
 
 impl Says {
@@ -1180,21 +1186,17 @@ pub(super) fn during<T: Terminal>(
                     // What Enter runs is the marked row where the list is open —
                     // a line still being typed is a reader choosing, and the mark
                     // is what they have chosen — and the typed word where it is
-                    // not. A bare `/` is the key that opens the list, not a
-                    // command, so it is never a submission.
-                    // A bare `/` is the key that opens the list, not a command:
-                    // it parses as a word that names none and is refused, which
-                    // is not what a reader pressing Enter while still choosing
-                    // meant. Only a line past the bare slash is ever submitted.
+                    // not. While a turn runs a bare `/` is the key that opened
+                    // the list, not a command and not a prompt: Enter on it
+                    // submits nothing, and the slash and its list stay put.
                     let bare = editor.text() == "/";
-                    let marked = opened_list.chosen().filter(|_| !bare);
-                    let owned = if bare {
-                        None
-                    } else {
-                        marked
-                            .and_then(|line| command::owned(&commands, line))
-                            .or_else(|| command::owned(&commands, editor.text()))
-                    };
+                    if bare {
+                        continue;
+                    }
+                    let marked = opened_list.chosen();
+                    let owned = marked
+                        .and_then(|line| command::owned(&commands, line))
+                        .or_else(|| command::owned(&commands, editor.text()));
                     if let Some(owned) = owned {
                         // The line as it was sent, which is the command where
                         // a marked row is what Return answered and the typed
@@ -1757,6 +1759,7 @@ pub(super) fn saying(runner: &Runner) -> Says {
         model: runner.model().to_owned(),
         provider: runner.serving(),
         effort: runner.effort().map(Effort::as_str),
+        pace: super::command::Pace::of(runner),
         tone: tone(mode),
         asking: None,
         left: runner.left(),
@@ -1764,6 +1767,7 @@ pub(super) fn saying(runner: &Runner) -> Says {
         // Filled in by the frame rather than by the session, because it changes
         // while nothing else on this row does.
         running: 0,
+        named: Vec::new(),
     }
 }
 

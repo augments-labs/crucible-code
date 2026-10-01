@@ -10,7 +10,7 @@
 //! Nothing here opens a file. This crate says what a document may hold; the
 //! wiring above it reads and writes.
 
-use crucible_models::Effort;
+use crucible_models::{Effort, Speed};
 use crucible_tools::Minted;
 use serde_json::Value;
 
@@ -34,9 +34,139 @@ const DRAWN: &str = "{\n  \"output\": {\n    \"KEY\": THEME\n  }\n}\n";
 /// nothing to write it beside.
 const UNASKED: &str = "{\n  \"compaction\": {\n    \"askOnResume\": 0\n  }\n}\n";
 
+/// The file crucible writes when a yes is all it has to say.
+const ACCEPTED: &str = "{\n  \"contentUse\": {\n    \"accepted\": [\n      ROUTE\n    ]\n  }\n}\n";
+
 /// The file crucible writes when it has nothing to write a provider's answer
 /// beside.
 const CHOSEN: &str = "{\n  \"providers\": {\n    PROVIDER: {\n      KEY: ANSWER\n    }\n  }\n}\n";
+
+/// The text of a configuration file that says yes to sending on `route`.
+///
+/// `text` is what the file holds now, and empty for a file that is not there
+/// yet. The route goes into `contentUse.accepted`, created with the block
+/// around it where the file has neither; a route already there leaves the
+/// file as it was.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] when the text is not JSON, and
+/// [`ConfigError::Unspliceable`] when it is JSON no answer can be written into
+/// without rewriting.
+pub fn accepting(text: &str, file: &str, route: &str) -> Result<String, ConfigError> {
+    let written = Value::String(route.to_owned()).to_string();
+
+    if text.trim().is_empty() {
+        return Ok(ACCEPTED.replace("ROUTE", &written));
+    }
+
+    let value = parsed(text, file)?;
+    let said = |block: &Value| {
+        block
+            .get("accepted")
+            .and_then(Value::as_array)
+            .is_some_and(|routes| routes.iter().any(|one| one.as_str() == Some(route)))
+    };
+    if value.get("contentUse").is_some_and(said) {
+        return Ok(text.to_owned());
+    }
+
+    let refuse = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: "contentUse.accepted".into(),
+        written: written.clone().into(),
+    };
+    let root = splice::root(text)
+        .filter(|_| value.is_object())
+        .ok_or_else(refuse)?;
+
+    // Outwards in, as a rule is added: whichever of the two is already there
+    // is where this stops.
+    let Some(block) = value.get("contentUse") else {
+        return Ok(splice::insert(text, root, |indent| match indent {
+            Some(indent) => format!(
+                "\"contentUse\": {{\n{indent}  \"accepted\": [\n{indent}    {written}\n{indent}  ]\n{indent}}}"
+            ),
+            None => format!("\"contentUse\": {{\"accepted\": [{written}]}}"),
+        }));
+    };
+    if !block.is_object() {
+        return Err(refuse());
+    }
+    let at = splice::member(text, root, "contentUse").ok_or_else(refuse)?;
+    match block.get("accepted") {
+        None => {
+            return Ok(splice::insert(text, at, |indent| match indent {
+                Some(indent) => format!("\"accepted\": [\n{indent}  {written}\n{indent}]"),
+                None => format!("\"accepted\": [{written}]"),
+            }));
+        }
+        Some(list) if !list.is_array() => return Err(refuse()),
+        Some(_) => {}
+    }
+    let accepted = splice::member(text, at, "accepted").ok_or_else(refuse)?;
+    Ok(splice::insert(text, accepted, |_| written.clone()))
+}
+
+/// The text of a configuration file with no yes to any route `gone` picks.
+///
+/// Only the `accepted` list is written over, with the routes left in it in
+/// the order they stood; every other byte stays where it was. A file that
+/// says yes to none of them is handed back as it is.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] when the text is not JSON, and
+/// [`ConfigError::Unremovable`] when it is JSON the list cannot be found in
+/// without rewriting.
+pub fn forgetting(
+    text: &str,
+    file: &str,
+    gone: impl Fn(&str) -> bool,
+) -> Result<String, ConfigError> {
+    if text.trim().is_empty() {
+        return Ok(text.to_owned());
+    }
+    let value = parsed(text, file)?;
+    let Some(held) = value
+        .get("contentUse")
+        .and_then(|block| block.get("accepted"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(text.to_owned());
+    };
+    let kept: Vec<&Value> = held
+        .iter()
+        .filter(|one| !one.as_str().is_some_and(&gone))
+        .collect();
+    if kept.len() == held.len() {
+        return Ok(text.to_owned());
+    }
+
+    let refuse = || ConfigError::Unremovable {
+        file: file.into(),
+        at: "contentUse.accepted".into(),
+    };
+    let root = splice::root(text).ok_or_else(refuse)?;
+    let block = splice::member(text, root, "contentUse").ok_or_else(refuse)?;
+    let accepted = splice::member(text, block, "accepted").ok_or_else(refuse)?;
+    let written: Vec<String> = kept.iter().map(ToString::to_string).collect();
+    Ok(splice::over(
+        text,
+        accepted,
+        &format!("[{}]", written.join(", ")),
+    ))
+}
+
+/// `text` as JSON, or the error naming where it stopped being JSON.
+fn parsed(text: &str, file: &str) -> Result<Value, ConfigError> {
+    serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
+        file: file.into(),
+        line: source.line(),
+        column: source.column(),
+        problem: crate::document::without_position(&source.to_string()).into(),
+    })
+}
 
 /// The text of a configuration file with one more `allow` rule in it.
 ///
@@ -374,20 +504,35 @@ fn output(text: &str, file: &str, key: &str, value_of: &str) -> Result<String, C
 /// [`ConfigError::Unspliceable`] when it is JSON that no answer can be written
 /// into without rewriting — which is the moment to tell somebody what to type
 /// rather than to guess at their file. [`ConfigError::Unremovable`] when the
-/// rung chosen for the previous model cannot be lifted out for the same
-/// reason.
+/// rung, or the speed kept for another model, cannot be lifted out for the
+/// same reason.
 pub fn choosing(
     text: &str,
     file: &str,
     provider: &str,
     model: &str,
 ) -> Result<String, ConfigError> {
-    let written = beside(text, file, provider, "model", model)?;
-    without_effort(&written, file, provider)
+    let was = named(text, provider);
+    let written = beside(text, file, provider, "model", &Value::from(model))?;
+    let written = without(&written, file, provider, "effort")?;
+    // The speed was chosen at that model's price, so it stays only with it.
+    if was.as_deref() == Some(model) {
+        Ok(written)
+    } else {
+        without(&written, file, provider, "fast")
+    }
 }
 
-/// Removes a rung chosen for the previous model.
-fn without_effort(text: &str, file: &str, provider: &str) -> Result<String, ConfigError> {
+/// The model `text` names for `provider`, where it is a file that names one.
+fn named(text: &str, provider: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    answered(&value, provider, "model")
+        .and_then(Value::as_str)
+        .map(|named| named.trim().to_owned())
+}
+
+/// Takes `providers.<provider>.<key>` out, where the file has it.
+fn without(text: &str, file: &str, provider: &str, key: &str) -> Result<String, ConfigError> {
     let value: Value = serde_json::from_str(text).map_err(|source| ConfigError::Malformed {
         file: file.into(),
         line: source.line(),
@@ -397,17 +542,17 @@ fn without_effort(text: &str, file: &str, provider: &str) -> Result<String, Conf
     let Some(chosen) = value.get("providers").and_then(|all| all.get(provider)) else {
         return Ok(text.to_owned());
     };
-    if chosen.get("effort").is_none() {
+    if chosen.get(key).is_none() {
         return Ok(text.to_owned());
     }
     let refuse = || ConfigError::Unremovable {
         file: file.into(),
-        at: format!("providers.{provider}.effort").into(),
+        at: format!("providers.{provider}.{key}").into(),
     };
     let root = splice::root(text).ok_or_else(refuse)?;
     let providers = splice::member(text, root, "providers").ok_or_else(refuse)?;
     let provider = splice::member(text, providers, provider).ok_or_else(refuse)?;
-    splice::remove(text, provider, "effort").ok_or_else(refuse)
+    splice::remove(text, provider, key).ok_or_else(refuse)
 }
 
 /// The text of a configuration file that asks `provider` to think this hard.
@@ -427,7 +572,75 @@ pub fn thinking(
     provider: &str,
     effort: Effort,
 ) -> Result<String, ConfigError> {
-    beside(text, file, provider, "effort", effort.as_str())
+    beside(
+        text,
+        file,
+        provider,
+        "effort",
+        &Value::from(effort.as_str()),
+    )
+}
+
+/// The text of a configuration file that asks `provider` for `model`, fast.
+///
+/// The speed is a choice about one model at its price, so the model is
+/// written with it, over whichever the file named, and the rung stays.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] and [`ConfigError::Unspliceable`], for the same
+/// reasons as [`choosing`].
+pub fn hastening(
+    text: &str,
+    file: &str,
+    provider: &str,
+    model: &str,
+) -> Result<String, ConfigError> {
+    let written = beside(text, file, provider, "model", &Value::from(model))?;
+    beside(&written, file, provider, "fast", &Value::Bool(true))
+}
+
+/// The text of a configuration file that asks `provider` for standard: the
+/// speed taken out, since a file that says nothing asks for standard.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`], and [`ConfigError::Unremovable`] where a speed
+/// written cannot be lifted out without rewriting.
+pub fn slowing(text: &str, file: &str, provider: &str) -> Result<String, ConfigError> {
+    if text.trim().is_empty() {
+        return Ok(text.to_owned());
+    }
+    without(text, file, provider, "fast")
+}
+
+/// The speed `text`, the user's own file, asks `provider` for `model`: what
+/// [`hastening`] wrote, read back the way a start reads it.
+///
+/// Fast only for the model the file names for the provider: a speed was
+/// chosen for a model, at that model's price, and a file that names none
+/// names no price.
+///
+/// # Errors
+///
+/// [`ConfigError`] where `text` is not a configuration file crucible reads.
+pub fn hastened(text: &str, file: &str, provider: &str, model: &str) -> Result<Speed, ConfigError> {
+    if text.trim().is_empty() {
+        return Ok(Speed::Standard);
+    }
+    let document = crate::document::Document::parse(text, file, crate::document::Origin::User)?;
+    let settings = crate::settings::Settings::resolve_checked(vec![document])?;
+    // Trimmed as a run trims the name it asks for, and blank is no name.
+    let beside = settings
+        .model(provider)
+        .map(str::trim)
+        .filter(|named| !named.is_empty())
+        == Some(model);
+    Ok(if beside {
+        settings.speed(provider)
+    } else {
+        Speed::Standard
+    })
 }
 
 /// The text of a configuration file where `providers.<provider>.<key>` says
@@ -446,12 +659,12 @@ fn beside(
     file: &str,
     provider: &str,
     key: &str,
-    answer: &str,
+    answer: &Value,
 ) -> Result<String, ConfigError> {
     // Both as JSON reads them. A provider name is somebody else's string, and
     // one holding a quote written raw would end the document.
     let named = Value::String(provider.to_owned()).to_string();
-    let written = Value::String(answer.to_owned()).to_string();
+    let written = answer.to_string();
 
     if text.trim().is_empty() {
         return Ok(CHOSEN
@@ -517,8 +730,8 @@ fn beside(
 }
 
 /// The answer a document already gives under this provider's key.
-fn answered<'a>(value: &'a Value, provider: &str, key: &str) -> Option<&'a str> {
-    value.get("providers")?.get(provider)?.get(key)?.as_str()
+fn answered<'a>(value: &'a Value, provider: &str, key: &str) -> Option<&'a Value> {
+    value.get("providers")?.get(provider)?.get(key)
 }
 
 /// Whether this rule is one the file already states.

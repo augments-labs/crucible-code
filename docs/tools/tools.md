@@ -88,7 +88,7 @@ A cut answer says so, in the answer:
 [more follows: call read again with offset 501]
 [showing first 200 matches: narrow the pattern or raise limit]
 [stopped at 74 matches: the answer was full at 30000 bytes, narrow the pattern]
-[41200 bytes of output cut from the middle]
+[process output was 41200 bytes; 11456 bytes omitted from the middle during capture]
 ```
 
 The notes are addressed to the model rather than to you, and they are the

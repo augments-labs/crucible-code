@@ -63,6 +63,8 @@ use crucible_runtime::BoxFuture;
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{Answered, Question, ToolCall};
 
+use crate::content_use::Warned;
+
 /// How many pending identities this process has given out.
 ///
 /// One count for as long as the host runs, private to this module, so an
@@ -100,6 +102,8 @@ pub enum Shown<'a> {
     },
     /// The questions a model asked.
     Questions(&'a [Question]),
+    /// The route a send would go on, whose vendor uses what is sent.
+    Warning(&'a Warned),
 }
 
 /// Whoever answers pending actions: a terminal, or a consumer with none.
@@ -157,8 +161,10 @@ pub(crate) enum Settled {
     Ruled(Ruling, Lasting),
     /// One answer per question.
     Answered(Vec<Picked>),
-    /// Nobody will answer the questions.
+    /// Nobody will answer the questions, or the send goes back.
     Declined,
+    /// Send anyway.
+    Accepted,
 }
 
 /// Holds `decision` against `pending`, the one action it may settle.
@@ -181,9 +187,16 @@ pub(crate) fn settle(pending: &Pending, decision: Decision) -> Result<Settled, R
                 Err(ErrorCode::InvalidArgument.into())
             }
         }
-        (Pending::Questions { .. }, Decision::Declined { .. }) => Ok(Settled::Declined),
-        (Pending::Permission { .. }, Decision::Answered { .. } | Decision::Declined { .. })
-        | (Pending::Questions { .. }, Decision::Ruled { .. }) => {
+        (Pending::Questions { .. } | Pending::Warning { .. }, Decision::Declined { .. }) => {
+            Ok(Settled::Declined)
+        }
+        (Pending::Warning { .. }, Decision::Accepted { .. }) => Ok(Settled::Accepted),
+        (
+            Pending::Permission { .. },
+            Decision::Answered { .. } | Decision::Declined { .. } | Decision::Accepted { .. },
+        )
+        | (Pending::Questions { .. }, Decision::Ruled { .. } | Decision::Accepted { .. })
+        | (Pending::Warning { .. }, Decision::Ruled { .. } | Decision::Answered { .. }) => {
             Err(ErrorCode::WrongDecision.into())
         }
     }
@@ -278,7 +291,9 @@ impl Ask for Deciding<'_> {
                     // `settle` gives a permission nothing else; refused the
                     // same way all the same, so that a new arm cannot become a
                     // yes.
-                    Ok(Settled::Answered(_) | Settled::Declined) => ErrorCode::WrongDecision.into(),
+                    Ok(Settled::Answered(_) | Settled::Declined | Settled::Accepted) => {
+                        ErrorCode::WrongDecision.into()
+                    }
                     Err(refusal) => refusal,
                 };
                 if turned_away(self.front, refusal, &mut tries) {
@@ -340,11 +355,57 @@ pub async fn questions(
                 );
             }
             Ok(Settled::Declined) => return None,
-            Ok(Settled::Ruled(..)) => ErrorCode::WrongDecision.into(),
+            Ok(Settled::Ruled(..) | Settled::Accepted) => ErrorCode::WrongDecision.into(),
             Err(refusal) => refusal,
         };
         if turned_away(front, refusal, &mut tries) {
             return None;
+        }
+    }
+}
+
+/// Puts the question a route whose vendor uses what is sent asks through
+/// `front`: `true` where the answer was to send anyway.
+///
+/// Put only to a client that said it answers permission questions, which this
+/// is one of: a yes lets something happen that nothing else would. Put whole
+/// or not at all, as a permission question is: a sentence cut short is not
+/// the vendor's, and one nobody was shown is answered as no.
+pub async fn warned(capabilities: Capabilities, front: &mut dyn Front, warned: &Warned) -> bool {
+    if !capabilities.has(Capability::Permissions) {
+        return false;
+    }
+    let words = [
+        Text::cut(warned.route),
+        Text::cut(warned.shown),
+        Text::cut(warned.warning.sentence),
+        Text::cut(&warned.warning.cited()),
+    ];
+    if words.iter().any(Text::truncated) && !front.draws_whole() {
+        return false;
+    }
+    let [route, shown, sentence, source] = words;
+    let pending = Pending::Warning {
+        id: mint(),
+        route,
+        shown,
+        sentence,
+        source,
+    };
+
+    let mut tries = 0;
+    loop {
+        let Some(decision) = front.put(&pending, Shown::Warning(warned)).await else {
+            return false;
+        };
+        let refusal = match settle(&pending, decision) {
+            Ok(Settled::Accepted) => return true,
+            Ok(Settled::Declined) => return false,
+            Ok(Settled::Ruled(..) | Settled::Answered(_)) => ErrorCode::WrongDecision.into(),
+            Err(refusal) => refusal,
+        };
+        if turned_away(front, refusal, &mut tries) {
+            return false;
         }
     }
 }

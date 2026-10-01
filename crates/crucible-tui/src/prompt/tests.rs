@@ -31,7 +31,7 @@ const VENDOR: &str = "anthropic";
 const RUNG: &str = "high";
 
 /// The three of them as the row joins them.
-const MODEL: &str = "anthropic/claude-sonnet-5 · high";
+const MODEL: &str = "anthropic · claude-sonnet-5 · high";
 
 /// The three modes as the row under the box spells them, the colour each puts
 /// on its own sentence, and the name of the picture each is checked against.
@@ -80,11 +80,15 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         model: "",
         provider: "",
         effort: None,
+        speed: None,
         asking: None,
         // Nothing, so that every test written before this row said what was
         // running is still a test about what it said before.
         commands: CommandCount::default(),
         room: ROOM,
+        // None, so that every test written before the box knew a command's
+        // name is still a test about a box that did not.
+        named: &[],
     }
 }
 
@@ -202,6 +206,30 @@ fn known_window_edges_are_named_on_the_same_row() {
         );
         assert_eq!(rows.len(), 5, "the reading took a row of its own");
     }
+}
+
+#[test]
+fn the_status_row_says_fast_only_where_it_is_told_an_answer_was_served_fast() {
+    let said = |prompt: &Prompt<'_>| {
+        prompt
+            .rows(120, Glyphs::Unicode)
+            .iter()
+            .map(|row| row.text().clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let fast = said(&Prompt {
+        speed: Some("fast"),
+        ..asking_of("")
+    });
+    let standard = said(&asking_of(""));
+
+    assert!(
+        fast.contains(&format!("{VENDOR} · {NAMED} · {RUNG} · fast")),
+        "{fast}"
+    );
+    assert!(!standard.contains("fast"), "{standard}");
 }
 
 #[test]
@@ -620,7 +648,7 @@ fn the_status_row_says_whose_model_it_is_before_saying_which() {
     // on its own never said whose it was in the first place.
     let status = row(&asking_of(""), 4, 80, Glyphs::Unicode);
 
-    assert!(status.contains("anthropic/claude-sonnet-5"), "{status:?}");
+    assert!(status.contains("anthropic · claude-sonnet-5"), "{status:?}");
 }
 
 #[test]
@@ -1439,4 +1467,106 @@ fn a_place_outside_the_prompts_it_counts_is_no_place_at_all() {
             "{at}/{of}"
         );
     }
+}
+
+/// The commands a box is told of, in the tests that are about them.
+const NAMES: [&str; 3] = ["/help", "/model", "/mode"];
+
+/// Everything the box draws in the accent a registered name takes, joined.
+fn strong(said: &str, columns: usize) -> String {
+    Prompt {
+        named: &NAMES,
+        ..typed(said)
+    }
+    .rows(columns, Glyphs::Unicode)
+    .iter()
+    .flat_map(|row| {
+        row.spans()
+            .filter(|(slot, _)| *slot == Slot::Strong)
+            .map(|(_, text)| text.to_owned())
+            .collect::<Vec<_>>()
+    })
+    .collect()
+}
+
+#[test]
+fn the_first_word_takes_the_accent_exactly_while_it_names_a_command() {
+    // The accent says what Enter will do: run the command. So it is on the one
+    // word that decides that, and on nothing a reader could take for part of
+    // it: not an argument, not a name half typed, not a path.
+    for columns in [80, FRAMED_AT - 4] {
+        for (said, accented) in [
+            ("/model gpt-6-sol", "/model"),
+            ("/model", "/model"),
+            ("  /help", "/help"),
+            ("/model /model", "/model"),
+            ("/model\nabcdefgh on a line of its own", "/model"),
+            ("/mode", "/mode"),
+            ("/mod", ""),
+            ("/modle", ""),
+            ("/Model", ""),
+            ("/etc/hosts is wrong", ""),
+            ("tell /model", ""),
+            ("", ""),
+        ] {
+            assert_eq!(strong(said, columns), accented, "{said:?} at {columns}");
+        }
+    }
+}
+
+#[test]
+fn a_name_the_box_has_to_break_is_accented_on_every_row_it_is_broken_over() {
+    // At eight columns there are six for the line: `/model` has to be broken
+    // over rows once the box is narrower than that, and both halves are the
+    // name. A name drawn half in the accent reads as two words. Every width
+    // here holds the whole line inside the rows the box is given.
+    for columns in 6..=80 {
+        assert_eq!(
+            strong("/model gpt-6-sol", columns),
+            "/model",
+            "at {columns}"
+        );
+    }
+}
+
+#[test]
+fn a_command_word_before_a_folded_paste_is_accented_like_any_other() {
+    // The accent is about the word the line opens with, and what was pasted
+    // after it is not that word.
+    let mut editor = Editor::new();
+    editor.put("/model ");
+    editor.paste(&"a paste long enough to be folded away ".repeat(40));
+    assert_ne!(
+        editor.projection().text(),
+        editor.text(),
+        "the paste stands folded"
+    );
+    let prompt = Prompt {
+        draft: Draft::projected(editor.projection()),
+        named: &NAMES,
+        ..typed("")
+    };
+    let accented: String = prompt
+        .rows(80, Glyphs::Unicode)
+        .iter()
+        .flat_map(|row| {
+            row.spans()
+                .filter(|(slot, _)| *slot == Slot::Strong)
+                .map(|(_, text)| text.to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(accented, "/model");
+}
+
+#[test]
+fn in_the_ascii_set_the_label_is_joined_by_spaced_hyphens() {
+    assert_eq!(
+        crate::label("openai", "gpt-5.6-sol", Some("high"), None, Glyphs::Ascii),
+        "openai - gpt-5.6-sol - high"
+    );
+    assert_eq!(
+        crate::label("deepseek", "deepseek-flash", None, None, Glyphs::Unicode),
+        "deepseek · deepseek-flash"
+    );
 }

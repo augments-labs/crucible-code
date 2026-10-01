@@ -23,10 +23,21 @@ use serde_json::json;
 
 use crate::json::{Array, Json, Object, described, object};
 
-/// The whole request body.
+/// The whole request body at standard speed, as the tests written before
+/// speed was asked for build it.
+#[cfg(test)]
 pub(super) fn serialize(
     request: &Request<'_>,
     scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
+    serialize_at(request, scope, false)
+}
+
+/// The whole request body, asking for the fast speed where `fast`.
+pub(super) fn serialize_at(
+    request: &Request<'_>,
+    scope: Option<ContinuationScope>,
+    fast: bool,
 ) -> Result<String, ProviderError> {
     let automatic = automatic_retention(request);
     let explicit = explicit_placement(request);
@@ -42,8 +53,11 @@ pub(super) fn serialize(
     json.object(|body| {
         body.text("model", request.model);
         body.number("max_tokens", request.max_tokens);
+        if fast {
+            body.text("speed", "fast");
+        }
         body.boolean("stream", true);
-        if request.model == super::FABLE_51 {
+        if super::bound(request.model) {
             // Intentional system/tool/history edits must not strand a session
             // on prefix-bound thinking. Unchanged blocks remain usable.
             body.object("thinking", |thinking| {
@@ -107,7 +121,7 @@ pub(super) fn serialize(
     outcome.map(|()| json.finish())
 }
 
-/// The cache metadata [`serialize`] adds for this exact request.
+/// The cache metadata [`serialize_at`] adds for this exact request.
 pub(super) fn prompt_cache_encoding(request: &Request<'_>) -> PromptCacheEncoding {
     let Some(selected) = request
         .prompt_cache
@@ -175,7 +189,7 @@ fn explicit_placement(request: &Request<'_>) -> Option<ExplicitPlacement> {
             // Thinking cannot carry an explicit cache marker. A Fable response
             // may contain nothing else, so use an earlier legal boundary and
             // report only the marker the serializer can actually write.
-            request.model != super::FABLE_51 || !point.message()
+            !super::bound(request.model) || !point.message()
                 .and_then(|index| usize::try_from(index).ok())
                 .and_then(|index| request.transcript.messages().get(index))
                 .is_some_and(|message| matches!(message, Message::Agent { text, calls, .. } if text.is_empty() && calls.is_empty()))
@@ -251,7 +265,7 @@ fn write_messages(
                     pending = None;
                     if let Some(state) = continuation
                         .as_ref()
-                        .filter(|state| replay::compatible(state, scope))
+                        .filter(|state| replay::compatible(state, scope, request.model))
                     {
                         replay::Agent { state, text, calls }.write(
                             messages,

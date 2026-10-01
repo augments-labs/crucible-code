@@ -43,7 +43,8 @@ pub(crate) enum Shape {
     /// the fact it does not have.
     Count,
 
-    /// A positive command resource ceiling, bounded by its host implementation.
+    /// A positive whole number under a ceiling its owner fixes: a command's
+    /// resource, or how long a provider may keep a cached prompt.
     Limit(u64),
 
     /// A bounded set of nonempty strings, semantically checked by its owner.
@@ -63,6 +64,14 @@ pub(crate) enum Shape {
     /// is the block a token would be in. Two lists, tested against each other,
     /// the same way a [`Choice`](Shape::Choice) and its reader are.
     Whole(&'static Whole),
+
+    /// A string an editor checks against this pattern.
+    ///
+    /// The pattern is what the schema publishes. Refusing a string that does
+    /// not match is its owner's, one layer down, for the reason it is with a
+    /// [`Whole`](Shape::Whole): the refusal there says what the value is for.
+    /// The owner's test holds the two to one answer.
+    Pattern(&'static str),
 
     /// True or false, and nothing that looks like either.
     ///
@@ -223,6 +232,21 @@ const PROVIDER: Shape = Shape::Fields(&[
         needed: false,
         widens: false,
     },
+    // Fast costs more on every request it is asked for, which is why only the
+    // user's own file may ask: a clone that could turn it on would be spending
+    // somebody else's money. Whether the model in force has a fast form is
+    // decided where the request is built, and a `true` where it has none asks
+    // for standard. It is read only beside the `model` it was chosen for: with
+    // no model, or with another model in force, it asks for standard too.
+    Field {
+        name: "fast",
+        about: "Whether to ask the model named beside it to answer fast, where its vendor serves a fast form at a higher price. Read only with that model in force; left off, standard speed. Read only from the configuration file in your home directory",
+        shape: Shape::Flag,
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: true,
+    },
     // The *name*. A key never appears in a configuration file: this workspace
     // resolves one from the environment by the name given here, and the value
     // has no path into a document, a session file or a log line. Choosing that
@@ -230,7 +254,7 @@ const PROVIDER: Shape = Shape::Fields(&[
     // so a file from the workspace may not make the choice.
     Field {
         name: "apiKeyEnv",
-        about: "Name of the environment variable holding this provider's API key — the name, never the key",
+        about: "Name of the environment variable holding this provider's API key — the name, never the key. Read only from the configuration file in your home directory",
         shape: Shape::Text,
         examples: &[],
         usual: None,
@@ -243,7 +267,7 @@ const PROVIDER: Shape = Shape::Fields(&[
     // that reads the key of everyone who opens it.
     Field {
         name: "baseUrl",
-        about: "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy",
+        about: "Address to send this provider's requests to instead of the vendor's, for a gateway or a proxy. Read only from the configuration file in your home directory",
         shape: Shape::Text,
         examples: &["https://gateway.example/v1/messages"],
         usual: None,
@@ -324,7 +348,7 @@ pub(crate) const MOUSE_SCROLL_SPEED: &str = "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED";
 /// is when nobody says.
 const ENV: &[Field] = &[Field {
     name: MOUSE_SCROLL_SPEED,
-    about: "How many rows of the transcript one notch of the wheel moves",
+    about: "How many rows or list entries one notch of the wheel moves, wherever the wheel scrolls",
     shape: Shape::Whole(&SCROLL_SPEED),
     // The bounds are the answers, and the schema writes them out.
     examples: &[],
@@ -502,7 +526,7 @@ pub(crate) const SEND: &[&str] = &["enter", "altEnter"];
 /// first of a kind, not the only one.
 const INPUT: &[Field] = &[Field {
     name: "send",
-    about: "Which press sends a prompt: enter sends and Shift+Enter, Alt+Enter or Ctrl+J opens a line; altEnter swaps the two, for a terminal that keeps Enter for itself",
+    about: "Which press sends a prompt: enter sends and Shift+Enter, Alt+Enter or Ctrl+J opens a line; altEnter swaps the two, for a terminal that keeps Shift+Enter for itself",
     shape: Shape::Choice(SEND),
     examples: &[],
     usual: Some("enter"),
@@ -742,8 +766,8 @@ const CACHE_RETENTION: &[Field] = &[
     },
     Field {
         name: "maxSeconds",
-        about: "Hard maximum provider retention in seconds; required for ephemeral and extended retention",
-        shape: Shape::Count,
+        about: "Hard maximum provider retention in seconds, at most a year; required for ephemeral and extended retention, and refused with providerDefault",
+        shape: Shape::Limit(RETENTION_SECONDS),
         examples: &[],
         usual: None,
         needed: false,
@@ -761,6 +785,18 @@ const CACHE_RESOURCES: &[Field] = &[Field {
     needed: false,
     widens: false,
 }];
+
+/// The longest retention a document may ask a provider for, in seconds.
+///
+/// The owner's ceiling, widened to the shape a limit is declared in. Written
+/// here so the schema publishes the number the policy refuses past.
+const RETENTION_SECONDS: u64 = crucible_types::MAX_PROMPT_CACHE_RETENTION_SECONDS as u64;
+
+/// What a cache namespace may be spelled with, as an editor checks it.
+///
+/// `PromptCacheNamespace` is what refuses one; the test beside its reader holds
+/// this pattern to the same alphabet and the same length.
+pub(crate) const NAMESPACE: &str = "^[A-Za-z0-9._-]{1,64}$";
 
 /// Provider-neutral prompt-cache policy.
 const PROMPT_CACHE: &[Field] = &[
@@ -815,8 +851,8 @@ const PROMPT_CACHE: &[Field] = &[
     },
     Field {
         name: "namespace",
-        about: "Bounded opaque user-owned label included in cache scope identity; never a provider cache key",
-        shape: Shape::Text,
+        about: "Opaque user-owned label of 1 to 64 ASCII letters, digits, '.', '-' or '_', included in cache scope identity; never a provider cache key. Read only from the configuration file in your home directory",
+        shape: Shape::Pattern(NAMESPACE),
         examples: &["personal"],
         usual: None,
         // A project-chosen external identity could collide with another scope.
@@ -854,7 +890,7 @@ const COMPACTION: &[Field] = &[
         about: "How many tokens of recent turns are kept word for word after the rest becomes a recap",
         shape: Shape::Count,
         examples: &[],
-        usual: None,
+        usual: Some("20000"),
         needed: false,
         widens: false,
     },
@@ -863,7 +899,7 @@ const COMPACTION: &[Field] = &[
         about: "Maximum tokens a structured compaction recap may produce; ordinary recaps stop earlier",
         shape: Shape::Count,
         examples: &[],
-        usual: None,
+        usual: Some("10240"),
         needed: false,
         widens: false,
     },
@@ -872,7 +908,7 @@ const COMPACTION: &[Field] = &[
         about: "How large a session has to be, in tokens, before picking it up asks whether to carry it whole. Zero never asks",
         shape: Shape::Count,
         examples: &[],
-        usual: None,
+        usual: Some("60000"),
         needed: false,
         widens: false,
     },
@@ -886,6 +922,27 @@ const COMPACTION: &[Field] = &[
         widens: false,
     },
 ];
+
+/// The answers the person gave about what vendors do with what is sent.
+const CONTENT_USE: &[Field] = &[Field {
+    name: "accepted",
+    about: "Routes you have said yes to sending on, though their vendor says it may use what is sent to train or improve its models; crucible writes this when you choose Use it anyway. Read only from the configuration file in your home directory",
+    shape: Shape::List {
+        of: &ROUTE,
+        repeats: false,
+        most: None,
+    },
+    examples: &["key:google", "subscription:moonshot@kimi.ai"],
+    usual: None,
+    needed: false,
+    // A yes is what lets a request leave for such a vendor. Written in a
+    // checkout, it would be a repository answering that question for
+    // everybody who clones it.
+    widens: true,
+}];
+
+/// One route: a `/login` row, a model, or a Kimi open platform address.
+const ROUTE: Shape = Shape::Text;
 
 /// How much one model accepts, under the name it is asked for.
 ///
@@ -1371,6 +1428,15 @@ pub(crate) const DOCUMENT: Shape = Shape::Fields(&[
         widens: false,
     },
     Field {
+        name: "contentUse",
+        about: "What you have said about vendors that may use what is sent to them",
+        shape: Shape::Fields(CONTENT_USE),
+        examples: &[],
+        usual: None,
+        needed: false,
+        widens: false,
+    },
+    Field {
         name: "updates",
         about: "Whether crucible finds out that a newer release exists",
         shape: Shape::Fields(UPDATES),
@@ -1402,6 +1468,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Pattern(_)
             | Self::Named { .. }
             | Self::List { .. }
             | Self::Opaque => Vec::new(),
@@ -1426,6 +1493,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Pattern(_)
             | Self::List { .. }
             | Self::Opaque => None,
         }
@@ -1446,6 +1514,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Pattern(_)
             | Self::List { .. }
             | Self::Named { .. }
             | Self::Opaque => &[],
@@ -1472,6 +1541,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Pattern(_)
             | Self::List { .. }
             | Self::Opaque => None,
         }
@@ -1504,6 +1574,7 @@ impl Shape {
             | Self::TextSet { .. }
             | Self::Flag
             | Self::Whole(_)
+            | Self::Pattern(_)
             | Self::Fields(_)
             | Self::Named { .. }
             | Self::Opaque => None,
@@ -1520,6 +1591,7 @@ impl Shape {
             Self::TextSet { .. } => "a bounded set of nonempty strings",
             Self::Flag => "true or false",
             Self::Whole(_) => "a whole number written as a string",
+            Self::Pattern(_) => "a string of the documented form",
             Self::Fields(_) | Self::Named { .. } => "an object",
             Self::List { .. } => "a list",
             // Said at more length than the plain object above, because a

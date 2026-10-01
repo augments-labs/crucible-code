@@ -1,5 +1,6 @@
 //! Splicing a durable rule into a user-owned configuration document.
 
+use crucible_models::Speed;
 use crucible_tools::{Ask, Command, Mode, Remember, Sensitivity, Settled, Verdict, narrowest};
 use crucible_types::{ToolArgs, ToolCall, ToolId};
 
@@ -173,6 +174,128 @@ fn a_rung_chosen_again_is_written_over_rather_than_written_twice() {
 
     assert_eq!(resolving(&written).effort("moonshot"), Some(Effort::Xhigh));
     assert_eq!(written.matches("effort").count(), 1, "{written}");
+}
+
+#[test]
+fn fast_is_written_with_the_model_it_was_chosen_for_and_standard_takes_it_out() {
+    let chosen = choosing("", "config.json", "openai", "gpt-5.6-sol")
+        .expect("an empty file is one to write whole");
+
+    let fast = hastening(&chosen, "config.json", "openai", "gpt-5.6-sol")
+        .expect("a provider already written is one to write beside");
+    assert_eq!(resolving(&fast).speed("openai"), Speed::Fast);
+    assert_eq!(resolving(&fast).model("openai"), Some("gpt-5.6-sol"));
+    assert!(fast.contains("\"fast\": true"), "{fast}");
+
+    let again = hastening(&fast, "config.json", "openai", "gpt-5.6-sol")
+        .expect("a speed already there is one to leave");
+    assert_eq!(again, fast);
+
+    let standard =
+        slowing(&fast, "config.json", "openai").expect("a speed written is one to take out");
+    assert_eq!(resolving(&standard).speed("openai"), Speed::Standard);
+    assert!(!standard.contains("\"fast\""), "{standard}");
+    assert_eq!(standard, chosen);
+}
+
+#[test]
+fn fast_chosen_for_a_model_the_file_does_not_name_names_it() {
+    // The speed is a choice about one model at one price, so the model goes
+    // into the file with it, whether the file named another or none.
+    for text in [
+        "",
+        "{\n  \"providers\": {\"openai\": {\"model\": \"gpt-6-astra\"}}\n}\n",
+    ] {
+        let fast = hastening(text, "config.json", "openai", "gpt-5.5")
+            .expect("a file a speed can be written into");
+        assert_eq!(resolving(&fast).model("openai"), Some("gpt-5.5"), "{fast}");
+        assert_eq!(resolving(&fast).speed("openai"), Speed::Fast, "{fast}");
+    }
+}
+
+#[test]
+fn standard_asked_of_a_file_with_no_speed_changes_nothing() {
+    for text in ["", "{\n  \"theme\": \"dark\"\n}\n"] {
+        let written = slowing(text, "config.json", "openai")
+            .expect("nothing to take out is nothing to refuse");
+        assert_eq!(written, text);
+    }
+}
+
+#[test]
+fn choosing_another_model_takes_the_speed_out_and_the_same_one_keeps_it() {
+    let chosen = choosing("", "config.json", "openai", "gpt-5.6-sol")
+        .expect("an empty file is one to write whole");
+    let fast = hastening(&chosen, "config.json", "openai", "gpt-5.6-sol")
+        .expect("a provider already written is one to write beside");
+
+    let same =
+        choosing(&fast, "config.json", "openai", "gpt-5.6-sol").expect("the model already written");
+    assert_eq!(resolving(&same).speed("openai"), Speed::Fast);
+
+    let other = choosing(&fast, "config.json", "openai", "gpt-5.6-luna")
+        .expect("a model already written is one to write over");
+    assert_eq!(resolving(&other).speed("openai"), Speed::Standard);
+    assert!(!other.contains("\"fast\""), "{other}");
+}
+
+#[test]
+fn a_speed_is_read_for_the_model_the_file_names_and_for_no_other() {
+    // A run on another model than the file names was never shown that
+    // model's price, and a file that names none names no price at all.
+    let fast = hastening("", "config.json", "openai", "gpt-5.6-sol")
+        .expect("an empty file is one to write whole");
+    assert_eq!(
+        hastened(&fast, "config.json", "openai", "gpt-5.6-sol").unwrap(),
+        Speed::Fast
+    );
+    assert_eq!(
+        hastened(&fast, "config.json", "openai", "gpt-5.5").unwrap(),
+        Speed::Standard
+    );
+    assert_eq!(
+        hastened(&fast, "config.json", "anthropic", "claude-opus-5").unwrap(),
+        Speed::Standard
+    );
+    let unnamed = r#"{"providers": {"openai": {"fast": true}}}"#;
+    assert_eq!(
+        hastened(unnamed, "config.json", "openai", "gpt-5.5").unwrap(),
+        Speed::Standard
+    );
+    assert_eq!(
+        hastened("", "config.json", "openai", "gpt-5.6-sol").unwrap(),
+        Speed::Standard
+    );
+    assert!(hastened("{", "config.json", "openai", "gpt-5.6-sol").is_err());
+}
+
+#[test]
+fn a_model_named_with_spaces_around_it_is_the_model_a_run_asks() {
+    // A run trims the name it reads, so the speed kept beside it is read for
+    // the same trimmed name, and choosing it again keeps the speed.
+    let padded = r#"{"providers": {"openai": {"model": " gpt-5.6-sol ", "fast": true}}}"#;
+    assert_eq!(
+        hastened(padded, "config.json", "openai", "gpt-5.6-sol").unwrap(),
+        Speed::Fast
+    );
+    let again = choosing(padded, "config.json", "openai", "gpt-5.6-sol")
+        .expect("the model already written");
+    assert_eq!(resolving(&again).speed("openai"), Speed::Fast);
+}
+
+#[test]
+fn a_blank_model_in_the_file_names_no_model_to_keep_a_speed_for() {
+    let blank = r#"{"providers": {"openai": {"model": "   ", "fast": true}}}"#;
+    assert_eq!(
+        hastened(blank, "config.json", "openai", "").unwrap(),
+        Speed::Standard
+    );
+}
+
+#[test]
+fn a_speed_the_file_spells_as_no_is_standard() {
+    let settings = resolving(r#"{"providers": {"openai": {"fast": false}}}"#);
+    assert_eq!(settings.speed("openai"), Speed::Standard);
 }
 
 #[test]
@@ -528,4 +651,129 @@ fn sandbox_choice_is_a_boolean_and_preserves_every_other_setting() {
         assert_eq!(super::sandboxing(&written, "test", true).unwrap(), written);
     }
     assert!(super::sandboxing(r#"{"sandbox":{"mode":"required"}}"#, "test", true).is_err());
+}
+
+/// What the file says yes to, as the settings read it.
+fn accepted(text: &str) -> Vec<String> {
+    let settings = Settings::resolve(vec![Document::sample(text, Origin::User)]);
+    settings
+        .content_accepted()
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn a_yes_is_written_into_a_file_that_is_not_there_yet() {
+    let written = accepting("", FILE, "key:google").unwrap();
+    assert_eq!(accepted(&written), ["key:google"]);
+    assert_eq!(
+        written,
+        "{\n  \"contentUse\": {\n    \"accepted\": [\n      \"key:google\"\n    ]\n  }\n}\n"
+    );
+}
+
+#[test]
+fn a_yes_is_added_beside_what_the_file_already_says_and_only_once() {
+    let text =
+        "{\n  \"provider\":   \"google\",\n  \"contentUse\": {\"accepted\": [\"key:google\"]}\n}\n";
+    let written = accepting(text, FILE, "api.moonshot.ai").unwrap();
+    assert_eq!(accepted(&written), ["key:google", "api.moonshot.ai"]);
+    assert!(written.starts_with("{\n  \"provider\":   \"google\",\n"));
+    assert_eq!(accepting(&written, FILE, "key:google").unwrap(), written);
+
+    let bare = "{\"provider\": \"google\"}";
+    let written = accepting(bare, FILE, "key:google").unwrap();
+    assert_eq!(accepted(&written), ["key:google"]);
+    let block = "{\"contentUse\": {}}";
+    assert_eq!(
+        accepted(&accepting(block, FILE, "key:google").unwrap()),
+        ["key:google"]
+    );
+}
+
+/// A block or a list that is not the shape a yes goes into is refused rather
+/// than written into: a list spliced into a string would leave a file that no
+/// longer says what the user wrote.
+#[test]
+fn a_yes_is_not_written_into_a_block_or_list_of_another_shape() {
+    for text in [
+        "{\"contentUse\": []}",
+        "{\"contentUse\": {\"accepted\": \"key:google\"}}",
+        "{\"contentUse\": {\"accepted\": null}}",
+    ] {
+        let refused = accepting(text, FILE, "key:google").expect_err(text);
+        assert!(
+            matches!(refused, ConfigError::Unspliceable { .. }),
+            "{text}: {refused:?}"
+        );
+    }
+}
+
+#[test]
+fn forgetting_takes_out_the_named_routes_and_nothing_else() {
+    let text = "{\n  \"provider\": \"moonshot\",\n  \"contentUse\": {\n    \"accepted\": [\"key:google\", \"key:moonshot\", \"api.moonshot.ai\"]\n  }\n}\n";
+    let written = forgetting(text, FILE, |route| {
+        ["key:moonshot", "api.moonshot.ai", "key:nobody"].contains(&route)
+    })
+    .unwrap();
+    assert_eq!(accepted(&written), ["key:google"]);
+    assert!(
+        written.starts_with(
+            "{\n  \"provider\": \"moonshot\",\n  \"contentUse\": {\n    \"accepted\": "
+        )
+    );
+    assert_eq!(
+        forgetting(&written, FILE, |route| route == "key:moonshot").unwrap(),
+        written
+    );
+    for untouched in ["", "{}", "{\"provider\": \"google\"}"] {
+        assert_eq!(
+            forgetting(untouched, FILE, |route| route == "key:google").unwrap(),
+            untouched
+        );
+    }
+}
+
+/// The file the roll back drill starts the prior binary over is the file this
+/// build writes when a yes is recorded into a home that turned the update
+/// check off, byte for byte, so the step proves what a roll back meets.
+#[test]
+fn the_roll_back_drill_meets_the_file_a_recorded_yes_leaves() {
+    const DRILL: &str = include_str!("../../../../scripts/sh/rollback-drill.sh");
+    let planted = DRILL
+        .lines()
+        .find_map(|line| line.strip_prefix("yes_file='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("the drill plants a yes file");
+
+    let written = accepting(
+        "{ \"updates\": { \"check\": \"never\" } }\n",
+        FILE,
+        "key:google",
+    )
+    .expect("a file a yes can be written into");
+    assert_eq!(written, format!("{planted}\n"));
+}
+
+/// The file the roll back drill starts the prior binary over is the file this
+/// build writes when fast is chosen into a home that turned the update check
+/// off, byte for byte, so the step proves what a roll back meets.
+#[test]
+fn the_roll_back_drill_meets_the_file_a_chosen_speed_leaves() {
+    const DRILL: &str = include_str!("../../../../scripts/sh/rollback-drill.sh");
+    let planted = DRILL
+        .lines()
+        .find_map(|line| line.strip_prefix("fast_file='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("the drill plants a fast file");
+
+    let written = hastening(
+        "{ \"updates\": { \"check\": \"never\" } }\n",
+        FILE,
+        "openai",
+        "gpt-5.6-sol",
+    )
+    .expect("a file a speed can be written into");
+    assert_eq!(written, format!("{planted}\n"));
 }

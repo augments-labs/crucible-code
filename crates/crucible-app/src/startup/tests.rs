@@ -861,6 +861,53 @@ fn moonshot_serves_both_halves_from_kimi_code() {
 }
 
 #[test]
+fn each_provider_is_given_only_the_web_tools_its_vendor_serves_on_its_wire() {
+    // (provider, a model it offers, search, fetch). Meta's and xAI's
+    // Responses serve a search and nothing that opens one page; the five on
+    // Chat Completions are served neither there.
+    for (named, model, searching, fetching) in [
+        ("anthropic", "claude-opus-5", true, true),
+        ("google", "gemini-3.8-flash", true, true),
+        ("moonshot", "k3", true, true),
+        ("openai", "gpt-5.6-sol", true, true),
+        ("meta", "muse-spark-1.3", true, false),
+        ("xai", "grok-4.7", true, false),
+        ("deepseek", "deepseek-flash", false, false),
+        ("zai", "glm-5.3", false, false),
+        ("qwen", "qwen3.8-max", false, false),
+        ("mimo", "mimo-v2.6-pro", false, false),
+        ("minimax", "MiniMax-M3", false, false),
+    ] {
+        let reaching = reaching_for(named, Some(model));
+
+        assert_eq!(reaching.searching.is_some(), searching, "{named} search");
+        assert_eq!(reaching.fetching.is_some(), fetching, "{named} fetch");
+    }
+    assert_eq!(
+        crate::providers::offered(&catalogue()).count(),
+        11,
+        "a provider this test does not name"
+    );
+}
+
+#[test]
+fn meta_and_xai_search_where_the_provider_sends_its_turns() {
+    for (named, model, host) in [
+        ("meta", "muse-spark-1.3", "api.meta.ai"),
+        ("xai", "grok-4.7", "api.x.ai"),
+    ] {
+        let searching = reaching_for(named, Some(model))
+            .searching
+            .expect("a search");
+        assert_eq!(searching.name(), named);
+        assert!(
+            matches!(searching.reaches(), crucible_tools::Host::Named { host: reached, .. } if reached.as_ref() == host),
+            "{named}"
+        );
+    }
+}
+
+#[test]
 fn a_session_with_no_model_chosen_reaches_nothing() {
     // A side request has to name a model, and the one it names is the session's.
     // Nothing is chosen yet in the state `/model` exists to leave open.
@@ -993,6 +1040,32 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
     let sample = Sample::new("compaction-recap-ceiling");
     let configured = sample.settings(r#"{"compaction":{"recap":12000}}"#);
     assert_eq!(policy(&configured).compaction.recap_tokens, 12_000);
+}
+
+/// What the published schema says `compaction.<key>` falls back to.
+fn published_compaction_default(key: &str) -> Option<u64> {
+    let schema: serde_json::Value =
+        serde_json::from_str(&crucible_config::schema()).expect("the schema is JSON");
+    schema
+        .pointer(&format!("/properties/compaction/properties/{key}/default"))
+        .and_then(serde_json::Value::as_u64)
+}
+
+#[test]
+fn the_schema_offers_the_keep_and_recap_a_run_falls_back_to() {
+    // The figures live in the runner and the schema is declared in the
+    // configuration crate, so neither can own both. An editor writes the
+    // schema's default into somebody's file; it has to be the one a run uses.
+    let defaults = policy(&Settings::default()).compaction;
+
+    assert_eq!(
+        published_compaction_default("keep"),
+        Some(defaults.keep_tokens)
+    );
+    assert_eq!(
+        published_compaction_default("recap"),
+        Some(u64::from(defaults.recap_tokens))
+    );
 }
 
 #[test]
@@ -1308,3 +1381,534 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
 
 mod conformance;
 mod lending;
+
+/// Where `stored` sends a Moonshot request, with `exported` in its variable
+/// and `sending` configured, if anything.
+fn moonshot_address(
+    stored: &StoredCredentials,
+    exported: Option<&str>,
+    sending: Option<Endpoint>,
+) -> Result<Endpoint, AppError> {
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let from = |name: &str| {
+        (name == "MOONSHOT_API_KEY")
+            .then(|| exported.map(str::to_owned))
+            .flatten()
+    };
+    credential(
+        ApiAudience {
+            provider: "moonshot",
+            variable: "MOONSHOT_API_KEY",
+            vendor: Moonshot::CODING,
+        },
+        sending,
+        ProviderAuth {
+            settings: &Settings::default(),
+            from: &from,
+            stored,
+            subscriptions: &subscriptions,
+        },
+    )
+    .map(|(endpoint, _)| endpoint)
+}
+
+#[test]
+fn each_kimi_row_sends_its_credential_to_its_own_site_and_to_no_other() {
+    for (name, signed_in, wanted) in [
+        ("moonshot@kimi.ai", true, Moonshot::CODING_AI),
+        ("moonshot", true, Moonshot::CODING),
+        ("moonshot@kimi.ai", false, Moonshot::CODING_AI),
+        ("moonshot", false, Moonshot::CODING),
+    ] {
+        let sample = Sample::new("kimi-row-address");
+        let stored = if signed_in {
+            sample.subscribed(name)
+        } else {
+            sample.stored(name)
+        };
+
+        let address = moonshot_address(&stored, None, None).expect("a stored credential");
+        assert_eq!(address, wanted, "{name} signed in {signed_in}");
+    }
+}
+
+#[test]
+fn a_configured_address_takes_a_kimi_ai_key_and_never_its_sign_in() {
+    let custom = Endpoint::parse("https://proxy.invalid/v1/chat/completions").unwrap();
+
+    let sample = Sample::new("kimi-ai-key-custom");
+    let stored = sample.stored("moonshot@kimi.ai");
+    assert_eq!(
+        moonshot_address(&stored, None, Some(custom.clone())).expect("a stored key"),
+        custom
+    );
+
+    let sample = Sample::new("kimi-ai-sign-in-custom");
+    let stored = sample.subscribed("moonshot@kimi.ai");
+    assert!(matches!(
+        moonshot_address(&stored, None, Some(custom)),
+        Err(AppError::SubscriptionAddress { .. })
+    ));
+}
+
+#[test]
+fn a_key_from_the_variable_goes_to_its_own_row_whatever_the_store_holds() {
+    // The variable's key belongs to kimi.com; a kimi.ai key in the store is
+    // not sent to kimi.com, and the variable's key is not sent to kimi.ai.
+    let sample = Sample::new("kimi-variable-row");
+    let stored = sample.stored("moonshot@kimi.ai");
+
+    assert_eq!(
+        moonshot_address(&stored, Some("exported-key"), None).expect("an exported key"),
+        Moonshot::CODING
+    );
+}
+
+#[test]
+fn a_store_0_43_3_wrote_signs_in_where_it_did() {
+    let sample = Sample::new("store-of-0-43-3");
+    let stored = sample.holding(
+        r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key","anthropic":"fabricated-anthropic-key"},"subscriptions":{"openai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{"account_id":"test-account"},"expires_at":18446744073709551615,"refreshed_at":1}},"identities":{}}"#,
+    );
+    let rows = crate::providers::Rows::production();
+
+    assert_eq!(
+        rows.held("moonshot", &stored).map(|row| row.shown),
+        Some("MoonshotAI · kimi.com")
+    );
+    assert_eq!(
+        rows.held("openai", &stored).map(|row| row.list),
+        Some(crate::providers::List::Subscription)
+    );
+    assert_eq!(
+        rows.held("anthropic", &stored).map(|row| row.shown),
+        Some("Anthropic")
+    );
+    assert_eq!(
+        moonshot_address(&stored, None, None).expect("the kimi.com key"),
+        Moonshot::CODING
+    );
+}
+
+/// A store as 0.43.3 leaves one after a roll back: its own `moonshot` key
+/// beside the kimi.ai sign-in the new release wrote.
+const TWO_HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-moonshot-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{"device_id":"01234567-89ab-4cde-8fab-0123456789ab","expires_in":"3600"},"expires_at":18446744073709551615,"refreshed_at":1}},"identities":{}}"#;
+
+#[test]
+fn after_a_roll_back_the_credential_0_43_3_wrote_is_the_one_sent() {
+    let sample = Sample::new("rolled-back");
+    let stored = sample.holding(TWO_HELD);
+
+    assert_eq!(
+        moonshot_address(&stored, None, None).expect("the kimi.com key"),
+        Moonshot::CODING
+    );
+}
+
+#[test]
+fn a_start_that_finds_two_says_which_went_in_one_line() {
+    let sample = Sample::new("settle-line");
+    let _ = sample.holding(TWO_HELD);
+    let rows = crate::providers::Rows::production();
+
+    let said = settle(&sample.store(), &rows, "·").expect("a line");
+
+    assert_eq!(
+        said,
+        "two credentials were stored for moonshot; the Kimi Code · kimi.ai sign-in was removed, \
+         and the MoonshotAI · kimi.com key is used"
+    );
+    assert!(!sample.store().read().has_subscription("moonshot@kimi.ai"));
+    assert_eq!(settle(&sample.store(), &rows, "·"), None);
+}
+
+#[test]
+fn a_start_that_cannot_remove_the_second_says_so_and_claims_nothing_went() {
+    let sample = Sample::new("settle-unwritten");
+    let _ = sample.holding(TWO_HELD);
+    std::fs::create_dir(sample.home().join("auth.json.new")).expect("a directory this test made");
+    let rows = crate::providers::Rows::production();
+
+    let said = settle(&sample.store(), &rows, "·").expect("a line");
+
+    assert!(
+        said.starts_with(
+            "two credentials are stored for moonshot; the MoonshotAI · kimi.com key is used"
+        ),
+        "{said}"
+    );
+    assert!(!said.contains("was removed"), "{said}");
+    // It comes back at every start, so it says why.
+    assert!(
+        said.contains("stays in the store until a start can remove it: "),
+        "{said}"
+    );
+    assert!(sample.store().read().has_subscription("moonshot@kimi.ai"));
+}
+
+#[test]
+fn each_kimi_site_answers_the_web_tools_of_the_credential_sent_to_it_and_no_other() {
+    let lookup = |_: &str| Some("fabricated".to_owned());
+    let key = || -> Box<dyn crucible_credentials::Credential> {
+        Box::new(crucible_credentials::HeaderKey::new(
+            crucible_credentials::ApiKey::from_lookup("K", lookup).expect("a key"),
+            crucible_credentials::Header::bearer(),
+        ))
+    };
+    let transport =
+        || -> Box<dyn crucible_provider::Transport> { Box::new(HttpTurns::unavailable()) };
+
+    for (endpoint, site, other) in [
+        (Moonshot::CODING_AI, "api.kimi.ai", "api.kimi.com"),
+        (Moonshot::CODING, "api.kimi.com", "api.kimi.ai"),
+    ] {
+        let source = moonshot_site(&endpoint, key(), transport()).expect("that site's services");
+        let said = format!("{source:?}");
+        // The paths are redacted from what is printed; the provider's own
+        // tests hold them. Both services stand on the site's host.
+        assert_eq!(
+            said.matches(&format!("https://{site}/")).count(),
+            2,
+            "{said}"
+        );
+        assert!(!said.contains(other), "{said}");
+    }
+    let custom = Endpoint::parse("https://proxy.invalid/v1/chat/completions").unwrap();
+    assert!(moonshot_site(&custom, key(), transport()).is_none());
+}
+
+/// A kimi.ai sign-in, a kimi.com sign-in, and keys, fabricated, as a store
+/// holds them.
+const KIMI_AI_SIGN_IN: &str = r#"{"version":2,"keys":{},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+const KIMI_COM_SIGN_IN: &str = r#"{"version":2,"keys":{},"subscriptions":{"moonshot":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+const KIMI_AI_KEY: &str =
+    r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{}}"#;
+const GOOGLE_KEY: &str =
+    r#"{"version":2,"keys":{"google":"fabricated-google-key"},"subscriptions":{}}"#;
+const OPENAI_SIGN_IN: &str = r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+const NOTHING: &str = r#"{"version":2,"keys":{},"subscriptions":{}}"#;
+
+/// One state a provider's credential can be in, and what it is served on:
+/// the provider, the store, whether its variable is set, the `baseUrl`, the
+/// route and the configured origin.
+type Case = (
+    &'static str,
+    &'static str,
+    bool,
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
+/// Where each way of holding a credential sends a provider's requests, and
+/// the route that is: the stored sign-in first where no address is set, a key
+/// from the environment on its provider's fixed row before a stored one, and a
+/// configured address answering for the route it is recognised as or none.
+/// Where [`credential`] resolves the same state, the address it sends to is
+/// one of the route's origins.
+#[test]
+fn a_provider_is_served_on_the_route_its_credential_goes_to() {
+    let routes = content_use::Routes::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let cases: [Case; 13] = [
+        (
+            "moonshot",
+            KIMI_AI_SIGN_IN,
+            false,
+            None,
+            Some("subscription:moonshot@kimi.ai"),
+            None,
+        ),
+        (
+            "moonshot",
+            KIMI_COM_SIGN_IN,
+            true,
+            None,
+            Some("subscription:moonshot"),
+            None,
+        ),
+        (
+            "moonshot",
+            KIMI_AI_KEY,
+            false,
+            None,
+            Some("key:moonshot@kimi.ai"),
+            None,
+        ),
+        (
+            "moonshot",
+            KIMI_AI_KEY,
+            true,
+            None,
+            Some("key:moonshot"),
+            None,
+        ),
+        (
+            "moonshot",
+            NOTHING,
+            true,
+            Some("https://api.moonshot.ai/v1"),
+            Some("api.moonshot.ai"),
+            Some("https://api.moonshot.ai"),
+        ),
+        (
+            "moonshot",
+            KIMI_COM_SIGN_IN,
+            true,
+            Some("https://gateway.example/v1"),
+            None,
+            Some("https://gateway.example"),
+        ),
+        ("google", NOTHING, true, None, Some("key:google"), None),
+        ("google", GOOGLE_KEY, false, None, Some("key:google"), None),
+        (
+            "openai",
+            OPENAI_SIGN_IN,
+            true,
+            None,
+            Some("subscription:openai"),
+            None,
+        ),
+        ("openai", NOTHING, true, None, Some("key:openai"), None),
+        (
+            "anthropic",
+            NOTHING,
+            true,
+            None,
+            Some("key:anthropic"),
+            None,
+        ),
+        ("moonshot", NOTHING, false, None, None, None),
+        (
+            "moonshot",
+            KIMI_COM_SIGN_IN,
+            false,
+            Some("https://gateway.example/v1"),
+            None,
+            None,
+        ),
+    ];
+    for (at, (named, held, exported, base, route, origin)) in cases.into_iter().enumerate() {
+        let sample = Sample::new(&format!("served-on-{at}"));
+        let stored = sample.holding(held);
+        let settings = match base {
+            Some(base) => sample.user(&format!(
+                r#"{{"providers": {{"{named}": {{"baseUrl": "{base}"}}}}}}"#
+            )),
+            None => Settings::default(),
+        };
+        let from = move |_: &str| exported.then(|| "fabricated-exported-key".to_owned());
+        let auth = ProviderAuth {
+            settings: &settings,
+            from: &from,
+            stored: &stored,
+            subscriptions: &subscriptions,
+        };
+
+        let serving = served_on(named, "VARIABLE", auth);
+        let case = format!("case {at}: {named} {held} {exported} {base:?}");
+        if route.is_none() && origin.is_none() {
+            assert_eq!(serving, None, "{case}");
+            continue;
+        }
+        let serving = serving.unwrap_or_else(|| panic!("{case}: served on nothing"));
+        assert_eq!(serving.route.as_deref(), route, "{case}");
+        assert_eq!(
+            serving.at.as_ref().map(ToString::to_string).as_deref(),
+            origin,
+            "{case}"
+        );
+
+        let vendor = match named {
+            "moonshot" => Moonshot::CODING,
+            "openai" => OpenAi::VENDOR,
+            _ => continue,
+        };
+        let sending = base.map(|base| Endpoint::parse(base).unwrap());
+        let (endpoint, _) = credential(
+            ApiAudience {
+                provider: named,
+                variable: "VARIABLE",
+                vendor,
+            },
+            sending,
+            auth,
+        )
+        .unwrap_or_else(|_| panic!("{case}: no credential"));
+        let sent = crucible_http::Origin::of(endpoint.as_str()).unwrap();
+        let reached = serving.at.as_ref() == Some(&sent)
+            || serving
+                .route
+                .as_deref()
+                .and_then(|route| routes.warned(route))
+                .is_none_or(|warned| warned.origins.contains(&sent.to_string().as_str()));
+        assert!(reached, "{case}: {sent} is not where {serving:?} goes");
+    }
+}
+
+/// A start reads the yes from the user's file and what each provider is
+/// served on, before anything is sent: a key from the environment on a warned
+/// route holds that route's origin until its yes, and a yes in the file lets
+/// it through.
+#[test]
+fn a_start_holds_a_warned_route_until_the_users_file_says_yes() {
+    use crucible_http::Hold as _;
+
+    let google = crucible_http::Origin::of(Google::VENDOR.as_str()).unwrap();
+    for (tree, document, held) in [
+        ("unsaid", "{}", Some("key:google")),
+        (
+            "said",
+            r#"{"contentUse": {"accepted": ["key:google"]}}"#,
+            None,
+        ),
+    ] {
+        let sample = Sample::new(&format!("start-consent-{tree}"));
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+        let services = Services::new();
+        let settings = sample.user(document);
+
+        assemble(&Startup {
+            providers: &catalogue(),
+            provider: Some(serving("google")),
+            unasked: NOTHING_TO_ASK,
+            model: Some("gemini-3.8-flash"),
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &settings,
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| Some("fabricated-exported-key".to_owned()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("a start with a key");
+
+        assert_eq!(services.consent().held(&google).as_deref(), held, "{tree}");
+        // A model address shared by two rows follows the one served.
+        let kimi = crucible_http::Origin::of(Moonshot::CODING.as_str()).unwrap();
+        assert_eq!(
+            services.consent().held(&kimi).as_deref(),
+            Some("key:moonshot"),
+            "{tree}"
+        );
+    }
+}
+
+#[test]
+fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
+    // A restart holds a chosen speed: the file is read as the run starts.
+    // A speed kept for another model than the one a run starts on was never
+    // shown at that model's price, and is not its speed.
+    for (kept, asked) in [
+        (Some("gpt-5.6-sol"), crucible_models::Speed::Fast),
+        (Some("gpt-5.5"), crucible_models::Speed::Standard),
+        (None, crucible_models::Speed::Standard),
+    ] {
+        let sample = Sample::new(&format!("start-fast-{}", kept.unwrap_or("none")));
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+        let file = sample.user_file();
+        if let Some(model) = kept {
+            crate::remember::hastening(&file, "openai", model).expect("a speed written down");
+        }
+        let services = Services::new();
+        services.consent().keeps_in(file);
+
+        let conversation = assemble(&Startup {
+            providers: &catalogue(),
+            provider: Some(serving("openai")),
+            unasked: NO_MODEL_CHOSEN,
+            model: Some("gpt-5.6-sol"),
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| Some("sk-test".to_owned()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("a session over a key starts");
+
+        assert_eq!(conversation.runner().speed(), asked, "kept {kept:?}");
+    }
+}
+
+/// A web search on a model whose own route is warned waits for that route's
+/// yes as a turn on it does, even once the session has moved to a model that
+/// is not warned: the search was built for the model the run started on.
+#[test]
+fn a_search_on_a_warned_model_sends_nothing_until_its_yes() {
+    let (url, heard) = crate::sample::recording();
+    let sample = Sample::new("web-source-warned-model");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"meta": {{"baseUrl": "{url}"}}}}}}"#
+    ));
+    let services = Services::new();
+    let model = "muse-spark-1.3-contributor";
+
+    let reaching = web(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving("meta")),
+            unasked: NO_MODEL_CHOSEN,
+            model: Some(model),
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &settings,
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| Some("fabricated-meta-key".to_owned()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        &settings,
+    );
+    let searching = reaching.searching.expect("Meta searches");
+    let runtime = services.runtime().handle().unwrap();
+    let search =
+        || runtime.block_on(searching.search("what the user is working on", &Cancel::new()));
+
+    let held = search().err().map(|problem| problem.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(
+        heard.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "{held:?}"
+    );
+    let route = content_use::model_route("meta", model);
+    assert!(held.is_some_and(|said| said.contains(&route)));
+
+    services.consent().record(&route);
+    let _ = search();
+    assert!(heard.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    drop(services);
+}

@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+80x30 cursor 28,0 scrolled 0
+|                                                                                |
+|                                                                                |
+|Warning: No models available. Use /login or set an API key environment variable.|
+|Then use /model to select a model.                                              |
+|                                                                                |
+|› /login kimi                                                                   |
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Log in                                                                          |
+|                                                                                |
+|Choose the account or key to sign in with.                                      |
+|                                                                                |
+|Subscription                                                                    |
+|                                                                                |
+|› Kimi Code · kimi.ai                                                           |
+|  may train on what is sent · Kimi Code plan usage, accounts outside mainland C…|
+|                                                                                |
+|  Kimi Code · kimi.com                                                          |
+|  may use what is sent · Kimi Code plan usage, mainland China accounts          |
+|                                                                                |
+|API key                                                                         |
+|                                                                                |
+|  MoonshotAI · kimi.ai                                                          |
+|  may train on what is sent · a Kimi Code Console key, accounts outside mainlan…|
+|                                                                                |
+|  MoonshotAI · kimi.com                                                         |
+|  may use what is sent · set MOONSHOT_API_KEY                                   |
+|                                                                                |
+|esc to cancel                                                                   |
+|                                                                                |

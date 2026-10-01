@@ -22,6 +22,8 @@ use std::fmt;
 
 use crucible_credentials::{CredentialError, Redactions};
 use crucible_runtime::{BoxFuture, Cancel};
+
+use crate::speed::{FastForm, Served, Speed};
 use crucible_types::{
     Carried, Continuation, Modalities, Modality, PricingDate, PricingError, PromptCacheEncoding,
     PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId, ToolSchema, Transcript,
@@ -123,6 +125,30 @@ pub enum ProviderError {
     /// there to set one up in.
     #[error("{0}")]
     Unconfigured(Box<str>),
+
+    /// Nothing was sent: the route the request would go on waits for the
+    /// user's yes to what its vendor does with what is sent.
+    ///
+    /// Said whole, naming the provider and the route and no address or
+    /// credential. Not about the moment, so never retried: the same request
+    /// is held again until the yes is given.
+    #[error("{0}")]
+    Held(Box<str>),
+
+    /// The vendor refused the fast form this request asked for, before it
+    /// answered anything, in its own words.
+    ///
+    /// Raised only by a provider that sent a fast form and read its vendor's
+    /// refusal of it; every other failure of a fast request is the failure it
+    /// would have been at standard speed. Nothing was answered, so the same
+    /// request is sent once more without the fast form.
+    #[error("{provider} refused fast: {message}")]
+    FastRefused {
+        /// Which provider refused it.
+        provider: &'static str,
+        /// The vendor's reason, as it gave it.
+        message: Box<str>,
+    },
 }
 
 impl ProviderError {
@@ -172,6 +198,11 @@ impl ProviderError {
                 },
             },
             Self::Unconfigured(problem) => Self::Unconfigured(redactions.redact(&problem).into()),
+            Self::Held(problem) => Self::Held(redactions.redact(&problem).into()),
+            Self::FastRefused { provider, message } => Self::FastRefused {
+                provider,
+                message: redactions.redact(&message).into(),
+            },
         }
     }
 
@@ -207,7 +238,9 @@ impl ProviderError {
             | Self::Protocol { .. }
             | Self::Credential { .. }
             | Self::Cancelled(_)
-            | Self::Unconfigured(_) => false,
+            | Self::Unconfigured(_)
+            | Self::Held(_)
+            | Self::FastRefused { .. } => false,
         }
     }
 }
@@ -539,6 +572,13 @@ pub trait DeltaStream: Send {
     /// The future borrows the stream, so one delta is read at a time, and
     /// dropping it before it answers abandons that read.
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>>;
+
+    /// What the response said about the speed it was served at, read once
+    /// the stream has ended. [`Served::Unsaid`], the default, is the answer
+    /// of a response that says nothing, which counts as standard.
+    fn served(&self) -> Served {
+        Served::Unsaid
+    }
 }
 
 /// One LLM backend adapter.
@@ -682,6 +722,34 @@ pub trait Provider: Send + Sync {
         request: Request<'a>,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>>;
+
+    /// [`Provider::stream`], asking the model to answer at `speed`.
+    ///
+    /// The default is the ordinary request whatever the speed, which is the
+    /// answer of a provider whose vendor serves no fast form. A provider that
+    /// has one writes it where `speed` is [`Speed::Fast`] and the model's
+    /// [`Provider::fast`] form is a [`FastForm::Field`], and nowhere else.
+    ///
+    /// # Errors
+    ///
+    /// As [`Provider::stream`], and [`ProviderError::FastRefused`] where the
+    /// vendor refused the fast form before answering.
+    fn stream_at<'a>(
+        &'a self,
+        request: Request<'a>,
+        speed: Speed,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        let _ = speed;
+        self.stream(request, cancel)
+    }
+
+    /// How `model` is asked to answer fast on this provider's route. The
+    /// default is none, the answer of a vendor that serves no fast form.
+    fn fast(&self, model: &str) -> FastForm {
+        let _ = model;
+        FastForm::None
+    }
 }
 
 impl fmt::Debug for dyn Provider {

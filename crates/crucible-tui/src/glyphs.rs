@@ -340,6 +340,28 @@ impl Glyphs {
         }
     }
 
+    /// The mark on a release told in one row.
+    ///
+    /// Hollow where [`Glyphs::told`] is filled: the two stand in one column
+    /// down the list of releases, and the difference between them is whether
+    /// the words are there.
+    #[must_use]
+    pub fn summed(self) -> &'static str {
+        match self {
+            Self::Unicode => "◇",
+            Self::Ascii => "o",
+        }
+    }
+
+    /// The mark on a release told in full.
+    #[must_use]
+    pub fn told(self) -> &'static str {
+        match self {
+            Self::Unicode => "◆",
+            Self::Ascii => "*",
+        }
+    }
+
     /// A semantic place on the transcript map.
     ///
     /// Hollow so the filled mark showing the current place remains distinct,

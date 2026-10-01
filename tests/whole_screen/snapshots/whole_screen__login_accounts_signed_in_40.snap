@@ -1,0 +1,36 @@
+---
+source: tests/whole_screen/main.rs
+assertion_line: 1398
+expression: plans
+---
+40x30 cursor 28,0 scrolled 0
+|                                        |
+|› /login                                |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|› OpenAI                                |
+|  signed in · may train on what is sent…|
+|                                        |
+|  Kimi Code · kimi.ai                   |
+|  may train on what is sent · Kimi Code…|
+|                                        |
+|  Kimi Code · kimi.com                  |
+|  may use what is sent · Kimi Code plan…|
+|                                        |
+|  MiniMax · minimax.io                  |
+|  may use what is sent · MiniMax Token …|
+|                                        |
+|  MiniMax · minimaxi.com                |
+|  may use what is sent · MiniMax Token …|
+|                                        |
+|  Qwen Coding Plan · alibabacloud.com   |
+|  Qwen Coding Plan usage, the internati…|
+|                                        |
+|  Qwen Coding Plan · aliyun.com         |
+|  uses what is sent · Qwen Coding Plan …|
+|  · 2 more                              |
+|                                        |
+|esc to go back                          |
+|                                        |

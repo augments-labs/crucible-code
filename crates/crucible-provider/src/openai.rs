@@ -1,18 +1,23 @@
-//! The OpenAI provider.
+//! The OpenAI provider: Responses, as OpenAI's dialect of it.
 //!
-//! Four parts, and the split is the direction data travels: [`body`] builds a
-//! request, [`wire`] reads one event of a response, [`stream`] delivers a whole
-//! one, and this file is the request itself — the address, the headers and the
-//! status. Two addresses serve this protocol and they do not accept the same
-//! body, so the address is also what [`Serving`] is read off on the way out.
+//! The wire is [`crate::responses`], which writes the request, reads the
+//! response and sends one for the other, and `Responses<Gpt>` is what ships.
+//! What is OpenAI's is here: its two addresses and which of its services each
+//! one is, the parts of the body only its own routes accept, its fast form (in
+//! [`fast`]), what its cache is known to do and what each model costs. Two
+//! addresses serve this protocol and they do not accept the same body, so the
+//! address is also what [`Serving`] is read off on the way out.
 //!
-//! Only two of those are this vendor's. Delivering a response is the same job
-//! whoever sent it, so the loop that does it lives in `crate::stream` and
-//! [`stream`] is where this protocol is handed to it.
+//! One model's turns go back as the items it answered with, encrypted
+//! reasoning included: [`continuation`] reads them off a response, and
+//! [`body`]'s `effort` and `replay` write them into the next request. That is
+//! [`Gpt`]'s [`Replay`], and nothing else on the wire knows which model it is.
+//! [`wire`] and [`stream`] hold nothing else that ships: they keep OpenAI's
+//! tests where they were, reaching the shared wire through this dialect.
 //!
-//! It names no HTTP client and no credential kind. A [`Transport`] is handed in
-//! and so is a [`Credential`], which is what lets the whole protocol be tested
-//! against recorded bytes.
+//! It names no HTTP client and no credential kind. A [`crate::Transport`] is
+//! handed in and so is a [`crucible_credentials::Credential`], which is what
+//! lets the whole protocol be tested against recorded bytes.
 //!
 //! Responses rather than Chat Completions, and not for the newer fields. A
 //! model that reasons before answering refuses function tools on the older
@@ -29,38 +34,39 @@
 //! answers to that: turn the reasoning off, or move. Turning it off would leave
 //! every OpenAI session running a thinking model told not to think, which is
 //! the worse of the two by some way.
-//!
-//! What that costs is the other vendors serving an OpenAI-compatible API, which
-//! implement the older endpoint and not this one. They are reached by a
-//! provider of their own the day one is written, and the seam is already the
-//! right shape for it: a wire protocol is a module here, and nothing above this
-//! crate learns which endpoint answered.
 
 mod body;
 mod continuation;
 #[cfg(test)]
 mod continuation_tests;
+mod fast;
+#[cfg(test)]
+mod fast_tests;
 #[cfg(test)]
 mod model_tests;
+#[cfg(test)]
+mod newer_tests;
 mod stream;
 mod wire;
 
-use crucible_credentials::{Credential, Outgoing};
+#[cfg(test)]
+use crucible_models::Provider;
 use crucible_models::{
-    DeltaStream, PriceRate, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,
+    Delta, FastForm, PriceRate, PromptCacheBoundary, PromptCacheCapabilities, PromptCacheContent,
     PromptCacheMechanismCapability, PromptCachePricing, PromptCacheProvenance, PromptCacheRates,
-    PromptCacheRoute, Provider, ProviderError, Request, StatefulTransportCapability, UsageRate,
+    ProviderError, Request, Served, StatefulTransportCapability, UsageRate,
 };
-use crucible_runtime::{BoxFuture, Cancel};
+#[cfg(test)]
+use crucible_runtime::Cancel;
 use crucible_types::{
-    CredentialScopeId, Modalities, Modality, PricingCurrency, PricingDate, PricingError,
+    ContinuationScope, Modalities, Modality, PricingCurrency, PricingDate, PricingError,
     PricingUnit, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
 
 use crate::endpoint::Endpoint;
-use crate::openai::stream::Stream;
-use crate::refusal::refused;
-use crate::transport::Transport;
+use crate::json::Object;
+use crate::responses::{Dialect, Hint, Priced, Replay, Responses};
+use crate::sse::SseEvent;
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "openai";
@@ -68,7 +74,9 @@ const ASTRA: &str = "gpt-6-astra";
 
 /// Models whose cache options and inclusive usage include cache writes.
 fn cache_writes(model: &str) -> bool {
-    model == ASTRA || model.starts_with("gpt-5.6-")
+    model == ASTRA
+        || model.starts_with("gpt-5.6-")
+        || matches!(model, "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna")
 }
 
 /// Where requests go unless a setting says otherwise.
@@ -124,15 +132,15 @@ const fn openai_rates(input: u64, read: u64, write: UsageRate, output: u64) -> P
 /// They speak the same protocol and do not accept the same body: the published
 /// API takes the whole Responses request, and the backend a plan is served by
 /// implements a part of it and answers a field it does not know with a 400 that
-/// ends the turn. So the difference is carried into [`body`] rather than left to
-/// the address.
+/// ends the turn. So the difference is carried into the body rather than left
+/// to the address.
 ///
 /// Read off the address rather than stored beside it, because being on that
 /// service *is* posting there — a field saying which one would be a second
 /// answer to a question the endpoint already answers, and the two would drift
 /// the first time one of them was set without the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Serving {
+pub enum Serving {
     /// `api.openai.com`, or whatever gateway a key was pointed at.
     Api,
 
@@ -151,81 +159,26 @@ impl Serving {
     }
 }
 
-/// OpenAI's Responses API.
+/// OpenAI's dialect of Responses.
 #[derive(Debug)]
-pub struct OpenAi {
-    credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
-    endpoint: Endpoint,
-    credential_scope: CredentialScopeId,
-}
+pub struct Gpt;
 
-impl OpenAi {
-    /// The address this API is served at, for a caller with no reason to send
-    /// anywhere else.
-    pub const VENDOR: Endpoint = VENDOR;
+impl Dialect for Gpt {
+    const NAME: &'static str = NAME;
+    const TITLE: &'static str = "OpenAi";
+    const ADDRESSES: &'static [Endpoint] = &[VENDOR, SUBSCRIPTION];
+    const PROTOCOL: &'static str = "openai-responses";
+    const SHAPE: &'static str = "openai-responses-v1";
+    const FAST_TIER: Option<&'static str> = Some(fast::TIER);
 
-    /// The fixed endpoint that accepts a `ChatGPT` subscription credential.
-    ///
-    /// Kept distinct from [`OpenAi::VENDOR`]: an API key may be redirected to a
-    /// configured compatible gateway, while a subscription token is minted for
-    /// this audience and must never follow that setting.
-    pub const SUBSCRIPTION: Endpoint = SUBSCRIPTION;
+    type Route = Serving;
+    type Replay = continuation::Output;
 
-    /// A provider that authenticates with `credential`, sends over `transport`
-    /// and posts to `endpoint`.
-    ///
-    /// The address is named by the caller rather than defaulted here, because
-    /// the wiring is where a decision like that belongs and there is one
-    /// constructor rather than a defaulting one beside an explicit one. It is
-    /// an [`Endpoint`] rather than a string because what decides who receives
-    /// the key is checked before it is one.
-    #[must_use]
-    pub fn at(
-        endpoint: Endpoint,
-        credential: Box<dyn Credential>,
-        transport: Box<dyn Transport>,
-    ) -> Self {
-        let credential_scope = credential.scope();
-        Self {
-            credential,
-            transport,
-            endpoint,
-            credential_scope,
-        }
+    fn route(endpoint: &Endpoint) -> Serving {
+        Serving::of(endpoint)
     }
 
-    /// The headers every request carries, including the secret.
-    ///
-    /// No version header: this API is versioned by its path, and behaviour
-    /// changes arrive under new model names rather than new dates.
-    async fn headers(&self, cancel: &Cancel) -> Result<Outgoing, ProviderError> {
-        let mut outgoing = Outgoing::new();
-        outgoing.set_header("content-type", "application/json");
-        outgoing.set_header("accept", "text/event-stream");
-
-        // Raced against the turn's cancel: a credential renewing its token
-        // waits for a renewal that is the renewal's own work, so a turn
-        // stopped meanwhile stops waiting here and leaves it to finish.
-        cancel
-            .race(self.credential.authorize(&mut outgoing))
-            .await
-            .ok_or(ProviderError::Cancelled(NAME))?
-            .map_err(|source| ProviderError::Credential {
-                provider: NAME,
-                source,
-            })?;
-
-        Ok(outgoing)
-    }
-}
-
-impl Provider for OpenAi {
-    fn name(&self) -> &'static str {
-        NAME
-    }
-
-    fn spells(&self) -> Modalities {
+    fn spells() -> Modalities {
         // Responses spells an attachment as an `input_image` or `input_file`
         // part, and this module writes both. An `input_file` carries other
         // kinds of file too, and none of them is offered: what is declared
@@ -237,288 +190,344 @@ impl Provider for OpenAi {
             .insert(Modality::Pdf)
     }
 
-    fn prompt_cache_capabilities(&self, model: &str) -> PromptCacheCapabilities {
-        if self.endpoint != VENDOR && self.endpoint != SUBSCRIPTION {
-            return PromptCacheCapabilities::unknown("custom endpoint");
-        }
+    fn ceiling(route: Serving) -> bool {
+        // The plan backend does not implement `max_output_tokens`, and refuses
+        // the whole request over it rather than ignoring it, so every turn
+        // failed with `Unsupported parameter: max_output_tokens` before the
+        // ceiling was asked where it was going.
+        route == Serving::Api
+    }
 
-        let (minimum, revision, retentions, usage): (u32, &'static str, &[_], _) = match model {
-            ASTRA => (
-                1_024,
-                ASTRA,
-                OPENAI_56_RETENTIONS,
-                PromptCacheUsageReporting::ReadAndWriteTokens,
-            ),
-            "gpt-5.6-sol" => (
-                1_024,
-                "gpt-5.6-sol",
-                OPENAI_56_RETENTIONS,
-                PromptCacheUsageReporting::ReadAndWriteTokens,
-            ),
-            "gpt-5.6-terra" => (
-                1_024,
-                "gpt-5.6-terra",
-                OPENAI_56_RETENTIONS,
-                PromptCacheUsageReporting::ReadAndWriteTokens,
-            ),
-            "gpt-5.6-luna" => (
-                1_024,
-                "gpt-5.6-luna",
-                OPENAI_56_RETENTIONS,
-                PromptCacheUsageReporting::ReadAndWriteTokens,
-            ),
-            "gpt-5.5" => (
-                2_048,
-                "gpt-5.5",
-                OPENAI_55_RETENTIONS,
-                PromptCacheUsageReporting::ReadTokens,
-            ),
-            _ => return PromptCacheCapabilities::unknown("unreviewed model"),
-        };
-        let automatic = PromptCacheMechanismCapability::automatic_prefix(
-            minimum,
-            true,
-            true,
-            OPENAI_CACHE_CONTENT,
-        )
-        .with_retentions(retentions);
-        let mechanisms = if self.endpoint == VENDOR && cache_writes(model) {
-            vec![
-                automatic,
-                PromptCacheMechanismCapability::explicit_breakpoints(
-                    minimum,
-                    4,
-                    OPENAI_EXPLICIT_BOUNDARIES,
-                    OPENAI_CACHE_CONTENT,
-                )
-                .with_retentions(OPENAI_56_RETENTIONS),
-            ]
-        } else {
-            vec![automatic]
-        };
-        let (reviewed, version) = if model == ASTRA {
-            ("2026-09-06", "openai-prompt-cache-2026-09-06")
-        } else {
-            ("2026-08-31", "openai-prompt-cache-2026-08-31")
-        };
-        PromptCacheCapabilities::supported(
-            version,
-            Some(revision),
-            PromptCacheProvenance::new(
-                "https://developers.openai.com/api/docs/guides/prompt-caching",
-                reviewed,
-                version,
-            ),
-            StatefulTransportCapability::Unsupported,
-            &mechanisms,
-            usage,
-        )
+    fn breakpoints(route: Serving) -> bool {
+        route == Serving::Api
+    }
+
+    fn retention(model: &str, retention: PromptCacheRetentionClass) -> Option<Hint> {
+        match (cache_writes(model), retention) {
+            (true, PromptCacheRetentionClass::Ephemeral) => Some(|body: &mut Object<'_>| {
+                body.object("prompt_cache_options", |options| {
+                    options.text("mode", "implicit");
+                    options.text("ttl", "30m");
+                });
+            }),
+            (false, PromptCacheRetentionClass::Extended) => Some(|body: &mut Object<'_>| {
+                body.text("prompt_cache_retention", "24h");
+            }),
+            (_, PromptCacheRetentionClass::ProviderDefault)
+            | (true, PromptCacheRetentionClass::Extended)
+            | (false, PromptCacheRetentionClass::Ephemeral) => None,
+        }
+    }
+
+    fn cache_writes(model: &str) -> bool {
+        cache_writes(model)
+    }
+
+    fn fast(route: Serving, model: &str) -> FastForm {
+        fast::form(Some(route), model)
+    }
+
+    fn fast_refused(route: Serving) -> Option<fn(u16, &str) -> bool> {
+        // A refusal of the tier is documented for an API key alone.
+        (route == Serving::Api).then_some(fast::refused as fn(u16, &str) -> bool)
+    }
+
+    fn served(data: &str) -> Option<Served> {
+        fast::served(data)
+    }
+
+    fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
+        prompt_cache(route, model)
     }
 
     fn prompt_cache_pricing(
-        &self,
-        model: &str,
-        revision: Option<&str>,
-        input_tokens: Option<u64>,
-        retention: PromptCacheRetentionClass,
-        at: PricingDate,
+        route: Option<Serving>,
+        asked: Priced<'_>,
     ) -> Result<Option<PromptCachePricing>, PricingError> {
-        let reviewed = if model == ASTRA {
-            ASTRA_REVIEWED
-        } else {
-            PRICING_REVIEWED
-        };
-        if self.endpoint != VENDOR || at < reviewed {
-            return Ok(None);
+        Ok(price(route, asked))
+    }
+}
+
+/// What the cache is known to do for `model` on one of the vendor's own
+/// routes.
+fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
+    let (minimum, revision, retentions, usage): (u32, &'static str, &[_], _) = match model {
+        ASTRA => (
+            1_024,
+            ASTRA,
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-6.1-sol" => (
+            1_024,
+            "gpt-6.1-sol",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-6-sol" => (
+            1_024,
+            "gpt-6-sol",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-6-luna" => (
+            1_024,
+            "gpt-6-luna",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-5.6-sol" => (
+            1_024,
+            "gpt-5.6-sol",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-5.6-terra" => (
+            1_024,
+            "gpt-5.6-terra",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-5.6-luna" => (
+            1_024,
+            "gpt-5.6-luna",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-5.5" => (
+            2_048,
+            "gpt-5.5",
+            OPENAI_55_RETENTIONS,
+            PromptCacheUsageReporting::ReadTokens,
+        ),
+        _ => return PromptCacheCapabilities::unknown("unreviewed model"),
+    };
+    let automatic =
+        PromptCacheMechanismCapability::automatic_prefix(minimum, true, true, OPENAI_CACHE_CONTENT)
+            .with_retentions(retentions);
+    let mechanisms = if route == Serving::Api && cache_writes(model) {
+        vec![
+            automatic,
+            PromptCacheMechanismCapability::explicit_breakpoints(
+                minimum,
+                4,
+                OPENAI_EXPLICIT_BOUNDARIES,
+                OPENAI_CACHE_CONTENT,
+            )
+            .with_retentions(OPENAI_56_RETENTIONS),
+        ]
+    } else {
+        vec![automatic]
+    };
+    let (reviewed, version) = match model {
+        ASTRA => ("2026-09-06", "openai-prompt-cache-2026-09-06"),
+        "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna" => {
+            ("2026-10-01", "openai-prompt-cache-2026-10-01")
         }
-        let Some(input_tokens) = input_tokens else {
-            return Ok(None);
-        };
-        let (model, source, short, long) = match (model, revision) {
-            (ASTRA, Some(ASTRA)) => (
-                ASTRA,
-                "https://developers.openai.com/api/docs/models/gpt-6-astra",
-                openai_rates(
-                    10_000_000_000,
-                    1_000_000_000,
-                    rate(12_500_000_000),
-                    50_000_000_000,
-                ),
-                openai_rates(
-                    20_000_000_000,
-                    2_000_000_000,
-                    rate(25_000_000_000),
-                    75_000_000_000,
-                ),
+        _ => ("2026-08-31", "openai-prompt-cache-2026-08-31"),
+    };
+    PromptCacheCapabilities::supported(
+        version,
+        Some(revision),
+        PromptCacheProvenance::new(
+            "https://developers.openai.com/api/docs/guides/prompt-caching",
+            reviewed,
+            version,
+        ),
+        StatefulTransportCapability::Unsupported,
+        &mechanisms,
+        usage,
+    )
+}
+
+/// What `asked` costs, priced only at the published API's own address.
+fn price(route: Option<Serving>, asked: Priced<'_>) -> Option<PromptCachePricing> {
+    let Priced {
+        model,
+        revision,
+        input_tokens,
+        retention,
+        at,
+    } = asked;
+    let reviewed = if model == ASTRA {
+        ASTRA_REVIEWED
+    } else {
+        PRICING_REVIEWED
+    };
+    if route != Some(Serving::Api) || at < reviewed {
+        return None;
+    }
+    let input_tokens = input_tokens?;
+    let (model, source, short, long) = match (model, revision) {
+        (ASTRA, Some(ASTRA)) => (
+            ASTRA,
+            "https://developers.openai.com/api/docs/models/gpt-6-astra",
+            openai_rates(
+                10_000_000_000,
+                1_000_000_000,
+                rate(12_500_000_000),
+                50_000_000_000,
             ),
-            ("gpt-5.6-sol", Some("gpt-5.6-sol")) => (
-                "gpt-5.6-sol",
-                PRICING_SOURCE,
-                openai_rates(
-                    4_000_000_000,
-                    400_000_000,
-                    rate(5_000_000_000),
-                    20_000_000_000,
-                ),
-                openai_rates(
-                    8_000_000_000,
-                    800_000_000,
-                    rate(10_000_000_000),
-                    30_000_000_000,
-                ),
+            openai_rates(
+                20_000_000_000,
+                2_000_000_000,
+                rate(25_000_000_000),
+                75_000_000_000,
             ),
-            ("gpt-5.6-terra", Some("gpt-5.6-terra")) => (
-                "gpt-5.6-terra",
-                PRICING_SOURCE,
-                openai_rates(
-                    2_000_000_000,
-                    200_000_000,
-                    rate(2_500_000_000),
-                    12_000_000_000,
-                ),
-                openai_rates(
-                    4_000_000_000,
-                    400_000_000,
-                    rate(5_000_000_000),
-                    18_000_000_000,
-                ),
+        ),
+        ("gpt-5.6-sol", Some("gpt-5.6-sol")) => (
+            "gpt-5.6-sol",
+            PRICING_SOURCE,
+            openai_rates(
+                4_000_000_000,
+                400_000_000,
+                rate(5_000_000_000),
+                20_000_000_000,
             ),
-            ("gpt-5.6-luna", Some("gpt-5.6-luna")) => (
-                "gpt-5.6-luna",
-                PRICING_SOURCE,
-                openai_rates(200_000_000, 20_000_000, rate(250_000_000), 1_200_000_000),
-                openai_rates(400_000_000, 40_000_000, rate(500_000_000), 1_800_000_000),
+            openai_rates(
+                8_000_000_000,
+                800_000_000,
+                rate(10_000_000_000),
+                30_000_000_000,
             ),
-            ("gpt-5.5", Some("gpt-5.5")) => (
-                "gpt-5.5",
-                MODEL_55_PRICING_SOURCE,
-                openai_rates(
-                    5_000_000_000,
-                    500_000_000,
-                    optional_rate(5_000_000_000),
-                    30_000_000_000,
-                ),
-                openai_rates(
-                    10_000_000_000,
-                    1_000_000_000,
-                    optional_rate(10_000_000_000),
-                    45_000_000_000,
-                ),
+        ),
+        ("gpt-5.6-terra", Some("gpt-5.6-terra")) => (
+            "gpt-5.6-terra",
+            PRICING_SOURCE,
+            openai_rates(
+                2_000_000_000,
+                200_000_000,
+                rate(2_500_000_000),
+                12_000_000_000,
             ),
-            _ => return Ok(None),
-        };
-        let allowed_retention = if model == "gpt-5.5" {
-            matches!(
-                retention,
-                PromptCacheRetentionClass::ProviderDefault | PromptCacheRetentionClass::Extended
-            )
-        } else {
-            matches!(
-                retention,
-                PromptCacheRetentionClass::ProviderDefault | PromptCacheRetentionClass::Ephemeral
-            )
-        };
-        if !allowed_retention {
-            return Ok(None);
-        }
-        let (short_version, long_version) = if model == ASTRA {
-            (
-                "openai-standard-short-2026-09-06",
-                "openai-standard-long-2026-09-06",
-            )
-        } else {
-            (
-                "openai-standard-short-2026-08-31",
-                "openai-standard-long-2026-08-31",
-            )
-        };
-        let (rates, minimum, maximum, version) = if input_tokens <= 272_000 {
-            (short, 0, Some(272_000), short_version)
-        } else {
-            (long, 272_001, None, long_version)
-        };
-        Ok(Some(
-            PromptCachePricing::new(
-                "openai-responses",
-                "https://api.openai.com/v1/responses",
-                model,
-                Some(model),
-                reviewed,
-                version,
-                source,
-                USD,
-                PricingUnit::MillionTokens,
-                rates,
-            )
-            .with_input_band(minimum, maximum)
-            .with_retention(retention),
-        ))
+            openai_rates(
+                4_000_000_000,
+                400_000_000,
+                rate(5_000_000_000),
+                18_000_000_000,
+            ),
+        ),
+        ("gpt-5.6-luna", Some("gpt-5.6-luna")) => (
+            "gpt-5.6-luna",
+            PRICING_SOURCE,
+            openai_rates(200_000_000, 20_000_000, rate(250_000_000), 1_200_000_000),
+            openai_rates(400_000_000, 40_000_000, rate(500_000_000), 1_800_000_000),
+        ),
+        ("gpt-5.5", Some("gpt-5.5")) => (
+            "gpt-5.5",
+            MODEL_55_PRICING_SOURCE,
+            openai_rates(
+                5_000_000_000,
+                500_000_000,
+                optional_rate(5_000_000_000),
+                30_000_000_000,
+            ),
+            openai_rates(
+                10_000_000_000,
+                1_000_000_000,
+                optional_rate(10_000_000_000),
+                45_000_000_000,
+            ),
+        ),
+        _ => return None,
+    };
+    let allowed_retention = if model == "gpt-5.5" {
+        matches!(
+            retention,
+            PromptCacheRetentionClass::ProviderDefault | PromptCacheRetentionClass::Extended
+        )
+    } else {
+        matches!(
+            retention,
+            PromptCacheRetentionClass::ProviderDefault | PromptCacheRetentionClass::Ephemeral
+        )
+    };
+    if !allowed_retention {
+        return None;
+    }
+    let (short_version, long_version) = if model == ASTRA {
+        (
+            "openai-standard-short-2026-09-06",
+            "openai-standard-long-2026-09-06",
+        )
+    } else {
+        (
+            "openai-standard-short-2026-08-31",
+            "openai-standard-long-2026-08-31",
+        )
+    };
+    let (rates, minimum, maximum, version) = if input_tokens <= 272_000 {
+        (short, 0, Some(272_000), short_version)
+    } else {
+        (long, 272_001, None, long_version)
+    };
+    Some(
+        PromptCachePricing::new(
+            "openai-responses",
+            "https://api.openai.com/v1/responses",
+            model,
+            Some(model),
+            reviewed,
+            version,
+            source,
+            USD,
+            PricingUnit::MillionTokens,
+            rates,
+        )
+        .with_input_band(minimum, maximum)
+        .with_retention(retention),
+    )
+}
+
+/// The one model whose turns go back as the items it answered with.
+impl Replay for continuation::Output {
+    fn replays(model: &str) -> bool {
+        model == ASTRA
     }
 
-    fn prompt_cache_route(&self) -> PromptCacheRoute<'_> {
-        PromptCacheRoute {
-            protocol: "openai-responses",
-            endpoint: self.endpoint.as_str(),
-            custom_endpoint: self.endpoint != VENDOR && self.endpoint != SUBSCRIPTION,
-            credential_scope: self.credential_scope,
-            account: None,
-            project: None,
-            request_shape_version: "openai-responses-v1",
-        }
+    fn reading(request: &Request<'_>, scope: ContinuationScope) -> Result<Self, ProviderError> {
+        Self::new(request, scope)
     }
 
-    fn prompt_cache_encoding(&self, request: &Request<'_>) -> crucible_types::PromptCacheEncoding {
-        body::prompt_cache_encoding(request, Serving::of(&self.endpoint))
+    fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        Self::deltas(self, event)
     }
 
-    fn stream<'a>(
-        &'a self,
-        request: Request<'a>,
-        cancel: &'a Cancel,
-    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
-        Box::pin(async move {
-            // Nothing is sent for a turn the user has already abandoned. Once the
-            // request is away, cancelling is the stream's business.
-            if cancel.requested() {
-                return Err(ProviderError::Cancelled(NAME));
-            }
-
-            let mut outgoing = self.headers(cancel).await?;
-            let scope = crucible_types::ContinuationScope::new(
-                self.credential_scope,
-                self.endpoint.as_str(),
-            );
-            let body = body::serialize(
-                &request,
-                Serving::of(&self.endpoint),
-                (request.model == ASTRA).then_some(scope),
-            )?;
-
-            let response = self
-                .transport
-                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
-                .await;
-            let redactions = outgoing.redactions();
-            let response =
-                response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
-
-            if response.status() != 200 {
-                let error = refused(NAME, response.status(), response, &redactions, cancel).await;
-                return Err(if request.model == ASTRA {
-                    continuation::refusal(error)
-                } else {
-                    error
-                });
-            }
-
-            Ok(Box::new(Stream::with_wire(
-                response.into_reader(),
-                cancel.clone(),
-                redactions,
-                wire::Responses::for_request(&request, scope)?,
-            )) as Box<dyn DeltaStream>)
-        })
+    fn write(
+        body: &mut Object<'_>,
+        request: &Request<'_>,
+        scope: ContinuationScope,
+        explicit: Option<usize>,
+    ) -> Result<(), ProviderError> {
+        body::replayed(body, request, scope, explicit)
     }
+
+    fn refusal(error: ProviderError) -> ProviderError {
+        continuation::refusal(error)
+    }
+}
+
+/// OpenAI's Responses API.
+pub type OpenAi = Responses<Gpt>;
+
+impl Responses<Gpt> {
+    /// The address this API is served at, for a caller with no reason to send
+    /// anywhere else.
+    pub const VENDOR: Endpoint = VENDOR;
+
+    /// How `model` is asked to answer fast under the `ChatGPT` sign-in: what a
+    /// list of models says before any provider is set up.
+    #[must_use]
+    pub fn fast_signed_in(model: &str) -> FastForm {
+        fast::form(Some(Serving::Subscription), model)
+    }
+
+    /// The fixed endpoint that accepts a `ChatGPT` subscription credential.
+    ///
+    /// Kept distinct from [`OpenAi::VENDOR`]: an API key may be redirected to a
+    /// configured compatible gateway, while a subscription token is minted for
+    /// this audience and must never follow that setting.
+    pub const SUBSCRIPTION: Endpoint = SUBSCRIPTION;
 }
 
 #[cfg(test)]

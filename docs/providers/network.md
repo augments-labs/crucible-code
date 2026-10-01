@@ -14,7 +14,8 @@ crucible makes requests of its own for three things, and nothing else:
   opens the page a fetch names; crucible never does.
 - **The account hosts**, when you sign in to a ChatGPT or Kimi Code plan with
   `/login` and when its token is renewed ([account
-  login](providers.md#account-login-today)).
+  login](providers.md#account-login-today)). A MiniMax or Qwen plan is a key,
+  sent to the provider's endpoint like any other, and signs in to no host.
 - **`api.github.com`**, to learn whether there is a newer release. It is asked
   once crucible has started, at most once a day, and is given ten seconds for
   the whole exchange; what it says is shown on the next run. A check that

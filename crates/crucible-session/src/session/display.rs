@@ -51,8 +51,13 @@ pub struct DisplayHistory {
     calls: Vec<ToolId>,
     notices: VecDeque<DisplayItem>,
     ready: bool,
-    queued: Option<(Message, HashMap<ToolId, Diff>)>,
+    queued: Option<(Message, HashMap<ToolId, Diff>, u64)>,
     ended: bool,
+    /// How many bytes of the log have been read, which is where the next
+    /// record begins.
+    read: u64,
+    /// Where the record the last message handed out came from begins.
+    last: Option<u64>,
 }
 
 impl fmt::Debug for DisplayHistory {
@@ -77,8 +82,11 @@ impl DisplayHistory {
             ready: false,
             queued: None,
             ended: false,
+            read: 0,
+            last: None,
         };
-        replay::read_record(&mut history.log, &mut history.raw, replay::RECORD_BYTES)?;
+        let header = replay::read_record(&mut history.log, &mut history.raw, replay::RECORD_BYTES)?;
+        history.read = u64::try_from(header).unwrap_or(u64::MAX);
         Ok(history)
     }
 
@@ -89,7 +97,8 @@ impl DisplayHistory {
             }
             self.ready = false;
         }
-        if let Some((message, previews)) = self.queued.take() {
+        if let Some((message, previews, at)) = self.queued.take() {
+            self.last = Some(at);
             return Ok(Some(DisplayItem::Message { message, previews }));
         }
         if self.ended {
@@ -97,7 +106,11 @@ impl DisplayHistory {
         }
         loop {
             self.raw.clear();
+            let at = self.read;
             let read = replay::read_record(&mut self.log, &mut self.raw, replay::RECORD_BYTES)?;
+            self.read = self
+                .read
+                .saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
             if read == 0 || !self.raw.ends_with(b"\n") {
                 self.ended = true;
                 return Ok(self.notices.pop_front());
@@ -213,15 +226,27 @@ impl DisplayHistory {
                 Message::User { .. } => {}
             }
             if let Some(notice) = self.notices.pop_front() {
-                self.queued = Some((message, shown));
+                self.queued = Some((message, shown, at));
                 self.ready = true;
                 return Ok(Some(notice));
             }
+            self.last = Some(at);
             return Ok(Some(DisplayItem::Message {
                 message,
                 previews: shown,
             }));
         }
+    }
+
+    /// Where in the log the record the last message handed out came from
+    /// begins, which is what a [`super::Place`] of one of its results holds.
+    ///
+    /// Asked between items rather than carried in them, so the items stay what
+    /// the reader draws and the position stays what the log is read back by.
+    /// `None` until a message has been handed out.
+    #[must_use]
+    pub const fn placed(&self) -> Option<u64> {
+        self.last
     }
 
     /// Two facts are enough to match the largest live compaction operation.

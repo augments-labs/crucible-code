@@ -31,8 +31,11 @@
 // case would say less about what went wrong than the message on the `expect`.
 #![allow(clippy::expect_used, clippy::panic)]
 
+mod fast;
+mod providers;
 mod screen;
 mod vendor;
+mod warning;
 mod watched;
 
 use std::fmt::Write as _;
@@ -160,6 +163,44 @@ fn a_turn_still_running() -> Vendor {
     )
 }
 
+/// Moves the mark of the panel standing to the entry named `name` and takes
+/// it: a row is reached by what it says, never by how far down it stands,
+/// so a row added above it moves no case.
+fn takes(window: &mut Watched, name: &str) {
+    let marked = format!("› {name}");
+    for _ in 0..24 {
+        let picture = window.picture();
+        if picture
+            .lines()
+            .any(|row| row.trim_matches('|').trim_end() == marked)
+        {
+            window.types("\r");
+            return;
+        }
+        window.types("\x1b[B");
+    }
+    panic!("no entry reads {name}: {}", window.picture());
+}
+
+/// Walks `/login` to the key box of the provider named `name`, saying yes on
+/// the way where its route's vendor uses what is sent.
+fn keyed(window: &mut Watched, name: &str) {
+    window.types_until("/login\r", "Provide your own API key");
+    takes(window, "Provide your own API key");
+    window.types_until("", "set DEEPSEEK_API_KEY");
+    takes(window, name);
+    answers(window);
+    window.types_until("", "paste or type your API key");
+}
+
+/// Says yes to the question a route whose vendor uses what is sent puts, where
+/// it stands.
+fn answers(window: &mut Watched) {
+    if window.picture().contains("Use it anyway") {
+        window.types("\r");
+    }
+}
+
 /// The row directly under the one that reads `› {command}`, without the
 /// picture's edges.
 fn under(picture: &str, command: &str) -> String {
@@ -220,21 +261,19 @@ fn every_onboarding_state_can_be_left_for_the_same_clean_prompt() {
     first.types_until("/login\r", "Provide your own API key");
     first.types_until("\x1b", "cancelled, nothing signed in");
 
+    // Below the first panel Escape goes back one screen at a time, so each
+    // state is left by as many presses as it stands deep.
     let mut provider = Watched::open("login-leave-provider", 80, 24);
     provider.types_until("/login\r", "Provide your own API key");
-    provider.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
+    takes(&mut provider, "Provide your own API key");
+    provider.types_until("", "set DEEPSEEK_API_KEY");
+    provider.types_until("\x1b", "Choose how usage is paid for.");
     provider.types_until("\x1b", "cancelled, nothing signed in");
 
     let mut secret = Watched::open("login-leave-secret", 80, 24);
-    secret.types_until("/login\r", "Provide your own API key");
-    secret.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    secret.types_until("\r", "paste or type your API key");
+    keyed(&mut secret, "Anthropic");
+    secret.types_until("\x1b", "set DEEPSEEK_API_KEY");
+    secret.types_until("\x1b", "Choose how usage is paid for.");
     secret.types_until("\x1b", "cancelled, nothing signed in");
 
     for picture in [first.picture(), provider.picture(), secret.picture()] {
@@ -523,6 +562,87 @@ fn a_bare_slash_is_the_list_opener_not_a_command() {
     window.types_and_catches("\r", "/clear");
     let still = window.picture();
     assert!(!still.contains("names no command"), "no refusal:\n{still}");
+}
+
+#[test]
+fn a_bare_slash_mid_turn_is_neither_refused_nor_queued() {
+    // Enter on the slash that opened the list is a reader still choosing. The
+    // next key typed lands after the slash in the box, which is what says the
+    // Enter was taken and the line kept: a refused slash would have stood a
+    // panel, and a queued one would have left the box empty.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("bare-slash-kept", 80, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/", "/clear");
+    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("h", "› /h ");
+
+    let still = window.picture();
+    assert!(!still.contains("no such command"), "no refusal:\n{still}");
+    assert!(!still.contains("esc to close"), "no panel:\n{still}");
+    assert!(!still.contains("queued"), "nothing queued:\n{still}");
+}
+
+/// A word typed alone that names no command, said back with what it was near.
+///
+/// Two rows under the line and nothing after them: the whole list under a slip
+/// buries the names that answer it. Nothing is sent, and the arrow that brings
+/// back the last line brings back this one to be corrected.
+fn refused_as_a_slip(window: &mut Watched) -> String {
+    window.types_until("/modle\r", "nearest: /model, /mode");
+    let refused = window.picture();
+    assert!(refused.contains("no such command: /modle"), "{refused}");
+    assert!(!refused.contains("what these are"), "no list:\n{refused}");
+
+    window.types_until("\x1b[A", "│ › /modle");
+    refused
+}
+
+#[test]
+fn a_mistyped_command_is_refused_with_the_names_it_was_nearest_to() {
+    let mut window = Watched::open("mistyped", 80, 24);
+
+    insta::assert_snapshot!(refused_as_a_slip(&mut window));
+}
+
+#[test]
+fn a_mistyped_command_is_refused_the_same_way_in_a_narrow_window() {
+    let mut window = Watched::open("mistyped-narrow", 40, 24);
+
+    insta::assert_snapshot!(refused_as_a_slip(&mut window));
+}
+
+#[test]
+fn a_mistyped_command_mid_turn_is_refused_on_the_panel_and_not_queued() {
+    // The same two rows, on the panel a command that cannot run now stands.
+    // What heads it is the word typed, not a command it was taken for.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("mistyped-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/modle\r", "nearest: /model, /mode");
+
+    let refused = window.picture();
+    assert!(refused.contains("esc to close"), "{refused}");
+    assert!(!refused.contains("/exit"), "{refused}");
+    assert!(!refused.contains("queued"), "{refused}");
+    insta::assert_snapshot!(refused);
+}
+
+#[test]
+fn a_mistyped_command_with_words_after_it_mid_turn_is_queued_as_a_prompt() {
+    // With words after it the line is somebody's sentence, and waits for the
+    // turn like any other line typed while one runs.
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("mistyped-queued", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/modle gpt-6-sol\r", "1 queued");
+
+    let queued = window.picture();
+    assert!(!queued.contains("no such command"), "{queued}");
+    assert!(!queued.contains("esc to close"), "{queued}");
 }
 
 #[test]
@@ -1176,11 +1296,7 @@ fn the_provider_panel_reaches_a_turn_without_a_provider_being_named() {
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Watched::keyless("login-walked", 80, 24, &vendor);
 
-    window.types("/login\r");
-    // Down twice to the console account, past the two plans; Enter opens the
-    // panel asking whose console, and Enter again takes the one under the mark.
-    window.types("\x1b[B\x1b[B\r");
-    window.types("\r");
+    keyed(&mut window, "Anthropic");
     window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
     window.types("/model claude-test-1\r");
     window.types_until("what is 2+2\r", "Two plus two is four.");
@@ -1202,9 +1318,7 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
     let vendor = Vendor::answering("Two plus two is four.");
     let mut window = Watched::keyless("login-written", 80, 24, &vendor);
 
-    window.types("/login\r");
-    window.types("\x1b[B\x1b[B\r");
-    window.types("\r");
+    keyed(&mut window, "Anthropic");
     window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
 
     let held = std::fs::read_to_string(window.home().join("config.json"))
@@ -1219,16 +1333,241 @@ fn logging_in_writes_down_which_provider_to_ask_from_the_next_run_on() {
 
 #[test]
 fn the_login_panel_offers_the_plans_the_reader_may_hold_and_a_key_of_their_own() {
-    // The first panel is a choice between things the reader has: a ChatGPT or
-    // Kimi Code subscription, or an API key of their own. Each row is named
-    // for that and the row under it says whose plan or whose bill it is —
-    // never "console", which names a vendor's product rather than what is in
-    // the reader's hands.
-    let mut window = Watched::open("login-ways", 80, 24);
+    // The first panel is a choice between two ways to pay: an account whose
+    // plan includes the usage, or a key billed by what is sent. It is the
+    // same two rows whatever the store holds, at either width; what is held
+    // is said on the lists they lead to.
+    for columns in [80, 40] {
+        let mut panels = Vec::new();
+        for (held, store) in [
+            ("empty", None),
+            ("key", Some(KEY_HELD)),
+            ("sign-in", Some(SIGN_IN_HELD)),
+        ] {
+            let mut window = Watched::open(&format!("login-ways-{held}-{columns}"), columns, 24);
+            if let Some(store) = store {
+                std::fs::write(window.home().join("auth.json"), store).expect("a store");
+            }
+            window.types_until("/login\r", "Provide your own API key");
+            let picture = window.picture();
+            let panel: Vec<&str> = picture
+                .lines()
+                .skip_while(|row| !row.contains("Log in"))
+                .collect();
+            panels.push(panel.join("\n"));
+            if store.is_none() {
+                if columns == 80 {
+                    insta::assert_snapshot!(picture);
+                } else {
+                    insta::assert_snapshot!("the_login_panel_at_40", picture);
+                }
+            }
+        }
+        let first = panels.first().expect("the panel over an empty store");
+        assert!(panels.iter().all(|panel| panel == first), "{panels:?}");
+        assert!(first.contains("Choose how usage is paid for."), "{first}");
+    }
+}
+
+/// A store holding an Anthropic key and nothing else, fabricated.
+const KEY_HELD: &str =
+    r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key"},"subscriptions":{}}"#;
+
+/// A store holding an OpenAI sign-in and nothing else, fabricated.
+pub(crate) const SIGN_IN_HELD: &str = r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+
+/// A store holding an OpenAI sign-in, an Anthropic key and a kimi.com key.
+const HELD_THREE: &str = r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key","moonshot":"fabricated-kimi-com-key"},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+
+#[test]
+fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
+    // The mark opens the row's description, so the narrowest window cuts the
+    // plan words and keeps it. Nothing of the credential itself is drawn.
+    let mut window = Watched::open("login-signed-in-40", 40, 30);
+    std::fs::write(window.home().join("auth.json"), HELD_THREE).expect("a store");
 
     window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Your account with subscription");
+    window.types_until("", "Kimi Code · kimi.com");
+    let plans = window.picture();
+    assert!(
+        plans.contains("signed in · may train on what is sent"),
+        "{plans}"
+    );
+    assert!(plans.contains("esc to go back"), "{plans}");
+    insta::assert_snapshot!("login_accounts_signed_in_40", plans);
 
-    insta::assert_snapshot!(window.picture());
+    window.types_until("\x1b", "Choose how usage is paid for.");
+    takes(&mut window, "Provide your own API key");
+    window.types_until("", "set DEEPSEEK_API_KEY");
+    // Anthropic's row, signed in with a stored key, is at the top of the
+    // list; the kimi.com key row is below what forty columns by thirty rows
+    // shows of it, so the mark is walked down to that one.
+    let top = window.picture();
+    assert_eq!(
+        top.matches("signed in with a stored key").count(),
+        1,
+        "{top}"
+    );
+    for _ in 0..16 {
+        if window
+            .picture()
+            .contains("signed in · may use what is sent")
+        {
+            break;
+        }
+        window.types("\x1b[B");
+    }
+    let keys = window.picture();
+    // The kimi.com key row, whose caution stands where the words about the
+    // key would.
+    assert!(keys.contains("signed in · may use what is sent"), "{keys}");
+    insta::assert_snapshot!("login_keys_signed_in_40", keys);
+
+    for picture in [&plans, &top, &keys] {
+        assert!(!picture.contains("fabricated"), "{picture}");
+    }
+}
+
+#[test]
+fn escape_in_a_list_goes_back_to_the_first_panel_with_its_mark_where_it_was() {
+    let mut window = Watched::open("login-back", 80, 24);
+
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Provide your own API key");
+    window.types_until("", "set DEEPSEEK_API_KEY");
+    assert!(
+        window.picture().contains("esc to go back"),
+        "{}",
+        window.picture()
+    );
+    window.types_until("\x1b", "Choose how usage is paid for.");
+
+    let picture = window.picture();
+    assert!(picture.contains("› Provide your own API key"), "{picture}");
+    assert!(picture.contains("esc to cancel"), "{picture}");
+    assert!(!picture.contains("cancelled"), "{picture}");
+}
+
+#[test]
+fn escape_in_a_key_box_goes_back_to_its_list_with_the_mark_on_the_row_it_came_from() {
+    let mut window = Watched::open("login-back-to-google", 80, 24);
+
+    keyed(&mut window, "Google");
+    window.types_until("\x1b", "set DEEPSEEK_API_KEY");
+
+    let picture = window.picture();
+    assert!(
+        picture
+            .lines()
+            .any(|row| row.trim_matches('|').trim_end() == "› Google"),
+        "{picture}"
+    );
+    assert!(picture.contains("esc to go back"), "{picture}");
+}
+
+#[test]
+fn a_key_for_a_provider_holding_a_credential_says_what_it_replaces_and_replaces_it_once_stored() {
+    // Key over sign-in, and one Kimi site's key over the other's: the box
+    // says which credential goes, and the store keeps it until the new key
+    // is written.
+    for (row, replaced, held_name, map) in [
+        (
+            "OpenAI",
+            "the sign-in held for OpenAI",
+            "openai",
+            "subscriptions",
+        ),
+        (
+            "MoonshotAI · kimi.ai",
+            "the API key held for MoonshotAI · kimi.com",
+            "moonshot",
+            "keys",
+        ),
+    ] {
+        let mut window = Watched::open("login-replaces", 80, 30);
+        let store = window.home().join("auth.json");
+        std::fs::write(&store, HELD_THREE).expect("a store");
+
+        keyed(&mut window, row);
+        let picture = window.picture();
+        let sentence = picture.replace("|\n|", " ").replace("  ", " ");
+        assert!(
+            sentence.contains(&format!("It replaces {replaced}")),
+            "{picture}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&store).expect("the store"),
+            HELD_THREE,
+            "nothing replaced before the key is stored"
+        );
+
+        window.types_until("not-a-key-and-nothing-reads-it\r", "login successful");
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&store).expect("the store"))
+                .expect("a store in its format");
+        let held = written.get(map).and_then(|map| map.get(held_name));
+        assert!(held.is_none(), "{written}");
+        let anthropic = written.get("keys").and_then(|keys| keys.get("anthropic"));
+        assert!(
+            anthropic.is_some_and(serde_json::Value::is_string),
+            "{written}"
+        );
+    }
+}
+
+#[test]
+fn words_after_login_narrow_the_rows_and_stand_them_under_their_kinds() {
+    for columns in [80, 40] {
+        let mut window = Watched::open(&format!("login-narrowed-{columns}"), columns, 30);
+
+        window.types_until("/login kimi\r", "Choose the account or key");
+        let picture = window.picture();
+        for heading in ["Subscription", "API key"] {
+            assert!(
+                picture
+                    .lines()
+                    .any(|row| row.trim_matches('|').trim_end() == heading),
+                "{picture}"
+            );
+        }
+        assert!(picture.contains("esc to cancel"), "{picture}");
+        insta::assert_snapshot!(format!("login_narrowed_{columns}"), picture);
+
+        // Opened by words, so Escape cancels.
+        window.types_until("\x1b", "cancelled, nothing signed in");
+    }
+}
+
+#[test]
+fn words_that_leave_one_key_row_open_its_box_and_words_that_leave_none_say_so() {
+    let mut window = Watched::open("login-one-row", 80, 24);
+
+    window.types_until("/login openai key\r", "OpenAI API key");
+    assert!(
+        window.picture().contains("esc to cancel"),
+        "{}",
+        window.picture()
+    );
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    // A key row of a provider with two opens a box that names its site, once
+    // its route has its yes.
+    window.types_until("/login moonshot key kimi.com\r", "Use it anyway");
+    window.types_until("\r", "API key");
+    assert!(
+        window.picture().contains("MoonshotAI · kimi.com API key"),
+        "{}",
+        window.picture()
+    );
+    window.types_until("\x1b", "cancelled, nothing signed in");
+
+    window.types_until("/login nope\r", "no sign-in matches");
+    let picture = window.picture();
+    assert!(
+        picture.contains(r#"! no sign-in matches "nope"; /login lists them"#),
+        "{picture}"
+    );
 }
 
 #[test]
@@ -1240,12 +1579,7 @@ fn the_key_box_stands_empty_under_the_provider_it_is_for() {
     // model, no map — because a key box is not a turn.
     let mut window = Watched::open("login-key-empty", 80, 24);
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
 
     let picture = window.picture();
     assert!(!picture.contains("window"), "{picture}");
@@ -1282,7 +1616,10 @@ fn model_picker_rows_show_wire_ids_instead_of_display_names() {
 fn google_login_and_model_selection_keep_keys_private_and_offer_three_efforts() {
     for columns in [40, 80] {
         let mut window = Watched::open(&format!("google-login-{columns}"), columns, 24);
-        window.types_until("/login google\r", "Google API key");
+        // The Google key row's vendor uses what is sent on unpaid quota, so it
+        // is asked about before its box stands.
+        window.types_until("/login google\r", "Use it anyway");
+        window.types_until("\r", "Google API key");
         let login = window.picture();
         assert!(login.contains("Google"));
         assert!(!login.contains("ChatGPT"));
@@ -1297,7 +1634,9 @@ fn google_login_and_model_selection_keep_keys_private_and_offer_three_efforts() 
         window.types("/model\r");
         window.types("gemini");
         let models = window.picture();
-        assert!(models.contains("Google"));
+        // The model this case takes below; at forty columns the providers
+        // folded into the header are cut before Google's name ends.
+        assert!(models.contains("gemini-3.8-flash"), "{models}");
         assert!(models.contains("low"));
         assert!(models.contains("medium"));
         assert!(models.contains("high"));
@@ -1317,12 +1656,7 @@ fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
     let key = format!("sk-ant-{}", "k".repeat(55));
     let mut window = Watched::open("login-key-pasted", 80, 24);
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
     window.types_until(&format!("\x1b[200~{key}\x1b[201~"), "enter to save");
 
     let picture = window.picture();
@@ -1335,17 +1669,15 @@ fn a_pasted_key_draws_one_mark_per_character_and_offers_to_save() {
 
 #[test]
 fn leaving_the_key_box_says_nothing_was_signed_in() {
-    // Escape in the box is the same leaving as escape on either panel before
-    // it, and is answered on the same row: hung under the command, one
+    // Escape in the box goes back to the list it was chosen from, and from
+    // there to the first panel; the Escape that leaves is answered on the
+    // same row as leaving the first panel: hung under the command, one
     // sentence, nothing about what was or was not typed.
     let mut window = Watched::open("login-key-left", 80, 24);
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
+    window.types_until("\x1b", "set DEEPSEEK_API_KEY");
+    window.types_until("\x1b", "Choose how usage is paid for.");
     window.types_until("\x1b", "cancelled, nothing signed in");
 
     let picture = window.picture();
@@ -1363,12 +1695,7 @@ fn a_key_that_cannot_be_written_down_is_said_without_a_path() {
     std::fs::create_dir_all(window.home().join("auth.json"))
         .expect("a directory where the store's file goes");
 
-    window.types_until("/login\r", "Provide your own API key");
-    window.types_until(
-        "\x1b[B\x1b[B\r",
-        "Choose the provider whose API key you have.",
-    );
-    window.types_until("\r", "paste or type your API key");
+    keyed(&mut window, "Anthropic");
     window.types_until(&format!("\x1b[200~{key}\x1b[201~\r"), "could not be saved");
 
     let picture = window.picture();
@@ -1393,8 +1720,12 @@ fn openai_account_login_offers_browser_and_device_code_methods() {
     // own inline panel rather than a provider's interface.
     let mut window = Watched::open("openai-login-methods", 80, 24);
 
-    window.types("/login\r");
-    window.types("\r");
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Your account with subscription");
+    window.types_until("", "Kimi Code · kimi.com");
+    takes(&mut window, "OpenAI");
+    answers(&mut window);
+    window.types_until("", "Choose where to finish account authorization.");
 
     insta::assert_snapshot!(window.picture());
 }
@@ -1417,7 +1748,7 @@ fn the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill() {
     // end of the last frame. Without a mark this case reads the screen where
     // the composer has echoed `/effort` and the ladder has not been drawn yet,
     // and blames the renderer for a picture the keyboard was simply ahead of.
-    window.types_until("/model claude-test-1\r", "anthropic/claude-test-1");
+    window.types_until("/model claude-test-1\r", "anthropic · claude-test-1");
     window.types_until("/effort\r", "Effort · claude-test-1");
 
     insta::assert_snapshot!(window.picture());
@@ -1932,4 +2263,1130 @@ fn a_termination_sent_while_the_list_stands_over_an_answer_is_not_kept_waiting()
         !recorded.contains("ANSWER-ENDS-HERE"),
         "the turn ran to the end of its answer instead of being stopped"
     );
+}
+
+/// A configuration that draws crucible's own marks with the characters every
+/// font has.
+fn in_ascii() -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "updates": {"check": "never"},
+        "output": {"glyphs": "ascii"}
+    }))
+    .expect("a configuration document")
+}
+
+/// The last word of 0.41.1 in the changelog: the one release these pictures
+/// are of, which no later release changes.
+const RELEASE_ENDS: &str = "rule.";
+
+#[test]
+fn one_release_is_printed_in_full_with_no_rail() {
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-one-{columns}"), columns, 24);
+        window.types_until("/release-notes 0.41.1\r", RELEASE_ENDS);
+
+        insta::assert_snapshot!(format!("one_release_at_{columns}"), window.picture());
+    }
+}
+
+#[test]
+fn one_release_is_printed_in_full_in_ascii() {
+    for columns in [40, 80] {
+        let config = in_ascii();
+        let mut window = Watched::configured(
+            &format!("release-notes-one-ascii-{columns}"),
+            columns,
+            24,
+            &config,
+            false,
+        );
+        window.types_until("/release-notes v0.41.1\r", RELEASE_ENDS);
+
+        insta::assert_snapshot!(
+            format!("one_release_in_ascii_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn a_version_that_is_no_release_is_refused_naming_the_newest() {
+    // The newest is the running version, and so masked: no release moves it.
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-none-{columns}"), columns, 24);
+        window.types_until("/release-notes 0.0.0\r", "no release 0.0.0");
+
+        insta::assert_snapshot!(format!("no_release_at_{columns}"), window.picture());
+    }
+}
+
+#[test]
+fn a_version_that_is_no_release_is_refused_the_same_in_ascii() {
+    for columns in [40, 80] {
+        let config = in_ascii();
+        let mut window = Watched::configured(
+            &format!("release-notes-none-ascii-{columns}"),
+            columns,
+            24,
+            &config,
+            false,
+        );
+        window.types_until("/release-notes 0.0.0\r", "no release 0.0.0");
+
+        insta::assert_snapshot!(
+            format!("no_release_in_ascii_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+/// Rows enough to hold the newest release of the changelog built in, whole, at
+/// `columns`, with the box and the closing row under it.
+///
+/// Its words hang five columns in, and a word that does not fit is carried
+/// whole to the next row, so a row and the one after it together hold more
+/// than the room: each line of the section takes at most its length over half
+/// that room, and one more. A quarter more again, and the box and the closing
+/// row, is margin.
+fn holding_the_newest(columns: u16) -> u16 {
+    const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
+    let newest = CHANGELOG
+        .split("\n## [")
+        .nth(2)
+        .expect("a release under Unreleased");
+    let half = (usize::from(columns) - 5) / 2;
+    let rows: usize = newest.lines().map(|line| line.len() / half + 1).sum();
+    u16::try_from(rows * 5 / 4 + 40).expect("a window a terminal can be")
+}
+
+#[test]
+fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
+    // Read rather than pictured: the list is the changelog built in, which every
+    // release adds to. The window is sized from the newest release, so the rows
+    // under its head are all on screen whatever that release says.
+    for columns in [40, 80] {
+        let rows = holding_the_newest(columns);
+        let mut window = Watched::open(&format!("release-notes-whole-{columns}"), columns, rows);
+        window.types_until("/release-notes\r", "newest in full");
+        let picture = window.picture();
+        // A row of the picture without the edges it is drawn between.
+        let lines: Vec<&str> = picture
+            .lines()
+            .map(|line| line.strip_prefix('|').unwrap_or(line))
+            .collect();
+        let at = format!("{columns} columns:\n{picture}");
+
+        // The release's own row, not a line of some release's notes that
+        // happens to say the same words.
+        let head = lines
+            .iter()
+            .rposition(|line| line.starts_with('◆') && line.contains("this version"))
+            .unwrap_or_else(|| panic!("no release marked as this version at {at}"));
+        let closing = lines
+            .iter()
+            .rposition(|line| line.contains('⎿'))
+            .unwrap_or_else(|| panic!("no closing row at {at}"));
+        let newest = lines.get(head).copied().unwrap_or_default();
+
+        // The running version is the one masked out of every picture.
+        assert!(newest.contains("◆ ######"), "{newest:?} at {at}");
+        assert!(
+            head < closing,
+            "the closing row is above the newest at {at}"
+        );
+        let body = lines.get(head + 1..closing).unwrap_or_default();
+        assert!(
+            body.iter().all(|line| !line.starts_with('│')),
+            "a rail stands under the newest at {at}"
+        );
+        assert!(
+            !body
+                .iter()
+                .any(|line| line.starts_with('◆') || line.starts_with('◇')),
+            "another release follows the newest at {at}"
+        );
+        // Between the closing row and the prompt box, whose own sides are drawn
+        // with the rail's character.
+        let boxed = lines
+            .iter()
+            .skip(closing)
+            .position(|line| line.starts_with('╭'))
+            .map_or(lines.len(), |under| closing + under);
+        let after = lines.get(closing + 1..boxed).unwrap_or_default();
+        assert!(
+            !after
+                .iter()
+                .any(|line| line.contains('◆') || line.contains('◇') || line.starts_with('│')),
+            "the closing row is not the last of the list at {at}"
+        );
+    }
+}
+
+#[test]
+fn release_notes_mid_turn_are_refused_on_the_panel() {
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("release-notes-mid-turn", 60, 24, &vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("/release-notes\r", "thousand rows");
+
+    let refused = window.picture();
+    assert!(refused.contains("esc to close"), "{refused}");
+    assert!(!refused.contains("newest in full"), "{refused}");
+    insta::assert_snapshot!(refused);
+}
+
+#[test]
+fn a_send_on_a_warned_route_stands_the_question_and_sends_nothing_before_the_yes() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-send",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+
+    // Enter twice in one write: the first sends, and the second is in hand
+    // before the panel is drawn, so it does not answer it.
+    window.types_until("hello\r\r", "Use it anyway");
+    let asked = window.picture();
+    assert!(asked.contains("Use it anyway"), "{asked}");
+    assert!(
+        asked.contains("On unpaid quota, Google uses what you send"),
+        "{asked}"
+    );
+    assert!(asked.contains("Gemini API terms, 30 Sep 2026"), "{asked}");
+    assert!(
+        asked.contains("enter to choose · esc to go back"),
+        "{asked}"
+    );
+    assert!(!asked.contains(warning::KEY), "{asked}");
+    insta::assert_snapshot!("question_at_send_80", asked);
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "sent before the yes");
+
+    // Going back keeps the message, and the question stands again at the
+    // next send.
+    window.types_until("\x1b", "nothing was sent; your message is back");
+    let back = window.picture();
+    assert!(back.contains("hello"), "{back}");
+    assert!(!back.contains("Use it anyway"), "{back}");
+    window.types_until("\r", "Use it anyway");
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "sent before the yes");
+
+    // The yes sends it, to its route's host alone (the transport asks again
+    // after the refusal, as it does after any connection that failed), and is
+    // written into the user's own file.
+    window.types("\r");
+    let reached = proxy.reached(1);
+    assert!(!reached.is_empty(), "{}", window.picture());
+    assert!(
+        reached.iter().all(|host| host == warning::GEMINI_HOST),
+        "{reached:?}"
+    );
+    assert!(
+        warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+}
+
+#[test]
+fn the_question_stands_at_forty_and_eighty_columns_in_either_glyph_set() {
+    for (columns, ascii) in [(40, false), (40, true), (80, true)] {
+        let proxy = warning::Proxy::new();
+        let glyphs = if ascii {
+            warning::GOOGLE.replace(
+                "  \"updates\"",
+                "  \"output\": {\"glyphs\": \"ascii\"},\n  \"updates\"",
+            )
+        } else {
+            warning::GOOGLE.to_owned()
+        };
+        let case = format!("warning-{columns}-{ascii}");
+        let mut window = warning::through(&case, (columns, 30), &glyphs, &proxy, (&[], None));
+        window.types_until("hello\r", "Use it anyway");
+        let picture = window.picture();
+        assert!(picture.contains("Gemini API terms, 30 Sep"), "{picture}");
+        let set = if ascii { "ascii" } else { "unicode" };
+        insta::assert_snapshot!(format!("warning_at_send_{columns}_{set}"), picture);
+        assert_eq!(proxy.asked(), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn a_yes_holds_for_the_next_run_on_the_same_home() {
+    let first = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-once",
+        (80, 30),
+        warning::GOOGLE,
+        &first,
+        (&[], None),
+    );
+    window.types_until("hello\r", "Use it anyway");
+    window.types("\r");
+    assert!(
+        first
+            .reached(1)
+            .iter()
+            .all(|host| host == warning::GEMINI_HOST)
+    );
+    let document = warning::said(&window);
+    assert!(document.contains("key:google"), "{document}");
+
+    // Another key in the variable is the same route: the yes is to the
+    // vendor's terms on that route, not to one key.
+    let second = warning::Proxy::new();
+    let home = window.home();
+    let mut again = Watched::launched(
+        "warning-once-again",
+        80,
+        30,
+        &watched::Launch {
+            document: &document,
+            env: &[
+                ("GEMINI_API_KEY", "another-fabricated-gemini-key"),
+                ("HTTPS_PROXY", &second.address),
+            ],
+            args: &[],
+            home: Some(&home),
+        },
+    );
+    again.types("again\r");
+    assert!(
+        !again.picture().contains("Use it anyway"),
+        "{}",
+        again.picture()
+    );
+    let reached = second.reached(1);
+    assert!(
+        !reached.is_empty() && reached.iter().all(|host| host == warning::GEMINI_HOST),
+        "{reached:?}"
+    );
+}
+
+/// A yes given at `/login` is written down with the key it stored, so the
+/// first send after it goes without asking again.
+#[test]
+fn a_yes_given_at_login_is_kept_with_the_key_and_the_send_after_it_asks_nothing() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-login-stored",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login google\r", "Use it anyway");
+    window.types_until("\r", "Google API key");
+    window.types_until("fabricated-google-key-never-sent", "enter to save");
+    window.types_until("\r", "login successful");
+    assert!(
+        warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new(), "a login sends nothing");
+
+    window.types("hello\r");
+    let reached = proxy.reached(1);
+    assert!(
+        !window.picture().contains("Use it anyway"),
+        "{}",
+        window.picture()
+    );
+    assert!(
+        !reached.is_empty() && reached.iter().all(|host| host == warning::GEMINI_HOST),
+        "{reached:?}"
+    );
+}
+
+#[test]
+fn a_route_reached_by_the_command_line_is_asked_about_before_the_first_send() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-flag",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&["--model", "google/gemini-3.8-flash"], None),
+    );
+    window.types_until("hello\r", "Use it anyway");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn no_room_for_the_question_keeps_the_message_and_sends_nothing() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-short",
+        (80, 12),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("hello\r", "make the window taller and send again");
+    let picture = window.picture();
+    assert!(picture.contains("hello"), "{picture}");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+
+    let mut window = warning::through(
+        "warning-short-login",
+        (80, 12),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until(
+        "/login kimi code kimi.ai\r",
+        "make the window taller and choose again",
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn choosing_a_model_of_a_warned_route_asks_first_and_going_back_returns_to_it() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-model",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types("/model\r");
+    window.types("gemini-3.7");
+    window.types_until(
+        "\r",
+        "Takes this choice; this route is not asked about again",
+    );
+
+    window.types_until("\x1b", "› gemini-3.7-flash");
+    let shelf = window.picture();
+    assert!(!shelf.contains("Use it anyway"), "{shelf}");
+
+    window.types_until("\r", "Use it anyway");
+    window.types_until("\r", "gemini-3.7-flash");
+    assert!(
+        warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a choice sends nothing"
+    );
+}
+
+#[test]
+fn a_warned_row_reached_by_words_asks_first_and_going_back_cancels() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-login-words",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login google\r", "Takes this choice");
+    window.types_until("\x1b", "cancelled, nothing signed in");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn a_sign_in_waits_for_the_yes_and_a_sign_in_that_fails_records_none() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-sign-in",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login kimi code kimi.ai\r", "Use it anyway");
+    let asked = window.picture();
+    assert!(asked.contains("Kimi Code · kimi.ai"), "{asked}");
+    assert!(
+        asked.contains("kimi.ai terms of service, 30 Sep 2026"),
+        "{asked}"
+    );
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a sign-in began before the yes"
+    );
+
+    // The yes lets the sign-in's first request go, and the proxy refuses it,
+    // so the sign-in fails and nothing is written down.
+    window.types("\r");
+    assert_eq!(
+        proxy.reached(1),
+        ["auth.kimi.ai:443"],
+        "{}",
+        window.picture()
+    );
+    assert!(
+        !warning::said(&window).contains("kimi.ai"),
+        "{}",
+        warning::said(&window)
+    );
+
+    // Asked again the next time the row is chosen.
+    window.types_until("\x1b", "");
+    window.types_until("/login kimi code kimi.ai\r", "Use it anyway");
+}
+
+#[test]
+fn a_credential_taken_out_takes_its_yes_and_the_question_stands_again() {
+    let proxy = warning::Proxy::new();
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-logout-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store =
+        r#"{"version":2,"keys":{"google":"fabricated-stored-google-key"},"subscriptions":{}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+
+    let mut window = warning::through(
+        "warning-logout",
+        (80, 30),
+        warning::GOOGLE_SAID,
+        &proxy,
+        (&[], Some(&earlier)),
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+    window.types_until(
+        "/logout google\r",
+        "removed the stored credential for google",
+    );
+    assert!(
+        !warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+
+    // The key from the environment still serves the route, and it is asked
+    // about again.
+    window.types_until("hello\r", "Use it anyway");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+/// Taking out a stored key of a provider nobody is asking takes its yes, and
+/// a key from the environment still serves the same route: choosing that
+/// provider at `/model` asks about the route again before it is taken.
+#[test]
+fn a_provider_logged_out_while_another_answers_is_asked_about_again_at_model() {
+    let proxy = warning::Proxy::new();
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-logout-other-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store =
+        r#"{"version":2,"keys":{"google":"fabricated-stored-google-key"},"subscriptions":{}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+    let document = concat!(
+        "{\n",
+        "  \"sandbox\": {\"enabled\": false},\n",
+        "  \"updates\": {\"check\": \"never\"},\n",
+        "  \"provider\": \"anthropic\",\n",
+        "  \"providers\": {\"anthropic\": {\"model\": \"claude-sonnet-5\"}},\n",
+        "  \"contentUse\": {\"accepted\": [\"key:google\"]}\n",
+        "}\n"
+    );
+    let mut window = Watched::launched(
+        "warning-logout-other",
+        80,
+        30,
+        &watched::Launch {
+            document,
+            env: &[
+                ("ANTHROPIC_API_KEY", "fabricated-anthropic-key-never-sent"),
+                ("GEMINI_API_KEY", warning::KEY),
+                ("HTTPS_PROXY", &proxy.address),
+            ],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+    window.types_until(
+        "/logout google\r",
+        "removed the stored credential for google",
+    );
+    assert!(
+        !warning::said(&window).contains("key:google"),
+        "{}",
+        warning::said(&window)
+    );
+
+    window.types("/model\r");
+    window.types("gemini-3.7");
+    window.types_until("\r", "Takes this choice");
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a choice sends nothing"
+    );
+}
+
+/// Two routes with no yes hold one origin: a sign-in's, and the one a
+/// `baseUrl` there answers for. Each is asked about before the send, and the
+/// send goes once both have their yes.
+#[test]
+fn a_send_two_routes_hold_asks_about_each_before_it_goes() {
+    let proxy = warning::Proxy::new();
+    let mut window = two_routes_at_one_origin("warning-two", &proxy);
+
+    window.types_until("hello\r", "Use it anyway");
+    let first = window.picture();
+    window.types_until("\r", the_other(&first));
+    assert!(window.picture().contains("Use it anyway"), "{first}");
+    assert_eq!(
+        proxy.reached(1),
+        Vec::<String>::new(),
+        "sent before the second yes"
+    );
+
+    window.types("\r");
+    let reached = proxy.reached(1);
+    assert!(
+        !reached.is_empty() && reached.iter().all(|host| host == "api.kimi.com:443"),
+        "{reached:?} {}",
+        window.picture()
+    );
+    let said = warning::said(&window);
+    assert!(
+        said.contains("key:moonshot") && said.contains("subscription:moonshot"),
+        "{said}"
+    );
+}
+
+/// The same two routes, reached by a choice at `/model`: each is asked about
+/// before the choice is taken, and choosing sends nothing.
+#[test]
+fn a_choice_two_routes_hold_asks_about_each_before_it_is_taken() {
+    let proxy = warning::Proxy::new();
+    let mut window = two_routes_at_one_origin("warning-two-model", &proxy);
+
+    window.types("/model\r");
+    window.types("claude-sonnet-5");
+    window.types_until("\r", "Takes this choice");
+    let first = window.picture();
+    window.types_until("\r", the_other(&first));
+    assert!(window.picture().contains("Takes this choice"), "{first}");
+
+    window.types("\r");
+    let said = within(|| {
+        let said = warning::said(&window);
+        (said.contains("key:moonshot") && said.contains("subscription:moonshot")).then_some(said)
+    })
+    .unwrap_or_else(|| warning::said(&window));
+    assert!(
+        said.contains("key:moonshot") && said.contains("subscription:moonshot"),
+        "{said}\n{}",
+        window.picture()
+    );
+    assert!(
+        !window.picture().contains("Takes this choice"),
+        "{}",
+        window.picture()
+    );
+    assert_eq!(
+        proxy.asked(),
+        Vec::<String>::new(),
+        "a choice sends nothing"
+    );
+}
+
+/// The name of whichever of the two routes at one origin `first` does not
+/// stand, which only the second question draws.
+fn the_other(first: &str) -> &'static str {
+    if first.contains("Kimi Code · kimi.com") {
+        "MoonshotAI · kimi.com"
+    } else {
+        "Kimi Code · kimi.com"
+    }
+}
+
+/// What `seen` answers within ten seconds of asking, polled, or `None`: for
+/// what is read afresh each time, such as a file, and never a picture, which
+/// changes only when keys are typed.
+fn within<T>(mut seen: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(seen) = seen() {
+            return Some(seen);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// crucible over a stored Kimi Code kimi.com sign-in and Anthropic answering
+/// through a `baseUrl` at the same origin, neither route said yes to.
+fn two_routes_at_one_origin(case: &str, proxy: &warning::Proxy) -> Watched {
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-{case}-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store = r#"{"version":2,"keys":{},"subscriptions":{"moonshot":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+    let document = concat!(
+        "{\n",
+        "  \"sandbox\": {\"enabled\": false},\n",
+        "  \"updates\": {\"check\": \"never\"},\n",
+        "  \"provider\": \"anthropic\",\n",
+        "  \"providers\": {\"anthropic\": {\"model\": \"claude-sonnet-5\", ",
+        "\"baseUrl\": \"https://api.kimi.com/coding/v1\"}}\n",
+        "}\n"
+    );
+    let window = Watched::launched(
+        case,
+        80,
+        30,
+        &watched::Launch {
+            document,
+            env: &[
+                ("ANTHROPIC_API_KEY", "fabricated-anthropic-key-never-sent"),
+                ("HTTPS_PROXY", &proxy.address),
+            ],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+    window
+}
+
+#[test]
+fn a_base_url_crucible_recognises_is_asked_about_and_any_other_is_sent_to() {
+    for (at, base, shown) in [
+        (
+            0,
+            "https://api.moonshot.ai/v1",
+            Some("Kimi open platform · api.moonshot.ai"),
+        ),
+        (
+            1,
+            "https://API.Kimi.ai:443/coding/v1",
+            Some("MoonshotAI · kimi.ai"),
+        ),
+        (2, "https://gateway.example/v1", None),
+        // A plan key row's address answers for that row, whichever
+        // provider's `baseUrl` holds it.
+        (
+            3,
+            "https://coding.dashscope.aliyuncs.com/v1",
+            Some("Qwen Coding Plan · aliyun.com"),
+        ),
+    ] {
+        let proxy = warning::Proxy::new();
+        let document = warning::based(base);
+        let case = format!("warning-base-{at}");
+        let mut window = warning::through(&case, (80, 30), &document, &proxy, (&[], None));
+        if let Some(shown) = shown {
+            window.types_until("hello\r", "Use it anyway");
+            assert!(window.picture().contains(shown), "{}", window.picture());
+            assert_eq!(proxy.asked(), Vec::<String>::new(), "{base}");
+        } else {
+            window.types("hello\r");
+            assert!(
+                !window.picture().contains("Use it anyway"),
+                "{}",
+                window.picture()
+            );
+            let reached = proxy.reached(1);
+            assert!(
+                !reached.is_empty() && reached.iter().all(|host| host == "gateway.example:443"),
+                "{reached:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_start_that_takes_a_second_credential_out_takes_its_yes_and_asks_again() {
+    // What a roll back to 0.43.3 can leave: a kimi.ai sign-in said yes to, and
+    // a kimi.com key 0.43.3 stored beside it. The start keeps the key and takes
+    // the sign-in out, and its yes with it, before the store is written.
+    let proxy = warning::Proxy::new();
+    let earlier = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-settle-home",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&earlier);
+    std::fs::create_dir_all(&earlier).expect("a home to start from");
+    let store = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{"moonshot@kimi.ai":{"access_token":"fabricated-access","refresh_token":"fabricated-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+    std::fs::write(earlier.join("auth.json"), store).expect("a store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(
+            earlier.join("auth.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("an owner-only store");
+    }
+    let document = warning::based("https://api.kimi.com/coding/v1").replace(
+        "\n}\n",
+        ",\n  \"contentUse\": {\"accepted\": [\"subscription:moonshot@kimi.ai\"]}\n}\n",
+    );
+
+    let mut window = warning::through(
+        "warning-settle",
+        (80, 30),
+        &document,
+        &proxy,
+        (&[], Some(&earlier)),
+    );
+    let _ = std::fs::remove_dir_all(&earlier);
+    assert!(
+        !warning::said(&window).contains("subscription:moonshot@kimi.ai"),
+        "{}",
+        warning::said(&window)
+    );
+    window.types_until("hello\r", "Use it anyway");
+    assert!(
+        window.picture().contains("MoonshotAI · kimi.com"),
+        "{}",
+        window.picture()
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn a_session_picked_up_on_a_warned_route_is_asked_about_before_it_sends() {
+    // The first run said yes and sent, so there is a session on the route; the
+    // second picks it up from a file with no yes in it, and asks again before
+    // anything goes.
+    let first = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-resume",
+        (80, 30),
+        warning::GOOGLE,
+        &first,
+        (&[], None),
+    );
+    window.types_until("hello\r", "Use it anyway");
+    window.types("\r");
+    assert!(!first.reached(1).is_empty());
+    // Kept aside: the case's directory goes with the window, and the session
+    // belongs to the workspace path under it, so the second run takes the
+    // same case name and a copy of the home.
+    let kept = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-resume-kept",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&kept);
+    copy_tree(&window.home(), &kept);
+    drop(window);
+
+    let second = warning::Proxy::new();
+    let mut again = warning::through(
+        "warning-resume",
+        (80, 30),
+        warning::GOOGLE,
+        &second,
+        (&["--continue"], Some(&kept)),
+    );
+    let _ = std::fs::remove_dir_all(&kept);
+    again.types_until("again\r", "Use it anyway");
+    assert_eq!(second.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn the_openai_plan_row_asks_with_its_condition_and_going_back_returns_to_its_list() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-openai",
+        (80, 30),
+        warning::NOTHING_CHOSEN,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/login\r", "Provide your own API key");
+    takes(&mut window, "Your account with subscription");
+    window.types_until("", "Kimi Code · kimi.com");
+    takes(&mut window, "OpenAI");
+    window.types_until("", "Use it anyway");
+    let asked = window.picture();
+    assert!(
+        asked.contains("On Free, Plus and Pro, OpenAI may use what you send"),
+        "{asked}"
+    );
+    assert!(
+        asked.contains("Takes this choice; this route is not asked about again"),
+        "{asked}"
+    );
+    insta::assert_snapshot!("question_at_openai_plan_80", asked);
+
+    // Go back: the list again, with the mark on the row it came from.
+    window.types_until("\x1b", "Kimi Code · kimi.com");
+    let list = window.picture();
+    assert!(
+        list.lines()
+            .any(|row| row.trim_matches('|').trim_end() == "› OpenAI"),
+        "{list}"
+    );
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn with_input_and_output_redirected_a_warned_route_ends_the_run_and_sends_nothing() {
+    use std::io::Write as _;
+
+    let proxy = warning::Proxy::new();
+    let scratch = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-warning-redirected",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let home = scratch.join("home");
+    let work = scratch.join("work");
+    std::fs::create_dir_all(&home).expect("a home");
+    std::fs::create_dir_all(&work).expect("a workspace");
+    std::fs::write(home.join("config.json"), warning::GOOGLE).expect("a configuration file");
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_crucible"))
+        .current_dir(&work)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("HOME", &scratch)
+        .env("CRUCIBLE_CODE_HOME", &home)
+        .env("GEMINI_API_KEY", warning::KEY)
+        .env("HTTPS_PROXY", proxy.address())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("crucible starts");
+    child
+        .stdin
+        .take()
+        .expect("its input")
+        .write_all(b"hello\n")
+        .expect("a line written");
+    let ended = child.wait_with_output().expect("crucible ends");
+    let _ = std::fs::remove_dir_all(&scratch);
+
+    let said = String::from_utf8_lossy(&ended.stderr);
+    assert_eq!(ended.status.code(), Some(1), "{said}");
+    assert!(
+        said.contains("On unpaid quota, Google uses what you send"),
+        "{said}"
+    );
+    assert!(said.contains("answer it once in a terminal"), "{said}");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+/// Copies the tree at `from` into `to`, file by file.
+fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).expect("a directory to copy into");
+    for entry in std::fs::read_dir(from).expect("a tree to copy").flatten() {
+        let into = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &into);
+        } else {
+            std::fs::copy(entry.path(), &into).expect("a file copied");
+        }
+    }
+}
+
+#[test]
+fn room_asked_for_on_a_warned_route_is_asked_about_and_going_back_says_nothing_was_sent() {
+    let proxy = warning::Proxy::new();
+    let mut window = warning::through(
+        "warning-compact",
+        (80, 30),
+        warning::GOOGLE,
+        &proxy,
+        (&[], None),
+    );
+    window.types_until("/compact\r", "Use it anyway");
+    window.types_until("\x1b", "nothing was sent");
+    let picture = window.picture();
+    assert!(!picture.contains("your message is back"), "{picture}");
+    assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn the_fast_panel_stands_over_a_model_with_a_fast_form() {
+    // Under a key and under a sign-in, whose prices differ, in both glyph sets.
+    let credentials = [
+        ("key", "google", "gemini-3.8-flash"),
+        ("sign_in", "openai", "gpt-5.6-sol"),
+    ];
+    for (credential, provider, model) in credentials {
+        for (glyphs, ascii) in [("unicode", false), ("ascii", true)] {
+            for columns in [40, 80] {
+                let case = format!("fast-{credential}-{glyphs}-{columns}");
+                let document = fast::document(provider, model, ascii);
+                let home = (credential == "sign_in").then(|| fast::signed_in_home(&case));
+                let mut window = Watched::launched(
+                    &case,
+                    columns,
+                    24,
+                    &watched::Launch {
+                        document: &document,
+                        env: &[("GEMINI_API_KEY", fast::KEY)],
+                        args: &[],
+                        home: home.as_deref(),
+                    },
+                );
+                if let Some(home) = &home {
+                    let _ = std::fs::remove_dir_all(home);
+                }
+                window.types_until("/fast\r", "enter to choose");
+
+                let picture = window.picture();
+                assert!(picture.contains("Standard"), "{picture}");
+                assert!(picture.contains("Fast"), "{picture}");
+                assert!(!picture.contains("fabricated"), "{picture}");
+                insta::assert_snapshot!(
+                    format!("fast_panel_{credential}_{glyphs}_{columns}"),
+                    picture
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
+    // Nine rows hold the two lines and not the panel.
+    let document = fast::document("google", "gemini-3.8-flash", false);
+    let mut window = Watched::launched(
+        "fast-short",
+        80,
+        24,
+        &watched::Launch {
+            document: &document,
+            env: &[("GEMINI_API_KEY", fast::KEY)],
+            args: &[],
+            home: None,
+        },
+    );
+    window.resize(80, 9);
+    window.types_until("/fast\r", "/fast off");
+
+    let picture = window.picture();
+    assert!(picture.contains("/fast on"), "{picture}");
+    assert!(picture.contains("75-100% more than Standard"), "{picture}");
+    assert!(!picture.contains("enter to choose"), "{picture}");
+    insta::assert_snapshot!("fast_lines_where_no_panel_fits", picture);
+}
+
+// The models pane under a credential that serves fewer than its provider
+// offers, and the note a warned model carries.
+
+/// `/model` over a home holding a `ChatGPT` sign-in, `columns` wide, narrowed
+/// to `OpenAI` in the providers pane and taken back in the models pane.
+fn signed_in_models(columns: u16) -> String {
+    let case = format!("model-signed-in-{columns}");
+    let document = fast::document("openai", "gpt-6-sol", false);
+    let home = fast::signed_in_home(&case);
+    let mut window = Watched::launched(
+        &case,
+        columns,
+        24,
+        &watched::Launch {
+            document: &document,
+            env: &[],
+            args: &[],
+            home: Some(&home),
+        },
+    );
+    let _ = std::fs::remove_dir_all(&home);
+
+    window.types_until("/model\r", "Search");
+    // Tab alone changes only how the mark is drawn, so it goes with the
+    // first step down; the closing row stands once `OpenAI` is marked.
+    window.types("\t\x1b[B");
+    for _ in 0..24 {
+        if window.picture().contains("1 more with an API key") {
+            break;
+        }
+        window.types("\x1b[B");
+    }
+    // Back to the models, which are what the heading names.
+    window.types_until("\t", "openai · ChatGPT sign-in");
+    window.picture()
+}
+
+#[test]
+fn a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add() {
+    for columns in [40, 80] {
+        let picture = signed_in_models(columns);
+
+        // At forty the heading takes the frame's top row from the providers,
+        // and the pane keeps its models and its closing row, which never
+        // takes the mark.
+        assert!(picture.contains("openai · ChatGPT sign-in"), "{picture}");
+        assert!(picture.contains("1 more with an API key"), "{picture}");
+        assert!(picture.contains("gpt-6.1-sol"), "{picture}");
+        assert!(!picture.contains("gpt-5.5 "), "{picture}");
+        assert!(!picture.contains("› 1 more"), "{picture}");
+        insta::assert_snapshot!(format!("model_signed_in_{columns}"), picture);
+    }
+}
+
+#[test]
+fn a_contributor_model_says_trains_where_its_standard_twin_says_nothing() {
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Watched::keyless("model-trains", 80, 24, &vendor);
+
+    window.types_until("/model\r", "Search");
+    window.types_until("muse", "trains");
+    let picture = window.picture();
+
+    // The names are cut at the column, so the rows are told apart by the part
+    // that is drawn: the two contributor models say `trains`, and the two
+    // standard ones say nothing.
+    let marked: Vec<&str> = picture
+        .lines()
+        .filter(|row| row.contains("trains"))
+        .collect();
+    assert_eq!(marked.len(), 2, "{picture}");
+    assert!(
+        marked.iter().all(|row| row.contains("contribu")),
+        "{picture}"
+    );
+    insta::assert_snapshot!("model_trains_80", picture);
 }

@@ -12,6 +12,14 @@ use serde_json::Value;
 
 pub(super) fn refusal(error: ProviderError) -> ProviderError {
     match error {
+        // Still a refusal of fast, so still sent once more at standard speed,
+        // with none of the body's words.
+        ProviderError::FastRefused { provider, .. } => ProviderError::FastRefused {
+            provider,
+            message:
+                "Anthropic would not serve this model fast; private response details omitted"
+                    .into(),
+        },
         ProviderError::Refused { status, .. } => ProviderError::Refused {
             provider: super::NAME,
             status,

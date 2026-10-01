@@ -313,6 +313,19 @@ fn a_provider_can_still_be_chosen_from_the_user_file() {
 }
 
 #[test]
+fn a_checked_in_file_cannot_choose_to_pay_for_a_faster_answer() {
+    // Fast costs more on every request it is asked for, and a repository that
+    // could turn it on would be spending the money of everyone who opens it.
+    for read in [shared as fn(&str) -> Result<Document, ConfigError>, local] {
+        let err = read(r#"{"providers": {"openai": {"fast": true}}}"#).unwrap_err();
+
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(err.to_string().contains("providers.openai.fast"), "{err}");
+    }
+    mine(r#"{"providers": {"openai": {"fast": true}}}"#).unwrap();
+}
+
+#[test]
 fn a_provider_can_still_be_pointed_somewhere_from_the_user_file() {
     // The case the setting exists for: a gateway one person reaches, written
     // where only that person's machine reads it.
@@ -872,4 +885,20 @@ fn checking_starts_nothing_it_only_names() {
         !scratch.at("tripwire.sh.fired").exists(),
         "the check launched the server it only validated"
     );
+}
+
+#[test]
+fn neither_workspace_file_can_say_yes_to_a_route_for_the_user() {
+    // A yes lets requests leave for a vendor that says it trains on them. A
+    // repository that could write one would be answering that for everybody
+    // who clones it, before any of them had been asked.
+    for read in [shared as fn(&str) -> Result<Document, ConfigError>, local] {
+        let err = read(r#"{"contentUse": {"accepted": ["key:google"]}}"#).unwrap_err();
+
+        let said = err.to_string();
+        assert!(matches!(err, ConfigError::Widening { .. }), "got {err:?}");
+        assert!(said.contains("contentUse.accepted"), "got {said}");
+        assert!(said.contains("home directory"), "got {said}");
+    }
+    mine(r#"{"contentUse": {"accepted": ["key:google", "api.moonshot.ai"]}}"#).unwrap();
 }

@@ -20,7 +20,9 @@ provider for `meta/llama-4`.
 1. `--model provider/model`, where it names one outright.
 2. `provider` in your [configuration](../configuration/configuration.md), when
    that provider still has a usable credential. This is the only setting that
-   remembers a vendor choice.
+   remembers a vendor choice, and it is read only from the configuration file
+   in your home directory: a file a repository brings cannot choose who is sent
+   your key.
 3. Exactly one provider having a usable credential: a stored account login, a
    stored API key, or a key in one of the variables in [Keys](#keys). That is
    the absence of a choice to make, and it lets a first run work with one
@@ -59,8 +61,9 @@ does not silently fall through to a different provider whose credential happens
 to be present.
 
 Whichever rung settled it, the answer is at the right of the row under the
-prompt box, which names the vendor before the model in the `provider/model`
-shape `--model` takes back. That row stands for the whole session and is said
+prompt box, which reads `provider · model · effort`, or `provider · model`
+where no rung is in force, the vendor before the model; what is typed after
+`--model` or `/model` keeps the slash, `provider/model`. That row stands for the whole session and is said
 again whenever one of the three changes, so it keeps up when `/model` hands the
 session to another vendor mid-way. The welcome card deliberately carries no provider, model or
 effort because it is the first thing in the transcript and is scrolled away from
@@ -117,6 +120,15 @@ keeps taking the model and saying how hard it should think one visit. Down a
 pipe, where nobody can walk a shelf, it writes the models out as the line that
 asks for each.
 
+Each provider lists the models its credential in use serves: a ChatGPT
+sign-in leaves out `gpt-5.5`, and a Qwen plan key lists its plan's models.
+With one provider marked, the models pane is headed by the provider and that
+credential, as in `openai · ChatGPT sign-in`, and a quiet row under the models,
+which the mark never takes, counts what an API key would add and names
+`/login`. A row's note says `trains` on a model whose vendor may train on what
+is sent to it (see [Content use](content-use.md)),
+else `no rung` on one that serves none, else `fast` on one with a fast form.
+
 Taking a row off the models pane moves the session to whoever serves it first:
 a model belongs to the vendor that serves it, and the two change together. The
 rung goes with them, because a rung is asked of a model: choosing one and then
@@ -135,14 +147,151 @@ Naming a provider this build does not have is a startup failure that says which
 ones it has:
 
 ```
-crucible: no provider called gemini; this build has anthropic, google, moonshot, openai
+crucible: no provider called gemini; this build has anthropic, deepseek, google, meta, mimo, minimax, moonshot, openai, qwen, xai, zai
 ```
+
+## What each provider serves
+
+This build serves eleven providers. The name in the first column is what
+`--model`, `provider` and `providers.<name>` take, and the models are what
+`/model` offers for it, each with the rungs it takes:
+
+| Provider | Vendor | Models and their rungs | Variable |
+| --- | --- | --- | --- |
+| `anthropic` | Anthropic | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`: all five; `claude-haiku-4-5`: none | `ANTHROPIC_API_KEY` |
+| `deepseek` | DeepSeek | `deepseek-flash`, `deepseek-v4-pro`: low, high, max | `DEEPSEEK_API_KEY` |
+| `google` | Google | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview`: low, medium, high | `GEMINI_API_KEY` |
+| `meta` | Meta | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`: low, medium, high, xhigh | `META_API_KEY` |
+| `mimo` | MiMo | `mimo-v2.6-pro`, `mimo-v2.6-flash`: none | `MIMO_API_KEY` |
+| `minimax` | MiniMax | `MiniMax-M3`, `MiniMax-M2.7`: none | `MINIMAX_API_KEY` |
+| `moonshot` | MoonshotAI | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`: low, high, max | `MOONSHOT_API_KEY` |
+| `openai` | OpenAI | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`: all five; `gpt-5.5`: low, medium, high, xhigh | `OPENAI_API_KEY` |
+| `qwen` | Qwen | `qwen3.8-max`, `qwen3.8-flash`: low, medium, xhigh; `qwen3.7-plus`, `qwen3.6-plus`: none | `DASHSCOPE_API_KEY` |
+| `xai` | xAI | `grok-4.7`, `grok-4.6`: low, medium, high, xhigh | `XAI_API_KEY` |
+| `zai` | Z.ai | `glm-5.3`, `glm-5.3-flash`: low, high, max; `glm-5.2`: high, max | `ZAI_API_KEY` |
+
+The two Meta models whose names end in `-contributor` are cheaper because Meta
+may train on what is sent to them; crucible asks before the first one is
+chosen or sent to, and the standard two are not asked about. See [content
+use](content-use.md).
+
+Meta and xAI are spoken to over the Responses protocol, the other five vendors
+new in this release over Chat Completions. crucible sends those seven text
+alone in this release: a picture, a PDF, audio or video stays out of the
+request, whatever the model reads. A refusal from any of them reaches you in
+the vendor's own words.
+
+### Rows and sites
+
+Each vendor's credentials are given on rows of `/login`. A row in the
+*subscription* list takes the plan's own key, typed into the same box as an
+API key; nothing is signed in to. With no `baseUrl` set, a row's requests go
+to its address followed by `/chat/completions`, or by `/responses` for Meta and
+xAI.
+
+| Row | List | Its keys | Address | Models the vendor serves there |
+| --- | --- | --- | --- | --- |
+| MiniMax · minimax.io | subscription | start `sk-cp-` | `https://api.minimax.io/v1` | both |
+| MiniMax · minimaxi.com | subscription | start `sk-cp-` | `https://api.minimax.cn/v1` | both |
+| Qwen Coding Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://coding-intl.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
+| Qwen Coding Plan · aliyun.com | subscription | start `sk-sp-` | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
+| Qwen Token Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
+| Qwen Token Plan · aliyun.com | subscription | start `sk-sp-` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
+| DeepSeek | API key | | `https://api.deepseek.com` | both |
+| Meta | API key | | `https://api.meta.ai/v1` | all four |
+| MiMo | API key | never start `tp-` or `ttp-` | `https://api.xiaomimimo.com/v1` | both |
+| MiniMax · minimax.io | API key | start `sk-api-` | `https://api.minimax.io/v1` | both |
+| MiniMax · minimaxi.com | API key | start `sk-api-` | `https://api.minimax.cn/v1` | both |
+| Qwen · alibabacloud.com | API key | | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | all four |
+| Qwen · aliyun.com | API key | | `https://dashscope.aliyuncs.com/compatible-mode/v1` | all four |
+| xAI | API key | | `https://api.x.ai/v1` | both |
+| Z.ai · z.ai | API key | | `https://api.z.ai/api/paas/v4` | all three |
+| Z.ai · bigmodel.cn | API key | | `https://open.bigmodel.cn/api/paas/v4` | all three |
+
+A key in a provider's variable belongs to one row of it: for MiniMax and Qwen
+the international site's API key row, for Z.ai the z.ai row. A key of the
+mainland China site, or a plan's key, is given through `/login`, or reaches
+that site with `providers.<name>.baseUrl` set to the whole address its
+requests go to: the row's address followed by `/chat/completions`, since a
+`baseUrl` is posted to as written. `baseUrl` is read only from the
+configuration file in your home directory. Qwen and MiniMax
+bind a key to its site and refuse it at the other; Z.ai does not say what its
+other site makes of one.
+
+A Qwen Coding Plan or Token Plan key starts with `sk-sp-` either way, and
+nothing in it says which plan, or whether a Token Plan key is the Personal or
+the Team edition. The plans are for interactive use in a coding tool;
+Alibaba Cloud's pages say a plan's key used in a script or a backend may be
+suspended. MiniMax sells M Plan in place of Token Plan to new buyers, with one
+key prefix for both, and its M Plan pages list only `MiniMax-M3.1-Flash-Preview`
+as a text model, which this build does not offer. Whether an M Plan key is
+served `MiniMax-M3` and `MiniMax-M2.7` is not settled by any page; the vendor
+answers.
+
+#### Qwen's shared addresses
+
+Alibaba Cloud put the shared `dashscope.aliyuncs.com` domain into maintenance
+on 30 September 2026: what it serves keeps working, and nothing new is added
+to it. Its notice does not say whether `dashscope-intl.aliyuncs.com` is
+included, or whether a model released later reaches either. The two Qwen API
+key rows still send there. Alibaba Cloud asks for the address of your own Model
+Studio workspace wherever possible, which a key row reaches with `baseUrl`, the
+address its requests are posted to:
+
+```json
+{ "providers": { "qwen": { "baseUrl": "https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions" } } }
+```
+
+with your workspace's id for `{WorkspaceId}`, and `cn-beijing` in place of
+`ap-southeast-1` for a mainland China workspace. A request sent to a `baseUrl`
+asks for no fast form and claims no reviewed cache: see [Fast](fast.md) and
+[Prompt caching](prompt-caching.md).
+
+### What each new vendor has, and what no source settled
+
+Where a vendor's pages did not settle a fact, the vendor still ships, with the
+choice that asks least of it, and this says which fact it was.
+
+- **Meta.** Web search through `web_search`, and no fetch: Meta serves none.
+  Provider-managed caching. No fast form: Meta's `service_tier` field has no
+  stated price, speed or behaviour. `max` is not offered on
+  `muse-spark-1.3`, because Meta's pages disagree on whether it takes one.
+  What a failed `web_search` call carries is not documented.
+- **xAI.** Web search through `web_search`, and no fetch: xAI's search item
+  documents no action that opens one page. Provider-managed caching. No fast
+  form: xAI serves a priority tier, but no source shows how it refuses one.
+- **DeepSeek.** No web tool on Chat Completions. Provider-managed caching,
+  with no published smallest prefix. No fast form: DeepSeek serves none.
+  `deepseek-flash` reads pictures; crucible sends it text alone.
+- **Z.ai.** No web tool: its Chat Completions search is not a tool the model
+  calls, and its pages disagree on which models take it. Provider-managed
+  caching, with no stated lifetime. No fast form: no source shows how
+  `glm-5.3-flashx` is refused. Z.ai's and Zhipu's API terms forbid using the
+  service through unauthorised third-party software, without saying whether a
+  client sending your own key is that; accepting those terms is yours.
+- **Qwen.** No web tool: its pages disagree on whether these four models take
+  search on Chat Completions. Provider-managed caching; caching at the plan
+  addresses is not documented. No fast form: no source shows how
+  `qwen3.8-max-prime` is refused or reported. Whether the plan addresses
+  honour a rung is not documented; crucible offers the 3.8 models' rungs
+  there as on a key.
+- **MiMo.** No web tool: MiMo's search must be switched on in its console,
+  and no source shows how a request is refused where it is not. Provider-managed
+  caching. No fast form: no source shows how `mimo-v2.6-pro-ultraspeed` is
+  refused or reported. Xiaomi's agreement forbids tools it has not authorised,
+  without saying what that covers; accepting those terms is yours.
+- **MiniMax.** No web tool on Chat Completions. Provider-managed caching from
+  512 input tokens. No fast form: no source shows how its priority tier or
+  `MiniMax-M2.7-highspeed` is refused, or how a Chat Completions answer says
+  which served it. MiniMax's reference and guide name different fields for the
+  reasoning it sends back.
 
 ## How much context is used
 
 A model's native maximum is not necessarily the session's context window.
-Without an explicit configuration, the window is 200,000 tokens for Anthropic and Google,
-272,000 for OpenAI, and 262,144 for Moonshot. A model with a smaller native limit
+Without an explicit configuration, the window is 200,000 tokens for Anthropic,
+Google and the seven vendors new in this release, 272,000 for OpenAI, and
+262,144 for Moonshot. A model with a smaller native limit
 stays smaller. The compaction reserve is separate and is subtracted when deciding
 whether another exchange fits.
 
@@ -202,6 +351,10 @@ a session: a rung you can see on the screen cannot be un-seen by being handed a
 default this program is never told the name of. Remove the key from the file
 for that.
 
+Where a vendor serves a model faster for a higher price, `/fast` asks for it,
+after saying what it costs. [Fast](fast.md) lists which models have a fast form,
+the vendor's price for each, and when the speed goes back to standard.
+
 ### Asking crucible what it is
 
 Both answers are told to the model before every turn, so asking a session which
@@ -254,10 +407,16 @@ current effort first. Nothing is silently mapped to a different rung.
 | Google | `gemini-3.6-flash` | low, medium, high |
 | Google | `gemini-3.1-pro-preview` | low, medium, high |
 | Anthropic | `claude-fable-5-1` | low, medium, high, xhigh, max |
+| Anthropic | `claude-opus-5-5` | low, medium, high, xhigh, max |
+| Anthropic | `claude-sonnet-5-5` | low, medium, high, xhigh, max |
 | OpenAI | `gpt-6-astra` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6.1-sol` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6-sol` | low, medium, high, xhigh, max |
+| OpenAI | `gpt-6-luna` | low, medium, high, xhigh, max |
 
-No configured effort means no effort field. Fable 5.1 still uses adaptive
-thinking, including the documented preserved-thinking and per-message effort
+No configured effort means no effort field. Opus 5.5 and Sonnet 5.5 are
+asked, and their thinking kept and replayed, as Fable 5.1's is. Fable 5.1 still
+uses adaptive thinking, including the documented preserved-thinking and per-message effort
 controls. Preserved thinking requires a compatible Anthropic workspace data
 retention setting; consult [Anthropic's preserved-thinking guide](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
 Crucible does not change workspace retention on your behalf.
@@ -276,9 +435,20 @@ with. Which variable is read follows from the provider:
 | Provider | Variable | Sent as |
 | --- | --- | --- |
 | `anthropic` | `ANTHROPIC_API_KEY` | `x-api-key` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `authorization: Bearer …` |
 | `google` | `GEMINI_API_KEY` | `x-goog-api-key` |
+| `meta` | `META_API_KEY` | `authorization: Bearer …` |
+| `mimo` | `MIMO_API_KEY` | `authorization: Bearer …` |
+| `minimax` | `MINIMAX_API_KEY` | `authorization: Bearer …` |
 | `moonshot` | `MOONSHOT_API_KEY` | `authorization: Bearer …` |
 | `openai` | `OPENAI_API_KEY` | `authorization: Bearer …` |
+| `qwen` | `DASHSCOPE_API_KEY` | `authorization: Bearer …` |
+| `xai` | `XAI_API_KEY` | `authorization: Bearer …` |
+| `zai` | `ZAI_API_KEY` | `authorization: Bearer …` |
+
+Meta's own reference names `MODEL_API_KEY`, a name another vendor's tool could
+read too; crucible reads `META_API_KEY`, as Meta's own command-line client
+does. A key kept under another name is reached with `apiKeyEnv`.
 
 Only the chosen provider's variable is read. Running `crucible --model
 openai/gpt-5.6-terra` needs `OPENAI_API_KEY` set and does not care whether
@@ -292,7 +462,9 @@ a second key for the same vendor needs:
 ```
 
 That is a variable **name**, and pointing crucible at one points it away from
-the other: `ANTHROPIC_API_KEY` is then not read at all.
+the other: `ANTHROPIC_API_KEY` is then not read at all. `apiKeyEnv`, `baseUrl`
+and `fast` are read only from the configuration file in your home directory; a
+project file that sets one is refused with `cannot be set here`.
 
 A custom `baseUrl` must use HTTPS unless it is the exact loopback host
 `localhost`, `127.0.0.1` or `[::1]`. User information and fragments are refused,
@@ -311,8 +483,8 @@ time or broke off after the bound had filled ends in
 ` [cut: crucible stopped reading here]`, because whether that one had more to
 come usually cannot be told. Either way the end of what was kept is dropped
 wherever that end begins a key, since a cut can land in the middle of one.
-Google, Fable 5.1 and Astra answer every refusal with a sentence of crucible's
-own instead.
+Google, Fable 5.1, Opus 5.5, Sonnet 5.5 and Astra answer every refusal with a
+sentence of crucible's own instead.
 
 The exact key crucible sent is removed from a log line, an error message, a
 session file and anything crucible prints. That is the value crucible knows it
@@ -339,9 +511,11 @@ needs nothing from your shell afterwards:
 
 `/login <provider>` inside a session is the direct API-key route. It writes
 from a labelled box that takes a paste and draws a dot per character rather
-than the key. `/login` on its own offers the account plans and *Provide your
-own API key*; that route then opens the provider list, each row naming the
-variable the provider reads from, and the same box.
+than the key. `/login` on its own asks how usage is paid for: *Your account with
+subscription* lists the accounts, and *Provide your own API key* lists the
+providers, each row naming the variable the provider reads from, and opens the
+same box. A row that holds the credential its provider is served by says
+`signed in`.
 
 The command reports that the key was stored, not that it was verified. Provider
 authentication is established by the next request; a rejected key stays stored
@@ -368,14 +542,25 @@ Editing the file by hand works too: crucible only reads what is there, and a
 name under `keys` that this build does not serve is left alone rather than
 offered for removal.
 
-The names under `keys` are provider names, the same ones `--model openai/…`
-takes. `version` says which crucible wrote the file, so one from a later version
-is left alone rather than guessed at.
+The names under `keys` and `subscriptions` say which `/login` row a credential
+was given on. A row every release has is written under the provider's own name,
+the one `--model openai/…` takes; a row an earlier release does not know is
+written under the provider, `@` and its site, as `moonshot@kimi.ai` is. So a
+roll back to an earlier release finds its credentials where it left them and
+leaves the rest alone. `version` says which crucible wrote the file, so one
+from a later version is left alone rather than guessed at.
 
-Stored login methods are mutually exclusive **per provider**. Saving an API key
-removes that provider’s stored subscription login; completing a subscription
-login removes its stored API key. Other providers’ credentials are unaffected.
-The login menu offers available methods, not multiple active methods at once.
+A provider holds **one** credential, whichever row it was given on. Saving a key
+or completing a sign-in removes that provider's other stored credential in the
+same write, and the screen before it says which. Nothing is replaced until the
+new credential is stored, so a sign-in that does not complete leaves the file as
+it was. Other providers' credentials are unaffected.
+
+Where the file holds two credentials for one provider, which only an earlier
+release writing after a roll back can cause, the one under the provider's own
+name is used. The next start removes the other in one write and says which it
+was; where that write cannot be made, the start goes on with the same credential
+and says so, and tries again the next time.
 
 For API-key authentication, **the variable wins over a stored API key**. It is
 the key chosen for this process (a second account, a work key, one rotated an
@@ -412,13 +597,25 @@ never learn whether it came from an account or a key.
 
 ### Account login today
 
-`/login` offers ChatGPT and Kimi Code account plans. ChatGPT uses browser PKCE
-or device authorization and is fixed to the ChatGPT subscription Responses
-endpoint.
-Kimi Code uses RFC 8628 device authorization and is fixed to its managed coding
-endpoint. Its token exchange stays on `auth.kimi.com`, while the browser opens
-the authorization page on `www.kimi.com`; crucible accepts only those fixed
-HTTPS origins. Both refresh in the protected store, each request within 30
+`/login` offers ChatGPT and Kimi Code accounts. The other rows of its
+subscription list, MiniMax's plan and Qwen's Coding Plan and Token Plan, take a
+plan's key and sign in to nothing; see [rows and sites](#rows-and-sites).
+ChatGPT uses browser PKCE or device authorization and is fixed to the ChatGPT
+subscription Responses endpoint.
+Kimi Code uses RFC 8628 device authorization, with one row for each of Kimi's
+two sites, and an account belongs to one of them:
+
+| Row | Token exchange | Authorization page | Requests |
+| --- | --- | --- | --- |
+| Kimi Code · kimi.com, mainland China accounts | `auth.kimi.com` | `www.kimi.com` | `https://api.kimi.com/coding/v1` |
+| Kimi Code · kimi.ai, accounts outside mainland China | `auth.kimi.ai` | `www.kimi.ai` | `https://api.kimi.ai/coding/v1` |
+
+The kimi.ai hosts are those Kimi's own client names for its global region
+([`packages/oauth/src/region.ts`](https://github.com/MoonshotAI/kimi-code/blob/main/packages/oauth/src/region.ts),
+read 29 September 2026), which also shares one client id across both sites.
+crucible accepts only each row's fixed HTTPS origins, and sends a credential,
+its renewals and the web tools it signs to the hosts of the row it was given on
+and to no other. Both refresh in the protected store, each request within 30
 seconds; a renewal runs once for everything waiting on that account, and Escape
 stops the turn without waiting for it. A configured `baseUrl` is never allowed
 to receive either token.
@@ -426,7 +623,11 @@ to receive either token.
 Anthropic subscription OAuth is deliberately absent: Claude subscription tokens
 are not a third-party authentication contract. Anthropic is reached with a
 Console API key instead. The *Provide your own API key* route also stores API
-keys for OpenAI, Google and MoonshotAI. Google accepts a Gemini Developer API
+keys for DeepSeek, Google, Meta, MiMo, MiniMax, MoonshotAI, OpenAI, Qwen, xAI
+and Z.ai. Meta's Muse Code subscription, the Z.ai Coding Plan, MiMo's Token
+Plan and xAI's SuperGrok have no row: Meta keeps the Muse Code credential for
+Muse Code alone, the Z.ai Coding Plan names the tools it may be used in and
+crucible is not one, and the other two are not offered in this release. Google accepts a Gemini Developer API
 key only; Gemini product subscriptions are not an authentication route here.
 
 Google requests use `POST https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse`
@@ -451,20 +652,23 @@ One difference is worth knowing about because it decides which OpenAI models
 work at all. crucible talks to OpenAI over `/v1/responses` rather than
 `/v1/chat/completions`, because a model that reasons before answering refuses
 function tools on the older endpoint. Crucible needs tool calls to work with
-reasoning enabled. The cost is that other vendors serving an "OpenAI-compatible"
-API implement the older
-endpoint and not this one, so `openai` means OpenAI here rather than anything
-that speaks its shape. `moonshot` is that older endpoint, read by a provider of
-its own.
+reasoning enabled. The cost is that most other vendors serving an
+"OpenAI-compatible" API implement the older endpoint and not this one, so
+`openai` means OpenAI here rather than anything that speaks its shape. `moonshot` is that older endpoint, read by a provider of
+its own, and so are `deepseek`, `zai`, `qwen`, `mimo` and `minimax`, each with
+its vendor's own ways of asking for reasoning and of reporting usage. `meta` and
+`xai` speak Responses, with what each vendor does differently kept beside it.
 
 Two consequences you can see:
 
 - Responses are not stored for later retrieval through a response ID: requests
   use `store:false`. This does not promise zero provider-side retention for
   safety, billing or other purposes under the vendor's terms.
-- No token ceiling is sent. On that endpoint one number bounds the reasoning and
-  the visible answer together, so a figure chosen for an answer is one the model
-  can spend entirely on thinking; the model's own ceiling applies instead.
+- One number bounds the reasoning and the visible answer together, so a long
+  think leaves less room for the answer. Crucible sends the model's own output
+  limit, held at 16,000 tokens, or 8,192 for a model it has no limits for. A
+  ChatGPT sign-in sends no ceiling, because that service refuses the field;
+  its own ceiling applies instead.
 
 ## When a response goes away
 
@@ -488,15 +692,17 @@ Asking again would spend your time to reach the same sentence.
 
 ## MoonshotAI issues a key against one console or the other
 
-This is the one provider where a working key can still be refused, and the
-refusal does not say why.
+Here a working key can still be refused, and the refusal does not say why.
+A Qwen or MiniMax key given to the other site is refused the same way; see
+[rows and sites](#rows-and-sites).
 
 MoonshotAI sells two products with separate consoles, and a key from one is not
 accepted by the other:
 
 | Where the key came from | Address it is accepted at |
 | --- | --- |
-| Kimi Code Console | `https://api.kimi.com/coding/v1` |
+| Kimi Code Console, kimi.com | `https://api.kimi.com/coding/v1` |
+| Kimi Code Console, kimi.ai | `https://api.kimi.ai/coding/v1` |
 | Open Platform | `https://api.moonshot.ai/v1` |
 
 Nothing in the key itself says which, so crucible cannot read it and decide. It
@@ -505,8 +711,11 @@ from the open platform says so in
 [configuration](../configuration/configuration.md):
 
 ```json
-{ "providers": { "moonshot": { "baseUrl": "https://api.moonshot.ai/v1" } } }
+{ "providers": { "moonshot": { "baseUrl": "https://api.moonshot.ai/v1/chat/completions" } } }
 ```
+
+`baseUrl` is the address requests are posted to, written whole: the API's
+base address with the path of the endpoint after it.
 
 The two consoles also spell their models differently. What `/model` offers is
 the coding console's spelling, that being the one crucible asks: `k3`,

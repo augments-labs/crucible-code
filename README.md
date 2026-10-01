@@ -20,9 +20,10 @@ continued later.
 
 ## Highlights
 
-- **Provider-independent sessions.** Anthropic, Google, Moonshot and OpenAI are wire
-  adapters. Each provider uses either an API key or a supported account login;
-  switching login methods replaces that provider’s stored credential.
+- **Provider-independent sessions.** Anthropic, DeepSeek, Google, Meta, MiMo,
+  MiniMax, Moonshot, OpenAI, Qwen, xAI and Z.ai are wire adapters. Each
+  provider uses either an API key or a supported account login; switching
+  login methods replaces that provider’s stored credential.
 - **Permissioned tools.** Reads inside the workspace are available by default;
   file changes, commands and reads outside it are decided by rules and the
   active permission mode. OS sandboxing is opt-in with `sandbox.enabled: true`;
@@ -120,17 +121,31 @@ cd ~/code/my-project
 crucible
 ```
 
-You can instead start without an environment key and use `/login`. Authentication
-does not silently choose a model; `/model` selects the provider, model and
-supported reasoning effort explicitly.
+You can instead start without an environment key and use `/login`, which asks
+how usage is paid for: a subscription, where you sign in to your account
+(OpenAI, or Kimi Code on kimi.ai or kimi.com) or give a plan's key (MiniMax,
+or Qwen's Coding Plan or Token Plan), or your own API key. Authentication does
+not silently choose a model; `/model` selects the provider, model and supported reasoning
+effort explicitly.
 
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
-accept API keys only, not product subscription logins.
+accept API keys only, not product subscription logins. The other providers read
+`DEEPSEEK_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
+`MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY` (Qwen), `XAI_API_KEY`
+and `ZAI_API_KEY`; see [providers and
+models](docs/providers/providers.md#what-each-provider-serves).
+
+Where a vendor says it may train on what is sent (a ChatGPT plan, Kimi Code,
+the Kimi open platform, a Gemini key on unpaid quota, MiniMax, Qwen's plans on
+aliyun.com, Z.ai's bigmodel.cn key, or Meta's contributor models), Crucible
+asks once before anything is sent and remembers the answer; see [content
+use](docs/providers/content-use.md).
 
 Useful commands:
 
 ```text
 /model       choose a provider, model and effort
+/fast        ask the model for its vendor's fast form, at its price
 /login       add an account or API-key credential
 /mode        inspect or change the permission mode
 /resume      continue an earlier session in this workspace

@@ -14,7 +14,7 @@ use crate::cli::sample::Sample;
 use crucible_app::Conversation;
 use crucible_app::providers::Providers;
 
-use super::{Effort, Selected, applied, keys, offered, taken};
+use super::{Asked, Effort, Selected, answered, applied, in_force, keys, offered, taken, titled};
 
 /// The built-in providers, as one generation the rows are read off.
 fn catalogue() -> Providers {
@@ -244,4 +244,515 @@ fn taking_a_model_replaces_name_output_and_startup_resolved_window_together() {
     assert_eq!(conversation.runner().model(), "claude-haiku-4-5");
     assert_eq!(conversation.runner().maximum_output(), 16_000);
     assert_eq!(conversation.runner().context_window(), Some(345_678));
+}
+
+/// What the status row under the box says of the model, at a width that holds
+/// every fact on it: what follows the last run of two spaces, which at this
+/// width is the label, itself spaced singly.
+fn under_the_box(provider: &str, model: &str, effort: Option<&str>, glyphs: Glyphs) -> String {
+    let prompt = crucible_tui::Prompt {
+        draft: crucible_tui::Draft::at("", 0),
+        left: crucible_tui::Remaining::new(None),
+        history: crucible_tui::Recalled::default(),
+        mode: "ask mode on",
+        tone: crucible_tui::Slot::Quiet,
+        hint: "",
+        model,
+        provider,
+        effort,
+        speed: None,
+        asking: None,
+        commands: crucible_tui::CommandCount::new(0, false),
+        room: 10,
+        named: &[],
+    };
+    let rows: Vec<String> = prompt
+        .rows(200, glyphs)
+        .iter()
+        .map(crucible_tui::Row::text)
+        .collect();
+    let status = rows
+        .iter()
+        .find(|row| row.starts_with("ask mode on"))
+        .unwrap_or_else(|| panic!("no status row in {rows:#?}"));
+    status
+        .trim_end()
+        .rsplit("  ")
+        .next()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[test]
+fn every_place_the_model_is_drawn_names_it_the_same_way() {
+    // The status row, the shelf's title, the row answering `/model` and the
+    // list printed where no shelf fits each say which model the next turn is
+    // asked of. For one state they say it in one form, for every model the
+    // registry holds, so a model added later is held to it with no new test.
+    // This holds the status row as drawn and the builder each other site
+    // calls; which rung the sites hand those builders is held by the tests
+    // that take a model below, and the drawn rows by the pictures.
+    let providers = catalogue();
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let dot = glyphs.dot();
+        for served in offered(&providers) {
+            for model in served.models {
+                let rungs = std::iter::once(None).chain(model.rungs.iter().copied().map(Some));
+                for effort in rungs {
+                    let wanted = match effort {
+                        Some(effort) => format!(
+                            "{} {dot} {} {dot} {}",
+                            served.name,
+                            model.name,
+                            effort.as_str()
+                        ),
+                        None => format!("{} {dot} {}", served.name, model.name),
+                    };
+                    let at = format!("{} {} {effort:?} {glyphs:?}", served.name, model.name);
+                    assert_eq!(
+                        under_the_box(served.name, model.name, effort.map(Effort::as_str), glyphs),
+                        wanted,
+                        "status row, {at}"
+                    );
+                    let current = Asked {
+                        provider: Some(served.name),
+                        model: model.name,
+                        effort: effort.map(Effort::as_str),
+                        pace: super::super::Pace::default(),
+                    };
+                    assert_eq!(
+                        titled(current, glyphs),
+                        format!("now  {wanted}"),
+                        "shelf title, {at}"
+                    );
+                    assert_eq!(
+                        answered(served.name, model.name, effort, glyphs),
+                        wanted,
+                        "answer row, {at}"
+                    );
+                    assert_eq!(
+                        in_force(Some(served.name), model.name, effort, glyphs),
+                        wanted,
+                        "list, {at}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn no_accepted_picture_draws_a_model_the_way_it_is_typed() {
+    // The label reads `provider · model`; `provider/model` is the form typed
+    // after `/model` and `--model`, and a line printed for somebody to type
+    // keeps it. So a picture may hold the slash only right after one of those,
+    // or where a built-in provider's name is only the tail of a longer word.
+    // What is read is every accepted `.snap` picture of the tree.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let providers = catalogue();
+    let names: Vec<&str> = offered(&providers).map(|served| served.name).collect();
+    let mut pictures = Vec::new();
+    let mut folders = vec![root.join("tests"), root.join("crates"), root.join("src")];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).expect("a folder of the tree") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() && !path.ends_with("target") {
+                folders.push(path);
+            } else if path.extension().is_some_and(|kind| kind == "snap") {
+                pictures.push(path);
+            }
+        }
+    }
+    assert!(pictures.len() > 50, "{} pictures found", pictures.len());
+
+    let mut drawn = Vec::new();
+    for picture in &pictures {
+        let text = std::fs::read_to_string(picture).expect("a picture");
+        for line in text.lines() {
+            for name in &names {
+                let slashed = format!("{name}/");
+                let mut from = 0;
+                while let Some(found) = line.get(from..).and_then(|rest| rest.find(&slashed)) {
+                    let at = from + found;
+                    let before = line.get(..at).unwrap_or_default();
+                    let typed = before.ends_with("/model ") || before.ends_with("--model ");
+                    let word = before.chars().last().is_some_and(char::is_alphanumeric);
+                    if !typed && !word {
+                        drawn.push(format!("{}: {}", picture.display(), line.trim()));
+                    }
+                    from = at + slashed.len();
+                }
+            }
+        }
+    }
+    assert!(drawn.is_empty(), "{drawn:#?}");
+}
+
+/// What `renderer` has said, a row a line.
+fn said(renderer: &Renderer<Recording>) -> Vec<String> {
+    renderer
+        .tail(24)
+        .iter()
+        .map(|row| row.text().trim_end().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_model_taken_off_the_shelf_is_answered_with_the_rung_taken_with_it() {
+    // The rung marked under the row is the one the next turn is asked on, so
+    // the answer names it rather than the one in force before the Enter.
+    let sample = Sample::new("model-answer-rung");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), Some(Effort::High));
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let selected = row("anthropic", "claude-sonnet-5");
+    let at = selected
+        .model
+        .rungs
+        .iter()
+        .position(|rung| *rung == Effort::Low)
+        .expect("a model that serves low");
+
+    applied(selected, Some(at), &mut renderer, &mut conversation, &terms)
+        .expect("the row to be taken");
+
+    let said = said(&renderer);
+    assert!(
+        said.iter()
+            .any(|row| row == "anthropic · claude-sonnet-5 · low"),
+        "{said:#?}"
+    );
+    assert_eq!(conversation.runner().effort(), Some(Effort::Low));
+}
+
+#[test]
+fn a_model_named_with_a_rung_in_force_is_answered_with_that_rung() {
+    let sample = Sample::new("model-typed-rung");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), Some(Effort::High));
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+
+    taken(
+        row("anthropic", "claude-sonnet-5").provider,
+        ("claude-sonnet-5", None),
+        &mut renderer,
+        &mut conversation,
+        &terms,
+    )
+    .expect("the name to be taken");
+
+    let said = said(&renderer);
+    assert!(
+        said.iter()
+            .any(|row| row == "anthropic · claude-sonnet-5 · high"),
+        "{said:#?}"
+    );
+}
+
+#[test]
+fn the_shelf_stood_while_a_turn_runs_names_the_rung_in_force() {
+    // No rung may be taken while the turn runs, but one is still in force,
+    // and the row under the box says so: the title says the same.
+    let current = Asked {
+        provider: Some("anthropic"),
+        model: "claude-sonnet-5",
+        effort: Some("high"),
+        pace: super::super::Pace::default(),
+    };
+
+    assert_eq!(
+        titled(current, Glyphs::Unicode),
+        "now  anthropic · claude-sonnet-5 · high"
+    );
+    assert_eq!(
+        under_the_box(
+            "anthropic",
+            "claude-sonnet-5",
+            Some("high"),
+            Glyphs::Unicode
+        ),
+        "anthropic · claude-sonnet-5 · high"
+    );
+}
+
+#[test]
+fn a_model_with_no_provider_answering_is_named_on_its_own() {
+    // A name taken from a file whose vendor has no credential yet: the label
+    // says the model and the rung, and no word stands in for the vendor.
+    let current = Asked {
+        provider: None,
+        model: "claude-sonnet-5",
+        effort: Some("high"),
+        pace: super::super::Pace::default(),
+    };
+
+    assert_eq!(
+        titled(current, Glyphs::Unicode),
+        "now  claude-sonnet-5 · high"
+    );
+    assert_eq!(
+        in_force(None, "claude-sonnet-5", Some(Effort::High), Glyphs::Unicode),
+        "claude-sonnet-5 · high"
+    );
+    assert_eq!(
+        under_the_box("", "claude-sonnet-5", Some("high"), Glyphs::Unicode),
+        "claude-sonnet-5 · high"
+    );
+}
+
+#[test]
+fn a_row_says_no_rung_before_it_says_fast_and_fast_for_either_kind_of_form() {
+    let cost = crucible_models::Cost {
+        price: "2x the price",
+        speed: None,
+        caveat: None,
+    };
+    let rungs = [Effort::High];
+
+    assert_eq!(
+        super::note(&rungs, crucible_models::FastForm::Field(cost)),
+        "fast"
+    );
+    assert_eq!(
+        super::note(&rungs, crucible_models::FastForm::Own(cost)),
+        "fast"
+    );
+    assert_eq!(super::note(&rungs, crucible_models::FastForm::None), "");
+    assert_eq!(
+        super::note(&[], crucible_models::FastForm::Field(cost)),
+        "no rung"
+    );
+}
+
+#[test]
+fn the_shelf_title_says_fast_only_after_an_answer_served_fast() {
+    let asked = |served| Asked {
+        provider: Some("openai"),
+        model: "gpt-6-astra",
+        effort: Some("high"),
+        pace: super::super::Pace {
+            served,
+            ..super::super::Pace::default()
+        },
+    };
+
+    assert_eq!(
+        titled(asked(true), Glyphs::Unicode),
+        "now  openai · gpt-6-astra · high · fast"
+    );
+    assert_eq!(
+        titled(asked(false), Glyphs::Unicode),
+        "now  openai · gpt-6-astra · high"
+    );
+}
+
+#[test]
+fn a_row_has_the_fast_form_of_the_route_its_provider_is_served_on() {
+    // A sign-in serves fast on fewer models than a key, and a configured
+    // address serves none: the note says what taking the row would ask.
+    let catalogue = catalogue();
+    let openai = offered(&catalogue)
+        .find(|served| served.name == "openai")
+        .expect("openai is offered");
+
+    assert!(super::routed(openai, "gpt-5.5", false, false).switched());
+    assert_eq!(
+        super::routed(openai, "gpt-5.5", false, true),
+        crucible_models::FastForm::None
+    );
+    assert!(super::routed(openai, "gpt-5.6-sol", false, true).switched());
+    assert_eq!(
+        super::routed(openai, "gpt-6-astra", true, false),
+        crucible_models::FastForm::None
+    );
+}
+
+#[test]
+fn a_row_reads_its_route_off_the_settings_and_the_store_in_force() {
+    // What the shelf hands the route: a `baseUrl` from the settings, and a
+    // sign-in from the store, each changing what a row says.
+    let catalogue = catalogue();
+    let openai = offered(&catalogue)
+        .find(|served| served.name == "openai")
+        .expect("openai is offered");
+    let plain = crucible_config::Settings::default();
+    let nothing = crucible_auth::StoredCredentials::default();
+    assert!(super::row_form(openai, "gpt-5.5", &plain, &nothing).switched());
+
+    let sample = Sample::new("row-route");
+    let based =
+        sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
+    assert_eq!(
+        super::row_form(openai, "gpt-5.5", &based, &nothing),
+        crucible_models::FastForm::None
+    );
+
+    let home = sample.found();
+    std::fs::create_dir_all(home.path()).expect("a home");
+    std::fs::write(
+        home.path().join("auth.json"),
+        r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#,
+    )
+    .expect("a store");
+    let signed = sample.store().read();
+    assert_eq!(
+        super::row_form(openai, "gpt-5.5", &plain, &signed),
+        crucible_models::FastForm::None
+    );
+    assert!(super::row_form(openai, "gpt-5.6-sol", &plain, &signed).switched());
+}
+
+/// What one provider's credential in use is, as `/model` reads it.
+fn using<'a>(
+    entries: &[(&'a str, &str, Option<&'static [&'static str]>)],
+) -> std::collections::BTreeMap<&'a str, crucible_app::providers::InUse> {
+    entries
+        .iter()
+        .map(|(provider, words, serves)| {
+            (
+                *provider,
+                crucible_app::providers::InUse {
+                    words: (*words).to_owned(),
+                    serves: *serves,
+                },
+            )
+        })
+        .collect()
+}
+
+const SIGNED_IN: &[&str] = &[
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+];
+
+#[test]
+fn a_sign_in_lists_what_it_serves_and_a_key_lists_every_model() {
+    let providers = catalogue();
+    let all = super::narrowing::every(&providers);
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
+
+    let listed: Vec<(&str, &str)> = super::narrowed(all.clone(), &signed_in)
+        .iter()
+        .map(|one| (one.provider.name, one.model.name))
+        .collect();
+
+    assert!(!listed.contains(&("openai", "gpt-5.5")), "{listed:?}");
+    assert!(listed.contains(&("openai", "gpt-6.1-sol")), "{listed:?}");
+    // Another provider's models are untouched.
+    assert!(
+        listed.contains(&("anthropic", "claude-opus-5-5")),
+        "{listed:?}"
+    );
+    assert_eq!(super::narrowed(all.clone(), &using(&[])).len(), all.len());
+}
+
+#[test]
+fn one_provider_marked_is_headed_by_its_credential_and_closed_by_what_a_key_adds() {
+    let providers = catalogue();
+    let openai = crucible_app::startup::served(&providers, "openai").expect("openai");
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
+    let keyed = using(&[("openai", "API key", None)]);
+
+    assert_eq!(
+        super::headed("openai", &signed_in, Glyphs::Unicode).as_deref(),
+        Some("openai · ChatGPT sign-in")
+    );
+    assert_eq!(
+        super::closing(openai, &signed_in, Glyphs::Unicode).as_deref(),
+        Some("1 more with an API key · /login")
+    );
+    assert_eq!(
+        super::headed("openai", &keyed, Glyphs::Unicode).as_deref(),
+        Some("openai · API key")
+    );
+    assert_eq!(super::closing(openai, &keyed, Glyphs::Unicode), None);
+    assert_eq!(super::headed("openai", &using(&[]), Glyphs::Unicode), None);
+
+    // A font without the dot has the glyph set's in its place, in the
+    // credential's own words too.
+    let plan = using(&[(
+        "qwen",
+        "Qwen Coding Plan · aliyun.com key",
+        Some(&["qwen3.7-plus"]),
+    )]);
+    let qwen = crucible_app::startup::served(&providers, "qwen").expect("qwen");
+    assert_eq!(
+        super::headed("qwen", &plan, Glyphs::Ascii).as_deref(),
+        Some("qwen - Qwen Coding Plan - aliyun.com key")
+    );
+    assert_eq!(
+        super::closing(qwen, &plan, Glyphs::Ascii).as_deref(),
+        Some("3 more with an API key - /login")
+    );
+}
+
+#[test]
+fn a_model_that_is_itself_warned_says_trains_before_anything_else() {
+    let cost = crucible_models::Cost {
+        price: "2x the price",
+        speed: None,
+        caveat: None,
+    };
+    assert_eq!(
+        super::noted(true, &[], crucible_models::FastForm::Field(cost)),
+        "trains"
+    );
+    assert_eq!(
+        super::noted(false, &[], crucible_models::FastForm::Field(cost)),
+        "no rung"
+    );
+}
+
+#[test]
+fn a_window_with_no_shelf_lists_what_the_credential_serves_and_says_trains() {
+    let providers = catalogue();
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
+    let routes = crucible_app::content_use::Routes::production();
+
+    let lines = super::lines(
+        super::narrowing::every(&providers),
+        &signed_in,
+        &routes,
+        Glyphs::Unicode,
+    );
+
+    assert!(
+        !lines.contains(&"/model openai/gpt-5.5".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model openai/gpt-6.1-sol".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model meta/muse-spark-1.3-contributor — trains".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model meta/muse-spark-1.3".to_owned()),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_narrow_window_with_no_shelf_folds_a_line_rather_than_cut_its_note() {
+    let sample = Sample::new("model-listed-narrow");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), None);
+    // Tall enough to hold every line, so none has scrolled off when read.
+    let mut renderer = Renderer::new(Recording::new(40, 100));
+
+    super::run("", &mut renderer, &mut conversation, &terms, false).unwrap();
+
+    let written = renderer.terminal().written().to_string();
+    let said = crucible_tui::Picture::of(&written, 40, 400)
+        .said()
+        .join(" ");
+    assert!(said.contains("muse-spark-1.3-contributor"), "{said}");
+    assert_eq!(said.matches("trains").count(), 2, "{said}");
 }

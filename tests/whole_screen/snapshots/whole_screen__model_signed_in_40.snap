@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+40x24 cursor 4,10 scrolled 0
+|› /model                                |
+|Model            now  openai · gpt-6-sol|
+|                                        |
+|╭──────────────────────────────────────╮|
+|│ Search    a model, or a vendor       │|
+|╰──────────────────────────────────────╯|
+|                                        |
+|╭──────────────────────────────────────╮|
+|│  openai · ChatGPT sign-in            │|
+|├──────────────────────────────────────┤|
+|│ › gpt-6-astra          272k  fast    │|
+|│   gpt-6.1-sol          272k  fast    │|
+|│   gpt-6-sol            272k  ← now   │|
+|│   gpt-6-luna           272k  fast    │|
+|│   gpt-5.6-sol          272k  fast    │|
+|│   gpt-5.6-terra        272k  fast    │|
+|│   gpt-5.6-luna         272k  fast    │|
+|│   1 more with an API key · /login    │|
+|╰──────────────────────────────────────╯|
+|                                        |
+|  Effort   ‹ low ›  medium   high   xhig|
+|                                        |
+|  tab · ↑↓ · ←→ · enter · esc           |
+|                                        |

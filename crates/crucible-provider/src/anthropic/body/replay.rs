@@ -13,12 +13,18 @@ use crucible_types::{
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 
-pub(super) fn compatible(state: &ProviderContinuation, scope: ContinuationScope) -> bool {
-    // This protocol is currently produced only by Fable 5.1. A future Claude
-    // name is not evidence that this older model can read its signed blocks.
+pub(super) fn compatible(
+    state: &ProviderContinuation,
+    scope: ContinuationScope,
+    model: &str,
+) -> bool {
+    // Signed blocks go back to the model that signed them and to no other: a
+    // block is bound to its model, and another Claude name, older or newer,
+    // is not evidence that it can read them.
     state.protocol() == PROTOCOL
         && state.scope() == scope
-        && state.model() == crate::anthropic::FABLE_51
+        && state.model() == model
+        && crate::anthropic::bound(model)
 }
 
 pub(super) fn answered(pending: Option<&BTreeSet<&str>>) -> Result<(), ProviderError> {

@@ -54,10 +54,11 @@ take in; it is where a call has plainly stopped meaning to write a plan at all.
 The plan that was there is the one still standing after any of the three: none
 of a refused call is kept.
 
-A word outside `open`, `doing` and `done` is the other kind of failure and ends
-the turn, the way an unreadable argument does anywhere else:
-`todo_write: tasks[0] state must be one of open, doing, done`. Reading it as
-`open` would be the mistake the model cannot see.
+A word outside `open`, `doing` and `done` is refused before the call runs, the
+way an unreadable argument is anywhere else: the call is marked `✗` with
+`todo_write: tasks[0] state must be one of open, doing, done`, and the turn goes
+on so the model can send it again. Reading it as `open` would be the mistake the
+model cannot see.
 
 ## What you read
 

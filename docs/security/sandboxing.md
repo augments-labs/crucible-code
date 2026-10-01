@@ -429,7 +429,9 @@ host and replaces `TEMP` and `TMP` with one private command directory. SSH/GPG
 agent sockets, inherited descriptors or handles, provider keys, cloud
 configuration and arbitrary host variables do not cross the boundary
 automatically. Values reach the command through the backend's cleared process
-environment, never through its argument list.
+environment, never through its argument list. The helper each backend starts
+the command through is started from a cleared environment too: on Windows,
+`crucible-sandbox-broker.exe` keeps only `SystemRoot` from crucible's own.
 
 A secret projection carries a bounded opaque credential handle and user/account
 provenance alongside the host-resolved value. Handles and values are redacted
@@ -527,35 +529,58 @@ asked what it settled on, and dropped. Nothing is materialized and nothing is
 spawned.
 
 ```
-sandbox enabled in /home/you/project
+sandbox enabled in /tmp/project
   backend   linux-bubblewrap bubblewrap 0.11.1, system
-  build     sha256:0abea81db798ebf6b4742ac0664802d97521547a353c2a0dbdc21d76cbbfd2c0
+  build     sha256:523da3e7399044be5163aee6f57a77a6bef7454376e28f0a0627920bae1b76b6
 
 what this backend can hold:
   filesystem            enforced
   network_deny          enforced
-  network_allowlist     unsupported
-  ...
+  network_allowlist     enforced
+  descriptor_isolation  enforced
+  process_isolation     enforced
+  kernel_surface        enforced
+  privilege_isolation   enforced
+  materialization       enforced
+  cpu_limit             enforced
+  memory_limit          enforced
+  disk_limit            unsupported
+  process_limit         enforced
+  open_file_limit       enforced
+  command_time_limit    enforced
+  session_time_limit    unsupported
+  outbound_byte_limit   unsupported
+  output_limit          enforced
+  concurrency_limit     enforced
+  cost_limit            unsupported
+  pty                   unsupported
+  file_operations       unsupported
+  persistence           unsupported
+  snapshot              unsupported
+  resume                unsupported
   audit                 enforced
   usage                 observed
 
 what a command would run under:
   enabled   true
-  cwd       sha256:1e3ffb52af5c198fe9cc1d10392d3a4160db588bedefa3a7e740dbc2fc84d9af
-  reach     4 places, named by digest
-    read_write  workspace           sha256:d6407f95fd7d98352f3068e2dbdf96c0bef1fc9147c28a70ac2c2dfb2ecdd169
-    protected   protected_metadata  sha256:66c7ff1304b464fc8b146ef2eeb56306dcb7476982d7913c9418f51a9d6943d4
+  cwd       sha256:5379e97dd14ba7ad731dbe4b651f0446654e282dc864b5be0c12d242280e21e3
+  reach     2 places, named by digest
+    read_write  workspace           sha256:2a95b86f4b582ee19fad51f7252cee135679f8ceda5ac1bed64f45be6fae05f6
+    protected   protected_metadata  sha256:a0eedc14820780d2addacee398e8defe2621e79a507f9f3aadc58637050b8948
   hidden    0 patterns
   network   closed
   ceilings
     cpu 60m                 enforced
     4096 open files         enforced
+    10 MiB captured         enforced
+    4 at once               enforced
+    20m per command         enforced
   staged    nothing
   outlives  no
   snapshots no
   confined  yes
   cleanup   pending; nothing was run and nothing was staged
-  policy    sha256:51d8eb2751c012e44f287582830e063f5d960ef3cc896960e3555f84c90520d5
+  policy    sha256:e6f3d0c483f0a5f4061ca6f711a9da725b85169f62c1f6c038eb1fe35a632c9e
   manifest  sha256:72c169df3655f6857b163163b2618631ec65982557eea70b57ea1cb983ae0890
 ```
 
@@ -575,10 +600,10 @@ same directory produce the same digests, which is what makes them comparable
 between machines.
 
 Where a backend answers but will not take this workspace's policy, the matrix is
-printed and the refusal follows it. The unsupported feature above is usually
-the whole explanation. Where nothing answers at all, the report says that rather
-than printing a matrix of claims belonging to nobody. Neither is an error: both
-are the answer, and the run ends successfully.
+printed and the refusal follows it. An `unsupported` row in the matrix is
+usually the whole explanation. Where nothing answers at all, the report says
+that rather than printing a matrix of claims belonging to nobody. Neither is an
+error: both are the answer, and the run ends successfully.
 
 ## Writable roots and publication
 

@@ -28,6 +28,10 @@
 //! description is quiet by role already, so greying the name too would flatten
 //! the entry.
 //!
+//! **Headings.** Entries of more than one kind stand under [`Heading`]s, laid
+//! between the entries and never among them, so the mark cannot land on one. A
+//! window scrolled past a heading carries it down over the first entry in view.
+//!
 //! Height is [`Panel::within`]'s subject. [`Panel::rows`] draws the whole panel
 //! and assumes the caller has room for it.
 
@@ -57,6 +61,10 @@ const CHROME: usize = 6;
 /// above.
 const ENTRY: usize = 3;
 
+/// Rows a heading can add at most: the blank above it, its name, and the blank
+/// between it and its first entry.
+const HEADING: usize = 3;
+
 /// One thing a panel offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Offered<'a> {
@@ -68,26 +76,65 @@ pub struct Offered<'a> {
 }
 
 /// A list as it stands after scrolling: what is on screen, which of that carries
-/// the mark, and how many entries are out of sight below it.
+/// the mark, how many entries are out of sight below it, and the headings
+/// standing in it.
 ///
-/// One value rather than three arguments, because the three only ever move
+/// One value rather than four arguments, because the four only ever move
 /// together — a slice with somebody else's index against it is the defect this
 /// shape makes unwriteable.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Scrolled<'a> {
     shown: &'a [Offered<'a>],
     chosen: usize,
     more: usize,
+    /// The headings standing in the window, counted from its first entry.
+    headings: Vec<Heading<'a>>,
 }
 
 impl<'a> Scrolled<'a> {
     /// The list with nothing scrolled off it.
-    const fn whole(shown: &'a [Offered<'a>], chosen: usize) -> Self {
+    fn whole(shown: &'a [Offered<'a>], chosen: usize, headings: &[Heading<'a>]) -> Self {
         Self {
             shown,
             chosen,
             more: 0,
+            headings: headings.to_vec(),
         }
+    }
+}
+
+/// A name standing over the entries of one kind, from the entry at `before` on.
+///
+/// Not an entry: it is laid between them and never counted among them, so the
+/// mark, which moves over entries, cannot land on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Heading<'a> {
+    /// The entry it stands above, counted in the panel's `shown`.
+    pub before: usize,
+    /// What the entries under it are.
+    pub name: &'a str,
+}
+
+/// A panel whose entries stand under headings.
+#[derive(Debug, Clone, Copy)]
+pub struct Headed<'a> {
+    panel: Panel<'a>,
+    headings: &'a [Heading<'a>],
+}
+
+impl Headed<'_> {
+    /// The whole panel with its headings, as [`Panel::rows`] draws one.
+    #[must_use]
+    pub fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+        self.panel.rows_under(columns, glyphs, self.headings)
+    }
+
+    /// The panel with its headings as it fits in `room` rows, by the rungs of
+    /// [`Panel::within`].
+    #[must_use]
+    pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
+        self.panel
+            .within_under(columns, room, glyphs, self.headings)
     }
 }
 
@@ -100,6 +147,11 @@ pub struct Panel<'a> {
     /// where the choice explains itself, and the first thing given up when the
     /// window is short.
     pub said: Option<&'a str>,
+    /// Where the sentence comes from and when it was read, on a quiet row of
+    /// its own under it, so a source is never folded into the words it
+    /// vouches for. `None` for a sentence that is crucible's own; given up with
+    /// the sentence when the window is short.
+    pub source: Option<&'a str>,
     /// What to offer, in the order it is listed.
     pub shown: &'a [Offered<'a>],
     /// Which entry a key would act on.
@@ -112,6 +164,17 @@ pub struct Panel<'a> {
     pub footer: &'a str,
 }
 
+impl<'a> Panel<'a> {
+    /// The same panel with `headings` standing over its entries.
+    #[must_use]
+    pub const fn under(self, headings: &'a [Heading<'a>]) -> Headed<'a> {
+        Headed {
+            panel: self,
+            headings,
+        }
+    }
+}
+
 impl Panel<'_> {
     /// The whole panel, drawn for a terminal `columns` wide.
     ///
@@ -121,7 +184,16 @@ impl Panel<'_> {
     /// [`Panel::within`] for a caller that has a window to fit inside.
     #[must_use]
     pub fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
-        self.laid(columns, glyphs, Scrolled::whole(self.shown, self.chosen))
+        self.rows_under(columns, glyphs, &[])
+    }
+
+    /// The whole panel with `headings` over its entries.
+    fn rows_under(&self, columns: usize, glyphs: Glyphs, headings: &[Heading<'_>]) -> Vec<Row> {
+        self.laid(
+            columns,
+            glyphs,
+            Scrolled::whole(self.shown, self.chosen, headings),
+        )
     }
 
     /// The panel as it fits in `room` rows, and empty where nothing does.
@@ -140,28 +212,46 @@ impl Panel<'_> {
     /// visible where it was asked for and no caller can forget to pass a bound.
     #[must_use]
     pub fn within(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
-        let whole = self.rows(columns, glyphs);
+        self.within_under(columns, room, glyphs, &[])
+    }
+
+    /// The rungs of [`Panel::within`], with `headings` over the entries.
+    fn within_under(
+        &self,
+        columns: usize,
+        room: usize,
+        glyphs: Glyphs,
+        headings: &[Heading<'_>],
+    ) -> Vec<Row> {
+        let whole = self.rows_under(columns, glyphs, headings);
         if whole.len() <= room {
             return whole;
         }
 
         let quiet = Self {
             said: None,
+            source: None,
             ..*self
         };
 
-        let shorter = quiet.rows(columns, glyphs);
+        let shorter = quiet.rows_under(columns, glyphs, headings);
         if shorter.len() <= room {
             return shorter;
         }
 
-        quiet.scrolled(columns, room, glyphs)
+        quiet.scrolled(columns, room, glyphs, headings)
     }
 
     /// The panel with its entries cut down to what `room` holds, and empty where
     /// not even one fits beside the rule, the title and the footer.
-    fn scrolled(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
-        let Some(fits) = self.fits(room) else {
+    fn scrolled(
+        &self,
+        columns: usize,
+        room: usize,
+        glyphs: Glyphs,
+        headings: &[Heading<'_>],
+    ) -> Vec<Row> {
+        let Some(fits) = self.fits(room, headings) else {
             return Vec::new();
         };
 
@@ -180,14 +270,19 @@ impl Panel<'_> {
                 shown: self.shown.get(from..from + fits).unwrap_or_default(),
                 chosen: self.chosen.saturating_sub(from),
                 more: self.shown.len() - fits,
+                headings: windowed(headings, from, fits),
             },
         )
     }
 
     /// How many entries a panel of `room` rows has space for, counting the row
     /// that says how many were left out, and `None` where that is none of them.
-    fn fits(&self, room: usize) -> Option<usize> {
-        let fits = (room.checked_sub(CHROME)? / ENTRY).min(self.shown.len());
+    ///
+    /// Every heading is counted whether or not it is in the window, so a window
+    /// that carries one down from above it is never a row over.
+    fn fits(&self, room: usize, headings: &[Heading<'_>]) -> Option<usize> {
+        let fits =
+            (room.checked_sub(CHROME + HEADING * headings.len())? / ENTRY).min(self.shown.len());
         (fits > 0).then_some(fits)
     }
 
@@ -197,6 +292,7 @@ impl Panel<'_> {
             shown,
             chosen,
             more,
+            headings,
         } = scrolled;
 
         // No room for the mark is no list to choose from: at that width it
@@ -214,9 +310,18 @@ impl Panel<'_> {
         rows.push(Row::new());
 
         for (at, one) in shown.iter().enumerate() {
+            // A heading stands in the column the mark leaves free, between
+            // blanks, so it reads as the name of what is under it and never as
+            // one more thing to choose.
+            if let Some(heading) = headings.iter().find(|heading| heading.before == at) {
+                if at > 0 {
+                    rows.push(Row::new());
+                }
+                rows.push(Row::new().then(Slot::Strong, clip(heading.name, columns)));
+                rows.push(Row::new());
             // A blank parts one entry from the next only where an entry is more
             // than a name; a list of names parts itself.
-            if at > 0 && !one.says.is_empty() {
+            } else if at > 0 && !one.says.is_empty() {
                 rows.push(Row::new());
             }
             rows.extend(entry(columns, front, glyphs, one, at == chosen));
@@ -237,7 +342,8 @@ impl Panel<'_> {
         rows
     }
 
-    /// The blank row and the sentence under the title, where there is one.
+    /// The blank row, the sentence under the title and its source, where
+    /// there is a sentence.
     ///
     /// Folded rather than clipped, and drawn in the reader's own foreground: it
     /// is the part of the panel that is read once and then not looked at again.
@@ -253,8 +359,41 @@ impl Panel<'_> {
 
         let mut rows = vec![Row::new()];
         rows.extend(folded.into_iter().map(Row::plain));
+        // Folded as the sentence is, and quiet: a date cut short is a date
+        // nobody can check.
+        for line in self
+            .source
+            .map(|source| fold(source, columns))
+            .unwrap_or_default()
+        {
+            rows.push(Row::new().then(Slot::Quiet, line));
+        }
         rows
     }
+}
+
+/// The headings of a window of `fits` entries from `from`, counted from its
+/// first entry.
+///
+/// The heading of the kind the first entry is of comes down to stand over it,
+/// so an entry scrolled into view is never read under the wrong kind.
+fn windowed<'a>(headings: &[Heading<'a>], from: usize, fits: usize) -> Vec<Heading<'a>> {
+    let carried = headings
+        .iter()
+        .filter(|heading| heading.before <= from)
+        .max_by_key(|heading| heading.before)
+        .map(|heading| Heading {
+            before: 0,
+            name: heading.name,
+        });
+    let inside = headings
+        .iter()
+        .filter(|heading| heading.before > from && heading.before < from + fits)
+        .map(|heading| Heading {
+            before: heading.before - from,
+            name: heading.name,
+        });
+    carried.into_iter().chain(inside).collect()
 }
 
 /// One entry: its display name on a row, what it is on the row beneath.
@@ -375,6 +514,7 @@ mod tests {
     /// first entry.
     fn folding<'a>(shown: &'a [Offered<'a>]) -> Panel<'a> {
         Panel {
+            source: None,
             said: Some(PROSE),
             ..login(shown, 0)
         }
@@ -406,6 +546,7 @@ mod tests {
     /// The login panel over `shown`, with the mark on `chosen`.
     fn login<'a>(shown: &'a [Offered<'a>], chosen: usize) -> Panel<'a> {
         Panel {
+            source: None,
             title: "Log in",
             said: Some(SAID),
             shown,
@@ -511,6 +652,7 @@ mod tests {
             says: "",
         }];
         let panel = Panel {
+            source: None,
             said: None,
             ..login(&shown, 0)
         };
@@ -629,6 +771,7 @@ mod tests {
         // strings in here.
         let shown = offered();
         let panel = Panel {
+            source: None,
             title: "Welcome",
             said: None,
             shown: &shown,
@@ -679,6 +822,92 @@ mod tests {
         let shown = offered();
 
         pictured("ascii", &login(&shown, 1), 80, Glyphs::Ascii);
+    }
+
+    /// A panel whose sentence is a vendor's, with the page and the day under
+    /// it.
+    fn cited<'a>(shown: &'a [Offered<'a>]) -> Panel<'a> {
+        Panel {
+            title: "Kimi Code · kimi.ai",
+            said: Some(
+                "Kimi may use what you send to train its models. To stop it, contact Kimi as \
+                 its terms say; that covers only what you send afterwards.",
+            ),
+            source: Some("kimi.ai terms of service, 30 Sep 2026"),
+            shown,
+            chosen: 0,
+            footer: "enter to choose · esc to go back",
+        }
+    }
+
+    #[test]
+    fn a_source_stands_quiet_on_rows_of_its_own_under_the_sentence() {
+        let shown = offered();
+        for columns in [20, 40, 80] {
+            let rows = cited(&shown).rows(columns, Glyphs::Unicode);
+            let texts: Vec<String> = rows.iter().map(Row::text).collect();
+            let at = texts
+                .iter()
+                .position(|text| text.contains("kimi.ai terms"))
+                .unwrap_or_else(|| panic!("no source at {columns}: {texts:?}"));
+            let said: String = texts
+                .get(at..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|text| !text.trim().is_empty())
+                .map(|text| text.trim_end())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(said, "kimi.ai terms of service, 30 Sep 2026", "{columns}");
+            assert!(
+                texts
+                    .get(at - 1)
+                    .is_some_and(|above| above.contains("afterwards")),
+                "the source is not under the sentence at {columns}: {texts:?}"
+            );
+            for row in rows
+                .get(at..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|row| !row.text().trim().is_empty())
+            {
+                assert_eq!(slots(row), [Slot::Quiet], "{columns}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_window_short_of_the_sentence_gives_up_its_source_with_it() {
+        let shown = offered();
+        let panel = cited(&shown);
+        let whole = panel.rows(80, Glyphs::Unicode).len();
+        let rows = panel.within(80, whole - 1, Glyphs::Unicode);
+        let texts: Vec<String> = rows.iter().map(Row::text).collect();
+        assert!(
+            !texts.iter().any(|text| text.contains("kimi.ai terms")),
+            "{texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text.contains("train")),
+            "{texts:?}"
+        );
+    }
+
+    #[test]
+    fn a_cited_panel_draws_at_forty_and_eighty_columns() {
+        let shown = [
+            Offered {
+                name: "Use it anyway",
+                says: "Sends your message; this route is not asked about again",
+            },
+            Offered {
+                name: "Go back",
+                says: "Keeps your message in the prompt box; nothing is sent",
+            },
+        ];
+        for columns in [40, 80] {
+            pictured("cited", &cited(&shown), columns, Glyphs::Unicode);
+        }
     }
 
     /// The rungs down, for a window the whole panel does not fit in.
@@ -794,6 +1023,125 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Two kinds of entry, the way `/login` narrowed by words lists them.
+    const KINDS: [Heading<'static>; 2] = [
+        Heading {
+            before: 0,
+            name: "Subscription",
+        },
+        Heading {
+            before: 2,
+            name: "API key",
+        },
+    ];
+
+    /// Entries under [`KINDS`]: two accounts and one key.
+    fn kinds() -> [Offered<'static>; 3] {
+        [
+            Offered {
+                name: "Kimi Code · kimi.ai",
+                says: "Kimi Code plan usage, accounts outside mainland China",
+            },
+            Offered {
+                name: "Kimi Code · kimi.com",
+                says: "Kimi Code plan usage, mainland China accounts",
+            },
+            Offered {
+                name: "MoonshotAI · kimi.com",
+                says: "set MOONSHOT_API_KEY",
+            },
+        ]
+    }
+
+    #[test]
+    fn a_heading_stands_over_its_entries_in_the_column_the_mark_leaves_free() {
+        let shown = kinds();
+        let rows: Vec<String> = login(&shown, 0)
+            .under(&KINDS)
+            .rows(80, Glyphs::Unicode)
+            .iter()
+            .map(|row| row.text().trim_end().to_owned())
+            .collect();
+
+        let at = |text: &str| rows.iter().position(|row| row == text);
+        let subscription = at("Subscription").expect("the first heading");
+        let key = at("API key").expect("the second heading");
+
+        assert_eq!(
+            at("› Kimi Code · kimi.ai"),
+            Some(subscription + 2),
+            "{rows:?}"
+        );
+        assert_eq!(at("  MoonshotAI · kimi.com"), Some(key + 2), "{rows:?}");
+        assert!(at("  Kimi Code · kimi.com") < Some(key), "{rows:?}");
+        for blank in [subscription - 1, subscription + 1, key - 1, key + 1] {
+            assert_eq!(rows.get(blank).map(String::as_str), Some(""), "{rows:?}");
+        }
+    }
+
+    #[test]
+    fn a_heading_never_takes_the_mark_at_any_rung() {
+        // The mark is on an entry in every window the panel is drawn into, and
+        // the entry it is on stands under the heading of its kind.
+        let shown = kinds();
+        for chosen in 0..shown.len() {
+            let headed = login(&shown, chosen).under(&KINDS);
+            for room in 0..=40 {
+                for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+                    let rows: Vec<String> = headed
+                        .within(80, room, glyphs)
+                        .iter()
+                        .map(Row::text)
+                        .collect();
+                    assert!(rows.len() <= room, "{room}: {rows:?}");
+                    if rows.is_empty() {
+                        continue;
+                    }
+
+                    let marked: Vec<&String> = rows
+                        .iter()
+                        .filter(|row| row.starts_with(glyphs.caret()))
+                        .collect();
+                    let name = shown.get(chosen).expect("the marked entry").name;
+                    assert_eq!(marked.len(), 1, "{room}: {rows:?}");
+                    assert!(
+                        marked.iter().all(|row| row.contains(name)),
+                        "{room}: {rows:?}"
+                    );
+
+                    let kind = if chosen < 2 {
+                        "Subscription"
+                    } else {
+                        "API key"
+                    };
+                    let heading = rows.iter().position(|row| row == kind);
+                    let entry = rows.iter().position(|row| row.contains(name));
+                    assert!(heading.is_some() && heading < entry, "{room}: {rows:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_panel_under_headings_is_drawn_at_both_widths() {
+        let shown = kinds();
+        let headed = Panel {
+            source: None,
+            said: Some("Choose the account or key to sign in with."),
+            ..login(&shown, 0)
+        }
+        .under(&KINDS);
+
+        for columns in [40, 80] {
+            insta::with_settings!({snapshot_suffix => columns.to_string()}, {
+                insta::assert_snapshot!(
+                    "headed",
+                    picture(&headed.rows(columns, Glyphs::Unicode), columns)
+                );
+            });
         }
     }
 }

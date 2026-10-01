@@ -110,9 +110,19 @@ fn hex(nibble: usize) -> char {
 }
 
 /// Fields within an object currently being written.
-pub(crate) struct Object<'a> {
+///
+/// Public in name only, for a dialect of a shared wire to be handed one; the
+/// module that holds it is the crate's own.
+pub struct Object<'a> {
     json: &'a mut Json,
     first: bool,
+}
+
+/// By hand: what is half written is a request body, and shows nothing here.
+impl std::fmt::Debug for Object<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Object").finish_non_exhaustive()
+    }
 }
 
 impl Object<'_> {

@@ -2,7 +2,9 @@
 
 A session runs in one mode, set by `permissions.mode` in
 [configuration](../configuration/configuration.md): `ask`, `allowEdits` or
-`fullAccess`. Nothing set means `ask`. That is where a session starts rather
+`fullAccess`. Nothing set means `ask`. Only `~/.crucible/config.json` may set
+it: a workspace file that does is refused at startup, because a mode only ever
+loosens what runs without asking. That is where a session starts rather
 than what it stays at: <kbd>Shift-Tab</kbd> steps it while you type, and
 `/mode` names one outright.
 
@@ -53,15 +55,16 @@ read it back and take it away again.
 The row under the prompt box says which one is in force (`ask mode on`,
 `allow edits on`, `full access mode on`) every time, not once at the top.
 Hours in, when the opening lines have scrolled away, which mode a session is in
-must not depend on what you remember starting. The box itself is drawn in that
-mode's colour, so a session that is not asking looks unlike one that is before
-the row is read at all.
+must not depend on what you remember starting. That row is drawn in the mode's
+colour; the box's border keeps one colour whatever the mode, because a border
+that large painted in a warning hue stops reading as a warning by the second
+prompt.
 
 ## Stepping it while you type
 
 <kbd>Shift-Tab</kbd> steps to the next mode and wraps round: `ask`, then
 `allowEdits`, then `fullAccess`, then `ask` again. The row under the box says
-which mode that landed in and the box changes colour with it, and the same key
+which mode that landed in, in that mode's colour, and the same key
 steps out again: a mode reached by one key is left by two more.
 
 While a prompt is being typed, every step takes effect on the press, and it is

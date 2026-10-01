@@ -17,6 +17,6 @@ pub use checkpoint::{
 };
 pub use prompt_cache::FilePromptCacheResourceStore;
 pub use session::{
-    DisplayHistory, DisplayItem, Glimpse, PROMPTS, Pruned, Recorded, Session, SessionError,
+    DisplayHistory, DisplayItem, Glimpse, PROMPTS, Place, Pruned, Recorded, Session, SessionError,
     glimpse, prompts, recent, remember, retitle,
 };

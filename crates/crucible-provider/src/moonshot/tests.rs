@@ -261,3 +261,24 @@ fn membership_billing_is_not_invented_as_a_pay_as_you_go_token_price() {
             .is_none()
     );
 }
+
+#[test]
+fn a_kimi_ai_credential_is_sent_to_the_global_coding_address_alone() {
+    assert_eq!(
+        Moonshot::CODING_AI.as_str(),
+        "https://api.kimi.ai/coding/v1/chat/completions"
+    );
+    assert_ne!(Moonshot::CODING_AI.as_str(), Moonshot::CODING.as_str());
+
+    let (moonshot, replay) = provider(Moonshot::CODING_AI, ANSWER, 200);
+    crucible_runtime::answered!(moonshot.stream(asking("hello"), &Cancel::new())).unwrap();
+    assert_eq!(replay.sent().url, Moonshot::CODING_AI.as_str());
+
+    // A vendor address, not a custom one: its caching is the one reviewed.
+    assert_eq!(
+        moonshot
+            .prompt_cache_capabilities("kimi-for-coding")
+            .support(),
+        PromptCacheSupport::Supported
+    );
+}

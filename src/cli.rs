@@ -38,6 +38,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use crucible_app::AppError;
+use crucible_app::content_use;
 use crucible_app::providers::{
     Providers, Served, available, chosen, providers, re_serving, unasked,
 };
@@ -106,8 +107,10 @@ changes a file or starts a process.
 
 --model takes a model name, optionally qualified by the provider serving it: \
 claude-sonnet-5, or openai/gpt-5.6-terra. The provider is whichever holds a \
-usable credential — a key in one of ANTHROPIC_API_KEY, GEMINI_API_KEY, MOONSHOT_API_KEY and \
-OPENAI_API_KEY (a variable exported empty holds none, so it does not compete), \
+usable credential — a key in one of ANTHROPIC_API_KEY, DASHSCOPE_API_KEY, \
+DEEPSEEK_API_KEY, GEMINI_API_KEY, META_API_KEY, MIMO_API_KEY, MINIMAX_API_KEY, \
+MOONSHOT_API_KEY, OPENAI_API_KEY, XAI_API_KEY and ZAI_API_KEY (a variable \
+exported empty holds none, so it does not compete), \
 or one stored by /login, whether an API key or an account login. Where more \
 than one is usable, qualify the name or set provider for one of them. \
 The key is read from that provider's variable, or from whichever one its \
@@ -116,7 +119,12 @@ apiKeyEnv names.
 MoonshotAI issues a key against one of two consoles and refuses it at the \
 other, and nothing in the key says which. crucible asks the coding console; a \
 key from the open platform sets providers.moonshot.baseUrl to \
-https://api.moonshot.ai/v1.
+https://api.moonshot.ai/v1/chat/completions, the whole address requests are \
+posted to.
+
+A key in DASHSCOPE_API_KEY, MINIMAX_API_KEY or ZAI_API_KEY is sent to the \
+vendor's international site. A key of its mainland China site is given \
+through /login, or sets that provider's baseUrl.
 
 --effort says how hard to think, as low, medium, high, xhigh or max, on every \
 turn of the session. Left off, it is providers.<name>.effort, and where nothing \
@@ -128,8 +136,8 @@ There is no model built in. Left off, or given as a provider and a bare slash, \
 the model comes from your configuration; where nothing says, crucible starts \
 and asks rather than picking one, and /model writes your answer down.
 
-crucible keeps its own files in ~/.crucible, and reads config.json there, then \
-.crucible/config.json and .crucible/config.local.json in the directory it was \
+crucible keeps its own files in ~/.crucible (or the directory CRUCIBLE_CODE_HOME \
+names), and reads config.json there, then .crucible/config.json and .crucible/config.local.json in the directory it was \
 started in. Nearer wins; the command line is nearer than all of them.
 
 Sessions are written one file per session, and --continue picks up the most \
@@ -137,7 +145,8 @@ recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
 /resume inside a session lists the rest.
 
---extensions lists what is installed in ~/.crucible/extensions, with what each \
+--extensions lists what is installed in ~/.crucible/extensions (or the \
+extensions directory under CRUCIBLE_CODE_HOME), with what each \
 manifest asks to be allowed to do and the digest crucible took over its bytes, \
 and stops. Nothing installed is run to produce that list, which is the point of \
 being able to read it.
@@ -145,7 +154,8 @@ being able to read it.
 --sandbox prints the confinement a command in this directory would run under — \
 which backend enforces it, what that backend can and cannot hold, the reach and \
 ceilings a command would get, and anything given up along the way — and stops. \
-No command is run to produce it, and every path in it is a digest.
+No command is run to produce it, and every path in it but the workspace root \
+is a digest.
 
 --with-mcp names a server written down under mcp.servers and hosts it for this \
 run, and may be repeated. A configuration file is a list of servers you could \
@@ -291,6 +301,13 @@ pub(crate) enum Fatal {
     /// the "it does nothing" report, arriving as success.
     #[error("{0} No turn was taken.")]
     Unanswerable(&'static str),
+
+    /// A send on a route whose vendor uses what is sent, with no yes to it and
+    /// no terminal to ask on. Ended the way an unanswerable prompt is, for
+    /// the same reason: a run that sent nothing must say so where a script
+    /// reads.
+    #[error("{0}")]
+    Unanswered(Box<str>),
 
     /// Standard input could not be read.
     #[error("could not read what you typed: {0}")]
@@ -601,7 +618,25 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // error, and the sentence is drawn under the welcome: a file that is only
     // ever an alternative to an exported variable must not be what ends a run
     // that never needed it.
-    let keys = Store::in_home(home.path()).read();
+    //
+    // A second credential for one provider, which only 0.43.3 writing after a
+    // roll back leaves, is taken out after that read and said in the same
+    // place.
+    //
+    // What the user's own file says yes to is read first: a credential taken
+    // out, here or later, takes its route's yes with it, before the store is
+    // written, and a yes this run took out must not come back.
+    //
+    // A credential that moves a provider's row in force, stored, taken out or
+    // replaced, takes that provider's speed out of the same file first: what
+    // fast costs was shown for the credential it was chosen under.
+    let rows = crucible_app::providers::Rows::production();
+    services.consent().keeps_in(crucible_config::user(&home));
+    services
+        .consent()
+        .recorded(settings.content_accepted().into_iter().map(str::to_owned));
+    let store = credential_store(&home, services.consent(), &rows, &settings);
+    let (keys, trouble) = stored(&store, &rows, style::glyph_set(settings.glyphs()));
     let subscriptions = Subscriptions::production(services.renewals());
 
     // Widened after the files are read because the root is what found them:
@@ -616,6 +651,18 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
     // the first prompt, and a model chosen without being asked for is one
     // vendor's name sent to whichever vendor the credential belongs to.
     let providers = providers()?;
+    // What a provider is served on is read again, from the store as it is
+    // then, once a credential taken out may have moved it: another may still
+    // serve it, and the write that took it out may have failed.
+    services
+        .consent()
+        .resolves(crucible_app::providers::resolving(
+            settings.clone(),
+            subscriptions.clone(),
+            &providers.snapshot(),
+            std::sync::Arc::new(|name: &str| std::env::var(name).ok()),
+            Store::in_home(home.path()).naming(rows.names()),
+        ));
     let launch = launch(
         cli,
         &providers.snapshot(),
@@ -702,6 +749,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // And no mode is stepped to mid-turn: the slot is empty until a
         // shift+tab over a running turn fills it.
         pending_mode: Cell::new(None),
+        pending_speed: Cell::new(None),
         settings: settings.clone(),
         choosing: crucible_config::user(&home),
 
@@ -714,6 +762,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),
             services.http().clone(),
+            services.consent().clone(),
         ),
         environment: Box::new(|name| std::env::var(name).ok()),
 
@@ -722,10 +771,11 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // being picked up is one of this directory's, and which directory that
         // is was decided before the first prompt.
         // The same directory the keys above were read from.
-        logins: Store::in_home(home.path()),
+        logins: store,
         // The account logins `/login` can start, the same registry the launch
         // resolved stored subscriptions through.
         subscriptions: subscriptions.clone(),
+        consent: services.consent().clone(),
         sessions: home.sessions().to_owned(),
         workspace: workspace.clone(),
     };
@@ -779,7 +829,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         &Opening {
             model: launch.model.as_deref(),
             unasked: launch.unasked,
-            trouble: keys.trouble(),
+            trouble: trouble.as_deref(),
             workspace: &workspace,
             sessions: &sessions,
             update: update.as_ref(),
@@ -962,6 +1012,55 @@ fn fail(problem: &Fatal) -> ExitCode {
 
     let _ = io::stderr().write_all(line.as_bytes());
     ExitCode::FAILURE
+}
+
+/// What a start reads its credentials from `home` as, and the one sentence
+/// to say about the store under the welcome, where there is one.
+///
+/// The store is told the names `rows` write credentials under, so a
+/// credential given on a row the bare provider name does not stand for is
+/// found; and a second credential for one provider is taken out.
+fn stored(
+    store: &Store,
+    rows: &crucible_app::providers::Rows,
+    glyphs: crucible_tui::Glyphs,
+) -> (crucible_auth::StoredCredentials, Option<String>) {
+    // Read first: that read tightens a store left readable by others and says
+    // so, and the settle after it finds the file private.
+    let keys = store.read();
+    let read = keys.trouble().map(str::to_owned);
+    let settled = startup::settle(store, rows, glyphs.dot());
+    // A credential taken out is no longer one to serve.
+    let keys = if settled.is_some() {
+        store.read()
+    } else {
+        keys
+    };
+    let trouble = match (settled, read) {
+        (Some(settled), Some(read)) => Some(format!("{settled}; {read}")),
+        (settled, read) => settled.or(read),
+    };
+    (keys, trouble)
+}
+
+/// The credential store a run writes through: a write that takes a credential
+/// out takes its route's yes out of the user's own file first, and a write that
+/// moves the credential a provider holds takes that provider's speed out of it.
+fn credential_store(
+    home: &Home,
+    consent: &crucible_app::content_use::Consent,
+    rows: &crucible_app::providers::Rows,
+    settings: &Settings,
+) -> Store {
+    Store::in_home(home.path())
+        .naming(rows.names())
+        .letting_go(content_use::letting_go(
+            consent,
+            crucible_config::user(home),
+            rows.clone(),
+            settings,
+        ))
+        .moving(crucible_app::speed::moving(crucible_config::user(home)))
 }
 
 #[cfg(test)]

@@ -418,6 +418,52 @@ mod tests {
     }
 
     #[test]
+    fn a_retention_outside_a_second_to_a_year_is_refused_where_it_is_written() {
+        // The walk refuses these against the ceiling the schema publishes, so
+        // an editor and a start answer alike.
+        let year = crucible_types::MAX_PROMPT_CACHE_RETENTION_SECONDS;
+        for seconds in [0, u64::from(year) + 1] {
+            let text = format!(
+                r#"{{"promptCaching":{{"requestedRetention":{{"class":"ephemeral","maxSeconds":{seconds}}}}}}}"#
+            );
+            let error = Document::parse(&text, "config.json", Origin::User)
+                .expect_err("a retention past the ceiling");
+            let shown = error.to_string();
+            assert!(
+                shown.contains("promptCaching.requestedRetention.maxSeconds"),
+                "{shown}"
+            );
+        }
+
+        let text = format!(
+            r#"{{"promptCaching":{{"requestedRetention":{{"class":"extended","maxSeconds":{year}}}}}}}"#
+        );
+        assert!(Document::parse(&text, "config.json", Origin::User).is_ok());
+    }
+
+    #[test]
+    fn the_published_namespace_pattern_is_the_one_the_policy_takes() {
+        // The schema's pattern and `PromptCacheNamespace::new` are two
+        // spellings of one rule: the same length, and the same alphabet.
+        assert_eq!(
+            crate::shape::NAMESPACE,
+            format!(
+                "^[A-Za-z0-9._-]{{1,{}}}$",
+                crucible_types::MAX_PROMPT_CACHE_NAMESPACE_BYTES
+            )
+        );
+        for byte in 0_u8..=127 {
+            let in_class = byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_');
+            let label = char::from(byte).to_string();
+            assert_eq!(
+                PromptCacheNamespace::new(&label).is_ok(),
+                in_class,
+                "{byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
     fn a_workspace_cannot_supply_a_cache_namespace() {
         let error = Document::parse(
             r#"{"promptCaching":{"namespace":"project-key"}}"#,
@@ -437,10 +483,6 @@ mod tests {
             ),
             (
                 r#"{"promptCaching":{"requestedRetention":{"class":"extended"}}}"#,
-                "promptCaching.requestedRetention.maxSeconds",
-            ),
-            (
-                r#"{"promptCaching":{"requestedRetention":{"class":"ephemeral","maxSeconds":0}}}"#,
                 "promptCaching.requestedRetention.maxSeconds",
             ),
         ] {

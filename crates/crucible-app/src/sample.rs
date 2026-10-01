@@ -6,6 +6,8 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{Home, Settings};
@@ -26,9 +28,16 @@ pub(crate) struct Sample {
 }
 
 impl Sample {
-    /// A tree of its own. `name` keeps two tests in one process apart.
+    /// A tree of its own. `name` says whose it is; a number drawn for each
+    /// keeps two alive at once apart, since tests run side by side and two of
+    /// them may ask for one name.
     pub(crate) fn new(name: &str) -> Self {
-        let base = std::env::temp_dir().join(format!("crucible-cli-{name}-{}", std::process::id()));
+        static DRAWN: AtomicUsize = AtomicUsize::new(0);
+        let drawn = DRAWN.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!(
+            "crucible-cli-{name}-{}-{drawn}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("work")).expect("a temporary directory");
 
@@ -76,9 +85,6 @@ impl Sample {
     }
 
     /// The disposable user-home root, a directory outside the workspace.
-    ///
-    /// Only a Unix test still asks for it, so elsewhere it is not compiled.
-    #[cfg(unix)]
     pub(crate) fn home(&self) -> PathBuf {
         self.base.join("home")
     }
@@ -106,7 +112,7 @@ impl Sample {
     pub(crate) fn subscribed(&self, provider: &str) -> StoredCredentials {
         let home = self.base.join("home");
         fs::create_dir_all(&home).expect("a temporary home");
-        let details = if provider == "moonshot" {
+        let details = if provider.starts_with("moonshot") {
             r#"{"device_id":"01234567-89ab-4cde-8fab-0123456789ab","expires_in":"3600"}"#
         } else {
             r#"{"account_id":"test-account"}"#
@@ -156,7 +162,16 @@ impl Sample {
     /// The store this tree keeps, which is the file `/login` writes and
     /// `/logout` takes a name back out of.
     pub(crate) fn store(&self) -> Store {
-        Store::in_home(&self.base.join("home"))
+        Store::in_home(&self.base.join("home")).naming(crate::providers::Rows::production().names())
+    }
+
+    /// The store this tree holds, with `text` on the disk as its file.
+    pub(crate) fn holding(&self, text: &str) -> StoredCredentials {
+        let home = self.base.join("home");
+        fs::create_dir_all(&home).expect("a temporary home");
+        fs::write(home.join("auth.json"), text).expect("a writable store");
+
+        self.store().read()
     }
 
     /// Resolves `document`, written as the project's `.crucible/<file>`.
@@ -213,4 +228,35 @@ impl Drop for Sample {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.base);
     }
+}
+
+/// A listener standing where a warned route's model would be, counting every
+/// byte it is sent and answering each request with an empty 200.
+pub(crate) fn recording() -> (String, Arc<AtomicUsize>) {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+    let heard = Arc::new(AtomicUsize::new(0));
+    let counting = Arc::clone(&heard);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buffer = [0; 4096];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            counting.fetch_add(read, Ordering::SeqCst);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+        }
+    });
+    (url, heard)
+}
+
+#[test]
+fn two_samples_of_one_name_alive_at_once_are_two_trees() {
+    // Tests run side by side, and two of them asking for the same name must
+    // not remove each other's files from under them.
+    let first = Sample::new("one-name");
+    let second = Sample::new("one-name");
+
+    assert_ne!(first.root(), second.root());
+    assert!(first.root().is_dir());
 }

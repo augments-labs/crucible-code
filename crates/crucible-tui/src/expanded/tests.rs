@@ -326,3 +326,44 @@ fn expansion_exposes_the_end_of_long_headings_and_output_lines() {
     assert!(all.contains("LAST_OUTPUT"), "{all}");
     assert!(rows.iter().all(|row| row.columns() <= 40));
 }
+
+#[test]
+fn a_list_is_as_long_as_its_results_laid_out_one_at_a_time_and_the_blanks_between() {
+    // What a caller that places a window over one result in a list adds up.
+    let texts = [counted(3), "x".repeat(130), String::new(), counted(1)];
+    let shown: Vec<Shown<'_>> = texts
+        .iter()
+        .map(|text| Shown {
+            called: "Bash(make)",
+            text,
+        })
+        .collect();
+
+    for columns in [1, 7, 40, 200] {
+        let one_at_a_time: usize = shown
+            .iter()
+            .map(|one| {
+                Expanded {
+                    shown: std::slice::from_ref(one),
+                    from: 0,
+                }
+                .length(columns)
+            })
+            .sum::<usize>()
+            + shown.len()
+            - 1;
+        let whole = Expanded {
+            shown: &shown,
+            from: 0,
+        };
+        assert_eq!(whole.length(columns), one_at_a_time, "{columns} columns");
+
+        for room in [0, 4, 5, 12, 400] {
+            assert_eq!(
+                whole.end(columns, room),
+                whole.length(columns).saturating_sub(Expanded::seen(room)),
+                "{columns} columns, {room} rows"
+            );
+        }
+    }
+}

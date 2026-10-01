@@ -175,6 +175,18 @@ pub enum TurnOutcome {
     /// problem gives. Where a step would have had to wait and was dropped,
     /// what it began is unconfirmed rather than undone.
     Failed(Problem),
+    /// Nothing was sent: the route the turn would go on is one whose vendor
+    /// says it uses what is sent, and no yes to it was given. The question
+    /// was declined, went unanswered, or could not be put to this client; a
+    /// yes that could not be written down is [`TurnOutcome::Failed`].
+    Warned {
+        /// The route, as a yes to it is written down.
+        route: Text,
+        /// What the vendor says, in English.
+        sentence: Text,
+        /// The page it says it on, and the day that was read.
+        source: Text,
+    },
 }
 
 /// How making room ended.
@@ -254,6 +266,23 @@ pub enum EffortOutcome {
     /// The model in force does not serve it.
     Unsupported,
     /// It is the effort in force.
+    Taken {
+        /// Why the choice will not outlive the host process, where it will not.
+        unwritten: Option<Problem>,
+    },
+}
+
+/// How asking for a speed ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpeedOutcome {
+    /// There is no model in force to ask it of.
+    Unasked,
+    /// The model in force has no fast form.
+    Unsupported,
+    /// The model in force is itself a fast model, with no standard form to
+    /// switch to; the other models are chosen with the model.
+    Own,
+    /// It is the speed asked for from the next turn on.
     Taken {
         /// Why the choice will not outlive the host process, where it will not.
         unwritten: Option<Problem>,
@@ -393,6 +422,55 @@ pub enum ThemeOutcome {
     Unwritten(Problem),
 }
 
+/// How many entries of one kind a release held.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Group {
+    /// The kind, as the changelog heads it, in lower case: `fixed`. Entries
+    /// above any heading are counted as `changed`.
+    pub kind: Name,
+    /// How many.
+    pub count: u64,
+}
+
+/// One release, as the notes tell it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    /// Its number: `0.43.3`.
+    pub version: Name,
+    /// The day it was cut.
+    pub date: Name,
+    /// How many entries of each kind it held, in the order they are told.
+    pub groups: Vec<Group>,
+    /// Its words in markdown, where it is told in full, cut to the ceiling.
+    pub text: Option<Text>,
+}
+
+/// How asking for the release notes ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotesOutcome {
+    /// Every release, oldest first, the newest told in full.
+    Listed {
+        /// The releases, the newest up to the list ceiling.
+        releases: Vec<Release>,
+        /// The version the host is running.
+        running: Name,
+        /// Whether older releases were left out to keep under the ceiling.
+        truncated: bool,
+    },
+    /// The release asked for, told in full.
+    One(Release),
+    /// No release has that number.
+    Unknown {
+        /// The newest release there is.
+        newest: Name,
+    },
+    /// What was asked for is not written as a version.
+    NotAVersion {
+        /// The newest release there is, which is how one is written.
+        newest: Name,
+    },
+}
+
 /// What came of one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -412,6 +490,8 @@ pub enum Outcome {
     Model(ModelOutcome),
     /// Asking for an effort ended.
     Effort(EffortOutcome),
+    /// Asking for a speed ended.
+    Speed(SpeedOutcome),
     /// This is the mode now in force.
     Mode(Mode),
     /// Adopting a credential ended.
@@ -428,6 +508,8 @@ pub enum Outcome {
     Theme(ThemeOutcome),
     /// The commands that ship, by the word each crosses as.
     Help(Vec<Name>),
+    /// Asking for the release notes ended.
+    Notes(NotesOutcome),
     /// The client is leaving; the host closes what it owns.
     Leaving,
 }
@@ -496,7 +578,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 17] = [
+    pub const KINDS: [&'static str; 19] = [
         "refused",
         "turn",
         "room",
@@ -505,6 +587,7 @@ impl Outcome {
         "resumed",
         "model",
         "effort",
+        "speed",
         "mode",
         "login",
         "logout",
@@ -513,6 +596,7 @@ impl Outcome {
         "sandbox",
         "theme",
         "help",
+        "notes",
         "leaving",
     ];
 
@@ -528,6 +612,7 @@ impl Outcome {
             Self::Resumed(_) => "resumed",
             Self::Model(_) => "model",
             Self::Effort(_) => "effort",
+            Self::Speed(_) => "speed",
             Self::Mode(_) => "mode",
             Self::Login(_) => "login",
             Self::Logout(_) => "logout",
@@ -536,6 +621,7 @@ impl Outcome {
             Self::Sandbox(_) => "sandbox",
             Self::Theme(_) => "theme",
             Self::Help(_) => "help",
+            Self::Notes(_) => "notes",
             Self::Leaving => "leaving",
         }
     }
@@ -551,6 +637,7 @@ impl Outcome {
             Self::Resumed(resumed) => object.with("resumed", resumed.written()),
             Self::Model(model) => object.with("model", model.written()),
             Self::Effort(effort) => object.with("effort", effort.written()),
+            Self::Speed(speed) => object.with("speed", speed.written()),
             Self::Mode(mode) => object.with("mode", mode.as_str()),
             Self::Login(login) => object.with("login", login.written()),
             Self::Logout(logout) => object.with("logout", logout.written()),
@@ -562,6 +649,7 @@ impl Outcome {
                 "commands",
                 commands.iter().map(Name::as_str).collect::<Vec<_>>(),
             ),
+            Self::Notes(notes) => object.with("notes", notes.written()),
         }
         .finish()
     }
@@ -578,6 +666,7 @@ impl Outcome {
             "resumed" => Self::Resumed(ResumeOutcome::read(fields.take("resumed")?)?),
             "model" => Self::Model(ModelOutcome::read(fields.take("model")?)?),
             "effort" => Self::Effort(EffortOutcome::read(fields.take("effort")?)?),
+            "speed" => Self::Speed(SpeedOutcome::read(fields.take("speed")?)?),
             "mode" => Self::Mode(fields.string("mode")?.parse()?),
             "login" => Self::Login(LoginOutcome::read(fields.take("login")?)?),
             "logout" => Self::Logout(LogoutOutcome::read(fields.take("logout")?)?),
@@ -592,6 +681,7 @@ impl Outcome {
                     .map(|value| Name::new(value.as_str().unwrap_or_default()))
                     .collect::<Result<_, _>>()?,
             ),
+            "notes" => Self::Notes(NotesOutcome::read(fields.take("notes")?)?),
             "leaving" => Self::Leaving,
             _ => return Err(ErrorCode::Malformed.into()),
         };

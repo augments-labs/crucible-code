@@ -27,6 +27,7 @@
 
 pub mod branching;
 pub mod client;
+pub mod content_use;
 mod conversation;
 mod error;
 pub mod extensions;
@@ -39,6 +40,7 @@ mod sample;
 pub mod sandbox;
 pub mod selecting;
 pub mod services;
+pub mod speed;
 pub mod startup;
 pub mod subscription;
 pub mod switching;

@@ -116,7 +116,7 @@ pub(crate) fn event<T: Terminal>(
 ) -> Result<(), TerminalError> {
     let columns = renderer.columns();
 
-    match event {
+    let drawn = match event {
         // The turn number is in the title bar, not in the transcript: a line
         // per turn saying which turn it is crowds out the turn itself. What it
         // is worth here is the row it parts from the prompt above it — the
@@ -207,6 +207,15 @@ pub(crate) fn event<T: Terminal>(
             came_back(renderer, kept, &call, Shown::live(output), style)
         }
 
+        // The vendor would not serve the request fast and it has gone out again
+        // at standard speed. Something that happened to the session rather
+        // than a state it is in, so it is written down, once, where it happened.
+        Event::FastRefused {
+            provider,
+            reason,
+            resent,
+        } => refused_fast(renderer, (provider, &reason), resent, style),
+
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.
         Event::TurnFinished { stop, .. } => {
@@ -242,7 +251,50 @@ pub(crate) fn event<T: Terminal>(
                 .collect();
             renderer.present(&rows)
         }
-    }
+    };
+    drawn?;
+
+    // Whatever it was, a result it brought in may have pushed an older one out
+    // of what is held (a call counted into a run is kept without a row of its
+    // own being drawn), and a row that can no longer open anything stops
+    // saying it can.
+    withdraw(renderer, kept)
+}
+
+/// Says that the vendor refused to serve a request fast, and what became of it.
+///
+/// Hung under the turn the way a result is rather than drawn as a failure: the
+/// turn goes on at standard speed, and the row says so, or says only that fast
+/// is off where a stop ended the second send. The vendor's reason
+/// is folded flat first, as a failed turn's is, so where one row ends and the
+/// next begins is this program's to choose.
+fn refused_fast<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    (provider, reason): (&str, &str),
+    resent: bool,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let glyphs = style.glyphs();
+    let mut lead = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
+    lead.push_structural(Slot::Quiet, glyphs.hangs());
+    lead.push(Slot::Quiet, " ");
+
+    let reason = flattened(reason);
+    let then = if resent {
+        "Sent again at standard speed; fast is off."
+    } else {
+        "Fast is off."
+    };
+    let said = format!(
+        "{provider} refused fast: {}. {then}",
+        reason.trim_end_matches('.')
+    );
+    let room = renderer.columns().saturating_sub(lead.columns());
+    let rows = hung_off(lead, &Row::plain(said), room);
+
+    renderer.settle()?;
+    renderer.apart()?;
+    renderer.present(&rows)
 }
 
 /// Writes the line a command that ended on its own leaves behind.
@@ -1161,10 +1213,13 @@ fn offer(beyond: usize, glyphs: Glyphs) -> (String, &'static str, &'static str) 
         } else {
             format!(" (+{beyond} lines {} ", glyphs.dot())
         },
-        "ctrl+o to expand",
+        EXPAND,
         ")",
     )
 }
+
+/// The words that name the key an offer to expand is made with.
+const EXPAND: &str = "ctrl+o to expand";
 
 /// Every row one answered call comes back as.
 ///
@@ -1213,6 +1268,11 @@ pub(crate) fn came_back<T: Terminal>(
     let details = kept
         .heading(call)
         .is_some_and(|said| words(said, renderer.columns(), style).text() != flattened(said));
+    // The first line the result writes, which is where the offer goes. Read
+    // before the rows go down rather than counted back after them: a change is
+    // written as one line however many rows it draws, so counting its rows back
+    // lands on a line above it.
+    let at = renderer.lines();
     let rows = if changed(&output).is_some() && renderer.is_terminal() {
         let retained = output.clone();
         let rows = finished_rows(&retained, renderer.columns(), style, details);
@@ -1235,14 +1295,12 @@ pub(crate) fn came_back<T: Terminal>(
     //
     // Where the offer went is the block's first row, which is the one that names
     // the key — the lines under it are a change, and a change is cut where it is
-    // built rather than here, so it offers nothing. Counted back from the end
-    // because the rows have already gone.
+    // built rather than here, so it offers nothing.
     if details
         || rows
             .iter()
             .any(|row| row.kinds().any(|slot| slot == Slot::Cut))
     {
-        let at = renderer.lines().saturating_sub(rows.len());
         kept.finished(call, output.into_text(), at);
     } else {
         // Even when nothing needs retaining, the call and any live tail are
@@ -1250,7 +1308,93 @@ pub(crate) fn came_back<T: Terminal>(
         kept.answered(call);
     }
 
-    Ok(())
+    withdraw(renderer, kept)
+}
+
+/// Takes the offer off every row the store can no longer open.
+///
+/// The store says which: a row whose result it let go of in a session with no
+/// log to read it back from, a row let go of whose place the ceiling then
+/// dropped too, and a row let go of under a log the store no longer reads. Each
+/// has nothing behind it, so it keeps its place and its words, and stops
+/// naming the key and lighting under the pointer.
+///
+/// # Errors
+///
+/// [`TerminalError::Io`] if the terminal could not be redrawn.
+pub(crate) fn withdraw<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    kept: &mut Kept,
+) -> Result<(), TerminalError> {
+    // Every row taken from the store is amended before a failure to redraw is
+    // said, because the store hands each one over once: a row left out here
+    // would go on offering with nothing behind it.
+    let mut drawn = Ok(());
+    for at in kept.withdrawn() {
+        let amended = renderer.amend(at, unoffered);
+        if drawn.is_ok() {
+            drawn = amended;
+        }
+    }
+    drawn
+}
+
+/// A row that offered to expand, without the offer.
+///
+/// What [`finished`] and [`offer`] wrote for it goes: the key's name and the
+/// brackets it stood in, or the whole of a change's offer, which is a cut run
+/// of its own at the end of the row. A count of the lines the row could not
+/// show stays, because it is still true. What was cut stops wearing the slot
+/// that lights under the pointer and reads as the row around it.
+fn unoffered(rows: &mut [Row]) {
+    for row in rows {
+        let spans: Vec<(Slot, String)> = row
+            .spans()
+            .map(|(slot, text)| (slot, text.to_owned()))
+            .collect();
+        let key = spans
+            .iter()
+            .position(|(slot, text)| *slot == Slot::Accent && text == EXPAND);
+        // ` (+2 lines · ` keeps its count and loses the mark after it; a bare
+        // ` (` was only ever the offer's.
+        let counted = key
+            .and_then(|key| key.checked_sub(1))
+            .and_then(|opens| spans.get(opens))
+            .and_then(|(_, opens)| opens.trim_end().rsplit_once(' '))
+            .map(|(count, _)| count.to_owned())
+            .filter(|count| count.contains('+'));
+        let last = spans.len().saturating_sub(1);
+
+        row.rewrite(|at, slot, text| {
+            if let Some(key) = key {
+                if at == key {
+                    return None;
+                }
+                if at + 1 == key {
+                    return counted.clone().map(|count| (Slot::Quiet, count));
+                }
+                if at == key + 1 {
+                    return counted.is_some().then(|| (slot, text.to_owned()));
+                }
+            }
+            match slot {
+                Slot::Cut if at == last && change_offer(text) => None,
+                Slot::Cut => Some((Slot::Quiet, text.to_owned())),
+                _ => Some((slot, text.to_owned())),
+            }
+        });
+    }
+}
+
+/// Whether `text` is a change's own offer as [`finished`] writes it: the key's
+/// name in brackets, flattened and clipped to the room the row had, so it may
+/// have lost its end to an ellipsis.
+fn change_offer(text: &str) -> bool {
+    let bare = text.trim().trim_end_matches(['…', '.']);
+    bare.strip_prefix('(').is_some_and(|inner| {
+        let inner = inner.strip_suffix(')').unwrap_or(inner);
+        !inner.is_empty() && EXPAND.starts_with(inner)
+    })
 }
 
 /// One finished result on its way to the screen, and the lines only the reader

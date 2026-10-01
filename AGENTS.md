@@ -53,7 +53,7 @@ invariants. Update it when the implementation makes a sentence false.
 
 - Open extension sets use traits: adding a provider, tool, sandbox, subagent or
   skill loader must not require naming its implementation in the crate that
-  owns its contract.
+  owns its contract. A new vendor is a dialect of a wire that names no vendor.
   Closed domain states use enums, matched exhaustively where new cases require
   every consumer to decide.
 - `crucible-app` composes concrete implementations into trait objects before
@@ -77,7 +77,12 @@ invariants. Update it when the implementation makes a sentence false.
   plugin routes with tests equivalent to the existing typed-boundary tests.
 - Apply secrets without exposing them. Credential-bearing values redact
   `Debug`, stay out of `Display`, errors and session logs, and register exact
-  outgoing representations for response redaction.
+  outgoing representations for response redaction. A stored credential's name
+  is its `/login` row (the bare provider name for a row 0.43.3 knows, else
+  `provider@site`) and never changes once shipped.
+- A route whose vendor uses what is sent is sent nothing before a yes: every
+  client that can reach a vendor takes `crucible_app::content_use`'s hold, and
+  `scripts/sh/repo-checks.sh` lists each file that builds a client, and why.
 - Treat model output and checked-out files as hostile input. Validate path
   reach through `Workspace`; process execution is the explicit exception and
   must be classified by what it will run.
@@ -173,8 +178,8 @@ it is the person whose name is on it who pays for that.
   left empty otherwise, naming who is being asked. A tick nobody gave is a false
   statement about a person.
 
-How a branch is finished, reviewed and published is owned by the skills in
-[`.agents/skills/`](.agents/skills/); this file states what the result has to be.
+Finishing, review and publication follow [`CONTRIBUTING.md`](CONTRIBUTING.md)
+and [`RELEASING.md`](RELEASING.md); this file states what the result has to be.
 
 ## Repository checks
 

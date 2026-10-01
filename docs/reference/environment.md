@@ -20,9 +20,10 @@ Two more are read only if crucible crashes: Rust's own `RUST_BACKTRACE` and
 ## crucible's own settings
 
 - `CRUCIBLE_CODE_HOME`: where crucible keeps its files: `config.json`,
-  `auth.json`, the cached release check and the `sessions` directory. It is
-  taken as the directory itself, not as somewhere to put a `.crucible` inside,
-  and only when it is an absolute path; a relative one is ignored. Unset:
+  `auth.json`, the cached release check, the `sessions` directory and the
+  `extensions` directory. It is taken as the directory itself, not as somewhere
+  to put a `.crucible` inside, and only when it is an absolute path; a relative
+  one is ignored. Unset:
   `.crucible` under your home directory. It is read to find the configuration
   file, so it is the one setting of crucible's own that no configuration file
   can carry: a file that sets it is refused with `env cannot set
@@ -86,11 +87,17 @@ your home directory, or set it in the shell you start crucible in`. See
 
 ## Provider keys
 
-- `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`:
-  the key for the provider of that name, unless `providers.<name>.apiKeyEnv`
+- `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`, `DEEPSEEK_API_KEY`,
+  `GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`, `MINIMAX_API_KEY`,
+  `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `ZAI_API_KEY`: the key
+  for `anthropic`, `qwen`, `deepseek`, `google`, `meta`, `mimo`, `minimax`,
+  `moonshot`, `openai`, `xai` and `zai` respectively, unless `providers.<name>.apiKeyEnv`
   names another variable to read instead. The value is trimmed, and unset or
   blank is treated as no key, which is how a shell turns a variable off for
-  one run. What a provider is used with is settled in this order: an account
+  one run. A key in `DASHSCOPE_API_KEY`, `MINIMAX_API_KEY` or `ZAI_API_KEY`
+  is sent to the vendor's international site; a key of its mainland China site
+  is given through `/login`, or reaches it with `providers.<name>.baseUrl`.
+  What a provider is used with is settled in this order: an account
   login stored for it (where the provider supports one and no `baseUrl` is
   set), then the variable, then a key stored in `auth.json`. See
   [keys](../providers/providers.md#keys) and
@@ -109,9 +116,9 @@ your home directory, or set it in the shell you start crucible in`. See
   crucible can read is the proxy for every request, whatever the address's
   scheme. No scheme means `http`. A `socks://`, `socks4://` or `socks5://`
   address is taken and then connected past, straight to the host; a
-  `socks4a://` or `socks5h://` one refuses every request. Unset: crucible
-  connects directly. These are read once, from the environment crucible was
-  started in; the `env` block reaches the commands crucible runs and not
+  `socks4a://` or `socks5h://` one refuses every request to a host `NO_PROXY`
+  does not name. Unset: crucible connects directly. These are read once, from
+  the environment crucible was started in; the `env` block reaches the commands crucible runs and not
   crucible's own requests, and no proxy setting of the operating system is
   read. A value that is not valid Unicode counts as unset. See
   [through a proxy](../providers/network.md#through-a-proxy).
@@ -165,7 +172,8 @@ separate set of rules. `NO_COLOR` set to anything but empty turns it off.
 Otherwise `CLICOLOR_FORCE` set to anything but empty turns it on even down a
 pipe, and `CLICOLOR` at `0` turns it off. On a terminal it is drawn when
 `TERM` allows colour, or when `CLICOLOR` is set to anything else, or when `CI`
-is set at all. `output.color` has no say here.
+is set at all. On Windows an unset `TERM` allows colour too; anywhere,
+`TERM=dumb` does not. `output.color` has no say here.
 
 ## The clipboard
 
@@ -198,7 +206,11 @@ unset stays unset. Nothing else crosses, your provider key included. See
 - On Windows: `PATH`, `PATHEXT`, `COMSPEC`, `SystemRoot`, `SystemDrive`,
   `windir`, `TEMP`, `TMP`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`,
   `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `ProgramFiles(x86)`,
-  `ProgramData`, `TERM`.
+  `ProgramData`, `TERM`. A name in the `env` block replaces an inherited one
+  only where the two are spelled with the same case: a block's `PATH` beside
+  an inherited `Path` leaves both in the map. Unconfined, the block's one is
+  what the command sees; a confined command is not started, with `Windows
+  sandbox environment is ambiguous`.
 
 Some of the same variables are read by crucible itself, to find a program:
 
@@ -247,12 +259,17 @@ environment, with these changes made by the platform's backend. See
 - Windows: `TEMP` and `TMP`, however they are capitalised, are replaced with
   one private directory that is removed with the command. It is made under the
   temporary directory Windows reports for the process.
-- A command with network domains on Linux or macOS is given `HTTP_PROXY`,
+  The helper that starts the command, `crucible-sandbox-broker.exe`, is
+  itself started through a cleared environment holding only `SystemRoot`,
+  kept because Windows resolves system components through it; the command's
+  map reaches it on its standard input instead.
+- A command under a network domains policy is given `HTTP_PROXY`,
   `HTTPS_PROXY`, `ALL_PROXY`, `http_proxy`, `https_proxy` and `all_proxy`, all
   set to crucible's own per-command proxy as `http://name:secret@address`,
   and `NO_PROXY` and `no_proxy` set to nothing. These replace whatever `env`
-  set, bypass lists included. Windows has no per-command proxy and sets none
-  of them. See
+  set, bypass lists included. Linux sets them for any domains policy; macOS
+  only where the policy allows at least one domain. Windows has no per-command
+  proxy and sets none of them. See
   [commands connect on their own](../providers/network.md#commands-connect-on-their-own).
 
 Unconfined execution also starts from a cleared environment and hands the
@@ -266,5 +283,7 @@ macOS, `explorer.exe` on Windows) is the one child started with crucible's own
 environment, because a browser needs your display and desktop session to open.
 It is started without the variables a provider key is read from: each
 provider's usual one, such as `ANTHROPIC_API_KEY`, and any variable an
-`apiKeyEnv` setting names. It gets the address to open as its only argument. See
+`apiKeyEnv` setting names. A variable an MCP server's `envFrom` names is not
+withheld: the browser opener inherits it. It gets the address to open as its
+only argument. See
 [account login today](../providers/providers.md#account-login-today).

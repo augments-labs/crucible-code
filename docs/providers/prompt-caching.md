@@ -19,6 +19,8 @@ and forbids persistent cached-content resources.
 | Anthropic | Automatic short-lived prefix caching | Top-level `cache_control: {"type":"ephemeral"}`. |
 | Google Gemini | Provider-managed implicit prefix caching | No additional cache field or remote cached-content resource. |
 | Moonshot/Kimi | Provider-managed automatic context caching | An opaque, derived `prompt_cache_key` scoped to the session by default; Kimi manages cache creation and lifetime. |
+| Meta, xAI | Provider-managed automatic prefix caching | An opaque, derived `prompt_cache_key` scoped to the session by default; the vendor manages cache creation and lifetime. |
+| DeepSeek, Z.ai, Qwen, MiMo, MiniMax | Provider-managed automatic prefix caching | None. These vendors take no cache field on the route crucible uses; crucible reads the cached-token count each answer reports. |
 
 Only exact built-in endpoint/model records advertise support. A custom
 `baseUrl`, proxy route or unreviewed model is `unknown`; crucible sends no
@@ -95,6 +97,15 @@ ordinary startup never scrapes mutable documentation.
 | OpenAI Responses: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | implicit automatic caching; up to four explicit input-content breakpoints on the public API | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-08-31` |
 | OpenAI Responses: `gpt-5.5` | implicit automatic caching; optional documented 24-hour retention | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-08-31` |
 | Anthropic Messages: `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), [tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-use-with-prompt-caching) | `anthropic-prompt-cache-2026-08-31` |
+| OpenAI Responses: `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna` | implicit automatic caching; up to four explicit input-content breakpoints on the public API | [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) | `openai-prompt-cache-2026-10-01` |
+| Anthropic Messages: `claude-opus-5-5`, `claude-sonnet-5-5` | top-level automatic control and up to four explicit block breakpoints; 5-minute and 1-hour classes | [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) | `anthropic-prompt-cache-2026-10-01` |
+| Meta Responses: `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | automatic prefix caching with a routing key | [Meta prompt caching](https://dev.meta.ai/docs/prompt-caching) | `meta-prompt-cache-2026-10-01` |
+| xAI Responses: `grok-4.7`, `grok-4.6` | automatic prefix caching with a routing key | [xAI prompt caching](https://docs.x.ai/developers/advanced-api-usage/prompt-caching) | `xai-prompt-cache-2026-10-01` |
+| DeepSeek Chat Completions: `deepseek-flash`, `deepseek-v4-pro` | provider-managed caching, reported usage only | [DeepSeek context caching](https://api-docs.deepseek.com/guides/kv_cache) | `deepseek-prompt-cache-2026-10-01` |
+| Z.ai Chat Completions: `glm-5.3`, `glm-5.3-flash`, `glm-5.2` | provider-managed caching, reported usage only | [Z.ai context caching](https://docs.z.ai/guides/capabilities/cache) | `zai-prompt-cache-2026-10-01` |
+| Qwen Chat Completions: `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus`, `qwen3.6-plus` | provider-managed caching, reported usage only | [Model Studio context cache](https://www.alibabacloud.com/help/en/model-studio/context-cache) | `qwen-prompt-cache-2026-10-01` |
+| MiMo Chat Completions: `mimo-v2.6-pro`, `mimo-v2.6-flash` | provider-managed caching, reported usage only | [MiMo pricing](https://mimo.mi.com/static/docs/price/pay-as-you-go.md) | `mimo-prompt-cache-2026-10-01` |
+| MiniMax Chat Completions: `MiniMax-M3`, `MiniMax-M2.7` | provider-managed caching from 512 input tokens, reported usage only | [MiniMax prompt caching](https://platform.minimax.io/docs/api-reference/text-prompt-caching) | `minimax-prompt-cache-2026-10-01` |
 | Moonshot/Kimi Chat Completions: `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | provider-managed automatic caching after the documented prefix minimum, with a stable routing key for agent sessions | [Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api) and [Chat Completions API](https://platform.kimi.ai/docs/api/chat) | `kimi-prompt-cache-2026-08-31` |
 
 The OpenAI public pricing record uses the current [OpenAI pricing](https://developers.openai.com/api/docs/pricing)
@@ -103,6 +114,17 @@ the prompt-caching guide. Pricing is selected only for an exact protocol,
 endpoint, model, revision, date, retention class and input band. Subscription
 billing and Moonshot membership billing remain unknown rather than being
 invented as token prices.
+
+For the seven vendors added in 0.44, what no source settled is said here
+rather than guessed at. None of Meta, xAI, DeepSeek, Z.ai or MiMo publishes
+the smallest prefix it caches, so crucible's records assume no hit below 1,024
+tokens, the floor Qwen publishes for its own. Qwen
+lists `qwen3.6-plus` on neither of its implicit cache's lists while that
+model's own page says it takes one, so crucible claims only the reading of
+what an answer reports for it. Qwen does not document caching at its plan
+addresses, Z.ai and MiniMax state no cache lifetime, and MiMo's examples never
+show whether its cached count lies inside the prompt's; crucible reads it as
+inside. Qwen's explicit `cache_control` markers are not written.
 
 Private continuation is distinct from a cache hit. Compatible Google and Astra
 native history is replayed in order; Fable thinking whose bound prefix was

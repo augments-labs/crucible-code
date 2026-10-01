@@ -54,6 +54,10 @@ pub struct Conversation {
     /// session log, and the registry names it for `/model`, the settings file
     /// and the credential store, which is the name every switch is decided by.
     pub(crate) serving: Option<&'static str>,
+    /// The yes given to each route whose vendor uses what is sent, where the
+    /// run holds one: a turn on such a route with no yes is asked about
+    /// before anything is sent.
+    consent: Option<crate::content_use::Consent>,
 }
 
 impl Conversation {
@@ -76,7 +80,25 @@ impl Conversation {
             runner: build(Arc::clone(&session)),
             session,
             serving,
+            consent: None,
         }
+    }
+
+    /// The same conversation, asking `consent` before a turn goes on a route
+    /// whose vendor uses what is sent.
+    #[must_use]
+    pub fn consenting(self, consent: crate::content_use::Consent) -> Self {
+        Self {
+            consent: Some(consent),
+            ..self
+        }
+    }
+
+    /// What a turn on a route whose vendor uses what is sent is asked about
+    /// against, where the run holds one.
+    #[must_use]
+    pub fn consent(&self) -> Option<&crate::content_use::Consent> {
+        self.consent.as_ref()
     }
 
     /// The same conversation, remembering the persistent prompt-cache
@@ -142,7 +164,10 @@ impl Conversation {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        self.runner.compact(why, run, spent).await
+        let asked = self.runner.speed();
+        let made = self.runner.compact(why, run, spent).await;
+        self.refusal_written(asked);
+        made
     }
 
     /// The persistent prompt-cache resources this conversation remembers
@@ -218,7 +243,10 @@ impl Conversation {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        self.runner.turn(prompt, attached, ask, run).await
+        let asked = self.runner.speed();
+        let turned = self.runner.turn(prompt, attached, ask, run).await;
+        self.refusal_written(asked);
+        turned
     }
 
     /// Starts a new session and records into it from here on, with nothing

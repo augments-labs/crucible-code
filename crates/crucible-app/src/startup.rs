@@ -27,8 +27,9 @@ use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
-    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, HttpTurns, Moonshot, MoonshotWeb, OpenAi,
-    OpenAiWeb, Unavailable,
+    Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Meta, MetaWeb, Mimo,
+    MiniMax, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Xai, XaiWeb,
+    Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
@@ -37,6 +38,7 @@ use crucible_tools::{DescribeTool, Fetch, Mode, Put, Revealed, Search, Tool, Too
 use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
+use crate::content_use::{self, Consent, Serving};
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
 use crate::services::Services;
@@ -212,15 +214,22 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // session writes a file, and one written for a run that never happened is
     // then the newest for this directory — which is what `--continue` would
     // offer instead of the last real session.
+    let auth = ProviderAuth {
+        settings,
+        from: startup.from,
+        stored: startup.stored,
+        subscriptions: startup.subscriptions,
+    };
+    // Before anything could be sent: what the user's own file says yes to,
+    // and what each provider's requests would go on, are what the clients
+    // ask before a request leaves.
+    let consent = startup.services.consent();
+    consent.recorded(settings.content_accepted().into_iter().map(str::to_owned));
+    serve(consent, startup.providers, auth);
     let provider = provider(
         startup.provider,
         startup.unasked,
-        ProviderAuth {
-            settings,
-            from: startup.from,
-            stored: startup.stored,
-            subscriptions: startup.subscriptions,
-        },
+        auth,
         startup.services.http(),
     )?;
 
@@ -331,7 +340,10 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     });
     recorded(&mut conversation, &runtime);
 
-    Ok(conversation)
+    if let Some(file) = startup.services.consent().file() {
+        conversation.hastened_as_kept(file);
+    }
+    Ok(conversation.consenting(startup.services.consent().clone()))
 }
 
 /// Waits on `runtime` for what picking the session up owes it, before the
@@ -659,6 +671,138 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     )))
 }
 
+/// `DeepSeek`'s Chat Completions, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn deepseek(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, DeepSeek::VENDOR)?;
+    Ok(Box::new(DeepSeek::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// Meta's Responses, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn meta(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Meta::VENDOR)?;
+    Ok(Box::new(Meta::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// xAI's Responses, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn xai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Xai::VENDOR)?;
+    Ok(Box::new(Xai::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// `MiMo`'s Chat Completions, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Mimo::VENDOR)?;
+    Ok(Box::new(Mimo::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// `MiniMax`'s Chat Completions, with a key or a plan's key, sent to the
+/// site of the row it was given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
+    Ok(Box::new(MiniMax::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// Qwen's Chat Completions, with a key or a plan's key, sent to the address
+/// of the row it was given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn qwen(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Qwen::KEY_INTL)?;
+    Ok(Box::new(Qwen::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// Z.ai's Chat Completions, with a key, sent to the site of the row it was
+/// given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn zai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Zai::ZAI)?;
+    Ok(Box::new(Zai::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// The key `wiring` resolves and the address it goes to, for a provider whose
+/// every credential is a key and whose own address is `vendor`.
+fn keyed(
+    wiring: Wiring<'_>,
+    vendor: Endpoint,
+) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
+    credential(
+        ApiAudience {
+            provider: wiring.named,
+            variable: wiring.variable,
+            vendor,
+        },
+        wiring.sending,
+        wiring.auth,
+    )
+}
+
 /// Gemini Interactions accepts an API key, never a product subscription login.
 ///
 /// # Errors
@@ -737,15 +881,29 @@ fn credential(
     {
         return Ok((subscribed.endpoint, subscribed.credential));
     }
+    // A key is sent to the address of the row it was given on: the variable's
+    // to its provider's environment row, a stored one to the row its name
+    // says. A configured address takes either, as it always has.
+    let rows = crate::providers::Rows::production();
+    let address = |row: Option<&crate::providers::Row>| row.and_then(|row| row.address.clone());
     match ApiKey::from_lookup(audience.variable, auth.from) {
         Ok(exported) => Ok((
-            sending.unwrap_or(audience.vendor),
+            sending
+                .or_else(|| address(rows.environment(audience.provider)))
+                .unwrap_or(audience.vendor),
             Box::new(HeaderKey::new(exported, Header::bearer())),
         )),
         Err(absent) => {
-            if let Some(written) = auth.stored.get(audience.provider) {
+            if let Some(held) = auth
+                .stored
+                .held(audience.provider)
+                .filter(|held| held.kind == crucible_auth::Kind::Key)
+                && let Some(written) = auth.stored.get(&held.name)
+            {
                 return Ok((
-                    sending.unwrap_or(audience.vendor),
+                    sending
+                        .or_else(|| address(rows.of(held.kind, &held.name)))
+                        .unwrap_or(audience.vendor),
                     Box::new(HeaderKey::new(written, Header::bearer())),
                 ));
             }
@@ -763,6 +921,124 @@ fn credential(
             Err(absent.into())
         }
     }
+}
+
+/// What `named`'s requests are sent on, resolved in the order `credential`
+/// and `key` choose a credential: a stored sign-in where no address is
+/// configured, then the variable's key, then a stored key. `None` where no
+/// credential would be found, so nothing would be sent.
+///
+/// A configured address takes a key wherever the key came from, and answers
+/// for the route [`content_use::recognised`] says, or for none.
+#[must_use]
+pub fn served_on(named: &str, variable: &str, auth: ProviderAuth<'_>) -> Option<Serving> {
+    let rows = crate::providers::Rows::production();
+    let base = auth.settings.base_url(named);
+    if base.is_none() && auth.subscriptions.credential(named, auth.stored).is_some() {
+        let row = rows.held(named, auth.stored)?;
+        return Some(Serving {
+            route: Some(content_use::row_route(row)),
+            at: None,
+        });
+    }
+    let row = if ApiKey::from_lookup(variable, auth.from).is_ok() {
+        rows.environment(named)
+    } else {
+        let held = auth
+            .stored
+            .held(named)
+            .filter(|held| held.kind == crucible_auth::Kind::Key)?;
+        auth.stored.get(&held.name)?;
+        rows.of(held.kind, &held.name)
+    };
+    Some(match base {
+        Some(base) => Serving {
+            route: content_use::recognised(base).map(str::to_owned),
+            at: Some(crucible_http::Origin::of(base)?),
+        },
+        None => Serving {
+            route: row.map(content_use::row_route),
+            at: None,
+        },
+    })
+}
+
+/// Tells `consent` what every provider this build serves is sent on, as
+/// `auth` resolves it now.
+///
+/// Called at the start. After a credential is stored or taken out,
+/// [`providers::re_serving`] tells the consent about the one provider it sets
+/// up again, since replacing the whole map mid-run would forget the others.
+pub fn serve(consent: &Consent, providers: &Providers, auth: ProviderAuth<'_>) {
+    let serving = providers::offered(providers)
+        .filter_map(|one| {
+            let variable = auth.settings.api_key_env(one.name).unwrap_or(one.key);
+            served_on(one.name, variable, auth).map(|serving| (one.name.to_owned(), serving))
+        })
+        .collect();
+    consent.serving(serving);
+}
+
+/// Takes out, at a start, a second credential a provider holds, and says what
+/// that did in one line; nothing where there was none.
+///
+/// Only a write by 0.43.3 after a roll back leaves two. The one under the bare
+/// name is the one 0.43.3 wrote and is used; the other is taken out in one
+/// locked write. Where that write cannot be made the start goes on with the
+/// same credential and the line says so without claiming anything went, and
+/// why, where that is more than another crucible holding the store for a
+/// moment. Rows are named with `dot`, the glyph set's own, between a name and
+/// its site.
+#[must_use]
+pub fn settle(
+    store: &crucible_auth::Store,
+    rows: &crate::providers::Rows,
+    dot: &str,
+) -> Option<String> {
+    let (dropped, why) = match store.settle() {
+        crucible_auth::Settled::Nothing => return None,
+        crucible_auth::Settled::Removed(dropped) => (dropped, None),
+        crucible_auth::Settled::Stayed { found, why } => (found, Some(why)),
+    };
+    let named = |row: &crate::providers::Row| row.credential().replace('·', dot);
+    let read = store.read();
+    let mut said = Vec::new();
+    let providers: std::collections::BTreeSet<&str> = dropped
+        .iter()
+        .map(|dropped| crucible_auth::provider_of(&dropped.name))
+        .collect();
+    for provider in providers {
+        let kept = rows
+            .held(provider, &read)
+            .map_or_else(|| provider.to_owned(), named);
+        let went: Vec<String> = dropped
+            .iter()
+            .filter(|dropped| crucible_auth::provider_of(&dropped.name) == provider)
+            .map(|dropped| {
+                rows.of(dropped.kind, &dropped.name)
+                    .map_or_else(|| dropped.name.clone(), named)
+            })
+            .collect();
+        let went = went.join(" and the ");
+        said.push(match &why {
+            None => format!(
+                "two credentials were stored for {provider}; the {went} was removed, and the {kept} is used"
+            ),
+            Some(why) => {
+                let stays = format!(
+                    "two credentials are stored for {provider}; the {kept} is used, and the {went} stays in the store until a start can remove it"
+                );
+                // A lock another crucible holds lets go on its own; anything
+                // else comes back at every start, so it is named.
+                if matches!(why, crucible_auth::AuthError::Busy { .. }) {
+                    stays
+                } else {
+                    format!("{stays}: {why}")
+                }
+            }
+        });
+    }
+    Some(said.join("; "))
 }
 
 /// What answers the two web tools, where this session has anything to.
@@ -810,6 +1086,27 @@ impl Reaching {
             fetching: Some(source),
         }
     }
+
+    /// The same sources, each sending nothing while `route` has no yes.
+    fn asked(self, consent: &Consent, route: &str) -> Self {
+        Self {
+            searching: self.searching.map(|source| -> Arc<dyn Search> {
+                Arc::new(content_use::Asked::new(source, consent, route.to_owned()))
+            }),
+            fetching: self.fetching.map(|source| -> Arc<dyn Fetch> {
+                Arc::new(content_use::Asked::new(source, consent, route.to_owned()))
+            }),
+        }
+    }
+
+    /// A search and no fetch: a vendor whose wire serves the one and not the
+    /// other.
+    fn searching(source: Arc<dyn Search>) -> Self {
+        Self {
+            searching: Some(source),
+            fetching: None,
+        }
+    }
 }
 
 fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
@@ -829,7 +1126,15 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
         return Reaching::nothing();
     };
 
-    (serving.reach)(wiring, model)
+    let reaching = (serving.reach)(wiring, model);
+    // Built once, for the model the run starts on, and named in every
+    // request it makes whichever model the session has moved to since.
+    let consent = startup.services.consent();
+    let route = content_use::model_route(serving.name, model);
+    match consent.routes().warned(&route) {
+        Some(_) => reaching.asked(consent, &route),
+        None => reaching,
+    }
 }
 
 /// Anthropic's own search and fetch, on the session's model.
@@ -932,14 +1237,71 @@ pub fn moonshot_web(wiring: Wiring<'_>, _model: &str) -> Reaching {
         return Reaching::nothing();
     };
 
-    if endpoint.as_str() != Moonshot::CODING.as_str() {
-        return Reaching::nothing();
-    }
+    moonshot_site(&endpoint, credential, Box::new(wiring.http.clone()))
+        .map_or_else(Reaching::nothing, |source| Reaching::both(Arc::new(source)))
+}
 
-    Reaching::both(Arc::new(MoonshotWeb::new(
+/// The web services of the Kimi site a credential sent to `endpoint` belongs
+/// to.
+///
+/// Each site's services take that site's credential, and a session sent
+/// anywhere else by a setting gets none rather than a pair that refuse it.
+fn moonshot_site(
+    endpoint: &Endpoint,
+    credential: Box<dyn Credential>,
+    transport: Box<dyn Transport>,
+) -> Option<MoonshotWeb> {
+    if *endpoint == Moonshot::CODING {
+        Some(MoonshotWeb::new(credential, transport))
+    } else if *endpoint == Moonshot::CODING_AI {
+        Some(MoonshotWeb::global(credential, transport))
+    } else {
+        None
+    }
+}
+
+/// Meta's hosted search, on the session's model, at the address its turns go
+/// to.
+///
+/// No fetch: Meta's Responses serves `web_search` and no tool that opens one
+/// page.
+pub fn meta_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let http = wiring.http;
+    let Ok((endpoint, credential)) = keyed(wiring, Meta::VENDOR) else {
+        return Reaching::nothing();
+    };
+
+    Reaching::searching(Arc::new(MetaWeb::new(
+        endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
+        model,
     )))
+}
+
+/// xAI's hosted search, on the session's model, at the address its turns go
+/// to.
+///
+/// No fetch: xAI's search browses inside itself and names no action that
+/// would tell an opened page from a searched one.
+pub fn xai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let http = wiring.http;
+    let Ok((endpoint, credential)) = keyed(wiring, Xai::VENDOR) else {
+        return Reaching::nothing();
+    };
+
+    Reaching::searching(Arc::new(XaiWeb::new(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+        model,
+    )))
+}
+
+/// No web tools: a provider whose vendor serves none on the wire crucible
+/// speaks to it.
+pub fn unreached(_wiring: Wiring<'_>, _model: &str) -> Reaching {
+    Reaching::nothing()
 }
 
 /// Where a setting says this provider's requests should go, where one does.
@@ -1180,10 +1542,12 @@ fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Age
 /// the window fills.
 ///
 /// Resolved here, whole, so the runner is handed an answer rather than
-/// learning that any of this has a spelling in a file. `keep` is the one figure with a
-/// default of crucible's own: a session carried on from needs enough of the
-/// recent turns to say what it is doing and how it got there, which is what
-/// "carry on from here" means, and nothing about a document makes that number.
+/// learning that any of this has a spelling in a file. `keep` and `recap` fall
+/// back to the runner's own figures, and `askOnResume` to the terminal's, when
+/// no document states them: a session carried on from needs enough of the recent
+/// turns to say what it is doing and how it got there, which is what "carry on
+/// from here" means, and nothing about a document makes that number. The schema
+/// publishes the same three figures, and the tests beside each hold them equal.
 ///
 /// The two byte ceilings and the retry policy are not configurable and are not
 /// read here: they bound this program's own memory and its own patience with a

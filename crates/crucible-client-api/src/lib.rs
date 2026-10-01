@@ -75,12 +75,12 @@ pub mod snapshot;
 mod wire;
 
 pub use bounds::{Name, Said, Text};
-pub use command::{Command, Mode, Palette, Prompt, Rung, Theme};
+pub use command::{Command, Mode, Pace, Palette, Prompt, Rung, Theme};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{
-    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, LoginOutcome, LogoutOutcome,
-    ModelOutcome, Outcome, Problem, Resource, Response, ResumeOutcome, Retained, RoomOutcome,
-    SandboxOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
+    CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Group, LoginOutcome, LogoutOutcome,
+    ModelOutcome, NotesOutcome, Outcome, Problem, Release, Resource, Response, ResumeOutcome,
+    Retained, RoomOutcome, SandboxOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome,
 };
 pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, Picked, Ruling};
 pub use progress::Progress;

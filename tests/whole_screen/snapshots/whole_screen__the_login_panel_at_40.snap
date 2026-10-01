@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+40x24 cursor 22,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|                                        |
+|Warning: No models available. Use /login|
+|or set an API key environment variable. |
+|Then use /model to select a model.      |
+|                                        |
+|› /login                                |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Log in                                  |
+|                                        |
+|Choose how usage is paid for.           |
+|                                        |
+|› Your account with subscription        |
+|  Usage included in your paid plan      |
+|                                        |
+|  Provide your own API key              |
+|  API usage billing                     |
+|                                        |
+|esc to cancel                           |
+|                                        |

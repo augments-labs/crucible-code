@@ -192,13 +192,14 @@ impl Remaining {
 pub struct Recalled(Option<(usize, usize)>);
 
 impl Recalled {
-    /// The `at`th prompt back, of `of` a walk may ever reach.
+    /// The `at`th prompt of the window, of `of` a walk may ever reach.
     ///
-    /// Counted from the newest, so the first press back is `1` and the number
-    /// rises as the walk goes on. The pair reads as a position in a journey the
-    /// reader is making rather than as an address in a file they cannot see: on
-    /// the first press it says how far they have come and how far they may go,
-    /// and both halves keep meaning that for the whole of the walk.
+    /// Counted in the order the prompts were sent, so the first press back is
+    /// the newest prompt's place, as many as are kept, and the number falls as
+    /// the walk goes on until the oldest is `1`. On the first press the pair
+    /// says how many prompts the walk can reach and how many it ever could, and
+    /// the falling half then counts the prompts from the oldest up to the one
+    /// shown.
     ///
     /// `of` is the window and not how much of it is filled, so it is the same
     /// number on the first day as on the hundredth.
@@ -288,6 +289,9 @@ pub struct Prompt<'a> {
     /// name, and a rung drawn here that was never sent is the one thing a
     /// status row must never be.
     pub effort: Option<&'a str>,
+    /// How fast the last answer was served, after the rung: `fast` only while
+    /// the vendor said it served one fast, and `None` otherwise.
+    pub speed: Option<&'a str>,
     /// A row under the status, for something waiting on the very next key.
     ///
     /// `None` in the ordinary state, and then the component is the height it
@@ -311,6 +315,15 @@ pub struct Prompt<'a> {
     /// what a caller holding the window height works it out with; a caller
     /// drawing a box nobody is typing into passes 1.
     pub room: usize,
+    /// The command names a line may open with, spelled as they are typed.
+    ///
+    /// The first word of the line is drawn in [`Slot::Strong`] exactly while it
+    /// is one of them; a word only part typed stays plain, the list's to
+    /// finish. Handed over as words because this crate names no command: which
+    /// there are is the caller's registry, and a box that kept its own list
+    /// would be a second one. Empty where the line cannot be a command, and
+    /// then nothing is.
+    pub named: &'a [&'a str],
 }
 
 impl Prompt<'_> {
@@ -729,6 +742,7 @@ impl Prompt<'_> {
     fn typed(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
         let inner = inner(columns);
         let edge = glyphs.vertical();
+        let command = self.command();
 
         self.shown(inner)
             .rows
@@ -739,7 +753,7 @@ impl Prompt<'_> {
                 // make fit: a character wider than the whole box. Half of one
                 // cannot be drawn, so none of it is, and the row still ends
                 // where the border expects it.
-                let mut line = Row::plain(width::clip(shown.text, inner));
+                let mut line = accenting(shown, inner, command.clone());
                 line.pad(inner);
 
                 let mark = if at == 0 { glyphs.caret() } else { " " };
@@ -766,6 +780,8 @@ impl Prompt<'_> {
             return vec![Row::new()];
         }
 
+        let command = self.command();
+
         self.shown(inner(columns))
             .rows
             .into_iter()
@@ -776,7 +792,7 @@ impl Prompt<'_> {
                 Row::new()
                     .then(Slot::Accent, mark)
                     .then(Slot::Plain, " ")
-                    .then(Slot::Plain, width::clip(shown.text, inner(columns)))
+                    .join(accenting(shown, inner(columns), command.clone()))
             })
             .collect()
     }
@@ -886,29 +902,11 @@ impl Prompt<'_> {
         (row, drew_counted)
     }
 
-    /// Whose model it is, which model, and the rung it is being asked on, as one
-    /// string.
-    ///
-    /// Joined here rather than by the caller so that the dot comes out of the
-    /// set in force, and so that a session with nothing chosen says nothing at
-    /// all rather than naming a vendor over an empty name. The vendor is joined
-    /// the way [`crate::Welcome`] joins it and the way `--model` takes it back,
-    /// so the fact reads the same wherever it is said.
+    /// Whose model it is, which model, the rung it is being asked on and how
+    /// fast it was served, as [`label`] says them everywhere the model is
+    /// drawn.
     fn asked(&self, glyphs: Glyphs) -> String {
-        if self.model.is_empty() {
-            return String::new();
-        }
-
-        let named = if self.provider.is_empty() {
-            self.model.to_owned()
-        } else {
-            format!("{}/{}", self.provider, self.model)
-        };
-
-        match self.effort {
-            Some(effort) => format!("{named} {} {effort}", glyphs.dot()),
-            None => named,
-        }
+        label(self.provider, self.model, self.effort, self.speed, glyphs)
     }
 
     /// The usable-window fact in its full spelling, or nothing while no
@@ -932,6 +930,19 @@ impl Prompt<'_> {
         }
 
         Some(width::clip("?", columns).to_owned())
+    }
+
+    /// Where in the line the word that names a command is, while one does.
+    ///
+    /// The first word, after any space the line opens with, and only where it
+    /// is exactly one of [`Prompt::named`]: the same word, read the same way,
+    /// that decides whether a line is a command at all.
+    fn command(&self) -> Option<std::ops::Range<usize>> {
+        let said = self.draft.text();
+        let from = said.len() - said.trim_start().len();
+        let word = said.get(from..)?.split(char::is_whitespace).next()?;
+
+        self.named.contains(&word).then(|| from..from + word.len())
     }
 
     /// The rows of the line the box has room for, and where the cursor sits
@@ -988,6 +999,9 @@ struct Shown<'a> {
 struct RowInLine<'a> {
     text: &'a str,
     line: usize,
+    /// Where in the whole text it starts, which is what places a word found in
+    /// the text on the rows it was broken over.
+    start: usize,
 }
 
 /// The text broken into display rows no wider than the box.
@@ -1002,21 +1016,27 @@ struct RowInLine<'a> {
 /// byte. Only a word or glyph sequence wider than the row is hard-broken.
 fn broken(said: &str, inner: usize) -> Vec<RowInLine<'_>> {
     if inner == 0 {
-        return vec![RowInLine { text: "", line: 0 }];
+        return vec![RowInLine {
+            text: "",
+            line: 0,
+            start: 0,
+        }];
     }
 
     let mut rows = Vec::new();
+    let mut start = 0;
 
     for (line, text) in said.split('\n').enumerate() {
         for range in width::wraps(text, inner) {
             rows.push(RowInLine {
+                start: start + range.start,
                 text: text.get(range).unwrap_or_default(),
                 line,
             });
         }
 
         if text.is_empty() {
-            rows.push(RowInLine { text, line });
+            rows.push(RowInLine { text, line, start });
         }
 
         // A line that exactly fills its last row is followed by an empty one, so
@@ -1027,11 +1047,41 @@ fn broken(said: &str, inner: usize) -> Vec<RowInLine<'_>> {
             .last()
             .is_some_and(|row| row.line == line && width::columns(row.text) == inner)
         {
-            rows.push(RowInLine { text: "", line });
+            rows.push(RowInLine {
+                text: "",
+                line,
+                start: start + text.len(),
+            });
         }
+
+        // Past the line and the break that ended it.
+        start += text.len() + 1;
     }
 
     rows
+}
+
+/// One row of the line, clipped to `inner`, with whatever part of `command`
+/// falls on it drawn in the accent a command name takes and the rest plain.
+fn accenting(shown: RowInLine<'_>, inner: usize, command: Option<std::ops::Range<usize>>) -> Row {
+    let text = width::clip(shown.text, inner);
+    let Some(command) = command else {
+        return Row::plain(text);
+    };
+
+    // The part of the name on this row, in the row's own bytes. Empty on
+    // every row the name is not on.
+    let from = command.start.saturating_sub(shown.start).min(text.len());
+    let to = command
+        .end
+        .saturating_sub(shown.start)
+        .min(text.len())
+        .max(from);
+
+    Row::new()
+        .then(Slot::Plain, text.get(..from).unwrap_or_default())
+        .then(Slot::Strong, text.get(from..to).unwrap_or_default())
+        .then(Slot::Plain, text.get(to..).unwrap_or_default())
 }
 
 /// Which display row the cursor's (`line`, `column`) falls on, and where in it.
@@ -1076,6 +1126,37 @@ fn inner(columns: usize) -> usize {
     };
 
     columns.saturating_sub(chrome)
+}
+
+/// Which model the next turn is asked of, as every place that draws it says
+/// it: the provider's name, the model's, the rung it is asked on, and a last
+/// part for how fast it is served, joined by the dot of the set in force.
+///
+/// Nothing at all where no model is chosen, and no provider where none is
+/// answering, so the label never names a vendor over an empty name. A dot and
+/// not the slash `--model` takes: the label is read, and what is typed keeps
+/// its own form.
+#[must_use]
+pub fn label(
+    provider: &str,
+    model: &str,
+    effort: Option<&str>,
+    speed: Option<&str>,
+    glyphs: Glyphs,
+) -> String {
+    if model.is_empty() {
+        return String::new();
+    }
+    [
+        (!provider.is_empty()).then_some(provider),
+        Some(model),
+        effort,
+        speed,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(&format!(" {} ", glyphs.dot()))
 }
 
 #[cfg(test)]

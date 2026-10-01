@@ -161,6 +161,22 @@ pub(super) fn stand_watching<T: Terminal, S>(
     )
 }
 
+/// Drops every press already waiting to be read, so a component stood next
+/// is answered only by a key pressed once it could be seen.
+///
+/// # Errors
+///
+/// [`Fatal::Terminal`] if the terminal could not be read from.
+pub(super) fn unheard<T: Terminal>(renderer: &mut Renderer<T>) -> Result<(), Fatal> {
+    if !renderer.is_terminal() {
+        return Ok(());
+    }
+    while renderer.waiting(Duration::ZERO)? {
+        let _ = renderer.pressed()?;
+    }
+    Ok(())
+}
+
 /// The loop behind [`stand_while`] and [`stand_watching`].
 #[allow(clippy::too_many_arguments)]
 // Seven for the reason `stand_while` gives its six, and the one more is the

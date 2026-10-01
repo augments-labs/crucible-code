@@ -41,7 +41,11 @@ use crate::row::Row;
 /// draws as one block. At roughly the width of a window this is a few megabytes
 /// and tens of screens of scrolling, deeper than a terminal's own default and
 /// far inside the peak budget.
-const MOST: usize = 20_000;
+///
+/// Public as [`RECORDED`](crate::RECORDED), for a caller printing more rows at
+/// once than it can be sure fit: what it prints past this is dropped from the
+/// top as the rest arrives.
+pub(crate) const MOST: usize = 20_000;
 
 /// Bytes of retained responsive source charged as one ordinary record line.
 ///
@@ -613,6 +617,39 @@ impl Record {
                     }
                     *prefix = Some(retained);
                 }
+            }
+        }
+
+        self.remeasure_all();
+    }
+
+    /// Edits the rows line `at` was written as, now and at every width it is
+    /// laid out at again.
+    ///
+    /// For a row that has to say less than it did when it was written: an
+    /// offer whose result has gone. The line keeps its place and its share of
+    /// the record; only its rows change. A line no longer held, or not written
+    /// yet, is left alone, and so is every other line.
+    pub(crate) fn amend(&mut self, at: usize, edit: fn(&mut [Row])) {
+        let Some(line) = at
+            .checked_sub(self.gone)
+            .and_then(|held| self.lines.get_mut(held))
+        else {
+            return;
+        };
+
+        match line {
+            Line::Flowed(row) | Line::Set(row) => edit(std::slice::from_mut(row)),
+            Line::Responsive { rows, lay, .. } => {
+                edit(rows);
+                // Kept with what lays the block out, or the next width would
+                // lay it out as it was written.
+                let before = std::mem::replace(lay, Box::new(|_| Vec::new()));
+                *lay = Box::new(move |columns| {
+                    let mut laid = before(columns);
+                    edit(&mut laid);
+                    laid
+                });
             }
         }
 

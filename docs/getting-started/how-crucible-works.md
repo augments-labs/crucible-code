@@ -13,6 +13,10 @@ anything, and that answer is the one you read. One request and the answer to
 it is what this page calls a round; the tools that answer asks for run before
 the next one.
 
+Before the first round on a route whose vendor says it may use what is sent to
+train or improve its models, crucible asks you once, and nothing leaves until
+you say yes: see [content use](../providers/content-use.md).
+
 ## One round
 
 Every round sends the model the whole conversation so far, from your first
@@ -74,6 +78,8 @@ answers without asking for a tool. It can also end sooner, for example when:
 - A request fails and is not retried, or fails again on the retries described
   in
   [When a response goes away](../providers/providers.md#when-a-response-goes-away).
+  A request asked at the vendor's [fast](../providers/fast.md) speed and refused
+  for it is sent once more at standard speed first.
 - The conversation no longer fits the model's window and crucible cannot make
   room, for example because the recap came back incomplete, because making
   room freed nothing, or because `compaction.when` is `never`; see

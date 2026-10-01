@@ -25,10 +25,10 @@ Entries are absolute paths, resolved once at startup the way the working
 directory already is. A relative entry is refused with an error naming the
 file and the position, because a path in a configuration file is not relative
 to anything the file knows. An absolute path also names one machine, so the
-entry belongs in `~/.crucible/config.json`. Both workspace filenames can be
-committed, whatever their ignore convention says, and neither may widen the
-directories a checkout can reach. `/home/you/src/shared-lib` means nothing to
-anyone else who clones. Lists from the layers that may set them concatenate.
+entry belongs in `~/.crucible/config.json`, the only file that may set it. A
+workspace file that does, committed or not, stops the start with `cannot be
+set here`, so a checkout can never widen the directories it reaches.
+`/home/you/src/shared-lib` means nothing to anyone else who clones.
 
 The working directory stays the anchor: a relative path in a tool call still
 means what it means from there, and `bash` still runs there. An extra

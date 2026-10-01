@@ -10,7 +10,7 @@ use crucible_client_api as api;
 use crucible_client_api::{
     Capabilities, Capability, Model, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
 };
-use crucible_models::Effort;
+use crucible_models::{Effort, Served, Speed};
 use crucible_runner::Event;
 use crucible_tools::Mode;
 use crucible_types::StopReason;
@@ -37,6 +37,12 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
         provider: conversation.serving().and_then(|name| Name::new(name).ok()),
         model: Model::new(runner.model()),
         effort: runner.effort().map(rung),
+        speed: pace(runner.speed()),
+        served: match runner.served() {
+            Served::Fast => Some(api::Pace::Fast),
+            Served::Standard => Some(api::Pace::Standard),
+            Served::Unsaid => None,
+        },
         mode: mode_out(runner.mode()),
         messages: count(transcript.len()),
         turns: count(transcript.turns()),
@@ -75,7 +81,9 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
             call: Text::cut(call.as_str()),
             failed: output.is_failed(),
         },
-        Event::Retrying => Progress::Retrying,
+        // Sent once more before anything was answered, as a retry is; the
+        // speed it leaves in force is the snapshot's to say.
+        Event::Retrying | Event::FastRefused { resent: true, .. } => Progress::Retrying,
         Event::Compacting { part, .. } => Progress::Compacting {
             part: u64::from(*part),
         },
@@ -90,7 +98,9 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
             stop: self::stop(*stop),
         },
         Event::Failed { error } => Progress::Failed(Problem::failed(error)),
-        Event::PromptCache { .. }
+        // A refusal whose second send a stop ended is no retry.
+        Event::FastRefused { resent: false, .. }
+        | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Wrote { .. }
         | Event::Carried { .. }
@@ -151,6 +161,22 @@ pub(super) const fn effort(rung: api::Rung) -> Effort {
         api::Rung::High => Effort::High,
         api::Rung::Xhigh => Effort::Xhigh,
         api::Rung::Max => Effort::Max,
+    }
+}
+
+pub(super) const fn speed(pace: api::Pace) -> Speed {
+    match pace {
+        api::Pace::Standard => Speed::Standard,
+        api::Pace::Fast => Speed::Fast,
+    }
+}
+
+/// `speed`, as the contract spells it.
+#[must_use]
+pub const fn pace(speed: Speed) -> api::Pace {
+    match speed {
+        Speed::Standard => api::Pace::Standard,
+        Speed::Fast => api::Pace::Fast,
     }
 }
 

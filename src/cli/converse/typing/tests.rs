@@ -1479,3 +1479,97 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
     assert!(editor.is_empty());
     assert_eq!(steer.take(), ["once more"]);
 }
+
+/// A box holding `said`, told the commands there are, as the prompt draws it.
+fn boxed_with_names(said: &str, style: Style) -> Vec<crucible_tui::Row> {
+    let mut editor = Editor::new();
+    editor.put(said);
+    let says = settled(Mode::Ask).naming(&commands());
+    writing(&editor, &says, Bordering::default(), false, 8).rows(80, style.glyphs())
+}
+
+#[test]
+fn the_word_a_line_runs_takes_the_accent_and_a_path_does_not() {
+    let strong = |said: &str| {
+        boxed_with_names(said, Style::coloured())
+            .iter()
+            .any(|row| row.kinds().any(|slot| slot == Slot::Strong))
+    };
+
+    assert!(strong("/model gpt-6-sol"));
+    assert!(!strong("/modle gpt-6-sol"));
+    assert!(!strong("/etc/hosts is wrong"));
+}
+
+#[test]
+fn a_command_in_the_box_writes_no_escape_wherever_colour_is_off() {
+    // With no colour the accent is not there to see, so it must not be there
+    // to write either: an escape byte reaching a pipe, or a terminal that said
+    // it cannot draw one, is noise in whatever reads it. What says the word is
+    // a command there is the refusal, which is the same either way.
+    let ways = [
+        Colourless::new("a pipe", false, None, &[("TERM", "xterm-256color")]),
+        Colourless::new(
+            "NO_COLOR",
+            true,
+            None,
+            &[("NO_COLOR", "1"), ("TERM", "xterm-256color")],
+        ),
+        Colourless::new(
+            "output.color never",
+            true,
+            Some(crucible_config::Color::Never),
+            &[("TERM", "xterm-256color")],
+        ),
+        Colourless::new("TERM=dumb", true, None, &[("TERM", "dumb")]),
+    ];
+
+    for Colourless {
+        way,
+        terminal,
+        color,
+        set,
+    } in ways
+    {
+        let from = |name: &str| {
+            set.iter()
+                .find(|(named, _)| *named == name)
+                .map(|(_, value)| (*value).to_owned())
+        };
+        let output = crate::cli::style::Output {
+            color,
+            ..crate::cli::style::Output::default()
+        };
+        let style = Style::resolve(output, terminal, None, None, &from);
+
+        for row in boxed_with_names("/model gpt-6-sol", style) {
+            let written = row.paint(&style.palette());
+            assert!(!written.contains('\x1b'), "{way}: {written:?}");
+        }
+    }
+}
+
+/// One way a run comes to write no colour: whether it is on a terminal, what
+/// the configuration said, and what the environment holds.
+struct Colourless {
+    way: &'static str,
+    terminal: bool,
+    color: Option<crucible_config::Color>,
+    set: &'static [(&'static str, &'static str)],
+}
+
+impl Colourless {
+    fn new(
+        way: &'static str,
+        terminal: bool,
+        color: Option<crucible_config::Color>,
+        set: &'static [(&'static str, &'static str)],
+    ) -> Self {
+        Self {
+            way,
+            terminal,
+            color,
+            set,
+        }
+    }
+}

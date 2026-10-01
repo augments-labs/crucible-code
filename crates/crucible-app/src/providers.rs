@@ -10,15 +10,21 @@
 
 use std::fmt;
 
-use crucible_auth::StoredCredentials;
+/// What the credential store holds, as a provider is set up from it.
+pub use crucible_auth::StoredCredentials;
+use crucible_auth::{Held, Kind, Names};
 use crucible_config::Settings;
-use crucible_models::{Effort, ModelCapabilities, ModelError, ModelLimits, Provider};
-use crucible_provider::HttpTurns;
+use crucible_models::{Effort, FastForm, ModelCapabilities, ModelError, ModelLimits, Provider};
+use crucible_provider::{
+    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Meta, Mimo, MiniMax, Moonshot, OpenAi, Qwen,
+    Xai, Zai,
+};
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
 
 use crate::AppError;
+use crate::content_use::{Consent, Reading};
 use crate::models;
 use crate::startup::{self, served};
 use crate::subscription::Subscriptions;
@@ -43,7 +49,7 @@ use crate::subscription::Subscriptions;
 /// since the build is one nobody picked without the vendor refusing it by name,
 /// and a model released since is typed, which is the path that was there before
 /// any of these were written down.
-const PROVIDERS: [Served; 4] = [
+const PROVIDERS: [Served; 11] = [
     Served {
         name: "anthropic",
         shown: "Anthropic",
@@ -51,10 +57,14 @@ const PROVIDERS: [Served; 4] = [
         build: startup::anthropic,
         reach: startup::anthropic_web,
         window: 200_000,
+        fast: Anthropic::fast_at_vendor,
+        fast_signed_in: None,
         models: &[
             Model::shown("claude-fable-5-1", "Claude Fable 5.1", EVERY),
             Model::new("claude-fable-5", EVERY),
+            Model::new("claude-opus-5-5", EVERY),
             Model::new("claude-opus-5", EVERY),
+            Model::new("claude-sonnet-5-5", EVERY),
             Model::new("claude-sonnet-5", EVERY),
             // The one model of this vendor's current three generations that
             // takes no rung: it reasons against a token budget rather than
@@ -64,11 +74,27 @@ const PROVIDERS: [Served; 4] = [
         ],
     },
     Served {
+        name: "deepseek",
+        shown: "DeepSeek",
+        key: "DEEPSEEK_API_KEY",
+        build: startup::deepseek,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: DeepSeek::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("deepseek-flash", LOW_HIGH_MAX),
+            Model::new("deepseek-v4-pro", LOW_HIGH_MAX),
+        ],
+    },
+    Served {
         name: "google",
         shown: "Google",
         key: "GEMINI_API_KEY",
         build: startup::google,
         reach: startup::google_web,
+        fast: Google::fast_at_vendor,
+        fast_signed_in: None,
         // The model's full input capacity is available through configuration;
         // starting below the long-context pricing boundary keeps it deliberate.
         window: 200_000,
@@ -80,12 +106,60 @@ const PROVIDERS: [Served; 4] = [
         ],
     },
     Served {
+        name: "meta",
+        shown: "Meta",
+        key: "META_API_KEY",
+        build: startup::meta,
+        reach: startup::meta_web,
+        window: 200_000,
+        fast: Meta::fast_at_vendor,
+        fast_signed_in: None,
+        // `max` on 1.3 is named by some of the vendor's pages and left out by
+        // its parameter lists, so it is not offered until a source settles it.
+        models: &[
+            Model::new("muse-spark-1.3", UP_TO_XHIGH),
+            Model::new("muse-spark-1.3-contributor", UP_TO_XHIGH),
+            Model::new("muse-spark-1.2", UP_TO_XHIGH),
+            Model::new("muse-spark-1.2-contributor", UP_TO_XHIGH),
+        ],
+    },
+    Served {
+        name: "mimo",
+        shown: "MiMo",
+        key: "MIMO_API_KEY",
+        build: startup::mimo,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Mimo::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("mimo-v2.6-pro", NONE),
+            Model::new("mimo-v2.6-flash", NONE),
+        ],
+    },
+    Served {
+        name: "minimax",
+        shown: "MiniMax",
+        key: "MINIMAX_API_KEY",
+        build: startup::minimax,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: MiniMax::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("MiniMax-M3", NONE),
+            Model::new("MiniMax-M2.7", NONE),
+        ],
+    },
+    Served {
         name: "moonshot",
         shown: "MoonshotAI",
         key: "MOONSHOT_API_KEY",
         build: startup::moonshot,
         reach: startup::moonshot_web,
         window: 262_144,
+        fast: Moonshot::fast_at_vendor,
+        fast_signed_in: None,
         // Spelled the way the coding console spells them, that being the one
         // crucible asks. The open platform serves the same models under longer
         // names and does not serve the second of these at all, so a key from
@@ -98,7 +172,7 @@ const PROVIDERS: [Served; 4] = [
             Model::shown("k3-256k", "K3-256k", KIMI),
             // The coding models are known by their product names; the wire
             // identifier stays the one the console serves them under.
-            Model::shown("kimi-for-coding", "K2.7 Coding", KIMI),
+            Model::shown("kimi-for-coding", "K2.8 Preview", KIMI),
             Model::shown("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
         ],
     },
@@ -109,21 +183,588 @@ const PROVIDERS: [Served; 4] = [
         build: startup::openai,
         reach: startup::openai_web,
         window: 272_000,
+        fast: OpenAi::fast_at_vendor,
+        fast_signed_in: Some(OpenAi::fast_signed_in),
         // The `-pro` variants are left off: they answer in one piece rather
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
             Model::shown("gpt-6-astra", "GPT-6 Astra", EVERY),
+            Model::new("gpt-6.1-sol", EVERY),
+            Model::new("gpt-6-sol", EVERY),
+            Model::new("gpt-6-luna", EVERY),
             Model::new("gpt-5.6-sol", EVERY),
             Model::new("gpt-5.6-terra", EVERY),
             Model::new("gpt-5.6-luna", EVERY),
             // One generation back and one rung short of the others.
-            Model::new(
-                "gpt-5.5",
-                &[Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh],
-            ),
+            Model::new("gpt-5.5", UP_TO_XHIGH),
+        ],
+    },
+    Served {
+        name: "qwen",
+        shown: "Qwen",
+        key: "DASHSCOPE_API_KEY",
+        build: startup::qwen,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Qwen::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("qwen3.8-max", QWEN),
+            Model::new("qwen3.8-flash", QWEN),
+            Model::new("qwen3.7-plus", NONE),
+            Model::new("qwen3.6-plus", NONE),
+        ],
+    },
+    Served {
+        name: "xai",
+        shown: "xAI",
+        key: "XAI_API_KEY",
+        build: startup::xai,
+        reach: startup::xai_web,
+        window: 200_000,
+        fast: Xai::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("grok-4.7", UP_TO_XHIGH),
+            Model::new("grok-4.6", UP_TO_XHIGH),
+        ],
+    },
+    Served {
+        name: "zai",
+        shown: "Z.ai",
+        key: "ZAI_API_KEY",
+        build: startup::zai,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Zai::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("glm-5.3", LOW_HIGH_MAX),
+            Model::new("glm-5.3-flash", LOW_HIGH_MAX),
+            // It takes every rung and serves two: the lower ones are answered
+            // as `high` and `xhigh` as `max`.
+            Model::new("glm-5.2", &[Effort::High, Effort::Max]),
         ],
     },
 ];
+
+/// The `/login` list a row stands in: what pays for what is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum List {
+    /// An account whose plan includes the usage.
+    Subscription,
+    /// A key, billed by what is sent.
+    Key,
+}
+
+/// One way to sign in: a kind of credential, a provider, and a site where the
+/// provider has more than one.
+///
+/// Its stored name is written into files people keep, so it never changes once
+/// shipped; its shown name may. The row a credential was given on is read off
+/// the map it is in and that name, and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    /// The list it stands in.
+    pub list: List,
+    /// Its name in that list: `Kimi Code · kimi.ai`.
+    pub shown: &'static str,
+    /// The provider's typed name: `moonshot`.
+    pub provider: &'static str,
+    /// What tells it from the provider's other rows, where there are others.
+    pub site: Option<&'static str>,
+    /// Its own words beneath its name, where they are not the variable to
+    /// set: a key row that reads from a variable says that instead.
+    pub says: Option<&'static str>,
+    /// The map its credential is written into.
+    pub kind: Kind,
+    /// The prefix every key of this row starts with, where one is known.
+    pub mark: Option<&'static str>,
+    /// The prefixes of the vendor's other kinds of key, which this row's
+    /// address refuses, where the row knows no mark of its own.
+    pub refuses: &'static [&'static str],
+    /// The name its credential is written under: the bare provider name for
+    /// a row 0.43.3 also knows, the provider, `@` and its site for the rest.
+    pub stored: &'static str,
+    /// Whether a key from the provider's variable belongs to it: one key row
+    /// of each provider.
+    pub environment: bool,
+    /// Where its requests go when no setting names an address; `None` sends
+    /// them to the provider's default one.
+    pub address: Option<Endpoint>,
+}
+
+impl Row {
+    /// Whether 0.43.3 has it: its credential is written under the bare
+    /// provider name, where 0.43.3 reads it.
+    #[must_use]
+    pub fn known(&self) -> bool {
+        self.stored == self.provider
+    }
+
+    /// The models its credential serves of those its provider offers, where
+    /// that is not all of them.
+    #[must_use]
+    pub fn serves(&self) -> Option<&'static [&'static str]> {
+        match (self.kind, self.stored) {
+            // The models a ChatGPT plan serves: every one the key does, but
+            // the generation the plan has retired.
+            (Kind::Account, "openai") => Some(&[
+                "gpt-6-astra",
+                "gpt-6.1-sol",
+                "gpt-6-sol",
+                "gpt-6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+            ]),
+            (Kind::Key, "qwen@coding-plan.alibabacloud.com" | "qwen@coding-plan.aliyun.com") => {
+                Some(&["qwen3.7-plus", "qwen3.6-plus"])
+            }
+            // Not `qwen3.6-plus`, which one of the plan's two editions serves
+            // and the other does not, and nothing in a key says which.
+            (Kind::Key, "qwen@token-plan.alibabacloud.com" | "qwen@token-plan.aliyun.com") => {
+                Some(&["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"])
+            }
+            _ => None,
+        }
+    }
+
+    /// What its credential is called: `ChatGPT sign-in`, `MoonshotAI · kimi.com
+    /// key`.
+    #[must_use]
+    pub fn credential(&self) -> String {
+        match self.kind {
+            // Named for the plans it signs in with rather than its row.
+            Kind::Account if self.stored == "openai" => "ChatGPT sign-in".to_owned(),
+            Kind::Account => format!("{} sign-in", self.shown),
+            Kind::Key => format!("{} key", self.shown),
+        }
+    }
+}
+
+/// Why a key was refused on a row before anything was sent with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Misfit {
+    /// The row's keys start with this mark, and the key does not.
+    Unmarked(&'static str),
+    /// The key carries the mark of this other row of the same provider.
+    Another(&'static str),
+    /// The key carries this mark, of a kind of key the row's address refuses.
+    Refused(&'static str),
+    /// The key carries this mark, which more than one other row of the same
+    /// provider shares, so no one of them is the key's.
+    Shared(&'static str),
+}
+
+/// Every row this build signs in with.
+///
+/// Subscription rows in the order the vendors are grouped; key rows by shown
+/// name, since that list is long and looked up by name. A provider's rows share
+/// its typed name, and each carries the name its credential is stored under.
+const ROWS: [Row; 24] = [
+    Row {
+        list: List::Subscription,
+        shown: "OpenAI",
+        provider: "openai",
+        site: None,
+        says: Some("ChatGPT plan usage with Plus, Pro, Business and Enterprise"),
+        kind: Kind::Account,
+        mark: None,
+        refuses: &[],
+        stored: "openai",
+        environment: false,
+        address: Some(OpenAi::SUBSCRIPTION),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Kimi Code · kimi.ai",
+        provider: "moonshot",
+        site: Some("kimi.ai"),
+        says: Some("Kimi Code plan usage, accounts outside mainland China"),
+        kind: Kind::Account,
+        mark: None,
+        refuses: &[],
+        stored: "moonshot@kimi.ai",
+        environment: false,
+        address: Some(Moonshot::CODING_AI),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Kimi Code · kimi.com",
+        provider: "moonshot",
+        site: Some("kimi.com"),
+        says: Some("Kimi Code plan usage, mainland China accounts"),
+        kind: Kind::Account,
+        mark: None,
+        refuses: &[],
+        stored: "moonshot",
+        environment: false,
+        address: Some(Moonshot::CODING),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "MiniMax · minimax.io",
+        provider: "minimax",
+        site: Some("minimax.io"),
+        says: Some("MiniMax Token Plan usage, accounts outside mainland China"),
+        kind: Kind::Key,
+        mark: Some("sk-cp-"),
+        refuses: &[],
+        stored: "minimax@token-plan.minimax.io",
+        environment: false,
+        address: Some(MiniMax::IO),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "MiniMax · minimaxi.com",
+        provider: "minimax",
+        site: Some("minimaxi.com"),
+        says: Some("MiniMax Token Plan usage, mainland China accounts"),
+        kind: Kind::Key,
+        mark: Some("sk-cp-"),
+        refuses: &[],
+        stored: "minimax@token-plan.minimaxi.com",
+        environment: false,
+        address: Some(MiniMax::CN),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Coding Plan · alibabacloud.com",
+        provider: "qwen",
+        site: Some("alibabacloud.com"),
+        says: Some("Qwen Coding Plan usage, the international site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        refuses: &[],
+        stored: "qwen@coding-plan.alibabacloud.com",
+        environment: false,
+        address: Some(Qwen::CODING_INTL),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Coding Plan · aliyun.com",
+        provider: "qwen",
+        site: Some("aliyun.com"),
+        says: Some("Qwen Coding Plan usage, the mainland China site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        refuses: &[],
+        stored: "qwen@coding-plan.aliyun.com",
+        environment: false,
+        address: Some(Qwen::CODING_CN),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Token Plan · alibabacloud.com",
+        provider: "qwen",
+        site: Some("alibabacloud.com"),
+        says: Some("Qwen Token Plan usage, the international site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        refuses: &[],
+        stored: "qwen@token-plan.alibabacloud.com",
+        environment: false,
+        address: Some(Qwen::TOKEN_INTL),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Token Plan · aliyun.com",
+        provider: "qwen",
+        site: Some("aliyun.com"),
+        says: Some("Qwen Token Plan usage, the mainland China site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        refuses: &[],
+        stored: "qwen@token-plan.aliyun.com",
+        environment: false,
+        address: Some(Qwen::TOKEN_CN),
+    },
+    Row {
+        list: List::Key,
+        shown: "Anthropic",
+        provider: "anthropic",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "anthropic",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "DeepSeek",
+        provider: "deepseek",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "deepseek@deepseek.com",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "Google",
+        provider: "google",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "google",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "Meta",
+        provider: "meta",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "meta@meta.ai",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "MiMo",
+        provider: "mimo",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        // Its Token Plan keys, the vendor's other kind, which this address
+        // answers with a 401; any other key is the vendor's to answer.
+        mark: None,
+        refuses: &["tp-", "ttp-"],
+        stored: "mimo@xiaomimimo.com",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "MiniMax · minimax.io",
+        provider: "minimax",
+        site: Some("minimax.io"),
+        says: None,
+        kind: Kind::Key,
+        mark: Some("sk-api-"),
+        refuses: &[],
+        stored: "minimax@minimax.io",
+        environment: true,
+        address: Some(MiniMax::IO),
+    },
+    Row {
+        list: List::Key,
+        shown: "MiniMax · minimaxi.com",
+        provider: "minimax",
+        site: Some("minimaxi.com"),
+        says: Some("a pay-as-you-go key, mainland China accounts"),
+        kind: Kind::Key,
+        mark: Some("sk-api-"),
+        refuses: &[],
+        stored: "minimax@minimaxi.com",
+        environment: false,
+        address: Some(MiniMax::CN),
+    },
+    Row {
+        list: List::Key,
+        shown: "MoonshotAI · kimi.ai",
+        provider: "moonshot",
+        site: Some("kimi.ai"),
+        says: Some("a Kimi Code Console key, accounts outside mainland China"),
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "moonshot@kimi.ai",
+        environment: false,
+        address: Some(Moonshot::CODING_AI),
+    },
+    Row {
+        list: List::Key,
+        shown: "MoonshotAI · kimi.com",
+        provider: "moonshot",
+        site: Some("kimi.com"),
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "moonshot",
+        environment: true,
+        address: Some(Moonshot::CODING),
+    },
+    Row {
+        list: List::Key,
+        shown: "OpenAI",
+        provider: "openai",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "openai",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "Qwen · alibabacloud.com",
+        provider: "qwen",
+        site: Some("alibabacloud.com"),
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "qwen@alibabacloud.com",
+        environment: true,
+        address: Some(Qwen::KEY_INTL),
+    },
+    Row {
+        list: List::Key,
+        shown: "Qwen · aliyun.com",
+        provider: "qwen",
+        site: Some("aliyun.com"),
+        says: Some("a pay-as-you-go key of the mainland China site"),
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "qwen@aliyun.com",
+        environment: false,
+        address: Some(Qwen::KEY_CN),
+    },
+    Row {
+        list: List::Key,
+        shown: "xAI",
+        provider: "xai",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "xai@x.ai",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "Z.ai · bigmodel.cn",
+        provider: "zai",
+        site: Some("bigmodel.cn"),
+        says: Some("a key of bigmodel.cn, mainland China accounts"),
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "zai@bigmodel.cn",
+        environment: false,
+        address: Some(Zai::BIGMODEL),
+    },
+    Row {
+        list: List::Key,
+        shown: "Z.ai · z.ai",
+        provider: "zai",
+        site: Some("z.ai"),
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "zai@z.ai",
+        environment: true,
+        address: Some(Zai::ZAI),
+    },
+];
+
+/// The rows `/login` offers and the store's names come from.
+///
+/// A value the functions that list, match and resolve rows take, so a test can
+/// hand them rows this build does not ship and read them back the same way.
+#[derive(Debug, Clone)]
+pub struct Rows {
+    rows: std::sync::Arc<[Row]>,
+}
+
+impl Rows {
+    /// The rows this build ships.
+    #[must_use]
+    pub fn production() -> Self {
+        Self::new(ROWS.to_vec())
+    }
+
+    /// Any rows, for a caller that builds its own.
+    #[must_use]
+    pub fn new(rows: Vec<Row>) -> Self {
+        Self { rows: rows.into() }
+    }
+
+    /// Every row, in the order the lists show them.
+    #[must_use]
+    pub fn all(&self) -> &[Row] {
+        &self.rows
+    }
+
+    /// The rows of one list.
+    pub fn listed(&self, list: List) -> impl Iterator<Item = &Row> {
+        self.rows.iter().filter(move |row| row.list == list)
+    }
+
+    /// The names the store writes credentials under.
+    #[must_use]
+    pub fn names(&self) -> Names {
+        Names::new(self.rows.iter().map(|row| row.stored))
+    }
+
+    /// The row a credential held in `kind`'s map under `name` was given on.
+    #[must_use]
+    pub fn of(&self, kind: Kind, name: &str) -> Option<&Row> {
+        self.rows
+            .iter()
+            .find(|row| row.kind == kind && row.stored == name)
+    }
+
+    /// The row a key from `provider`'s variable belongs to.
+    #[must_use]
+    pub fn environment(&self, provider: &str) -> Option<&Row> {
+        self.rows
+            .iter()
+            .find(|row| row.provider == provider && row.environment)
+    }
+
+    /// Why `key` does not fit `row`, or nothing where it may: it does not
+    /// start with the row's own mark, or, where the row knows no mark of its
+    /// own, it starts with a mark the row refuses or the mark of another row
+    /// of the same provider.
+    #[must_use]
+    pub fn misfit(&self, row: &Row, key: &str) -> Option<Misfit> {
+        if let Some(mark) = row.mark {
+            return (!key.starts_with(mark)).then_some(Misfit::Unmarked(mark));
+        }
+        if let Some(mark) = row.refuses.iter().find(|mark| key.starts_with(**mark)) {
+            return Some(Misfit::Refused(mark));
+        }
+        let mut others = self
+            .rows
+            .iter()
+            .filter(|other| other.provider == row.provider && other != &row)
+            .filter(|other| other.mark.is_some_and(|mark| key.starts_with(mark)));
+        let first = others.next()?;
+        Some(match (others.next(), first.mark) {
+            (Some(_), Some(mark)) => Misfit::Shared(mark),
+            _ => Misfit::Another(first.shown),
+        })
+    }
+
+    /// The row of the credential `provider` is served by from the store.
+    #[must_use]
+    pub fn held(&self, provider: &str, stored: &StoredCredentials) -> Option<&Row> {
+        let Held { kind, name } = stored.held(provider)?;
+        self.of(kind, &name)
+    }
+}
 
 /// What the generated table knows about a model's limits, if it knows anything.
 ///
@@ -158,6 +799,16 @@ const GEMINI: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High];
 /// is a rung asked for, and two words that reach the same rung are two words
 /// somebody has to be told are the same.
 const KIMI: &[Effort] = &[Effort::Low, Effort::High, Effort::Max];
+
+/// The three rungs `DeepSeek`'s models and Z.ai's newest serve: the two
+/// between are answered as `high` rather than refused, and so are not offered.
+const LOW_HIGH_MAX: &[Effort] = &[Effort::Low, Effort::High, Effort::Max];
+
+/// Every rung but the top one.
+const UP_TO_XHIGH: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh];
+
+/// The three rungs Qwen's 3.8 models serve.
+const QWEN: &[Effort] = &[Effort::Low, Effort::Medium, Effort::Xhigh];
 
 /// What a model that takes none at all is written with.
 ///
@@ -252,6 +903,14 @@ pub struct Served {
     /// otherwise. Conservative on purpose: long context is available, and
     /// using it is a choice rather than the starting behavior.
     pub window: u32,
+    /// How each of its models is asked to answer fast at the vendor's own
+    /// address with a key, for a list that reads every provider's models
+    /// without setting each one up. A provider set up answers for itself; a
+    /// test holds the two to one answer.
+    pub fast: fn(&str) -> FastForm,
+    /// The same, where a stored sign-in serves it, for a provider whose
+    /// sign-in serves fast on other models than its key.
+    pub fast_signed_in: Option<fn(&str) -> FastForm>,
 }
 
 /// Why the built-in providers could not be assembled.
@@ -540,6 +1199,10 @@ pub fn capabilities<'a>(
 /// not set.
 pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
 
+/// A [`Lookup`] that can be read from any thread, as the consent's resolver
+/// is.
+pub type SharedLookup = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
 /// The [`Serving`] a provider is set up again through once a run is under
 /// way: after a credential is stored, after one is forgotten, and when
 /// `/model` names a provider other than the one answering.
@@ -550,11 +1213,15 @@ pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;
 /// run already read: nothing in them grows with the transcript. `from` is the
 /// environment lookup, handed in like every other source this crate reads, so
 /// that a caller with no environment to offer can say so.
+///
+/// `consent` is told what the provider is served on each time, before a
+/// request could go: a credential just stored or forgotten can move it.
 pub fn re_serving(
     settings: Settings,
     subscriptions: Subscriptions,
     from: Lookup,
     http: HttpTurns,
+    consent: Consent,
 ) -> Serving {
     Box::new(move |named: Served, stored: &StoredCredentials| {
         let auth = startup::ProviderAuth {
@@ -563,6 +1230,8 @@ pub fn re_serving(
             stored,
             subscriptions: &subscriptions,
         };
+        let variable = settings.api_key_env(named.name).unwrap_or(named.key);
+        consent.served(named.name, startup::served_on(named.name, variable, auth));
         let source = credential_source(named, auth).ok_or_else(|| AppError::Authentication {
             provider: named.name.into(),
         })?;
@@ -574,6 +1243,47 @@ pub fn re_serving(
             provider: startup::provider(Some(named), unasked(Some(named.name), true), auth, &http)?,
             source,
         })
+    })
+}
+
+/// The [`crate::content_use::Resolver`] a run's consent reads a provider
+/// again through: what it is served on, from `store` as it is when asked and
+/// the environment `from` reads.
+///
+/// `store` is read and never written, so it carries no hook of its own.
+pub fn resolving(
+    settings: Settings,
+    subscriptions: Subscriptions,
+    providers: &Providers,
+    from: SharedLookup,
+    store: crucible_auth::Store,
+) -> crate::content_use::Resolver {
+    let variables: std::collections::BTreeMap<String, String> = offered(providers)
+        .map(|one| {
+            let variable = settings.api_key_env(one.name).unwrap_or(one.key);
+            (one.name.to_owned(), variable.to_owned())
+        })
+        .collect();
+    Box::new(move |name| {
+        let Some(variable) = variables.get(name) else {
+            return Reading::Served(None);
+        };
+        let stored = store.read();
+        // A store that could not be read says nothing about what is left in
+        // it: the provider stays as it was, to be read again.
+        if stored.unread() {
+            return Reading::Unread;
+        }
+        Reading::Served(startup::served_on(
+            name,
+            variable,
+            startup::ProviderAuth {
+                settings: &settings,
+                from: &*from,
+                stored: &stored,
+                subscriptions: &subscriptions,
+            },
+        ))
     })
 }
 
@@ -653,6 +1363,46 @@ pub fn available<'a>(
     offered(providers).filter(move |one| credential_source(*one, auth).is_some())
 }
 
+/// The credential a provider's requests are sent with, as `/model` heads its
+/// models: its words, and which of the provider's models it serves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InUse {
+    /// The `/login` row it was given on, `API key` for a key stored on the
+    /// row a variable's key belongs to, or the variable's name.
+    pub words: String,
+    /// The models it serves, where that is not every model offered.
+    pub serves: Option<&'static [&'static str]>,
+}
+
+/// The credential `one`'s requests are sent with, or nothing where it has none.
+#[must_use]
+pub fn in_use(one: Served, auth: startup::ProviderAuth<'_>) -> Option<InUse> {
+    let rows = Rows::production();
+    let held = || rows.held(one.name, auth.stored);
+    let (words, row) = match credential_source(one, auth)? {
+        CredentialSource::Subscription => {
+            let row = held()?;
+            (row.credential(), Some(row))
+        }
+        CredentialSource::Environment(variable) => {
+            (variable.into_string(), rows.environment(one.name))
+        }
+        CredentialSource::StoredKey => {
+            let row = held()?;
+            let words = if row.environment {
+                "API key".to_owned()
+            } else {
+                row.credential()
+            };
+            (words, Some(row))
+        }
+    };
+    Some(InUse {
+        words,
+        serves: row.and_then(Row::serves),
+    })
+}
+
 /// The source provider construction will select, without reading a secret out.
 ///
 /// The order is the one [`startup::provider`] resolves in, and the two must
@@ -666,9 +1416,10 @@ pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option
         stored,
         subscriptions,
     } = auth;
+    let held = stored.held(one.name);
     if settings.base_url(one.name).is_none()
         && subscriptions.supports(one.name)
-        && stored.has_subscription(one.name)
+        && held.as_ref().is_some_and(|held| held.kind == Kind::Account)
     {
         return Some(CredentialSource::Subscription);
     }
@@ -676,7 +1427,7 @@ pub fn credential_source(one: Served, auth: startup::ProviderAuth<'_>) -> Option
     if from(variable).is_some_and(|value| !value.trim().is_empty()) {
         return Some(CredentialSource::Environment(variable.into()));
     }
-    if stored.has_key(one.name) {
+    if held.is_some_and(|held| held.kind == Kind::Key) {
         return Some(CredentialSource::StoredKey);
     }
     None

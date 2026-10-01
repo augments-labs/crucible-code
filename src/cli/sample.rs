@@ -87,7 +87,7 @@ impl Sample {
 
     /// This tree's home directory as crucible would find it, rather than
     /// whatever the machine running the test keeps in its own.
-    fn found(&self) -> Home {
+    pub(super) fn found(&self) -> Home {
         Home::find(&|name: &str| {
             (name == crucible_config::HOME).then(|| OsString::from(self.base.join("home")))
         })
@@ -98,6 +98,7 @@ impl Sample {
     /// `/logout` takes a name back out of.
     pub(super) fn store(&self) -> Store {
         Store::in_home(&self.base.join("home"))
+            .naming(crucible_app::providers::Rows::production().names())
     }
 
     /// Resolves `document`, written as the project's `.crucible/<file>`.

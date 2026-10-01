@@ -162,7 +162,7 @@ fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
         [
             ("k3", "K3", KIMI),
             ("k3-256k", "K3-256k", KIMI),
-            ("kimi-for-coding", "K2.7 Coding", KIMI),
+            ("kimi-for-coding", "K2.8 Preview", KIMI),
             ("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
         ]
     );
@@ -442,9 +442,15 @@ fn a_display_name_is_the_typed_name_under_the_vendor_s_own_capitals() {
     // offering `OpenAl` writes its key down under `openai` and reads correctly
     // to everybody except the person deciding which vendor they are logging in
     // to.
+    // Letters only: `Z.ai` is typed `zai`, and the dot is the vendor's.
     for one in every() {
+        let letters: String = one
+            .shown
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect();
         assert!(
-            one.shown.to_lowercase().starts_with(one.name),
+            letters.to_lowercase().starts_with(one.name),
             "{} is offered as {}",
             one.name,
             one.shown
@@ -454,13 +460,15 @@ fn a_display_name_is_the_typed_name_under_the_vendor_s_own_capitals() {
 
 #[test]
 fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
-    // The panel is a handful to look down, not a catalogue. Five is where a
-    // list stops being read and starts being searched — and a name that is not
-    // on it is still typed, which is what keeps the ceiling a ceiling rather
-    // than a claim about what the vendor serves.
+    // The panel is a list to look down, not a catalogue. Fifteen is room for
+    // a vendor's current generation and the one before it, which is what a
+    // migration needs on screen at once; past that a list stops being read
+    // and starts being searched. A name that is not on it is still typed,
+    // which is what keeps the ceiling a ceiling rather than a claim about
+    // what the vendor serves.
     for one in every() {
         assert!(!one.models.is_empty(), "{}", one.name);
-        assert!(one.models.len() <= 5, "{}: {}", one.name, one.models.len());
+        assert!(one.models.len() <= 15, "{}: {}", one.name, one.models.len());
     }
 }
 
@@ -684,7 +692,7 @@ fn the_models_table_has_a_row_for_every_model_crucible_offers_and_no_others() {
 }
 
 #[test]
-fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
+fn the_models_table_says_every_model_reads_text_and_all_but_four_read_an_image() {
     assert!(
         !models::FACTS.is_empty(),
         "the table is generated and is never empty"
@@ -692,17 +700,26 @@ fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
     for facts in models::FACTS {
         let named = facts.model;
         assert!(facts.accepts.contains(Modality::Text), "{named} reads text");
-        assert!(
+        // These four read text alone, as their vendors' pages say.
+        let text_alone = matches!(
+            named,
+            "deepseek-v4-pro" | "glm-5.3" | "glm-5.2" | "MiniMax-M2.7"
+        );
+        assert_eq!(
             facts.accepts.contains(Modality::Image),
+            !text_alone,
             "{named} reads an image"
         );
     }
 }
 
 #[test]
-fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot() {
+fn the_models_table_gives_a_pdf_to_the_models_whose_vendors_read_one() {
     for facts in models::FACTS {
-        let expected = matches!(facts.provider, "anthropic" | "google" | "openai");
+        let expected = matches!(
+            facts.provider,
+            "anthropic" | "google" | "meta" | "openai" | "xai"
+        ) || matches!(facts.model, "glm-5.3-flash" | "qwen3.8-max");
         assert_eq!(
             facts.accepts.contains(Modality::Pdf),
             expected,
@@ -714,22 +731,29 @@ fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot(
 }
 
 #[test]
-fn the_models_table_gives_video_to_moonshot_and_google_and_audio_only_to_google() {
+fn the_models_table_gives_video_and_audio_to_the_models_whose_vendors_read_them() {
     for facts in models::FACTS {
+        let video = matches!(
+            facts.provider,
+            "moonshot" | "google" | "meta" | "mimo" | "qwen"
+        ) || matches!(facts.model, "glm-5.3-flash" | "MiniMax-M3");
         assert_eq!(
             facts.accepts.contains(Modality::Video),
-            matches!(facts.provider, "moonshot" | "google"),
+            video,
             "{} reading a video",
             facts.model,
         );
         assert_eq!(
             facts.accepts.contains(Modality::Audio),
-            facts.provider == "google",
+            matches!(facts.provider, "google" | "meta" | "mimo"),
             "{} audio support",
             facts.model,
         );
     }
-    assert_eq!(accepting(Modality::Audio), vec!["google"; 4]);
+    let mut audio = accepting(Modality::Audio);
+    audio.sort_unstable();
+    audio.dedup();
+    assert_eq!(audio, ["google", "meta", "mimo"]);
 }
 
 #[test]
@@ -936,6 +960,30 @@ fn built(serving: Served, settings: &Settings) -> Box<dyn Provider> {
 }
 
 #[test]
+fn every_offered_models_fast_form_is_the_one_its_provider_answers() {
+    // The list is read before any provider is set up, and the provider answers
+    // for itself once it is: two sources of one fact, held to one answer here.
+    let settings = Settings::default();
+    let mut switched = 0;
+
+    for serving in every() {
+        let provider = built(serving, &settings);
+        for model in serving.models {
+            let listed = (serving.fast)(model.name);
+            assert_eq!(
+                listed,
+                provider.fast(model.name),
+                "{}/{}",
+                serving.name,
+                model.name
+            );
+            switched += usize::from(listed.switched());
+        }
+    }
+    assert!(switched > 0, "no offered model has a fast form to compare");
+}
+
+#[test]
 fn every_offered_model_keeps_its_own_reviewed_cache_record_through_the_registry() {
     // The offer list and the reviewed cache records are written in different
     // files by different hands, and a model in one and not the other is silent:
@@ -1138,6 +1186,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|name| (name == "CRUCIBLE_FIXTURE_ONLY_KEY").then(|| "not-a-key".into())),
         HttpTurns::unavailable(),
+        crate::content_use::Consent::new(crate::content_use::Routes::production()),
     );
     let found = handed(serving("openai"), &stored).expect("the handed variable holds a key");
     assert_eq!(
@@ -1150,6 +1199,7 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
         Subscriptions::production(&crucible_auth::Renewals::new()),
         Box::new(|_| None),
         HttpTurns::unavailable(),
+        crate::content_use::Consent::new(crate::content_use::Routes::production()),
     );
     for one in every() {
         assert!(
@@ -1160,5 +1210,502 @@ fn serving_again_reads_the_environment_it_was_handed_and_no_other() {
             "{} was set up from somewhere other than the lookup",
             one.name
         );
+    }
+}
+
+#[test]
+fn every_row_is_named_once_in_its_map_and_its_name_gives_it_back() {
+    let rows = Rows::production();
+    let all = rows.all();
+    for row in all {
+        assert_eq!(rows.of(row.kind, row.stored), Some(row), "{row:?}");
+        assert_eq!(
+            crucible_auth::provider_of(row.stored),
+            row.provider,
+            "{row:?}"
+        );
+        assert!(
+            row.stored
+                .chars()
+                .all(|character| character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || matches!(character, '.' | '-' | '@'))
+                && row.stored.matches('@').count() <= 1,
+            "{row:?}"
+        );
+    }
+    for (at, one) in all.iter().enumerate() {
+        for other in all.iter().skip(at + 1) {
+            assert!(
+                !(one.kind == other.kind && one.stored == other.stored),
+                "{one:?} and {other:?} share a name"
+            );
+        }
+    }
+}
+
+#[test]
+fn only_a_row_0_43_3_knows_is_written_under_the_bare_name() {
+    let rows = Rows::production();
+    for row in rows.all() {
+        // Under a name 0.43.3 serves sits only what 0.43.3 sends to the same
+        // hosts: under `moonshot`, a kimi.com credential.
+        if row.stored == "moonshot" {
+            assert_eq!(row.site, Some("kimi.com"), "{row:?}");
+        }
+    }
+    let known: Vec<(crucible_auth::Kind, &str)> = rows
+        .all()
+        .iter()
+        .filter(|row| row.known())
+        .map(|row| (row.kind, row.stored))
+        .collect();
+    assert_eq!(known.len(), 6, "{known:?}");
+}
+
+#[test]
+fn every_provider_has_one_environment_row_and_every_row_a_served_provider() {
+    let rows = Rows::production();
+    for served in every() {
+        let environment: Vec<&Row> = rows
+            .all()
+            .iter()
+            .filter(|row| row.provider == served.name && row.environment)
+            .collect();
+        assert_eq!(environment.len(), 1, "{}", served.name);
+        assert!(environment.iter().all(|row| row.list == List::Key));
+        // Opened by `/login <provider>` or chosen from the list, its key is
+        // written under one name: the provider's own where 0.43.3 serves the
+        // provider, and the provider at a site where it does not, since only a
+        // credential 0.43.3 can read sits under a bare name.
+        let served_by_0_43_3 =
+            matches!(served.name, "anthropic" | "google" | "moonshot" | "openai");
+        assert!(
+            environment
+                .iter()
+                .all(|row| (row.stored == row.provider) == served_by_0_43_3),
+            "{}",
+            served.name
+        );
+    }
+    for row in rows.all() {
+        assert!(
+            every().iter().any(|served| served.name == row.provider),
+            "{row:?}"
+        );
+    }
+}
+
+#[test]
+fn every_sign_in_row_is_one_the_subscription_registry_starts_and_sends_to_its_address() {
+    let rows = Rows::production();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let registered: Vec<(&str, &Endpoint)> = subscriptions.registered().collect();
+
+    for row in rows
+        .all()
+        .iter()
+        .filter(|row| row.kind == crucible_auth::Kind::Account)
+    {
+        assert!(!subscriptions.routes(row.stored).is_empty(), "{row:?}");
+        let logins: Vec<&&Endpoint> = registered
+            .iter()
+            .filter(|(name, _)| *name == row.stored)
+            .map(|(_, endpoint)| endpoint)
+            .collect();
+        assert_eq!(logins.len(), 1, "{row:?}");
+        assert_eq!(
+            row.address.as_ref(),
+            logins.first().copied().copied(),
+            "{row:?}"
+        );
+    }
+    for (name, _) in &registered {
+        assert!(
+            rows.of(crucible_auth::Kind::Account, name).is_some(),
+            "{name} is registered and no row gives it"
+        );
+    }
+    for route in subscriptions.every_route() {
+        assert!(
+            registered.iter().any(|(name, _)| *name == route.name()),
+            "{route:?} starts no registered login"
+        );
+    }
+    let mut names: Vec<&str> = registered.iter().map(|(name, _)| *name).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), registered.len(), "{registered:?}");
+}
+
+/// Setting a provider up again tells the run's consent what it is now served
+/// on, so an origin two rows share follows the credential just stored.
+#[test]
+fn serving_again_tells_the_consent_what_the_provider_is_served_on() {
+    use crucible_http::Hold as _;
+
+    let sample = Sample::new("serving-again-consent");
+    let stored = sample.holding(
+        r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{}}"#,
+    );
+    let consent = crate::content_use::Consent::new(crate::content_use::Routes::production());
+    consent.recorded(["key:moonshot@kimi.ai".to_owned()]);
+    let model =
+        crucible_http::Origin::of("https://api.kimi.ai/coding/v1/chat/completions").unwrap();
+    assert!(
+        consent.held(&model).is_some(),
+        "nothing said what it is served on yet"
+    );
+
+    let again = re_serving(
+        Settings::default(),
+        Subscriptions::production(&crucible_auth::Renewals::new()),
+        Box::new(|_| None),
+        HttpTurns::unavailable(),
+        consent.clone(),
+    );
+    again(serving("moonshot"), &stored).expect("a stored key");
+
+    assert_eq!(consent.held(&model), None);
+}
+
+/// What the consent reads a provider again through: from the store as it is,
+/// and, where the store could not be read at all, nothing settled, so the
+/// provider stays as it was to be read again.
+#[test]
+fn a_provider_is_read_again_from_the_store_and_an_unreadable_store_settles_nothing() {
+    use crate::content_use::{Reading, Serving};
+
+    let sample = Sample::new("resolving");
+    let settings = sample.user("{}");
+    let resolve = |store| {
+        resolving(
+            settings.clone(),
+            Subscriptions::production(&crucible_auth::Renewals::new()),
+            &catalogue(),
+            std::sync::Arc::new(|_: &str| None),
+            store,
+        )
+    };
+
+    let store = sample.store();
+    store.keep("google", "fabricated-google-key").unwrap();
+    assert_eq!(
+        resolve(store.clone())("google"),
+        Reading::Served(Some(Serving {
+            route: Some("key:google".to_owned()),
+            at: None,
+        }))
+    );
+    store.forget("google").unwrap();
+    assert_eq!(resolve(store)("google"), Reading::Served(None));
+
+    let unreadable = Sample::new("resolving-unreadable");
+    std::fs::create_dir_all(unreadable.home().join("auth.json")).unwrap();
+    assert_eq!(resolve(unreadable.store())("google"), Reading::Unread);
+
+    // Read in full, with a warning beside it that its permissions were
+    // tightened: what it holds is known.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let open = Sample::new("resolving-open");
+        let credentials = open.holding(
+            r#"{"version":2,"keys":{"google":"fabricated-google-key"},"subscriptions":{}}"#,
+        );
+        drop(credentials);
+        let file = open.home().join("auth.json");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            resolve(open.store())("google"),
+            Reading::Served(Some(_))
+        ));
+    }
+}
+
+#[test]
+fn the_registry_serves_eleven_providers_each_under_its_name_and_variable() {
+    let served: Vec<_> = every()
+        .iter()
+        .map(|one| (one.name, one.shown, one.key))
+        .collect();
+
+    assert_eq!(
+        served,
+        [
+            ("anthropic", "Anthropic", "ANTHROPIC_API_KEY"),
+            ("deepseek", "DeepSeek", "DEEPSEEK_API_KEY"),
+            ("google", "Google", "GEMINI_API_KEY"),
+            ("meta", "Meta", "META_API_KEY"),
+            ("mimo", "MiMo", "MIMO_API_KEY"),
+            ("minimax", "MiniMax", "MINIMAX_API_KEY"),
+            ("moonshot", "MoonshotAI", "MOONSHOT_API_KEY"),
+            ("openai", "OpenAI", "OPENAI_API_KEY"),
+            ("qwen", "Qwen", "DASHSCOPE_API_KEY"),
+            ("xai", "xAI", "XAI_API_KEY"),
+            ("zai", "Z.ai", "ZAI_API_KEY"),
+        ]
+    );
+}
+
+#[test]
+fn openai_and_anthropic_list_their_current_models_before_the_ones_they_replace() {
+    let listed = |provider| -> Vec<&str> {
+        serving(provider)
+            .models
+            .iter()
+            .map(|model| model.name)
+            .collect()
+    };
+
+    assert_eq!(
+        listed("openai"),
+        [
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+        ]
+    );
+    assert_eq!(
+        listed("anthropic"),
+        [
+            "claude-fable-5-1",
+            "claude-fable-5",
+            "claude-opus-5-5",
+            "claude-opus-5",
+            "claude-sonnet-5-5",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+        ]
+    );
+}
+
+#[test]
+fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
+    use Effort::{High, Low, Max, Medium, Xhigh};
+    let up_to_xhigh = &[Low, Medium, High, Xhigh][..];
+    for (provider, model, served) in [
+        ("openai", "gpt-6.1-sol", &Effort::LADDER[..]),
+        ("openai", "gpt-6-sol", &Effort::LADDER[..]),
+        ("openai", "gpt-6-luna", &Effort::LADDER[..]),
+        ("anthropic", "claude-opus-5-5", &Effort::LADDER[..]),
+        ("anthropic", "claude-sonnet-5-5", &Effort::LADDER[..]),
+        // `max` on 1.3 is named by some of Meta's pages and left out by its
+        // parameter lists, so it is not offered until a source settles it.
+        ("meta", "muse-spark-1.3", up_to_xhigh),
+        ("meta", "muse-spark-1.3-contributor", up_to_xhigh),
+        ("meta", "muse-spark-1.2", up_to_xhigh),
+        ("meta", "muse-spark-1.2-contributor", up_to_xhigh),
+        ("xai", "grok-4.7", up_to_xhigh),
+        ("xai", "grok-4.6", up_to_xhigh),
+        ("deepseek", "deepseek-flash", &[Low, High, Max][..]),
+        ("deepseek", "deepseek-v4-pro", &[Low, High, Max][..]),
+        ("zai", "glm-5.3", &[Low, High, Max][..]),
+        ("zai", "glm-5.3-flash", &[Low, High, Max][..]),
+        ("zai", "glm-5.2", &[High, Max][..]),
+        ("qwen", "qwen3.8-max", &[Low, Medium, Xhigh][..]),
+        ("qwen", "qwen3.8-flash", &[Low, Medium, Xhigh][..]),
+        ("qwen", "qwen3.7-plus", &[][..]),
+        ("qwen", "qwen3.6-plus", &[][..]),
+        ("mimo", "mimo-v2.6-pro", &[][..]),
+        ("mimo", "mimo-v2.6-flash", &[][..]),
+        ("minimax", "MiniMax-M3", &[][..]),
+        ("minimax", "MiniMax-M2.7", &[][..]),
+    ] {
+        assert_eq!(
+            rungs(&catalogue(), provider, model),
+            served,
+            "{provider}/{model}"
+        );
+    }
+}
+
+#[test]
+fn every_provider_keeps_its_window_and_a_new_one_starts_at_two_hundred_thousand() {
+    let windows: Vec<_> = every().iter().map(|one| (one.name, one.window)).collect();
+
+    assert_eq!(
+        windows,
+        [
+            ("anthropic", 200_000),
+            ("deepseek", 200_000),
+            ("google", 200_000),
+            ("meta", 200_000),
+            ("mimo", 200_000),
+            ("minimax", 200_000),
+            ("moonshot", 262_144),
+            ("openai", 272_000),
+            ("qwen", 200_000),
+            ("xai", 200_000),
+            ("zai", 200_000),
+        ]
+    );
+}
+
+#[test]
+fn a_key_that_does_not_fit_its_row_is_refused_by_the_mark_it_carries() {
+    let rows = Rows::production();
+    let row = |shown: &str, list: List| {
+        rows.all()
+            .iter()
+            .find(|row| row.shown == shown && row.list == list)
+            .cloned()
+            .unwrap_or_else(|| panic!("no row {shown}"))
+    };
+    let minimax_key = row("MiniMax · minimax.io", List::Key);
+    let minimax_plan = row("MiniMax · minimax.io", List::Subscription);
+    let qwen_coding = row("Qwen Coding Plan · aliyun.com", List::Subscription);
+    let qwen_token = row("Qwen Token Plan · aliyun.com", List::Subscription);
+    let qwen_key = row("Qwen · aliyun.com", List::Key);
+    let mimo = row("MiMo", List::Key);
+
+    assert_eq!(
+        rows.misfit(&minimax_key, "sk-cp-plan-key"),
+        Some(Misfit::Unmarked("sk-api-"))
+    );
+    assert_eq!(
+        rows.misfit(&minimax_plan, "sk-api-pay-as-you-go"),
+        Some(Misfit::Unmarked("sk-cp-"))
+    );
+    assert_eq!(
+        rows.misfit(&qwen_coding, "sk-plain-key"),
+        Some(Misfit::Unmarked("sk-sp-"))
+    );
+    // A Token Plan key, which the pay-as-you-go address refuses.
+    assert_eq!(
+        rows.misfit(&mimo, "tp-token-plan-key"),
+        Some(Misfit::Refused("tp-"))
+    );
+    assert_eq!(
+        rows.misfit(&mimo, "ttp-token-plan-key"),
+        Some(Misfit::Refused("ttp-"))
+    );
+    // A row that knows no mark of its own still refuses another row's; four
+    // plan rows carry this one, at two sites, so none of them is named.
+    assert_eq!(
+        rows.misfit(&qwen_key, "sk-sp-plan-key"),
+        Some(Misfit::Shared("sk-sp-"))
+    );
+
+    for (fits, key) in [
+        (&minimax_key, "sk-api-pay-as-you-go"),
+        (&minimax_plan, "sk-cp-plan-key"),
+        (&qwen_coding, "sk-sp-plan-key"),
+        // A Token Plan key carries the Coding Plan's mark, and nothing in it
+        // tells the two apart: the vendor answers which it is.
+        (&qwen_token, "sk-sp-plan-key"),
+        (&qwen_key, "sk-plain-key"),
+        (&mimo, "sk-mimo-key"),
+        // The key MiMo Code's own sign-in makes, which carries no mark the
+        // row refuses: the vendor answers whether it is served.
+        (&mimo, "mimo-code-cli-key-made-by-a-sign-in"),
+    ] {
+        assert_eq!(rows.misfit(fits, key), None, "{} {key}", fits.shown);
+    }
+}
+
+#[test]
+fn the_credential_in_use_heads_the_models_it_serves() {
+    let settings = Settings::default();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let unset = holding(&[]);
+    let sample = Sample::new("credential-in-use");
+    let auth = |stored| authenticating(&settings, &unset, stored, &subscriptions);
+
+    // A ChatGPT sign-in serves every OpenAI model but the one it retired.
+    let signed = sample.subscribed("openai");
+    let openai = in_use(serving("openai"), auth(&signed)).expect("a sign-in");
+    assert_eq!(openai.words, "ChatGPT sign-in");
+    let serves = openai.serves.expect("a narrower list");
+    assert!(!serves.contains(&"gpt-5.5"), "{serves:?}");
+    assert!(serves.contains(&"gpt-6.1-sol"), "{serves:?}");
+
+    // A plan's key serves its plan's models.
+    let coding = Sample::new("credential-in-use-coding").stored("qwen@coding-plan.aliyun.com");
+    let qwen = in_use(serving("qwen"), auth(&coding)).expect("a plan key");
+    assert_eq!(qwen.words, "Qwen Coding Plan · aliyun.com key");
+    assert_eq!(qwen.serves, Some(&["qwen3.7-plus", "qwen3.6-plus"][..]));
+    let token = Sample::new("credential-in-use-token").stored("qwen@token-plan.alibabacloud.com");
+    assert_eq!(
+        in_use(serving("qwen"), auth(&token)).and_then(|one| one.serves),
+        Some(&["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"][..])
+    );
+
+    // A key on the row a variable's key belongs to is an API key, and serves
+    // every model.
+    let keyed = Sample::new("credential-in-use-key").stored("qwen@alibabacloud.com");
+    assert_eq!(
+        in_use(serving("qwen"), auth(&keyed)),
+        Some(InUse {
+            words: "API key".to_owned(),
+            serves: None
+        })
+    );
+
+    // A key from the variable is named by the variable.
+    let nothing = StoredCredentials::default();
+    let exported = holding(&["DEEPSEEK_API_KEY"]);
+    assert_eq!(
+        in_use(
+            serving("deepseek"),
+            authenticating(&settings, &exported, &nothing, &subscriptions)
+        ),
+        Some(InUse {
+            words: "DEEPSEEK_API_KEY".to_owned(),
+            serves: None
+        })
+    );
+    assert_eq!(in_use(serving("deepseek"), auth(&nothing)), None);
+}
+
+/// The line a Qwen key refused for belonging to the other site names the row
+/// it was given on by the address it was sent to; that name is the row's own,
+/// and the key from the environment is the international key row's.
+#[test]
+fn every_qwen_row_is_named_by_its_address_as_the_row_shows_it() {
+    let rows = Rows::production();
+    let qwen: Vec<&Row> = rows
+        .all()
+        .iter()
+        .filter(|row| row.provider == "qwen")
+        .collect();
+    assert_eq!(qwen.len(), 6);
+    for row in qwen {
+        let address = row
+            .address
+            .as_ref()
+            .expect("every Qwen row names its address");
+        assert_eq!(Qwen::row(address), Some(row.shown), "{}", row.stored);
+    }
+    let environment = rows.environment("qwen").expect("a row for the variable");
+    assert_eq!(environment.shown, "Qwen · alibabacloud.com");
+    assert_eq!(environment.address, Some(Qwen::KEY_INTL));
+}
+
+/// What a row's credential serves is written apart from what its provider
+/// offers, and `/model` keeps only the names in both: a name in one and not
+/// the other would hide a model without a word.
+#[test]
+fn every_model_a_row_serves_is_one_its_provider_offers() {
+    let providers = catalogue();
+    for row in Rows::production().all() {
+        let Some(serves) = row.serves() else {
+            continue;
+        };
+        let offered = crate::startup::served(&providers, row.provider)
+            .unwrap_or_else(|_| panic!("{} is offered", row.provider));
+        for name in serves {
+            assert!(
+                offered.models.iter().any(|model| model.name == *name),
+                "{} serves {name}, which {} does not offer",
+                row.shown,
+                row.provider
+            );
+        }
     }
 }

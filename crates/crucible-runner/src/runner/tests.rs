@@ -93,6 +93,7 @@ mod cache_operations;
 mod compaction;
 mod context;
 mod continuation;
+mod fast;
 mod guardrails;
 mod instructions;
 mod lifecycle;
@@ -386,6 +387,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::FastRefused { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -413,6 +415,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::FastRefused { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -436,6 +439,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
                 | Event::Steered { .. }
@@ -473,6 +477,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
                 | Event::Steered { .. }
@@ -500,6 +505,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
                 | Event::Steered { .. }
@@ -526,6 +532,7 @@ impl Scripted {
                 | Event::Compacting { .. }
                 | Event::Compacted { .. }
                 | Event::Retrying
+                | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
                 | Event::Steered { .. }

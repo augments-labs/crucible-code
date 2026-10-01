@@ -453,3 +453,372 @@ fn an_unknown_method_is_rejected_before_a_worker_starts() {
         .unwrap_err();
     assert!(matches!(problem, OAuthError::Method));
 }
+
+#[test]
+fn a_kimi_ai_sign_in_sends_the_browser_only_to_www_kimi_ai() {
+    // The global site's hosts, as Kimi's own client names them for accounts
+    // outside mainland China; the client id is shared with kimi.com.
+    assert_eq!(KimiSite::Ai.host(), "https://auth.kimi.ai");
+    assert_eq!(KimiSite::Ai.verify(), "https://www.kimi.ai");
+    assert!(within(
+        KimiSite::Ai.verify(),
+        "https://www.kimi.ai/code?user_code=ABCD-EFGH"
+    ));
+    for address in [
+        "https://www.kimi.ai.evil.example/code",
+        "https://www.kimi.ai@evil.example/code",
+        "http://www.kimi.ai/code",
+        // Neither site's sign-in opens the other's page.
+        "https://www.kimi.com/code?user_code=ABCD-EFGH",
+    ] {
+        assert!(
+            !within(KimiSite::Ai.verify(), address),
+            "accepted {address}"
+        );
+    }
+    assert!(!within(
+        KimiSite::Com.verify(),
+        "https://www.kimi.ai/code?user_code=ABCD-EFGH"
+    ));
+}
+
+#[test]
+fn each_kimi_site_writes_its_sign_in_under_a_name_of_its_own() {
+    assert_eq!(KimiSite::Com.name(), "moonshot");
+    assert_eq!(KimiSite::Ai.name(), "moonshot@kimi.ai");
+    assert_eq!(
+        KimiOAuth::at(Renewals::new(), KimiSite::Ai).name(),
+        "moonshot@kimi.ai"
+    );
+    assert_eq!(KimiOAuth::new(Renewals::new()).name(), "moonshot");
+}
+
+#[test]
+fn a_kimi_ai_device_response_is_read_against_www_kimi_ai() {
+    let (base, requests, server) = server(|_| {
+        vec![(
+            200,
+            serde_json::json!({
+                "device_code": "device-code",
+                "user_code": "ABCD-EFGH",
+                "verification_uri_complete": "https://www.kimi.ai/code?user_code=ABCD-EFGH",
+                "expires_in": 600,
+                "interval": 5,
+            })
+            .to_string(),
+        )]
+    });
+    let runtime = runtime();
+    let flow = Flow::at(
+        renewing(&runtime),
+        &base,
+        KimiSite::Ai.verify(),
+        PATIENCE,
+        PATIENCE,
+        Duration::from_millis(1),
+    );
+    let identity = Identity::new("01234567-89ab-4cde-8fab-0123456789ab".to_owned()).unwrap();
+
+    let device = runtime.block_on(flow.request_device(&identity)).unwrap();
+
+    let request = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert_eq!(request.target, "/api/oauth/device_authorization");
+    assert_eq!(
+        device.complete.as_ref(),
+        "https://www.kimi.ai/code?user_code=ABCD-EFGH"
+    );
+}
+
+/// A device authorization pointing the browser at `base`.
+fn device(base: &str) -> String {
+    serde_json::json!({
+        "device_code": "device-code",
+        "user_code": "ABCD-EFGH",
+        "verification_uri": format!("{base}/device"),
+        "verification_uri_complete": format!("{base}/device?code=ABCD-EFGH"),
+        "expires_in": 600,
+        "interval": 1,
+    })
+    .to_string()
+}
+
+/// A store holding a kimi.com key and no identity: what a sign-in on either
+/// site must leave as it was until it completes.
+const HELD: &str = r#"{"version":2,"keys":{"moonshot":"fabricated-kimi-com-key"},"subscriptions":{},"identities":{}}"#;
+
+/// What a fake Kimi service answers, given the address it listens on.
+type Answers = dyn Fn(&str) -> Vec<(u16, String)>;
+
+#[test]
+fn a_kimi_sign_in_that_does_not_complete_leaves_the_store_byte_for_byte() {
+    // Refused at the device authorization, denied at the token, and left
+    // while it waits: each on a store holding a key, and on no store at all.
+    let refused = |_: &str| vec![(400, r#"{"error":"invalid_client"}"#.to_owned())];
+    let denied = |base: &str| {
+        vec![
+            (200, device(base)),
+            (400, r#"{"error":"access_denied"}"#.to_owned()),
+        ]
+    };
+    let left = |base: &str| vec![(200, device(base))];
+    let cases: [(&str, &Answers, bool); 3] = [
+        ("refused", &refused, false),
+        ("denied", &denied, false),
+        ("left", &left, true),
+    ];
+
+    for (case, answers, leaves) in cases {
+        for (held, site) in [
+            (Some(HELD), KimiSite::Ai),
+            (Some(HELD), KimiSite::Com),
+            (None, KimiSite::Ai),
+        ] {
+            let (base, _requests, server) = server(|base| answers(base));
+            let scratch = Scratch::new(&format!("unfinished-{case}-{}", site.name()));
+            let file = scratch.path().join("auth.json");
+            if let Some(held) = held {
+                std::fs::write(&file, held).unwrap();
+            }
+            let store = Store::in_home(scratch.path())
+                .naming(crate::Names::new(["moonshot", "moonshot@kimi.ai"]));
+            let runtime = runtime();
+            let flow = Flow::testing(&base, &renewing(&runtime)).named(site.name());
+            let oauth = KimiOAuth::testing(flow);
+
+            let attempt = oauth.start(KimiOAuth::DEVICE, store).unwrap();
+            if leaves {
+                assert!(matches!(
+                    attempt.wait(PATIENCE),
+                    Ok(Some(LoginUpdate::Authorize { .. }))
+                ));
+                attempt.cancel();
+            } else {
+                loop {
+                    match attempt.wait(PATIENCE) {
+                        Ok(Some(LoginUpdate::Authorize { .. })) => {}
+                        Err(_) => break,
+                        other => panic!("{case}: {other:?}"),
+                    }
+                }
+            }
+            server.join().unwrap();
+            drop(attempt);
+            drop(oauth);
+            drop(runtime);
+
+            let now = std::fs::read_to_string(&file).ok();
+            assert_eq!(now.as_deref(), held, "{case} on {}", site.name());
+        }
+    }
+}
+
+#[test]
+fn each_site_signs_in_renews_and_opens_its_page_on_its_own_hosts_alone() {
+    for (site, host, page, other) in [
+        (
+            KimiSite::Ai,
+            "https://auth.kimi.ai",
+            "https://www.kimi.ai",
+            "kimi.com",
+        ),
+        (
+            KimiSite::Com,
+            "https://auth.kimi.com",
+            "https://www.kimi.com",
+            "kimi.ai",
+        ),
+    ] {
+        let flow = Flow::production(Renewals::new(), site);
+
+        assert_eq!(&*flow.token, format!("{host}/api/oauth/token"));
+        assert_eq!(
+            &*flow.authorize,
+            format!("{host}/api/oauth/device_authorization")
+        );
+        assert_eq!(&*flow.verification, page);
+        assert_eq!(flow.name, site.name());
+        for address in [&*flow.token, &*flow.authorize, &*flow.verification] {
+            assert!(!address.contains(other), "{address}");
+        }
+    }
+}
+
+#[test]
+fn a_kimi_ai_renewal_reads_and_writes_its_own_name_and_writes_nothing_under_kimi_com() {
+    const STABLE: &str = "01234567-89ab-4cde-8fab-0123456789ab";
+    let (base, requests, server) = server(|_| {
+        vec![(
+            200,
+            serde_json::json!({
+                "access_token": "access-new",
+                "refresh_token": "refresh-new",
+                "expires_in": 3600,
+            })
+            .to_string(),
+        )]
+    });
+    let runtime = runtime();
+    let flow = Flow::testing(&base, &renewing(&runtime)).named(KimiSite::Ai.name());
+    let oauth = KimiOAuth::testing(flow);
+    let scratch = Scratch::new("refresh-kimi-ai");
+    std::fs::write(scratch.path().join("auth.json"), HELD).unwrap();
+    let store =
+        Store::in_home(scratch.path()).naming(crate::Names::new(["moonshot", "moonshot@kimi.ai"]));
+    store
+        .keep_subscription(
+            "moonshot@kimi.ai",
+            Tokens::new("access-old".into(), "refresh-old".into(), 1, 1)
+                .with_detail(DEVICE_ID, STABLE)
+                .with_detail(EXPIRES_IN, "3600"),
+        )
+        .unwrap();
+
+    let credential = oauth.credential(&store.read()).unwrap();
+    let mut outgoing = Outgoing::new();
+    runtime
+        .block_on(credential.authorize(&mut outgoing))
+        .unwrap();
+
+    let sent = requests.recv_timeout(PATIENCE).unwrap();
+    server.join().unwrap();
+    assert!(sent.body.contains("refresh-old"), "{}", sent.body);
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(scratch.path().join("auth.json")).unwrap())
+            .unwrap();
+    let renewed = on_disk
+        .get("subscriptions")
+        .and_then(|held| held.get("moonshot@kimi.ai"))
+        .and_then(|held| held.get("refresh_token"))
+        .and_then(serde_json::Value::as_str);
+    assert_eq!(renewed, Some("refresh-new"));
+    let kimi_com = on_disk
+        .get("subscriptions")
+        .and_then(|held| held.get("moonshot"));
+    assert!(kimi_com.is_none(), "{on_disk}");
+}
+
+#[test]
+fn a_completed_sign_in_keeps_its_identity_and_the_next_one_presents_it_again() {
+    for site in [KimiSite::Ai, KimiSite::Com] {
+        let scratch = Scratch::new(&format!("identity-{}", site.name()));
+        let store = Store::in_home(scratch.path())
+            .naming(crate::Names::new(["moonshot", "moonshot@kimi.ai"]));
+        let mut presented = Vec::new();
+        for _ in 0..2 {
+            let (base, requests, server) = server(|base| {
+                vec![
+                    (200, device(base)),
+                    (
+                        200,
+                        serde_json::json!({
+                            "access_token": "access-canary",
+                            "refresh_token": "refresh-canary",
+                            "expires_in": 3600,
+                        })
+                        .to_string(),
+                    ),
+                ]
+            });
+            let runtime = runtime();
+            let flow = Flow::testing(&base, &renewing(&runtime)).named(site.name());
+            let oauth = KimiOAuth::testing(flow);
+            let attempt = oauth.start(KimiOAuth::DEVICE, store.clone()).unwrap();
+            loop {
+                match attempt.wait(PATIENCE).unwrap() {
+                    Some(LoginUpdate::Complete) => break,
+                    Some(_) => {}
+                    None => panic!("the sign-in stalled"),
+                }
+            }
+            let first = requests.recv_timeout(PATIENCE).unwrap();
+            server.join().unwrap();
+            presented.push(first.headers.get("x-msh-device-id").unwrap().clone());
+        }
+
+        let [first, second] = presented.as_slice() else {
+            panic!("two sign-ins");
+        };
+        assert_eq!(first, second, "{}", site.name());
+        let on_disk: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(scratch.path().join("auth.json")).unwrap(),
+        )
+        .unwrap();
+        let kept = on_disk
+            .get("identities")
+            .and_then(|kept| kept.get(site.name()))
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(kept, Some(first.as_str()), "{on_disk}");
+    }
+}
+
+#[test]
+fn a_sign_in_stopped_while_its_write_waits_on_the_lock_says_what_the_store_ends_up_holding() {
+    // Another crucible holds the store's lock, as a renewal does across its
+    // request, while a kimi.ai sign-in's tokens arrive and the reader stops
+    // it. Whatever `cancel` answers must be what the store holds once the lock
+    // is let go: never "nothing written" over a sign-in that then lands.
+    let (base, _requests, server) = server(|base| {
+        vec![
+            (200, device(base)),
+            (
+                200,
+                serde_json::json!({
+                    "access_token": "access-canary",
+                    "refresh_token": "refresh-canary",
+                    "expires_in": 3600,
+                })
+                .to_string(),
+            ),
+        ]
+    });
+    let scratch = Scratch::new("stopped-under-lock");
+    let file = scratch.path().join("auth.json");
+    std::fs::write(&file, HELD).unwrap();
+    let store =
+        Store::in_home(scratch.path()).naming(crate::Names::new(["moonshot", "moonshot@kimi.ai"]));
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(scratch.path().join("auth.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let runtime = runtime();
+    let flow = Flow::testing(&base, &renewing(&runtime)).named(KimiSite::Ai.name());
+    let oauth = KimiOAuth::testing(flow);
+
+    let attempt = oauth.start(KimiOAuth::DEVICE, store.clone()).unwrap();
+    assert!(matches!(
+        attempt.wait(PATIENCE),
+        Ok(Some(LoginUpdate::Authorize { .. }))
+    ));
+    server.join().unwrap();
+    // The token has been served; half a second is ample for the flow to reach
+    // its write and begin waiting on the lock.
+    std::thread::sleep(Duration::from_millis(500));
+    let letting_go = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(1));
+        lock.unlock().unwrap();
+    });
+
+    let stopped = attempt.cancel();
+    letting_go.join().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let holding = store.holding().unwrap();
+    let signed_in = holding.iter().any(|held| held.name == "moonshot@kimi.ai");
+    match stopped {
+        crate::Stopped::Written => assert!(signed_in, "{holding:?}"),
+        crate::Stopped::Unwritten => {
+            assert!(!signed_in, "{holding:?}");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), HELD);
+        }
+        crate::Stopped::Unsettled => panic!("the write outlived its patience"),
+    }
+    assert_eq!(
+        stopped,
+        crate::Stopped::Written,
+        "the token was served before the stop"
+    );
+}

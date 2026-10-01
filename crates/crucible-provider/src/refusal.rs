@@ -156,6 +156,89 @@ pub(crate) async fn refused(
     .await
 }
 
+/// Whether a refused body, with its status, is the vendor refusing the fast
+/// form the request asked for. Each provider that sends one has its own,
+/// since the vendor's refusal is written in its own shape.
+pub(crate) type FastRule = fn(u16, &str) -> bool;
+
+/// [`refused`], for a request that may have asked for a fast form: a refusal
+/// `fast` recognises is [`ProviderError::FastRefused`] rather than the failure
+/// it would otherwise be.
+///
+/// A path of its own rather than a parameter of [`refused`], so a provider
+/// that never asks for a fast form reads its refusals exactly as before.
+pub(crate) async fn refused_at(
+    provider: &'static str,
+    fast: Option<FastRule>,
+    body: PostResponse,
+    redactions: &Redactions,
+    cancel: &Cancel,
+) -> ProviderError {
+    let refusal = Refusal {
+        provider,
+        status: body.status(),
+        redactions,
+        cancel,
+    };
+    let Some(fast) = fast else {
+        return said_async(refusal, body, MAX_WAIT).await;
+    };
+    let mut said = Vec::new();
+    let mut reading = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
+    let read = fill_async(&mut reading, &mut said, MAX_WAIT, cancel).await;
+    let whole = usize::try_from(MAX_REFUSAL).is_ok_and(|most| said.len() <= most);
+    if read.is_ok() && whole {
+        let text = String::from_utf8_lossy(&said);
+        if fast(refusal.status, &text) {
+            return ProviderError::FastRefused {
+                provider,
+                message: explain(&text).into(),
+            }
+            .redacted(redactions);
+        }
+    }
+    resolved(refusal, said, read)
+}
+
+/// [`refused`], for a vendor whose code says more than its sentence: where
+/// `worded` reads the whole body and its status as a line of crucible's own,
+/// that line is the message; anywhere else the refusal is what [`refused`]
+/// makes of it.
+///
+/// The body is read under the same bound and wait. A body that did not come
+/// whole is never reworded, since the code it would be read from may be what
+/// went missing.
+pub(crate) async fn refused_worded(
+    provider: &'static str,
+    body: PostResponse,
+    redactions: &Redactions,
+    cancel: &Cancel,
+    worded: impl FnOnce(u16, &str) -> Option<String>,
+) -> ProviderError {
+    let refusal = Refusal {
+        provider,
+        status: body.status(),
+        redactions,
+        cancel,
+    };
+    let mut said = Vec::new();
+    let mut reading = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
+    let read = fill_async(&mut reading, &mut said, MAX_WAIT, cancel).await;
+    let whole = usize::try_from(MAX_REFUSAL).is_ok_and(|most| said.len() <= most);
+    if read.is_ok()
+        && whole
+        && let Some(message) = worded(refusal.status, &String::from_utf8_lossy(&said))
+    {
+        return ProviderError::Refused {
+            provider,
+            status: refusal.status,
+            message: message.into(),
+        }
+        .redacted(redactions);
+    }
+    resolved(refusal, said, read)
+}
+
 /// The request facts needed while its refused body is read.
 #[derive(Clone, Copy)]
 struct Refusal<'a> {

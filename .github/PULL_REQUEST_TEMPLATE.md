@@ -26,7 +26,7 @@ environment is grounds for closing the PR. -->
 | Model + exact id | <!-- or n/a if by hand --> |
 | Harness + version | <!-- the IDE, CLI, or runner, or n/a --> |
 | Installed plugins | <!-- name and version of every plugin loaded, or none --> |
-| Human who reviewed this diff | <!-- a person, not a role --> |
+| Human who reviewed this diff | <!-- a person, not a role; while the box below is empty, who is being asked --> |
 
 ## What problem did you hit?
 
@@ -140,10 +140,12 @@ and what the crate costs in build time, binary size and startup. -->
 - [ ] A human has read the **complete** diff before this PR was opened.
 
 <!--
-STOP. If that box is not checked, do not open the PR.
+Tick the box only once the person named in the table has said they read the
+complete diff or authorized this PR. Until then leave it empty and name in the
+table who is being asked. A tick nobody gave is a false statement about a person.
 
 A PR is closed without review when it:
-- shows no evidence of a human reading the diff;
+- ticks the box for a person who has neither read the diff nor authorized it;
 - bundles unrelated changes;
 - leaves a required section blank or keeps placeholder text;
 - targets `main` without being a release or hotfix branch;

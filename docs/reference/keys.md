@@ -85,8 +85,9 @@ through the prompts sent from this directory, newest first, and keeps what it
 interrupted. The box need not be empty. <kbd>↓</kbd> walks forward again, and
 one step past the newest puts that text back. The top border of the box says
 where you are, such as `history 80/100`. Any edit ends the walk and leaves the
-text yours; moving the cursor does not. Each directory keeps its last hundred
-prompts between sessions, and a blank prompt is never kept. [Run
+text yours; moving the cursor does not. Each directory keeps at most its last
+hundred prompts between sessions, out of 512 kept across every directory, and a
+blank prompt or one longer than 1024 bytes is never kept. [Run
 it](../getting-started/getting-started.md#run-it) tells the longer story.
 
 ### The command list
@@ -94,8 +95,10 @@ it](../getting-started/getting-started.md#run-it) tells the longer story.
 While the box holds one word starting with `/`, the commands whose names begin
 with it stand in a list above the box, and a bare `/` shows all of them.
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list and <kbd>Enter</kbd> runs the
-marked command. The list is not opened where there is no room for the whole
-of it. The commands themselves are under
+marked command. The list is not drawn where there is no room for the whole
+of it, but it is still there: <kbd>↑</kbd> and <kbd>↓</kbd> still move its
+unseen mark, and <kbd>Enter</kbd> runs the marked command rather than the
+word as typed. The commands themselves are under
 [Commands](../getting-started/getting-started.md#commands).
 
 ### Other keys at the prompt
@@ -154,7 +157,7 @@ A call that needs your verdict stands a panel where the box was:
 
 | Key | What it does |
 | --- | --- |
-| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. While the explanation is open, scrolls it instead. |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. While the explanation is open and was cut to fit, scrolls it instead. |
 | <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> | Takes that answer at once: `Yes, once`, `Yes, and don't ask again this session`, `No, and end the turn`. |
 | <kbd>Enter</kbd> | Takes the marked answer. |
 | <kbd>Ctrl+E</kbd> | Opens the explanation the call sent, under the command or the path, and hides it again. Only where the footer names it. |
@@ -163,7 +166,8 @@ A call that needs your verdict stands a panel where the box was:
 
 The footer names the keys that apply: `esc to cancel` alone, or
 `esc to cancel · ctrl+e to explain` where the call sent an explanation and
-`esc to cancel · ctrl+e to hide` once it is open. [The long
+`esc to cancel · ctrl+e to hide` once it is open. An open explanation cut to
+fit adds `↑↓ to see more`. [The long
 version](../permissions/permissions.md#the-long-version) is about what
 <kbd>Ctrl+E</kbd> shows.
 
@@ -251,6 +255,13 @@ runs](../getting-started/getting-started.md#a-command-typed-while-a-turn-runs).
 and <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> leave with
 `cancelled, no rung taken`.
 
+### `/fast`
+
+<kbd>↑</kbd> and <kbd>↓</kbd> walk `Standard` and `Fast`, <kbd>Enter</kbd>
+takes the one marked, and <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or
+<kbd>Ctrl+D</kbd> leave with `cancelled, the speed is unchanged`. Typed while a
+turn runs, the speed taken is asked for once the turn ends.
+
 ### `/theme`
 
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list in view, <kbd>←</kbd> and
@@ -270,17 +281,30 @@ that row into the transcript. Leaving writes `sandbox settings unchanged`.
 
 ### `/login`
 
+The first panel and each list take the common keys; the arrows pass over the
+`Subscription` and `API key` headings that stand over rows narrowed by words.
+Below the first screen <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd>
+go back one screen with the mark where it was, and the footer reads `esc to go
+back`. On the first screen, and on one that words after `/login` opened
+directly, they cancel with `cancelled, nothing signed in`, and the footer reads
+`esc to cancel`.
+
 The key box shows one mark per character and never the key. Typed characters
 and a paste go in (a paste is trimmed and its control characters dropped),
 <kbd>Backspace</kbd> rubs out the last character, <kbd>Enter</kbd> saves the
 key and does nothing while the box is empty, and <kbd>Esc</kbd>,
-<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> leave with `cancelled, nothing signed
-in`. The arrows do nothing here: there is no cursor to move. A key past 16 KiB
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> leave it as its footer says. The arrows do nothing here: there is no cursor to move. A key past 16 KiB
 is refused whole, and silently. A window too short for the box says `the
 window has no room for the key box; make it taller and try /login again`.
 
 While an account login waits on the browser, <kbd>Esc</kbd>,
-<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> cancels it. Where a code is typed by
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> stops it and goes back; on a sign-in
+that words opened directly it cancels with `cancelled, nothing signed in`.
+Pressed as the sign-in is being stored, it waits for the write, up to ten
+seconds, and ends signed in where the write went through, or says `! the
+sign-in was being stored when it was stopped; /login shows what is stored`. A
+sign-in that fails, is refused or expires ends with `! sign-in did not
+complete` and what stays stored. Where a code is typed by
 hand instead, typing, paste and <kbd>Backspace</kbd> edit it and
 <kbd>Enter</kbd> submits it once it holds something. Past 16 KiB the row
 under the box says `authorization input is limited to 16 KiB`. [Account login
@@ -294,11 +318,14 @@ footer `esc to cancel`.
 ### `/help`, and a command refused mid-turn
 
 `/help` writes the list of commands into the transcript, and there is nothing
-to close. While a turn runs it stands as a panel instead: any key closes it, and
+to close; so does `/release-notes`, which is refused while a turn runs. While a
+turn runs `/help` stands as a panel instead: any key closes it, and
 so does a click on its rows or a wheel notch, and a resize redraws it. A
 command that cannot act while a turn runs stands a panel saying so, with
 `esc to close` under it; <kbd>Esc</kbd>, <kbd>Enter</kbd>, <kbd>Ctrl+C</kbd>
-and <kbd>Ctrl+D</kbd> all close it.
+and <kbd>Ctrl+D</kbd> all close it. A word typed alone that names no command
+stands the same panel, saying the word back with the nearest command names, or
+pointing at `/help` when none is near, in place of a name and a reason.
 
 ### A large session on pickup
 
@@ -331,7 +358,13 @@ the list, and <kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> close the whole thing.
 ### Results cut short
 
 <kbd>Ctrl+O</kbd> stands every result the transcript cut, newest first, and a
-click on a result's ` (ctrl+o to expand)` offer stands that one. Between
+click on a result's ` (ctrl+o to expand)` offer stands that one. A result no
+longer held in memory is read back from the session log when the view reaches
+it, one result's worth at a time: a further one the window reaches says
+`read back from the session log as the view moves on to it` until the one
+above it leaves, as does one the running turn has not written yet, and a step
+stops at each such result rather than passing it.
+Between
 turns the view takes the place of the box; while a turn runs it stands under
 the tail. Results cut after it opened are there the next time it is opened.
 The footer reads `esc to close`, or `esc to close · ↑↓ to see more` where
@@ -339,7 +372,7 @@ there is more.
 
 | Key | What it does |
 | --- | --- |
-| <kbd>↑</kbd>, <kbd>↓</kbd>, wheel | A row up or down. At either end, a notch the view cannot use scrolls the transcript. |
+| <kbd>↑</kbd>, <kbd>↓</kbd>, wheel | An arrow moves a row up or down; a wheel notch moves as many rows as it moves the transcript, six unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise. At either end, a notch the view cannot use scrolls the transcript. |
 | <kbd>Ctrl+O</kbd>, <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Closes it. |
 | Anything else | Nothing, <kbd>Enter</kbd> included. |
 

@@ -17,6 +17,11 @@ mod continuation;
 #[cfg(test)]
 mod continuation_tests;
 mod diagnostics;
+mod fast;
+#[cfg(test)]
+mod fast_tests;
+#[cfg(test)]
+mod newer_tests;
 mod stream;
 mod wire;
 
@@ -34,7 +39,7 @@ use crucible_types::{
 
 use crate::anthropic::stream::Stream;
 use crate::endpoint::Endpoint;
-use crate::refusal::refused;
+use crate::refusal::{FastRule, refused_at};
 use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
@@ -47,6 +52,16 @@ const VENDOR: Endpoint = Endpoint::fixed("https://api.anthropic.com/v1/messages"
 /// a deliberate change here rather than something that drifts.
 const VERSION: &str = "2023-06-01";
 pub(super) const FABLE_51: &str = "claude-fable-5-1";
+const OPUS_55: &str = "claude-opus-5-5";
+const SONNET_55: &str = "claude-sonnet-5-5";
+
+/// Whether `model`'s thinking is bound to the model and the conversation it
+/// was written in, and so is asked for with the binding controls, kept beside
+/// its answer and replayed to that model alone. Its vendor's pages say so of
+/// each of these three, in the same words.
+pub(crate) fn bound(model: &str) -> bool {
+    matches!(model, FABLE_51 | OPUS_55 | SONNET_55)
+}
 
 const ANTHROPIC_CACHE_CONTENT: &[PromptCacheContent] = &[
     PromptCacheContent::Text,
@@ -68,6 +83,7 @@ const ANTHROPIC_RETENTIONS: &[PromptCacheRetentionClass] = &[
 const USD: PricingCurrency = PricingCurrency::new("USD");
 const PRICING_REVIEWED: PricingDate = PricingDate::new(2026, 8, 31);
 const FABLE_51_REVIEWED: PricingDate = PricingDate::new(2026, 9, 6);
+const NEWER_REVIEWED: PricingDate = PricingDate::new(2026, 10, 1);
 const PRICING_SOURCE: &str = "https://platform.claude.com/docs/en/about-claude/pricing";
 
 const fn anthropic_rates(input: u64, read: u64, write: u64, output: u64) -> PromptCacheRates {
@@ -96,6 +112,13 @@ impl Anthropic {
     /// anywhere else.
     pub const VENDOR: Endpoint = VENDOR;
 
+    /// How `model` is asked to answer fast at the vendor's own address:
+    /// what a list of models says before any provider is set up.
+    #[must_use]
+    pub fn fast_at_vendor(model: &str) -> crucible_models::FastForm {
+        fast::form(true, model)
+    }
+
     /// A provider that authenticates with `credential`, sends over `transport`
     /// and posts to `endpoint`.
     ///
@@ -120,16 +143,19 @@ impl Anthropic {
     }
 
     /// The headers every request carries, including the secret.
-    async fn headers(&self, model: &str) -> Result<Outgoing, ProviderError> {
+    async fn headers(&self, model: &str, fast: bool) -> Result<Outgoing, ProviderError> {
         let mut outgoing = Outgoing::new();
         outgoing.set_header("content-type", "application/json");
         outgoing.set_header("anthropic-version", VERSION);
         outgoing.set_header("accept", "text/event-stream");
-        if model == FABLE_51 {
+        if bound(model) {
             outgoing.set_header(
                 "anthropic-beta",
                 "thinking-binding-controls-2026-08-01,mid-conversation-output-config-2026-07-01",
             );
+        }
+        if fast {
+            fast::beta(&mut outgoing);
         }
 
         self.credential
@@ -167,6 +193,8 @@ impl Provider for Anthropic {
         }
         let (minimum, revision) = match model {
             FABLE_51 => (512, FABLE_51),
+            OPUS_55 => (512, OPUS_55),
+            SONNET_55 => (512, SONNET_55),
             "claude-fable-5" => (512, "claude-fable-5"),
             "claude-opus-5" => (512, "claude-opus-5"),
             "claude-sonnet-5" => (1_024, "claude-sonnet-5"),
@@ -187,10 +215,10 @@ impl Provider for Anthropic {
             ANTHROPIC_CACHE_CONTENT,
         )
         .with_retentions(ANTHROPIC_RETENTIONS);
-        let (date, version) = if model == FABLE_51 {
-            ("2026-09-06", "anthropic-prompt-cache-2026-09-06")
-        } else {
-            ("2026-08-31", "anthropic-prompt-cache-2026-08-31")
+        let (date, version) = match model {
+            FABLE_51 => ("2026-09-06", "anthropic-prompt-cache-2026-09-06"),
+            OPUS_55 | SONNET_55 => ("2026-10-01", "anthropic-prompt-cache-2026-10-01"),
+            _ => ("2026-08-31", "anthropic-prompt-cache-2026-08-31"),
         };
         PromptCacheCapabilities::supported(
             version,
@@ -214,10 +242,10 @@ impl Provider for Anthropic {
         retention: PromptCacheRetentionClass,
         at: PricingDate,
     ) -> Result<Option<PromptCachePricing>, PricingError> {
-        let reviewed = if model == FABLE_51 {
-            FABLE_51_REVIEWED
-        } else {
-            PRICING_REVIEWED
+        let reviewed = match model {
+            FABLE_51 => FABLE_51_REVIEWED,
+            OPUS_55 | SONNET_55 => NEWER_REVIEWED,
+            _ => PRICING_REVIEWED,
         };
         if self.endpoint != VENDOR || at < reviewed || input_tokens.is_none() {
             return Ok(None);
@@ -249,6 +277,24 @@ impl Provider for Anthropic {
                     12_500_000_000,
                     20_000_000_000,
                     50_000_000_000,
+                ),
+                (OPUS_55, Some(OPUS_55)) => (
+                    OPUS_55,
+                    OPUS_55,
+                    4_000_000_000,
+                    200_000_000,
+                    5_000_000_000,
+                    8_000_000_000,
+                    20_000_000_000,
+                ),
+                (SONNET_55, Some(SONNET_55)) => (
+                    SONNET_55,
+                    SONNET_55,
+                    2_000_000_000,
+                    200_000_000,
+                    2_500_000_000,
+                    4_000_000_000,
+                    10_000_000_000,
                 ),
                 ("claude-opus-5", Some("claude-opus-5")) => (
                     "claude-opus-5",
@@ -296,6 +342,10 @@ impl Provider for Anthropic {
                     "anthropic-direct-1h-2026-09-06"
                 } else if model == FABLE_51 {
                     "anthropic-direct-5m-2026-09-06"
+                } else if matches!(model, OPUS_55 | SONNET_55) && extended {
+                    "anthropic-direct-1h-2026-10-01"
+                } else if matches!(model, OPUS_55 | SONNET_55) {
+                    "anthropic-direct-5m-2026-10-01"
                 } else if extended {
                     "anthropic-direct-1h-2026-08-31"
                 } else {
@@ -326,9 +376,22 @@ impl Provider for Anthropic {
         body::prompt_cache_encoding(request)
     }
 
+    fn fast(&self, model: &str) -> crucible_models::FastForm {
+        fast::form(self.endpoint == VENDOR, model)
+    }
+
     fn stream<'a>(
         &'a self,
         request: Request<'a>,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
+        self.stream_at(request, crucible_models::Speed::Standard, cancel)
+    }
+
+    fn stream_at<'a>(
+        &'a self,
+        request: Request<'a>,
+        speed: crucible_models::Speed,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<Box<dyn DeltaStream>, ProviderError>> {
         Box::pin(async move {
@@ -338,12 +401,15 @@ impl Provider for Anthropic {
                 return Err(ProviderError::Cancelled(NAME));
             }
 
-            let mut outgoing = self.headers(request.model).await?;
+            // Fast only where it was asked and this model at this address has
+            // a form the request carries.
+            let fast = speed == crucible_models::Speed::Fast && self.fast(request.model).switched();
+            let mut outgoing = self.headers(request.model, fast).await?;
             let scope = crucible_types::ContinuationScope::new(
                 self.credential_scope,
                 self.endpoint.as_str(),
             );
-            let body = body::serialize(&request, (request.model == FABLE_51).then_some(scope))?;
+            let body = body::serialize_at(&request, bound(request.model).then_some(scope), fast)?;
 
             let response = self
                 .transport
@@ -354,8 +420,9 @@ impl Provider for Anthropic {
                 response.map_err(|problem| problem.for_provider(NAME).redacted(&redactions))?;
 
             if response.status() != 200 {
-                let error = refused(NAME, response.status(), response, &redactions, cancel).await;
-                return Err(if request.model == FABLE_51 {
+                let rule = fast.then_some(fast::refused as FastRule);
+                let error = refused_at(NAME, rule, response, &redactions, cancel).await;
+                return Err(if bound(request.model) {
                     diagnostics::refusal(error)
                 } else {
                     error

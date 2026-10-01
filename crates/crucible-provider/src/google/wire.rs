@@ -25,9 +25,16 @@ pub(crate) struct Interactions {
     completed: bool,
     done: bool,
     budget: Budget,
+    /// The tier the response header said served the request.
+    served: crucible_models::Served,
 }
 
 impl Interactions {
+    /// The same stream, served at `served`, as the response header said.
+    pub(crate) fn serving(self, served: crucible_models::Served) -> Self {
+        Self { served, ..self }
+    }
+
     pub(crate) fn new(model: &str, scope: ContinuationScope) -> Result<Self, ProviderError> {
         Ok(Self {
             state: Some(
@@ -139,6 +146,9 @@ impl Interactions {
 
 impl Wire for Interactions {
     const PROVIDER: &'static str = super::NAME;
+    fn served(&self) -> crucible_models::Served {
+        self.served
+    }
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
         if event.name == "ping" {
             return Ok(Vec::new());

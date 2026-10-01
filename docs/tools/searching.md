@@ -112,7 +112,10 @@ successful search of nothing.
 | `limit` | How many paths. Defaults to 200, never more than 1000. |
 
 The answer is one path per line, and a walk that matched more says so:
-`[41 more: narrow the pattern or raise limit]`.
+`[41 more: narrow the pattern or raise limit]`. An answer that filled its
+30,000 bytes before `limit` was reached says
+`[41 more: the answer was full at 30000 bytes, narrow the pattern]` instead,
+since raising the limit would not help.
 
 `sort` decides the order and therefore which paths a `limit` keeps, which is the
 part worth knowing. The listing is bounded while the tree is still being walked,

@@ -2,7 +2,8 @@
 //!
 //! `/model` and `/effort` write into the file at home, because which model to
 //! ask and how hard to think are facts about who is running crucible rather
-//! than about the checkout.
+//! than about the checkout; so does a yes to a route whose vendor uses what is
+//! sent, which only that file may hold.
 //!
 //! The crate below decides what a file may say and what one more answer leaves
 //! it looking like. This opens it, and puts the answer back.
@@ -14,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crucible_config::ConfigError;
-use crucible_models::Effort;
+use crucible_models::{Effort, Speed};
 
 #[cfg(test)]
 use crucible_tools::Minted;
@@ -107,6 +108,35 @@ pub fn syntax(file: &Path, theme: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Writes down the yes to sending on `route`.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the yes and nothing else.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn accepting(file: &Path, route: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::accepting(text, named, route)
+    })
+}
+
+/// Takes the yes to every route `gone` picks out of the file.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn forgetting(file: &Path, gone: impl Fn(&str) -> bool) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::forgetting(text, named, &gone)
+    })
+}
+
 /// Writes `provider` down as the one to ask from now on.
 ///
 /// Everything already in the file stays where it was, byte for byte. A file
@@ -125,8 +155,10 @@ pub fn asking(file: &Path, provider: &str) -> Result<(), RememberError> {
 
 /// Writes `model` down as the one to ask `provider` for.
 ///
-/// Everything already in the file stays where it was, byte for byte. A file
-/// that is not there yet becomes one holding the choice and nothing else.
+/// The rung is taken out, and the speed too where the file named another
+/// model; everything else already in the file stays where it was, byte for
+/// byte. A file that is
+/// not there yet becomes one holding the choice and nothing else.
 ///
 /// # Errors
 ///
@@ -153,6 +185,32 @@ pub fn choosing(file: &Path, provider: &str, model: &str) -> Result<(), Remember
 pub fn thinking(file: &Path, provider: &str, effort: Effort) -> Result<(), RememberError> {
     answering(file, |text, named| {
         crucible_config::thinking(text, named, provider, effort)
+    })
+}
+
+/// Writes down that `provider` asks `model` fast: the model and the speed
+/// together, since the speed was chosen at that model's price. Everything
+/// else already in the file stays where it was, byte for byte.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration.
+pub fn hastening(file: &Path, provider: &str, model: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::hastening(text, named, provider, model)
+    })
+}
+
+/// Takes `provider`'s speed out of `file`, so it asks at standard.
+///
+/// # Errors
+///
+/// As [`hastening`].
+pub fn slowing(file: &Path, provider: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::slowing(text, named, provider)
     })
 }
 
@@ -194,31 +252,59 @@ fn answering(
         Err(problem) => return Err(unwritable(problem.into_io())),
     }
 
+    let text = text_of(file, &named)?;
+
+    let written = splice(&text, &named)?;
+    // An answer already written, or a yes taken out of a file that holds
+    // none, changes nothing, and a file nothing changed is not written: one
+    // that was not there would otherwise be left empty, which is not
+    // configuration.
+    if written == text {
+        return Ok(());
+    }
+
+    put(file, &written).map_err(unwritable)
+}
+
+/// What `file`, named `named`, holds: the empty text where nothing is there
+/// yet, which is what most projects look like and what the crate below reads
+/// as "write a whole file".
+fn text_of(file: &Path, named: &str) -> Result<String, RememberError> {
+    let unwritable = |source| RememberError::Unwritable {
+        file: named.into(),
+        source,
+    };
     let opened = match File::open(file) {
-        Ok(opened) => Some(opened),
-        // Nothing there yet, which is what most projects look like. The empty
-        // text is what the crate below reads as "write a whole file".
-        Err(source) if source.kind() == io::ErrorKind::NotFound => None,
+        Ok(opened) => opened,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(String::new()),
         Err(source) => return Err(unwritable(source)),
     };
     let mut text = String::new();
-    if let Some(opened) = opened {
-        opened
-            .take((crucible_config::MAX_DOCUMENT_BYTES + 1) as u64)
-            .read_to_string(&mut text)
-            .map_err(unwritable)?;
-        if text.len() > crucible_config::MAX_DOCUMENT_BYTES {
-            return Err(ConfigError::TooLarge {
-                file: named.clone().into(),
-                maximum: crucible_config::MAX_DOCUMENT_BYTES,
-            }
-            .into());
+    opened
+        .take((crucible_config::MAX_DOCUMENT_BYTES + 1) as u64)
+        .read_to_string(&mut text)
+        .map_err(unwritable)?;
+    if text.len() > crucible_config::MAX_DOCUMENT_BYTES {
+        return Err(ConfigError::TooLarge {
+            file: named.into(),
+            maximum: crucible_config::MAX_DOCUMENT_BYTES,
         }
+        .into());
     }
+    Ok(text)
+}
 
-    let written = splice(&text, &named)?;
-
-    put(file, &written).map_err(unwritable)
+/// The speed `file` asks `provider` for now: what [`hastening`] last wrote,
+/// read without waiting on the lock, since a write replaces the file whole.
+///
+/// # Errors
+///
+/// [`RememberError::Unwritable`] when the file cannot be read, and
+/// [`RememberError::Unusable`] when what it says is not configuration.
+pub fn hastened(file: &Path, provider: &str, model: &str) -> Result<Speed, RememberError> {
+    let named = file.display().to_string();
+    let text = text_of(file, &named)?;
+    Ok(crucible_config::hastened(&text, &named, provider, model)?)
 }
 
 /// Replaces the file, or leaves whatever is there untouched.

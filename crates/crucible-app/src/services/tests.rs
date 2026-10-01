@@ -10,6 +10,7 @@ use tokio::runtime::Handle;
 
 use super::serving;
 use crate::runtime::WORKERS;
+use crate::sample::recording;
 
 /// Longer than a free runtime takes to run a task it was just handed, by
 /// orders of magnitude, and short enough that a stop handed to a runtime that
@@ -218,7 +219,7 @@ fn the_release_owner_lends_a_client_and_keeps_its_own_pool_unbuilt() {
     let (asked, stopped) = serving(|services| {
         let owner = services.release();
         let plain = crucible_http::Lookups::plain(std::num::NonZeroUsize::MIN);
-        let lent = owner.client(plain.clone().into());
+        let lent = owner.client(plain.clone().into(), Arc::new(services.consent().clone()));
         let check_has_its_own = format!("{owner:?}");
 
         (
@@ -234,5 +235,62 @@ fn the_release_owner_lends_a_client_and_keeps_its_own_pool_unbuilt() {
         "the release owner refused to lend a client, the run's client was built before anything \
          asked for it, or the check had built its own pool before its first use"
     );
+    assert_eq!(stopped, Ok(()));
+}
+
+/// The one client provider turns and web posts share holds a warned route's
+/// origin: nothing reaches it before the yes, and the request goes after it.
+#[test]
+fn the_shared_client_sends_a_warned_route_nothing_until_its_yes() {
+    use crucible_credentials::Outgoing;
+    use crucible_provider::Transport as _;
+    use crucible_runtime::Cancel;
+
+    use crate::content_use::{Routes, WARNED, Warned};
+
+    let (url, heard) = recording();
+    let origin: &'static str = Box::leak(
+        crucible_http::Origin::of(&url)
+            .unwrap()
+            .to_string()
+            .into_boxed_str(),
+    );
+    let warned = Warned {
+        route: "key:recorded",
+        shown: "Recorded",
+        warning: WARNED[3].warning,
+        origins: Box::leak(Box::new([origin])),
+    };
+    let services = super::Services::over(Routes::new(vec![warned]));
+    let runtime = services.runtime().handle().unwrap();
+    let post = || {
+        runtime.block_on(services.http().post(
+            &url,
+            &mut Outgoing::new(),
+            "{}".into(),
+            &Cancel::new(),
+        ))
+    };
+
+    let held = post().err().map(|problem| problem.to_string());
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(heard.load(Ordering::SeqCst), 0, "{held:?}");
+    assert!(held.is_some_and(|said| said.contains("key:recorded")));
+
+    services.consent().record("key:recorded");
+    assert!(post().is_ok());
+    assert!(heard.load(Ordering::SeqCst) > 0);
+    drop(services);
+}
+
+/// The renewals owner is handed the run's consent before anything could be
+/// sent, so every sign-in and renewal request it makes asks it first. What the
+/// hold then does to a request is the renewals owner's own test; this is the
+/// run handing it over.
+#[test]
+fn the_renewals_owner_is_held_by_the_run_s_consent_from_the_start() {
+    let (asked, stopped) = serving(|services| format!("{:?}", services.renewals()));
+
+    assert!(asked.contains("held: true"), "{asked}");
     assert_eq!(stopped, Ok(()));
 }

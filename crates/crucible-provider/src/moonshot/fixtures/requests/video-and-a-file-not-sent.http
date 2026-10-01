@@ -1,0 +1,7 @@
+POST https://api.kimi.com/coding/v1/chat/completions
+content-type: application/json
+accept: text/event-stream
+user-agent: crucible/{version}
+authorization: Bearer fabricated-kimi-key
+
+{"model":"k3","max_tokens":4096,"stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":[{"type":"video_url","video_url":{"url":"data:video/mp4;base64,AAAAGGZ0eXA="}},{"type":"text","text":"holiday.png is not attached to this request, to keep the request within its size limit: read it again if you need it."}]}]}

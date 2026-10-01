@@ -28,6 +28,7 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::providers::Served;
 use crucible_client_api as api;
+use crucible_models::{FastForm, Speed};
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
@@ -40,14 +41,16 @@ use crate::cli::client::astray;
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
-use super::{Held, Terms, mode, picking};
+use super::{Held, Terms, mode, picking, warning};
 
 mod cache;
 mod clear;
 mod effort;
+mod fast;
 mod login;
 mod logout;
 mod model;
+pub(crate) mod notes;
 mod resume;
 mod sandbox;
 mod theme;
@@ -60,10 +63,14 @@ mod theme;
 pub(super) enum Command {
     /// What these are.
     Help,
+    /// Every release crucible has had, or one of them in full.
+    ReleaseNotes,
     /// Which model answers.
     Model,
     /// How hard it is asked to think.
     Effort,
+    /// How fast it is asked to answer, where its vendor serves a fast form.
+    Fast,
     /// A key for a provider, given to a box that does not echo it.
     Login,
     /// An account or API key Crucible stored, removed.
@@ -91,10 +98,12 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 13] = [
+const EVERY: [Command; 15] = [
     Command::Help,
+    Command::ReleaseNotes,
     Command::Model,
     Command::Effort,
+    Command::Fast,
     Command::Login,
     Command::Logout,
     Command::Mode,
@@ -218,20 +227,19 @@ pub(super) enum Owned {
         /// What followed it. Empty where nothing did.
         rest: String,
     },
-    /// A word shaped like a command that names none. The word is not kept: an
-    /// unknown one is refused whichever it is, and the panel says only that it
-    /// names no command.
-    Unknown,
+    /// A word shaped like a command that names none, and the two rows it is
+    /// refused with, which the panel says in the words the transcript would.
+    Unknown([String; 2]),
 }
 
 impl Owned {
-    /// Which command this is, or `Exit` for a word that names none — a command
-    /// that is never live, so an unknown word is refused the way a safe-looking
-    /// typo is.
+    /// Which command this is, or `Exit` for a word that names none. `Exit` is a
+    /// stand-in no caller runs: the class of a word that names none is a
+    /// refusal, and [`refused`] says the word itself back rather than a name.
     pub(super) fn command(&self) -> Command {
         match self {
             Self::Known { command, .. } => *command,
-            Self::Unknown => Command::Exit,
+            Self::Unknown(_) => Command::Exit,
         }
     }
 
@@ -240,7 +248,7 @@ impl Owned {
     pub(super) fn class(&self) -> MidTurn {
         match self {
             Self::Known { command, .. } => command.mid_turn(),
-            Self::Unknown => MidTurn::Refused("names no command"),
+            Self::Unknown(_) => MidTurn::Refused("names no command"),
         }
     }
 }
@@ -267,8 +275,10 @@ impl Command {
     const fn name(self) -> &'static str {
         match self {
             Self::Help => "/help",
+            Self::ReleaseNotes => "/release-notes",
             Self::Model => "/model",
             Self::Effort => "/effort",
+            Self::Fast => "/fast",
             Self::Login => "/login",
             Self::Logout => "/logout",
             Self::Mode => "/mode",
@@ -286,8 +296,10 @@ impl Command {
     const fn says(self, glyphs: Glyphs) -> &'static str {
         match self {
             Self::Help => "what these are",
+            Self::ReleaseNotes => "what changed in each release",
             Self::Model => "pick which model answers",
             Self::Effort => "pick how hard it thinks",
+            Self::Fast => "pick how fast it answers",
             // How you are signed in, rather than what crucible signs with. A
             // key is one of the ways in and the row is read by somebody who
             // does not know yet which of them is theirs.
@@ -340,7 +352,11 @@ impl Command {
             // and the command is told the same — stepped to and held for the
             // turn the loop starts next, the change a running turn's gate
             // cannot take.
-            Self::Model | Self::Mode => MidTurn::Deferred,
+            //
+            // The speed belongs to the next request, as the model does: the
+            // `/fast` panel opens now and the speed taken is asked for once
+            // the turn ends.
+            Self::Model | Self::Mode | Self::Fast => MidTurn::Deferred,
             Self::Effort => {
                 MidTurn::Refused("sets how hard it thinks, which the running turn has taken")
             }
@@ -355,6 +371,12 @@ impl Command {
             }
             Self::Clear => MidTurn::Refused("starts a new session, leaving the one being answered"),
             Self::Exit => MidTurn::Refused("ends the session, turn and all"),
+            // Refused rather than printed under the tail: a thousand rows
+            // would part the answer being written, and they will be there to
+            // print once it is done.
+            Self::ReleaseNotes => {
+                MidTurn::Refused("prints a thousand rows into the answer being written")
+            }
         }
     }
 }
@@ -373,10 +395,15 @@ pub(super) enum MidTurn {
 /// What `line` asked for, or `None` where it asked for no command at all.
 ///
 /// The whole of the parsing, done once, here. Everything downstream has either
-/// a [`Command`] or a word already known to be a slash and letters, which is
-/// what makes an unknown one safe to say back: it cannot be carrying an escape
-/// sequence, because a word carrying one is not shaped like a command and never
-/// reaches this far.
+/// a [`Command`] or a word already known to be a slash, letters and hyphens,
+/// which is what makes an unknown one safe to say back: it cannot be carrying
+/// an escape sequence, because a word carrying one is not shaped like a command
+/// and never reaches this far.
+///
+/// An unknown word is only ever the whole line. `/tmp is full` is a sentence
+/// that happens to open with a directory, and refusing it would be refusing to
+/// send somebody's question; a word typed alone is the one line that could
+/// only have been meant as a command.
 pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a>> {
     let line = line.trim();
     let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
@@ -385,13 +412,14 @@ pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a
         return None;
     }
 
-    Some(match named(commands, word) {
-        Some(command) => Wanted::Known {
+    match named(commands, word) {
+        Some(command) => Some(Wanted::Known {
             command,
             rest: rest.trim(),
-        },
-        None => Wanted::Unknown(word),
-    })
+        }),
+        None if rest.is_empty() => Some(Wanted::Unknown(word)),
+        None => None,
+    }
 }
 
 /// Runs a command that moves nothing but the screen, with a turn behind it.
@@ -413,7 +441,7 @@ pub(super) fn live<T: Terminal>(
     let style = terms.style();
     let rest = match wanted {
         Owned::Known { rest, .. } => rest.as_str(),
-        Owned::Unknown => "",
+        Owned::Unknown(_) => "",
     };
     match wanted.command() {
         Command::Theme => theme::live(renderer, terms, rest, while_waiting),
@@ -459,6 +487,8 @@ struct Still;
 pub(super) enum Kept {
     /// A model picked and confirmed, to be applied when the runner is back.
     Model(Served, String),
+    /// A speed taken, to be asked for when the runner is back.
+    Speed(Speed),
 }
 
 /// Who is answering and for which model, by name: what a panel stood while the
@@ -469,6 +499,34 @@ pub(super) struct Asked<'a> {
     pub(super) provider: Option<&'static str>,
     /// The model in force, empty where none is.
     pub(super) model: &'a str,
+    /// The rung it is asked on, where one is in force.
+    pub(super) effort: Option<&'a str>,
+    /// How fast the model is asked to answer, and was last served.
+    pub(super) pace: Pace,
+}
+
+/// How the model in force is asked to answer fast, the speed it is asked at,
+/// and whether the last answer was served fast: read off the runner while it
+/// is this side's, for what is drawn while it is away.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Pace {
+    /// The model's fast form, as its provider answers.
+    pub(super) form: FastForm,
+    /// The speed it is asked at.
+    pub(super) speed: Speed,
+    /// Whether the last answer was served fast.
+    pub(super) served: bool,
+}
+
+impl Pace {
+    /// The pace of the model `runner` asks.
+    pub(super) fn of(runner: &crucible_runner::Runner) -> Self {
+        Self {
+            form: runner.provider().fast(runner.model()),
+            speed: runner.speed(),
+            served: runner.served().fast(),
+        }
+    }
 }
 
 pub(super) fn deferred<T: Terminal>(
@@ -493,10 +551,27 @@ pub(super) fn deferred<T: Terminal>(
 
             if model::confirmed(renderer, terms, selected, while_waiting)? {
                 let (provider, name) = selected.parts();
-                return Ok(Some(Kept::Model(provider, name)));
+                match warning::choosing(
+                    renderer,
+                    terms,
+                    (provider.name, &name),
+                    true,
+                    while_waiting,
+                )? {
+                    warning::Chosen::Take => return Ok(Some(Kept::Model(provider, name))),
+                    warning::Chosen::Back => {}
+                    warning::Chosen::Stop(said) => {
+                        renderer.commit(&said)?;
+                        return Ok(None);
+                    }
+                }
             }
             // "go back": round to the picker.
         },
+        Owned::Known {
+            command: Command::Fast,
+            ..
+        } => Ok(fast::picked_while(renderer, terms, current, while_waiting)?.map(Kept::Speed)),
         // `/mode` has no picker to stand here: mid-turn it makes the step
         // shift+tab would, and the loop holds it for the next turn. Every other
         // command the classifier does not route here holds nothing either.
@@ -519,16 +594,28 @@ pub(super) fn apply_model<T: Terminal>(
     model::apply(renderer, conversation, terms, provider, name)
 }
 
+/// Asks for a speed taken mid-turn, as the turn it was taken over ends.
+pub(super) fn apply_speed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    conversation: &mut Conversation,
+    terms: &Terms,
+    speed: Speed,
+) -> Result<(), Fatal> {
+    fast::taken(speed, renderer, conversation, terms)
+}
+
 /// Stands why a command cannot run now over the box until escape closes it.
 ///
 /// Where the box was, as every panel is: the rule, the command's name, the one
-/// reason it cannot run while a turn is, and the key that closes it. The turn
+/// reason it cannot run while a turn is, and the key that closes it. A word
+/// that names no command has neither, and is said back with the names nearest
+/// to it, as it would be between turns. The turn
 /// goes on above — the panel stands where the working row, the box, the status
 /// and the map were, and the transcript keeps its own rows. Nothing of the turn
 /// changes: the command did nothing, and this is the whole of what happened.
 pub(super) fn refused<T: Terminal>(
     renderer: &mut Renderer<T>,
-    command: Command,
+    wanted: &Owned,
     why: &'static str,
     style: Style,
 ) -> Result<Option<&'static str>, Fatal> {
@@ -536,22 +623,7 @@ pub(super) fn refused<T: Terminal>(
         renderer,
         |_| style,
         &mut Still,
-        |_, columns, _| {
-            let glyphs = style.glyphs();
-            let mut rows = vec![
-                Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
-                Row::new(),
-                Row::new().then(Slot::Strong, command.name()),
-            ];
-            rows.extend(
-                fold(why, columns)
-                    .into_iter()
-                    .map(|line| Row::new().then(Slot::Plain, line)),
-            );
-            rows.push(Row::new());
-            rows.push(Row::new().then(Slot::Quiet, "esc to close"));
-            (rows, None)
-        },
+        |_, columns, _| (refusing(wanted, why, columns, style.glyphs()), None),
         |arrived, _| {
             // Matching the key rather than the state: the panel holds nothing,
             // so only the press decides what the loop does with it.
@@ -570,6 +642,41 @@ pub(super) fn refused<T: Terminal>(
     Ok(None)
 }
 
+/// The rows of the panel [`refused`] stands: the rule, what was asked for,
+/// why it cannot run now, and the key that closes it.
+///
+/// A word that names no command has no name to head the panel and no reason of
+/// its own, so it is said back the way the transcript says it between turns:
+/// the word, and the names it was nearest to.
+fn refusing(wanted: &Owned, why: &'static str, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    let mut rows = vec![
+        Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
+        Row::new(),
+    ];
+    let said = match wanted {
+        Owned::Known { command, .. } => {
+            rows.push(Row::new().then(Slot::Strong, command.name()));
+            vec![why]
+        }
+        Owned::Unknown(refused) => refused.iter().map(String::as_str).collect(),
+    };
+    // Folded after the indent a line opens with, so the names under a refused
+    // word stay under its words rather than back at the edge.
+    rows.extend(said.into_iter().flat_map(|line| {
+        let words = line.trim_start();
+        let gap = line.len() - words.len();
+        // A window no wider than the indent keeps none of it, so the words
+        // still have a column to be drawn in.
+        let indent = " ".repeat(if gap < columns { gap } else { 0 });
+        fold(words, columns - indent.len())
+            .into_iter()
+            .map(move |part| Row::new().then(Slot::Plain, format!("{indent}{part}")))
+    }));
+    rows.push(Row::new());
+    rows.push(Row::new().then(Slot::Quiet, "esc to close"));
+    rows
+}
+
 /// A command read mid-turn, owned so it crosses from the keyboard loop to the
 /// turn's own. `None` where the line is no command, the same as [`wanted`].
 pub(super) fn owned(commands: &Commands, line: &str) -> Option<Owned> {
@@ -578,7 +685,7 @@ pub(super) fn owned(commands: &Commands, line: &str) -> Option<Owned> {
             command,
             rest: rest.to_owned(),
         },
-        Wanted::Unknown(_) => Owned::Unknown,
+        Wanted::Unknown(word) => Owned::Unknown(refusal(commands, word)),
     })
 }
 
@@ -636,6 +743,20 @@ pub(super) fn run<T: Terminal>(
         return Ok(Ran::Leave);
     }
 
+    // The one answer not hung off the line that asked: a timeline has a rail
+    // of its own down the left, and a thousand rows indented under a mark
+    // would be a second one beside it. One release and the refusals are set
+    // apart the same way, as the list's look draws them.
+    if let Wanted::Known {
+        command: Command::ReleaseNotes,
+        rest,
+    } = wanted
+    {
+        notes::run(rest, renderer, terms.style().glyphs())?;
+        renderer.commit("")?;
+        return Ok(Ran::Again);
+    }
+
     // Directly under the line that asked, with nothing between: the answer is
     // hung off that line by the mark in front of it, and a blank row between
     // the two would leave the mark pointing at nothing. The blank goes after,
@@ -662,11 +783,13 @@ fn answer<T: Terminal>(
     let glyphs = style.glyphs();
 
     match wanted {
-        // Answered by `run`, which returns before this is reached. Spelled out
-        // rather than left to a wildcard, so a command added later stops the
-        // build here instead of running and saying nothing.
+        // Answered by `run`, which returns before this is reached: `/exit`
+        // ends the conversation, and `/release-notes` is printed without being
+        // hung under the line that asked. Spelled out rather than left to a
+        // wildcard, so a command added later stops the build here instead of
+        // running and saying nothing.
         Wanted::Known {
-            command: Command::Exit,
+            command: Command::Exit | Command::ReleaseNotes,
             ..
         } => {}
 
@@ -691,6 +814,11 @@ fn answer<T: Terminal>(
             command: Command::Effort,
             rest,
         } => effort::run(rest, renderer, conversation, terms, held.answers.keys)?,
+
+        Wanted::Known {
+            command: Command::Fast,
+            rest,
+        } => fast::run(rest, renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Login,
@@ -736,9 +864,9 @@ fn answer<T: Terminal>(
         } => clear::run(renderer, conversation, held, terms)?,
 
         Wanted::Unknown(word) => {
-            renderer.commit(&format!("! no such command: {word}"))?;
-            renderer.commit("")?;
-            renderer.present(&listing(&terms.commands.snapshot(), columns, glyphs))?;
+            for row in refusal(&terms.commands.snapshot(), word) {
+                renderer.commit(&row)?;
+            }
         }
     }
 
@@ -854,22 +982,128 @@ const fn leaves(wanted: Wanted<'_>) -> bool {
     )
 }
 
+/// How many names a slip is answered with, at most. More than this is the
+/// list again, and the list is what `/help` is for.
+const NEAREST: usize = 3;
+
+/// The registered names nearest to a word that names none, nearest first.
+pub(super) fn nearest(commands: &Commands, word: &str) -> Vec<&'static str> {
+    nearest_among(
+        commands.entries().iter().map(|slash| slash.command.name()),
+        word,
+    )
+}
+
+/// The names of `names` nearest to `word`, nearest first, at most [`NEAREST`].
+///
+/// Near is a few edits away: a letter put in, taken out or changed, or two
+/// neighbours swapped, which between them are the slips a hand makes. A longer
+/// name tolerates more of them, one more for every five of its letters past
+/// the first four, so `/hlep` finds `/help` while `/zzz` finds nothing. Of
+/// names equally near, the one nearest the word in length comes first, since a
+/// slip that kept the length changed a letter rather than dropping one; then
+/// the order the names were given in.
+fn nearest_among(names: impl Iterator<Item = &'static str>, word: &str) -> Vec<&'static str> {
+    let mut near: Vec<(usize, usize, usize, &'static str)> = names
+        .enumerate()
+        .filter_map(|(listed, name)| {
+            let edits = apart(word, name);
+            let letters = name.len().saturating_sub(1);
+            let tolerated = 1 + letters.saturating_sub(4) / 5;
+            (edits > 0 && edits <= tolerated)
+                .then(|| (edits, name.len().abs_diff(word.len()), listed, name))
+        })
+        .collect();
+    near.sort_unstable();
+    near.into_iter()
+        .take(NEAREST)
+        .map(|(.., name)| name)
+        .collect()
+}
+
+/// How many single edits turn `word` into `name`: a character put in, taken
+/// out or changed, or two neighbours swapped.
+fn apart(word: &str, name: &str) -> usize {
+    let word: Vec<char> = word.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    // Out of the table reads as too far to matter, so a slip at an edge is
+    // never the cheapest way through.
+    let at = |row: &[usize], column: usize| row.get(column).copied().unwrap_or(usize::MAX / 2);
+
+    let mut earlier = vec![0; name.len() + 1];
+    let mut last: Vec<usize> = (0..=name.len()).collect();
+    for (typed, one) in word.iter().enumerate() {
+        let mut row = Vec::with_capacity(name.len() + 1);
+        row.push(typed + 1);
+        for (listed, other) in name.iter().enumerate() {
+            let mut best = (at(&last, listed) + usize::from(one != other))
+                .min(at(&last, listed + 1) + 1)
+                .min(at(&row, listed) + 1);
+            let swapped = typed > 0
+                && listed > 0
+                && word.get(typed - 1) == Some(other)
+                && name.get(listed - 1) == Some(one);
+            if swapped {
+                best = best.min(at(&earlier, listed - 1) + 1);
+            }
+            row.push(best);
+        }
+        earlier = std::mem::replace(&mut last, row);
+    }
+    at(&last, name.len())
+}
+
+/// The two rows a word that names no command is refused with: the word, and
+/// the names it was nearest to, or where the whole list is when it was near
+/// none of them.
+///
+/// The word is said back as it came, because only a word shaped like a
+/// command gets this far and such a word has nothing in it to write to the
+/// terminal but a slash, letters and hyphens.
+pub(super) fn refusal(commands: &Commands, word: &str) -> [String; 2] {
+    let near = nearest(commands, word);
+    let then = if near.is_empty() {
+        format!("  {} lists every command", Command::Help.name())
+    } else {
+        format!("  nearest: {}", near.join(", "))
+    };
+    [format!("! no such command: {word}"), then]
+}
+
+/// Every name a line may open with, in this generation of the registry, for
+/// the box to know its first word by.
+pub(super) fn names(commands: &Commands) -> Vec<&'static str> {
+    commands
+        .entries()
+        .iter()
+        .map(|slash| slash.command.name())
+        .collect()
+}
+
 /// The command that word names, in this generation of the registry.
 fn named(commands: &Commands, word: &str) -> Option<Command> {
     commands.find(word).map(|slash| slash.command)
 }
 
-/// Whether this word is shaped like a command name: a slash, then letters, and
-/// nothing else.
+/// Whether this word is shaped like a command name: a slash, then an ASCII
+/// letter, then ASCII letters and hyphens, and nothing else. A bare slash is the key that
+/// opens the list, and passes too.
 ///
 /// It is what keeps a prompt that opens with a path a prompt. `/etc/hosts is
 /// wrong` is a sentence about a file and `/Users/me/notes.md` is a file, and
 /// neither is read as a command that happens not to exist. A line is only ever
 /// taken for a command where it could not be anything else.
 pub(super) fn shaped(word: &str) -> bool {
-    match word.strip_prefix('/') {
-        Some(rest) => rest.chars().all(|one| one.is_ascii_alphabetic()),
-        None => false,
+    let Some(rest) = word.strip_prefix('/') else {
+        return false;
+    };
+    let mut letters = rest.chars();
+    match letters.next() {
+        None => true,
+        Some(first) => {
+            first.is_ascii_alphabetic()
+                && letters.all(|one| one.is_ascii_alphabetic() || one == '-')
+        }
     }
 }
 

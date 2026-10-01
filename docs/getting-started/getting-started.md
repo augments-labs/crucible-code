@@ -101,7 +101,7 @@ cargo build --release -p crucible-code -p crucible-sandbox-broker
 
 ## Sign in or give it a key
 
-`/login` inside a session can authorize a ChatGPT or Kimi Code account, or keep
+`/login` inside a session can sign in to a ChatGPT or Kimi Code account, or keep
 a provider API key in crucible's protected store. An API key can instead come
 from the environment. [Providers and models](../providers/providers.md) has the
 exact routes and precedence.
@@ -110,18 +110,29 @@ exact routes and precedence.
 export ANTHROPIC_API_KEY=...
 ```
 
-Type `/login` to choose how crucible signs its requests: a ChatGPT plan, a Kimi
-Code plan, or *Provide your own API key*. ChatGPT offers a local browser
-callback and a device code for remote terminals; Kimi Code offers a device code.
-The live panel opens the authorization page, shows only the safe page and
-one-time code, stays cancellable with Escape, which also closes the browser
-callback so the next `/login` can start, and takes a masked paste-back fallback
-for ChatGPT browser login. Anthropic and Google have no account route;
-choose *Provide your own API key*, then the provider from the list. That list
-names each provider with the variable it reads from, `set ANTHROPIC_API_KEY`
-and so on, for anyone who would rather export a key than store one.
+Type `/login` to choose how usage is paid for: *Your account with subscription*,
+usage included in your paid plan, or *Provide your own API key*, billed by API
+usage. The first lists the accounts: OpenAI, and Kimi Code on kimi.ai (accounts
+outside mainland China) or on kimi.com (mainland China accounts); and the plans
+whose own key you type in, MiniMax on either of its sites and Qwen's Coding Plan
+and Token Plan on either of Alibaba Cloud's. The second
+lists the providers whose key you may hold, each with the variable it reads
+from, `set ANTHROPIC_API_KEY` and so on, for anyone who would rather export a
+key than store one. A row that holds your credential says `signed in`. Escape
+goes back one screen at a time and cancels from the first.
 
-`/login anthropic` and `/login google` are direct API-key shortcuts. Google also
+ChatGPT offers a local browser callback and a device code for remote terminals;
+Kimi Code offers a device code. The live panel opens the authorization page,
+shows only the safe page and one-time code, stays cancellable with Escape, which
+also closes the browser callback so the next `/login` can start, and takes a
+masked paste-back fallback for ChatGPT browser login. Anthropic and Google have
+no account route.
+
+Words after `/login` narrow the rows: `/login openai` shows OpenAI's two,
+`/login kimi.ai` the two on kimi.ai, and words that leave one row open it at
+once. `/login anthropic` opens the key box directly, and `/login google` does
+once you have answered whether Google may use what is sent on unpaid quota
+(see [content use](../providers/content-use.md)). Google also
 reads `GEMINI_API_KEY`; for example, select `google/gemini-3.8-flash` in `/model`
 after exporting that variable or storing a key. The key goes into its own
 labelled box, which takes a paste as readily as typing and draws a dot per
@@ -130,6 +141,14 @@ Account tokens and API keys go to `~/.crucible/auth.json`, a file only you can
 read. The session asks that provider from the next turn on; there is nothing to
 restart. Authentication never chooses a model or effort; both stay explicit
 choices, and `/model` is where they are asked together.
+
+Some vendors say they may use what you send to train or improve their models:
+a ChatGPT plan, Kimi Code and the Kimi open platform, a Gemini key on unpaid
+quota, MiniMax, Qwen's plans on aliyun.com, Z.ai's bigmodel.cn key, and Meta's
+two contributor models. Before the first message on one of those goes, crucible asks you once,
+with what the vendor's terms say and where; **Use it anyway** sends it
+and is remembered, **Go back** keeps the message and sends nothing. [Content
+use](../providers/content-use.md) lists each route and what its vendor says.
 
 You do not have to know that command to find it. A run holding no key for any
 provider says so under the welcome and names both halves of setting one up:
@@ -167,7 +186,7 @@ Under the card is the box:
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ ›                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-ask mode on (shift+tab to cycle)                anthropic/claude-sonnet-5 · high
+ask mode on (shift+tab to cycle)              anthropic · claude-sonnet-5 · high
 ```
 
 The box is as wide as the terminal, and a line longer than it wraps onto the
@@ -214,17 +233,19 @@ directory is a row of the screen spent on neither.
 The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
 behind the box. At the right is what the session is talking to: the provider,
-the model, and the rung it is being asked on where one has been chosen. It sits
-beside the box because every key that changes it is typed into that box.
+the model, the rung it is being asked on where one has been chosen, and `fast`
+after an answer its vendor served fast. It sits beside the box because every
+key that changes it is typed into that box.
 
-The model is written the way `--model` takes it back, so what the row says is
-what you would type to ask for it again, and the vendor is named because a model
+The three are joined by a dot, `anthropic · claude-sonnet-5 · high`, and read
+the same on the `/model` panel and in its answer. What you type keeps its own
+form, `/model anthropic/claude-sonnet-5`. The vendor is named because a model
 name says which model and never whose. A machine holding keys for two of them is
 a machine where that is a real question.
 
 The row is redrawn on every keystroke, and both ends move while a session runs:
-<kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort` and `/login` change the
-right. Where the window is too narrow for both, the right end gives way whole
+<kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort`, `/fast` and `/login`
+change the right. Where the window is too narrow for both, the right end gives way whole
 rather than being cut, and the mode keeps its place.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
@@ -245,11 +266,14 @@ end the walk. Edit the line, by so much as a <kbd>Backspace</kbd>, and the walk
 ends where you edited it: the count goes, the line is yours again, and the one
 you had set aside is not coming back.
 
-The prompts are kept between sessions, per directory. A line you sent in one
-checkout is never offered under the arrow key in another, and each directory
-keeps its own hundred: the hundred-and-first prompt you send here is what the
-first one is spent on, and it goes from the file rather than sitting in it
-unreachable.
+The prompts are kept between sessions, in one `prompt.history` file beside the
+sessions, with the directory each was sent from. A line you sent in one checkout
+is never offered under the arrow key in another, and each directory keeps at
+most a hundred: the hundred-and-first prompt you send here is what the first one
+is spent on, and it goes from the file rather than sitting in it unreachable.
+The file holds at most 512 prompts across every directory, so prompts sent
+elsewhere can push this directory's oldest out. A prompt longer than 1024 bytes,
+usually a paste, is not kept at all.
 
 Where the prompt is more than one line, <kbd>↑</kbd> moves up through it and
 only reaches the history from the first line, and <kbd>↓</kbd> only from the
@@ -483,8 +507,8 @@ watching the bottom of the screen for it.
 
 The rest wait for their tool. A command that is still printing has its output to
 show and `ctrl+b` pointing at it, and a response that asked for four tools at
-once gets four answers in whatever order they finish, so writing those rows up
-front would take each result under the wrong call. Those stand above the working
+once has them run one after another in the order asked, so writing all four rows
+up front would put each result a row or more away from the call it answers. Those stand above the working
 row instead, with the mark pulsing on the beat the mark below it turns on, and
 each commits the moment its own tool answers: the same words in the same
 columns, with the motion gone. So a call still waiting is told from one that has
@@ -523,18 +547,23 @@ the closing parenthesis when arguments were clipped: `Bash(cat …)`.
 A recent long command stays expandable even when it produced no
 output; an individual call with only horizontally clipped text offers
 `(ctrl+o to expand)` without a count of extra lines.
-Expansion keeps a bounded history and drops the oldest details as newer
-results arrive. Background completion notices also shorten long commands,
+What is held in memory for expansion is bounded, and the oldest results are let
+go as newer ones arrive. Where the session has a log, a row whose result was let
+go of still opens: the result is read back from the log when the view reaches
+it. A row with nothing left to open stops offering. Background completion
+notices also shorten long commands,
 preserving their exit status and output line count.
 
 A result the row had no room for says how much it left over and names the key
 that gives it back: `(+128 lines · ctrl+o to expand)`. The key is drawn in the
 accent, and what the result said reads as the quiet the rest of the transcript
 is in until you point at it. Clicking it opens the same view the key does, for
-the one result it belongs to. The key reaches further than the pointer does:
-<kbd>Ctrl+O</kbd> stands
-every result that was cut this way where the box was, newest first, each under
-the line of the call it answers. Arrow keys move one row at a time; the mouse
+the one result it belongs to. <kbd>Ctrl+O</kbd> stands every result the rows
+offer where the box was, newest first, each under the line of the call it
+answers. A result no longer held in memory is read back from the session log
+when the view reaches it; one the log cannot give back says
+`! this result could not be read back from the session log` in its place.
+Arrow keys move one row at a time; the mouse
 wheel uses `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` (six rows per notch by default).
 Long headings and output lines wrap here so their ends remain readable.
 <kbd>Esc</kbd> or <kbd>Ctrl+O</kbd> again closes
@@ -561,7 +590,9 @@ Local file lookups and web research in the same batch are counted together:
 ● Searched for 3 patterns, read 2 files, searched the web 2 times, fetched 4 pages
 ```
 
-Only the kinds that happened are named, in that order, and each carries its own
+Only the kinds that happened are named, always in this order: searched for
+patterns, read files, listed directories, ran commands, searched the web,
+fetched pages. Each carries its own
 number: a run that read one file says `read 1 file`. Two calls are enough to
 fold; a single lookup keeps the row it always had, since a count of one is the
 same width as the name it replaced and says less.
@@ -794,11 +825,13 @@ tool opens when the model asks for it. A picture the model asks for that way
 comes back as a picture too, rather than as a refusal; see
 [`read`](../tools/files.md#a-picture-is-looked-at-rather-than-read).
 
-Pictures go to all four providers. A PDF goes to Anthropic, OpenAI and Google,
-whose requests have a shape for a document; MoonshotAI's have none, and say so
-rather than sending the file as anything else. A video, which has to be an
-`.mp4`, goes to Google and MoonshotAI; Anthropic's and OpenAI's requests have no
-shape for one.
+Pictures go to Anthropic, Google, MoonshotAI and OpenAI. A PDF goes to
+Anthropic, OpenAI and Google, whose requests have a shape for a document;
+MoonshotAI's have none, and say so rather than sending the file as anything
+else. A video, which has to be an `.mp4`, goes to Google and MoonshotAI;
+Anthropic's and OpenAI's requests have no shape for one. The seven providers new
+in 0.44 are sent text alone in this release, and say so of a file the same
+way.
 
 Nothing asks you first. Every other way a file reaches the model goes through a
 tool, and a tool is something the agent chose to run, which is the thing a
@@ -832,15 +865,27 @@ such line.
 
 ## Commands
 
-A line starting with `/` is a command rather than a prompt. It is answered here,
-costs the provider nothing, and is not part of what the model is told about the
-session.
+A line whose first word is one of the names below is a command rather than a
+prompt. It is answered here, costs the provider nothing, and is not part of what
+the model is told about the session. Where colour is on, a command's name
+turns to the accent colour once it is typed in full. A name only part typed
+stays plain, and the command list above the box offers the rest.
+
+Any other line is a prompt, even one that opens with a slash: `/etc/hosts is
+wrong` and `/tmp is full` are questions about files, and are sent as typed. The
+one exception is a word shaped like a command (a slash, a letter from a to z in
+either case, then letters and hyphens) typed alone and naming none. That is
+taken for a slip: nothing is sent, and the answer names the nearest commands
+(`nearest: /model, /mode`) or points at `/help`. The up arrow brings the line
+back to correct.
 
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists these |
+| `/release-notes` | Prints what changed in each release, or in the one you name |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
+| `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
@@ -858,8 +903,8 @@ serves in one pane beside the models in the other, and the rungs the marked mode
 takes on a strip underneath. Model rows show exact API IDs, such as `gpt-6-astra`
 and `gemini-3.8-flash`; search also accepts display names.
 Type to narrow both panes at once: `openai` leaves everything that vendor
-serves, `sonnet` leaves the one model, and the line does not ask which kind of
-name it just got. <kbd>Tab</kbd> crosses between the panes, the up and down
+serves, `sonnet` leaves the two Sonnet models, and the line does not ask which
+kind of name it just got. <kbd>Tab</kbd> crosses between the panes, the up and down
 arrows walk whichever one the mark is in, the left and right arrows walk the
 rungs, and Enter takes the model and the rung under it together. Taking a row
 moves the session to whoever serves that model. Escape leaves it and changes
@@ -871,6 +916,15 @@ Either way the name is written to `~/.crucible/config.json` under the provider
 this run is set up for, and the provider beside it, so the next crucible
 started anywhere begins with both. See [Providers and
 models](../providers/providers.md).
+
+`/release-notes` prints every release crucible has had into the transcript,
+oldest first: a row each for the older ones, saying how many entries each group
+held, then the ten newest in full, the one you are running last and marked
+`this version`. `/release-notes 0.41.1`, or `v0.41.1`, prints that release
+alone. The notes are the changelog of the build you are running, built into it,
+so asking for them needs no network. Where a very narrow window would print more
+rows than the transcript keeps, the oldest rows are left out first, and the last
+row says how many.
 
 ### A command typed while a turn runs
 
@@ -885,9 +939,16 @@ Enter depends on the command:
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already
   taken, so that half waits for `/effort` between turns.
+- **`/fast`** is held the same way: the panel opens now, and the speed taken is
+  asked for once the turn ends.
 - The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
+- **`/release-notes`** would print a thousand rows into the answer being
+  written, so it is refused on the same panel; ask for it once the turn ends.
+- **A word that names no command**, typed alone, stands the same panel with
+  the nearest names on it, and is not queued. With words after it the line is
+  a prompt, and waits for the turn like any other.
 
 `/theme` stands a list of themes where the prompt box was, with a specimen
 beside it drawn in whatever your marks are standing on. Moving a mark redraws
@@ -919,7 +980,7 @@ The mark opens on `high` where nothing has chosen yet, which is a place to start
 walking from rather than a rung being asked for: leaving it leaves the session
 asking for none, and what applies then is the vendor's own default for that
 model. The ladder holds what the model serves rather than all five: the Kimi
-models serve `low`, `high` and `max`, and a model whose vendor serves none is
+and DeepSeek models serve `low`, `high` and `max`, and a model whose vendor serves none is
 told so instead of being offered a ladder that cannot be answered. A session
 with no model chosen is sent to `/model` first, since a rung is asked of a
 model.
@@ -933,21 +994,26 @@ cannot be written is answered with `the key could not be saved` and what to fix
 that cannot be read and should be moved aside), never with the path or the key.
 A window too short for the box says so instead, and asks for a taller one.
 
-`/login` on its own asks how crucible should sign its requests, which is a
-different question from which vendor: somebody paying for a ChatGPT plan and
-somebody holding an OpenAI console key are two people, and only one of them has a
-key to type. So the panel offers three ways: OpenAI's ChatGPT plan with your
-subscription; MoonshotAI's Kimi Code plan with your subscription; and *Provide
-your own API key*, billed by API usage. The two plans connect: ChatGPT opens a
-browser authorization, or a device code from a terminal with no browser to
-reach, and Kimi Code a device code; either writes a renewable credential to the
-same protected store a key goes to. The key route asks whose key you have before
-opening the box, each provider shown with the variable it reads from, and is the
-route an Anthropic key takes, Anthropic having no account route.
+`/login` on its own asks how usage is paid for, which is a different question
+from which vendor: somebody paying for a ChatGPT plan and somebody holding an
+OpenAI console key are two people, and only one of them has a key to type. So
+the first panel has two rows, whatever is stored: *Your account with
+subscription* and *Provide your own API key*. The accounts connect: ChatGPT
+opens a browser authorization, or a device code from a terminal with no browser
+to reach, and Kimi Code a device code on the site your account belongs to;
+either writes a renewable credential to the same protected store a key goes to.
+The key route asks whose key you have before opening the box, and is the route
+an Anthropic key takes, Anthropic having no account route.
+
+A provider holds one credential. Choosing a row whose provider holds another
+says on the next screen what it replaces, and nothing is replaced until the new
+one is stored: a sign-in that fails, is refused or expires says `sign-in did
+not complete` and names what is unchanged. A store that is there and cannot be
+parsed, is not text, or is past its size limit is said before any row is drawn.
 
 A run with no keyboard to walk that panel (and a window with no room to stand
-one in) gets the provider names as rows instead, with the variable each reads
-from.
+one in) gets each row as the line to type instead: `/login` and the words that
+reach that row alone.
 
 A key that is written lands on the session that took it: the provider is set up
 there and then, from the next turn on. Logging in chooses neither a model nor a
@@ -1122,6 +1188,11 @@ sessions never write a plan or ask a question about the world.
 | `web_search` | Searches the web | yes |
 | `web_fetch` | Reads one web page | yes |
 | `tool_search` | Finds a tool that is not in the list | no |
+
+`web_search` and `web_fetch` exist only where the provider serves them.
+Anthropic, Google, MoonshotAI and OpenAI serve both; Meta and xAI serve
+`web_search` alone; DeepSeek, MiMo, MiniMax, Qwen and Z.ai serve neither, and a
+session there has ten tools or fewer.
 
 Reads inside the workspace never ask; one that leads outside it puts the path
 to you first. Anything that changes a file or starts a process asks, until

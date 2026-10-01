@@ -21,6 +21,9 @@ use super::*;
 /// serving closure resolves any credential without reaching a network.
 fn in_force(sample: &Sample) -> Terms {
     Terms {
+        consent: crucible_app::content_use::Consent::new(
+            crucible_app::content_use::Routes::production(),
+        ),
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
@@ -37,6 +40,7 @@ fn in_force(sample: &Sample) -> Terms {
         leaving: crucible_builtins::Background::new(),
         pending_model: Cell::new(None),
         pending_mode: Cell::new(None),
+        pending_speed: Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),
@@ -409,26 +413,19 @@ fn the_paste_box_draws_its_mark_and_its_dots_out_of_the_glyph_set() {
 
 #[test]
 fn every_way_is_named_by_what_the_reader_holds_and_how_it_is_billed() {
-    // The row under an account names the plan and whose it is; the row
-    // under the key names how a key is billed. Neither is a sentence about
-    // what pressing Enter does — the reader is choosing between things they
-    // have, and a future account row inherits the same shape.
-    let sample = Sample::new("login-ways");
-    let terms = in_force(&sample);
-    let ways = ways(&terms);
+    // Two ways to pay, whatever the store holds: an account whose plan
+    // includes the usage, or a key billed by what is sent. Neither row is a
+    // sentence about what pressing Enter does, and neither names a vendor:
+    // the vendors are the lists each leads to.
+    let shown: Vec<&str> = FIRST.iter().map(|way| way.name).collect();
+    let says: Vec<&str> = FIRST.iter().map(|way| way.says).collect();
 
-    let shown: Vec<&str> = ways.iter().map(|way| way.shown).collect();
-    let says: Vec<&str> = ways.iter().map(|way| way.says.as_str()).collect();
-
-    assert_eq!(shown, ["OpenAI", "MoonshotAI", KEY_ROUTE_SHOWN]);
+    assert_eq!(shown, ["Your account with subscription", KEY_ROUTE_SHOWN]);
     assert_eq!(
         says,
-        [
-            "ChatGPT plan with your subscription",
-            "Kimi Code plan with your subscription",
-            "API usage billing",
-        ]
+        ["Usage included in your paid plan", "API usage billing"]
     );
+    assert_eq!(HOW, "Choose how usage is paid for.");
 }
 
 #[test]
@@ -479,5 +476,810 @@ fn every_login_row_and_its_caret_fit_a_narrow_terminal() {
         assert!(rows.iter().all(|row| row.columns() <= columns));
         assert!(caret.column <= columns.saturating_sub(1));
         assert!(caret.row < rows.len());
+    }
+}
+
+/// The rows this build ships.
+fn production() -> Rows {
+    Rows::production()
+}
+
+/// The row of `production` named `shown` in `list`.
+fn way(rows: &Rows, list: List, shown: &str) -> Way {
+    rows.listed(list)
+        .find(|way| way.shown == shown)
+        .cloned()
+        .unwrap_or_else(|| panic!("a row named {shown}"))
+}
+
+/// The names of the rows `words` leave.
+fn left(words: &str, rows: &Rows) -> Vec<String> {
+    let words: Vec<&str> = words.split_whitespace().collect();
+    matching(&words, rows)
+        .iter()
+        .map(|way| format!("{} {}", way.shown, credential(way)))
+        .collect()
+}
+
+#[test]
+fn words_after_login_narrow_the_rows_to_those_every_word_matches() {
+    let rows = production();
+
+    assert_eq!(left("openai", &rows), ["OpenAI sign-in", "OpenAI API key"]);
+    for words in ["kimi", "moonshot", "KIMI", "Moonshot"] {
+        assert_eq!(
+            left(words, &rows),
+            [
+                "Kimi Code · kimi.ai sign-in",
+                "Kimi Code · kimi.com sign-in",
+                "MoonshotAI · kimi.ai API key",
+                "MoonshotAI · kimi.com API key",
+            ],
+            "{words}"
+        );
+    }
+    assert_eq!(
+        left("kimi code", &rows),
+        [
+            "Kimi Code · kimi.ai sign-in",
+            "Kimi Code · kimi.com sign-in"
+        ]
+    );
+    assert_eq!(
+        left("kimi.ai", &rows),
+        [
+            "Kimi Code · kimi.ai sign-in",
+            "MoonshotAI · kimi.ai API key"
+        ]
+    );
+    assert_eq!(
+        left("kimi code kimi.ai", &rows),
+        ["Kimi Code · kimi.ai sign-in"]
+    );
+    assert_eq!(left("openai subscription", &rows), ["OpenAI sign-in"]);
+    assert_eq!(left("openai key", &rows), ["OpenAI API key"]);
+    assert_eq!(left("anthropic", &rows), ["Anthropic API key"]);
+    assert_eq!(left("google", &rows), ["Google API key"]);
+    assert!(left("nope", &rows).is_empty());
+    assert_eq!(left("", &rows).len(), rows.all().len());
+}
+
+#[test]
+fn every_row_is_left_alone_by_the_words_it_is_typed_with() {
+    let rows = production();
+    for way in rows.all() {
+        let words = reaching(way, &rows);
+        let split: Vec<&str> = words.split_whitespace().collect();
+
+        assert_eq!(matching(&split, &rows), [way], "{words}");
+    }
+}
+
+/// A registry holding one row this build has never shipped of each kind.
+fn fabricated() -> Rows {
+    let mut rows = production().all().to_vec();
+    rows.insert(
+        0,
+        Way {
+            list: List::Subscription,
+            shown: "Fabricated Plan",
+            provider: "fabricated",
+            site: None,
+            says: Some("Fabricated plan usage"),
+            kind: Kind::Account,
+            mark: None,
+            refuses: &[],
+            stored: "fabricated",
+            environment: false,
+            address: None,
+        },
+    );
+    rows.push(Way {
+        list: List::Key,
+        shown: "Fabricated",
+        provider: "fabricated",
+        site: None,
+        says: Some("a fabricated console key"),
+        kind: Kind::Key,
+        mark: None,
+        refuses: &[],
+        stored: "fabricated",
+        environment: false,
+        address: None,
+    });
+    Rows::new(rows)
+}
+
+#[test]
+fn a_row_added_to_the_registry_is_listed_with_no_edit_here() {
+    let rows = fabricated();
+    let providers = crucible_app::providers::providers()
+        .expect("the built-in providers register")
+        .snapshot();
+
+    for (list, shown, says) in [
+        (
+            List::Subscription,
+            "Fabricated Plan",
+            "Fabricated plan usage",
+        ),
+        (List::Key, "Fabricated", "a fabricated console key"),
+    ] {
+        let listed: Vec<(&str, String)> = listed(&rows, list)
+            .into_iter()
+            .map(|way| {
+                let says = described(way, &[], &providers, Glyphs::Unicode);
+                (way.shown, says)
+            })
+            .collect();
+        assert!(listed.contains(&(shown, says.to_owned())), "{listed:?}");
+
+        let way = way(&rows, list, shown);
+        let line = line(&way, &rows, &providers, Glyphs::Unicode);
+        assert!(line.starts_with("/login fabricated "), "{line}");
+    }
+}
+
+/// Terms over `sample`'s home, whose store names what the rows do.
+fn named(sample: &Sample) -> Terms {
+    let mut terms = in_force(sample);
+    terms.logins = Store::in_home(&sample.root()).naming(production().names());
+    terms
+}
+
+/// A store holding a kimi.ai key and an OpenAI sign-in, and nothing else.
+const HELD: &str = r#"{"version":2,"keys":{"moonshot@kimi.ai":"fabricated-kimi-ai-key"},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+
+#[test]
+fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_screen() {
+    let sample = Sample::new("login-signed-in");
+    std::fs::write(sample.root().join("auth.json"), HELD).expect("a store");
+    let terms = named(&sample);
+    let rows = production();
+    let providers = terms.providers.snapshot();
+
+    let held = holding(&rows, &terms).expect("a store that reads whole");
+    let said: Vec<(&str, String)> = rows
+        .all()
+        .iter()
+        .map(|way| {
+            (
+                way.shown,
+                described(way, &held, &providers, Glyphs::Unicode),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        said,
+        [
+            (
+                "OpenAI",
+                "signed in · may train on what is sent · ChatGPT plan usage with Plus, Pro, \
+                 Business and Enterprise"
+                    .to_owned()
+            ),
+            (
+                "Kimi Code · kimi.ai",
+                "may train on what is sent · Kimi Code plan usage, accounts outside mainland \
+                 China"
+                    .to_owned()
+            ),
+            (
+                "Kimi Code · kimi.com",
+                "may use what is sent · Kimi Code plan usage, mainland China accounts".to_owned()
+            ),
+            (
+                "MiniMax · minimax.io",
+                "may use what is sent · MiniMax Token Plan usage, accounts outside mainland China"
+                    .to_owned()
+            ),
+            (
+                "MiniMax · minimaxi.com",
+                "may use what is sent · MiniMax Token Plan usage, mainland China accounts"
+                    .to_owned()
+            ),
+            (
+                "Qwen Coding Plan · alibabacloud.com",
+                "Qwen Coding Plan usage, the international site".to_owned()
+            ),
+            (
+                "Qwen Coding Plan · aliyun.com",
+                "uses what is sent · Qwen Coding Plan usage, the mainland China site".to_owned()
+            ),
+            (
+                "Qwen Token Plan · alibabacloud.com",
+                "Qwen Token Plan usage, the international site".to_owned()
+            ),
+            (
+                "Qwen Token Plan · aliyun.com",
+                "uses what is sent · Qwen Token Plan usage, the mainland China site".to_owned()
+            ),
+            ("Anthropic", "set ANTHROPIC_API_KEY".to_owned()),
+            ("DeepSeek", "set DEEPSEEK_API_KEY".to_owned()),
+            (
+                "Google",
+                "uses what is sent · set GEMINI_API_KEY".to_owned()
+            ),
+            ("Meta", "set META_API_KEY".to_owned()),
+            ("MiMo", "set MIMO_API_KEY".to_owned()),
+            (
+                "MiniMax · minimax.io",
+                "may use what is sent · set MINIMAX_API_KEY".to_owned()
+            ),
+            (
+                "MiniMax · minimaxi.com",
+                "may use what is sent · a pay-as-you-go key, mainland China accounts".to_owned()
+            ),
+            (
+                "MoonshotAI · kimi.ai",
+                "signed in · may train on what is sent".to_owned()
+            ),
+            (
+                "MoonshotAI · kimi.com",
+                "may use what is sent · set MOONSHOT_API_KEY".to_owned()
+            ),
+            ("OpenAI", "set OPENAI_API_KEY".to_owned()),
+            (
+                "Qwen · alibabacloud.com",
+                "set DASHSCOPE_API_KEY".to_owned()
+            ),
+            (
+                "Qwen · aliyun.com",
+                "a pay-as-you-go key of the mainland China site".to_owned()
+            ),
+            ("xAI", "set XAI_API_KEY".to_owned()),
+            (
+                "Z.ai · bigmodel.cn",
+                "may train on what is sent · a key of bigmodel.cn, mainland China accounts"
+                    .to_owned()
+            ),
+            ("Z.ai · z.ai", "set ZAI_API_KEY".to_owned()),
+        ]
+    );
+    let everything = format!("{said:?} {held:?}");
+    assert!(!everything.contains("fabricated"), "{everything}");
+}
+
+#[test]
+fn signed_in_is_kept_at_forty_columns_where_the_plan_words_are_cut() {
+    let sample = Sample::new("login-signed-in-narrow");
+    std::fs::write(sample.root().join("auth.json"), HELD).expect("a store");
+    let terms = named(&sample);
+    let rows = production();
+    let providers = terms.providers.snapshot();
+    let held = holding(&rows, &terms).expect("a store that reads whole");
+
+    let says: Vec<String> = rows
+        .listed(List::Subscription)
+        .map(|way| described(way, &held, &providers, Glyphs::Unicode))
+        .collect();
+    let shown: Vec<Offered<'_>> = rows
+        .listed(List::Subscription)
+        .zip(&says)
+        .map(|(way, says)| Offered {
+            name: way.shown,
+            says,
+        })
+        .collect();
+    let panel = Panel {
+        source: None,
+        title: TITLE,
+        said: Some(ACCOUNTS),
+        shown: &shown,
+        chosen: 0,
+        footer: BACK,
+    };
+    let drawn: Vec<String> = panel
+        .rows(40, Glyphs::Unicode)
+        .iter()
+        .map(|row| row.text().trim_end().to_owned())
+        .collect();
+
+    assert!(
+        drawn.contains(&"  signed in · may train on what is sent…".to_owned()),
+        "{drawn:?}"
+    );
+}
+
+#[test]
+fn an_unreadable_store_is_said_before_any_row_is_drawn() {
+    for (case, text) in [
+        ("login-open-unreadable", "not json {".to_owned()),
+        ("login-open-too-large", "x".repeat(64 * 1024 + 1)),
+    ] {
+        let sample = Sample::new(case);
+        std::fs::write(sample.root().join("auth.json"), text).expect("a store");
+        let terms = named(&sample);
+        let mut conversation = asking("claude-test-1");
+        let mut renderer = Renderer::new(Recording::new(80, 24));
+
+        run("", &mut renderer, &mut conversation, &terms, true)
+            .expect("the terminal to be written");
+
+        let written = renderer.terminal().picture().said().join(" ");
+        assert!(
+            written.contains(
+                "! crucible cannot read its login store; move it aside and try /login again"
+            ),
+            "{written}"
+        );
+        assert!(!written.contains(TITLE), "{written}");
+    }
+}
+
+#[test]
+fn what_a_choice_replaces_is_named_by_the_row_it_was_given_on() {
+    let rows = production();
+    let held = |list, shown| vec![way(&rows, list, shown)];
+
+    let openai_key = way(&rows, List::Key, "OpenAI");
+    let openai_plan = way(&rows, List::Subscription, "OpenAI");
+    let kimi_ai = way(&rows, List::Subscription, "Kimi Code · kimi.ai");
+    let anthropic = way(&rows, List::Key, "Anthropic");
+
+    assert_eq!(
+        replaced(
+            &openai_key,
+            &held(List::Subscription, "OpenAI"),
+            Glyphs::Unicode
+        )
+        .as_deref(),
+        Some("the sign-in held for OpenAI")
+    );
+    assert_eq!(
+        replaced(&openai_plan, &held(List::Key, "OpenAI"), Glyphs::Unicode).as_deref(),
+        Some("the API key held for OpenAI")
+    );
+    assert_eq!(
+        replaced(
+            &kimi_ai,
+            &held(List::Subscription, "Kimi Code · kimi.com"),
+            Glyphs::Unicode
+        )
+        .as_deref(),
+        Some("the sign-in held for Kimi Code · kimi.com")
+    );
+    assert_eq!(
+        replaced(&anthropic, &held(List::Key, "Anthropic"), Glyphs::Unicode).as_deref(),
+        Some("the API key held for Anthropic")
+    );
+    assert_eq!(
+        replaced(&anthropic, &held(List::Key, "OpenAI"), Glyphs::Unicode),
+        None
+    );
+
+    assert_eq!(
+        unchanged(&openai_plan, &held(List::Key, "OpenAI"), Glyphs::Unicode),
+        "! sign-in did not complete; the API key stored for OpenAI is unchanged"
+    );
+    assert_eq!(
+        unchanged(&kimi_ai, &[], Glyphs::Unicode),
+        "! sign-in did not complete; nothing was stored"
+    );
+}
+
+#[test]
+fn a_sign_in_chosen_from_a_list_says_what_it_replaces_and_that_escape_goes_back() {
+    let view = LoginView::new(Glyphs::Unicode).opened(
+        BACK,
+        Some("the API key held for OpenAI".to_owned()),
+        Glyphs::Unicode,
+    );
+    let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+    let text: Vec<String> = rows.iter().map(Row::text).collect();
+
+    assert_eq!(
+        text.get(1).map(String::as_str),
+        Some("Signing in replaces the API key held for OpenAI once it completes."),
+        "{text:?}"
+    );
+    assert!(
+        text.iter().any(|row| row == "waiting — esc to go back"),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn the_key_route_is_worded_the_same_on_the_first_panel_and_the_key_box() {
+    assert_eq!(
+        KEY_ROUTE_SHOWN.to_lowercase(),
+        crucible_tui::KEY_ROUTE.to_lowercase()
+    );
+}
+
+/// What `/login` with nothing after it writes into a window `columns` by
+/// `height`, with a keyboard or without one.
+fn opened_into(columns: usize, height: usize, keys: bool) -> String {
+    let sample = Sample::new("login-no-room");
+    let terms = named(&sample);
+    let mut conversation = asking("claude-test-1");
+    let mut renderer = Renderer::new(Recording::new(columns, height));
+
+    run("", &mut renderer, &mut conversation, &terms, keys).expect("the terminal to be written");
+
+    renderer.terminal().written().to_string()
+}
+
+#[test]
+fn a_window_with_no_room_for_a_panel_is_given_every_row_as_the_line_to_type() {
+    // A run with no keyboard stands no panel: it is given one line per row,
+    // `/login` and the words that leave that row alone, whole at forty
+    // columns too, folded only where the words are wider than the window.
+    let rows = production();
+    for columns in [80, 40] {
+        let written = opened_into(columns, 40, false);
+        let unfolded = crucible_tui::Picture::of(&written, columns, 200)
+            .said()
+            .join(" ");
+        for way in rows.all() {
+            let typed = format!("/login {} —", reaching(way, &rows));
+            assert!(unfolded.contains(&typed), "{columns}: {typed}: {written}");
+            // Narrower than the window, it is never broken at all.
+            if typed.chars().count() < columns {
+                assert!(written.contains(&typed), "{columns}: {typed}: {written}");
+            }
+        }
+        assert_eq!(
+            written.matches("/login ").count(),
+            rows.all().len(),
+            "{written}"
+        );
+    }
+
+    // Three rows hold no panel either, keyboard or not: the same lines come
+    // out, the last of them on the screen.
+    for columns in [80, 40] {
+        let written = opened_into(columns, 3, true);
+        assert!(
+            written.contains("/login openai key —"),
+            "{columns}: {written}"
+        );
+        assert!(!written.contains(TITLE), "{columns}: {written}");
+    }
+}
+
+#[test]
+fn row_names_are_drawn_with_the_glyph_sets_own_dot() {
+    // A terminal set to ASCII is sent no middle dot: not in a row's name, not
+    // in the sentence naming what a choice replaces.
+    let rows = production();
+    let providers = crucible_app::providers::providers()
+        .expect("the built-in providers register")
+        .snapshot();
+    let kimi_com = way(&rows, List::Subscription, "Kimi Code · kimi.com");
+    let kimi_ai = way(&rows, List::Subscription, "Kimi Code · kimi.ai");
+
+    let listed: Vec<&Way> = rows.all().iter().collect();
+    let ascii = entries(
+        &listed,
+        std::slice::from_ref(&kimi_com),
+        &providers,
+        Glyphs::Ascii,
+    );
+    for (name, says) in &ascii {
+        assert!(name.is_ascii(), "{name}");
+        assert!(says.is_ascii(), "{says}");
+    }
+    assert!(
+        ascii.iter().any(|(name, _)| name == "Kimi Code - kimi.ai"),
+        "{ascii:?}"
+    );
+    assert_eq!(
+        replaced(&kimi_ai, std::slice::from_ref(&kimi_com), Glyphs::Ascii).as_deref(),
+        Some("the sign-in held for Kimi Code - kimi.com")
+    );
+    assert!(unchanged(&kimi_ai, &[kimi_com], Glyphs::Ascii).is_ascii());
+
+    let unicode = entries(&listed, &[], &providers, Glyphs::Unicode);
+    assert!(
+        unicode
+            .iter()
+            .any(|(name, _)| name == "Kimi Code · kimi.ai"),
+        "{unicode:?}"
+    );
+}
+
+#[test]
+fn rows_narrowed_by_words_stand_under_the_heading_of_their_own_kind() {
+    // A registry that lists a sign-in row after key rows, as one a later
+    // release adds a row to may: each still stands under its own kind.
+    let mut listed = production().all().to_vec();
+    let late = listed.remove(0);
+    listed.push(late);
+    let rows = Rows::new(listed);
+    let matched = matching(&["openai"], &rows);
+
+    let (ordered, headings) = kinds(&matched);
+
+    let names: Vec<(&str, List)> = ordered.iter().map(|way| (way.shown, way.list)).collect();
+    assert_eq!(
+        names,
+        [("OpenAI", List::Subscription), ("OpenAI", List::Key)]
+    );
+    let at: Vec<(usize, &str)> = headings.iter().map(|one| (one.before, one.name)).collect();
+    assert_eq!(at, [(0, "Subscription"), (1, "API key")]);
+}
+
+/// A sign-in that is refused the moment it starts: the one way a test can
+/// see what the sign-in view says when a flow does not complete.
+struct Refused {
+    slot: crucible_auth::LoginSlot,
+}
+
+impl std::fmt::Debug for Refused {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("Refused")
+    }
+}
+
+impl crucible_auth::SubscriptionLogin for Refused {
+    fn provider(&self) -> &'static str {
+        "openai"
+    }
+
+    fn start(
+        &self,
+        _method: crucible_auth::LoginMethod,
+        _store: Store,
+    ) -> Result<crucible_auth::LoginAttempt, crucible_auth::OAuthError> {
+        self.slot
+            .start(&crate::cli::fake::runtime(), |updates| async move {
+                let _ = updates.send(Err(crucible_auth::OAuthError::Denied));
+            })
+    }
+
+    fn credential(
+        &self,
+        _stored: &crucible_auth::StoredCredentials,
+    ) -> Option<Box<dyn crucible_credentials::Credential>> {
+        None
+    }
+}
+
+/// The one route to [`Refused`].
+const REFUSED: Route = Route::new(
+    "openai",
+    crucible_auth::LoginMethod::new("refused"),
+    "Log in to ChatGPT",
+    "Refused",
+    "refused at once",
+);
+
+#[test]
+fn a_refused_sign_in_names_what_it_would_have_replaced_and_says_it_is_unchanged() {
+    let sample = Sample::new("login-refused");
+    let mut terms = named(&sample);
+    terms.subscriptions = crucible_app::subscription::Subscriptions::new(
+        vec![(
+            Arc::new(Refused {
+                slot: crucible_auth::LoginSlot::new(),
+            }),
+            crucible_provider::OpenAi::SUBSCRIPTION,
+        )],
+        vec![REFUSED],
+    );
+    let rows = production();
+    let held = [way(&rows, List::Key, "OpenAI")];
+    let mut conversation = asking("claude-test-1");
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let plan = way(&rows, List::Subscription, "OpenAI");
+    let mut walk = Walk {
+        renderer: &mut renderer,
+        conversation: &mut conversation,
+        terms: &terms,
+        held: &held,
+    };
+
+    let closed = subscribed(REFUSED, &plan, Opened::Directly, &mut walk).expect("the terminal");
+
+    assert_eq!(closed, Closed::Done);
+    let written = renderer.terminal().written().to_string();
+    assert!(
+        written.contains("Signing in replaces the API key held for OpenAI once it completes."),
+        "{written}"
+    );
+    assert!(
+        written.contains("! account login was not authorized"),
+        "{written}"
+    );
+    assert!(
+        written.contains("! sign-in did not complete; the API key stored for OpenAI is unchanged"),
+        "{written}"
+    );
+}
+
+#[test]
+fn a_sign_in_row_nothing_is_registered_for_says_so_rather_than_standing_an_empty_panel() {
+    let sample = Sample::new("login-unregistered");
+    let mut terms = named(&sample);
+    terms.subscriptions = crucible_app::subscription::Subscriptions::new(Vec::new(), Vec::new());
+    // The row's route said yes to, so what stands is the screen this is about
+    // rather than the question before it.
+    terms.consent.keeps_in(sample.user_file());
+    let warned = crucible_app::content_use::WARNED
+        .iter()
+        .find(|one| one.route == "subscription:moonshot@kimi.ai")
+        .expect("the kimi.ai sign-in row is warned");
+    terms.consent.accept(warned).expect("a yes written down");
+    let rows = production();
+    let mut conversation = asking("claude-test-1");
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let plan = way(&rows, List::Subscription, "Kimi Code · kimi.ai");
+    let mut walk = Walk {
+        renderer: &mut renderer,
+        conversation: &mut conversation,
+        terms: &terms,
+        held: &[],
+    };
+
+    let closed = screen(&plan, Opened::Directly, &mut walk).expect("the terminal");
+
+    assert_eq!(closed, Closed::Done);
+    let said = renderer.terminal().picture().said().join(" ");
+    assert!(
+        said.contains("! no subscription login for Kimi Code · kimi.ai"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_key_only_the_environment_holds_marks_no_row() {
+    // The marks are read from the store and nothing else: a key exported in
+    // the shell is not one this command stored or can replace.
+    let sample = Sample::new("login-environment-only");
+    let mut terms = named(&sample);
+    terms.environment = Box::new(|_| Some("fabricated-exported-key".to_owned()));
+    let rows = production();
+    let providers = terms.providers.snapshot();
+
+    let held = holding(&rows, &terms).expect("an empty store");
+    let listed: Vec<&Way> = rows.all().iter().collect();
+    let drawn = entries(&listed, &held, &providers, Glyphs::Unicode);
+
+    assert!(held.is_empty(), "{held:?}");
+    assert!(
+        drawn.iter().all(|(_, says)| !says.starts_with("signed in")),
+        "{drawn:?}"
+    );
+}
+
+#[test]
+fn what_is_said_after_a_stop_is_what_the_store_holds() {
+    use crucible_auth::Stopped;
+
+    for opened in [Opened::Below, Opened::Directly] {
+        assert_eq!(after_stop(Stopped::Written, opened), AfterStop::Take);
+        assert_eq!(after_stop(Stopped::Unsettled, opened), AfterStop::Unsettled);
+    }
+    assert_eq!(
+        after_stop(Stopped::Unwritten, Opened::Below),
+        AfterStop::Back
+    );
+    assert_eq!(
+        after_stop(Stopped::Unwritten, Opened::Directly),
+        AfterStop::Left
+    );
+}
+
+#[test]
+fn a_sign_in_being_stopped_says_so_while_it_waits() {
+    let mut view = LoginView::new(Glyphs::Unicode);
+    view.stopping();
+    let (rows, _) = view.frame(80, "Log in to ChatGPT", Glyphs::Unicode);
+    let text: Vec<String> = rows.iter().map(Row::text).collect();
+
+    assert!(
+        text.iter()
+            .any(|row| row == "stopping; waiting for anything being stored…"),
+        "{text:?}"
+    );
+}
+
+/// A warned row says its caution after `signed in` and before its own words,
+/// so a window of forty columns cuts those rather than it; a row whose vendor
+/// says nothing carries none.
+#[test]
+fn a_warned_row_keeps_its_caution_at_forty_columns() {
+    let sample = Sample::new("login-caution-narrow");
+    std::fs::write(sample.root().join("auth.json"), HELD).expect("a store");
+    let terms = named(&sample);
+    let rows = production();
+    let providers = terms.providers.snapshot();
+    let held = holding(&rows, &terms).expect("a store that reads whole");
+
+    for list in [List::Subscription, List::Key] {
+        let listed = listed(&rows, list);
+        let drawn = entries(&listed, &held, &providers, Glyphs::Unicode);
+        let shown: Vec<Offered<'_>> = drawn
+            .iter()
+            .map(|(name, says)| Offered { name, says })
+            .collect();
+        let panel = Panel {
+            source: None,
+            title: TITLE,
+            said: None,
+            shown: &shown,
+            chosen: 0,
+            footer: BACK,
+        };
+        let picture: Vec<String> = panel
+            .rows(40, Glyphs::Unicode)
+            .iter()
+            .map(|row| row.text().trim_end().to_owned())
+            .collect();
+        for way in &listed {
+            let route = crucible_app::content_use::row_route(way);
+            let at = picture
+                .iter()
+                .position(|row| row.trim_start().trim_start_matches("› ") == way.shown)
+                .unwrap_or_else(|| panic!("{} is not drawn: {picture:?}", way.shown));
+            let under = picture.get(at + 1).cloned().unwrap_or_default();
+            match terms.consent.routes().warned(&route) {
+                Some(warned) => {
+                    assert!(under.contains(warned.warning.caution), "{route}: {under}");
+                    let signed = under.find("signed in").unwrap_or(0);
+                    assert!(
+                        under.find(warned.warning.caution) >= Some(signed),
+                        "{under}"
+                    );
+                }
+                None => assert!(!under.contains("sent"), "{route}: {under}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn the_new_vendors_rows_are_narrowed_and_replaced_by_their_own_words() {
+    let rows = production();
+
+    assert_eq!(left("qwen", &rows).len(), 6, "{:?}", left("qwen", &rows));
+    assert_eq!(
+        left("qwen coding aliyun.com", &rows),
+        ["Qwen Coding Plan · aliyun.com API key"]
+    );
+    assert!(left("qwen tokyo", &rows).is_empty());
+
+    // A key held on one row of a vendor is named when another of its rows is
+    // chosen: the plans of one site, and the two sites of one vendor.
+    let coding = way(&rows, List::Subscription, "Qwen Coding Plan · aliyun.com");
+    let token = way(&rows, List::Subscription, "Qwen Token Plan · aliyun.com");
+    assert_eq!(
+        replaced(&token, &[coding], Glyphs::Unicode).as_deref(),
+        Some("the API key held for Qwen Coding Plan · aliyun.com")
+    );
+    let international = way(&rows, List::Key, "Z.ai · z.ai");
+    let mainland = way(&rows, List::Key, "Z.ai · bigmodel.cn");
+    assert_eq!(
+        replaced(&mainland, &[international], Glyphs::Unicode).as_deref(),
+        Some("the API key held for Z.ai · z.ai")
+    );
+}
+
+#[test]
+fn a_refused_key_is_answered_by_its_mark_and_never_its_text() {
+    use crucible_app::providers::Misfit;
+    use crucible_tui::Glyphs;
+
+    for (misfit, said) in [
+        (
+            Misfit::Unmarked("sk-api-"),
+            "! not a key for this row; its keys start sk-api-",
+        ),
+        (
+            Misfit::Refused("tp-"),
+            "! not a key for this row; keys starting tp- are another kind",
+        ),
+        (
+            Misfit::Shared("sk-sp-"),
+            "! keys starting sk-sp- are for another row; choose it by its plan and site",
+        ),
+        (
+            Misfit::Another("MiniMax · minimax.io"),
+            "! that is a key for MiniMax - minimax.io; choose that row",
+        ),
+    ] {
+        assert_eq!(super::unfitting(&misfit, Glyphs::Ascii), said);
     }
 }

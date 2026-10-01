@@ -14,8 +14,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crucible_auth::{
-    KimiOAuth, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Renewals, Store,
-    StoredCredentials, SubscriptionLogin,
+    KimiOAuth, KimiSite, Kind, LoginAttempt, LoginMethod, OAuthError, OpenAiOAuth, Renewals, Store,
+    StoredCredentials, SubscriptionLogin, provider_of,
 };
 use crucible_credentials::Credential;
 use crucible_provider::{Endpoint, Moonshot, OpenAi};
@@ -46,7 +46,8 @@ pub struct Account {
 /// One authorization method inside a provider account.
 #[derive(Debug, Clone, Copy)]
 pub struct Route {
-    provider: &'static str,
+    /// The name the sign-in it starts is written under.
+    name: &'static str,
     method: LoginMethod,
     title: &'static str,
     /// The short name at the left of the picker.
@@ -87,6 +88,10 @@ impl Subscriptions {
                     endpoint: OpenAi::SUBSCRIPTION,
                 },
                 Registered {
+                    login: Arc::new(KimiOAuth::at(renewals.clone(), KimiSite::Ai)),
+                    endpoint: Moonshot::CODING_AI,
+                },
+                Registered {
                     login: Arc::new(KimiOAuth::new(renewals.clone())),
                     endpoint: Moonshot::CODING,
                 },
@@ -105,21 +110,28 @@ impl Subscriptions {
             ]),
             routes: Arc::new([
                 Route {
-                    provider: "openai",
+                    name: "openai",
                     method: OpenAiOAuth::BROWSER,
                     title: "Log in to ChatGPT",
                     shown: "Continue in browser",
                     says: "sign in to ChatGPT on this device",
                 },
                 Route {
-                    provider: "openai",
+                    name: "openai",
                     method: OpenAiOAuth::DEVICE,
                     title: "Log in to ChatGPT",
                     shown: "Use a device code",
                     says: "sign in to ChatGPT from another device",
                 },
                 Route {
-                    provider: "moonshot",
+                    name: KimiSite::Ai.name(),
+                    method: KimiOAuth::DEVICE,
+                    title: "Log in to Kimi Code",
+                    shown: "Use a device code",
+                    says: "authorize the Kimi Code plan in a browser",
+                },
+                Route {
+                    name: KimiSite::Com.name(),
                     method: KimiOAuth::DEVICE,
                     title: "Log in to Kimi Code",
                     shown: "Use a device code",
@@ -129,25 +141,61 @@ impl Subscriptions {
         }
     }
 
+    /// A registry of `logins`, each paired with the one address its tokens
+    /// may be sent to, started through `routes`.
+    ///
+    /// The seam an implementation other than this build's own comes in
+    /// through, such as one a test stands up; [`Subscriptions::production`] is
+    /// the registry this build ships.
+    #[must_use]
+    pub fn new(logins: Vec<(Arc<dyn SubscriptionLogin>, Endpoint)>, routes: Vec<Route>) -> Self {
+        Self {
+            providers: logins
+                .into_iter()
+                .map(|(login, endpoint)| Registered { login, endpoint })
+                .collect(),
+            accounts: Arc::new([]),
+            routes: routes.into(),
+        }
+    }
+
+    /// Every registered login's stored name and the one address it is sent
+    /// to, for the test that holds the rows to this registry.
+    #[cfg(test)]
+    pub(crate) fn registered(&self) -> impl Iterator<Item = (&'static str, &Endpoint)> {
+        self.providers
+            .iter()
+            .map(|registered| (registered.login.name(), &registered.endpoint))
+    }
+
+    /// Every route this registry offers, for the test that holds each to a
+    /// registered login.
+    #[cfg(test)]
+    pub(crate) fn every_route(&self) -> impl Iterator<Item = Route> + '_ {
+        self.routes.iter().copied()
+    }
+
     /// Provider accounts in their stable display order.
     #[must_use]
     pub fn accounts(&self) -> &[Account] {
         &self.accounts
     }
 
-    /// The login methods registered for one provider.
-    pub fn routes(&self, provider: &str) -> Vec<Route> {
+    /// The login methods registered for the sign-in written under `name`.
+    pub fn routes(&self, name: &str) -> Vec<Route> {
         self.routes
             .iter()
             .copied()
-            .filter(move |route| route.provider == provider)
+            .filter(move |route| route.name == name)
             .collect()
     }
 
     /// Whether this build can sign in to `provider` with a subscription.
     #[must_use]
     pub fn supports(&self, provider: &str) -> bool {
-        self.find(provider).is_some()
+        self.providers
+            .iter()
+            .any(|registered| registered.login.provider() == provider)
     }
 
     /// Starts one route from this registry.
@@ -156,34 +204,64 @@ impl Subscriptions {
     ///
     /// [`OAuthError`] from the selected implementation.
     pub fn start(&self, route: Route, store: Store) -> Result<LoginAttempt, OAuthError> {
-        self.find(route.provider)
+        self.find(route.name)
             .ok_or(OAuthError::Method)?
             .login
             .start(route.method, store)
     }
 
-    /// Resolves a stored subscription without exposing its token.
+    /// Resolves the sign-in `provider` holds without exposing its token,
+    /// paired with the one address its site serves it at.
     #[must_use]
     pub fn credential(&self, provider: &str, stored: &StoredCredentials) -> Option<Resolved> {
-        let registered = self.find(provider)?;
+        let held = stored
+            .held(provider)
+            .filter(|held| held.kind == Kind::Account)?;
+        let registered = self.find(&held.name)?;
         Some(Resolved {
             credential: registered.login.credential(stored)?,
             endpoint: registered.endpoint.clone(),
         })
     }
 
-    fn find(&self, provider: &str) -> Option<&Registered> {
+    fn find(&self, name: &str) -> Option<&Registered> {
         self.providers
             .iter()
-            .find(|registered| registered.login.provider() == provider)
+            .find(|registered| registered.login.name() == name)
     }
 }
 
 impl Route {
-    /// The provider selected after this route completes.
+    /// A way to start the sign-in written under `name`, as a registry of
+    /// logins other than this build's own offers it.
     #[must_use]
-    pub const fn provider(self) -> &'static str {
-        self.provider
+    pub const fn new(
+        name: &'static str,
+        method: LoginMethod,
+        title: &'static str,
+        shown: &'static str,
+        says: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            method,
+            title,
+            shown,
+            says,
+        }
+    }
+
+    /// The name the sign-in it starts is written under.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        self.name
+    }
+
+    /// The provider selected after this route completes: the part of its
+    /// name before any `@`.
+    #[must_use]
+    pub fn provider(self) -> &'static str {
+        provider_of(self.name)
     }
 
     /// The account product named above a running login.

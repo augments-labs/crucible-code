@@ -111,7 +111,7 @@ fn many() -> Vec<Stocked<'static>> {
 fn shelf<'a>(providers: &'a [Serving<'a>], models: &'a [Stocked<'a>]) -> Shelf<'a> {
     Shelf {
         title: "Model",
-        now: "now  anthropic/claude-sonnet-5 · high",
+        now: "now  anthropic · claude-sonnet-5 · high",
         query: "",
         typed: 0,
         hint: "a model, or a vendor",
@@ -127,6 +127,8 @@ fn shelf<'a>(providers: &'a [Serving<'a>], models: &'a [Stocked<'a>]) -> Shelf<'
         keys: KEYS,
         norung: "no rung",
         pointer: None,
+        heading: None,
+        closing: None,
     }
 }
 
@@ -745,4 +747,158 @@ fn nothing_rests_on_a_row_that_is_not_a_row_to_take() {
     shelf.pointer = Some((BODY, 40));
     assert_eq!(shelf.resting(100, CHROME), None);
     assert_eq!(shelf.resting(NARROWEST - 1, 30), None);
+}
+
+#[test]
+fn a_heading_names_the_models_pane_and_without_one_it_reads_models() {
+    let providers = serving();
+    let models = stocked();
+    let headed = Shelf {
+        heading: Some("openai · ChatGPT sign-in"),
+        ..shelf(&providers, &models)
+    };
+    let plain = shelf(&providers, &models);
+
+    let top_row = |shelf: &Shelf<'_>| {
+        shelf
+            .within(80, 24, Glyphs::Unicode)
+            .iter()
+            .map(Row::text)
+            .find(|row| row.contains("Providers"))
+            .unwrap_or_default()
+    };
+    assert!(
+        top_row(&headed).contains("openai · ChatGPT sign-in"),
+        "{}",
+        top_row(&headed)
+    );
+    assert!(!top_row(&headed).contains("Models"), "{}", top_row(&headed));
+    assert!(top_row(&plain).contains("Models"), "{}", top_row(&plain));
+}
+
+#[test]
+fn the_closing_row_stands_under_the_models_and_never_takes_the_mark() {
+    let providers = serving();
+    let models = stocked();
+    let last = models.len() - 1;
+    let closing = "1 more with an API key · /login";
+    let closed = Shelf {
+        closing: Some(closing),
+        model: last,
+        ..shelf(&providers, &models)
+    };
+
+    let rows: Vec<String> = closed
+        .within(80, 24, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect();
+    let at = rows
+        .iter()
+        .position(|row| row.contains(closing))
+        .unwrap_or_else(|| panic!("no closing row: {rows:#?}"));
+    let marked = rows
+        .iter()
+        .position(|row| {
+            let start: String = models
+                .get(last)
+                .map(|one| one.name.chars().take(8).collect())
+                .unwrap_or_default();
+            row.contains(&format!("› {start}"))
+        })
+        .unwrap_or_else(|| panic!("no marked row: {rows:#?}"));
+    assert!(marked < at, "{rows:#?}");
+    let closing_row = rows.get(at).cloned().unwrap_or_default();
+    assert!(!closing_row.contains('›'), "{closing_row}");
+
+    // Too many to fit and scrolled to the last: the closing row still stands,
+    // under the last model, rather than being scrolled past, where the pane
+    // has the rows for both.
+    let many = many();
+    let scrolled = Shelf {
+        closing: Some(closing),
+        models: &many,
+        model: many.len() - 1,
+        ..shelf(&providers, &many)
+    };
+    let rows: Vec<String> = scrolled
+        .within(80, 18, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect();
+    assert!(rows.iter().any(|row| row.contains(closing)), "{rows:#?}");
+    assert!(
+        rows.iter().any(|row| {
+            let start: String = many
+                .last()
+                .map(|one| one.name.chars().take(8).collect())
+                .unwrap_or_default();
+            row.contains(&format!("› {start}"))
+        }),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn a_folded_shelf_keeps_the_marked_provider_and_its_heading_in_view() {
+    let names = [
+        "All",
+        "Anthropic",
+        "DeepSeek",
+        "Google",
+        "Meta",
+        "MiMo",
+        "MiniMax",
+        "MoonshotAI",
+        "OpenAI",
+        "Qwen",
+        "xAI",
+        "Z.ai",
+    ];
+    let providers: Vec<Serving<'_>> = names
+        .iter()
+        .map(|name| Serving {
+            name,
+            count: Some(1),
+        })
+        .collect();
+    let models = stocked();
+    let marked = names.iter().position(|name| *name == "OpenAI").unwrap_or(0);
+    let header = |shelf: &Shelf<'_>, glyphs: Glyphs| {
+        shelf
+            .within(40, 24, glyphs)
+            .iter()
+            .map(Row::text)
+            .nth(HEADER)
+            .unwrap_or_default()
+    };
+
+    // Walking the providers: the one marked is on the strip, whatever came
+    // before it that no longer fits.
+    let walking = Shelf {
+        provider: marked,
+        pane: Pane::Providers,
+        heading: Some("openai · ChatGPT sign-in"),
+        ..shelf(&providers, &models)
+    };
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let strip = header(&walking, glyphs);
+        assert!(strip.contains("OpenAI"), "{strip}");
+        assert!(!strip.contains("All "), "{strip}");
+    }
+
+    // In the models, whose they are, as the pane says it apart.
+    let reading = Shelf {
+        pane: Pane::Models,
+        ..walking
+    };
+    let top = header(&reading, Glyphs::Unicode);
+    assert!(top.contains("openai · ChatGPT sign-in"), "{top}");
+
+    // And with nothing to head it, the strip.
+    let plain = Shelf {
+        heading: None,
+        ..reading
+    };
+    assert!(header(&plain, Glyphs::Unicode).contains("OpenAI"));
 }

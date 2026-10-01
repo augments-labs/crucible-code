@@ -40,8 +40,10 @@ of the shell that launched it.
 The command line is a fourth layer and is nearer than all three: `--model
 openai/gpt-5.6-terra` wins over anything a file says.
 
-When `/model`, `/effort` or `/login` changes the user file, crucible prepares an
-owner-only sibling and replaces the complete document atomically. A failed
+When `/model`, `/effort`, `/fast`, `/login`, `/theme`, `/sandbox enable` or
+`disable`, answering **Use it anyway**, removing a credential, or telling
+`/resume` to stop asking about a large session changes the user file, crucible
+prepares an owner-only sibling and replaces the complete document atomically. A failed
 write before that commit leaves the previous file whole. An owner-only lock
 spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
@@ -74,12 +76,14 @@ repository's choice to make for everyone who clones it.
 
 ### `providers`
 
-Keyed by provider name: `anthropic`, `google`, `moonshot`, `openai`.
+Keyed by provider name: `anthropic`, `deepseek`, `google`, `meta`, `mimo`,
+`minimax`, `moonshot`, `openai`, `qwen`, `xai`, `zai`.
 
 | Key | Means |
 | --- | --- |
 | `model` | The model to ask when `--model` does not name one. |
 | `effort` | How hard to think before answering, when `--effort` does not say. |
+| `fast` | `true` asks the `model` beside it for its vendor's fast form, at its price. |
 | `apiKeyEnv` | The name of the environment variable holding that provider's key. |
 | `baseUrl` | Where to send that provider's requests instead of the vendor's. |
 | `contextWindow` | The session's context-window size in tokens, keyed by model name. |
@@ -90,6 +94,12 @@ provider because which rungs exist is the vendor's business. A rung chosen for
 the one serving it says nothing about the one that would refuse it. Left out,
 crucible asks for no rung at all and the vendor's own default for that model
 applies. See [Providers and models](../providers/providers.md).
+
+`fast` is written by `/fast` and read only from the configuration file in your
+home directory, because it costs more on every request. It reaches a request
+only where the file's `model` is the model in force, that model has a fast form
+and no `baseUrl` is set; see
+[Fast](../providers/fast.md).
 
 `apiKeyEnv` takes a **name**, never a key. The credential wiring reads its value
 at startup and does not copy it into a document, diagnostic or session message.
@@ -124,7 +134,8 @@ describe the model you had just left:
 ```
 
 Without either setting, the session's context window is 200,000 tokens for
-Anthropic and Google, 272,000 for OpenAI, and 262,144 for Moonshot. A known
+Anthropic, Google, DeepSeek, Meta, MiMo, MiniMax, Qwen, xAI and Z.ai, 272,000
+for OpenAI, and 262,144 for Moonshot. A known
 model with a smaller native limit keeps the smaller figure, and an unknown model
 of a known provider gets that provider's default. Native 1M support therefore
 does not make 1M the session default.
@@ -226,8 +237,8 @@ and its answer have to fit the window together, so a larger answer ceiling
 means compacting sooner, not later. The reserve is never more than half the
 window, so a small model still has half of itself to work in.
 
-`askOnResume` is a number of tokens, and `0` means never ask, which is what
-the *stop asking* answer writes down. See
+`askOnResume` is a number of tokens, 60,000 when no layer sets it, and `0`
+means never ask, which is what the *stop asking* answer writes down. See
 [Sessions](../sessions/sessions.md#picking-up-a-large-one).
 
 `spendCeiling` is off unless you set it. It bounds what a runaway turn actually
@@ -256,18 +267,18 @@ reuses a model answer or skips a provider request.
 | `mode` | `observeOnly`, `prefer`, `require`, or `prohibit`. The default is `prefer`. |
 | `allowedMechanisms` | Optional intersection of `providerManagedUsageOnly`, `automaticPrefix`, `explicitBreakpoints`, and `persistentContent`. |
 | `isolationScope` | Broadest identity scope allowed to share a prefix: `run`, `session`, `workspace`, or `user`. The default is `session`. |
-| `requestedRetention` | Optional provider-neutral `class` and hard `maxSeconds` ceiling. |
+| `requestedRetention` | Optional provider-neutral `class` and hard `maxSeconds` ceiling. The default class is `providerDefault`. |
 | `persistentResources.mode` | Separately managed remote resources are `forbid`, `reuse`, `create`, or `require`. The default is `forbid`. |
-| `namespace` | A bounded user-owned identity label; it is never copied directly into a provider cache key. |
+| `namespace` | A user-owned identity label of 1 to 64 ASCII letters, digits, `.`, `-` or `_`; it is never copied directly into a provider cache key. |
 
 `observeOnly` adds no Crucible cache controls, although a provider may still
 cache automatically and report that usage. `require` fails before sending if no
 reviewed eligible mechanism can be selected. `prohibit` also fails before
 sending unless the provider exposes a documented opt-out.
 
-`providerDefault` requests no retention override. `ephemeral` and `extended`
-require a positive bounded `maxSeconds`; the figure is a ceiling rather than an
-exact TTL promise. Extended retention, resource creation, broad isolation and a
+`providerDefault` requests no retention override and takes no `maxSeconds`.
+`ephemeral` and `extended` require a `maxSeconds` from 1 to 31,536,000 (a
+year); the figure is a ceiling rather than an exact TTL promise. Extended retention, resource creation, broad isolation and a
 namespace must come from your home configuration. Workspace layers can only
 narrow the inherited policy. Persistent resources are never created by the
 default, and their private metadata contains no prompt, response or credential.
@@ -378,9 +389,10 @@ private address does not grant access by itself. A permitted connection goes
 through the `http://` proxy crucible's own environment names, if any ([commands
 connect on their own](../providers/network.md#commands-connect-on-their-own)).
 
-`allowLocalBinding` allows local listeners; it does not grant host egress or
-publish a Linux namespace port onto the host. On macOS a local listener may
-also bind a wildcard address, so use it only when a listener is intended.
+`allowLocalBinding`, `false` by default, allows local listeners; it does not
+grant host egress or publish a Linux namespace port onto the host. On macOS a
+local listener may also bind a wildcard address, so use it only when a listener
+is intended.
 `allowUnixSockets` grants connections to exact existing native Unix socket
 paths, with no wildcard matching. It does not grant Windows named pipes.
 Granting a privileged service socket grants access to that service's protocol.
@@ -414,7 +426,8 @@ are not a budget you are meant to work within. They are not configurable, and
 a command may narrow a supported ceiling but not drop it.
 
 With confinement disabled, commands retain guardrails, deadlines, output bounds,
-usage and audit records, but their inspection report says `confined: false`.
+usage and audit records, but `crucible --sandbox` says `confined  no` and the
+session records `confined: false`.
 The confinement-only resource ceilings do not apply. Permission approval and a
 worktree are not a sandbox.
 
@@ -434,7 +447,7 @@ this is the key reference.
 
 | Key | Answers | Means |
 | --- | --- | --- |
-| `mode` | `ask`, `allowEdits`, `fullAccess` | What happens to a call no rule mentions. |
+| `mode` | `ask`, `allowEdits`, `fullAccess` | What happens to a call no rule mentions. The default is `ask`. |
 | `allow` | a list of rules | Runs without asking. |
 | `ask` | a list of rules | Put to you, whatever the mode says. |
 | `deny` | a list of rules | Refused, in every mode. |
@@ -497,11 +510,11 @@ you with no way to send at all.
 
 | Key | Answers | Means |
 | --- | --- | --- |
-| `color` | `auto`, `always`, `never` | Whether to write colour. `auto` follows the terminal and `NO_COLOR`; `always` writes colour on a terminal even when `NO_COLOR` is set, and `never` writes none. Output that is not a terminal gets no colour whatever this says, and the model's markdown is kept as written. A `TERM` of `dumb`, or no `TERM` at all, still gets no colour, even under `always`, unless `COLORTERM` says `truecolor` or `24bit`. |
-| `glyphs` | `unicode`, `ascii` | Which characters crucible draws with. `ascii` if box drawing shows as hollow squares. |
-| `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with. |
-| `syntaxTheme` | a theme name | Which theme fenced code is drawn in. |
-| `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window. Recent clipped details remain expandable while retained. |
+| `color` | `auto`, `always`, `never` | Whether to write colour; `auto` by default. `auto` follows the terminal and `NO_COLOR`; `always` writes colour on a terminal even when `NO_COLOR` is set, and `never` writes none. Output that is not a terminal gets no colour whatever this says, and the model's markdown is kept as written. A `TERM` of `dumb`, or no `TERM` at all, still gets no colour, even under `always`, unless `COLORTERM` says `truecolor` or `24bit`. |
+| `glyphs` | `unicode`, `ascii` | Which characters crucible draws with; `unicode` by default. `ascii` if box drawing shows as hollow squares. |
+| `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with; `auto` by default. |
+| `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
+| `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light
@@ -596,6 +609,22 @@ its version.
 `never` stops the asking. crucible then never contacts GitHub, and never says
 anything about releases.
 
+### `contentUse`
+
+| Key | Means |
+| --- | --- |
+| `accepted` | The routes you have said yes to sending on, though their vendor says it may use what is sent to train or improve its models. |
+
+```json
+{ "contentUse": { "accepted": ["key:google"] } }
+```
+
+crucible writes a route here when you choose **Use it anyway**, and takes it
+out when a credential of that route is removed or replaced; you rarely write it
+by hand. A name this build has no route for means nothing. Read only from your
+home file. See [content use](../providers/content-use.md) for the routes and
+what each vendor says.
+
 ### `env`
 
 Environment variables for the commands crucible runs (the bash tool's children)
@@ -622,8 +651,15 @@ gets a short list of what a program needs in order to run at all, and whatever
   `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramFiles`, `ProgramFiles(x86)`,
   `ProgramData`.
 
-When native Windows confinement is enabled, the backend replaces `TEMP` and
-`TMP` with a private directory that it owns and removes with the command.
+Confinement changes a few of these. On Linux the command gets `HOME` set to
+`/crucible-home` and `TMPDIR` set to `/tmp`, both inside the sandbox, and never
+gets `SSH_AUTH_SOCK` or `GPG_AGENT_INFO`. On macOS `TMPDIR` is a private
+directory crucible owns and removes with the command. When native Windows
+confinement is enabled, the backend replaces `TEMP` and `TMP` the same way.
+Where the network is granted, crucible sets `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY` and their lowercase forms to its own proxy, and `NO_PROXY` and
+`no_proxy` to nothing, after `env`, so these names in `env` do not reach a
+confined command.
 
 Everything else stops here, and your provider key is why. `env` and `printenv`
 are ordinary things for a model to run, and what a command prints comes back as
@@ -670,11 +706,16 @@ is still not a way to ship somebody's key.
 The same refusal covers every key that could loosen what crucible does unasked:
 `permissions.mode`, `permissions.allow`, `permissions.extraDirectories`,
 `systemPrompt.custom`, `providers.<name>.apiKeyEnv`, `providers.<name>.baseUrl`,
-and `provider`. The last four are not permissions, and they are here for the
-same reason: they replace the instructions that say to ask, or choose which
-credential is read and who receives it, and nothing on those paths stops to ask.
-Each is read only from your home file and refused in both files under the
-workspace.
+`providers.<name>.fast`, `provider`, `promptCaching.namespace`,
+`contentUse.accepted`, and `sandbox.enabled` set to `false`. Everything after
+the three `permissions` keys is not a permission, and is here for the same
+reason: these replace the instructions that say to ask, choose which credential
+is read and who receives it, spend more of your money on every request, decide
+which cached prompts may be shared, answer for you whether a vendor that trains
+on what is sent may be sent anything, or take away the sandbox, and nothing on
+those paths stops to ask. Each is read only from your home file and refused in
+both files under the workspace. The `extensions` and `mcp` blocks are refused
+there too; their own sections below say so.
 
 The refusal is structural rather than a warning, and there is no "trusted
 project" setting that switches it off. The guarantee holds only because there is
@@ -787,7 +828,7 @@ survive either, so a decision recorded against it stops applying at the moment
 the program you agreed to stopped being the one that is there:
 
 ```
-  may run   no; the manifest has changed since it was agreed to at sha256:810cb2…
+  may run   no; the manifest has changed since it was agreed to at sha256:810cb273aa0d388bf206a0685138577efc74b078759f6921d166539580d61e16
 ```
 
 That is not an accusation, and an update you were expecting is the ordinary
@@ -1192,15 +1233,19 @@ fixed set of strings at line 3, column 5
 crucible: /home/you/.crucible/config.json is not valid JSON at line 2,
 column 14: key must be a string
 
-crucible: /home/you/api/.crucible/config.json: permissions.allow[1] at line 3,
+crucible: /home/you/.crucible/config.json: permissions.allow[1] at line 3,
 column 5 — read(src is not a rule; a rule names a tool and what it may act on,
 like read(src/**)
 
-crucible: /home/you/api/.crucible/config.local.json:
-permissions.extraDirectories[0] must be an absolute path at line 3, column 5 —
+crucible: /home/you/.crucible/config.json: permissions.extraDirectories[0]
+must be an absolute path at line 3, column 5 —
 ../shared is relative, and a configuration file cannot know what it would be
 relative to
 ```
+
+The last two are from the home file because neither key may be written in a
+project file at all: there, either one is refused as `cannot be set here`,
+before its value is read.
 
 An entry in a list is named by the index it sits at and located at the key
 holding the list, because an entry has no key of its own to search the file
@@ -1232,6 +1277,10 @@ configuration invalid
 
 Each file is `valid`, `invalid` or `absent`, and each error is the one a
 startup would stop on, including two layers whose rules contradict each other.
+It does not look up a provider's name or check a `baseUrl` address; a start
+refuses an unknown provider, and an address that is neither `https` nor `http`
+on `localhost`, `127.0.0.1` or `[::1]`, so a file that passes here can still
+stop one.
 It exits 0 when everything holds and 1 otherwise, repeating the first error on
 standard error. `--json` prints one JSON document instead, with the same
 `status`, `files`, `failures` and `schema`. Neither report carries a secret; a

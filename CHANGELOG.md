@@ -8,6 +8,132 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-01
+
+**Seven more vendors, the newest OpenAI and Anthropic models, and `/fast` for
+a vendor's faster tier.** Meta, xAI, DeepSeek, Z.ai, Qwen, MiMo and MiniMax
+join as rows of `/login`, `/model` lists what your credential serves, and
+crucible asks once before sending anything to a vendor that may train on it.
+The Windows sandbox helper no longer sees your provider keys, and `--continue`
+resumes your latest session whichever build wrote it. Before rolling back to
+0.43.3, set `provider` to one it serves and delete `"fast": true` and the
+`contentUse` block from your configuration file.
+
+### Added
+
+- **Crucible asks once before sending to a vendor that may train on it.** A
+  ChatGPT plan, Kimi Code, the Kimi open platform, a Gemini key on unpaid
+  quota, MiniMax, a Qwen plan on aliyun.com, a Z.ai key of bigmodel.cn and
+  Meta's two contributor models stand what the vendor says before the first
+  message, sign-in or renewal goes, and nothing leaves until you choose Use it anyway, which is kept
+  under `contentUse.accepted` in your own configuration file. Before rolling
+  back to 0.43.3, delete the `contentUse` block from that file, or 0.43.3 stops
+  on it.
+- **Kimi Code signs in on kimi.ai as well as kimi.com.** `/login` has a row for
+  each Kimi site, for a sign-in and for a Kimi Code Console key, and each
+  credential goes only to its own site's hosts. Rolling back to 0.43.3 keeps
+  every credential, though 0.43.3 does not use a kimi.ai one; a Kimi sign-in or
+  Moonshot key stored there is the one 0.44 keeps at its next start, and it says
+  which kimi.ai credential it removed.
+- **`/fast` asks a model for its vendor's fast form, at its price.** OpenAI,
+  Anthropic and Google models that have one show the vendor's price and caveat
+  before you choose, and the label adds `fast` only after an answer served fast;
+  where crucible recognises a refusal of fast, the request is sent once more at
+  standard speed. Before rolling back to 0.43.3, delete `"fast": true` from each
+  provider in your configuration file, or 0.43.3 stops on it.
+- **Seven more vendors: Meta, xAI, DeepSeek, Z.ai, Qwen, MiMo and MiniMax.**
+  Each is a row of `/login`, with a row per site or plan where the vendor has
+  several, and its models in `/model`; their keys are read from
+  `META_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`,
+  `DASHSCOPE_API_KEY`, `MIMO_API_KEY` and `MINIMAX_API_KEY`. Before rolling
+  back to 0.43.3, set `provider` in your configuration file to one 0.43.3
+  serves (`anthropic`, `google`, `moonshot` or `openai`), or 0.43.3 stops on it.
+- **GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna, Claude Opus 5.5 and Claude Sonnet 5.5
+  are offered.** `/model` lists what the credential in use serves, headed by
+  it, so a ChatGPT sign-in no longer offers `gpt-5.5`, and a row under the list
+  says what an API key would add.
+- **`/release-notes` prints what changed in each release.** Older releases get
+  a row each with how many entries they added, changed and fixed, the ten
+  newest are printed in full, and the one you are running is marked `this
+  version`; `/release-notes 0.41.1` prints one alone. The notes are the
+  changelog the binary was built from, so they need no network.
+
+### Changed
+
+- **`/login` refuses a key meant for another row.** A key whose prefix
+  belongs to another of the vendor's rows, such as a MiniMax Token Plan key on
+  its pay-as-you-go row, is refused in the key box before it is stored or sent,
+  and the box stays open for the right one.
+- **`/login` opens on two ways to pay.** It asks whether usage comes from your
+  account's plan or your own API key, lists the rows of each with `signed in`
+  on the one you hold, and says what a choice replaces before it replaces
+  anything. Words after `/login` narrow the rows, and Escape goes back one
+  screen at a time.
+- **The model is named one way wherever it is drawn.** The row under the box,
+  the `/model` panel's title and the row answering `/model` now all read
+  `openai · gpt-5.6-sol · high`, and the answer names the rung it will be asked
+  on. What you type after `/model` and `--model` keeps `provider/model`.
+- **A line that opens with a path is sent as a prompt, and a mistyped command
+  names the nearest ones.** `/tmp is full` and `/modle gpt-6-sol` used to be
+  refused as unknown commands; a line whose first word names no command and
+  has more after it is now a prompt. A word typed alone that names no command
+  is still refused, in two rows naming the nearest commands instead of the
+  whole list, and a command's name turns to the accent colour once typed.
+
+### Fixed
+
+- **The Windows sandbox helper no longer sees your provider keys.**
+  `crucible-sandbox-broker.exe` was started with every variable of crucible's
+  own environment, provider API keys included. It now starts from a cleared
+  environment holding only `SystemRoot`; the confined command still gets
+  exactly the map it got before.
+
+- **The open platform address for a Kimi key is given whole.** The help text
+  and the docs said to set `providers.moonshot.baseUrl` to
+  `https://api.moonshot.ai/v1`, but crucible posts to that address as written,
+  so the request missed the endpoint; the address to set is
+  `https://api.moonshot.ai/v1/chat/completions`.
+
+- **A Kimi sign-in that does not complete leaves the credential store as it
+  was.** It wrote an installation identity before its first request, so a
+  sign-in that was refused, denied or left still changed the file.
+- **A row that offers to expand opens once its result is no longer in memory.**
+  Past the half mebibyte of results held in memory, older rows still offered
+  `ctrl+o to expand` and opened nothing, after a resume or late in a long
+  session. <kbd>Ctrl+O</kbd> and a click now read such a result back from the
+  session log when the view reaches it, and a row that can no longer open
+  anything stops offering.
+- **A click on a changed file's result opens it.** The result was held against
+  a line above the row that offered it, so the row named the key and a click on
+  it opened nothing.
+- **A mistyped command typed while a turn runs is said back as you typed it.**
+  The panel it stood was headed `/exit`, the command an unknown word was taken
+  for, over `names no command`.
+- **Enter on a lone `/` while a turn runs leaves it in the box.** It was queued
+  and sent to the model as a prompt once the turn ended.
+- **A redirected run asking for a model nothing serves now fails.** `crucible
+  --model foo` with no provider set up ended 0 after recording every piped
+  prompt; it now says there is no model to ask and exits non-zero, as a run
+  with no model does.
+- **`--continue`, the welcome list and `/resume` follow start time across old
+  and new session names.** Sessions named by builds before 0.25 sorted after
+  every newer one, so `--continue` picked up the newest old session and the
+  lists showed old sessions first or left newer ones out. An index an earlier
+  build kept is repaired once, and rolling back to 0.43.3 stays safe.
+- **The configuration schema and `--help` say what the build does.** Editors
+  now offer the `compaction.keep`, `recap` and `askOnResume` defaults, mark a
+  `promptCaching.namespace` or `maxSeconds` that a start refuses, and say which
+  keys only your home file may set, and `--help` names `CRUCIBLE_CODE_HOME`
+  beside `~/.crucible`.
+
+### Internal
+
+- **Chat Completions is one module that names no vendor.** Kimi is its first
+  dialect, supplying its addresses, its headers, how it counts a response and
+  how it spells effort, so a second vendor on that wire adds a dialect rather
+  than a copy. Nothing Kimi is sent or reads changed: its requests, responses
+  and allocations are held to what the code produced before the move.
+
 ## [0.43.3] - 2026-09-29
 
 **The browser `/login` opens no longer carries your provider keys, and a mode
@@ -4543,7 +4669,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...v0.44.0
 [0.43.3]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...v0.43.1

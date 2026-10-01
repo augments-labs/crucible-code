@@ -1,7 +1,8 @@
 //! Public provider -> runner -> protected session -> provider acceptance.
 //!
-//! Six exact models use synthetic HTTP responses on loopback. The fixture
-//! never reads credentials or reaches a vendor. Assertions observe requests,
+//! Six exact models use synthetic HTTP responses on loopback, and so does one
+//! of `DeepSeek`'s, for the reasoning it wants back. The fixture never reads
+//! credentials or reaches a vendor. Assertions observe requests,
 //! durable replay, permission decisions and tool effects, not parser internals.
 
 // Test-only helpers fail the owning case when its controlled fixture is invalid.
@@ -15,6 +16,9 @@ mod google_web;
 
 #[path = "provider_lifecycle/settling.rs"]
 mod settling;
+
+#[path = "provider_lifecycle/reasoning.rs"]
+mod reasoning;
 
 use std::sync::Arc;
 

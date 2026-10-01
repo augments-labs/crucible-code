@@ -97,7 +97,26 @@ const KEYS: [&str; 71] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 4] = ["unwritten", "variable", "version", "why"];
+const MORE_KEYS: [&str; 18] = [
+    "count",
+    "date",
+    "groups",
+    "newest",
+    "notes",
+    "release",
+    "releases",
+    "route",
+    "running",
+    "sentence",
+    "served",
+    "shown",
+    "source",
+    "speed",
+    "unwritten",
+    "variable",
+    "version",
+    "why",
+];
 
 /// What a field name may not say, whatever else it says.
 ///
@@ -164,6 +183,16 @@ fn questions() -> Pending {
     }
 }
 
+fn warning() -> Pending {
+    Pending::Warning {
+        id: PendingId::new(9),
+        route: marked(),
+        shown: marked(),
+        sentence: marked(),
+        source: marked(),
+    }
+}
+
 fn decisions() -> Vec<Decision> {
     vec![
         Decision::Ruled {
@@ -185,6 +214,9 @@ fn decisions() -> Vec<Decision> {
         },
         Decision::Declined {
             id: PendingId::new(8),
+        },
+        Decision::Accepted {
+            id: PendingId::new(9),
         },
     ]
 }
@@ -220,10 +252,15 @@ fn commands() -> Vec<Command> {
         Command::Theme(Theme::Drawing(Palette::Dark)),
         Command::Theme(Theme::Syntax(name("base16"))),
         Command::Help,
+        Command::ReleaseNotes { version: None },
+        Command::ReleaseNotes {
+            version: Some(name("v0.41.1")),
+        },
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
     commands.extend(Rung::EVERY.into_iter().map(Command::SetEffort));
+    commands.extend(Pace::EVERY.into_iter().map(Command::SetSpeed));
     commands.extend(Mode::EVERY.into_iter().map(Command::SetMode));
     commands
 }
@@ -249,6 +286,11 @@ fn turn_outcomes() -> Vec<TurnOutcome> {
             stop: Some(Stop::Cancelled),
         },
         TurnOutcome::Failed(problem()),
+        TurnOutcome::Warned {
+            route: marked(),
+            sentence: marked(),
+            source: marked(),
+        },
     ];
     turns.extend(
         Stop::EVERY
@@ -295,6 +337,25 @@ fn login_outcomes() -> Vec<Outcome> {
     ]
 }
 
+/// A release, with its words where there are some.
+fn release(text: Option<Text>) -> Release {
+    Release {
+        version: name("0.41.1"),
+        date: name("2026-09-14"),
+        groups: vec![
+            Group {
+                kind: name("security"),
+                count: 1,
+            },
+            Group {
+                kind: name("fixed"),
+                count: 3,
+            },
+        ],
+        text,
+    }
+}
+
 fn outcomes() -> Vec<Outcome> {
     let mut outcomes = vec![
         Outcome::Room(RoomOutcome::Made { replaced: 12 }),
@@ -332,6 +393,13 @@ fn outcomes() -> Vec<Outcome> {
             unwritten: Some(problem()),
         }),
         Outcome::Effort(EffortOutcome::Taken { unwritten: None }),
+        Outcome::Speed(SpeedOutcome::Unasked),
+        Outcome::Speed(SpeedOutcome::Unsupported),
+        Outcome::Speed(SpeedOutcome::Own),
+        Outcome::Speed(SpeedOutcome::Taken {
+            unwritten: Some(problem()),
+        }),
+        Outcome::Speed(SpeedOutcome::Taken { unwritten: None }),
         Outcome::Cache(CacheOutcome::Listed {
             resources: vec![
                 Resource {
@@ -364,6 +432,18 @@ fn outcomes() -> Vec<Outcome> {
         Outcome::Theme(ThemeOutcome::Remembered),
         Outcome::Theme(ThemeOutcome::Unwritten(problem())),
         Outcome::help(),
+        Outcome::Notes(NotesOutcome::Listed {
+            releases: vec![release(None), release(Some(marked()))],
+            running: name("0.43.3"),
+            truncated: true,
+        }),
+        Outcome::Notes(NotesOutcome::One(release(Some(marked())))),
+        Outcome::Notes(NotesOutcome::Unknown {
+            newest: name("0.43.3"),
+        }),
+        Outcome::Notes(NotesOutcome::NotAVersion {
+            newest: name("0.43.3"),
+        }),
         Outcome::Leaving,
     ];
     outcomes.extend(login_outcomes());
@@ -420,13 +500,19 @@ fn progress() -> Vec<Progress> {
 }
 
 fn snapshots() -> Vec<Snapshot> {
-    [Some(permission()), Some(questions()), None]
+    [Some(permission()), Some(questions()), Some(warning()), None]
         .into_iter()
         .map(|pending| Snapshot {
             session: pending.as_ref().map(|_| SessionId::new()),
             provider: pending.as_ref().map(|_| name("anthropic")),
             model: pending.as_ref().and_then(|_| Model::new(MARKER)),
             effort: pending.as_ref().map(|_| Rung::Max),
+            speed: if pending.is_some() {
+                Pace::Fast
+            } else {
+                Pace::Standard
+            },
+            served: pending.as_ref().map(|_| Pace::Standard),
             mode: Mode::AllowEdits,
             messages: 4,
             turns: 2,
@@ -519,60 +605,66 @@ const fn decision_arm(one: &Decision) -> (usize, usize) {
         Decision::Ruled {
             ruling: Ruling::Allow,
             ..
-        } => (0, 4),
+        } => (0, 5),
         Decision::Ruled {
             ruling: Ruling::Deny,
             ..
-        } => (1, 4),
-        Decision::Answered { .. } => (2, 4),
-        Decision::Declined { .. } => (3, 4),
+        } => (1, 5),
+        Decision::Answered { .. } => (2, 5),
+        Decision::Declined { .. } => (3, 5),
+        Decision::Accepted { .. } => (4, 5),
     }
 }
 
 const fn pending_arm(one: &Pending) -> (usize, usize) {
     match one {
-        Pending::Permission { .. } => (0, 2),
-        Pending::Questions { .. } => (1, 2),
+        Pending::Permission { .. } => (0, 3),
+        Pending::Questions { .. } => (1, 3),
+        Pending::Warning { .. } => (2, 3),
     }
 }
 
 /// An optional field counts twice: once with something in it, once without.
 const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
     match one {
-        TurnOutcome::Ran { .. } => (0, 6),
-        TurnOutcome::Rejected { stop: Some(_), .. } => (1, 6),
-        TurnOutcome::Rejected { stop: None, .. } => (2, 6),
-        TurnOutcome::Undecided { stop: Some(_), .. } => (3, 6),
-        TurnOutcome::Undecided { stop: None, .. } => (4, 6),
-        TurnOutcome::Failed(_) => (5, 6),
+        TurnOutcome::Ran { .. } => (0, 7),
+        TurnOutcome::Rejected { stop: Some(_), .. } => (1, 7),
+        TurnOutcome::Rejected { stop: None, .. } => (2, 7),
+        TurnOutcome::Undecided { stop: Some(_), .. } => (3, 7),
+        TurnOutcome::Undecided { stop: None, .. } => (4, 7),
+        TurnOutcome::Failed(_) => (5, 7),
+        TurnOutcome::Warned { .. } => (6, 7),
     }
 }
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 21),
-        Command::Compact => (1, 21),
-        Command::Cancel => (2, 21),
-        Command::Decide(_) => (3, 21),
-        Command::Clear => (4, 21),
-        Command::Resume(_) => (5, 21),
+        Command::Prompt(_) => (0, 24),
+        Command::Compact => (1, 24),
+        Command::Cancel => (2, 24),
+        Command::Decide(_) => (3, 24),
+        Command::Clear => (4, 24),
+        Command::Resume(_) => (5, 24),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 21),
-        Command::SelectModel { effort: None, .. } => (7, 21),
-        Command::SetEffort(_) => (8, 21),
-        Command::SetMode(_) => (9, 21),
-        Command::CycleMode => (10, 21),
-        Command::Login { .. } => (11, 21),
-        Command::Logout { .. } => (12, 21),
-        Command::InspectCache => (13, 21),
-        Command::CleanCache => (14, 21),
-        Command::Sandbox { enabled: true } => (15, 21),
-        Command::Sandbox { enabled: false } => (16, 21),
-        Command::Theme(Theme::Drawing(_)) => (17, 21),
-        Command::Theme(Theme::Syntax(_)) => (18, 21),
-        Command::Help => (19, 21),
-        Command::Exit => (20, 21),
+        } => (6, 24),
+        Command::SelectModel { effort: None, .. } => (7, 24),
+        Command::SetEffort(_) => (8, 24),
+        Command::SetMode(_) => (9, 24),
+        Command::CycleMode => (10, 24),
+        Command::Login { .. } => (11, 24),
+        Command::Logout { .. } => (12, 24),
+        Command::InspectCache => (13, 24),
+        Command::CleanCache => (14, 24),
+        Command::Sandbox { enabled: true } => (15, 24),
+        Command::Sandbox { enabled: false } => (16, 24),
+        Command::Theme(Theme::Drawing(_)) => (17, 24),
+        Command::Theme(Theme::Syntax(_)) => (18, 24),
+        Command::Help => (19, 24),
+        Command::ReleaseNotes { version: None } => (20, 24),
+        Command::ReleaseNotes { version: Some(_) } => (21, 24),
+        Command::Exit => (22, 24),
+        Command::SetSpeed(_) => (23, 24),
     }
 }
 
@@ -642,6 +734,13 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
             EffortOutcome::Taken { unwritten: Some(_) } => (2, 4),
             EffortOutcome::Taken { unwritten: None } => (3, 4),
         },
+        Outcome::Speed(speed) => match speed {
+            SpeedOutcome::Unasked => (0, 5),
+            SpeedOutcome::Unsupported => (1, 5),
+            SpeedOutcome::Own => (2, 5),
+            SpeedOutcome::Taken { unwritten: Some(_) } => (3, 5),
+            SpeedOutcome::Taken { unwritten: None } => (4, 5),
+        },
         Outcome::Login(login) => match login {
             LoginOutcome::Unusable(_) => (0, 5),
             LoginOutcome::Elsewhere => (1, 5),
@@ -669,6 +768,12 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         Outcome::Theme(theme) => match theme {
             ThemeOutcome::Remembered => (0, 2),
             ThemeOutcome::Unwritten(_) => (1, 2),
+        },
+        Outcome::Notes(notes) => match notes {
+            NotesOutcome::Listed { .. } => (0, 4),
+            NotesOutcome::One(_) => (1, 4),
+            NotesOutcome::Unknown { .. } => (2, 4),
+            NotesOutcome::NotAVersion { .. } => (3, 4),
         },
     }
 }
@@ -1016,6 +1121,7 @@ fn an_argument_outside_its_closed_set_is_invalid() {
     let invalid = [
         json!({"kind": "set_mode", "mode": "root"}),
         json!({"kind": "set_effort", "effort": "ludicrous"}),
+        json!({"kind": "set_speed", "speed": "ludicrous"}),
         json!({"kind": "prompt", "text": ""}),
         json!({"kind": "login", "provider": ""}),
         json!({"kind": "login", "provider": "a\nb"}),
@@ -1200,6 +1306,8 @@ fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
         provider: Some(name("anthropic")),
         model: Model::new(MARKER),
         effort: Some(Rung::Max),
+        speed: Pace::Standard,
+        served: Some(Pace::Standard),
         mode: Mode::AllowEdits,
         messages: 4,
         turns: 2,
@@ -1535,7 +1643,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 17_913_927_481_741_580_016),
+        (1, 7_024_358_126_322_682_185),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

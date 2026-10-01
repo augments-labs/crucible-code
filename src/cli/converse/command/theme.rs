@@ -463,6 +463,7 @@ fn laid(standing: &Standing, style: Style, columns: usize, room: usize) -> Vec<R
     };
 
     let panel = Panel {
+        source: None,
         title: TITLE,
         said: Some(SAID),
         shown: &shown,

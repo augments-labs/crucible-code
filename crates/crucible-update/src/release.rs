@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
-use crucible_http::{Http, Lookups, PlainLookups, ProxyEnv, Tls, read_limited};
+use crucible_http::{Hold, Http, Lookups, PlainLookups, ProxyEnv, Tls, read_limited};
 use crucible_runtime::Cancel;
 use crucible_types::later;
 use tokio::runtime::Handle;
@@ -262,15 +262,13 @@ impl UpdateCrateReleaseCheck {
     /// The returned client has its own pool. Passing the owner's plain lookup
     /// owner for proxy hosts keeps the release and application lookups within
     /// the same bounded, unpoisoned place without sharing a connection pool.
+    ///
+    /// Every request it sends asks `hold` first: a client lent out of here
+    /// is never one without it.
     #[must_use]
-    pub fn client(&self, targets: Lookups) -> Option<Http> {
+    pub fn client(&self, targets: Lookups, hold: Arc<dyn Hold>) -> Option<Http> {
         let tls = self.0.tls.as_ref()?;
-        Some(Http::new(
-            tls,
-            targets,
-            self.0.plain.clone(),
-            self.0.proxy.clone(),
-        ))
+        Some(Http::new(tls, targets, self.0.plain.clone(), self.0.proxy.clone()).holding(hold))
     }
 
     fn release_client(&self) -> Option<&Http> {

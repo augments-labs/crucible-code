@@ -148,8 +148,97 @@ fn a_model_picked_while_a_turn_runs_is_the_one_in_force_once_it_ends() {
     .expect("the loop to finish");
 
     let written = renderer.terminal().written();
-    assert!(written.contains("anthropic/claude-haiku-4-5"), "{written}");
+    assert!(
+        written.contains("anthropic · claude-haiku-4-5"),
+        "{written}"
+    );
 
     let held = std::fs::read_to_string(sample.user_file()).expect("the file it said it wrote");
     assert!(held.contains("\"model\": \"claude-haiku-4-5\""), "{held}");
+}
+
+#[test]
+fn a_speed_taken_while_a_turn_runs_is_asked_for_once_it_ends() {
+    // The script has no fast form, so the line saying so can only come from the
+    // speed held over the turn being asked for as it ends.
+    let sample = Sample::new("speed-held");
+    let terms = keeping(&sample);
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(
+            Script::new(vec![calling("write"), saying("changed it")]),
+            tools(Fixed::new("write", changing())),
+            session,
+        )
+    });
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Meanwhile::new("edit it\ny\n", "y\n", || {
+        terms.pending_speed.set(Some(crucible_models::Speed::Fast));
+    });
+
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
+
+    let written = renderer.terminal().written();
+    assert!(written.contains("script has no fast form"), "{written}");
+}
+
+#[test]
+fn a_speed_and_a_model_taken_while_a_turn_runs_leave_the_new_model_at_standard() {
+    // The speed's panel stood over the model in force, and its price was that
+    // model's. Another model taken over the same turn goes back to standard,
+    // whichever of the two was chosen first.
+    let sample = Sample::new("speed-and-model-held");
+    let mut terms = keeping(&sample);
+    // The model switched to is served by a provider whose models have a fast
+    // form, so the order the two are asked in decides whether it is fast.
+    terms.serving = Box::new(|_, _| {
+        Ok(crucible_app::providers::Resolved {
+            provider: Box::new(super::fast::Fastened::new(super::fast::FIELD)),
+            source: crucible_app::providers::CredentialSource::StoredKey,
+        })
+    });
+    let openai = crucible_app::providers::offered(&terms.providers.snapshot())
+        .find(|served| served.name == "openai")
+        .expect("openai is offered");
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(
+            Script::new(vec![calling("write"), saying("changed it")]),
+            tools(Fixed::new("write", changing())),
+            session,
+        )
+    });
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Meanwhile::new("edit it\ny\n", "y\n", || {
+        terms.pending_speed.set(Some(crucible_models::Speed::Fast));
+        terms
+            .pending_model
+            .set(Some((openai, "gpt-6-astra".into())));
+    });
+
+    converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the loop to finish");
+
+    let written = renderer.terminal().written();
+    assert!(written.contains("gpt-6-astra"), "{written}");
+    assert!(!written.contains("gpt-6-astra · fast"), "{written}");
+    let held = std::fs::read_to_string(sample.user_file()).unwrap_or_default();
+    assert!(!held.contains("\"fast\""), "{held}");
 }

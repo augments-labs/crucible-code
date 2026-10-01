@@ -779,7 +779,7 @@ pub(crate) struct Scratch {
 }
 
 impl Scratch {
-    fn new(name: &str) -> Result<Self, StartupError> {
+    pub(crate) fn new(name: &str) -> Result<Self, StartupError> {
         let base = std::env::temp_dir().join(format!(
             "crucible-bench-{}-{}",
             name.trim().len(),
@@ -795,7 +795,7 @@ impl Scratch {
         })
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 

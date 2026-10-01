@@ -24,7 +24,8 @@
 //! last, so the key that went too far is the key that goes further.
 
 use crucible_tui::{
-    Caret, Editor, Key, Ladder, Pane, Panel, Pressed, Renderer, Resting, Row, Terminal, Typed,
+    Caret, Editor, Heading, Key, Ladder, Pane, Panel, Pressed, Renderer, Resting, Row, Terminal,
+    Typed,
 };
 
 use crate::cli::Fatal;
@@ -118,7 +119,19 @@ pub(super) fn pick<T: Terminal>(
 pub(super) fn pick_while<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
+    panel: Panel<'_>,
+    while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
+) -> Result<Picked, Fatal> {
+    pick_under(renderer, style, panel, &[], while_waiting)
+}
+
+/// [`pick_while`] over a panel whose entries stand under `headings`, which
+/// the mark passes over: it moves over the entries alone.
+pub(super) fn pick_under<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    style: Style,
     mut panel: Panel<'_>,
+    headings: &[Heading<'_>],
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Picked, Fatal> {
     let count = panel.shown.len();
@@ -134,7 +147,10 @@ pub(super) fn pick_while<T: Terminal>(
         &mut at,
         |marked, columns, rows| {
             panel.chosen = *marked;
-            (panel.within(columns, rows, style.glyphs()), None)
+            (
+                panel.under(headings).within(columns, rows, style.glyphs()),
+                None,
+            )
         },
         |arrived, at| moving(arrived, at, count),
         while_waiting,
@@ -187,7 +203,7 @@ pub(super) fn adjust<T: Terminal>(
 // An event token is handed over, not lent: the handler takes the one thing
 // the reader produced, and a reference would say the caller kept a say in it.
 #[allow(clippy::needless_pass_by_value)]
-fn moving(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
+pub(super) fn moving(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
     match arrived {
         Pressed::Up => step(at, at.checked_sub(1)),
         Pressed::Down => step(at, Some(*at + 1).filter(|next| *next < count)),

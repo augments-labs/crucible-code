@@ -353,6 +353,25 @@ impl Row {
         ranges
     }
 
+    /// Rewrites the row span by span, left to right.
+    ///
+    /// `each` is handed each span's place in the row, its slot and its words,
+    /// and answers what stands there instead, or `None` to take it out. A span
+    /// handed back with its own words keeps everything else it carried (art
+    /// kept out of a selection, an address), and one given other words carries
+    /// none of it, since that belonged to the words replaced.
+    ///
+    /// For a row already written that has to say less than it did.
+    pub fn rewrite(&mut self, mut each: impl FnMut(usize, Slot, &str) -> Option<(Slot, String)>) {
+        for (at, span) in std::mem::take(&mut self.0).into_iter().enumerate() {
+            match each(at, span.slot, &span.text) {
+                None => {}
+                Some((slot, text)) if text == span.text => self.0.push(Span { slot, ..span }),
+                Some((slot, text)) => self.push(slot, text),
+            }
+        }
+    }
+
     /// The runs the row is made of: the slot each asked for, and what it says.
     ///
     /// The one thing neither [`Row::text`] nor [`Row::paint`] can answer. A
@@ -360,10 +379,11 @@ impl Row {
     /// where paint shows the hue a palette settled on for one terminal — so
     /// this is how `crate::dump`, which only a test build has, writes a run's
     /// job into the picture beside the run. Shipped code has a palette in hand
-    /// and asks for paint; the one exception is a table, which folds a cell
+    /// and asks for paint, with two exceptions: a table, which folds a cell
     /// through a row and has to hand the pieces back to the scanner as the runs
-    /// they are.
-    pub(crate) fn spans(&self) -> impl Iterator<Item = (Slot, &str)> {
+    /// they are, and a row already written that is rewritten through
+    /// [`Row::rewrite`], which has to know what it is looking at.
+    pub fn spans(&self) -> impl Iterator<Item = (Slot, &str)> {
         self.0.iter().map(|span| (span.slot, span.text.as_str()))
     }
 
@@ -832,5 +852,26 @@ mod tests {
 
         assert_eq!(row.text(), "|");
         assert_eq!(row.columns(), 1, "counted the colour it never drew");
+    }
+
+    #[test]
+    fn a_rewritten_row_keeps_what_each_span_carried_unless_its_words_changed() {
+        let mut row = Row::new()
+            .then_structural(Slot::Quiet, "⎿")
+            .then(Slot::Plain, " ")
+            .then(Slot::Cut, "what was cut")
+            .then(Slot::Quiet, " (")
+            .then(Slot::Accent, "the key")
+            .then(Slot::Quiet, ")");
+
+        row.rewrite(|at, slot, text| match (at, slot) {
+            (3..=5, _) => None,
+            (_, Slot::Cut) => Some((Slot::Quiet, text.to_owned())),
+            _ => Some((slot, text.to_owned())),
+        });
+
+        assert_eq!(row.text(), "⎿ what was cut");
+        assert!(row.starts_structural(), "the mark is still art");
+        assert!(row.kinds().all(|slot| slot != Slot::Cut));
     }
 }

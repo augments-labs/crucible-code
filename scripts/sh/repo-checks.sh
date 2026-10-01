@@ -347,6 +347,85 @@ else
     fi
 fi
 
+section "whole-screen cases reach /login rows by name"
+# A case that walks to a /login row by pressing Down a counted number of times
+# lands on another row the moment one is added above it, and still passes if
+# that row opens the same screen. Each case reaches a row by what it says,
+# through the one helper that does, so a row added moves no case.
+screens=tests/whole_screen/main.rs
+if ! grep -q '/login' "$screens"; then
+    printf '    FAIL %s types no /login; this check measured nothing\n' "$screens"
+    failed=1
+else
+    counted=$(awk '
+        /^fn |^    fn / { login = 0 }
+        /\/login/ { login = 1 }
+        login && (/\\x1b\[B.*\\x1b\[B/ || /\\x1b\[B"\.repeat/) { print FILENAME ":" FNR ": " $0 }
+    ' "$screens")
+    if [[ -n "$counted" ]]; then
+        printf '%s\n' "$counted"
+        printf '    FAIL the lines above walk to a /login row by counting Down keys; use takes()\n'
+        failed=1
+    fi
+fi
+
+section "every HTTP client is built where its hold was decided"
+# A request leaves through a client, and a hold is handed to a client when it
+# is built. Each file below builds one outside a tests file, and each was
+# decided about: renewal.rs builds the client sign-ins and renewals go
+# through, handed the application's hold; release.rs lends the client
+# provider turns and web posts share only under a hold its caller hands in,
+# and builds the release check's own, which reaches GitHub alone; transport/http.rs builds one
+# only inside its test module. One more file is one more decision to take.
+decided="crates/crucible-auth/src/oauth/renewal.rs
+crates/crucible-provider/src/transport/http.rs
+crates/crucible-update/src/release.rs"
+built=$(git ls-files 'crates/*.rs' 'src/*.rs' |
+    grep -v -E '(^|/)tests(\.rs|/)' |
+    xargs grep -l -E '^[[:space:]]*[^/[:space:]].*Http::new\(' | sort)
+if [[ -z "$built" ]]; then
+    printf '    FAIL no file builds an HTTP client; this check measured nothing\n'
+    failed=1
+elif [[ "$built" != "$decided" ]]; then
+    diff <(printf '%s\n' "$decided") <(printf '%s\n' "$built") | sed 's/^/    /'
+    printf '    FAIL the files building an HTTP client changed; decide whether each is held\n'
+    failed=1
+fi
+
+# A vendor on a shared wire supplies a dialect; the wire itself, and the tests
+# that hold it, are every vendor's. A vendor's name there would be one vendor's
+# case written into all of them, so it belongs in that vendor's dialect instead.
+# Called with the wire's name, the names that may not appear, and the files.
+wire_names_no_vendor() {
+    local wire=$1 vendors=$2 shared named
+    shift 2
+    shared=$(git ls-files "$@")
+    if [[ -z "$shared" ]]; then
+        printf '    FAIL the shared %s module was not found; this check measured nothing\n' "$wire"
+        failed=1
+    elif named=$(printf '%s\n' "$shared" | xargs grep -n -i -E "$vendors"); then
+        printf '%s\n' "$named" | sed 's/^/    /'
+        printf '    FAIL the shared %s wire names a vendor; move it into the dialect\n' "$wire"
+        failed=1
+    fi
+}
+
+section "the shared Chat Completions wire names no vendor"
+wire_names_no_vendor 'Chat Completions' \
+    'moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax|\bmeta\b|muse|xai|grok' \
+    'crates/crucible-provider/src/completions.rs' \
+    'crates/crucible-provider/src/completions/*'
+
+section "the shared Responses wire names no vendor"
+# Its vendors, their products, and the one model whose turns go back as the
+# items it answered with. `meta` is matched only as a word of its own: inside
+# one it is `metadata`, which the cache code on this wire says on purpose, and
+# a check that failed on that would be one people learn to read past.
+wire_names_no_vendor 'Responses' \
+    'openai|chatgpt|codex|astra|\bmeta\b|muse|xai|grok|moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax' \
+    'crates/crucible-provider/src/responses.rs' \
+    'crates/crucible-provider/src/responses/*'
+
 section "accepted screens"
 # The whole-screen suite proves a capture matches its accepted picture. It
 # cannot prove the picture is still the one a reviewer accepted, because a
@@ -1142,6 +1221,9 @@ src/bin/bench-grep.rs crucible_tools
 src/bin/bench-grep.rs crucible_types
 src/bin/bench-grep.rs crucible_workspace
 src/bin/bench-live-burst.rs crucible_tui
+src/bin/bench-read-back.rs crucible_session
+src/bin/bench-read-back.rs crucible_types
+src/bin/bench-read-back.rs crucible_workspace
 src/bin/bench-render-burst.rs crucible_tui
 src/bin/bench-session-rss.rs crucible_attachments
 src/bin/bench-session-rss.rs crucible_config
@@ -1190,10 +1272,13 @@ sandbox
 set_mode'
 decided=''
 kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep -oE '"[a-z_]+"' | tr -d '"' | sort)
-# The five were picked out of the eighteen commands there were. One more is one
-# nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 18)); then
-    printf '    FAIL the client contract no longer has the 18 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 18 in this check\n'
+# The five were picked out of the eighteen commands there were. Asking for the
+# release notes, the nineteenth, changes nothing a session may do, and neither
+# does asking for a speed, the twentieth: it changes what a request costs, not
+# what the session may reach or whom it acts as. One more is one nobody has
+# asked this of.
+if (($(grep -c . <<<"$kinds") != 20)); then
+    printf '    FAIL the client contract no longer has the 20 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 20 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1285,6 +1370,30 @@ while IFS= read -r file; do
         failed=1
     fi
 done <<<"$naming"
+
+section "the release notes reach nothing outside the binary"
+# `/release-notes` reads the changelog the binary was built with, and so opens
+# no socket and reads no file, which is what lets it be asked with no network
+# and no credential. The module is held to what it takes values from, written
+# down whole in the reader, since most crates of this workspace reach a
+# provider, a server or a file one way or another. The reader reads the source
+# as Rust is read, strings, characters and comments taken out first, because a
+# pattern over the raw text has twice been shown to read code as a string or a
+# string as code; its self-test holds every such shape.
+notes_owner=src/cli/converse/command/notes.rs
+if ! PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/notes-reach.py --self-test; then
+    printf '    FAIL the release notes reader failed its self-test\n'
+    failed=1
+fi
+if [[ ! -f "$notes_owner" ]]; then
+    printf '    FAIL %s is missing; the release notes check measured nothing\n' "$notes_owner"
+    failed=1
+elif ! notes_reached=$(PYTHONDONTWRITEBYTECODE=1 python3 scripts/python/notes-reach.py "$notes_owner"); then
+    while IFS= read -r said; do
+        printf '    FAIL %s %s; the release notes are read from the binary alone\n' "$notes_owner" "$said"
+    done <<<"${notes_reached:-was not read}"
+    failed=1
+fi
 
 section "workspace inheritance"
 if ((${#member_manifests[@]} == 0)); then

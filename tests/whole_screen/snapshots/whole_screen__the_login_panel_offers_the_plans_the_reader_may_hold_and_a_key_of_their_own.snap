@@ -1,8 +1,11 @@
 ---
 source: tests/whole_screen/main.rs
-expression: window.picture()
+expression: picture
 ---
 80x24 cursor 22,0 scrolled 0
+|│                                  │ · \ enter    adds a line without sending  │|
+|│                                  │ · shift+tab  steps the permission mode    │|
+|│                                  │ · ctrl+c     clears the line typed so far │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
 |                                                                                |
@@ -14,13 +17,10 @@ expression: window.picture()
 |                                                                                |
 |Log in                                                                          |
 |                                                                                |
-|Choose how crucible signs its requests.                                         |
+|Choose how usage is paid for.                                                   |
 |                                                                                |
-|› OpenAI                                                                        |
-|  ChatGPT plan with your subscription                                           |
-|                                                                                |
-|  MoonshotAI                                                                    |
-|  Kimi Code plan with your subscription                                         |
+|› Your account with subscription                                                |
+|  Usage included in your paid plan                                              |
 |                                                                                |
 |  Provide your own API key                                                      |
 |  API usage billing                                                             |

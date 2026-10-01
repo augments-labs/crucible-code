@@ -56,6 +56,11 @@ fn typed(text: &str) -> Editor {
     editor
 }
 
+/// Consent over the routes this build warns, with nothing served on any.
+pub(crate) fn unwarned() -> crucible_app::content_use::Consent {
+    crucible_app::content_use::Consent::new(crucible_app::content_use::Routes::production())
+}
+
 /// The terms a test runs under when neither the style nor cancelling is what
 /// it is watching.
 ///
@@ -70,6 +75,7 @@ pub(crate) fn plain() -> Terms {
         .join("crucible-unwritten");
 
     Terms {
+        consent: unwarned(),
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
@@ -88,6 +94,7 @@ pub(crate) fn plain() -> Terms {
         // a configuration anybody keeps.
         pending_model: Cell::new(None),
         pending_mode: Cell::new(None),
+        pending_speed: Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: unwritten.join("config.json"),
 
@@ -132,6 +139,7 @@ pub(crate) fn plain() -> Terms {
 /// inside `sample`, which removes it when the test is over.
 pub(crate) fn keeping(sample: &Sample) -> Terms {
     Terms {
+        consent: unwarned(),
         choosing: sample.user_file(),
         ..plain()
     }
@@ -359,6 +367,7 @@ fn a_theme_taken_mid_session_is_what_the_rows_after_it_are_drawn_in() {
     // same captured style fed — the one that says no model has been chosen.
     let sample = Sample::new("theme-mid-session");
     let terms = Terms {
+        consent: unwarned(),
         style: Cell::new(Style::coloured()),
         ..keeping(&sample)
     };
@@ -1160,6 +1169,7 @@ fn the_mark_a_piped_line_is_typed_after_comes_out_of_the_glyph_set() {
         let mut renderer = Renderer::new(Recording::new(80, 24));
         let mut input = Cursor::new(Vec::new());
         let terms = Terms {
+            consent: unwarned(),
             style: std::cell::Cell::new(Style::drawn(glyphs)),
             ..plain()
         };
@@ -1334,6 +1344,7 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     // the worker, and this test would prove nothing about the seam it is for.
     let putting = crate::cli::seen::Putting::new();
     let terms = Terms {
+        consent: unwarned(),
         putting: putting.clone(),
         ..plain()
     };
@@ -1384,9 +1395,16 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
     assert!(written.contains("carried on"), "{written}");
 }
 
+mod cache;
 mod command;
+mod fast;
 mod held;
+mod login;
 mod question;
+mod release_notes;
+mod restricted;
+mod unanswerable;
+mod warning;
 
 // Which questions a mode leaves to be drawn.
 //
@@ -1788,138 +1806,6 @@ fn a_huge_line_without_a_newline_is_refused_before_it_is_retained() {
 
     assert!(matches!(problem, Fatal::InputTooLong), "{problem:?}");
     assert!(problem.to_string().contains("1 MiB"), "{problem}");
-}
-
-#[test]
-fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly() {
-    // Interactively this is a warning and the session carries on, because
-    // `/model` is a key away. Down a pipe nobody can type it, so every line
-    // after this one would be read and none of them answered — and the run
-    // would end `Ok`, which is the one thing a script looks at. `echo ... |
-    // crucible` reporting success while answering nothing is the "it does
-    // nothing" report arriving as a zero exit.
-    let conversation = paired(Arc::new(Session::nowhere()), |session| {
-        Runner::new(
-            Box::new(Script::new(Vec::new())),
-            Tools::new(),
-            Agent::new(
-                AgentId::new("test"),
-                Model {
-                    name: String::new().into(),
-                    max_tokens: 64,
-                    window: None,
-                    accepts: None,
-                    effort: None,
-                },
-            ),
-            crucible_context::ContextInputs::new(std::env::temp_dir()),
-            session,
-        )
-    });
-
-    let mut renderer = Renderer::new(Recording::redirected(80, 24));
-    let mut input = Cursor::new(b"what is 2+2\n".to_vec());
-
-    let problem = converse(
-        conversation,
-        &mut renderer,
-        &plain(),
-        First {
-            card: &opening(),
-            arming: None,
-        },
-        &mut input,
-    )
-    .expect_err("a run that answered nothing to fail");
-
-    assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");
-}
-
-/// What a piped prompt ends the run with, in a session that chose no provider.
-fn unanswered_without_a_provider(terms: &Terms) -> Fatal {
-    let conversation = Conversation::recording(Arc::new(Session::nowhere()), None, |session| {
-        Runner::new(
-            Box::new(Script::new(Vec::new())),
-            Tools::new(),
-            Agent::new(
-                AgentId::new("test"),
-                Model {
-                    name: String::new().into(),
-                    max_tokens: 64,
-                    window: None,
-                    accepts: None,
-                    effort: None,
-                },
-            ),
-            crucible_context::ContextInputs::new(std::env::temp_dir()),
-            session,
-        )
-    });
-
-    let mut renderer = Renderer::new(Recording::redirected(80, 24));
-    let mut input = Cursor::new(b"what is 2+2\n".to_vec());
-
-    converse(
-        conversation,
-        &mut renderer,
-        terms,
-        First {
-            card: &opening(),
-            arming: None,
-        },
-        &mut input,
-    )
-    .expect_err("a run that answered nothing to fail")
-}
-
-#[test]
-fn a_piped_prompt_with_keys_for_two_providers_and_neither_chosen_says_choose_one() {
-    // Two keys and nothing choosing between them is the state the welcome
-    // calls "no provider selected". The prompt after it is the same state, so
-    // it owes the same sentence: telling somebody holding two keys to go and
-    // set one sends them to check the half that was never wrong.
-    let sample = Sample::new("no-provider-piped");
-    sample.stored("anthropic");
-    sample.stored("openai");
-
-    let problem = unanswered_without_a_provider(&Terms {
-        logins: sample.store(),
-        ..plain()
-    });
-
-    assert!(
-        matches!(
-            problem,
-            Fatal::Unanswerable(crucible_app::providers::NO_PROVIDER_CHOSEN)
-        ),
-        "{problem:?}"
-    );
-}
-
-#[test]
-fn an_exported_key_counts_toward_which_warning_a_piped_prompt_gets() {
-    // Nothing stored and one key exported is a provider set up, the way the
-    // launch counts it; with no key anywhere the first warning is the one owed.
-    let exported = unanswered_without_a_provider(&Terms {
-        environment: Box::new(|name| (name == "OPENAI_API_KEY").then(|| "sk-sample".to_owned())),
-        ..plain()
-    });
-    let bare = unanswered_without_a_provider(&plain());
-
-    assert!(
-        matches!(
-            exported,
-            Fatal::Unanswerable(crucible_app::providers::NO_PROVIDER_CHOSEN)
-        ),
-        "{exported:?}"
-    );
-    assert!(
-        matches!(
-            bare,
-            Fatal::Unanswerable(crucible_app::providers::NOTHING_TO_ASK)
-        ),
-        "{bare:?}"
-    );
 }
 
 #[test]

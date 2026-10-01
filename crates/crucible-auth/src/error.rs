@@ -54,6 +54,15 @@ pub enum AuthError {
         /// The greatest accepted byte length.
         maximum: usize,
     },
+
+    /// What had to happen before a write took a credential out, or moved
+    /// the one a provider holds, could not be done, so the store was left as
+    /// it was.
+    #[error("nothing was changed: {why}")]
+    Unreleased {
+        /// What could not be done, in the words of whoever was asked.
+        why: Box<str>,
+    },
 }
 
 impl AuthError {
