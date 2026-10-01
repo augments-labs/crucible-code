@@ -144,8 +144,9 @@ crucible has no record of starts at 200,000 tokens, or 272,000 for OpenAI and
 262,144 for Moonshot.
 
 A session may grow to its window before it is compacted, and every turn sends
-all of it, so a larger window costs more per turn; some vendors also charge
-more per token past a size of their own. Use `defaultContextWindow` to lower the
+all of it, so a larger window costs more per turn. Gemini, xAI and OpenAI with
+a key also charge more per token once a request passes a threshold of their
+own. Use `defaultContextWindow` to lower the
 window for every model of one provider, or `contextWindow` for a named model, as
 in the example above; either can also raise a window past these figures.
 Neither is sent anywhere. The configured/default value is the window; the existing

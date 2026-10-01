@@ -22,6 +22,9 @@ mod fast;
 mod fast_tests;
 #[cfg(test)]
 mod newer_tests;
+mod overlong;
+#[cfg(test)]
+mod overlong_tests;
 mod stream;
 mod wire;
 
@@ -425,7 +428,7 @@ impl Provider for Anthropic {
                     NAME,
                     Rules {
                         fast: rule,
-                        overlong: None,
+                        overlong: Some(overlong::outgrew),
                     },
                     response,
                     &redactions,

@@ -309,10 +309,21 @@ lists each model's figure.
 
 This is local context management, not a request parameter. A session may grow
 to its window before it is compacted, and every turn sends all of it, so a
-large window costs more per turn, and some vendors charge more per token past
-a size of their own. To compact sooner, set a lower figure for the named model
-under `providers.<name>.contextWindow`, or `defaultContextWindow` for every
-model of that provider.
+large window costs more per turn. Gemini, xAI and OpenAI with a key also
+charge more per token once a request passes a threshold of their own. To
+compact sooner, set a lower figure for the named model under
+`providers.<name>.contextWindow`, or `defaultContextWindow` for every model of
+that provider.
+
+When a request is refused as too long for the model, Anthropic, Meta, MiniMax
+and Z.ai make room and ask again, as a
+[full window](../sessions/sessions.md#when-the-window-fills) does. Anthropic's
+and Meta's refusals carry no code, so crucible reads each by its shape and the
+words it opens with; the words matched for Anthropic and MiniMax are not printed
+on their own pages, so a refusal worded otherwise ends the turn. On Google,
+DeepSeek, Qwen, xAI and MiMo a request too long for the model still ends the
+turn; a lower `defaultContextWindow` compacts the session before it gets
+there.
 
 ## How hard to think
 
