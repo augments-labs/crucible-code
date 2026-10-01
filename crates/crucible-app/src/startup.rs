@@ -1542,10 +1542,12 @@ fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Age
 /// the window fills.
 ///
 /// Resolved here, whole, so the runner is handed an answer rather than
-/// learning that any of this has a spelling in a file. `keep` is the one figure with a
-/// default of crucible's own: a session carried on from needs enough of the
-/// recent turns to say what it is doing and how it got there, which is what
-/// "carry on from here" means, and nothing about a document makes that number.
+/// learning that any of this has a spelling in a file. `keep` and `recap` fall
+/// back to the runner's own figures, and `askOnResume` to the terminal's, when
+/// no document states them: a session carried on from needs enough of the recent
+/// turns to say what it is doing and how it got there, which is what "carry on
+/// from here" means, and nothing about a document makes that number. The schema
+/// publishes the same three figures, and the tests beside each hold them equal.
 ///
 /// The two byte ceilings and the retry policy are not configurable and are not
 /// read here: they bound this program's own memory and its own patience with a

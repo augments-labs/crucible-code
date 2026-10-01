@@ -178,8 +178,8 @@ it is the person whose name is on it who pays for that.
   left empty otherwise, naming who is being asked. A tick nobody gave is a false
   statement about a person.
 
-How a branch is finished, reviewed and published is owned by the skills in
-[`.agents/skills/`](.agents/skills/); this file states what the result has to be.
+Finishing, review and publication follow [`CONTRIBUTING.md`](CONTRIBUTING.md)
+and [`RELEASING.md`](RELEASING.md); this file states what the result has to be.
 
 ## Repository checks
 

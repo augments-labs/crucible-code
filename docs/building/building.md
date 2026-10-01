@@ -91,10 +91,12 @@ scripts/sh/check.sh
 Build under `umask 022`. Linux sandboxing refuses a broker image that a group
 member could rewrite, and it walks the whole path to it, so a checkout made
 under `umask 002` fails the confinement tests for the mode of a directory above
-the helper rather than for anything you changed. The error names the directory.
+the helper rather than for anything you changed. The error names the broker
+path and says a directory above it is writable by a group or by everyone;
+`namei -l <path>` shows which one.
 
-The compatibility command runs the deterministic Rust and repository checks
-expected on a contributor machine. CI calls those named gates independently,
+The compatibility command runs the deterministic Rust, repository and Python
+checks expected on a contributor machine. CI calls those named gates independently,
 runs Rust tests on Intel and Apple silicon macOS plus Windows, and supplies
 dependency and performance jobs of its own;
 [workflow ownership](../../.github/workflows/README.md) has the map. You can
@@ -108,6 +110,9 @@ this tree writes. It builds v0.43.3 from the local tag in a scratch worktree
 fixtures the candidate binary has read and recovered: a conversation must
 replay byte-identical, a session ending in an unanswered tool call must recover
 to the same bytes on both sides, and `--sandbox` and `--extensions` must agree.
+The previous binary must also stop on, and name, what this tree can leave in a
+user's file that it does not know: a `contentUse` yes, a `fast` key, and a
+provider it does not serve.
 Everything happens under scratch directories with no model selected, so no
 provider is called and no real session is read. `scripts/sh/rollback-drill-selftest.sh`
 runs the drill clean and against a corrupted fixture, which must fail. CI runs

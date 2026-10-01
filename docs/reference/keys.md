@@ -85,8 +85,9 @@ through the prompts sent from this directory, newest first, and keeps what it
 interrupted. The box need not be empty. <kbd>↓</kbd> walks forward again, and
 one step past the newest puts that text back. The top border of the box says
 where you are, such as `history 80/100`. Any edit ends the walk and leaves the
-text yours; moving the cursor does not. Each directory keeps its last hundred
-prompts between sessions, and a blank prompt is never kept. [Run
+text yours; moving the cursor does not. Each directory keeps at most its last
+hundred prompts between sessions, out of 512 kept across every directory, and a
+blank prompt or one longer than 1024 bytes is never kept. [Run
 it](../getting-started/getting-started.md#run-it) tells the longer story.
 
 ### The command list
@@ -94,8 +95,10 @@ it](../getting-started/getting-started.md#run-it) tells the longer story.
 While the box holds one word starting with `/`, the commands whose names begin
 with it stand in a list above the box, and a bare `/` shows all of them.
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list and <kbd>Enter</kbd> runs the
-marked command. The list is not opened where there is no room for the whole
-of it. The commands themselves are under
+marked command. The list is not drawn where there is no room for the whole
+of it, but it is still there: <kbd>↑</kbd> and <kbd>↓</kbd> still move its
+unseen mark, and <kbd>Enter</kbd> runs the marked command rather than the
+word as typed. The commands themselves are under
 [Commands](../getting-started/getting-started.md#commands).
 
 ### Other keys at the prompt
@@ -154,7 +157,7 @@ A call that needs your verdict stands a panel where the box was:
 
 | Key | What it does |
 | --- | --- |
-| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. While the explanation is open, scrolls it instead. |
+| <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. While the explanation is open and was cut to fit, scrolls it instead. |
 | <kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd> | Takes that answer at once: `Yes, once`, `Yes, and don't ask again this session`, `No, and end the turn`. |
 | <kbd>Enter</kbd> | Takes the marked answer. |
 | <kbd>Ctrl+E</kbd> | Opens the explanation the call sent, under the command or the path, and hides it again. Only where the footer names it. |
@@ -163,7 +166,8 @@ A call that needs your verdict stands a panel where the box was:
 
 The footer names the keys that apply: `esc to cancel` alone, or
 `esc to cancel · ctrl+e to explain` where the call sent an explanation and
-`esc to cancel · ctrl+e to hide` once it is open. [The long
+`esc to cancel · ctrl+e to hide` once it is open. An open explanation cut to
+fit adds `↑↓ to see more`. [The long
 version](../permissions/permissions.md#the-long-version) is about what
 <kbd>Ctrl+E</kbd> shows.
 
@@ -368,7 +372,7 @@ there is more.
 
 | Key | What it does |
 | --- | --- |
-| <kbd>↑</kbd>, <kbd>↓</kbd>, wheel | A row up or down. At either end, a notch the view cannot use scrolls the transcript. |
+| <kbd>↑</kbd>, <kbd>↓</kbd>, wheel | An arrow moves a row up or down; a wheel notch moves as many rows as it moves the transcript, six unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise. At either end, a notch the view cannot use scrolls the transcript. |
 | <kbd>Ctrl+O</kbd>, <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Closes it. |
 | Anything else | Nothing, <kbd>Enter</kbd> included. |
 

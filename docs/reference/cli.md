@@ -91,8 +91,9 @@ variable exported empty holds none, so it does not compete), or one stored by
 `/login`. A key in `DASHSCOPE_API_KEY`, `MINIMAX_API_KEY` or `ZAI_API_KEY` is
 sent to the vendor's international site; a key of its mainland China site is
 given through `/login`, or reaches it with that provider's `baseUrl`. Where more than one is usable, qualify the
-name or set `provider` in your configuration; otherwise crucible starts with
-no provider chosen and says so
+name or set `provider` in the configuration file in your home directory, the
+only file `provider`, `baseUrl` and `apiKeyEnv` are read from; otherwise
+crucible starts with no provider chosen and says so
 ([Which provider](../providers/providers.md#which-provider)). The key is read
 from that provider's variable, or from whichever one its `apiKeyEnv` names
 ([Keys](../providers/providers.md#keys)).
@@ -223,6 +224,11 @@ again on standard error. `--json` prints one JSON document to standard output
 instead, with `format_version` 1, `kind` `config-check`, `status`, `files`,
 `failures`, `schema` and a `truncated` flag. `config` on its own, without
 `check`, is a usage error.
+
+The check reads each value's shape and the file it may come from. It does not
+ask whether a provider name is one this build serves or whether a `baseUrl` is
+an address crucible will send a key to: an `http` address that is not loopback
+passes here, and the next start refuses it.
 
 ## Windows sandbox maintenance
 

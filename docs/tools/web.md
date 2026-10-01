@@ -126,18 +126,14 @@ every call is put to you first.
 writing files in a directory you already opened crucible in. Sending a query
 somewhere else is not that.
 
-Answering *don't ask again* writes down a rule naming the **host**, never the
-page:
+Answering *Yes, and don't ask again this session* covers the tool and the
+**host**, never the page, and lasts only for this session. The next request to
+that host runs without asking; a request to any other host is a new question.
+An answer about the page would be one that never matched twice, because the next
+address carries a different path.
 
-```
-allow web_fetch(docs.rs)
-```
-
-The next request to that host runs without asking; a request to any other host
-is a new question. A rule about the page would be a rule that never matched
-twice, because the next address carries a different path.
-
-You can write them yourself, in the same file as every other rule:
+To keep it past the session, write the rule yourself, in the same file as every
+other rule:
 
 ```json
 {

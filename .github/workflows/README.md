@@ -1,15 +1,14 @@
 # Workflow ownership
 
-`blocking-ci.yml` is the pull-request entrypoint. It runs again when the merge
-queue on `dev` builds a pull request, on top of `dev` and everything queued
-ahead of it, and on every push to `dev` and `main`. It calls focused reusable
-workflows and exposes `CI required` as the single merge result. A queued run
-restores caches but saves none, because the branch it runs on is deleted once
-the queue is done with it.
+`blocking-ci.yml` is the pull-request entrypoint. It runs on every pull request
+and on every push to `dev` and `main`. It calls focused reusable workflows and
+exposes `CI required` as the single merge result. `dev` and `main` both merge
+directly once `CI required` is green on a head that is up to date with the
+base.
 
 | Workflow | Owns |
 | --- | --- |
-| `rust-ci.yml` | Rust formatting, all-feature linting, tests and rustdoc on supported CI platforms |
+| `rust-ci.yml` | Rust formatting on Linux; all-feature linting, tests and rustdoc on supported CI platforms; install tests on macOS; the rollback drill and its self-test on all five platforms |
 | `repo-checks.yml` | Deterministic cross-file repository policy |
 | `python-ci.yml` | Python canary and campaign harness syntax, fixtures and report validation |
 | `dependency-policy.yml` | Blocking Cargo usage, license, source and ban policy |

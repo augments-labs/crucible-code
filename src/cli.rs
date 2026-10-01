@@ -136,8 +136,8 @@ There is no model built in. Left off, or given as a provider and a bare slash, \
 the model comes from your configuration; where nothing says, crucible starts \
 and asks rather than picking one, and /model writes your answer down.
 
-crucible keeps its own files in ~/.crucible, and reads config.json there, then \
-.crucible/config.json and .crucible/config.local.json in the directory it was \
+crucible keeps its own files in ~/.crucible (or the directory CRUCIBLE_CODE_HOME \
+names), and reads config.json there, then .crucible/config.json and .crucible/config.local.json in the directory it was \
 started in. Nearer wins; the command line is nearer than all of them.
 
 Sessions are written one file per session, and --continue picks up the most \
@@ -145,7 +145,8 @@ recent one for this directory. --resume picks up the exact session an id \
 names instead; a quitting session prints its own id on the way out, and \
 /resume inside a session lists the rest.
 
---extensions lists what is installed in ~/.crucible/extensions, with what each \
+--extensions lists what is installed in ~/.crucible/extensions (or the \
+extensions directory under CRUCIBLE_CODE_HOME), with what each \
 manifest asks to be allowed to do and the digest crucible took over its bytes, \
 and stops. Nothing installed is run to produce that list, which is the point of \
 being able to read it.
@@ -153,7 +154,8 @@ being able to read it.
 --sandbox prints the confinement a command in this directory would run under — \
 which backend enforces it, what that backend can and cannot hold, the reach and \
 ceilings a command would get, and anything given up along the way — and stops. \
-No command is run to produce it, and every path in it is a digest.
+No command is run to produce it, and every path in it but the workspace root \
+is a digest.
 
 --with-mcp names a server written down under mcp.servers and hosts it for this \
 run, and may be repeated. A configuration file is a list of servers you could \

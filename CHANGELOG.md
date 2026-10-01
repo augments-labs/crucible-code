@@ -109,6 +109,11 @@ change in any release with no deprecation period.
   every newer one, so `--continue` picked up the newest old session and the
   lists showed old sessions first or left newer ones out. An index an earlier
   build kept is repaired once, and rolling back to 0.43.3 stays safe.
+- **The configuration schema and `--help` say what the build does.** Editors
+  now offer the `compaction.keep`, `recap` and `askOnResume` defaults, mark a
+  `promptCaching.namespace` or `maxSeconds` that a start refuses, and say which
+  keys only your home file may set, and `--help` names `CRUCIBLE_CODE_HOME`
+  beside `~/.crucible`.
 
 ### Internal
 

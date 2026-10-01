@@ -104,7 +104,9 @@ same way afterwards.
    itself names — no shell, no toolchain, no certificate bundle, no source tree,
    and a home directory that did not exist a moment ago. It reports the glibc
    floor, which is the number that decides which distributions this release
-   leaves behind; when it moves, `docs/getting-started/getting-started.md` says so.
+   leaves behind, and fails when that floor rises above glibc 2.34, the floor
+   `docs/getting-started/getting-started.md` promises. Raising the promise is a
+   product decision: change the script's ceiling and that page together.
 
    The run stops short of a completed turn unless `CRUCIBLE_SMOKE_KEY` is set,
    because a turn costs tokens. Set it for the release you actually cut:
@@ -128,7 +130,7 @@ same way afterwards.
 ## Cutting it
 
 Nothing reaches `dev` or `main` except through a pull request, and none merges
-until `CI required` is green. That aggregate covers Rust, repository,
+until `CI required` is green. That aggregate covers Rust, Python, repository,
 dependency and performance workflows, so the ruleset needs one stable status as
 new language workflows become peers. The ruleset has no bypass and therefore
 applies to the release change too.
@@ -163,7 +165,7 @@ git push -u origin chore/merge-v0.0.1
 
 gh pr create --base dev --title "chore: merge 0.0.1 back into dev"
 gh pr checks --watch
-gh pr merge                     # joins the merge queue on dev
+gh pr merge --merge
 ```
 
 Step 4 carries the bump over a branch rather than opening `main` against `dev`
@@ -173,11 +175,9 @@ pushes to `main`. A branch cut from `dev` takes the merge where it can be
 fixed: it fast-forwards when `dev` did not move and records a real merge when
 it did.
 
-`dev` merges through a merge queue. A pull request joins it once `CI required`
-is green, and the queue runs the same checks again on `dev` with every change
-queued ahead of it applied, so a change that landed in the meantime never has
-to be merged in by hand. `main` has no queue: only a release branch or a hotfix
-reaches it, one at a time, and each must be up to date before it merges.
+`dev` and `main` both merge directly once `CI required` is green on a head that
+is up to date with the base. Only a release branch or a hotfix reaches `main`,
+one at a time.
 
 Step 4 is not bookkeeping either. Until it runs, `dev` builds a binary that
 reports the previous version and a changelog with no entry for the release that

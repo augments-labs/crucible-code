@@ -1042,6 +1042,32 @@ fn recap_room_defaults_to_ten_k_and_accepts_a_configured_ceiling() {
     assert_eq!(policy(&configured).compaction.recap_tokens, 12_000);
 }
 
+/// What the published schema says `compaction.<key>` falls back to.
+fn published_compaction_default(key: &str) -> Option<u64> {
+    let schema: serde_json::Value =
+        serde_json::from_str(&crucible_config::schema()).expect("the schema is JSON");
+    schema
+        .pointer(&format!("/properties/compaction/properties/{key}/default"))
+        .and_then(serde_json::Value::as_u64)
+}
+
+#[test]
+fn the_schema_offers_the_keep_and_recap_a_run_falls_back_to() {
+    // The figures live in the runner and the schema is declared in the
+    // configuration crate, so neither can own both. An editor writes the
+    // schema's default into somebody's file; it has to be the one a run uses.
+    let defaults = policy(&Settings::default()).compaction;
+
+    assert_eq!(
+        published_compaction_default("keep"),
+        Some(defaults.keep_tokens)
+    );
+    assert_eq!(
+        published_compaction_default("recap"),
+        Some(u64::from(defaults.recap_tokens))
+    );
+}
+
 #[test]
 fn stable_instructions_hold_no_session_fact() {
     let said = under(&Settings::default());

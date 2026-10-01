@@ -78,9 +78,11 @@ above, and that one was read out of the arguments rather than written. The
 caption is cut to one row however much arrived, so nothing off-screen decides
 how tall this panel is, and a call that offered none leaves the row out
 entirely. It is spelled `description`, and the tools that invite one are the
-three whose calls stop here: [`bash`](../tools/commands.md),
-[`write` and `edit`](../tools/files.md). A read is allowed or refused without
-being asked about, so there would be nowhere to draw one.
+three whose calls most often stop here: [`bash`](../tools/commands.md),
+[`write` and `edit`](../tools/files.md). Other calls reach this panel too,
+without a caption: a read of a file outside the workspace, a web tool's request
+to a host, and any call an `ask` rule names. A read inside the workspace is
+allowed or refused without being asked about.
 
 `↑` and `↓` move the mark, and stop at each end rather than wrapping. `enter`
 takes the answer the mark stands on, and `1`, `2` and `3` take theirs directly.
@@ -203,11 +205,13 @@ Both durations remember exactly what the question named.
   `cargo test`; `cargo build`, the same program but a different command, asks
   again. Standing permission for a family of commands is a job for an
   [allow rule](rules.md), which is written down where you can read it back.
+- For a web tool, it is the tool **and the host**. `session` on a `web_fetch`
+  from `docs.rs` stops asking about that host; another host asks again.
 
 A session-long allow lives as long as the process that made it and is never
-written to disk, so `--continue` starts with none. Resuming a session does
-not resume its permissions, and the mode comes fresh from configuration at
-every start.
+written to disk, so `--continue` starts with none. `/clear` and `/resume` drop
+them too. Resuming a session does not resume its permissions, and the mode
+comes fresh from configuration at every start.
 
 ## Durable rules
 
@@ -215,7 +219,9 @@ A lasting `allow` is written deliberately in `~/.crucible/config.json`, outside
 the checkout. Neither workspace configuration filename can carry authority:
 an ignored-by-convention file is still a filename a repository can commit, and
 crucible cannot distinguish the two sources safely. Project files may add
-`ask` and `deny` policy because both narrow what can happen.
+`ask` and `deny` policy because both narrow what can happen; one that sets
+`permissions.mode` is refused at startup, and `crucible config check` exits 1
+on it.
 
 ## The files the file tools may not write
 

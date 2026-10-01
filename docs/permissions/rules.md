@@ -50,9 +50,10 @@ so only an absolute pattern reaches it. In a file pattern `*` stops at `/`:
 `src/*` names the files in `src`, and `src/**` everything below it.
 
 A pattern separates directories with `/` on every platform, Windows included:
-write `read(src/**)` and `read(C:/Users/you/src/**)`. A backslash is the escape
-character in a pattern rather than a separator, so a Windows path spelled with
-one names something else. Crucible writes rules that way itself; a path in a
+write `read(src/**)` and `read(C:/Users/you/src/**)`. On Unix a backslash
+escapes the next character, so a path spelled with one names something else; on
+Windows it is read as a separator. Write patterns with `/` and they mean the
+same everywhere. Crucible writes rules that way itself; a path in a
 question and a rule are both spelled with `/` there.
 
 **Command patterns**, such as `bash(cargo test)` or `bash(git *)`, are matched
@@ -125,7 +126,8 @@ never subtract from what may not happen.
 Both workspace filenames may add `ask` and `deny` rules, and neither may add an
 `allow`: a repository can commit either name, whatever its ignore convention
 says. Durable allows therefore live only in the user configuration outside the
-checkout. A deny in any layer still beats them.
+checkout, and so does `permissions.mode`: a workspace file that sets it is
+refused at startup. A deny in any layer still beats them.
 
 ## The model never sees them
 

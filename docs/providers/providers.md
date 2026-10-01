@@ -20,7 +20,9 @@ provider for `meta/llama-4`.
 1. `--model provider/model`, where it names one outright.
 2. `provider` in your [configuration](../configuration/configuration.md), when
    that provider still has a usable credential. This is the only setting that
-   remembers a vendor choice.
+   remembers a vendor choice, and it is read only from the configuration file
+   in your home directory: a file a repository brings cannot choose who is sent
+   your key.
 3. Exactly one provider having a usable credential: a stored account login, a
    stored API key, or a key in one of the variables in [Keys](#keys). That is
    the absence of a choice to make, and it lets a first run work with one
@@ -211,7 +213,8 @@ the international site's API key row, for Z.ai the z.ai row. A key of the
 mainland China site, or a plan's key, is given through `/login`, or reaches
 that site with `providers.<name>.baseUrl` set to the whole address its
 requests go to: the row's address followed by `/chat/completions`, since a
-`baseUrl` is posted to as written. Qwen and MiniMax
+`baseUrl` is posted to as written. `baseUrl` is read only from the
+configuration file in your home directory. Qwen and MiniMax
 bind a key to its site and refuse it at the other; Z.ai does not say what its
 other site makes of one.
 
@@ -459,7 +462,9 @@ a second key for the same vendor needs:
 ```
 
 That is a variable **name**, and pointing crucible at one points it away from
-the other: `ANTHROPIC_API_KEY` is then not read at all.
+the other: `ANTHROPIC_API_KEY` is then not read at all. `apiKeyEnv`, `baseUrl`
+and `fast` are read only from the configuration file in your home directory; a
+project file that sets one is refused with `cannot be set here`.
 
 A custom `baseUrl` must use HTTPS unless it is the exact loopback host
 `localhost`, `127.0.0.1` or `[::1]`. User information and fragments are refused,
@@ -659,9 +664,11 @@ Two consequences you can see:
 - Responses are not stored for later retrieval through a response ID: requests
   use `store:false`. This does not promise zero provider-side retention for
   safety, billing or other purposes under the vendor's terms.
-- No token ceiling is sent. On that endpoint one number bounds the reasoning and
-  the visible answer together, so a figure chosen for an answer is one the model
-  can spend entirely on thinking; the model's own ceiling applies instead.
+- One number bounds the reasoning and the visible answer together, so a long
+  think leaves less room for the answer. Crucible sends the model's own output
+  limit, held at 16,000 tokens, or 8,192 for a model it has no limits for. A
+  ChatGPT sign-in sends no ceiling, because that service refuses the field;
+  its own ceiling applies instead.
 
 ## When a response goes away
 

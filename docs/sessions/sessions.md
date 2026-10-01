@@ -238,8 +238,9 @@ rather than reporting the claim it would find on that file as another crucible's
 Renaming a session with <kbd>Ctrl+R</kbd> saves the title beside the logs rather
 than in one, so it survives the picker being closed and this crucible ending. It
 changes what the session is called and nothing about what is in it: the
-transcript, the id and the log file are untouched, and a name cleared back to
-nothing goes back to being the session's first prompt.
+transcript, the id and the log file are untouched. An empty title is refused
+with `a title cannot be empty` under the row, since a session with no title is
+already called by its first prompt.
 
 ## What comes back looks like what you left
 
@@ -477,6 +478,11 @@ one with `cat`, `jq` or a text editor is a supported thing to do, and deleting
 one is how you forget a session. A `.jsonl.lock` beside one is where the claim
 above is taken; it holds nothing, and an empty one left by a crash is only a
 file.
+
+`recent.sessions` sits beside them too: a small index of the newest sessions,
+which is what the welcome reads and where a title from <kbd>Ctrl+R</kbd> is
+kept. Its `recent.sessions.lock` is the claim taken while it is rewritten, and
+like a log's holds nothing.
 
 One more file sits beside them: `prompt.history`, holding the lines the arrow
 keys walk back through. It is one file for every directory rather than one per
