@@ -112,9 +112,8 @@ change in any release with no deprecation period.
 - **The configuration schema and `--help` say what the build does.** Editors
   now offer the `compaction.keep`, `recap` and `askOnResume` defaults, mark a
   `promptCaching.namespace` or `maxSeconds` that a start refuses, and say which
-  keys only your home file may set. A `maxSeconds` of 0 or past a year is now
-  refused at the key itself, and `--help` names `CRUCIBLE_CODE_HOME` beside
-  `~/.crucible`.
+  keys only your home file may set, and `--help` names `CRUCIBLE_CODE_HOME`
+  beside `~/.crucible`.
 
 ### Internal
 

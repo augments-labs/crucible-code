@@ -689,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn a_state_nobody_offers_ends_the_turn_and_names_the_words_that_are() {
+    fn a_state_nobody_offers_is_refused_and_names_the_words_that_are() {
         // A word outside the set is a call asking for something this tool does
         // not do, and reading it as `open` would be the failure the model
         // cannot see.
@@ -711,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn a_call_with_no_tasks_at_all_ends_the_turn() {
+    fn a_call_with_no_tasks_at_all_is_refused() {
         let tool = TodoWrite::new(Plan::new());
 
         let problem =

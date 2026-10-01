@@ -198,7 +198,8 @@ impl Recalled {
     /// the newest prompt's place, as many as are kept, and the number falls as
     /// the walk goes on until the oldest is `1`. On the first press the pair
     /// says how many prompts the walk can reach and how many it ever could, and
-    /// the falling half then says how many are still behind the one shown.
+    /// the falling half then counts the prompts from the oldest up to the one
+    /// shown.
     ///
     /// `of` is the window and not how much of it is filled, so it is the same
     /// number on the first day as on the hundredth.

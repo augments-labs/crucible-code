@@ -40,10 +40,10 @@ of the shell that launched it.
 The command line is a fourth layer and is nearer than all three: `--model
 openai/gpt-5.6-terra` wins over anything a file says.
 
-When `/model`, `/effort`, `/fast`, `/login`, `/theme` or `/sandbox enable` or
-`disable` changes the user file, or so does answering **Use it anyway**,
-removing a credential, or telling `/resume` to stop asking about a large
-session, crucible prepares an owner-only sibling and replaces the complete document atomically. A failed
+When `/model`, `/effort`, `/fast`, `/login`, `/theme`, `/sandbox enable` or
+`disable`, answering **Use it anyway**, removing a credential, or telling
+`/resume` to stop asking about a large session changes the user file, crucible
+prepares an owner-only sibling and replaces the complete document atomically. A failed
 write before that commit leaves the previous file whole. An owner-only lock
 spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
