@@ -360,3 +360,30 @@ fn forgetting_where_there_is_no_file_leaves_no_file() {
     crucible_config::Settings::read(&home, &sample.root())
         .expect("the next start reads its settings");
 }
+
+/// The file the roll back drill starts the prior binary over is the file this
+/// build writes when `/model` chooses a vendor 0.43.3 does not serve, in a home
+/// that turned the update check off, byte for byte: the provider, then the
+/// model under it, as a switch writes them.
+#[test]
+fn the_roll_back_drill_meets_the_file_a_new_vendor_chosen_leaves() {
+    const DRILL: &str = include_str!("../../../../scripts/sh/rollback-drill.sh");
+    let planted = DRILL
+        .lines()
+        .find_map(|line| line.strip_prefix("vendor_file='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("the drill plants a file whose provider is a new vendor");
+
+    let sample = Sample::new("remember-new-vendor");
+    let file = sample.user_file();
+    fs::create_dir_all(file.parent().expect("a file in a directory")).expect("a home");
+    fs::write(&file, "{ \"updates\": { \"check\": \"never\" } }\n").expect("a home's file");
+
+    asking(&file, "qwen").expect("the provider written");
+    choosing(&file, "qwen", "qwen3.8-max").expect("the model written");
+
+    assert_eq!(
+        fs::read_to_string(&file).expect("the file written"),
+        format!("{planted}\n")
+    );
+}

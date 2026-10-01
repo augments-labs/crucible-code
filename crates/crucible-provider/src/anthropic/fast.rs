@@ -22,11 +22,19 @@ const PRICE: Cost = Cost {
     caveat: Some("Fast mode is a research preview; Anthropic turns it on per organization."),
 };
 
+/// What `Fast` costs on Claude Opus 5.5, read 2026-10-01: its own price,
+/// lower than Opus 5's, with the same speed and the same preview.
+const OPUS_55_PRICE: Cost = Cost {
+    price: "$8 / $40 per million input / output tokens",
+    ..PRICE
+};
+
 /// How `model` is asked to answer fast on the vendor's own address, and on
 /// a configured one, `None`.
 pub(super) fn form(vendor: bool, model: &str) -> FastForm {
     match (vendor, model) {
         (true, "claude-opus-5") => FastForm::Field(PRICE),
+        (true, "claude-opus-5-5") => FastForm::Field(OPUS_55_PRICE),
         _ => FastForm::None,
     }
 }

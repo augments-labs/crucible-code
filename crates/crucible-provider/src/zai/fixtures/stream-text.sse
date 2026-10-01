@@ -1,0 +1,12 @@
+data: {"id":"1","created":1677652288,"model":"glm-5.3","choices":[{"index":0,"delta":{"content":"Spring"},"finish_reason":null}]}
+
+data: {"id":"1","created":1677652288,"model":"glm-5.3","choices":[{"index":0,"delta":{"content":" comes"},"finish_reason":null}]}
+
+data: {"id":"1","created":1677652288,"model":"glm-5.3","choices":[{"index":0,"delta":{"content":" with"},"finish_reason":null}]}
+
+...
+
+data: {"id":"1","created":1677652288,"model":"glm-5.3","choices":[{"index":0,"finish_reason":"stop","delta":{"role":"assistant","content":""}}],"usage":{"prompt_tokens":8,"completion_tokens":262,"total_tokens":270,"prompt_tokens_details":{"cached_tokens":0}}}
+
+data: [DONE]
+

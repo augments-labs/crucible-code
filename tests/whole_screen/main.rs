@@ -32,6 +32,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 mod fast;
+mod providers;
 mod screen;
 mod vendor;
 mod warning;
@@ -186,7 +187,7 @@ fn takes(window: &mut Watched, name: &str) {
 fn keyed(window: &mut Watched, name: &str) {
     window.types_until("/login\r", "Provide your own API key");
     takes(window, "Provide your own API key");
-    window.types_until("", "Choose the provider whose API key you have.");
+    window.types_until("", "set DEEPSEEK_API_KEY");
     takes(window, name);
     answers(window);
     window.types_until("", "paste or type your API key");
@@ -265,13 +266,13 @@ fn every_onboarding_state_can_be_left_for_the_same_clean_prompt() {
     let mut provider = Watched::open("login-leave-provider", 80, 24);
     provider.types_until("/login\r", "Provide your own API key");
     takes(&mut provider, "Provide your own API key");
-    provider.types_until("", "Choose the provider whose API key you have.");
+    provider.types_until("", "set DEEPSEEK_API_KEY");
     provider.types_until("\x1b", "Choose how usage is paid for.");
     provider.types_until("\x1b", "cancelled, nothing signed in");
 
     let mut secret = Watched::open("login-leave-secret", 80, 24);
     keyed(&mut secret, "Anthropic");
-    secret.types_until("\x1b", "Choose the provider whose API key you have.");
+    secret.types_until("\x1b", "set DEEPSEEK_API_KEY");
     secret.types_until("\x1b", "Choose how usage is paid for.");
     secret.types_until("\x1b", "cancelled, nothing signed in");
 
@@ -1387,7 +1388,7 @@ fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
 
     window.types_until("/login\r", "Provide your own API key");
     takes(&mut window, "Your account with subscription");
-    window.types_until("", "Choose the account whose plan pays");
+    window.types_until("", "Kimi Code · kimi.com");
     let plans = window.picture();
     assert!(
         plans.contains("signed in · may train on what is sent"),
@@ -1398,19 +1399,32 @@ fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
 
     window.types_until("\x1b", "Choose how usage is paid for.");
     takes(&mut window, "Provide your own API key");
-    window.types_until("", "Choose the provider whose API key");
-    let keys = window.picture();
-    // Anthropic's row, and the kimi.com key row, whose caution stands where
-    // the words about the key would.
+    window.types_until("", "set DEEPSEEK_API_KEY");
+    // Anthropic's row, signed in with a stored key, is at the top of the
+    // list; the kimi.com key row is below what forty columns by thirty rows
+    // shows of it, so the mark is walked down to that one.
+    let top = window.picture();
     assert_eq!(
-        keys.matches("signed in with a stored key").count(),
+        top.matches("signed in with a stored key").count(),
         1,
-        "{keys}"
+        "{top}"
     );
+    for _ in 0..16 {
+        if window
+            .picture()
+            .contains("signed in · may use what is sent")
+        {
+            break;
+        }
+        window.types("\x1b[B");
+    }
+    let keys = window.picture();
+    // The kimi.com key row, whose caution stands where the words about the
+    // key would.
     assert!(keys.contains("signed in · may use what is sent"), "{keys}");
     insta::assert_snapshot!("login_keys_signed_in_40", keys);
 
-    for picture in [&plans, &keys] {
+    for picture in [&plans, &top, &keys] {
         assert!(!picture.contains("fabricated"), "{picture}");
     }
 }
@@ -1421,7 +1435,7 @@ fn escape_in_a_list_goes_back_to_the_first_panel_with_its_mark_where_it_was() {
 
     window.types_until("/login\r", "Provide your own API key");
     takes(&mut window, "Provide your own API key");
-    window.types_until("", "Choose the provider whose API key you have.");
+    window.types_until("", "set DEEPSEEK_API_KEY");
     assert!(
         window.picture().contains("esc to go back"),
         "{}",
@@ -1440,7 +1454,7 @@ fn escape_in_a_key_box_goes_back_to_its_list_with_the_mark_on_the_row_it_came_fr
     let mut window = Watched::open("login-back-to-google", 80, 24);
 
     keyed(&mut window, "Google");
-    window.types_until("\x1b", "Choose the provider whose API key you have.");
+    window.types_until("\x1b", "set DEEPSEEK_API_KEY");
 
     let picture = window.picture();
     assert!(
@@ -1620,7 +1634,9 @@ fn google_login_and_model_selection_keep_keys_private_and_offer_three_efforts() 
         window.types("/model\r");
         window.types("gemini");
         let models = window.picture();
-        assert!(models.contains("Google"));
+        // The model this case takes below; at forty columns the providers
+        // folded into the header are cut before Google's name ends.
+        assert!(models.contains("gemini-3.8-flash"), "{models}");
         assert!(models.contains("low"));
         assert!(models.contains("medium"));
         assert!(models.contains("high"));
@@ -1660,7 +1676,7 @@ fn leaving_the_key_box_says_nothing_was_signed_in() {
     let mut window = Watched::open("login-key-left", 80, 24);
 
     keyed(&mut window, "Anthropic");
-    window.types_until("\x1b", "Choose the provider whose API key you have.");
+    window.types_until("\x1b", "set DEEPSEEK_API_KEY");
     window.types_until("\x1b", "Choose how usage is paid for.");
     window.types_until("\x1b", "cancelled, nothing signed in");
 
@@ -1706,7 +1722,7 @@ fn openai_account_login_offers_browser_and_device_code_methods() {
 
     window.types_until("/login\r", "Provide your own API key");
     takes(&mut window, "Your account with subscription");
-    window.types_until("", "Choose the account whose plan pays for usage.");
+    window.types_until("", "Kimi Code · kimi.com");
     takes(&mut window, "OpenAI");
     answers(&mut window);
     window.types_until("", "Choose where to finish account authorization.");
@@ -2991,6 +3007,13 @@ fn a_base_url_crucible_recognises_is_asked_about_and_any_other_is_sent_to() {
             Some("MoonshotAI · kimi.ai"),
         ),
         (2, "https://gateway.example/v1", None),
+        // A plan key row's address answers for that row, whichever
+        // provider's `baseUrl` holds it.
+        (
+            3,
+            "https://coding.dashscope.aliyuncs.com/v1",
+            Some("Qwen Coding Plan · aliyun.com"),
+        ),
     ] {
         let proxy = warning::Proxy::new();
         let document = warning::based(base);
@@ -3118,7 +3141,7 @@ fn the_openai_plan_row_asks_with_its_condition_and_going_back_returns_to_its_lis
     );
     window.types_until("/login\r", "Provide your own API key");
     takes(&mut window, "Your account with subscription");
-    window.types_until("", "Choose the account whose plan pays for usage.");
+    window.types_until("", "Kimi Code · kimi.com");
     takes(&mut window, "OpenAI");
     window.types_until("", "Use it anyway");
     let asked = window.picture();
@@ -3133,7 +3156,7 @@ fn the_openai_plan_row_asks_with_its_condition_and_going_back_returns_to_its_lis
     insta::assert_snapshot!("question_at_openai_plan_80", asked);
 
     // Go back: the list again, with the mark on the row it came from.
-    window.types_until("\x1b", "Choose the account whose plan pays for usage.");
+    window.types_until("\x1b", "Kimi Code · kimi.com");
     let list = window.picture();
     assert!(
         list.lines()
@@ -3286,4 +3309,82 @@ fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
     assert!(picture.contains("75-100% more than Standard"), "{picture}");
     assert!(!picture.contains("enter to choose"), "{picture}");
     insta::assert_snapshot!("fast_lines_where_no_panel_fits", picture);
+}
+
+// The models pane under a credential that serves fewer than its provider
+// offers, and the note a warned model carries.
+
+/// `/model` over a home holding a `ChatGPT` sign-in, `columns` wide, narrowed
+/// to `OpenAI` in the providers pane and taken back in the models pane.
+fn signed_in_models(columns: u16) -> String {
+    let case = format!("model-signed-in-{columns}");
+    let document = fast::document("openai", "gpt-6-sol", false);
+    let home = fast::signed_in_home(&case);
+    let mut window = Watched::launched(
+        &case,
+        columns,
+        24,
+        &watched::Launch {
+            document: &document,
+            env: &[],
+            args: &[],
+            home: Some(&home),
+        },
+    );
+    let _ = std::fs::remove_dir_all(&home);
+
+    window.types_until("/model\r", "Search");
+    // Tab alone changes only how the mark is drawn, so it goes with the
+    // first step down; the closing row stands once `OpenAI` is marked.
+    window.types("\t\x1b[B");
+    for _ in 0..24 {
+        if window.picture().contains("1 more with an API key") {
+            break;
+        }
+        window.types("\x1b[B");
+    }
+    // Back to the models, which are what the heading names.
+    window.types_until("\t", "openai · ChatGPT sign-in");
+    window.picture()
+}
+
+#[test]
+fn a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add() {
+    for columns in [40, 80] {
+        let picture = signed_in_models(columns);
+
+        // At forty the heading takes the frame's top row from the providers,
+        // and the pane keeps its models and its closing row, which never
+        // takes the mark.
+        assert!(picture.contains("openai · ChatGPT sign-in"), "{picture}");
+        assert!(picture.contains("1 more with an API key"), "{picture}");
+        assert!(picture.contains("gpt-6.1-sol"), "{picture}");
+        assert!(!picture.contains("gpt-5.5 "), "{picture}");
+        assert!(!picture.contains("› 1 more"), "{picture}");
+        insta::assert_snapshot!(format!("model_signed_in_{columns}"), picture);
+    }
+}
+
+#[test]
+fn a_contributor_model_says_trains_where_its_standard_twin_says_nothing() {
+    let vendor = Vendor::answering("Two plus two is four.");
+    let mut window = Watched::keyless("model-trains", 80, 24, &vendor);
+
+    window.types_until("/model\r", "Search");
+    window.types_until("muse", "trains");
+    let picture = window.picture();
+
+    // The names are cut at the column, so the rows are told apart by the part
+    // that is drawn: the two contributor models say `trains`, and the two
+    // standard ones say nothing.
+    let marked: Vec<&str> = picture
+        .lines()
+        .filter(|row| row.contains("trains"))
+        .collect();
+    assert_eq!(marked.len(), 2, "{picture}");
+    assert!(
+        marked.iter().all(|row| row.contains("contribu")),
+        "{picture}"
+    );
+    insta::assert_snapshot!("model_trains_80", picture);
 }

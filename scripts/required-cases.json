@@ -776,7 +776,7 @@
       },
       "case": "google_login_and_model_selection_keep_keys_private_and_offer_three_efforts",
       "source": "tests/whole_screen/main.rs",
-      "body_sha256": "748f73cc9f8a4f0781f73bf0c8710b07f0799b943360bbacdd038bdf6c69bcbf",
+      "body_sha256": "2f6e6fece72fb76e1336346666d8979310fb4feb8307d53ebaf0a40ba71c50f8",
       "platforms": [
         "linux"
       ]

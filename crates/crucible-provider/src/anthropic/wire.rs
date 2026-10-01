@@ -39,7 +39,7 @@ impl Messages {
         effort: Option<crucible_models::Effort>,
     ) -> Result<Self, ProviderError> {
         Ok(Self {
-            blocks: if model == super::FABLE_51 {
+            blocks: if super::bound(model) {
                 Some(super::continuation::Blocks::new(model, scope, effort)?)
             } else {
                 None

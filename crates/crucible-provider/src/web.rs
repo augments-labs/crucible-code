@@ -44,7 +44,11 @@ use crate::sse::{Events, Framed};
 use crate::transport::{PostBodyError, PostResponse, Transport, TransportError};
 
 mod google;
+mod meta;
+mod xai;
 pub use google::GoogleWeb;
+pub use meta::MetaWeb;
+pub use xai::XaiWeb;
 
 #[cfg(test)]
 mod tests;
@@ -361,7 +365,7 @@ impl AnthropicWeb {
         json.object(|body| {
             body.text("model", &self.model);
             body.number("max_tokens", if fetching { FETCH_CEILING } else { CEILING });
-            if self.model.as_ref() == crate::anthropic::FABLE_51 {
+            if crate::anthropic::bound(self.model.as_ref()) {
                 // This fresh side request has no thinking history to bind.
                 // Fable is always adaptive; leave its effort default unchosen
                 // and let it select the tool rather than forcing a rejected mode.
@@ -406,7 +410,7 @@ impl AnthropicWeb {
         })
         .await
         .map_err(|error| self.failure(error))?;
-        if self.model.as_ref() == crate::anthropic::FABLE_51
+        if crate::anthropic::bound(self.model.as_ref())
             && !matches!(
                 answered.get("stop_reason").and_then(Value::as_str),
                 Some("end_turn" | "stop_sequence")
@@ -423,7 +427,7 @@ impl AnthropicWeb {
     /// A Fable side response can include private thinking beside web results.
     /// Keep typed failure facts but never expose arbitrary response prose/code.
     fn failure(&self, error: SourceError) -> SourceError {
-        if self.model.as_ref() != crate::anthropic::FABLE_51 {
+        if !crate::anthropic::bound(self.model.as_ref()) {
             return error;
         }
         match error {
@@ -861,6 +865,7 @@ impl OpenAiWeb {
                     outgoing,
                     body,
                     &cancel,
+                    false,
                 ))
                 .await
             },
@@ -913,11 +918,16 @@ fn openai_input(body: &mut crate::json::Object<'_>, text: &str) {
 /// `response.completed` event carries the same whole response object the
 /// unstreamed API would have returned, so this frames the existing bounded body
 /// and hands that object to the existing result readers.
+///
+/// Where `lifted`, a refusal is said in the vendor's sentence rather than its
+/// whole body: lifted out by decoding the body, and redacted after, since a
+/// secret the body carried in an escape is only whole once decoded.
 async fn posted_openai(
     sending: Sending<'_>,
     mut outgoing: Outgoing,
     body: String,
     cancel: &Cancel,
+    lifted: bool,
 ) -> Result<Value, SourceError> {
     let Sending {
         named,
@@ -931,14 +941,19 @@ async fn posted_openai(
 
     if status != 200 {
         let answered = Box::pin(read(named, response, cancel)).await?;
+        let said = if lifted {
+            sentence(&answered).unwrap_or(answered)
+        } else {
+            answered
+        };
         return Err(SourceError::Refused {
             named,
             status,
-            message: redactions.redact(&answered).into(),
+            message: redactions.redact(&said).into(),
         });
     }
 
-    Box::pin(openai_response(response, cancel, &redactions)).await
+    Box::pin(openai_response(named, response, cancel, &redactions)).await
 }
 
 /// Reads a whole bounded side response, then frames it exactly as a turn.
@@ -948,23 +963,24 @@ async fn posted_openai(
 /// framing then rejects contradictions after completion instead of using a
 /// prefix that only appeared successful.
 async fn openai_response(
+    named: &'static str,
     response: PostResponse,
     cancel: &Cancel,
     redactions: &Redactions,
 ) -> Result<Value, SourceError> {
     let since = Instant::now();
-    let body = Box::pin(read(OPENAI, response, cancel)).await?;
+    let body = Box::pin(read(named, response, cancel)).await?;
     let mut events = Events::new(io::Cursor::new(body));
     let mut finished = Vec::new();
     let mut completed = None;
 
     while let Some(next) = events.next().await {
         if cancel.requested() {
-            return Err(SourceError::Cancelled(OPENAI));
+            return Err(SourceError::Cancelled(named));
         }
         if since.elapsed() >= MAX_WAIT {
             return Err(SourceError::Transport {
-                named: OPENAI,
+                named,
                 problem: timed_out().to_string().into(),
             });
         }
@@ -974,7 +990,7 @@ async fn openai_response(
             Ok(Framed::Event(event)) => event,
             Err(problem) => {
                 return Err(SourceError::Transport {
-                    named: OPENAI,
+                    named,
                     problem: problem.to_string().into(),
                 });
             }
@@ -986,13 +1002,13 @@ async fn openai_response(
         }
         if completed.is_some() {
             return Err(SourceError::Protocol {
-                named: OPENAI,
+                named,
                 problem: "the stream continued after response.completed".into(),
             });
         }
         let payload: Value =
             serde_json::from_str(data).map_err(|problem| SourceError::Protocol {
-                named: OPENAI,
+                named,
                 problem: format!("an event was not JSON: {problem}").into(),
             })?;
 
@@ -1002,7 +1018,7 @@ async fn openai_response(
                     .get("item")
                     .cloned()
                     .ok_or_else(|| SourceError::Protocol {
-                        named: OPENAI,
+                        named,
                         problem: "response.output_item.done carried no item".into(),
                     })?;
                 finished.push(item);
@@ -1013,7 +1029,7 @@ async fn openai_response(
                         .get("response")
                         .cloned()
                         .ok_or_else(|| SourceError::Protocol {
-                            named: OPENAI,
+                            named,
                             problem: "response.completed carried no response".into(),
                         })?;
 
@@ -1028,7 +1044,7 @@ async fn openai_response(
                     let object = response
                         .as_object_mut()
                         .ok_or_else(|| SourceError::Protocol {
-                            named: OPENAI,
+                            named,
                             problem: "response.completed did not carry an object".into(),
                         })?;
                     object.insert(
@@ -1038,53 +1054,61 @@ async fn openai_response(
                 }
                 completed = Some(response);
             }
-            Some("response.failed") => return Err(openai_failed(&payload, redactions)),
+            Some("response.failed") => return Err(openai_failed(named, &payload, redactions)),
             Some("response.incomplete") => {
                 let reason = text_at(&payload, "/response/incomplete_details/reason")
                     .unwrap_or_else(|| "the response was incomplete".into());
                 return Err(SourceError::Protocol {
-                    named: OPENAI,
+                    named,
                     problem: redactions.redact(&reason).into(),
                 });
             }
-            Some("error") => return Err(openai_upstream(&payload, redactions)),
+            Some("error") => {
+                // Flat on OpenAI's wire; another vendor's events nest the code
+                // and the words under `error`, beside the event's own type.
+                let error = payload
+                    .get("error")
+                    .filter(|error| error.is_object())
+                    .unwrap_or(&payload);
+                return Err(openai_upstream(named, error, redactions));
+            }
             _ => {}
         }
     }
 
     completed.ok_or_else(|| SourceError::Protocol {
-        named: OPENAI,
+        named,
         problem: "the stream ended before response.completed".into(),
     })
 }
 
 /// A response the provider gave up on after accepting the request.
-fn openai_failed(payload: &Value, redactions: &Redactions) -> SourceError {
+fn openai_failed(named: &'static str, payload: &Value, redactions: &Redactions) -> SourceError {
     let error = payload
         .pointer("/response/error")
         .filter(|error| !error.is_null());
     if let Some(error) = error {
-        return openai_upstream(error, redactions);
+        return openai_upstream(named, error, redactions);
     }
 
     let kind = text_at(payload, "/response/status").unwrap_or_else(|| "error".into());
     let message = text_at(payload, "/response/incomplete_details/reason")
         .unwrap_or_else(|| "the provider gave up on the response and named no reason".into());
     SourceError::Protocol {
-        named: OPENAI,
+        named,
         problem: redactions.redact(&format!("{kind}: {message}")).into(),
     }
 }
 
 /// A failure event, flat or nested under a failed response.
-fn openai_upstream(error: &Value, redactions: &Redactions) -> SourceError {
+fn openai_upstream(named: &'static str, error: &Value, redactions: &Redactions) -> SourceError {
     let kind = text_at(error, "/code")
         .or_else(|| text_at(error, "/type"))
         .unwrap_or_else(|| "error".into());
     let message = text_at(error, "/message")
         .unwrap_or_else(|| "the provider did not say what went wrong".into());
     SourceError::Protocol {
-        named: OPENAI,
+        named,
         problem: redactions.redact(&format!("{kind}: {message}")).into(),
     }
 }
@@ -1138,6 +1162,77 @@ impl Search for OpenAiWeb {
             Ok(cited(&answered).into())
         })
     }
+}
+
+/// What a hosted search on a Responses wire found, for a vendor whose search
+/// call can fail on its own inside a request that succeeds.
+///
+/// An answer written without a search call is refused, as OpenAI's is. A call
+/// the vendor reports as failed, with none beside it that completed, is this
+/// search failing, said in the vendor's words: the call's status and whatever
+/// it gave with it. One that failed beside one that completed costs nothing
+/// but its own results.
+fn searched(
+    named: &'static str,
+    answered: &Value,
+    redactions: &Redactions,
+) -> Result<Vec<SearchResult>, SourceError> {
+    if !web_called(answered) {
+        return Err(SourceError::Protocol {
+            named,
+            problem: "the answer was written without searching the web".into(),
+        });
+    }
+
+    let calls = answered
+        .pointer("/output")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|item| text_at(item, "/type").as_deref() == Some("web_search_call"));
+    let mut failed = Vec::new();
+    for call in calls {
+        if text_at(call, "/status").as_deref() == Some("failed") {
+            failed.push(call_failure(call));
+        } else {
+            return Ok(cited(answered));
+        }
+    }
+
+    Err(SourceError::Protocol {
+        named,
+        problem: redactions.redact(&failed.join("; ")).into(),
+    })
+}
+
+/// What a failed search call says: its identity and status, and the words it
+/// gave with them where it gave any, nested or flat.
+fn call_failure(call: &Value) -> String {
+    let id = text_at(call, "/id").unwrap_or_else(|| "with no id".into());
+    let said = text_at(call, "/error/message").or_else(|| text_at(call, "/error"));
+    match said {
+        Some(said) => format!("web_search_call {id} failed: {said}"),
+        None => format!("web_search_call {id} failed"),
+    }
+}
+
+/// The vendor's sentence in a refused body, with its code in front where it
+/// gave one: the two shapes the Responses vendors besides OpenAI refuse in,
+/// nested, `{error: {code, message}}`, and flat, `{code, error}`, where the
+/// code may be a word, a sentence or a number. A body in neither keeps its
+/// bytes.
+fn sentence(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let (code, said) = match value.get("error")? {
+        Value::String(said) => (value.get("code"), said.as_str()),
+        error => (error.get("code"), error.get("message")?.as_str()?),
+    };
+    Some(match code {
+        Some(Value::String(code)) => format!("{code}: {said}"),
+        Some(Value::Number(code)) => format!("{code}: {said}"),
+        _ => said.to_owned(),
+    })
 }
 
 /// Every address this answer cited, with the span of prose written off it.

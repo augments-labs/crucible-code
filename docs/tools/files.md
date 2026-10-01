@@ -63,7 +63,7 @@ are what is there, and where they disagree the bytes win.
 A PDF is the exception, and deliberately: it is not handed back this way even on
 a model that reads one. What it gets is the refusal below, naming a converter:
 an answer that works on every model crucible offers, where an attachment works
-with three of the four providers.
+with three of the eleven providers.
 
 ### A document is read by converting it first
 

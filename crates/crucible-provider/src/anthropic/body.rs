@@ -57,7 +57,7 @@ pub(super) fn serialize_at(
             body.text("speed", "fast");
         }
         body.boolean("stream", true);
-        if request.model == super::FABLE_51 {
+        if super::bound(request.model) {
             // Intentional system/tool/history edits must not strand a session
             // on prefix-bound thinking. Unchanged blocks remain usable.
             body.object("thinking", |thinking| {
@@ -189,7 +189,7 @@ fn explicit_placement(request: &Request<'_>) -> Option<ExplicitPlacement> {
             // Thinking cannot carry an explicit cache marker. A Fable response
             // may contain nothing else, so use an earlier legal boundary and
             // report only the marker the serializer can actually write.
-            request.model != super::FABLE_51 || !point.message()
+            !super::bound(request.model) || !point.message()
                 .and_then(|index| usize::try_from(index).ok())
                 .and_then(|index| request.transcript.messages().get(index))
                 .is_some_and(|message| matches!(message, Message::Agent { text, calls, .. } if text.is_empty() && calls.is_empty()))
@@ -265,7 +265,7 @@ fn write_messages(
                     pending = None;
                     if let Some(state) = continuation
                         .as_ref()
-                        .filter(|state| replay::compatible(state, scope))
+                        .filter(|state| replay::compatible(state, scope, request.model))
                     {
                         replay::Agent { state, text, calls }.write(
                             messages,

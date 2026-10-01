@@ -27,8 +27,9 @@ use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
-    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, HttpTurns, Moonshot, MoonshotWeb, OpenAi,
-    OpenAiWeb, Transport, Unavailable,
+    Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Meta, MetaWeb, Mimo,
+    MiniMax, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Xai, XaiWeb,
+    Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
@@ -670,6 +671,138 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     )))
 }
 
+/// `DeepSeek`'s Chat Completions, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn deepseek(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, DeepSeek::VENDOR)?;
+    Ok(Box::new(DeepSeek::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// Meta's Responses, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn meta(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Meta::VENDOR)?;
+    Ok(Box::new(Meta::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// xAI's Responses, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn xai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Xai::VENDOR)?;
+    Ok(Box::new(Xai::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// `MiMo`'s Chat Completions, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Mimo::VENDOR)?;
+    Ok(Box::new(Mimo::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// `MiniMax`'s Chat Completions, with a key or a plan's key, sent to the
+/// site of the row it was given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
+    Ok(Box::new(MiniMax::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// Qwen's Chat Completions, with a key or a plan's key, sent to the address
+/// of the row it was given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn qwen(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Qwen::KEY_INTL)?;
+    Ok(Box::new(Qwen::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// Z.ai's Chat Completions, with a key, sent to the site of the row it was
+/// given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn zai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Zai::ZAI)?;
+    Ok(Box::new(Zai::at(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+    )))
+}
+
+/// The key `wiring` resolves and the address it goes to, for a provider whose
+/// every credential is a key and whose own address is `vendor`.
+fn keyed(
+    wiring: Wiring<'_>,
+    vendor: Endpoint,
+) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
+    credential(
+        ApiAudience {
+            provider: wiring.named,
+            variable: wiring.variable,
+            vendor,
+        },
+        wiring.sending,
+        wiring.auth,
+    )
+}
+
 /// Gemini Interactions accepts an API key, never a product subscription login.
 ///
 /// # Errors
@@ -953,6 +1086,27 @@ impl Reaching {
             fetching: Some(source),
         }
     }
+
+    /// The same sources, each sending nothing while `route` has no yes.
+    fn asked(self, consent: &Consent, route: &str) -> Self {
+        Self {
+            searching: self.searching.map(|source| -> Arc<dyn Search> {
+                Arc::new(content_use::Asked::new(source, consent, route.to_owned()))
+            }),
+            fetching: self.fetching.map(|source| -> Arc<dyn Fetch> {
+                Arc::new(content_use::Asked::new(source, consent, route.to_owned()))
+            }),
+        }
+    }
+
+    /// A search and no fetch: a vendor whose wire serves the one and not the
+    /// other.
+    fn searching(source: Arc<dyn Search>) -> Self {
+        Self {
+            searching: Some(source),
+            fetching: None,
+        }
+    }
 }
 
 fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
@@ -972,7 +1126,15 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
         return Reaching::nothing();
     };
 
-    (serving.reach)(wiring, model)
+    let reaching = (serving.reach)(wiring, model);
+    // Built once, for the model the run starts on, and named in every
+    // request it makes whichever model the session has moved to since.
+    let consent = startup.services.consent();
+    let route = content_use::model_route(serving.name, model);
+    match consent.routes().warned(&route) {
+        Some(_) => reaching.asked(consent, &route),
+        None => reaching,
+    }
 }
 
 /// Anthropic's own search and fetch, on the session's model.
@@ -1096,6 +1258,50 @@ fn moonshot_site(
     } else {
         None
     }
+}
+
+/// Meta's hosted search, on the session's model, at the address its turns go
+/// to.
+///
+/// No fetch: Meta's Responses serves `web_search` and no tool that opens one
+/// page.
+pub fn meta_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let http = wiring.http;
+    let Ok((endpoint, credential)) = keyed(wiring, Meta::VENDOR) else {
+        return Reaching::nothing();
+    };
+
+    Reaching::searching(Arc::new(MetaWeb::new(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+        model,
+    )))
+}
+
+/// xAI's hosted search, on the session's model, at the address its turns go
+/// to.
+///
+/// No fetch: xAI's search browses inside itself and names no action that
+/// would tell an opened page from a searched one.
+pub fn xai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let http = wiring.http;
+    let Ok((endpoint, credential)) = keyed(wiring, Xai::VENDOR) else {
+        return Reaching::nothing();
+    };
+
+    Reaching::searching(Arc::new(XaiWeb::new(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+        model,
+    )))
+}
+
+/// No web tools: a provider whose vendor serves none on the wire crucible
+/// speaks to it.
+pub fn unreached(_wiring: Wiring<'_>, _model: &str) -> Reaching {
+    Reaching::nothing()
 }
 
 /// Where a setting says this provider's requests should go, where one does.

@@ -70,13 +70,27 @@ A file written by a later crucible gets this sentence rather than a silent fall
 back to whichever key is exported. See [which
 provider](../providers/providers.md#which-provider).
 
+### `crucible: no provider called qwen; this build has anthropic, google, moonshot, openai`
+
+This is 0.43.3 or earlier started with no `--model` over a configuration file
+in which 0.44 or later wrote `provider` as one of the providers 0.43.3 does not
+have: `deepseek`, `meta`, `mimo`, `minimax`, `qwen`, `xai` or `zai`. `/model`
+writes it when one of them is chosen, and so does a `/login` that sets the
+session up. Before rolling back to
+0.43.3, set `provider` in the configuration file in your home directory to
+`anthropic`, `google`, `moonshot` or `openai`, or delete it. Keys and plan keys
+stored for the new providers stay in `auth.json` under names 0.43.3 leaves
+alone, and are used again by a later crucible.
+
 ## Keys and models
 
 ### `Warning: No models available. Use /login or set an API key environment variable. Then use /model to select a model.`
 
 Said under the welcome, and again at a prompt, when no provider holds a
-credential: none of `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `MOONSHOT_API_KEY`
-or `OPENAI_API_KEY` is exported with a value, and `/login` has stored nothing.
+credential: none of `ANTHROPIC_API_KEY`, `DASHSCOPE_API_KEY`,
+`DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `META_API_KEY`, `MIMO_API_KEY`,
+`MINIMAX_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` or
+`ZAI_API_KEY` is exported with a value, and `/login` has stored nothing.
 An exported variable that is empty holds no key. Everything but a turn works in
 this state, so export a key or run `/login`, then `/model`.
 
@@ -156,9 +170,13 @@ from `/login` or `/model`, where nothing was chosen.
 
 ### `<provider>: nothing was sent: <route> waits for an answer`
 
-A request was about to leave for a host of a route whose vendor uses what is
-sent, before that route had its yes. It was held, and nothing reached the host.
-Send a message on the route in a terminal to be asked, or see [content
+A request was about to leave on a route whose vendor uses what is sent, before
+that route had its yes. It was held, and nothing was sent. Send a message on
+the route in a terminal to be asked: for a route named `model:<provider>/<model>`,
+choose that model with `/model` first, since a web search keeps the model the
+run started with. To keep searches off that model instead, choose the model you
+want and start crucible again: the next run starts on it, where no project
+file or `--model` names another. Or see [content
 use](../providers/content-use.md).
 
 ### `crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>`
@@ -179,9 +197,10 @@ again.
 ### `anthropic: HTTP 401: check the Anthropic API key and its model access`
 
 The provider refused the request with that status. For Anthropic's
-`claude-fable-5-1`, OpenAI's `gpt-6-astra` and every Google model the message
-is a sentence of crucible's own, chosen by status; for any other model, and
-for MoonshotAI, it is the service's own words, read for at most 8 KiB and
+`claude-fable-5-1`, `claude-opus-5-5` and `claude-sonnet-5-5`, OpenAI's
+`gpt-6-astra` and every Google model the message is a sentence of crucible's
+own, chosen by status; for any other model, and for every other provider, it is
+the service's own words, read for at most 8 KiB and
 ending in ` [cut: the reply was longer than crucible reads]` or
 ` [cut: crucible stopped reading here]` where it was cut.
 
@@ -195,11 +214,21 @@ ending in ` [cut: the reply was longer than crucible reads]` or
 A 401 from MoonshotAI in its own words, with a key you know is good, is
 usually a key from the other console: a Kimi Code key is accepted at
 `https://api.kimi.com/coding/v1`, an Open Platform key only at
-`https://api.moonshot.ai/v1`, which is set with `providers.moonshot.baseUrl`.
+`https://api.moonshot.ai/v1`, which is set with `providers.moonshot.baseUrl` as
+`https://api.moonshot.ai/v1/chat/completions`, the whole address requests are
+posted to.
 See [when a response goes
 away](../providers/providers.md#when-a-response-goes-away) and [MoonshotAI
 issues a key against one console or the
 other](../providers/providers.md#moonshotai-issues-a-key-against-one-console-or-the-other).
+
+The same holds for the other vendors that bind a key to a site. A Qwen or
+MiniMax key is refused at the other site's address, and a Qwen plan's key
+anywhere but its plan's address; a key from `DASHSCOPE_API_KEY` or
+`MINIMAX_API_KEY` goes to the international site. Give a mainland China key on
+its own row in `/login`, or set `baseUrl` to the whole address its site's
+requests go to, ending `/chat/completions`. See [rows and
+sites](../providers/providers.md#rows-and-sites).
 
 ### `anthropic: overloaded_error: Anthropic could not finish this request; private details omitted`
 

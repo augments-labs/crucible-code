@@ -21,7 +21,10 @@
 //! with no yes waits, whichever way the route was reached: `/login`, `/model`,
 //! a key from the environment, configuration, `--model` or a resumed session.
 //! What the front ends ask first is a courtesy on top of that; this is what
-//! nothing walks around.
+//! nothing walks around. A model's own route names no origin, since its
+//! vendor's address serves models nobody warned about too: a turn on it is
+//! asked about where it is sent, and a web source built for it before each
+//! request it makes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -32,6 +35,10 @@ use crucible_config::Settings;
 use crucible_http::{Hold, Origin};
 
 use crate::providers::{List, Row, Rows};
+
+mod asked;
+
+pub(crate) use asked::Asked;
 
 /// What a vendor says about one route, and where it says it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +78,8 @@ pub struct Warned {
     pub warning: Warning,
     /// Every origin a request of this route is sent to: its model and web tool
     /// address, and for a sign-in the host that issues and renews its tokens.
+    /// None for a warned model: its host serves its provider's other models
+    /// too, so it is asked about at the send rather than held at the host.
     pub origins: &'static [&'static str],
 }
 
@@ -136,8 +145,71 @@ const PLATFORM_CN: Warning = Warning {
     caution: "may use what is sent",
 };
 
+const MINIMAX_IO: Warning = Warning {
+    sentence: "MiniMax may use what you send, and what it answers, to develop and improve its \
+               services.",
+    condition: None,
+    source: "MiniMax terms of service",
+    link: "https://platform.minimax.io/protocol/terms-of-service",
+    read: "1 Oct 2026",
+    caution: "may use what is sent",
+};
+
+const MINIMAX_CN: Warning = Warning {
+    sentence: "MiniMax may use what you send, and what it answers, once de-identified, to \
+               optimise its services.",
+    condition: None,
+    source: "MiniMax user agreement, minimaxi.com",
+    link: "https://platform.minimaxi.com/protocol/user-agreement",
+    read: "1 Oct 2026",
+    caution: "may use what is sent",
+};
+
+const QWEN_CODING_CN: Warning = Warning {
+    sentence: "Alibaba Cloud uses what you send, and what the model answers, to improve its \
+               service and its models. To stop it, stop using the Coding Plan; that covers only \
+               what you send afterwards.",
+    condition: None,
+    source: "Qwen Coding Plan, aliyun.com",
+    link: "https://help.aliyun.com/zh/model-studio/coding-plan",
+    read: "1 Oct 2026",
+    caution: "uses what is sent",
+};
+
+const QWEN_TOKEN_CN: Warning = Warning {
+    sentence: "On the Personal edition, Alibaba Cloud uses what you send, and what the model \
+               answers, to improve its service and its models. To stop it, stop using the plan; \
+               that covers only what you send afterwards.",
+    condition: Some("On the Personal edition"),
+    source: "Qwen Token Plan Personal, aliyun.com",
+    link: "https://help.aliyun.com/zh/model-studio/token-plan-personal-overview",
+    read: "1 Oct 2026",
+    caution: "uses what is sent",
+};
+
+const BIGMODEL: Warning = Warning {
+    sentence: "Zhipu may use what you send, once anonymised, to improve its products and \
+               services, including to train its models, without asking you again.",
+    condition: None,
+    source: "bigmodel.cn user agreement",
+    link: "https://docs.bigmodel.cn/cn/terms/user-agreement",
+    read: "1 Oct 2026",
+    caution: "may train on what is sent",
+};
+
+const META_CONTRIBUTOR: Warning = Warning {
+    sentence: "Meta may use what you send to train, develop, evaluate and improve its AI models, \
+               products and services, and gives no way to keep it out of training. Its terms say \
+               not to send code or anything else you must keep confidential.",
+    condition: None,
+    source: "Meta Model API terms of service",
+    link: "https://dev.meta.ai/legal/terms-of-service",
+    read: "1 Oct 2026",
+    caution: "may train on what is sent",
+};
+
 /// Every warned route this build has.
-pub const WARNED: [Warned; 8] = [
+pub const WARNED: [Warned; 17] = [
     Warned {
         route: "subscription:openai",
         shown: "OpenAI",
@@ -157,6 +229,30 @@ pub const WARNED: [Warned; 8] = [
         origins: &["https://api.kimi.com", "https://auth.kimi.com"],
     },
     Warned {
+        route: "subscription:minimax@token-plan.minimax.io",
+        shown: "MiniMax · minimax.io",
+        warning: MINIMAX_IO,
+        origins: &["https://api.minimax.io"],
+    },
+    Warned {
+        route: "subscription:minimax@token-plan.minimaxi.com",
+        shown: "MiniMax · minimaxi.com",
+        warning: MINIMAX_CN,
+        origins: &["https://api.minimax.cn"],
+    },
+    Warned {
+        route: "subscription:qwen@coding-plan.aliyun.com",
+        shown: "Qwen Coding Plan · aliyun.com",
+        warning: QWEN_CODING_CN,
+        origins: &["https://coding.dashscope.aliyuncs.com"],
+    },
+    Warned {
+        route: "subscription:qwen@token-plan.aliyun.com",
+        shown: "Qwen Token Plan · aliyun.com",
+        warning: QWEN_TOKEN_CN,
+        origins: &["https://token-plan.cn-beijing.maas.aliyuncs.com"],
+    },
+    Warned {
         route: "key:google",
         shown: "Google",
         warning: GEMINI_UNPAID,
@@ -173,6 +269,36 @@ pub const WARNED: [Warned; 8] = [
         shown: "MoonshotAI · kimi.com",
         warning: KIMI_COM,
         origins: &["https://api.kimi.com"],
+    },
+    Warned {
+        route: "key:minimax@minimax.io",
+        shown: "MiniMax · minimax.io",
+        warning: MINIMAX_IO,
+        origins: &["https://api.minimax.io"],
+    },
+    Warned {
+        route: "key:minimax@minimaxi.com",
+        shown: "MiniMax · minimaxi.com",
+        warning: MINIMAX_CN,
+        origins: &["https://api.minimax.cn"],
+    },
+    Warned {
+        route: "key:zai@bigmodel.cn",
+        shown: "Z.ai · bigmodel.cn",
+        warning: BIGMODEL,
+        origins: &["https://open.bigmodel.cn"],
+    },
+    Warned {
+        route: "model:meta/muse-spark-1.3-contributor",
+        shown: "Meta · muse-spark-1.3-contributor",
+        warning: META_CONTRIBUTOR,
+        origins: &[],
+    },
+    Warned {
+        route: "model:meta/muse-spark-1.2-contributor",
+        shown: "Meta · muse-spark-1.2-contributor",
+        warning: META_CONTRIBUTOR,
+        origins: &[],
     },
     Warned {
         route: "api.moonshot.ai",
@@ -201,14 +327,19 @@ pub struct Recognised {
 
 /// Every address a `baseUrl` is recognised at.
 ///
-/// The address of built-in rows answers for the key row there, since only a
-/// key is ever sent to a `baseUrl`; so the `OpenAI` sign-in's address, where
-/// no key row stands, is not among them. Each Kimi open platform address is a
-/// route of its own.
-pub const RECOGNISED: [Recognised; 7] = [
+/// The address of built-in rows answers for the row there whose credential
+/// is a key, in whichever list it stands, and for the `API key` list's row
+/// where two such rows share it, since only a key is ever sent to a
+/// `baseUrl`; so the `OpenAI` sign-in's address, where no key row stands, is
+/// not among them. Each Kimi open platform address is a route of its own.
+pub const RECOGNISED: [Recognised; 21] = [
     Recognised {
         address: "https://api.anthropic.com/v1",
         route: "key:anthropic",
+    },
+    Recognised {
+        address: "https://api.deepseek.com",
+        route: "key:deepseek@deepseek.com",
     },
     Recognised {
         address: "https://generativelanguage.googleapis.com/v1beta",
@@ -223,8 +354,60 @@ pub const RECOGNISED: [Recognised; 7] = [
         route: "key:moonshot",
     },
     Recognised {
+        address: "https://api.meta.ai/v1",
+        route: "key:meta@meta.ai",
+    },
+    Recognised {
+        address: "https://api.xiaomimimo.com/v1",
+        route: "key:mimo@xiaomimimo.com",
+    },
+    Recognised {
+        address: "https://api.minimax.io/v1",
+        route: "key:minimax@minimax.io",
+    },
+    Recognised {
+        address: "https://api.minimax.cn/v1",
+        route: "key:minimax@minimaxi.com",
+    },
+    Recognised {
         address: "https://api.openai.com/v1",
         route: "key:openai",
+    },
+    Recognised {
+        address: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        route: "key:qwen@alibabacloud.com",
+    },
+    Recognised {
+        address: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        route: "key:qwen@aliyun.com",
+    },
+    Recognised {
+        address: "https://coding-intl.dashscope.aliyuncs.com/v1",
+        route: "subscription:qwen@coding-plan.alibabacloud.com",
+    },
+    Recognised {
+        address: "https://coding.dashscope.aliyuncs.com/v1",
+        route: "subscription:qwen@coding-plan.aliyun.com",
+    },
+    Recognised {
+        address: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        route: "subscription:qwen@token-plan.alibabacloud.com",
+    },
+    Recognised {
+        address: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        route: "subscription:qwen@token-plan.aliyun.com",
+    },
+    Recognised {
+        address: "https://api.x.ai/v1",
+        route: "key:xai@x.ai",
+    },
+    Recognised {
+        address: "https://api.z.ai/api/paas/v4",
+        route: "key:zai@z.ai",
+    },
+    Recognised {
+        address: "https://open.bigmodel.cn/api/paas/v4",
+        route: "key:zai@bigmodel.cn",
     },
     Recognised {
         address: "https://api.moonshot.ai/v1",

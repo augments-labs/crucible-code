@@ -1,6 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1628
+assertion_line: 1632
 expression: models
 ---
 40x24 cursor 4,16 scrolled 0
@@ -12,7 +12,7 @@ expression: models
 |╰──────────────────────────────────────╯|
 |                                        |
 |╭──────────────────────────────────────╮|
-|│  ‹All› · Anthropic · Google · Moonsho│|
+|│  ‹All› · Anthropic · DeepSeek · Googl│|
 |├──────────────────────────────────────┤|
 |│ › gemini-3.8-flash     200k  fast    │|
 |│   gemini-3.7-flash     200k  fast    │|

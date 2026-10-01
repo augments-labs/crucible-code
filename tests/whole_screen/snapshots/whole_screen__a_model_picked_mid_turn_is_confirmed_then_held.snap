@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 749
 expression: window.picture()
 ---
 100x24 cursor 22,0 scrolled 0
@@ -16,11 +17,11 @@ expression: window.picture()
 |                                                                                                    |
 |Switch model?                                                                                       |
 |                                                                                                    |
-|This session is cached for the current model. Switching to claude-opus-5 means the full transcript  |
+|This session is cached for the current model. Switching to claude-opus-5-5 means the full transcript|
 |gets re-read on your next message.                                                                  |
 |                                                                                                    |
 |› Yes                                                                                               |
-|  switch to claude-opus-5                                                                           |
+|  switch to claude-opus-5-5                                                                         |
 |                                                                                                    |
 |  No                                                                                                |
 |  go back                                                                                           |

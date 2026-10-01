@@ -21,6 +21,7 @@
 //! against recorded bytes.
 
 pub(crate) mod body;
+pub(crate) mod usage;
 pub(crate) mod wire;
 
 use std::fmt;
@@ -32,11 +33,13 @@ use crucible_models::{
     Provider, ProviderError, Request,
 };
 use crucible_runtime::{BoxFuture, Cancel};
-use crucible_types::{CredentialScopeId, Modalities, PromptCacheEncoding};
+use crucible_types::{
+    ContinuationScope, CredentialScopeId, Modalities, PromptCacheEncoding, StopReason,
+};
 use serde_json::Value;
 
 use crate::endpoint::Endpoint;
-use crate::refusal::refused;
+use crate::refusal::refused_worded;
 use crate::stream::Response;
 use crate::transport::Transport;
 
@@ -92,6 +95,102 @@ pub trait Dialect: Send + Sync + 'static {
         let _ = model;
         None
     }
+
+    /// What a response's reader keeps of its reasoning: `()` for a vendor
+    /// that wants none back, [`wire::Thought`] for one that does.
+    type Kept: wire::Keeps;
+
+    /// What `model`'s reasoning, written before its answer, is to the vendor.
+    /// Read past and never sent back, by default.
+    fn reasoning(model: &str) -> Reasoning {
+        let _ = model;
+        Reasoning::Unread
+    }
+
+    /// Whether the counts of a response have to be asked for. A vendor that
+    /// sends them unasked, and does not document the field that asks, is sent
+    /// nothing it might refuse.
+    const USAGE_ASKED: bool = true;
+
+    /// The field the ceiling on generated tokens is written under.
+    const CEILING: &'static str = "max_tokens";
+
+    /// Fields the vendor needs on every request, each a flag set the same way
+    /// whatever is asked.
+    const FLAGS: &'static [(&'static str, bool)] = &[];
+
+    /// A failure the vendor reports inside an event that otherwise reads as
+    /// part of an answer, where it has a way of its own to say one.
+    fn failure(payload: &Value) -> Option<ProviderError> {
+        let _ = payload;
+        None
+    }
+
+    /// What a refusal at `endpoint` means, as a line of crucible's own, where
+    /// the vendor's code says more than its sentence: a key the vendor says
+    /// belongs elsewhere names the row it was given on. `None`, by default,
+    /// leaves the vendor's sentence as it is.
+    fn refused(status: u16, body: &str, endpoint: &Endpoint) -> Option<String> {
+        let _ = (status, body, endpoint);
+        None
+    }
+
+    /// Why the model stopped, for a reason the vendor has words of its own for.
+    /// `None` leaves it to the reasons every vendor on this wire shares.
+    fn stopped(reason: &str) -> Option<StopReason> {
+        let _ = reason;
+        None
+    }
+}
+
+/// What a model's reasoning is to the vendor that wrote it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reasoning {
+    /// Read past and never sent back: the vendor keeps none of it.
+    Unread,
+    /// Kept beside the answer it came with, and sent back on that message.
+    Returned,
+    /// Kept and sent back the same way, and sent as empty on a message that
+    /// has none, once a request carries tools: the vendor refuses a turn with
+    /// tools that leaves any earlier answer without it.
+    Required,
+}
+
+/// What this harness is called, to a vendor on this wire.
+///
+/// Sent rather than left to whatever the HTTP client would say on its own: a
+/// vendor that reads it reads the client that is calling.
+const AGENT: &str = concat!("crucible/", env!("CARGO_PKG_VERSION"));
+
+/// Names crucible to the vendor, for a dialect whose headers say who calls.
+pub(crate) fn identify(outgoing: &mut Outgoing) {
+    outgoing.set_header("user-agent", AGENT);
+}
+
+/// What a vendor's cache is known to do where it caches a prompt's prefix on
+/// its own and reports what it read, with no field a request could set: the
+/// record for `revision`, reviewed at `provenance`, assuming no hit below
+/// `minimum` tokens.
+pub(crate) fn automatic(
+    revision: &'static str,
+    provenance: crucible_models::PromptCacheProvenance,
+    minimum: u32,
+) -> PromptCacheCapabilities {
+    let usage_only = crucible_models::PromptCacheMechanismCapability::provider_managed(
+        minimum,
+        &[
+            crucible_models::PromptCacheContent::Text,
+            crucible_models::PromptCacheContent::Tools,
+        ],
+    );
+    PromptCacheCapabilities::supported(
+        provenance.record_version(),
+        Some(revision),
+        provenance,
+        crucible_models::StatefulTransportCapability::Unsupported,
+        &[usage_only],
+        crucible_types::PromptCacheUsageReporting::ReadTokens,
+    )
 }
 
 /// A Chat Completions provider, speaking `D`'s dialect.
@@ -144,6 +243,22 @@ impl<D: Dialect> Chat<D> {
             credential_scope,
             dialect: PhantomData,
         }
+    }
+
+    /// Where reasoning kept for `request` is bound, or nothing where the vendor
+    /// wants none of it back. Worked out where it is used rather than held
+    /// across the send, which would be room every request carries for it.
+    fn keeping(&self, request: &Request<'_>) -> Option<ContinuationScope> {
+        (D::reasoning(request.model) != Reasoning::Unread)
+            .then(|| ContinuationScope::new(self.credential_scope, self.endpoint.as_str()))
+    }
+
+    /// Where an answer this wire kept reasoning for is bound, for a vendor
+    /// that keeps any: what tells its own earlier answers, whichever model
+    /// wrote them, from another vendor's or another credential's.
+    fn owning(&self) -> Option<ContinuationScope> {
+        <D::Kept as wire::Keeps>::KEEPS
+            .then(|| ContinuationScope::new(self.credential_scope, self.endpoint.as_str()))
     }
 
     /// Whether requests go to one of the vendor's own addresses rather than
@@ -228,7 +343,7 @@ impl<D: Dialect> Provider for Chat<D> {
             }
 
             let mut outgoing = self.headers(cancel).await?;
-            let body = body::serialize::<D>(&request);
+            let body = body::serialize_for::<D>(&request, self.owning());
 
             let response = self
                 .transport
@@ -239,19 +354,29 @@ impl<D: Dialect> Provider for Chat<D> {
                 response.map_err(|problem| problem.for_provider(D::NAME).redacted(&redactions))?;
 
             if response.status() != 200 {
-                return Err(
-                    refused(D::NAME, response.status(), response, &redactions, cancel).await,
-                );
+                return Err(refused_worded(
+                    D::NAME,
+                    response,
+                    &redactions,
+                    cancel,
+                    |status, body| D::refused(status, body, &self.endpoint),
+                )
+                .await);
             }
 
-            Ok(Box::new(Response::<wire::Completions<D>>::new(
+            Ok(Box::new(Response::with_wire(
                 response.into_reader(),
                 cancel.clone(),
                 redactions,
+                wire::Completions::<D>::for_request(&request, self.keeping(&request)),
             )) as Box<dyn DeltaStream>)
         })
     }
 }
 
+#[cfg(test)]
+mod reasoning_tests;
+#[cfg(test)]
+pub(crate) mod testing;
 #[cfg(test)]
 mod tests;

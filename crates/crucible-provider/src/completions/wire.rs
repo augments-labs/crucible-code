@@ -16,12 +16,20 @@
 //!
 //! What the counts in the last event mean is the one thing vendors on this
 //! wire disagree about, so the dialect reads them.
+//!
+//! A model that thinks first sends its reasoning beside the answer. Most
+//! vendors want none of it back; a vendor whose dialect asks for it has it kept
+//! here, bounded, as the answer's private continuation, which the request
+//! writer sends back on the message it came with.
 
 use std::fmt;
 use std::marker::PhantomData;
 
-use crucible_models::{Delta, ProviderError};
-use crucible_types::{StopReason, ToolId};
+use crucible_models::{Delta, ProviderError, Request};
+use crucible_types::{
+    CONTINUATION_BYTES, Continuation, ContinuationData, ContinuationPart, ContinuationScope,
+    StopReason, ToolId,
+};
 use serde_json::Value;
 
 use super::Dialect;
@@ -36,9 +44,14 @@ use crate::stream::Wire;
 /// has just finished arriving.
 const DONE: &str = "[DONE]";
 
+/// What reasoning kept by this wire is recorded as, beside the answer it came
+/// with. Written into session logs, so it never changes once shipped.
+pub(crate) const PROTOCOL: &str = "chat-completions-reasoning-v1";
+
 /// Chat Completions, being narrated, in `D`'s dialect.
 pub(crate) struct Completions<D: Dialect> {
     open: Open,
+    kept: D::Kept,
     dialect: PhantomData<D>,
 }
 
@@ -46,7 +59,21 @@ impl<D: Dialect> Default for Completions<D> {
     fn default() -> Self {
         Self {
             open: Open::default(),
+            kept: D::Kept::default(),
             dialect: PhantomData,
+        }
+    }
+}
+
+impl<D: Dialect> Completions<D> {
+    /// The reader for one response to `request`, keeping its reasoning under
+    /// `scope`, where there is one.
+    pub(crate) fn for_request(request: &Request<'_>, scope: Option<ContinuationScope>) -> Self {
+        Self {
+            kept: scope.map_or_else(D::Kept::default, |scope| {
+                D::Kept::begin(request.model, scope)
+            }),
+            ..Self::default()
         }
     }
 }
@@ -56,7 +83,7 @@ impl<D: Dialect> fmt::Debug for Completions<D> {
         f.debug_struct("Completions")
             .field("provider", &D::NAME)
             .field("open", &self.open)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -64,7 +91,172 @@ impl<D: Dialect> Wire for Completions<D> {
     const PROVIDER: &'static str = D::NAME;
 
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
-        deltas::<D>(event, &mut self.open)
+        let mut deltas = deltas::<D>(event, &mut self.open, &mut self.kept)?;
+        if self.kept.keeping() {
+            for delta in &deltas {
+                self.kept.note(delta);
+            }
+            // Handed over just before the stop, which is the one point the
+            // whole answer it refers to is known.
+            if let Some(at) = deltas
+                .iter()
+                .position(|delta| matches!(delta, Delta::Stopped(_)))
+                && let Some(kept) = self.kept.take()
+            {
+                deltas.insert(at, Delta::Continuation(kept));
+            }
+        }
+        Ok(deltas)
+    }
+}
+
+/// What a reader keeps of the reasoning a response writes, for a vendor that
+/// wants it back. `()` keeps nothing and takes no room, which is what a
+/// vendor that wants none of it is read with.
+pub trait Keeps: Default + Send + 'static {
+    /// Whether this keeps anything at all, for any model of its vendor.
+    const KEEPS: bool;
+
+    /// Ready to keep `model`'s reasoning under `scope`.
+    fn begin(model: &str, scope: ContinuationScope) -> Self;
+    /// Whether anything is being kept.
+    fn keeping(&self) -> bool;
+    /// One more piece of reasoning.
+    fn more(&mut self, piece: &str);
+    /// One more piece of the answer the reasoning belongs beside.
+    fn note(&mut self, delta: &Delta);
+    /// The reasoning, as the continuation of the answer it came with.
+    fn take(&mut self) -> Option<Continuation>;
+}
+
+impl Keeps for () {
+    const KEEPS: bool = false;
+
+    fn begin(_model: &str, _scope: ContinuationScope) -> Self {}
+    fn keeping(&self) -> bool {
+        false
+    }
+    fn more(&mut self, _piece: &str) {}
+    fn note(&mut self, _delta: &Delta) {}
+    fn take(&mut self) -> Option<Continuation> {
+        None
+    }
+}
+
+/// The reasoning one response has written so far, and enough of its answer to
+/// say which text and calls it belongs beside.
+#[derive(Default)]
+pub struct Thought(Option<Box<Thinking>>);
+
+/// By hand: the reasoning is the model's private working, and only how much
+/// of it is kept is shown.
+impl fmt::Debug for Thought {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Thought")
+            .field(
+                "kept",
+                &self.0.as_ref().map(|thinking| thinking.reasoning.len()),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+struct Thinking {
+    model: Box<str>,
+    scope: ContinuationScope,
+    reasoning: String,
+    /// Whether all of it fitted. Reasoning past the bound is not kept at all:
+    /// part of it sent back would be the vendor reading words its model never
+    /// finished, which is worse than reading none.
+    whole: bool,
+    said: usize,
+    calls: usize,
+}
+
+impl Keeps for Thought {
+    const KEEPS: bool = true;
+
+    fn begin(model: &str, scope: ContinuationScope) -> Self {
+        Self(Some(Box::new(Thinking {
+            model: model.into(),
+            scope,
+            reasoning: String::new(),
+            whole: true,
+            said: 0,
+            calls: 0,
+        })))
+    }
+
+    fn keeping(&self) -> bool {
+        self.0.is_some()
+    }
+
+    fn more(&mut self, piece: &str) {
+        if let Some(thinking) = &mut self.0 {
+            thinking.more(piece);
+        }
+    }
+
+    fn note(&mut self, delta: &Delta) {
+        if let Some(thinking) = &mut self.0 {
+            match delta {
+                Delta::Text(said) => thinking.said += said.len(),
+                Delta::ToolStarted { .. } => thinking.calls += 1,
+                _ => {}
+            }
+        }
+    }
+
+    fn take(&mut self) -> Option<Continuation> {
+        self.0.as_mut()?.continuation()
+    }
+}
+
+impl Thinking {
+    /// One more piece of reasoning, kept while the whole still fits.
+    fn more(&mut self, piece: &str) {
+        if !self.whole {
+            return;
+        }
+        if self.reasoning.len().saturating_add(piece.len()) > CONTINUATION_BYTES {
+            self.whole = false;
+            self.reasoning = String::new();
+            return;
+        }
+        self.reasoning.push_str(piece);
+    }
+
+    /// The reasoning, as the continuation of the answer it came with, or
+    /// nothing where there was none or it did not fit.
+    fn continuation(&mut self) -> Option<Continuation> {
+        if !self.whole || self.reasoning.is_empty() {
+            return None;
+        }
+        let reasoning = std::mem::take(&mut self.reasoning);
+        let mut state = Continuation::new(PROTOCOL, &self.model, self.scope).ok()?;
+        state
+            .push(ContinuationPart::Opaque(
+                ContinuationData::new(&reasoning).ok()?,
+            ))
+            .ok()?;
+        if self.said > 0 {
+            state
+                .push(ContinuationPart::Text {
+                    start: 0,
+                    end: self.said,
+                    data: ContinuationData::new("").ok()?,
+                })
+                .ok()?;
+        }
+        for index in 0..self.calls {
+            state
+                .push(ContinuationPart::Call {
+                    index,
+                    data: ContinuationData::new("").ok()?,
+                })
+                .ok()?;
+        }
+        Some(state)
     }
 }
 
@@ -88,7 +280,11 @@ struct Open {
 /// failure inside a response it had already started, and
 /// [`ProviderError::Protocol`] when an event does not parse, announces a tool
 /// call by part of its identity, or contradicts what is open.
-fn deltas<D: Dialect>(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+fn deltas<D: Dialect>(
+    event: &SseEvent,
+    open: &mut Open,
+    kept: &mut D::Kept,
+) -> Result<Vec<Delta>, ProviderError> {
     // A heartbeat, which a proxy may send with no data line at all, and the
     // sentinel above. Neither is JSON and neither means anything here.
     let data = event.data.trim();
@@ -102,6 +298,9 @@ fn deltas<D: Dialect>(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, P
     // choices rather than beside them.
     if let Some(error) = payload.get("error").filter(|error| !error.is_null()) {
         return Err(upstream::<D>(error));
+    }
+    if let Some(failure) = D::failure(&payload) {
+        return Err(failure);
     }
 
     let mut deltas = Vec::new();
@@ -126,7 +325,11 @@ fn deltas<D: Dialect>(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, P
     if let Some(delta) = choice.get("delta") {
         // `reasoning_content` sits beside this on a model that thinks first.
         // Nothing displays it, and reading it as the answer would put the
-        // model's working in front of the user as though it were one.
+        // model's working in front of the user as though it were one. It is
+        // kept only where the vendor wants it back.
+        if let Some(piece) = text(delta, "reasoning_content") {
+            kept.more(piece);
+        }
         if let Some(said) = text(delta, "content").filter(|said| !said.is_empty()) {
             deltas.push(Delta::Text(said.into()));
         }
@@ -135,7 +338,9 @@ fn deltas<D: Dialect>(event: &SseEvent, open: &mut Open) -> Result<Vec<Delta>, P
     }
 
     if let Some(reason) = text(choice, "finish_reason") {
-        deltas.push(Delta::Stopped(stop(reason)));
+        deltas.push(Delta::Stopped(
+            D::stopped(reason).unwrap_or_else(|| stop(reason)),
+        ));
     }
 
     Ok(deltas)

@@ -113,7 +113,9 @@ export ANTHROPIC_API_KEY=...
 Type `/login` to choose how usage is paid for: *Your account with subscription*,
 usage included in your paid plan, or *Provide your own API key*, billed by API
 usage. The first lists the accounts: OpenAI, and Kimi Code on kimi.ai (accounts
-outside mainland China) or on kimi.com (mainland China accounts). The second
+outside mainland China) or on kimi.com (mainland China accounts); and the plans
+whose own key you type in, MiniMax on either of its sites and Qwen's Coding Plan
+and Token Plan on either of Alibaba Cloud's. The second
 lists the providers whose key you may hold, each with the variable it reads
 from, `set ANTHROPIC_API_KEY` and so on, for anyone who would rather export a
 key than store one. A row that holds your credential says `signed in`. Escape
@@ -141,8 +143,9 @@ restart. Authentication never chooses a model or effort; both stay explicit
 choices, and `/model` is where they are asked together.
 
 Some vendors say they may use what you send to train or improve their models:
-a ChatGPT plan, Kimi Code and the Kimi open platform, and a Gemini key on unpaid
-quota. Before the first message on one of those goes, crucible asks you once,
+a ChatGPT plan, Kimi Code and the Kimi open platform, a Gemini key on unpaid
+quota, MiniMax, Qwen's plans on aliyun.com, Z.ai's bigmodel.cn key, and Meta's
+two contributor models. Before the first message on one of those goes, crucible asks you once,
 with what the vendor's terms say and where; **Use it anyway** sends it
 and is remembered, **Go back** keeps the message and sends nothing. [Content
 use](../providers/content-use.md) lists each route and what its vendor says.
@@ -817,11 +820,13 @@ tool opens when the model asks for it. A picture the model asks for that way
 comes back as a picture too, rather than as a refusal; see
 [`read`](../tools/files.md#a-picture-is-looked-at-rather-than-read).
 
-Pictures go to all four providers. A PDF goes to Anthropic, OpenAI and Google,
-whose requests have a shape for a document; MoonshotAI's have none, and say so
-rather than sending the file as anything else. A video, which has to be an
-`.mp4`, goes to Google and MoonshotAI; Anthropic's and OpenAI's requests have no
-shape for one.
+Pictures go to Anthropic, Google, MoonshotAI and OpenAI. A PDF goes to
+Anthropic, OpenAI and Google, whose requests have a shape for a document;
+MoonshotAI's have none, and say so rather than sending the file as anything
+else. A video, which has to be an `.mp4`, goes to Google and MoonshotAI;
+Anthropic's and OpenAI's requests have no shape for one. The seven providers new
+in 0.44 are sent text alone in this release, and say so of a file the same
+way.
 
 Nothing asks you first. Every other way a file reaches the model goes through a
 tool, and a tool is something the agent chose to run, which is the thing a
@@ -970,7 +975,7 @@ The mark opens on `high` where nothing has chosen yet, which is a place to start
 walking from rather than a rung being asked for: leaving it leaves the session
 asking for none, and what applies then is the vendor's own default for that
 model. The ladder holds what the model serves rather than all five: the Kimi
-models serve `low`, `high` and `max`, and a model whose vendor serves none is
+and DeepSeek models serve `low`, `high` and `max`, and a model whose vendor serves none is
 told so instead of being offered a ladder that cannot be answered. A session
 with no model chosen is sent to `/model` first, since a rung is asked of a
 model.

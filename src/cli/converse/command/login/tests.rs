@@ -568,6 +568,7 @@ fn fabricated() -> Rows {
             says: Some("Fabricated plan usage"),
             kind: Kind::Account,
             mark: None,
+            refuses: &[],
             stored: "fabricated",
             environment: false,
             address: None,
@@ -581,6 +582,7 @@ fn fabricated() -> Rows {
         says: Some("a fabricated console key"),
         kind: Kind::Key,
         mark: None,
+        refuses: &[],
         stored: "fabricated",
         environment: false,
         address: None,
@@ -667,10 +669,47 @@ fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_scre
                 "Kimi Code · kimi.com",
                 "may use what is sent · Kimi Code plan usage, mainland China accounts".to_owned()
             ),
+            (
+                "MiniMax · minimax.io",
+                "may use what is sent · MiniMax Token Plan usage, accounts outside mainland China"
+                    .to_owned()
+            ),
+            (
+                "MiniMax · minimaxi.com",
+                "may use what is sent · MiniMax Token Plan usage, mainland China accounts"
+                    .to_owned()
+            ),
+            (
+                "Qwen Coding Plan · alibabacloud.com",
+                "Qwen Coding Plan usage, the international site".to_owned()
+            ),
+            (
+                "Qwen Coding Plan · aliyun.com",
+                "uses what is sent · Qwen Coding Plan usage, the mainland China site".to_owned()
+            ),
+            (
+                "Qwen Token Plan · alibabacloud.com",
+                "Qwen Token Plan usage, the international site".to_owned()
+            ),
+            (
+                "Qwen Token Plan · aliyun.com",
+                "uses what is sent · Qwen Token Plan usage, the mainland China site".to_owned()
+            ),
             ("Anthropic", "set ANTHROPIC_API_KEY".to_owned()),
+            ("DeepSeek", "set DEEPSEEK_API_KEY".to_owned()),
             (
                 "Google",
                 "uses what is sent · set GEMINI_API_KEY".to_owned()
+            ),
+            ("Meta", "set META_API_KEY".to_owned()),
+            ("MiMo", "set MIMO_API_KEY".to_owned()),
+            (
+                "MiniMax · minimax.io",
+                "may use what is sent · set MINIMAX_API_KEY".to_owned()
+            ),
+            (
+                "MiniMax · minimaxi.com",
+                "may use what is sent · a pay-as-you-go key, mainland China accounts".to_owned()
             ),
             (
                 "MoonshotAI · kimi.ai",
@@ -681,6 +720,21 @@ fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_scre
                 "may use what is sent · set MOONSHOT_API_KEY".to_owned()
             ),
             ("OpenAI", "set OPENAI_API_KEY".to_owned()),
+            (
+                "Qwen · alibabacloud.com",
+                "set DASHSCOPE_API_KEY".to_owned()
+            ),
+            (
+                "Qwen · aliyun.com",
+                "a pay-as-you-go key of the mainland China site".to_owned()
+            ),
+            ("xAI", "set XAI_API_KEY".to_owned()),
+            (
+                "Z.ai · bigmodel.cn",
+                "may train on what is sent · a key of bigmodel.cn, mainland China accounts"
+                    .to_owned()
+            ),
+            ("Z.ai · z.ai", "set ZAI_API_KEY".to_owned()),
         ]
     );
     let everything = format!("{said:?} {held:?}");
@@ -851,13 +905,20 @@ fn opened_into(columns: usize, height: usize, keys: bool) -> String {
 fn a_window_with_no_room_for_a_panel_is_given_every_row_as_the_line_to_type() {
     // A run with no keyboard stands no panel: it is given one line per row,
     // `/login` and the words that leave that row alone, whole at forty
-    // columns too.
+    // columns too, folded only where the words are wider than the window.
     let rows = production();
     for columns in [80, 40] {
         let written = opened_into(columns, 40, false);
+        let unfolded = crucible_tui::Picture::of(&written, columns, 200)
+            .said()
+            .join(" ");
         for way in rows.all() {
             let typed = format!("/login {} —", reaching(way, &rows));
-            assert!(written.contains(&typed), "{columns}: {typed}: {written}");
+            assert!(unfolded.contains(&typed), "{columns}: {typed}: {written}");
+            // Narrower than the window, it is never broken at all.
+            if typed.chars().count() < columns {
+                assert!(written.contains(&typed), "{columns}: {typed}: {written}");
+            }
         }
         assert_eq!(
             written.matches("/login ").count(),
@@ -1166,5 +1227,59 @@ fn a_warned_row_keeps_its_caution_at_forty_columns() {
                 None => assert!(!under.contains("sent"), "{route}: {under}"),
             }
         }
+    }
+}
+
+#[test]
+fn the_new_vendors_rows_are_narrowed_and_replaced_by_their_own_words() {
+    let rows = production();
+
+    assert_eq!(left("qwen", &rows).len(), 6, "{:?}", left("qwen", &rows));
+    assert_eq!(
+        left("qwen coding aliyun.com", &rows),
+        ["Qwen Coding Plan · aliyun.com API key"]
+    );
+    assert!(left("qwen tokyo", &rows).is_empty());
+
+    // A key held on one row of a vendor is named when another of its rows is
+    // chosen: the plans of one site, and the two sites of one vendor.
+    let coding = way(&rows, List::Subscription, "Qwen Coding Plan · aliyun.com");
+    let token = way(&rows, List::Subscription, "Qwen Token Plan · aliyun.com");
+    assert_eq!(
+        replaced(&token, &[coding], Glyphs::Unicode).as_deref(),
+        Some("the API key held for Qwen Coding Plan · aliyun.com")
+    );
+    let international = way(&rows, List::Key, "Z.ai · z.ai");
+    let mainland = way(&rows, List::Key, "Z.ai · bigmodel.cn");
+    assert_eq!(
+        replaced(&mainland, &[international], Glyphs::Unicode).as_deref(),
+        Some("the API key held for Z.ai · z.ai")
+    );
+}
+
+#[test]
+fn a_refused_key_is_answered_by_its_mark_and_never_its_text() {
+    use crucible_app::providers::Misfit;
+    use crucible_tui::Glyphs;
+
+    for (misfit, said) in [
+        (
+            Misfit::Unmarked("sk-api-"),
+            "! not a key for this row; its keys start sk-api-",
+        ),
+        (
+            Misfit::Refused("tp-"),
+            "! not a key for this row; keys starting tp- are another kind",
+        ),
+        (
+            Misfit::Shared("sk-sp-"),
+            "! keys starting sk-sp- are for another row; choose it by its plan and site",
+        ),
+        (
+            Misfit::Another("MiniMax · minimax.io"),
+            "! that is a key for MiniMax - minimax.io; choose that row",
+        ),
+    ] {
+        assert_eq!(super::unfitting(&misfit, Glyphs::Ascii), said);
     }
 }

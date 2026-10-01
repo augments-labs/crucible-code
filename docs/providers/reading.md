@@ -8,10 +8,25 @@ here is whatever that table said when this build was made.
 
 | Provider | Model | Reads |
 | --- | --- | --- |
-| `anthropic` | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5` | text, pictures, PDFs |
+| `anthropic` | `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-haiku-4-5` | text, pictures, PDFs |
+| `deepseek` | `deepseek-flash` | text, pictures |
+| `deepseek` | `deepseek-v4-pro` | text |
 | `google` | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro-preview` | text, pictures, PDFs, audio, video |
+| `meta` | `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor` | text, pictures, PDFs, audio, video |
+| `mimo` | `mimo-v2.6-pro`, `mimo-v2.6-flash` | text, pictures, audio, video |
+| `minimax` | `MiniMax-M3` | text, pictures, video |
+| `minimax` | `MiniMax-M2.7` | text |
 | `moonshot` | `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` | text, pictures, video |
-| `openai` | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | text, pictures, PDFs |
+| `openai` | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5` | text, pictures, PDFs |
+| `qwen` | `qwen3.8-max` | text, pictures, PDFs, video |
+| `qwen` | `qwen3.8-flash`, `qwen3.7-plus`, `qwen3.6-plus` | text, pictures, video |
+| `xai` | `grok-4.7`, `grok-4.6` | text, pictures, PDFs |
+| `zai` | `glm-5.3`, `glm-5.2` | text |
+| `zai` | `glm-5.3-flash` | text, pictures, PDFs, video |
+
+What a model reads is not what crucible sends it: the seven providers new in
+this release are sent text alone, as [the protocol's
+half](#what-crucible-puts-in-a-request) below decides.
 
 A model crucible has never heard of is not in that table and has no row here.
 crucible knows nothing about what it reads, which is a different answer from

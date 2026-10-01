@@ -52,7 +52,9 @@ pub(super) fn refusal(error: ProviderError) -> ProviderError {
     }
 }
 
-pub(super) struct Output {
+/// One response from a model whose turns go back as the items it answered
+/// with, being assembled into what the next request carries.
+pub struct Output {
     items: BTreeMap<usize, Item>,
     frontier: usize,
     budget: Budget,

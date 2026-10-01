@@ -601,3 +601,158 @@ fn a_row_reads_its_route_off_the_settings_and_the_store_in_force() {
     );
     assert!(super::row_form(openai, "gpt-5.6-sol", &plain, &signed).switched());
 }
+
+/// What one provider's credential in use is, as `/model` reads it.
+fn using<'a>(
+    entries: &[(&'a str, &str, Option<&'static [&'static str]>)],
+) -> std::collections::BTreeMap<&'a str, crucible_app::providers::InUse> {
+    entries
+        .iter()
+        .map(|(provider, words, serves)| {
+            (
+                *provider,
+                crucible_app::providers::InUse {
+                    words: (*words).to_owned(),
+                    serves: *serves,
+                },
+            )
+        })
+        .collect()
+}
+
+const SIGNED_IN: &[&str] = &[
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+];
+
+#[test]
+fn a_sign_in_lists_what_it_serves_and_a_key_lists_every_model() {
+    let providers = catalogue();
+    let all = super::narrowing::every(&providers);
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
+
+    let listed: Vec<(&str, &str)> = super::narrowed(all.clone(), &signed_in)
+        .iter()
+        .map(|one| (one.provider.name, one.model.name))
+        .collect();
+
+    assert!(!listed.contains(&("openai", "gpt-5.5")), "{listed:?}");
+    assert!(listed.contains(&("openai", "gpt-6.1-sol")), "{listed:?}");
+    // Another provider's models are untouched.
+    assert!(
+        listed.contains(&("anthropic", "claude-opus-5-5")),
+        "{listed:?}"
+    );
+    assert_eq!(super::narrowed(all.clone(), &using(&[])).len(), all.len());
+}
+
+#[test]
+fn one_provider_marked_is_headed_by_its_credential_and_closed_by_what_a_key_adds() {
+    let providers = catalogue();
+    let openai = crucible_app::startup::served(&providers, "openai").expect("openai");
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
+    let keyed = using(&[("openai", "API key", None)]);
+
+    assert_eq!(
+        super::headed("openai", &signed_in, Glyphs::Unicode).as_deref(),
+        Some("openai · ChatGPT sign-in")
+    );
+    assert_eq!(
+        super::closing(openai, &signed_in, Glyphs::Unicode).as_deref(),
+        Some("1 more with an API key · /login")
+    );
+    assert_eq!(
+        super::headed("openai", &keyed, Glyphs::Unicode).as_deref(),
+        Some("openai · API key")
+    );
+    assert_eq!(super::closing(openai, &keyed, Glyphs::Unicode), None);
+    assert_eq!(super::headed("openai", &using(&[]), Glyphs::Unicode), None);
+
+    // A font without the dot has the glyph set's in its place, in the
+    // credential's own words too.
+    let plan = using(&[(
+        "qwen",
+        "Qwen Coding Plan · aliyun.com key",
+        Some(&["qwen3.7-plus"]),
+    )]);
+    let qwen = crucible_app::startup::served(&providers, "qwen").expect("qwen");
+    assert_eq!(
+        super::headed("qwen", &plan, Glyphs::Ascii).as_deref(),
+        Some("qwen - Qwen Coding Plan - aliyun.com key")
+    );
+    assert_eq!(
+        super::closing(qwen, &plan, Glyphs::Ascii).as_deref(),
+        Some("3 more with an API key - /login")
+    );
+}
+
+#[test]
+fn a_model_that_is_itself_warned_says_trains_before_anything_else() {
+    let cost = crucible_models::Cost {
+        price: "2x the price",
+        speed: None,
+        caveat: None,
+    };
+    assert_eq!(
+        super::noted(true, &[], crucible_models::FastForm::Field(cost)),
+        "trains"
+    );
+    assert_eq!(
+        super::noted(false, &[], crucible_models::FastForm::Field(cost)),
+        "no rung"
+    );
+}
+
+#[test]
+fn a_window_with_no_shelf_lists_what_the_credential_serves_and_says_trains() {
+    let providers = catalogue();
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
+    let routes = crucible_app::content_use::Routes::production();
+
+    let lines = super::lines(
+        super::narrowing::every(&providers),
+        &signed_in,
+        &routes,
+        Glyphs::Unicode,
+    );
+
+    assert!(
+        !lines.contains(&"/model openai/gpt-5.5".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model openai/gpt-6.1-sol".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model meta/muse-spark-1.3-contributor — trains".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model meta/muse-spark-1.3".to_owned()),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_narrow_window_with_no_shelf_folds_a_line_rather_than_cut_its_note() {
+    let sample = Sample::new("model-listed-narrow");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), None);
+    // Tall enough to hold every line, so none has scrolled off when read.
+    let mut renderer = Renderer::new(Recording::new(40, 100));
+
+    super::run("", &mut renderer, &mut conversation, &terms, false).unwrap();
+
+    let written = renderer.terminal().written().to_string();
+    let said = crucible_tui::Picture::of(&written, 40, 400)
+        .said()
+        .join(" ");
+    assert!(said.contains("muse-spark-1.3-contributor"), "{said}");
+    assert_eq!(said.matches("trains").count(), 2, "{said}");
+}
