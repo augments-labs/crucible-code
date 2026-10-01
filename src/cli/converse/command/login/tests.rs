@@ -667,10 +667,47 @@ fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_scre
                 "Kimi Code · kimi.com",
                 "may use what is sent · Kimi Code plan usage, mainland China accounts".to_owned()
             ),
+            (
+                "MiniMax · minimax.io",
+                "may use what is sent · MiniMax Token Plan usage, accounts outside mainland China"
+                    .to_owned()
+            ),
+            (
+                "MiniMax · minimaxi.com",
+                "may use what is sent · MiniMax Token Plan usage, mainland China accounts"
+                    .to_owned()
+            ),
+            (
+                "Qwen Coding Plan · alibabacloud.com",
+                "Qwen Coding Plan usage, the international site".to_owned()
+            ),
+            (
+                "Qwen Coding Plan · aliyun.com",
+                "uses what is sent · Qwen Coding Plan usage, the mainland China site".to_owned()
+            ),
+            (
+                "Qwen Token Plan · alibabacloud.com",
+                "Qwen Token Plan usage, the international site".to_owned()
+            ),
+            (
+                "Qwen Token Plan · aliyun.com",
+                "uses what is sent · Qwen Token Plan usage, the mainland China site".to_owned()
+            ),
             ("Anthropic", "set ANTHROPIC_API_KEY".to_owned()),
+            ("DeepSeek", "set DEEPSEEK_API_KEY".to_owned()),
             (
                 "Google",
                 "uses what is sent · set GEMINI_API_KEY".to_owned()
+            ),
+            ("Meta", "set META_API_KEY".to_owned()),
+            ("MiMo", "set MIMO_API_KEY".to_owned()),
+            (
+                "MiniMax · minimax.io",
+                "may use what is sent · set MINIMAX_API_KEY".to_owned()
+            ),
+            (
+                "MiniMax · minimaxi.com",
+                "may use what is sent · a pay-as-you-go key, mainland China accounts".to_owned()
             ),
             (
                 "MoonshotAI · kimi.ai",
@@ -681,6 +718,21 @@ fn a_row_holding_its_providers_credential_says_so_and_no_secret_reaches_the_scre
                 "may use what is sent · set MOONSHOT_API_KEY".to_owned()
             ),
             ("OpenAI", "set OPENAI_API_KEY".to_owned()),
+            (
+                "Qwen · alibabacloud.com",
+                "set DASHSCOPE_API_KEY".to_owned()
+            ),
+            (
+                "Qwen · aliyun.com",
+                "a pay-as-you-go key of the mainland China site".to_owned()
+            ),
+            ("xAI", "set XAI_API_KEY".to_owned()),
+            (
+                "Z.ai · bigmodel.cn",
+                "may train on what is sent · a key of bigmodel.cn, mainland China accounts"
+                    .to_owned()
+            ),
+            ("Z.ai · z.ai", "set ZAI_API_KEY".to_owned()),
         ]
     );
     let everything = format!("{said:?} {held:?}");
