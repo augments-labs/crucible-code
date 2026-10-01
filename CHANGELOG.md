@@ -18,6 +18,11 @@ change in any release with no deprecation period.
   nothing is recorded or sent; at a terminal, `/compact` gives the warning a
   prompt does and ends a piped run as one does, and "Carry on from summary" on
   a resumed session gives that warning too.
+- **A Meta or MiniMax request too long for the model makes room and asks
+  again.** Neither vendor sends a code for that refusal, so it ended the turn;
+  crucible now reads each one by its exact shape and words and compacts the
+  session mid-turn instead. MiniMax's other refusals, including `1039` "Token
+  limit exceeded", end the turn as before.
 
 ## [0.44.1] - 2026-10-01
 

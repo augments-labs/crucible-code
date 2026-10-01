@@ -107,6 +107,11 @@ pub enum ProviderError {
     /// session smaller and send it again. Each wire decides it from its own
     /// vendor's spelling — matching on a message here would be this crate
     /// guessing at prose three vendors write differently and change freely.
+    /// That spelling is the vendor's code, except for the two vendors that
+    /// send none for this refusal, Meta and `MiniMax`: their dialects read the
+    /// shape that refusal alone has and one exact phrase in it, because
+    /// without that a session that outgrows a million-token window could
+    /// only end the turn.
     #[error("{provider}: the request did not fit the model's window")]
     WindowExceeded {
         /// Which provider refused it.

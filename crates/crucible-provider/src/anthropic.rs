@@ -39,7 +39,7 @@ use crucible_types::{
 
 use crate::anthropic::stream::Stream;
 use crate::endpoint::Endpoint;
-use crate::refusal::{FastRule, refused_at};
+use crate::refusal::{FastRule, Rules, refused_at};
 use crate::transport::Transport;
 
 /// What this provider is called, in errors and in the status line.
@@ -421,7 +421,17 @@ impl Provider for Anthropic {
 
             if response.status() != 200 {
                 let rule = fast.then_some(fast::refused as FastRule);
-                let error = refused_at(NAME, rule, response, &redactions, cancel).await;
+                let error = refused_at(
+                    NAME,
+                    Rules {
+                        fast: rule,
+                        overlong: None,
+                    },
+                    response,
+                    &redactions,
+                    cancel,
+                )
+                .await;
                 return Err(if bound(request.model) {
                     diagnostics::refusal(error)
                 } else {

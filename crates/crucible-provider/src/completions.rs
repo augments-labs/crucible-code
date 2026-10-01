@@ -144,6 +144,14 @@ pub trait Dialect: Send + Sync + 'static {
     /// default.
     const OUTGREW: &'static [&'static str] = &[];
 
+    /// The vendor's refusal of a request too large for the model's window,
+    /// where it sends that refusal with no code of its own: a refused body,
+    /// read whole, that this answers yes for with its status is
+    /// [`ProviderError::WindowExceeded`] as well. Written as the shape that
+    /// refusal alone has and one exact phrase, case and all, never the phrase
+    /// alone. None, by default.
+    const OVERLONG: Option<fn(u16, &Value) -> bool> = None;
+
     /// Why the model stopped, for a reason the vendor has words of its own for.
     /// `None` leaves it to the reasons every vendor on this wire shares.
     fn stopped(reason: &str) -> Option<StopReason> {
@@ -370,6 +378,7 @@ impl<D: Dialect> Provider for Chat<D> {
                     cancel,
                     Own {
                         outgrew: || D::OUTGREW,
+                        overlong: D::OVERLONG,
                         worded: |status, body: &str| D::refused(status, body, &self.endpoint),
                     },
                 )
