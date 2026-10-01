@@ -16,7 +16,7 @@ scripts/sh/check.sh
 That compatibility command runs:
 
 ```bash
-scripts/sh/rust-checks.sh   # rustfmt, all-feature clippy, tests, rustdoc, generated agreement
+scripts/sh/rust-checks.sh   # rustfmt, all-feature clippy, package isolation, tests, required cases, rustdoc, generated agreement
 scripts/sh/repo-checks.sh   # cross-file repository policy
 scripts/sh/python-checks.sh # harness fixtures, campaign reports and this version's release notes
 ```

@@ -33,10 +33,9 @@ version bump, and a hotfix for something already published.
 [`RELEASING.md`](RELEASING.md) owns both.
 
 Both branches refuse direct pushes, force-pushes and deletion, and need
-`CI required` green before a merge. `dev` also merges through a merge queue,
-which checks each pull request again on top of `dev` and everything queued
-ahead of it, so nobody brings a branch up to date by hand. Everything else is a
-task branch, and merging its pull request deletes it — the work is on `dev` by
+`CI required` green before a merge. A pull request to `dev` merges once
+`CI required` is green on a head that is up to date with `dev`. Everything else
+is a task branch, and merging its pull request deletes it — the work is on `dev` by
 then, and the ruleset is what keeps the same rule from reaching `dev` or `main`.
 
 ## Make a change
@@ -50,8 +49,10 @@ then, and the ruleset is what keeps the same rule from reaching `dev` or `main`.
 
 Coding agents begin in [`AGENTS.md`](AGENTS.md), which holds the repository
 constraints for implementation, dependencies and writing. Human contributors
-can read the same guide; remaining skills live under
-[`.agents/skills/`](.agents/skills/).
+can read the same guide. Finishing, review and publication follow this file and
+[`RELEASING.md`](RELEASING.md);
+[`.agents/skills/run-the-gate`](.agents/skills/run-the-gate/SKILL.md) owns the
+local gate.
 
 ### Adding a vendor
 
@@ -80,6 +81,8 @@ no web tool, no fast form) and the docs say which fact was not settled.
    which agreement tests hold to the code, name its variable in the help text
    and its accepted copy `tests/differential/command-line.txt`, and update the
    pages that list the providers.
+6. Record where each recorded fixture came from, its link and the day it was
+   read, in `crates/crucible-provider/src/<vendor>/fixtures/SOURCES.md`.
 
 ## Local gates
 
@@ -119,7 +122,9 @@ Run the checks from a checkout whose directories are not group-writable, which
 is what `umask 022` produces. Linux sandboxing refuses a broker image that a
 group member could rewrite, and it walks the whole path to it, so a tree
 created under `umask 002` fails the sandbox tests for its mode rather than for
-anything in the change under test. The error names the directory.
+anything in the change under test. The error names the broker path and says a
+directory above it is writable by a group or by everyone; `namei -l <path>`
+shows which one.
 
 On Linux, a test build keeps the sandbox's state in a directory of its own
 checkout, `/var/tmp/crucible-code-sandbox-{uid}-v1-{token}`, where the token is
@@ -233,9 +238,11 @@ Compile-time changes can also be compared without an absolute gate:
 scripts/sh/build-comparison.sh BASE CANDIDATE
 ```
 
-That command requires a clean checkout, checks both revisions on the same
-machine with independent Cargo targets, and writes clean, no-op, leaf-touch and
-root-touch timing/RSS evidence plus Cargo timing reports. Live release,
+That command requires a clean checkout, GNU `/usr/bin/time` and `python3`. It
+checks both revisions on the same machine with independent Cargo targets, and
+writes clean, no-op, leaf-touch and root-touch timing/RSS evidence plus Cargo
+timing reports to an optional third argument, `generated/build-comparison` by
+default. Live release,
 provider, and coding-task campaigns are scheduled or manual workflows rather
 than local or pull-request requirements; their ownership and credentials are
 listed in [the workflow map](.github/workflows/README.md).

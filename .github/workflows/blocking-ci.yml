@@ -2,8 +2,8 @@ name: blocking-ci
 
 on:
   pull_request: {}
-  # A pull request queued for dev is checked again on top of dev and of
-  # everything queued ahead of it, so nobody has to bring it up to date.
+  # No merge queue is in use: dev and main merge directly once CI required
+  # is green on a head up to date with the base.
   merge_group: {}
   push:
     branches: [main, dev]
