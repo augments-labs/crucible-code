@@ -2,9 +2,6 @@ name: blocking-ci
 
 on:
   pull_request: {}
-  # No merge queue is in use: dev and main merge directly once CI required
-  # is green on a head up to date with the base.
-  merge_group: {}
   push:
     branches: [main, dev]
 
