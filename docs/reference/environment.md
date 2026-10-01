@@ -255,8 +255,8 @@ environment, with these changes made by the platform's backend. See
   temporary directory Windows reports for the process.
   The helper that starts the command, `crucible-sandbox-broker.exe`, is
   itself started through a cleared environment holding only `SystemRoot`,
-  which Windows needs to load the account, firewall and logon services the
-  helper calls; the command's map reaches it on its standard input instead.
+  kept because Windows resolves system components through it; the command's
+  map reaches it on its standard input instead.
 - A command with network domains on Linux or macOS is given `HTTP_PROXY`,
   `HTTPS_PROXY`, `ALL_PROXY`, `http_proxy`, `https_proxy` and `all_proxy`, all
   set to crucible's own per-command proxy as `http://name:secret@address`,

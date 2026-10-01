@@ -6,10 +6,10 @@
 //! the launch frame on the broker's standard input, and the account-side
 //! broker is started by the host broker with its private desktop name alone.
 //!
-//! `SystemRoot` is the one variable the host broker keeps. Nothing in the
-//! broker reads a variable of its own, but it calls DPAPI, the account and
-//! Filtering Platform services and the secondary logon service, and Windows
-//! loads the components behind them from paths written as `%SystemRoot%`.
+//! `SystemRoot` is the one variable the host broker keeps, as a precaution:
+//! nothing in the broker reads a variable of its own, but Windows resolves
+//! system components through `%SystemRoot%`, and the broker calls DPAPI, the
+//! account and Filtering Platform services and the secondary logon service.
 //! `TEMP`, `TMP` and `PATH` are left out: the broker makes no temporary file,
 //! resolves no program by name, and finds itself through its own image path.
 
@@ -57,11 +57,6 @@ mod tests {
             .collect())
     }
 
-    /// Names only, so a failure never prints a value the host holds.
-    fn names(environment: &[(String, String)]) -> Vec<&str> {
-        environment.iter().map(|(name, _)| name.as_str()).collect()
-    }
-
     #[test]
     fn the_broker_is_started_with_a_cleared_environment_and_only_system_root() {
         // The test process always has variables of its own, such as PATH,
@@ -73,18 +68,22 @@ mod tests {
             _ => None,
         };
         let environment = started(host).expect("env runs");
-        assert_eq!(names(&environment), ["SystemRoot"]);
-        assert_eq!(
-            environment,
-            [("SystemRoot".to_owned(), r"C:\Windows".to_owned())]
+        // Said by count alone, so a failure prints nothing the host holds,
+        // whatever a value spells across lines.
+        assert!(
+            environment == [("SystemRoot".to_owned(), r"C:\Windows".to_owned())],
+            "{} variables reached the helper, not SystemRoot alone",
+            environment.len()
         );
     }
 
     #[test]
     fn a_host_without_system_root_gives_the_broker_nothing() {
-        assert_eq!(
-            names(&started(|_| None).expect("env runs")),
-            Vec::<&str>::new()
+        let environment = started(|_| None).expect("env runs");
+        assert!(
+            environment.is_empty(),
+            "{} variables reached the helper",
+            environment.len()
         );
     }
 }
