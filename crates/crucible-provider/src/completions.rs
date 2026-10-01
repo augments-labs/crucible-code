@@ -148,8 +148,8 @@ pub trait Dialect: Send + Sync + 'static {
     /// where it sends that refusal with no code of its own: a refused body,
     /// read whole, that this answers yes for with its status is
     /// [`ProviderError::WindowExceeded`] as well. Written as the shape that
-    /// refusal alone has and one exact phrase, case and all, never the phrase
-    /// alone. None, by default.
+    /// refusal comes in and one exact phrase, case and all, anchored where the
+    /// vendor puts it, never the phrase alone. None, by default.
     const OVERLONG: Option<fn(u16, &Value) -> bool> = None;
 
     /// Why the model stopped, for a reason the vendor has words of its own for.

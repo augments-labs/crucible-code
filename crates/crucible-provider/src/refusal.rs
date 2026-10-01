@@ -22,12 +22,12 @@
 //!
 //! One refusal is told apart from the rest: a request too large for the
 //! model's window, which the session can be compacted for. It is told by the
-//! vendor's code and never by its sentence, with two narrow exceptions. Meta
-//! and `MiniMax` send no code for it, and with windows of a million tokens it
-//! is a refusal a session reaches, so each of their dialects names the shape
-//! that refusal alone has and one exact phrase in it (see [`Overlong`]),
-//! read only from a body that arrived whole. Every other vendor's refusals
-//! are read by their code alone.
+//! vendor's code and never by its sentence, with three narrow exceptions.
+//! Anthropic, Meta and `MiniMax` send no code of its own for it, and with
+//! windows of a million tokens it is a refusal a session reaches, so each of
+//! them names the shape that refusal comes in and one exact phrase anchored
+//! where the vendor puts it (see [`Overlong`]), read only from a body that
+//! arrived whole. Every other vendor's refusals are read by their code alone.
 //!
 //! [`authorize`]: crucible_credentials::Credential::authorize
 
@@ -174,10 +174,11 @@ pub(crate) type FastRule = fn(u16, &str) -> bool;
 /// Whether a refused body, with its status, is the vendor's refusal of a
 /// request too large for the model, for a vendor that sends no code for it.
 ///
-/// The one place a refusal is read by its words, and only beside a shape the
-/// vendor gives that refusal alone: a dialect writes it as a structural
-/// precondition and one exact phrase, case and all, so that a vendor's other
-/// refusals, and the same words in another shape, stay what they were. Asked
+/// The one place a refusal is read by its words, and only beside the shape the
+/// vendor gives that refusal: a vendor writes it as a structural precondition
+/// and one exact phrase, case and all, anchored at the start of the message
+/// (or at both ends), so that a vendor's other refusals, and the same words
+/// quoted back inside them, stay what they were. Asked
 /// only of a body that arrived whole; a cut body may have lost what it would
 /// be read from.
 pub(crate) type Overlong = fn(u16, &serde_json::Value) -> bool;
@@ -549,8 +550,8 @@ const OUTGREW: &[&str] = &[
 /// The **code**, never the sentence. Matching prose would be reading three
 /// vendors' phrasing, in whatever language they answered in, and getting it
 /// wrong in the direction that compacts a session for a refusal about something
-/// else entirely. The two vendors that send no code for this refusal are read
-/// by their dialects' [`Overlong`], beside this and not through it.
+/// else entirely. The three vendors that send no code of their own for this
+/// refusal are read by their own [`Overlong`], beside this and not through it.
 ///
 /// [`OUTGREW`]'s words are read where every vendor that uses them puts them: as
 /// text under `error.code`. `own`, the vendor's codes, is read wherever a

@@ -442,14 +442,21 @@ fn the_words_alone_are_not_a_request_too_large() {
 fn the_words_echoed_inside_another_refusal_are_not_a_request_too_large() {
     // A refusal of the documented shape that quotes the words back from what
     // was sent, rather than saying them as its own sentence.
-    let mut body = json(CONTEXT_WINDOW);
-    *body.pointer_mut("/error/message").unwrap() =
-        json!("Invalid input text: 'the model's context length is only 8 tokens' is not allowed");
+    // Each anchor is tried alone: the words with neither end, with Meta's
+    // opening but another ending, and with Meta's ending but another opening.
+    for said in [
+        "Invalid input text: 'the model's context length is only 8 tokens' is not allowed",
+        "You passed 'the model's context length is only 8' which is not allowed",
+        "Invalid input text: 'the model's context length is only 8'. Please reduce the length of the input prompt",
+    ] {
+        let mut body = json(CONTEXT_WINDOW);
+        *body.pointer_mut("/error/message").unwrap() = json!(said);
 
-    let problem = refused(400, &body.to_string());
+        let problem = refused(400, &body.to_string());
 
-    assert!(
-        matches!(problem, ProviderError::Refused { status: 400, .. }),
-        "{problem:?}"
-    );
+        assert!(
+            matches!(problem, ProviderError::Refused { status: 400, .. }),
+            "{said}: {problem:?}"
+        );
+    }
 }

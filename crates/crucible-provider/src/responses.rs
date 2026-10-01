@@ -217,8 +217,9 @@ pub trait Dialect: Sized + Send + Sync + 'static {
     /// where it sends that refusal with no code: a refusal this answers yes
     /// for, from its status and its body read whole, is
     /// [`ProviderError::WindowExceeded`], which the session is compacted for.
-    /// Written as the shape that refusal alone has and one exact phrase, case
-    /// and all; every other vendor's refusals are told by their code alone.
+    /// Written as the shape that refusal comes in and one exact phrase, case
+    /// and all, anchored where the vendor puts it; every other vendor's
+    /// refusals are told by their code alone.
     /// None, by default.
     const OVERLONG: Option<fn(u16, &Value) -> bool> = None;
 

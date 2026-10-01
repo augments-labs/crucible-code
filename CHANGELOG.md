@@ -29,22 +29,12 @@ change in any release with no deprecation period.
   nothing is recorded or sent; at a terminal, `/compact` gives the warning a
   prompt does and ends a piped run as one does, and "Carry on from summary" on
   a resumed session gives that warning too.
-- **A Meta or MiniMax request too long for the model makes room and asks
-  again.** Neither vendor sends a code for that refusal, so it ended the turn;
-  crucible now reads each one by its exact shape and words and compacts the
-  session mid-turn instead. MiniMax's other refusals, including `1039` "Token
-  limit exceeded", end the turn as before.
-- **A Meta request too long for the model makes room and asks again.** Meta
-  sends no code for that refusal, so it ended the turn; crucible now reads it
-  by its documented shape and words and compacts mid-turn instead. MiniMax's
-  refusal is matched by wording MiniMax does not publish, so it compacts only
-  where that wording holds, and any other MiniMax refusal ends the turn.
 - **An Anthropic or Meta request too long for the model makes room and asks
   again.** Neither sends a code for that refusal, so it ended the turn; crucible
   now reads each by its shape and opening words and compacts mid-turn instead,
   and does the same for MiniMax where its refusal has the wording matched.
   MiniMax's wording is not confirmed against its own pages, so a refusal
-  worded otherwise still ends the turn. On Google, DeepSeek, Qwen,
+  worded otherwise still ends the turn. On Google, DeepSeek, Moonshot, Qwen,
   xAI and MiMo a request too long for the model still ends the turn, and a
   lower `defaultContextWindow` avoids it.
 
