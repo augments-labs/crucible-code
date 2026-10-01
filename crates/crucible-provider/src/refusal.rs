@@ -197,13 +197,26 @@ pub(crate) async fn refused_at(
             .redacted(redactions);
         }
     }
-    resolved(refusal, said, read)
+    resolved(refusal, said, read, &[])
 }
 
-/// [`refused`], for a vendor whose code says more than its sentence: where
-/// `worded` reads the whole body and its status as a line of crucible's own,
-/// that line is the message; anywhere else the refusal is what [`refused`]
-/// makes of it.
+/// What a vendor reads in its refusals its own way.
+pub(crate) struct Own<O, W> {
+    /// The vendor's codes for a request too large for the model's window, read
+    /// beside the ones in [`OUTGREW`]. Asked once the body is in rather than
+    /// held as the codes themselves, so a request that is never refused carries
+    /// no room for them while it waits.
+    pub(crate) outgrew: O,
+
+    /// The whole body and its status as a line of crucible's own, where the
+    /// vendor's code says more than its sentence.
+    pub(crate) worded: W,
+}
+
+/// [`refused`], for a vendor with codes of its own: where `own.worded` reads
+/// the whole body and its status as a line of crucible's own, that line is the
+/// message; anywhere else the refusal is what [`refused`] makes of it, with
+/// `own.outgrew`'s codes read as a request too large for the window too.
 ///
 /// The body is read under the same bound and wait. A body that did not come
 /// whole is never reworded, since the code it would be read from may be what
@@ -213,7 +226,7 @@ pub(crate) async fn refused_worded(
     body: PostResponse,
     redactions: &Redactions,
     cancel: &Cancel,
-    worded: impl FnOnce(u16, &str) -> Option<String>,
+    own: Own<impl FnOnce() -> &'static [&'static str], impl FnOnce(u16, &str) -> Option<String>>,
 ) -> ProviderError {
     let refusal = Refusal {
         provider,
@@ -227,7 +240,7 @@ pub(crate) async fn refused_worded(
     let whole = usize::try_from(MAX_REFUSAL).is_ok_and(|most| said.len() <= most);
     if read.is_ok()
         && whole
-        && let Some(message) = worded(refusal.status, &String::from_utf8_lossy(&said))
+        && let Some(message) = (own.worded)(refusal.status, &String::from_utf8_lossy(&said))
     {
         return ProviderError::Refused {
             provider,
@@ -236,7 +249,7 @@ pub(crate) async fn refused_worded(
         }
         .redacted(redactions);
     }
-    resolved(refusal, said, read)
+    resolved(refusal, said, read, (own.outgrew)())
 }
 
 /// The request facts needed while its refused body is read.
@@ -258,7 +271,7 @@ fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> Pro
         wait,
         refusal.cancel,
     );
-    resolved(refusal, said, read)
+    resolved(refusal, said, read, &[])
 }
 
 /// Reads a live post body on the caller's runtime.
@@ -266,11 +279,19 @@ async fn said_async(refusal: Refusal<'_>, body: PostResponse, wait: Duration) ->
     let mut said = Vec::new();
     let mut body = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
     let read = fill_async(&mut body, &mut said, wait, refusal.cancel).await;
-    resolved(refusal, said, read)
+    resolved(refusal, said, read, &[])
 }
 
 /// Interprets the bounded read identically for live and recorded bodies.
-fn resolved(refusal: Refusal<'_>, mut said: Vec<u8>, read: Result<(), ReadError>) -> ProviderError {
+///
+/// `own` is the vendor's codes for a request too large for the window, beside
+/// [`OUTGREW`]: none, where the vendor uses only those.
+fn resolved(
+    refusal: Refusal<'_>,
+    mut said: Vec<u8>,
+    read: Result<(), ReadError>,
+    own: &[&str],
+) -> ProviderError {
     let most = usize::try_from(MAX_REFUSAL).unwrap_or(usize::MAX);
     let longer = said.len() > most;
 
@@ -298,10 +319,10 @@ fn resolved(refusal: Refusal<'_>, mut said: Vec<u8>, read: Result<(), ReadError>
     said.truncate(most);
 
     let problem = match read {
-        Ok(()) if longer => kept(refusal, &said, End::Longer),
-        Ok(()) => kept(refusal, &said, End::Whole),
+        Ok(()) if longer => kept(refusal, &said, End::Longer, own),
+        Ok(()) => kept(refusal, &said, End::Whole, own),
         Err(ReadError::Cancelled) => ProviderError::Cancelled(refusal.provider),
-        Err(ReadError::Body(_)) if filled => kept(refusal, &said, End::Stopped),
+        Err(ReadError::Body(_)) if filled => kept(refusal, &said, End::Stopped, own),
         Err(ReadError::Body(problem)) => ProviderError::Refused {
             provider: refusal.provider,
             status: refusal.status,
@@ -351,7 +372,7 @@ impl End {
 
 /// The refusal that what was read makes, whether it is the whole reply or the
 /// beginning of one.
-fn kept(refusal: Refusal<'_>, said: &[u8], end: End) -> ProviderError {
+fn kept(refusal: Refusal<'_>, said: &[u8], end: End, own: &[&str]) -> ProviderError {
     let clause = end.clause();
 
     // A cut ends the body wherever the bytes ran out, which can be the middle
@@ -397,7 +418,7 @@ fn kept(refusal: Refusal<'_>, said: &[u8], end: End) -> ProviderError {
     // Decided from the vendor's own code rather than from the prose beside it:
     // a code is a value the vendor enumerates, and the prose is a sentence they
     // rewrite whenever they like.
-    if outgrew(&body) {
+    if outgrew(&body, own) {
         return ProviderError::WindowExceeded {
             provider: refusal.provider,
         };
@@ -426,9 +447,11 @@ fn kept(refusal: Refusal<'_>, said: &[u8], end: End) -> ProviderError {
 /// been renamed costs a compaction that would have recovered the turn — the
 /// refusal still reaches the user, saying what the vendor said.
 ///
-/// One list rather than one per provider because a code is not ambiguous: no
-/// vendor uses another's code to mean something else, and a wire that never
-/// sends any of these is unaffected by all of them.
+/// These are read for every vendor because each is a word, and no vendor uses
+/// another's word to mean something else: a wire that never sends any of them
+/// is unaffected by all of them. A vendor that numbers its codes instead names
+/// its own beside these, since a number means something only within the vendor
+/// that numbered it.
 const OUTGREW: &[&str] = &[
     "context_length_exceeded",
     "string_above_max_length",
@@ -440,8 +463,8 @@ const OUTGREW: &[&str] = &[
 /// The **code**, never the sentence. Matching prose would be reading three
 /// vendors' phrasing, in whatever language they answered in, and getting it
 /// wrong in the direction that compacts a session for a refusal about something
-/// else entirely.
-fn outgrew(body: &str) -> bool {
+/// else entirely. `own` is the vendor's codes, read beside [`OUTGREW`].
+fn outgrew(body: &str, own: &[&str]) -> bool {
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
         return false;
     };
@@ -450,7 +473,7 @@ fn outgrew(body: &str) -> bool {
         .get("error")
         .and_then(|error| error.get("code"))
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|code| OUTGREW.contains(&code))
+        .is_some_and(|code| OUTGREW.contains(&code) || own.contains(&code))
 }
 
 /// Why reading the bounded refusal stopped.

@@ -50,6 +50,11 @@ impl Dialect for Muse {
     type Route = ();
     type Replay = Plain;
 
+    // A request too large for the model is refused with a 400 whose `code` is
+    // null, as Meta's error page prints it, beside a sentence giving the
+    // counts. Refusals are told apart by their code alone, so this one ends
+    // the turn in Meta's words rather than compacting the session.
+
     fn route(endpoint: &Endpoint) {
         let _ = endpoint;
     }
