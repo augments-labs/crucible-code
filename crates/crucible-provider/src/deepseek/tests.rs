@@ -192,3 +192,42 @@ fn a_refusal_mid_stream_is_said_in_deepseeks_words() {
         "{failed:?}"
     );
 }
+
+#[test]
+fn every_assistant_message_carries_its_reasoning_the_note_after_a_cut_one_included() {
+    // A turn stopped part way is followed by a note of its own saying so,
+    // and the vendor wants reasoning on every earlier assistant message once
+    // tools are sent: the note too, or the session is refused from then on.
+    let (provider, replay) = at::<DeepSeekChat>(DeepSeek::VENDOR, 200, STREAM);
+    let mut transcript = question();
+    transcript
+        .push(Message::Agent {
+            text: "Partial answ".into(),
+            calls: Vec::new(),
+            stop: Some(StopReason::OutOfTokens),
+            continuation: None,
+        })
+        .expect("a valid transcript");
+    transcript
+        .push(Message::said("Go on."))
+        .expect("a valid transcript");
+
+    read(&provider, asking("deepseek-flash", transcript, true, None)).expect("the answer reads");
+
+    let body = sent(&replay);
+    let messages = field(&body, "/messages")
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let assistants: Vec<&Value> = messages
+        .iter()
+        .filter(|message| message.get("role") == Some(&json!("assistant")))
+        .collect();
+    assert_eq!(assistants.len(), 2, "{messages:?}");
+    assert!(
+        assistants
+            .iter()
+            .all(|message| message.get("reasoning_content") == Some(&json!(""))),
+        "{messages:?}"
+    );
+}

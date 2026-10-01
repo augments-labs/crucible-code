@@ -278,6 +278,11 @@ fn append<D: Dialect>(
                 messages.object(|message| {
                     message.text("role", "assistant");
                     message.text("content", said);
+                    // A vendor that wants reasoning on every earlier answer
+                    // wants it on this one too; it has none of its own.
+                    if matches!(back, Back::Every(_)) {
+                        message.text("reasoning_content", "");
+                    }
                 });
             }
         }
