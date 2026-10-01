@@ -37,8 +37,8 @@ use std::marker::PhantomData;
 
 use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_models::{
-    Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricing, PromptCacheRoute,
-    Provider, ProviderError, Request, Served, Speed,
+    Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricing,
+    PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request, Served, Speed,
 };
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
@@ -72,6 +72,34 @@ pub struct Priced<'a> {
     pub retention: PromptCacheRetentionClass,
     /// The day the price is asked for.
     pub at: PricingDate,
+}
+
+/// What a vendor's cache is known to do where it caches a prompt's prefix on
+/// its own, takes a key that routes requests to the same cache, and reports
+/// what it read: the record for `revision`, reviewed at `provenance`, assuming
+/// no hit below `minimum` tokens.
+pub(crate) fn automatic(
+    revision: &'static str,
+    provenance: PromptCacheProvenance,
+    minimum: u32,
+) -> PromptCacheCapabilities {
+    let routed = crucible_models::PromptCacheMechanismCapability::automatic_prefix(
+        minimum,
+        true,
+        false,
+        &[
+            crucible_models::PromptCacheContent::Text,
+            crucible_models::PromptCacheContent::Tools,
+        ],
+    );
+    PromptCacheCapabilities::supported(
+        provenance.record_version(),
+        Some(revision),
+        provenance,
+        crucible_models::StatefulTransportCapability::Unsupported,
+        &[routed],
+        crucible_types::PromptCacheUsageReporting::ReadTokens,
+    )
 }
 
 /// What one vendor on this wire does its own way.

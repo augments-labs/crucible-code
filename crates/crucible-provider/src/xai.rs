@@ -16,6 +16,7 @@
 
 use crucible_credentials::Redactions;
 use crucible_models::{Delta, ProviderError};
+use crucible_models::{PromptCacheCapabilities, PromptCacheProvenance};
 use crucible_types::{Modalities, Modality};
 use serde_json::Value;
 
@@ -53,6 +54,25 @@ impl Dialect for Grok {
 
     fn route(endpoint: &Endpoint) {
         let _ = endpoint;
+    }
+
+    fn prompt_cache(_route: (), model: &str) -> PromptCacheCapabilities {
+        let revision = match model {
+            "grok-4.7" => "grok-4.7",
+            "grok-4.6" => "grok-4.6",
+            _ => return PromptCacheCapabilities::unknown("unreviewed model"),
+        };
+        crate::responses::automatic(
+            revision,
+            PromptCacheProvenance::new(
+                "https://docs.x.ai/developers/advanced-api-usage/prompt-caching",
+                "2026-10-01",
+                "xai-prompt-cache-2026-10-01",
+            ),
+            // No smallest cached prefix is published; this assumes no hit
+            // below the floor the wire's other vendors share.
+            1_024,
+        )
     }
 
     fn spells() -> Modalities {

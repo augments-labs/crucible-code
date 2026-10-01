@@ -16,6 +16,7 @@
 //! handed in and so is a [`crucible_credentials::Credential`], which is what
 //! lets the whole protocol be tested against recorded bytes.
 
+use crucible_models::{PromptCacheCapabilities, PromptCacheProvenance};
 use crucible_types::{Modalities, Modality};
 
 use crate::endpoint::Endpoint;
@@ -51,6 +52,27 @@ impl Dialect for Muse {
 
     fn route(endpoint: &Endpoint) {
         let _ = endpoint;
+    }
+
+    fn prompt_cache(_route: (), model: &str) -> PromptCacheCapabilities {
+        let revision = match model {
+            "muse-spark-1.3" => "muse-spark-1.3",
+            "muse-spark-1.3-contributor" => "muse-spark-1.3-contributor",
+            "muse-spark-1.2" => "muse-spark-1.2",
+            "muse-spark-1.2-contributor" => "muse-spark-1.2-contributor",
+            _ => return PromptCacheCapabilities::unknown("unreviewed model"),
+        };
+        crate::responses::automatic(
+            revision,
+            PromptCacheProvenance::new(
+                "https://dev.meta.ai/docs/prompt-caching",
+                "2026-10-01",
+                "meta-prompt-cache-2026-10-01",
+            ),
+            // No smallest cached prefix is published; this assumes no hit
+            // below the floor the wire's other vendors share.
+            1_024,
+        )
     }
 
     fn spells() -> Modalities {

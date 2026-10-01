@@ -15,7 +15,9 @@ pub use crucible_auth::StoredCredentials;
 use crucible_auth::{Held, Kind, Names};
 use crucible_config::Settings;
 use crucible_models::{Effort, FastForm, ModelCapabilities, ModelError, ModelLimits, Provider};
-use crucible_provider::{Anthropic, Endpoint, Google, HttpTurns, Moonshot, OpenAi};
+use crucible_provider::{
+    Anthropic, DeepSeek, Endpoint, Google, HttpTurns, Mimo, MiniMax, Moonshot, OpenAi, Qwen, Zai,
+};
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
@@ -46,7 +48,7 @@ use crate::subscription::Subscriptions;
 /// since the build is one nobody picked without the vendor refusing it by name,
 /// and a model released since is typed, which is the path that was there before
 /// any of these were written down.
-const PROVIDERS: [Served; 4] = [
+const PROVIDERS: [Served; 9] = [
     Served {
         name: "anthropic",
         shown: "Anthropic",
@@ -59,13 +61,29 @@ const PROVIDERS: [Served; 4] = [
         models: &[
             Model::shown("claude-fable-5-1", "Claude Fable 5.1", EVERY),
             Model::new("claude-fable-5", EVERY),
+            Model::new("claude-opus-5-5", EVERY),
             Model::new("claude-opus-5", EVERY),
+            Model::new("claude-sonnet-5-5", EVERY),
             Model::new("claude-sonnet-5", EVERY),
             // The one model of this vendor's current three generations that
             // takes no rung: it reasons against a token budget rather than
             // against a word, and the field the other three read is one it has
             // never been served.
             Model::new("claude-haiku-4-5", NONE),
+        ],
+    },
+    Served {
+        name: "deepseek",
+        shown: "DeepSeek",
+        key: "DEEPSEEK_API_KEY",
+        build: startup::deepseek,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: DeepSeek::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("deepseek-flash", LOW_HIGH_MAX),
+            Model::new("deepseek-v4-pro", LOW_HIGH_MAX),
         ],
     },
     Served {
@@ -84,6 +102,34 @@ const PROVIDERS: [Served; 4] = [
             Model::shown("gemini-3.7-flash", "Gemini 3.7 Flash", GEMINI),
             Model::shown("gemini-3.6-flash", "Gemini 3.6 Flash", GEMINI),
             Model::shown("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", GEMINI),
+        ],
+    },
+    Served {
+        name: "mimo",
+        shown: "MiMo",
+        key: "MIMO_API_KEY",
+        build: startup::mimo,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Mimo::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("mimo-v2.6-pro", NONE),
+            Model::new("mimo-v2.6-flash", NONE),
+        ],
+    },
+    Served {
+        name: "minimax",
+        shown: "MiniMax",
+        key: "MINIMAX_API_KEY",
+        build: startup::minimax,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: MiniMax::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("MiniMax-M3", NONE),
+            Model::new("MiniMax-M2.7", NONE),
         ],
     },
     Served {
@@ -107,7 +153,7 @@ const PROVIDERS: [Served; 4] = [
             Model::shown("k3-256k", "K3-256k", KIMI),
             // The coding models are known by their product names; the wire
             // identifier stays the one the console serves them under.
-            Model::shown("kimi-for-coding", "K2.7 Coding", KIMI),
+            Model::shown("kimi-for-coding", "K2.8 Preview", KIMI),
             Model::shown("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
         ],
     },
@@ -124,6 +170,9 @@ const PROVIDERS: [Served; 4] = [
         // than streaming, and every turn here is drawn as it arrives.
         models: &[
             Model::shown("gpt-6-astra", "GPT-6 Astra", EVERY),
+            Model::new("gpt-6.1-sol", EVERY),
+            Model::new("gpt-6-sol", EVERY),
+            Model::new("gpt-6-luna", EVERY),
             Model::new("gpt-5.6-sol", EVERY),
             Model::new("gpt-5.6-terra", EVERY),
             Model::new("gpt-5.6-luna", EVERY),
@@ -132,6 +181,39 @@ const PROVIDERS: [Served; 4] = [
                 "gpt-5.5",
                 &[Effort::Low, Effort::Medium, Effort::High, Effort::Xhigh],
             ),
+        ],
+    },
+    Served {
+        name: "qwen",
+        shown: "Qwen",
+        key: "DASHSCOPE_API_KEY",
+        build: startup::qwen,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Qwen::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("qwen3.8-max", QWEN),
+            Model::new("qwen3.8-flash", QWEN),
+            Model::new("qwen3.7-plus", NONE),
+            Model::new("qwen3.6-plus", NONE),
+        ],
+    },
+    Served {
+        name: "zai",
+        shown: "Z.ai",
+        key: "ZAI_API_KEY",
+        build: startup::zai,
+        reach: startup::unreached,
+        window: 200_000,
+        fast: Zai::fast_at_vendor,
+        fast_signed_in: None,
+        models: &[
+            Model::new("glm-5.3", LOW_HIGH_MAX),
+            Model::new("glm-5.3-flash", LOW_HIGH_MAX),
+            // It takes every rung and serves two: the lower ones are answered
+            // as `high` and `xhigh` as `max`.
+            Model::new("glm-5.2", &[Effort::High, Effort::Max]),
         ],
     },
 ];
@@ -203,7 +285,7 @@ impl Row {
 /// Subscription rows in the order the vendors are grouped; key rows by shown
 /// name, since that list is long and looked up by name. A provider's rows share
 /// its typed name, and each carries the name its credential is stored under.
-const ROWS: [Row; 8] = [
+const ROWS: [Row; 22] = [
     Row {
         list: List::Subscription,
         shown: "OpenAI",
@@ -241,6 +323,78 @@ const ROWS: [Row; 8] = [
         address: Some(Moonshot::CODING),
     },
     Row {
+        list: List::Subscription,
+        shown: "MiniMax · minimax.io",
+        provider: "minimax",
+        site: Some("minimax.io"),
+        says: Some("MiniMax Token Plan usage, accounts outside mainland China"),
+        kind: Kind::Key,
+        mark: Some("sk-cp-"),
+        stored: "minimax@token-plan.minimax.io",
+        environment: false,
+        address: Some(MiniMax::IO),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "MiniMax · minimaxi.com",
+        provider: "minimax",
+        site: Some("minimaxi.com"),
+        says: Some("MiniMax Token Plan usage, mainland China accounts"),
+        kind: Kind::Key,
+        mark: Some("sk-cp-"),
+        stored: "minimax@token-plan.minimaxi.com",
+        environment: false,
+        address: Some(MiniMax::CN),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Coding Plan · alibabacloud.com",
+        provider: "qwen",
+        site: Some("alibabacloud.com"),
+        says: Some("Qwen Coding Plan usage, the international site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        stored: "qwen@coding-plan.alibabacloud.com",
+        environment: false,
+        address: Some(Qwen::CODING_INTL),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Coding Plan · aliyun.com",
+        provider: "qwen",
+        site: Some("aliyun.com"),
+        says: Some("Qwen Coding Plan usage, the mainland China site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        stored: "qwen@coding-plan.aliyun.com",
+        environment: false,
+        address: Some(Qwen::CODING_CN),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Token Plan · alibabacloud.com",
+        provider: "qwen",
+        site: Some("alibabacloud.com"),
+        says: Some("Qwen Token Plan usage, the international site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        stored: "qwen@token-plan.alibabacloud.com",
+        environment: false,
+        address: Some(Qwen::TOKEN_INTL),
+    },
+    Row {
+        list: List::Subscription,
+        shown: "Qwen Token Plan · aliyun.com",
+        provider: "qwen",
+        site: Some("aliyun.com"),
+        says: Some("Qwen Token Plan usage, the mainland China site"),
+        kind: Kind::Key,
+        mark: Some("sk-sp-"),
+        stored: "qwen@token-plan.aliyun.com",
+        environment: false,
+        address: Some(Qwen::TOKEN_CN),
+    },
+    Row {
         list: List::Key,
         shown: "Anthropic",
         provider: "anthropic",
@@ -249,6 +403,18 @@ const ROWS: [Row; 8] = [
         kind: Kind::Key,
         mark: None,
         stored: "anthropic",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "DeepSeek",
+        provider: "deepseek",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "deepseek@deepseek.com",
         environment: true,
         address: None,
     },
@@ -263,6 +429,42 @@ const ROWS: [Row; 8] = [
         stored: "google",
         environment: true,
         address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "MiMo",
+        provider: "mimo",
+        site: None,
+        says: None,
+        kind: Kind::Key,
+        mark: Some("sk-"),
+        stored: "mimo@xiaomimimo.com",
+        environment: true,
+        address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "MiniMax · minimax.io",
+        provider: "minimax",
+        site: Some("minimax.io"),
+        says: None,
+        kind: Kind::Key,
+        mark: Some("sk-api-"),
+        stored: "minimax@minimax.io",
+        environment: true,
+        address: Some(MiniMax::IO),
+    },
+    Row {
+        list: List::Key,
+        shown: "MiniMax · minimaxi.com",
+        provider: "minimax",
+        site: Some("minimaxi.com"),
+        says: Some("a pay-as-you-go key, mainland China accounts"),
+        kind: Kind::Key,
+        mark: Some("sk-api-"),
+        stored: "minimax@minimaxi.com",
+        environment: false,
+        address: Some(MiniMax::CN),
     },
     Row {
         list: List::Key,
@@ -299,6 +501,54 @@ const ROWS: [Row; 8] = [
         stored: "openai",
         environment: true,
         address: None,
+    },
+    Row {
+        list: List::Key,
+        shown: "Qwen · alibabacloud.com",
+        provider: "qwen",
+        site: Some("alibabacloud.com"),
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "qwen@alibabacloud.com",
+        environment: true,
+        address: Some(Qwen::KEY_INTL),
+    },
+    Row {
+        list: List::Key,
+        shown: "Qwen · aliyun.com",
+        provider: "qwen",
+        site: Some("aliyun.com"),
+        says: Some("a pay-as-you-go key of the mainland China site"),
+        kind: Kind::Key,
+        mark: None,
+        stored: "qwen@aliyun.com",
+        environment: false,
+        address: Some(Qwen::KEY_CN),
+    },
+    Row {
+        list: List::Key,
+        shown: "Z.ai · bigmodel.cn",
+        provider: "zai",
+        site: Some("bigmodel.cn"),
+        says: Some("a key of bigmodel.cn, mainland China accounts"),
+        kind: Kind::Key,
+        mark: None,
+        stored: "zai@bigmodel.cn",
+        environment: false,
+        address: Some(Zai::BIGMODEL),
+    },
+    Row {
+        list: List::Key,
+        shown: "Z.ai · z.ai",
+        provider: "zai",
+        site: Some("z.ai"),
+        says: None,
+        kind: Kind::Key,
+        mark: None,
+        stored: "zai@z.ai",
+        environment: true,
+        address: Some(Zai::ZAI),
     },
 ];
 
@@ -398,6 +648,13 @@ const GEMINI: &[Effort] = &[Effort::Low, Effort::Medium, Effort::High];
 /// is a rung asked for, and two words that reach the same rung are two words
 /// somebody has to be told are the same.
 const KIMI: &[Effort] = &[Effort::Low, Effort::High, Effort::Max];
+
+/// The three rungs `DeepSeek`'s models and Z.ai's newest serve: the two
+/// between are answered as `high` rather than refused, and so are not offered.
+const LOW_HIGH_MAX: &[Effort] = &[Effort::Low, Effort::High, Effort::Max];
+
+/// The three rungs Qwen's 3.8 models serve.
+const QWEN: &[Effort] = &[Effort::Low, Effort::Medium, Effort::Xhigh];
 
 /// What a model that takes none at all is written with.
 ///

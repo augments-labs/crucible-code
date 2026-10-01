@@ -162,7 +162,7 @@ fn kimi_product_names_keep_their_wire_identifiers_and_effort_sets() {
         [
             ("k3", "K3", KIMI),
             ("k3-256k", "K3-256k", KIMI),
-            ("kimi-for-coding", "K2.7 Coding", KIMI),
+            ("kimi-for-coding", "K2.8 Preview", KIMI),
             ("kimi-for-coding-highspeed", "K2.7 Coding Highspeed", KIMI),
         ]
     );
@@ -442,9 +442,15 @@ fn a_display_name_is_the_typed_name_under_the_vendor_s_own_capitals() {
     // offering `OpenAl` writes its key down under `openai` and reads correctly
     // to everybody except the person deciding which vendor they are logging in
     // to.
+    // Letters only: `Z.ai` is typed `zai`, and the dot is the vendor's.
     for one in every() {
+        let letters: String = one
+            .shown
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect();
         assert!(
-            one.shown.to_lowercase().starts_with(one.name),
+            letters.to_lowercase().starts_with(one.name),
             "{} is offered as {}",
             one.name,
             one.shown
@@ -454,13 +460,15 @@ fn a_display_name_is_the_typed_name_under_the_vendor_s_own_capitals() {
 
 #[test]
 fn every_provider_offers_a_few_models_and_never_a_list_to_scroll() {
-    // The panel is a handful to look down, not a catalogue. Five is where a
-    // list stops being read and starts being searched — and a name that is not
-    // on it is still typed, which is what keeps the ceiling a ceiling rather
-    // than a claim about what the vendor serves.
+    // The panel is a list to look down, not a catalogue. Fifteen is room for
+    // a vendor's current generation and the one before it, which is what a
+    // migration needs on screen at once; past that a list stops being read
+    // and starts being searched. A name that is not on it is still typed,
+    // which is what keeps the ceiling a ceiling rather than a claim about
+    // what the vendor serves.
     for one in every() {
         assert!(!one.models.is_empty(), "{}", one.name);
-        assert!(one.models.len() <= 5, "{}: {}", one.name, one.models.len());
+        assert!(one.models.len() <= 15, "{}: {}", one.name, one.models.len());
     }
 }
 
@@ -692,8 +700,14 @@ fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
     for facts in models::FACTS {
         let named = facts.model;
         assert!(facts.accepts.contains(Modality::Text), "{named} reads text");
-        assert!(
+        // These four read text alone, as their vendors' pages say.
+        let text_alone = matches!(
+            named,
+            "deepseek-v4-pro" | "glm-5.3" | "glm-5.2" | "MiniMax-M2.7"
+        );
+        assert_eq!(
             facts.accepts.contains(Modality::Image),
+            !text_alone,
             "{named} reads an image"
         );
     }
@@ -702,7 +716,10 @@ fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
 #[test]
 fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot() {
     for facts in models::FACTS {
-        let expected = matches!(facts.provider, "anthropic" | "google" | "openai");
+        let expected = matches!(
+            facts.provider,
+            "anthropic" | "google" | "meta" | "openai" | "xai"
+        ) || matches!(facts.model, "glm-5.3-flash" | "qwen3.8-max");
         assert_eq!(
             facts.accepts.contains(Modality::Pdf),
             expected,
@@ -716,20 +733,22 @@ fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot(
 #[test]
 fn the_models_table_gives_video_to_moonshot_and_google_and_audio_only_to_google() {
     for facts in models::FACTS {
+        let video = matches!(facts.provider, "moonshot" | "google" | "meta" | "mimo" | "qwen")
+            || matches!(facts.model, "glm-5.3-flash" | "MiniMax-M3");
         assert_eq!(
             facts.accepts.contains(Modality::Video),
-            matches!(facts.provider, "moonshot" | "google"),
+            video,
             "{} reading a video",
             facts.model,
         );
         assert_eq!(
             facts.accepts.contains(Modality::Audio),
-            facts.provider == "google",
+            matches!(facts.provider, "google" | "meta" | "mimo"),
             "{} audio support",
             facts.model,
         );
     }
-    assert_eq!(accepting(Modality::Audio), vec!["google"; 4]);
+    assert!(accepting(Modality::Audio).contains(&"google"));
 }
 
 #[test]
@@ -1251,9 +1270,14 @@ fn every_provider_has_one_environment_row_and_every_row_a_served_provider() {
         assert_eq!(environment.len(), 1, "{}", served.name);
         assert!(environment.iter().all(|row| row.list == List::Key));
         // Opened by `/login <provider>` or chosen from the list, its key is
-        // written under one name: the provider's own.
+        // written under one name: the provider's own where 0.43.3 serves the
+        // provider, and the provider at a site where it does not, since only a
+        // credential 0.43.3 can read sits under a bare name.
+        let served_by_0_43_3 = matches!(served.name, "anthropic" | "google" | "moonshot" | "openai");
         assert!(
-            environment.iter().all(|row| row.stored == row.provider),
+            environment
+                .iter()
+                .all(|row| (row.stored == row.provider) == served_by_0_43_3),
             "{}",
             served.name
         );
@@ -1391,4 +1415,124 @@ fn a_provider_is_read_again_from_the_store_and_an_unreadable_store_settles_nothi
             Reading::Served(Some(_))
         ));
     }
+}
+
+#[test]
+fn the_registry_serves_eleven_providers_each_under_its_name_and_variable() {
+    let served: Vec<_> = every()
+        .iter()
+        .map(|one| (one.name, one.shown, one.key))
+        .collect();
+
+    assert_eq!(
+        served,
+        [
+            ("anthropic", "Anthropic", "ANTHROPIC_API_KEY"),
+            ("deepseek", "DeepSeek", "DEEPSEEK_API_KEY"),
+            ("google", "Google", "GEMINI_API_KEY"),
+            ("meta", "Meta", "META_API_KEY"),
+            ("mimo", "MiMo", "MIMO_API_KEY"),
+            ("minimax", "MiniMax", "MINIMAX_API_KEY"),
+            ("moonshot", "MoonshotAI", "MOONSHOT_API_KEY"),
+            ("openai", "OpenAI", "OPENAI_API_KEY"),
+            ("qwen", "Qwen", "DASHSCOPE_API_KEY"),
+            ("xai", "xAI", "XAI_API_KEY"),
+            ("zai", "Z.ai", "ZAI_API_KEY"),
+        ]
+    );
+}
+
+#[test]
+fn openai_and_anthropic_list_their_current_models_before_the_ones_they_replace() {
+    let listed = |provider| -> Vec<&str> {
+        serving(provider).models.iter().map(|model| model.name).collect()
+    };
+
+    assert_eq!(
+        listed("openai"),
+        [
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+        ]
+    );
+    assert_eq!(
+        listed("anthropic"),
+        [
+            "claude-fable-5-1",
+            "claude-fable-5",
+            "claude-opus-5-5",
+            "claude-opus-5",
+            "claude-sonnet-5-5",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+        ]
+    );
+}
+
+#[test]
+fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
+    use Effort::{High, Low, Max, Medium, Xhigh};
+    let up_to_xhigh = &[Low, Medium, High, Xhigh][..];
+    for (provider, model, served) in [
+        ("openai", "gpt-6.1-sol", &Effort::LADDER[..]),
+        ("openai", "gpt-6-sol", &Effort::LADDER[..]),
+        ("openai", "gpt-6-luna", &Effort::LADDER[..]),
+        ("anthropic", "claude-opus-5-5", &Effort::LADDER[..]),
+        ("anthropic", "claude-sonnet-5-5", &Effort::LADDER[..]),
+        // `max` on 1.3 is named by some of Meta's pages and left out by its
+        // parameter lists, so it is not offered until a source settles it.
+        ("meta", "muse-spark-1.3", up_to_xhigh),
+        ("meta", "muse-spark-1.3-contributor", up_to_xhigh),
+        ("meta", "muse-spark-1.2", up_to_xhigh),
+        ("meta", "muse-spark-1.2-contributor", up_to_xhigh),
+        ("xai", "grok-4.7", up_to_xhigh),
+        ("xai", "grok-4.6", up_to_xhigh),
+        ("deepseek", "deepseek-flash", &[Low, High, Max][..]),
+        ("deepseek", "deepseek-v4-pro", &[Low, High, Max][..]),
+        ("zai", "glm-5.3", &[Low, High, Max][..]),
+        ("zai", "glm-5.3-flash", &[Low, High, Max][..]),
+        ("zai", "glm-5.2", &[High, Max][..]),
+        ("qwen", "qwen3.8-max", &[Low, Medium, Xhigh][..]),
+        ("qwen", "qwen3.8-flash", &[Low, Medium, Xhigh][..]),
+        ("qwen", "qwen3.7-plus", &[][..]),
+        ("qwen", "qwen3.6-plus", &[][..]),
+        ("mimo", "mimo-v2.6-pro", &[][..]),
+        ("mimo", "mimo-v2.6-flash", &[][..]),
+        ("minimax", "MiniMax-M3", &[][..]),
+        ("minimax", "MiniMax-M2.7", &[][..]),
+    ] {
+        assert_eq!(
+            rungs(&catalogue(), provider, model),
+            served,
+            "{provider}/{model}"
+        );
+    }
+}
+
+#[test]
+fn every_provider_keeps_its_window_and_a_new_one_starts_at_two_hundred_thousand() {
+    let windows: Vec<_> = every().iter().map(|one| (one.name, one.window)).collect();
+
+    assert_eq!(
+        windows,
+        [
+            ("anthropic", 200_000),
+            ("deepseek", 200_000),
+            ("google", 200_000),
+            ("meta", 200_000),
+            ("mimo", 200_000),
+            ("minimax", 200_000),
+            ("moonshot", 262_144),
+            ("openai", 272_000),
+            ("qwen", 200_000),
+            ("xai", 200_000),
+            ("zai", 200_000),
+        ]
+    );
 }

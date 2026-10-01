@@ -44,6 +44,8 @@ mod fast;
 mod fast_tests;
 #[cfg(test)]
 mod model_tests;
+#[cfg(test)]
+mod newer_tests;
 mod stream;
 mod wire;
 
@@ -72,7 +74,9 @@ const ASTRA: &str = "gpt-6-astra";
 
 /// Models whose cache options and inclusive usage include cache writes.
 fn cache_writes(model: &str) -> bool {
-    model == ASTRA || model.starts_with("gpt-5.6-")
+    model == ASTRA
+        || model.starts_with("gpt-5.6-")
+        || matches!(model, "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna")
 }
 
 /// Where requests go unless a setting says otherwise.
@@ -254,6 +258,24 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
             OPENAI_56_RETENTIONS,
             PromptCacheUsageReporting::ReadAndWriteTokens,
         ),
+        "gpt-6.1-sol" => (
+            1_024,
+            "gpt-6.1-sol",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-6-sol" => (
+            1_024,
+            "gpt-6-sol",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
+        "gpt-6-luna" => (
+            1_024,
+            "gpt-6-luna",
+            OPENAI_56_RETENTIONS,
+            PromptCacheUsageReporting::ReadAndWriteTokens,
+        ),
         "gpt-5.6-sol" => (
             1_024,
             "gpt-5.6-sol",
@@ -297,10 +319,12 @@ fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {
     } else {
         vec![automatic]
     };
-    let (reviewed, version) = if model == ASTRA {
-        ("2026-09-06", "openai-prompt-cache-2026-09-06")
-    } else {
-        ("2026-08-31", "openai-prompt-cache-2026-08-31")
+    let (reviewed, version) = match model {
+        ASTRA => ("2026-09-06", "openai-prompt-cache-2026-09-06"),
+        "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna" => {
+            ("2026-10-01", "openai-prompt-cache-2026-10-01")
+        }
+        _ => ("2026-08-31", "openai-prompt-cache-2026-08-31"),
     };
     PromptCacheCapabilities::supported(
         version,

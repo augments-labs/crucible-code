@@ -327,3 +327,23 @@ fn asking(text: &str) -> Request<'static> {
         prompt_cache: None,
     }
 }
+
+#[test]
+fn every_model_caches_its_prefix_on_its_own_and_takes_a_routing_key() {
+    let (provider, _) = provider("");
+    for model in [
+        "muse-spark-1.3",
+        "muse-spark-1.3-contributor",
+        "muse-spark-1.2",
+        "muse-spark-1.2-contributor",
+    ] {
+        let record = provider.prompt_cache_capabilities(model);
+        assert_eq!(record.model_revision(), Some(model));
+        assert!(
+            record.mechanisms().iter().all(|one| one.mechanism()
+                == crucible_types::PromptCacheMechanism::AutomaticPrefix
+                && one.supports_routing_key()),
+            "{model}"
+        );
+    }
+}

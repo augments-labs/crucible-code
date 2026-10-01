@@ -328,3 +328,18 @@ fn a_refused_request_says_the_vendors_words_when_they_are_the_whole_of_its_error
         Err("xai: HTTP 400: model 'nope' does not exist".to_owned())
     );
 }
+
+#[test]
+fn every_model_caches_its_prefix_on_its_own_and_takes_a_routing_key() {
+    let (provider, _) = provider(200, "");
+    for model in ["grok-4.7", "grok-4.6"] {
+        let record = provider.prompt_cache_capabilities(model);
+        assert_eq!(record.model_revision(), Some(model));
+        assert!(
+            record.mechanisms().iter().all(|one| one.mechanism()
+                == crucible_types::PromptCacheMechanism::AutomaticPrefix
+                && one.supports_routing_key()),
+            "{model}"
+        );
+    }
+}

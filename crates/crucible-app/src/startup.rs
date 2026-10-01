@@ -27,8 +27,8 @@ use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
-    Anthropic, AnthropicWeb, Endpoint, Google, GoogleWeb, HttpTurns, Moonshot, MoonshotWeb, OpenAi,
-    OpenAiWeb, Transport, Unavailable,
+    Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Mimo, MiniMax,
+    Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
@@ -670,6 +670,101 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     )))
 }
 
+/// `DeepSeek`'s Chat Completions, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn deepseek(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let (endpoint, credential) = keyed(&wiring, DeepSeek::VENDOR)?;
+    Ok(Box::new(DeepSeek::at(
+        endpoint,
+        credential,
+        Box::new(wiring.http.clone()),
+    )))
+}
+
+/// `MiMo`'s Chat Completions, with a key.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let (endpoint, credential) = keyed(&wiring, Mimo::VENDOR)?;
+    Ok(Box::new(Mimo::at(
+        endpoint,
+        credential,
+        Box::new(wiring.http.clone()),
+    )))
+}
+
+/// `MiniMax`'s Chat Completions, with a key or a plan's key, sent to the
+/// site of the row it was given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let (endpoint, credential) = keyed(&wiring, MiniMax::IO)?;
+    Ok(Box::new(MiniMax::at(
+        endpoint,
+        credential,
+        Box::new(wiring.http.clone()),
+    )))
+}
+
+/// Qwen's Chat Completions, with a key or a plan's key, sent to the address
+/// of the row it was given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn qwen(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let (endpoint, credential) = keyed(&wiring, Qwen::KEY_INTL)?;
+    Ok(Box::new(Qwen::at(
+        endpoint,
+        credential,
+        Box::new(wiring.http.clone()),
+    )))
+}
+
+/// Z.ai's Chat Completions, with a key, sent to the site of the row it was
+/// given on.
+///
+/// # Errors
+///
+/// Whatever stops the credential being resolved or the address being used:
+/// [`AppError::Credential`], [`AppError::Address`] and their kin.
+pub fn zai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
+    let (endpoint, credential) = keyed(&wiring, Zai::ZAI)?;
+    Ok(Box::new(Zai::at(
+        endpoint,
+        credential,
+        Box::new(wiring.http.clone()),
+    )))
+}
+
+/// The key `wiring` resolves and the address it goes to, for a provider whose
+/// every credential is a key and whose own address is `vendor`.
+fn keyed(
+    wiring: &Wiring<'_>,
+    vendor: Endpoint,
+) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
+    credential(
+        ApiAudience {
+            provider: wiring.named,
+            variable: wiring.variable,
+            vendor,
+        },
+        wiring.sending.clone(),
+        wiring.auth,
+    )
+}
+
 /// Gemini Interactions accepts an API key, never a product subscription login.
 ///
 /// # Errors
@@ -1096,6 +1191,12 @@ fn moonshot_site(
     } else {
         None
     }
+}
+
+/// No web tools: a provider whose vendor serves none on the wire crucible
+/// speaks to it.
+pub fn unreached(_wiring: Wiring<'_>, _model: &str) -> Reaching {
+    Reaching::nothing()
 }
 
 /// Where a setting says this provider's requests should go, where one does.

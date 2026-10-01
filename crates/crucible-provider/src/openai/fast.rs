@@ -55,11 +55,17 @@ const PLAN_STATED: Cost = Cost {
 /// say.
 pub(super) fn form(serving: Option<Serving>, model: &str) -> FastForm {
     match (serving, model) {
-        (Some(Serving::Api), "gpt-6-astra" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna") => {
-            FastForm::Field(TWICE)
-        }
+        (
+            Some(Serving::Api),
+            "gpt-6-astra" | "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna" | "gpt-5.6-sol"
+            | "gpt-5.6-terra" | "gpt-5.6-luna",
+        ) => FastForm::Field(TWICE),
         (Some(Serving::Api), "gpt-5.5") => FastForm::Field(TWO_AND_A_HALF),
-        (Some(Serving::Subscription), "gpt-6-astra") => FastForm::Field(PLAN),
+        // The vendor states no speed for its GPT-6 models signed in.
+        (
+            Some(Serving::Subscription),
+            "gpt-6-astra" | "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna",
+        ) => FastForm::Field(PLAN),
         (Some(Serving::Subscription), "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna") => {
             FastForm::Field(PLAN_STATED)
         }
