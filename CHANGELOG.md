@@ -100,6 +100,10 @@ change in any release with no deprecation period.
   for, over `names no command`.
 - **Enter on a lone `/` while a turn runs leaves it in the box.** It was queued
   and sent to the model as a prompt once the turn ended.
+- **A redirected run asking for a model nothing serves now fails.** `crucible
+  --model foo` with no provider set up ended 0 after recording every piped
+  prompt; it now says there is no model to ask and exits non-zero, as a run
+  with no model does.
 
 ### Internal
 
