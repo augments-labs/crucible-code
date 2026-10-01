@@ -607,8 +607,11 @@ mod tests {
         by_name(&path, &[id(1)]);
         ensure(&sample.logs()).expect("the index repaired");
 
-        // What this build writes afterwards keeps the mark with the index.
+        // What this build writes afterwards keeps the mark with the index:
+        // a session started, and the same session ending, counted and named.
         record(&sample.logs(), &id(2)).expect("a session recorded");
+        tally(&sample.logs(), &id(2), 1).expect("a session counted");
+        retitle(&sample.logs(), &id(2), "named").expect("a session named");
 
         // A log the index was never told about: only a scan could find it, and
         // the startup after a repair does fixed work.
