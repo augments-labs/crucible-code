@@ -26,7 +26,7 @@ use crucible_client_api::{Command, Name};
 use crucible_models::{Effort, FastForm};
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
-    clip, fold, label,
+    fold, label,
 };
 
 use crate::cli::Fatal;
@@ -831,24 +831,22 @@ fn listed<T: Terminal>(
         ))?,
     }
 
-    let columns = renderer.columns();
     let providers = terms.providers.snapshot();
     let stored = terms.logins.read();
-    let rows: Vec<Row> = lines(
+    let lines = lines(
         narrowing::every(&providers),
         &in_use(terms, &providers, &stored),
         terms.consent.routes(),
         terms.style().glyphs(),
-    )
-    .iter()
-    .map(|named| Row::new().then(Slot::Quiet, clip(named, columns)))
-    .collect();
+    );
 
-    // A row at a time, so each passes through the window on its way up: the
+    // A line at a time, so each passes through the window on its way up: the
     // list is taller than a window can be, and laid down at once only the
-    // rows that fit the window are ever drawn.
-    for row in rows {
-        renderer.present(&[row])?;
+    // rows that fit the window are ever drawn. Folded rather than cut where
+    // the window is narrower, since what a line ends with, `trains`, is the
+    // part that must be read.
+    for line in lines {
+        say(renderer, &line)?;
     }
     Ok(())
 }

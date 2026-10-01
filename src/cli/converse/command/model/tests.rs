@@ -738,3 +738,21 @@ fn a_window_with_no_shelf_lists_what_the_credential_serves_and_says_trains() {
         "{lines:?}"
     );
 }
+
+#[test]
+fn a_narrow_window_with_no_shelf_folds_a_line_rather_than_cut_its_note() {
+    let sample = Sample::new("model-listed-narrow");
+    let terms = keeping(&sample);
+    let mut conversation = conversing(Some("anthropic"), "old", Some(99), None);
+    // Tall enough to hold every line, so none has scrolled off when read.
+    let mut renderer = Renderer::new(Recording::new(40, 100));
+
+    super::run("", &mut renderer, &mut conversation, &terms, false).unwrap();
+
+    let written = renderer.terminal().written().to_string();
+    let said = crucible_tui::Picture::of(&written, 40, 400)
+        .said()
+        .join(" ");
+    assert!(said.contains("muse-spark-1.3-contributor"), "{said}");
+    assert_eq!(said.matches("trains").count(), 2, "{said}");
+}
