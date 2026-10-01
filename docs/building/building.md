@@ -105,14 +105,11 @@ also [build for another platform yourself](cross-compiling.md).
 ## The rollback drill
 
 `scripts/sh/rollback-drill.sh` proves the previous release can still read what
-this tree writes. It builds v0.43.3 from the local tag in a scratch worktree
+this tree writes. It builds v0.44.0 from the local tag in a scratch worktree
 (it never fetches) and runs that binary headless over a copy of session
 fixtures the candidate binary has read and recovered: a conversation must
 replay byte-identical, a session ending in an unanswered tool call must recover
 to the same bytes on both sides, and `--sandbox` and `--extensions` must agree.
-The previous binary must also stop on, and name, what this tree can leave in a
-user's file that it does not know: a `contentUse` yes, a `fast` key, and a
-provider it does not serve.
 Everything happens under scratch directories with no model selected, so no
 provider is called and no real session is read. `scripts/sh/rollback-drill-selftest.sh`
 runs the drill clean and against a corrupted fixture, which must fail. CI runs
