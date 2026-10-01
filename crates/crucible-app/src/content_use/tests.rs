@@ -35,6 +35,32 @@ fn a_documented_address_is_recognised_however_it_is_spelled() {
         ),
         ("https://api.openai.com/v1/responses", "key:openai"),
         ("https://api.anthropic.com/v1/messages", "key:anthropic"),
+        // A plan key row's own address answers for that row.
+        (
+            "https://coding.dashscope.aliyuncs.com/v1",
+            "subscription:qwen@coding-plan.aliyun.com",
+        ),
+        (
+            "https://Token-Plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "subscription:qwen@token-plan.aliyun.com",
+        ),
+        // Two rows whose credential is a key share this address: the
+        // `API key` list's answers.
+        ("https://api.minimax.io/v1", "key:minimax@minimax.io"),
+        (
+            "https://api.minimax.cn/v1/chat/completions",
+            "key:minimax@minimaxi.com",
+        ),
+        (
+            "https://open.bigmodel.cn/api/paas/v4",
+            "key:zai@bigmodel.cn",
+        ),
+        ("https://api.z.ai/api/paas/v4", "key:zai@z.ai"),
+        (
+            "https://api.deepseek.com/chat/completions",
+            "key:deepseek@deepseek.com",
+        ),
+        ("https://api.meta.ai/v1/responses", "key:meta@meta.ai"),
     ] {
         assert_eq!(recognised(spelled), Some(route), "{spelled}");
     }
@@ -57,6 +83,8 @@ fn a_near_miss_is_not_recognised() {
         "https://api.moonshot.ai",
         "https://api.kimi.com/coding",
         "https://api.kimi.com/v1",
+        "https://dashscope.aliyuncs.com/v1",
+        "https://api.z.ai/api/paas/v40",
         // The ChatGPT sign-in's own address: no key row stands there.
         "https://chatgpt.com/backend-api/codex/responses",
         "http://localhost:8080/v1",
@@ -66,10 +94,11 @@ fn a_near_miss_is_not_recognised() {
     }
 }
 
-/// Every address a key row sends to lies under the address recognised for
-/// it, so a `baseUrl` set to where a key row already goes answers for that
-/// row; and every recognised address answers for a key row or for a Kimi open
-/// platform route.
+/// Every address a row whose credential is a key sends to lies under the
+/// address recognised for it, so a `baseUrl` set to where such a row already
+/// goes answers for that row, or for the `API key` list's row where the two
+/// share it; and every recognised address answers for a key row or for a Kimi
+/// open platform route.
 #[test]
 fn every_key_row_is_recognised_at_the_address_it_sends_to() {
     let rows = Rows::production();
@@ -77,17 +106,27 @@ fn every_key_row_is_recognised_at_the_address_it_sends_to() {
         "google" => Google::VENDOR.as_str().to_owned(),
         "openai" => OpenAi::VENDOR.as_str().to_owned(),
         "anthropic" => crucible_provider::Anthropic::VENDOR.as_str().to_owned(),
+        "deepseek" => crucible_provider::DeepSeek::VENDOR.as_str().to_owned(),
+        "meta" => crucible_provider::Meta::VENDOR.as_str().to_owned(),
+        "mimo" => crucible_provider::Mimo::VENDOR.as_str().to_owned(),
+        "xai" => crucible_provider::Xai::VENDOR.as_str().to_owned(),
         _ => panic!("no default address for {provider}"),
     };
-    for row in rows.listed(List::Key) {
-        let address = row
-            .address
+    let address = |row: &Row| {
+        row.address
             .as_ref()
-            .map_or_else(|| vendor(row.provider), |at| at.as_str().to_owned());
+            .map_or_else(|| vendor(row.provider), |at| at.as_str().to_owned())
+    };
+    for row in rows.all().iter().filter(|row| row.kind == Kind::Key) {
+        let at = address(row);
+        let answers = rows
+            .listed(List::Key)
+            .find(|key| key.provider == row.provider && address(key) == at)
+            .unwrap_or(row);
         assert_eq!(
-            recognised(&address).map(str::to_owned),
-            Some(row_route(row)),
-            "{address}"
+            recognised(&at).map(str::to_owned),
+            Some(row_route(answers)),
+            "{at}"
         );
     }
     for one in RECOGNISED {
@@ -101,16 +140,32 @@ fn every_key_row_is_recognised_at_the_address_it_sends_to() {
 
 /// The routes and the rows agree: each warned row route names a row, each
 /// sends only to its route's origins, a Kimi row's sign-in, model and web tool
-/// hosts are its site's, and route spellings are distinct.
+/// hosts are its site's, and route spellings are distinct. A warned model is
+/// one its provider offers, and claims no origin: the host it is sent to
+/// serves that provider's other models too, so it is asked about at the send.
 #[test]
 fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
     let rows = Rows::production();
     let routes = Routes::production();
+    let catalogue = crate::providers::providers()
+        .expect("the built-in providers")
+        .snapshot();
     let mut spelled = BTreeSet::new();
     for warned in routes.all() {
         assert!(spelled.insert(warned.route), "{} twice", warned.route);
         if warned.route.starts_with("api.moonshot.") {
             assert_eq!(warned.origins, [format!("https://{}", warned.route)]);
+            continue;
+        }
+        if let Some(named) = warned.route.strip_prefix("model:") {
+            let (provider, model) = named.split_once('/').expect("provider/model");
+            assert!(
+                crate::providers::offered(&catalogue).any(|served| served.name == provider
+                    && served.models.iter().any(|offered| offered.name == model)),
+                "{} names no model offered",
+                warned.route
+            );
+            assert!(warned.origins.is_empty(), "{}", warned.route);
             continue;
         }
         let row = rows
@@ -158,6 +213,90 @@ fn every_warned_route_names_its_row_and_every_origin_it_is_sent_to() {
     for unwarned in ["key:anthropic", "key:openai"] {
         assert!(routes.warned(unwarned).is_none(), "{unwarned}");
     }
+}
+
+/// The routes warned are exactly those whose vendor's own terms say what is
+/// sent there may be used to train or improve its models; every other row of
+/// the same vendors, and the standard Meta models, are not asked about.
+#[test]
+fn the_routes_warned_are_those_whose_vendor_says_so() {
+    let warned: BTreeSet<&str> = WARNED.iter().map(|warned| warned.route).collect();
+    let expected = BTreeSet::from([
+        "subscription:openai",
+        "subscription:moonshot@kimi.ai",
+        "subscription:moonshot",
+        "subscription:minimax@token-plan.minimax.io",
+        "subscription:minimax@token-plan.minimaxi.com",
+        "subscription:qwen@coding-plan.aliyun.com",
+        "subscription:qwen@token-plan.aliyun.com",
+        "key:google",
+        "key:minimax@minimax.io",
+        "key:minimax@minimaxi.com",
+        "key:moonshot@kimi.ai",
+        "key:moonshot",
+        "key:zai@bigmodel.cn",
+        "model:meta/muse-spark-1.3-contributor",
+        "model:meta/muse-spark-1.2-contributor",
+        "api.moonshot.ai",
+        "api.moonshot.cn",
+    ]);
+    assert_eq!(warned, expected);
+
+    let rows = Rows::production();
+    for row in rows.all() {
+        let route = row_route(row);
+        let asked = WARNED.iter().any(|warned| warned.route == route);
+        assert_eq!(asked, expected.contains(route.as_str()), "{route}");
+    }
+}
+
+/// A contributor model is asked about before its first send, and its
+/// standard twin on the same key is not: neither is held at the host they
+/// share, which serves the standard models too.
+#[test]
+fn a_contributor_model_is_asked_about_and_its_standard_twin_is_not() {
+    let consent = Consent::new(Routes::production());
+    consent.served("meta", Some(serving("key:meta@meta.ai")));
+    let host = origin("https://api.meta.ai/v1/responses");
+
+    for model in ["muse-spark-1.3-contributor", "muse-spark-1.2-contributor"] {
+        let route = model_route("meta", model);
+        assert_eq!(
+            consent.unanswered("meta", model).map(|one| one.route),
+            Some(route.as_str())
+        );
+    }
+    for model in ["muse-spark-1.3", "muse-spark-1.2"] {
+        assert_eq!(consent.unanswered("meta", model), None, "{model}");
+    }
+    assert_eq!(consent.held(&host), None);
+
+    consent.record("model:meta/muse-spark-1.3-contributor");
+    assert_eq!(
+        consent.unanswered("meta", "muse-spark-1.3-contributor"),
+        None
+    );
+    assert!(
+        consent
+            .unanswered("meta", "muse-spark-1.2-contributor")
+            .is_some()
+    );
+}
+
+/// A Qwen Token Plan key of aliyun.com says what holds it before anything is
+/// sent: the Personal edition's terms, which the Team edition's do not share
+/// and which crucible cannot tell apart by the key.
+#[test]
+fn the_aliyun_token_plan_states_its_edition_first() {
+    let routes = Routes::production();
+    let token = routes
+        .warned("subscription:qwen@token-plan.aliyun.com")
+        .expect("warned");
+    assert_eq!(token.warning.condition, Some("On the Personal edition"));
+    assert_eq!(
+        token.origins,
+        ["https://token-plan.cn-beijing.maas.aliyuncs.com"]
+    );
 }
 
 #[test]

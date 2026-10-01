@@ -2992,6 +2992,13 @@ fn a_base_url_crucible_recognises_is_asked_about_and_any_other_is_sent_to() {
             Some("MoonshotAI · kimi.ai"),
         ),
         (2, "https://gateway.example/v1", None),
+        // A plan key row's address answers for that row, whichever
+        // provider's `baseUrl` holds it.
+        (
+            3,
+            "https://coding.dashscope.aliyuncs.com/v1",
+            Some("Qwen Coding Plan · aliyun.com"),
+        ),
     ] {
         let proxy = warning::Proxy::new();
         let document = warning::based(base);
