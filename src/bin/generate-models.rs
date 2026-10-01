@@ -260,11 +260,15 @@ fn rows<'a>(found: &[Found<'a>]) -> Result<BTreeMap<(&'a str, &'a str), Row>, St
 
         // The whole window an answer is written into, which counts the answer
         // where the input limit does not.
-        let whole = limit
+        let whole = match limit
             .get("context")
             .and_then(Value::as_u64)
-            .and_then(|whole| u32::try_from(whole).ok())
-            .unwrap_or(window);
+            .filter(|whole| *whole > 0)
+        {
+            Some(whole) => u32::try_from(whole)
+                .map_err(|_| format!("{provider}/{key} states a limit too large to hold"))?,
+            None => window,
+        };
 
         // A model served at a fraction of the listed window is written at that
         // fraction, the divisor stated beside it rather than read from anywhere.
@@ -453,6 +457,14 @@ mod tests {
         // A window served at a fraction holds no answer longer than itself.
         let whole = entry(json!({ "context": 1_048_576, "output": 1_048_576 }));
         assert_eq!(row(&whole, Some(4)), Ok(Some((262_144, 262_144))));
+        // A whole window of nothing is no window stated, as an input limit of
+        // nothing is, and one too large to hold stops the run as the window
+        // would, rather than falling back to the input limit unsaid.
+        let nothing = entry(json!({ "context": 0, "input": 72_000, "output": 128_000 }));
+        assert_eq!(row(&nothing, None), Ok(Some((72_000, 72_000))));
+        let huge =
+            entry(json!({ "context": 5_000_000_000_u64, "input": 72_000, "output": 128_000 }));
+        assert!(row(&huge, None).is_err());
     }
 
     #[test]
