@@ -27,8 +27,9 @@ use crucible_http::ProxyEnv;
 use crucible_mcp::Hosting;
 use crucible_models::{Effort, ModelCapabilities, Provider};
 use crucible_provider::{
-    Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Meta, Mimo, MiniMax,
-    Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Xai, Zai,
+    Anthropic, AnthropicWeb, DeepSeek, Endpoint, Google, GoogleWeb, HttpTurns, Meta, MetaWeb, Mimo,
+    MiniMax, Moonshot, MoonshotWeb, OpenAi, OpenAiWeb, Qwen, Transport, Unavailable, Xai, XaiWeb,
+    Zai,
 };
 use crucible_runner::{Agent, AgentBuilder, Bounds, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_sandbox_local::LocalSandbox;
@@ -1085,6 +1086,15 @@ impl Reaching {
             fetching: Some(source),
         }
     }
+
+    /// A search and no fetch: a vendor whose wire serves the one and not the
+    /// other.
+    fn searching(source: Arc<dyn Search>) -> Self {
+        Self {
+            searching: Some(source),
+            fetching: None,
+        }
+    }
 }
 
 fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
@@ -1228,6 +1238,44 @@ fn moonshot_site(
     } else {
         None
     }
+}
+
+/// Meta's hosted search, on the session's model, at the address its turns go
+/// to.
+///
+/// No fetch: Meta's Responses serves `web_search` and no tool that opens one
+/// page.
+pub fn meta_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let http = wiring.http;
+    let Ok((endpoint, credential)) = keyed(wiring, Meta::VENDOR) else {
+        return Reaching::nothing();
+    };
+
+    Reaching::searching(Arc::new(MetaWeb::new(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+        model,
+    )))
+}
+
+/// xAI's hosted search, on the session's model, at the address its turns go
+/// to.
+///
+/// No fetch: xAI's search browses inside itself and names no action that
+/// would tell an opened page from a searched one.
+pub fn xai_web(wiring: Wiring<'_>, model: &str) -> Reaching {
+    let http = wiring.http;
+    let Ok((endpoint, credential)) = keyed(wiring, Xai::VENDOR) else {
+        return Reaching::nothing();
+    };
+
+    Reaching::searching(Arc::new(XaiWeb::new(
+        endpoint,
+        credential,
+        Box::new(http.clone()),
+        model,
+    )))
 }
 
 /// No web tools: a provider whose vendor serves none on the wire crucible

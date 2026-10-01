@@ -861,6 +861,53 @@ fn moonshot_serves_both_halves_from_kimi_code() {
 }
 
 #[test]
+fn each_provider_is_given_only_the_web_tools_its_vendor_serves_on_its_wire() {
+    // (provider, a model it offers, search, fetch). Meta's and xAI's
+    // Responses serve a search and nothing that opens one page; the five on
+    // Chat Completions are served neither there.
+    for (named, model, searching, fetching) in [
+        ("anthropic", "claude-opus-5", true, true),
+        ("google", "gemini-3.8-flash", true, true),
+        ("moonshot", "k3", true, true),
+        ("openai", "gpt-5.6-sol", true, true),
+        ("meta", "muse-spark-1.3", true, false),
+        ("xai", "grok-4.7", true, false),
+        ("deepseek", "deepseek-flash", false, false),
+        ("zai", "glm-5.3", false, false),
+        ("qwen", "qwen3.8-max", false, false),
+        ("mimo", "mimo-v2.6-pro", false, false),
+        ("minimax", "MiniMax-M3", false, false),
+    ] {
+        let reaching = reaching_for(named, Some(model));
+
+        assert_eq!(reaching.searching.is_some(), searching, "{named} search");
+        assert_eq!(reaching.fetching.is_some(), fetching, "{named} fetch");
+    }
+    assert_eq!(
+        crate::providers::offered(&catalogue()).count(),
+        11,
+        "a provider this test does not name"
+    );
+}
+
+#[test]
+fn meta_and_xai_search_where_the_provider_sends_its_turns() {
+    for (named, model, host) in [
+        ("meta", "muse-spark-1.3", "api.meta.ai"),
+        ("xai", "grok-4.7", "api.x.ai"),
+    ] {
+        let searching = reaching_for(named, Some(model))
+            .searching
+            .expect("a search");
+        assert_eq!(searching.name(), named);
+        assert!(
+            matches!(searching.reaches(), crucible_tools::Host::Named { host: reached, .. } if reached.as_ref() == host),
+            "{named}"
+        );
+    }
+}
+
+#[test]
 fn a_session_with_no_model_chosen_reaches_nothing() {
     // A side request has to name a model, and the one it names is the session's.
     // Nothing is chosen yet in the state `/model` exists to leave open.

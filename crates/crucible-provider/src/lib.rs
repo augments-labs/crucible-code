@@ -53,6 +53,6 @@ pub use qwen::Qwen;
 pub use transport::http::HttpTurns;
 pub use transport::{PostResponse, Transport, TransportError};
 pub use unavailable::Unavailable;
-pub use web::{AnthropicWeb, GoogleWeb, MoonshotWeb, OpenAiWeb};
+pub use web::{AnthropicWeb, GoogleWeb, MetaWeb, MoonshotWeb, OpenAiWeb, XaiWeb};
 pub use xai::Xai;
 pub use zai::Zai;

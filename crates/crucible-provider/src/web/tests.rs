@@ -14,7 +14,9 @@ use serde_json::json;
 use super::*;
 use crate::transport::{Replay, TransportError};
 
+mod meta;
 mod ssrf;
+mod xai;
 
 /// Awaits `future` on a current-thread runtime of the test's own, made for the
 /// one future and gone with it, the way a turn awaits a tool's run on the
