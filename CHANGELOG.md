@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-10-01
+
+**Web search follows `/model`, and a prompt nothing can answer is no longer
+recorded.** Searches and fetches now go to the model, provider and credential
+in force after `/model`, `/login` or `/logout`, holding a contributor model's
+queries until its yes. A Z.ai request too long for the model makes room and
+asks again, MiniMax's plan rows are named apart from its key rows, and a
+background command that ended after a refused stop no longer reads as refused.
+
 ### Changed
 
 - **A MiniMax plan key is named apart from a MiniMax API key.** The
@@ -4702,7 +4711,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...HEAD
+[0.44.1]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...v0.44.0
 [0.43.3]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...v0.43.2
