@@ -114,6 +114,9 @@ impl<D: Dialect> Wire for Completions<D> {
 /// wants it back. `()` keeps nothing and takes no room, which is what a
 /// vendor that wants none of it is read with.
 pub trait Keeps: Default + Send + 'static {
+    /// Whether this keeps anything at all, for any model of its vendor.
+    const KEEPS: bool;
+
     /// Ready to keep `model`'s reasoning under `scope`.
     fn begin(model: &str, scope: ContinuationScope) -> Self;
     /// Whether anything is being kept.
@@ -127,6 +130,8 @@ pub trait Keeps: Default + Send + 'static {
 }
 
 impl Keeps for () {
+    const KEEPS: bool = false;
+
     fn begin(_model: &str, _scope: ContinuationScope) -> Self {}
     fn keeping(&self) -> bool {
         false
@@ -169,6 +174,8 @@ struct Thinking {
 }
 
 impl Keeps for Thought {
+    const KEEPS: bool = true;
+
     fn begin(model: &str, scope: ContinuationScope) -> Self {
         Self(Some(Box::new(Thinking {
             model: model.into(),

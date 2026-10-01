@@ -258,3 +258,35 @@ fn another_refusal_of_a_key_is_left_in_the_vendor_s_words() {
     assert_eq!(status, 401);
     assert_eq!(said, "Access denied.");
 }
+
+#[test]
+fn an_answer_kept_by_3_8_stays_an_answer_when_the_session_moves_to_3_7() {
+    // The model changes; the vendor, the key and the address do not, so the
+    // answer is still this vendor's own and goes back as one, with nothing
+    // of its reasoning, which 3.7 does not read.
+    let (provider, replay) = at::<QwenChat>(Qwen::KEY_INTL, 200, &thinking_then_calling());
+    let deltas =
+        read(&provider, asking("qwen3.8-max", question(), true, None)).expect("the answer reads");
+    let kept = deltas.iter().find_map(|delta| match delta {
+        Delta::Continuation(state) => state
+            .clone()
+            .finish("", 1, Some(StopReason::WantsTools))
+            .ok(),
+        _ => None,
+    });
+    assert!(kept.is_some(), "{deltas:?}");
+
+    read(
+        &provider,
+        asking("qwen3.7-plus", after_the_call(kept), true, None),
+    )
+    .expect("the answer reads");
+
+    let body = sent(&replay);
+    let roles: Vec<Value> = field(&body, "/messages")
+        .as_array()
+        .map(|messages| messages.iter().map(|one| field(one, "/role")).collect())
+        .unwrap_or_default();
+    assert_eq!(roles, [json!("user"), json!("assistant"), json!("tool")]);
+    assert_eq!(reasoning(&body), None);
+}

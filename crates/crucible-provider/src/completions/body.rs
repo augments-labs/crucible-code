@@ -29,7 +29,8 @@ pub(crate) fn serialize<D: Dialect>(request: &Request<'_>) -> String {
 }
 
 /// The whole request body, as `D` reads it, sending back the reasoning kept
-/// under `scope` where the vendor wants it.
+/// under `scope` where the vendor wants it for the model asked, and reading
+/// any answer kept under `scope` as this vendor's own.
 pub(crate) fn serialize_for<D: Dialect>(
     request: &Request<'_>,
     scope: Option<ContinuationScope>,
@@ -134,7 +135,7 @@ fn write_messages<D: Dialect>(messages: &mut Array<'_>, request: &Request<'_>, b
         // An answer whose reasoning this wire kept for this credential and
         // address is this vendor's own, and goes back as an answer.
         let own = |state: &ProviderContinuation| match back {
-            Back::Kept(scope) | Back::Every(scope) => {
+            Back::Owned(scope) | Back::Kept(scope) | Back::Every(scope) => {
                 state.protocol() == super::wire::PROTOCOL && state.scope() == scope
             }
             Back::Nothing => false,
@@ -155,8 +156,11 @@ fn write_messages<D: Dialect>(messages: &mut Array<'_>, request: &Request<'_>, b
 /// What this request sends back of the reasoning its earlier answers kept.
 #[derive(Debug, Clone, Copy)]
 enum Back {
-    /// Nothing: the vendor keeps none, or nothing was kept under this scope.
+    /// Nothing: the vendor keeps none.
     Nothing,
+    /// Nothing sent back, since the model asked reads none; an answer kept
+    /// under `scope` is still this vendor's own.
+    Owned(ContinuationScope),
     /// What each answer kept, under `scope`.
     Kept(ContinuationScope),
     /// The same, and empty for an answer that kept none.
@@ -166,7 +170,8 @@ enum Back {
 /// What `request` sends back to `D`, given where it is going.
 fn back<D: Dialect>(request: &Request<'_>, scope: Option<ContinuationScope>) -> Back {
     match (D::reasoning(request.model), scope) {
-        (Reasoning::Unread, _) | (_, None) => Back::Nothing,
+        (_, None) => Back::Nothing,
+        (Reasoning::Unread, Some(scope)) => Back::Owned(scope),
         (Reasoning::Required, Some(scope)) if !request.tools.is_empty() => Back::Every(scope),
         (Reasoning::Returned | Reasoning::Required, Some(scope)) => Back::Kept(scope),
     }
@@ -250,7 +255,7 @@ fn append<D: Dialect>(
                     assistant.text("content", text);
                 }
                 let reasoning = match back {
-                    Back::Nothing => None,
+                    Back::Nothing | Back::Owned(_) => None,
                     Back::Kept(scope) => kept(continuation.as_ref(), scope),
                     Back::Every(scope) => kept(continuation.as_ref(), scope).or(Some("")),
                 };

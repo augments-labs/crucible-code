@@ -253,6 +253,14 @@ impl<D: Dialect> Chat<D> {
             .then(|| ContinuationScope::new(self.credential_scope, self.endpoint.as_str()))
     }
 
+    /// Where an answer this wire kept reasoning for is bound, for a vendor
+    /// that keeps any: what tells its own earlier answers, whichever model
+    /// wrote them, from another vendor's or another credential's.
+    fn owning(&self) -> Option<ContinuationScope> {
+        <D::Kept as wire::Keeps>::KEEPS
+            .then(|| ContinuationScope::new(self.credential_scope, self.endpoint.as_str()))
+    }
+
     /// Whether requests go to one of the vendor's own addresses rather than
     /// one a setting named.
     fn vendor(&self) -> bool {
@@ -335,7 +343,7 @@ impl<D: Dialect> Provider for Chat<D> {
             }
 
             let mut outgoing = self.headers(cancel).await?;
-            let body = body::serialize_for::<D>(&request, self.keeping(&request));
+            let body = body::serialize_for::<D>(&request, self.owning());
 
             let response = self
                 .transport
