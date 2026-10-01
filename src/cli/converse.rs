@@ -720,6 +720,15 @@ pub(crate) fn converse<T: Terminal>(
             continue;
         }
 
+        // A model named with nobody to ask it of, as `--model foo` is on a
+        // machine with nothing set up: the provider standing in refuses every
+        // turn. At a terminal that refusal is the warning and `/login` is a
+        // key away. Down a pipe it is the run above, unanswerable to the last
+        // line, and it ends the same way rather than `Ok`.
+        if !renderer.is_terminal() && !conversation.runner().provider().reaches_a_model() {
+            return Err(Fatal::Unanswerable(terms.unasked(conversation.serving())));
+        }
+
         let imported = attaching::imported(&held);
         let attached = attaching::beside(
             renderer,

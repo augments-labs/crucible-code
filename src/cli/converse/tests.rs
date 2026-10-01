@@ -1403,6 +1403,7 @@ mod login;
 mod question;
 mod release_notes;
 mod restricted;
+mod unanswerable;
 mod warning;
 
 // Which questions a mode leaves to be drawn.
@@ -1805,138 +1806,6 @@ fn a_huge_line_without_a_newline_is_refused_before_it_is_retained() {
 
     assert!(matches!(problem, Fatal::InputTooLong), "{problem:?}");
     assert!(problem.to_string().contains("1 MiB"), "{problem}");
-}
-
-#[test]
-fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly() {
-    // Interactively this is a warning and the session carries on, because
-    // `/model` is a key away. Down a pipe nobody can type it, so every line
-    // after this one would be read and none of them answered — and the run
-    // would end `Ok`, which is the one thing a script looks at. `echo ... |
-    // crucible` reporting success while answering nothing is the "it does
-    // nothing" report arriving as a zero exit.
-    let conversation = paired(Arc::new(Session::nowhere()), |session| {
-        Runner::new(
-            Box::new(Script::new(Vec::new())),
-            Tools::new(),
-            Agent::new(
-                AgentId::new("test"),
-                Model {
-                    name: String::new().into(),
-                    max_tokens: 64,
-                    window: None,
-                    accepts: None,
-                    effort: None,
-                },
-            ),
-            crucible_context::ContextInputs::new(std::env::temp_dir()),
-            session,
-        )
-    });
-
-    let mut renderer = Renderer::new(Recording::redirected(80, 24));
-    let mut input = Cursor::new(b"what is 2+2\n".to_vec());
-
-    let problem = converse(
-        conversation,
-        &mut renderer,
-        &plain(),
-        First {
-            card: &opening(),
-            arming: None,
-        },
-        &mut input,
-    )
-    .expect_err("a run that answered nothing to fail");
-
-    assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");
-}
-
-/// What a piped prompt ends the run with, in a session that chose no provider.
-fn unanswered_without_a_provider(terms: &Terms) -> Fatal {
-    let conversation = Conversation::recording(Arc::new(Session::nowhere()), None, |session| {
-        Runner::new(
-            Box::new(Script::new(Vec::new())),
-            Tools::new(),
-            Agent::new(
-                AgentId::new("test"),
-                Model {
-                    name: String::new().into(),
-                    max_tokens: 64,
-                    window: None,
-                    accepts: None,
-                    effort: None,
-                },
-            ),
-            crucible_context::ContextInputs::new(std::env::temp_dir()),
-            session,
-        )
-    });
-
-    let mut renderer = Renderer::new(Recording::redirected(80, 24));
-    let mut input = Cursor::new(b"what is 2+2\n".to_vec());
-
-    converse(
-        conversation,
-        &mut renderer,
-        terms,
-        First {
-            card: &opening(),
-            arming: None,
-        },
-        &mut input,
-    )
-    .expect_err("a run that answered nothing to fail")
-}
-
-#[test]
-fn a_piped_prompt_with_keys_for_two_providers_and_neither_chosen_says_choose_one() {
-    // Two keys and nothing choosing between them is the state the welcome
-    // calls "no provider selected". The prompt after it is the same state, so
-    // it owes the same sentence: telling somebody holding two keys to go and
-    // set one sends them to check the half that was never wrong.
-    let sample = Sample::new("no-provider-piped");
-    sample.stored("anthropic");
-    sample.stored("openai");
-
-    let problem = unanswered_without_a_provider(&Terms {
-        logins: sample.store(),
-        ..plain()
-    });
-
-    assert!(
-        matches!(
-            problem,
-            Fatal::Unanswerable(crucible_app::providers::NO_PROVIDER_CHOSEN)
-        ),
-        "{problem:?}"
-    );
-}
-
-#[test]
-fn an_exported_key_counts_toward_which_warning_a_piped_prompt_gets() {
-    // Nothing stored and one key exported is a provider set up, the way the
-    // launch counts it; with no key anywhere the first warning is the one owed.
-    let exported = unanswered_without_a_provider(&Terms {
-        environment: Box::new(|name| (name == "OPENAI_API_KEY").then(|| "sk-sample".to_owned())),
-        ..plain()
-    });
-    let bare = unanswered_without_a_provider(&plain());
-
-    assert!(
-        matches!(
-            exported,
-            Fatal::Unanswerable(crucible_app::providers::NO_PROVIDER_CHOSEN)
-        ),
-        "{exported:?}"
-    );
-    assert!(
-        matches!(
-            bare,
-            Fatal::Unanswerable(crucible_app::providers::NOTHING_TO_ASK)
-        ),
-        "{bare:?}"
-    );
 }
 
 #[test]
