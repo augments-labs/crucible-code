@@ -11,9 +11,10 @@ change in any release with no deprecation period.
 ### Added
 
 - **Crucible asks once before sending to a vendor that may train on it.** A
-  ChatGPT plan, Kimi Code, the Kimi open platform and a Gemini key on unpaid
-  quota stand what the vendor says before the first message, sign-in or
-  renewal goes, and nothing leaves until you choose Use it anyway, which is kept
+  ChatGPT plan, Kimi Code, the Kimi open platform, a Gemini key on unpaid
+  quota, MiniMax, a Qwen plan on aliyun.com, a Z.ai key of bigmodel.cn and
+  Meta's two contributor models stand what the vendor says before the first
+  message, sign-in or renewal goes, and nothing leaves until you choose Use it anyway, which is kept
   under `contentUse.accepted` in your own configuration file. Before rolling
   back to 0.43.3, delete the `contentUse` block from that file, or 0.43.3 stops
   on it.
@@ -29,6 +30,17 @@ change in any release with no deprecation period.
   where crucible recognises a refusal of fast, the request is sent once more at
   standard speed. Before rolling back to 0.43.3, delete `"fast": true` from each
   provider in your configuration file, or 0.43.3 stops on it.
+- **Seven more vendors: Meta, xAI, DeepSeek, Z.ai, Qwen, MiMo and MiniMax.**
+  Each is a row of `/login`, with a row per site or plan where the vendor has
+  several, and its models in `/model`; their keys are read from
+  `META_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`,
+  `DASHSCOPE_API_KEY`, `MIMO_API_KEY` and `MINIMAX_API_KEY`. Before rolling
+  back to 0.43.3, set `provider` in your configuration file to one 0.43.3
+  serves (`anthropic`, `google`, `moonshot` or `openai`), or 0.43.3 stops on it.
+- **GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna, Claude Opus 5.5 and Claude Sonnet 5.5
+  are offered.** `/model` lists what the credential in use serves, headed by
+  it, so a ChatGPT sign-in no longer offers `gpt-5.5`, and a row under the list
+  says what an API key would add.
 - **`/release-notes` prints what changed in each release.** Older releases get
   a row each with how many entries they added, changed and fixed, the ten
   newest are printed in full, and the one you are running is marked `this
@@ -36,6 +48,11 @@ change in any release with no deprecation period.
   changelog the binary was built from, so they need no network.
 
 ### Changed
+
+- **`/login` refuses a key meant for another row.** A key whose prefix
+  belongs to another of the vendor's rows, such as a MiniMax Token Plan key on
+  its pay-as-you-go row, is refused in the key box before it is stored or sent,
+  and the box stays open for the right one.
 
 - **`/login` opens on two ways to pay.** It asks whether usage comes from your
   account's plan or your own API key, lists the rows of each with `signed in`

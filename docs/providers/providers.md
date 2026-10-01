@@ -118,6 +118,15 @@ keeps taking the model and saying how hard it should think one visit. Down a
 pipe, where nobody can walk a shelf, it writes the models out as the line that
 asks for each.
 
+Each provider lists the models its credential in use serves: a ChatGPT
+sign-in leaves out `gpt-5.5`, and a Qwen plan key lists its plan's models.
+With one provider marked, the models pane is headed by the provider and that
+credential, as in `openai · OpenAI sign-in`, and a quiet row under the models,
+which the mark never takes, counts what an API key would add and names
+`/login`. A row's note says `trains` on a model whose vendor may train on what
+is sent to it (see [Content use](content-use.md)),
+else `no rung` on one that serves none, else `fast` on one with a fast form.
+
 Taking a row off the models pane moves the session to whoever serves it first:
 a model belongs to the vendor that serves it, and the two change together. The
 rung goes with them, because a rung is asked of a model: choosing one and then
