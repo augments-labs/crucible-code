@@ -38,6 +38,7 @@ pub(super) fn recorded(state: &ProviderContinuation) -> Result<Option<Effort>, P
 pub(super) struct Efforts<'a> {
     remaining: std::iter::Enumerate<std::slice::Iter<'a, Message>>,
     scope: ContinuationScope,
+    model: &'a str,
     next: Option<(usize, Option<Effort>)>,
     initial: Option<Effort>,
     active: Effort,
@@ -52,6 +53,7 @@ impl<'a> Efforts<'a> {
         let mut this = Self {
             remaining: request.transcript.messages().iter().enumerate(),
             scope,
+            model: request.model,
             next: None,
             initial: None,
             active: Effort::High,
@@ -74,7 +76,7 @@ impl<'a> Efforts<'a> {
                 continuation: Some(state),
                 ..
             } = message
-                && compatible(state, self.scope)
+                && compatible(state, self.scope, self.model)
             {
                 self.next = Some((index, recorded(state)?));
                 break;

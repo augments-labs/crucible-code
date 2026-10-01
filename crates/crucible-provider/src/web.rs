@@ -361,7 +361,7 @@ impl AnthropicWeb {
         json.object(|body| {
             body.text("model", &self.model);
             body.number("max_tokens", if fetching { FETCH_CEILING } else { CEILING });
-            if self.model.as_ref() == crate::anthropic::FABLE_51 {
+            if crate::anthropic::bound(self.model.as_ref()) {
                 // This fresh side request has no thinking history to bind.
                 // Fable is always adaptive; leave its effort default unchosen
                 // and let it select the tool rather than forcing a rejected mode.
@@ -406,7 +406,7 @@ impl AnthropicWeb {
         })
         .await
         .map_err(|error| self.failure(error))?;
-        if self.model.as_ref() == crate::anthropic::FABLE_51
+        if crate::anthropic::bound(self.model.as_ref())
             && !matches!(
                 answered.get("stop_reason").and_then(Value::as_str),
                 Some("end_turn" | "stop_sequence")
@@ -423,7 +423,7 @@ impl AnthropicWeb {
     /// A Fable side response can include private thinking beside web results.
     /// Keep typed failure facts but never expose arbitrary response prose/code.
     fn failure(&self, error: SourceError) -> SourceError {
-        if self.model.as_ref() != crate::anthropic::FABLE_51 {
+        if !crate::anthropic::bound(self.model.as_ref()) {
             return error;
         }
         match error {
