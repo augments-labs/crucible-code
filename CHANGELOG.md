@@ -8,6 +8,17 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Every model crucible knows now uses its native context window by
+  default.** Most offered models now manage against about a million tokens
+  instead of 200,000, so a session may grow to that size before it is
+  compacted, and each turn costs more as it grows; Gemini, xAI and OpenAI with
+  a key also charge more per token once a request passes a threshold. OpenAI's
+  models are held to 872,000, the most its ChatGPT sign-in takes. Set
+  `defaultContextWindow` or `contextWindow` under `providers.<name>` to compact
+  sooner.
+
 ### Fixed
 
 - **A prompt or `/compact` with no model to ask records nothing, whatever
@@ -18,6 +29,14 @@ change in any release with no deprecation period.
   nothing is recorded or sent; at a terminal, `/compact` gives the warning a
   prompt does and ends a piped run as one does, and "Carry on from summary" on
   a resumed session gives that warning too.
+- **An Anthropic or Meta request too long for the model makes room and asks
+  again.** Neither sends a code for that refusal, so it ended the turn; crucible
+  now reads each by its shape and opening words and compacts mid-turn instead,
+  and does the same for MiniMax where its refusal has the wording matched.
+  MiniMax's wording is not confirmed against its own pages, so a refusal
+  worded otherwise still ends the turn. On Google, DeepSeek, Moonshot, Qwen,
+  xAI and MiMo a request too long for the model still ends the turn, and a
+  lower `defaultContextWindow` avoids it.
 
 ## [0.44.1] - 2026-10-01
 

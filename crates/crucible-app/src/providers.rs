@@ -57,6 +57,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::anthropic,
         reach: startup::anthropic_web,
         window: 200_000,
+        most: None,
         fast: Anthropic::fast_at_vendor,
         fast_signed_in: None,
         models: &[
@@ -80,6 +81,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::deepseek,
         reach: startup::unreached,
         window: 200_000,
+        most: None,
         fast: DeepSeek::fast_at_vendor,
         fast_signed_in: None,
         models: &[
@@ -95,9 +97,8 @@ const PROVIDERS: [Served; 11] = [
         reach: startup::google_web,
         fast: Google::fast_at_vendor,
         fast_signed_in: None,
-        // The model's full input capacity is available through configuration;
-        // starting below the long-context pricing boundary keeps it deliberate.
         window: 200_000,
+        most: None,
         models: &[
             Model::shown("gemini-3.8-flash", "Gemini 3.8 Flash", GEMINI),
             Model::shown("gemini-3.7-flash", "Gemini 3.7 Flash", GEMINI),
@@ -112,6 +113,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::meta,
         reach: startup::meta_web,
         window: 200_000,
+        most: None,
         fast: Meta::fast_at_vendor,
         fast_signed_in: None,
         // `max` on 1.3 is named by some of the vendor's pages and left out by
@@ -130,6 +132,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::mimo,
         reach: startup::unreached,
         window: 200_000,
+        most: None,
         fast: Mimo::fast_at_vendor,
         fast_signed_in: None,
         models: &[
@@ -144,6 +147,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::minimax,
         reach: startup::unreached,
         window: 200_000,
+        most: None,
         fast: MiniMax::fast_at_vendor,
         fast_signed_in: None,
         models: &[
@@ -158,6 +162,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::moonshot,
         reach: startup::moonshot_web,
         window: 262_144,
+        most: None,
         fast: Moonshot::fast_at_vendor,
         fast_signed_in: None,
         // Spelled the way the coding console spells them, that being the one
@@ -183,6 +188,11 @@ const PROVIDERS: [Served; 11] = [
         build: startup::openai,
         reach: startup::openai_web,
         window: 272_000,
+        // A key is served each model's whole window, and the sign-in is served
+        // the same names under a smaller one: the vendor's own client manages
+        // against 872,000 at most there. The window is chosen before which of
+        // the two answers is known, so it is the one both take.
+        most: Some(872_000),
         fast: OpenAi::fast_at_vendor,
         fast_signed_in: Some(OpenAi::fast_signed_in),
         // The `-pro` variants are left off: they answer in one piece rather
@@ -206,6 +216,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::qwen,
         reach: startup::unreached,
         window: 200_000,
+        most: None,
         fast: Qwen::fast_at_vendor,
         fast_signed_in: None,
         models: &[
@@ -222,6 +233,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::xai,
         reach: startup::xai_web,
         window: 200_000,
+        most: None,
         fast: Xai::fast_at_vendor,
         fast_signed_in: None,
         models: &[
@@ -236,6 +248,7 @@ const PROVIDERS: [Served; 11] = [
         build: startup::zai,
         reach: startup::unreached,
         window: 200_000,
+        most: None,
         fast: Zai::fast_at_vendor,
         fast_signed_in: None,
         models: &[
@@ -899,10 +912,15 @@ pub struct Served {
     /// serves neither. Never fails a start: a session without web tools is
     /// still the coding agent that was asked for.
     pub reach: startup::Reach,
-    /// The context window a session manages against unless a setting says
-    /// otherwise. Conservative on purpose: long context is available, and
-    /// using it is a choice rather than the starting behavior.
+    /// The context window a session manages against for a model this build
+    /// has no row for, unless a setting says otherwise. A model with a row
+    /// starts at its own window instead. Conservative on purpose: a name
+    /// released after this build has a window nobody here knows, and guessing
+    /// it high is a session the vendor refuses before it is compacted.
     pub window: u32,
+    /// The most a model this build knows is managed against, where a route
+    /// crucible sends to takes less than the model's own window.
+    pub most: Option<u32>,
     /// How each of its models is asked to answer fast at the vendor's own
     /// address with a key, for a list that reads every provider's models
     /// without setting each one up. A provider set up answers for itself; a

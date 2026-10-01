@@ -20,6 +20,15 @@
 //! answered — and would need a bound of its own so the second refusal could not
 //! ask for a third.
 //!
+//! One refusal is told apart from the rest: a request too large for the
+//! model's window, which the session can be compacted for. It is told by the
+//! vendor's code and never by its sentence, with three narrow exceptions.
+//! Anthropic, Meta and `MiniMax` send no code of its own for it, and with
+//! windows of a million tokens it is a refusal a session reaches, so each of
+//! them names the shape that refusal comes in and one exact phrase anchored
+//! where the vendor puts it (see [`Overlong`]), read only from a body that
+//! arrived whole. Every other vendor's refusals are read by their code alone.
+//!
 //! [`authorize`]: crucible_credentials::Credential::authorize
 
 use std::borrow::Cow;
@@ -152,6 +161,7 @@ pub(crate) async fn refused(
         },
         body,
         MAX_WAIT,
+        Outgrew::SHARED,
     )
     .await
 }
@@ -161,15 +171,38 @@ pub(crate) async fn refused(
 /// since the vendor's refusal is written in its own shape.
 pub(crate) type FastRule = fn(u16, &str) -> bool;
 
+/// Whether a refused body, with its status, is the vendor's refusal of a
+/// request too large for the model, for a vendor that sends no code for it.
+///
+/// The one place a refusal is read by its words, and only beside the shape the
+/// vendor gives that refusal: a vendor writes it as a structural precondition
+/// and one exact phrase, case and all, anchored at the start of the message
+/// (or at both ends), so that a vendor's other refusals, and the same words
+/// quoted back inside them, stay what they were. Asked
+/// only of a body that arrived whole; a cut body may have lost what it would
+/// be read from.
+pub(crate) type Overlong = fn(u16, &serde_json::Value) -> bool;
+
+/// The refusals a vendor on [`refused_at`] tells apart in a shape of its own.
+#[derive(Clone, Copy)]
+pub(crate) struct Rules {
+    /// Its refusal of the fast form, for a request that asked for one.
+    pub(crate) fast: Option<FastRule>,
+    /// Its refusal of a request too large for the window, for a vendor that
+    /// sends no code for it: see [`Overlong`].
+    pub(crate) overlong: Option<Overlong>,
+}
+
 /// [`refused`], for a request that may have asked for a fast form: a refusal
-/// `fast` recognises is [`ProviderError::FastRefused`] rather than the failure
-/// it would otherwise be.
+/// `rules.fast` recognises is [`ProviderError::FastRefused`] rather than the
+/// failure it would otherwise be, and one `rules.overlong` recognises is
+/// [`ProviderError::WindowExceeded`].
 ///
 /// A path of its own rather than a parameter of [`refused`], so a provider
 /// that never asks for a fast form reads its refusals exactly as before.
 pub(crate) async fn refused_at(
     provider: &'static str,
-    fast: Option<FastRule>,
+    Rules { fast, overlong }: Rules,
     body: PostResponse,
     redactions: &Redactions,
     cancel: &Cancel,
@@ -181,7 +214,7 @@ pub(crate) async fn refused_at(
         cancel,
     };
     let Some(fast) = fast else {
-        return said_async(refusal, body, MAX_WAIT).await;
+        return said_async(refusal, body, MAX_WAIT, Outgrew::words(overlong)).await;
     };
     let mut said = Vec::new();
     let mut reading = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
@@ -197,7 +230,7 @@ pub(crate) async fn refused_at(
             .redacted(redactions);
         }
     }
-    resolved(refusal, said, read, &[])
+    resolved(refusal, said, read, Outgrew::words(overlong))
 }
 
 /// What a vendor reads in its refusals its own way.
@@ -207,6 +240,10 @@ pub(crate) struct Own<O, W> {
     /// held as the codes themselves, so a request that is never refused carries
     /// no room for them while it waits.
     pub(crate) outgrew: O,
+
+    /// The vendor's refusal of a request too large for the window, where it
+    /// sends that refusal with no code: see [`Overlong`].
+    pub(crate) overlong: Option<Overlong>,
 
     /// The whole body and its status as a line of crucible's own, where the
     /// vendor's code says more than its sentence.
@@ -249,7 +286,40 @@ pub(crate) async fn refused_worded(
         }
         .redacted(redactions);
     }
-    resolved(refusal, said, read, (own.outgrew)())
+    resolved(
+        refusal,
+        said,
+        read,
+        Outgrew {
+            codes: (own.outgrew)(),
+            overlong: own.overlong,
+        },
+    )
+}
+
+/// How a refusal is told to be a request too large for the window: by the
+/// codes in [`OUTGREW`], by `codes`, and by `overlong` where a vendor sends
+/// no code for it.
+#[derive(Clone, Copy)]
+struct Outgrew<'a> {
+    codes: &'a [&'a str],
+    overlong: Option<Overlong>,
+}
+
+impl Outgrew<'_> {
+    /// [`OUTGREW`]'s codes alone, for a vendor that uses only those.
+    const SHARED: Self = Self {
+        codes: &[],
+        overlong: None,
+    };
+
+    /// [`OUTGREW`]'s codes and a vendor's own words, where it has them.
+    const fn words(overlong: Option<Overlong>) -> Self {
+        Self {
+            codes: &[],
+            overlong,
+        }
+    }
 }
 
 /// The request facts needed while its refused body is read.
@@ -271,26 +341,31 @@ fn said(refusal: Refusal<'_>, body: Box<dyn Read + Send>, wait: Duration) -> Pro
         wait,
         refusal.cancel,
     );
-    resolved(refusal, said, read, &[])
+    resolved(refusal, said, read, Outgrew::SHARED)
 }
 
 /// Reads a live post body on the caller's runtime.
-async fn said_async(refusal: Refusal<'_>, body: PostResponse, wait: Duration) -> ProviderError {
+async fn said_async(
+    refusal: Refusal<'_>,
+    body: PostResponse,
+    wait: Duration,
+    own: Outgrew<'_>,
+) -> ProviderError {
     let mut said = Vec::new();
     let mut body = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
     let read = fill_async(&mut body, &mut said, wait, refusal.cancel).await;
-    resolved(refusal, said, read, &[])
+    resolved(refusal, said, read, own)
 }
 
 /// Interprets the bounded read identically for live and recorded bodies.
 ///
-/// `own` is the vendor's codes for a request too large for the window, beside
-/// [`OUTGREW`]: none, where the vendor uses only those.
+/// `own` is how the vendor tells a request too large for the window, beside
+/// [`OUTGREW`]: [`Outgrew::SHARED`], where the vendor uses only those.
 fn resolved(
     refusal: Refusal<'_>,
     mut said: Vec<u8>,
     read: Result<(), ReadError>,
-    own: &[&str],
+    own: Outgrew<'_>,
 ) -> ProviderError {
     let most = usize::try_from(MAX_REFUSAL).unwrap_or(usize::MAX);
     let longer = said.len() > most;
@@ -372,7 +447,7 @@ impl End {
 
 /// The refusal that what was read makes, whether it is the whole reply or the
 /// beginning of one.
-fn kept(refusal: Refusal<'_>, said: &[u8], end: End, own: &[&str]) -> ProviderError {
+fn kept(refusal: Refusal<'_>, said: &[u8], end: End, own: Outgrew<'_>) -> ProviderError {
     let clause = end.clause();
 
     // A cut ends the body wherever the bytes ran out, which can be the middle
@@ -417,8 +492,20 @@ fn kept(refusal: Refusal<'_>, said: &[u8], end: End, own: &[&str]) -> ProviderEr
     // has, so it is told apart before the rest are given their sentence.
     // Decided from the vendor's own code rather than from the prose beside it:
     // a code is a value the vendor enumerates, and the prose is a sentence they
-    // rewrite whenever they like.
-    if outgrew(&body, own) {
+    // rewrite whenever they like. The exception is a vendor that sends no code
+    // for this refusal, whose dialect names the shape and the words of it, and
+    // only for a body that arrived whole.
+    let payload = serde_json::from_str::<serde_json::Value>(&body).ok();
+    let worded = |payload: &serde_json::Value| {
+        matches!(end, End::Whole)
+            && own
+                .overlong
+                .is_some_and(|overlong| overlong(refusal.status, payload))
+    };
+    if payload
+        .as_ref()
+        .is_some_and(|payload| outgrew(payload, own.codes) || worded(payload))
+    {
         return ProviderError::WindowExceeded {
             provider: refusal.provider,
         };
@@ -463,18 +550,15 @@ const OUTGREW: &[&str] = &[
 /// The **code**, never the sentence. Matching prose would be reading three
 /// vendors' phrasing, in whatever language they answered in, and getting it
 /// wrong in the direction that compacts a session for a refusal about something
-/// else entirely.
+/// else entirely. The three vendors that send no code of their own for this
+/// refusal are read by their own [`Overlong`], beside this and not through it.
 ///
 /// [`OUTGREW`]'s words are read where every vendor that uses them puts them: as
 /// text under `error.code`. `own`, the vendor's codes, is read wherever a
 /// vendor that numbers its codes has been documented to put one: under
 /// `error` or at the top level with no wrapper, as text or as a whole number,
 /// compared by its decimal spelling.
-fn outgrew(body: &str, own: &[&str]) -> bool {
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
-        return false;
-    };
-
+fn outgrew(payload: &serde_json::Value, own: &[&str]) -> bool {
     let under = payload.get("error").and_then(|error| error.get("code"));
     if under
         .and_then(serde_json::Value::as_str)
@@ -1177,6 +1261,41 @@ mod tests {
                 ),
                 "{said}"
             );
+        }
+    }
+
+    #[test]
+    fn a_vendor_s_own_words_for_a_request_too_large_are_read_only_from_a_body_read_whole() {
+        // A dialect that names the words of its vendor's over-long refusal is
+        // asked only of a body that ended where the vendor ended it: what a
+        // cut lost may be the part of the shape that tells this refusal from
+        // another.
+        fn always(_: u16, _: &serde_json::Value) -> bool {
+            true
+        }
+        let own = Outgrew {
+            codes: &[],
+            overlong: Some(always),
+        };
+        let redactions = Redactions::default();
+        let cancel = Cancel::new();
+        let refusal = Refusal {
+            provider: "test",
+            status: 400,
+            redactions: &redactions,
+            cancel: &cancel,
+        };
+        let said = br#"{"error":{"message":"too long"}}"#;
+
+        assert!(matches!(
+            kept(refusal, said, End::Whole, own),
+            ProviderError::WindowExceeded { .. }
+        ));
+        for end in [End::Longer, End::Stopped] {
+            assert!(matches!(
+                kept(refusal, said, end, own),
+                ProviderError::Refused { .. }
+            ));
         }
     }
 

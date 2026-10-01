@@ -1526,25 +1526,50 @@ fn every_model_of_a_new_vendor_serves_the_rungs_its_reference_names() {
 }
 
 #[test]
-fn every_provider_keeps_its_window_and_a_new_one_starts_at_two_hundred_thousand() {
-    let windows: Vec<_> = every().iter().map(|one| (one.name, one.window)).collect();
+fn every_offered_model_starts_at_its_native_window_and_a_new_name_at_its_provider_s() {
+    // The window a name nobody has a row for starts at, and the most any
+    // known one is held to where a route crucible sends to takes less than
+    // the model's own window.
+    let windows: Vec<_> = every()
+        .iter()
+        .map(|one| (one.name, one.window, one.most))
+        .collect();
 
     assert_eq!(
         windows,
         [
-            ("anthropic", 200_000),
-            ("deepseek", 200_000),
-            ("google", 200_000),
-            ("meta", 200_000),
-            ("mimo", 200_000),
-            ("minimax", 200_000),
-            ("moonshot", 262_144),
-            ("openai", 272_000),
-            ("qwen", 200_000),
-            ("xai", 200_000),
-            ("zai", 200_000),
+            ("anthropic", 200_000, None),
+            ("deepseek", 200_000, None),
+            ("google", 200_000, None),
+            ("meta", 200_000, None),
+            ("mimo", 200_000, None),
+            ("minimax", 200_000, None),
+            ("moonshot", 262_144, None),
+            ("openai", 272_000, Some(872_000)),
+            ("qwen", 200_000, None),
+            ("xai", 200_000, None),
+            ("zai", 200_000, None),
         ]
     );
+
+    // Every name `/model` offers starts at the window its row gives it, or
+    // under its provider's most.
+    let settings = Settings::default();
+    let providers = catalogue();
+    for served in every() {
+        for model in served.models {
+            let native = facts(served.name, model.name)
+                .expect("an offered model has a row")
+                .window;
+            assert_eq!(
+                startup::window(&providers, served, model.name, &settings),
+                served.most.map_or(native, |most| native.min(most)),
+                "{}/{}",
+                served.name,
+                model.name
+            );
+        }
+    }
 }
 
 #[test]

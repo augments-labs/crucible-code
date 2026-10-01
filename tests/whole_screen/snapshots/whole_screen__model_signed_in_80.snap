@@ -13,13 +13,13 @@ expression: picture
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
 |│  Providers          │  openai · ChatGPT sign-in                      7 of 41 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│   Anthropic       7 │ › gpt-6-astra                            272k  fast    │|
-|│   DeepSeek        2 │   gpt-6.1-sol                            272k  fast    │|
-|│   Google          4 │   gpt-6-sol                              272k  ← now   │|
-|│   Meta            4 │   gpt-6-luna                             272k  fast    │|
-|│   MiMo            2 │   gpt-5.6-sol                            272k  fast    │|
-|│   MiniMax         2 │   gpt-5.6-terra                          272k  fast    │|
-|│   MoonshotAI      4 │   gpt-5.6-luna                           272k  fast    │|
+|│   Anthropic       7 │ › gpt-6-astra                            872k  fast    │|
+|│   DeepSeek        2 │   gpt-6.1-sol                            872k  fast    │|
+|│   Google          4 │   gpt-6-sol                              872k  ← now   │|
+|│   Meta            4 │   gpt-6-luna                             872k  fast    │|
+|│   MiMo            2 │   gpt-5.6-sol                            872k  fast    │|
+|│   MiniMax         2 │   gpt-5.6-terra                          872k  fast    │|
+|│   MoonshotAI      4 │   gpt-5.6-luna                           872k  fast    │|
 |│ › OpenAI          7 │   1 more with an API key · /login                      │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
