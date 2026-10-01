@@ -1171,3 +1171,30 @@ fn a_warned_row_keeps_its_caution_at_forty_columns() {
         }
     }
 }
+
+#[test]
+fn the_new_vendors_rows_are_narrowed_and_replaced_by_their_own_words() {
+    let rows = production();
+
+    assert_eq!(left("qwen", &rows).len(), 6, "{:?}", left("qwen", &rows));
+    assert_eq!(
+        left("qwen coding aliyun.com", &rows),
+        ["Qwen Coding Plan · aliyun.com API key"]
+    );
+    assert!(left("qwen tokyo", &rows).is_empty());
+
+    // A key held on one row of a vendor is named when another of its rows is
+    // chosen: the plans of one site, and the two sites of one vendor.
+    let coding = way(&rows, List::Subscription, "Qwen Coding Plan · aliyun.com");
+    let token = way(&rows, List::Subscription, "Qwen Token Plan · aliyun.com");
+    assert_eq!(
+        replaced(&token, &[coding], Glyphs::Unicode).as_deref(),
+        Some("the API key held for Qwen Coding Plan · aliyun.com")
+    );
+    let international = way(&rows, List::Key, "Z.ai · z.ai");
+    let mainland = way(&rows, List::Key, "Z.ai · bigmodel.cn");
+    assert_eq!(
+        replaced(&mainland, &[international], Glyphs::Unicode).as_deref(),
+        Some("the API key held for Z.ai · z.ai")
+    );
+}
