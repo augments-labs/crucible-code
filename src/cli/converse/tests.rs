@@ -1852,6 +1852,60 @@ fn a_prompt_that_cannot_be_answered_down_a_pipe_fails_rather_than_ending_quietly
     assert!(matches!(problem, Fatal::Unanswerable(_)), "{problem:?}");
 }
 
+#[test]
+fn a_piped_prompt_for_a_model_nothing_serves_fails_as_one_with_no_model_does() {
+    // `--model foo` on a machine with nothing set up names a model and leaves
+    // nobody to ask it of: the provider standing in refuses every turn. Down a
+    // pipe that is the same unanswerable run as one with no model at all, and
+    // it owes the same ending: said once, and not `Ok`.
+    let conversation = Conversation::recording(Arc::new(Session::nowhere()), None, |session| {
+        Runner::new(
+            Box::new(crucible_provider::Unavailable::new(
+                crucible_app::providers::NOTHING_TO_ASK,
+            )),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: "foo".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
+
+    let mut renderer = Renderer::new(Recording::redirected(80, 24));
+    let mut input = Cursor::new(b"what is 2+2\nand 3+3\n".to_vec());
+
+    let problem = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect_err("a run that answered nothing to fail");
+
+    assert!(
+        matches!(
+            problem,
+            Fatal::Unanswerable(crucible_app::providers::NOTHING_TO_ASK)
+        ),
+        "{problem:?}"
+    );
+    // Said once, by the error: no turn was refused on the screen before it.
+    let written = renderer.terminal().written();
+    assert!(!written.contains("No models available"), "{written}");
+}
+
 /// What a piped prompt ends the run with, in a session that chose no provider.
 fn unanswered_without_a_provider(terms: &Terms) -> Fatal {
     let conversation = Conversation::recording(Arc::new(Session::nowhere()), None, |session| {
