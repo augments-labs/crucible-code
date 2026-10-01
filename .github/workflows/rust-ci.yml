@@ -16,11 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # No merge queue is in use; should one run, its branch is deleted
-      # afterwards, so a cache saved there is one no later run can restore.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
 
       # The gate runs on the enforcing sandbox host, and a missing backend is
       # a failure rather than a skip; the action says why.
@@ -51,8 +47,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - if: ${{ runner.os == 'Windows' && !cancelled() }}
         name: Build and provision the native Windows sandbox
@@ -114,8 +108,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.event_name != 'merge_group' }}
       # The tag the drill rolls back to, read from the drill so it is named in
       # one place, and fetched without credentials. The drill itself never
       # fetches; it builds whatever tag is already local.
@@ -176,10 +168,8 @@ jobs:
             echo "::error::the build of $PRIOR_TAG left no crucible binary"
             exit 1
           }
-      # No merge queue is in use; should one run, its branch is deleted
-      # afterwards, so nothing could restore what it saved.
       - name: Cache the previous release binary
-        if: ${{ steps.prior.outputs.cache-hit != 'true' && github.event_name != 'merge_group' }}
+        if: ${{ steps.prior.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/prior-bin
