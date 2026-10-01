@@ -27,6 +27,7 @@ mod moonshot;
 mod openai;
 mod qwen;
 mod refusal;
+mod responses;
 mod sse;
 mod stream;
 mod transport;

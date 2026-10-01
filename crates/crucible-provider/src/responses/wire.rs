@@ -1,0 +1,545 @@
+//! A response, from the Responses shape.
+//!
+//! One event in, however many deltas out. Zero for most of them: this endpoint
+//! narrates a response item by item, and the majority of what it sends is the
+//! narration rather than the answer.
+//!
+//! Read by field lookup rather than into mirror structs. The payload is
+//! consumed once, here, and a struct per event shape would be more code to say
+//! the same thing while still needing a fallback for what it does not know.
+//!
+//! Every event says its own `type`, so that is what is read rather than the SSE
+//! event name beside it. One name, one place it is spelled.
+//!
+//! What the counts mean, where a failure keeps its words, which tier an answer
+//! says it was served at and whether a stream may close with a sentinel are
+//! the [`Dialect`]'s. An answer from a model that replays is read by its
+//! [`Replay`] instead.
+
+use std::fmt;
+use std::marker::PhantomData;
+
+use crucible_models::{Delta, ProviderError, Served};
+use crucible_types::{
+    InputTokenUsage, ProviderNumericDetail, ProviderUsage, StopReason, ToolId, UsageError,
+};
+use serde_json::Value;
+
+use super::{Dialect, Replay};
+use crate::refusal::SILENT;
+use crate::sse::SseEvent;
+use crate::stream::Wire;
+
+/// What a vendor that closes its streams the way Chat Completions does sends
+/// after the event that ended the response. Not JSON.
+const DONE: &str = "[DONE]";
+
+/// The Responses API, being narrated, in `D`'s dialect.
+pub(crate) struct Narration<D: Dialect> {
+    /// What reads an answer from a model that replays, in place of the rest.
+    replay: Option<D::Replay>,
+    /// The call being assembled right now.
+    open: Open,
+    /// Whether this response has asked for a tool at any point, which is what
+    /// it stops for. See [`stop`].
+    called: bool,
+    /// Whether the exact requested model documents a cache-write usage bucket.
+    cache_write_reporting: bool,
+    /// The tier the response said it was served at, once it has.
+    served: Served,
+    dialect: PhantomData<D>,
+}
+
+impl<D: Dialect> Default for Narration<D> {
+    fn default() -> Self {
+        Self {
+            replay: None,
+            open: Open::default(),
+            called: false,
+            cache_write_reporting: false,
+            served: Served::default(),
+            dialect: PhantomData,
+        }
+    }
+}
+
+impl<D: Dialect> fmt::Debug for Narration<D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Responses")
+            .field("replay", &self.replay)
+            .field("open", &self.open)
+            .field("called", &self.called)
+            .field("cache_write_reporting", &self.cache_write_reporting)
+            .field("served", &self.served)
+            .finish()
+    }
+}
+
+impl<D: Dialect> Narration<D> {
+    /// What reads the answer to `request`.
+    pub(crate) fn for_request(
+        request: &crucible_models::Request<'_>,
+        scope: crucible_types::ContinuationScope,
+    ) -> Result<Self, ProviderError> {
+        Ok(Self {
+            replay: if D::Replay::replays(request.model) {
+                Some(D::Replay::reading(request, scope)?)
+            } else {
+                None
+            },
+            cache_write_reporting: D::cache_writes(request.model),
+            ..Self::default()
+        })
+    }
+
+    /// What reads an answer whose usage counts what was written to the cache.
+    #[cfg(test)]
+    pub(crate) fn reporting_cache_writes() -> Self {
+        Self {
+            cache_write_reporting: true,
+            ..Self::default()
+        }
+    }
+}
+
+impl<D: Dialect> Wire for Narration<D> {
+    const PROVIDER: &'static str = D::NAME;
+
+    fn served(&self) -> Served {
+        self.served
+    }
+
+    fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        if let Some(served) = D::served(&event.data) {
+            self.served = served;
+        }
+        if let Some(replay) = &mut self.replay {
+            return replay.deltas(event);
+        }
+        deltas(event, self)
+    }
+}
+
+/// The tool call the response has open, and whether its arguments have started
+/// arriving.
+///
+/// Carried between events because a call is opened in one and its arguments
+/// arrive in the ones after it, so no single event can tell whether a fragment
+/// belongs where it is about to be assembled. The flag is what decides whether
+/// the finished item repeats arguments already streamed or supplies ones that
+/// never were.
+#[derive(Debug, Default)]
+struct Open {
+    /// The item id this endpoint keys its fragments by, empty where none is
+    /// open.
+    item: String,
+    /// Whether a fragment has arrived for it.
+    streamed: bool,
+}
+
+/// What an event means, or nothing if it means nothing to us.
+///
+/// # Errors
+///
+/// [`ProviderError::Upstream`] when the event is the provider reporting a
+/// failure inside a response it had already started, and
+/// [`ProviderError::Protocol`] when an event does not parse, announces a tool
+/// call by part of its identity, or contradicts what is open.
+pub(crate) fn deltas<D: Dialect>(
+    event: &SseEvent,
+    response: &mut Narration<D>,
+) -> Result<Vec<Delta>, ProviderError> {
+    // A heartbeat, which a proxy may spell any way it likes and may send with
+    // no data line at all. There is nothing to parse; reading it as an event
+    // fails the turn and discards the answer that had already arrived.
+    if event.data.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // The line that closes a stream for a vendor that sends one. Read as an
+    // event it is not JSON, and fails a turn whose answer has already ended.
+    if D::SENTINEL && event.data.trim() == DONE {
+        return Ok(Vec::new());
+    }
+
+    let payload = parse::<D>(&event.data)?;
+    let Some(kind) = text(&payload, "type") else {
+        return Ok(Vec::new());
+    };
+
+    match kind {
+        // The answer as it is written, and the other thing a model writes in
+        // its place. A model that declines produces no output text at all, and
+        // a refusal left unread is a turn that shows nothing and then reports
+        // that it finished normally.
+        "response.output_text.delta" | "response.refusal.delta" => Ok(said(&payload)),
+
+        "response.output_item.added" => started::<D>(&payload, response),
+        "response.function_call_arguments.delta" => arguing::<D>(&payload, &mut response.open),
+        "response.output_item.done" => finished::<D>(&payload, &mut response.open),
+
+        // The three ways a response ends. `completed` is the only one that is
+        // not a failure, and which of the two finishes it is depends on what
+        // the response turned out to ask for.
+        "response.completed" => ended::<D>(
+            &payload,
+            stop(response.called),
+            response.cache_write_reporting,
+        ),
+        "response.incomplete" => {
+            ended::<D>(&payload, cut(&payload), response.cache_write_reporting)
+        }
+        "response.failed" => Err(failed::<D>(&payload)),
+
+        // A failure outside any response, which arrives flat rather than under
+        // one, or wherever the dialect says it keeps its words.
+        "error" => Err(upstream::<D>(D::failure(&payload))),
+
+        // Everything else this endpoint narrates: the response opening, content
+        // parts being framed, reasoning being done. A stream that failed on an
+        // event it had not heard of would fail every turn the day a field is
+        // added.
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// A fragment of what the model is saying.
+fn said(payload: &Value) -> Vec<Delta> {
+    match text(payload, "delta").filter(|delta| !delta.is_empty()) {
+        Some(delta) => vec![Delta::Text(delta.into())],
+        None => Vec::new(),
+    }
+}
+
+/// An item the response has started, which is a tool call or is not.
+///
+/// A message item opening is nothing to report: its text arrives as fragments
+/// and this would put a delta in front of it saying so.
+fn started<D: Dialect>(
+    payload: &Value,
+    response: &mut Narration<D>,
+) -> Result<Vec<Delta>, ProviderError> {
+    let Some(item) = payload.get("item") else {
+        return Ok(Vec::new());
+    };
+    if text(item, "type") != Some("function_call") {
+        return Ok(Vec::new());
+    }
+
+    // The two identities this endpoint gives a call, and they are not
+    // interchangeable. `id` is what its own fragments are keyed by; `call_id`
+    // is what a result is answered against, and it is the one the transcript
+    // has to carry.
+    //
+    // A call missing either of them, or its name, is refused rather than
+    // skipped. Skipped, nothing opens: the fragments that follow are assembled
+    // onto the call before it (one tool running on another tool's arguments),
+    // and the call that was half announced leaves no trace, so the turn ends
+    // looking like a clean finish with a tool the model asked for never run.
+    let (Some(id), Some(name), Some(call)) =
+        (text(item, "id"), text(item, "name"), text(item, "call_id"))
+    else {
+        return Err(ProviderError::Protocol {
+            provider: D::NAME,
+            problem: "a tool call arrived without both of its identities and a name".into(),
+        });
+    };
+
+    response.open = Open {
+        item: id.to_owned(),
+        streamed: false,
+    };
+    // Outlives the call it was set by: this is what the response stops for, and
+    // it is asked about once every item has been narrated.
+    response.called = true;
+
+    Ok(vec![Delta::ToolStarted {
+        id: ToolId::new(call),
+        name: name.into(),
+    }])
+}
+
+/// A fragment of the open call's arguments.
+///
+/// Fragments carry the item they belong to, so unlike the older endpoint this
+/// can say when one does not belong to the call in hand. It refuses rather than
+/// assembling it anyway, which would be one tool running on another tool's
+/// arguments rather than a failure anyone can see.
+fn arguing<D: Dialect>(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+    let Some(delta) = text(payload, "delta").filter(|delta| !delta.is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    if text(payload, "item_id").is_none_or(|item| item != open.item) {
+        return Err(ProviderError::Protocol {
+            provider: D::NAME,
+            problem: "arguments arrived for a tool call other than the one open".into(),
+        });
+    }
+
+    open.streamed = true;
+    Ok(vec![Delta::ToolArgs(delta.into())])
+}
+
+/// An item the response has finished.
+///
+/// The finished call carries its whole argument text. Where fragments arrived it
+/// is what they add up to and repeating it would double the arguments; where
+/// none did (a server that narrates only the ends of things), it is the only
+/// copy there is.
+///
+/// Which of those it is can only be answered about the call in hand, so the item
+/// is checked against the open one first: the same check [`arguing`] makes, for
+/// the same reason. Taken on trust, the arguments of one call would be emitted
+/// under whichever call happens to be open and against the `streamed` flag of
+/// that other call: one tool running on another tool's arguments, and the flag
+/// deciding whether they arrive twice or not at all.
+fn finished<D: Dialect>(payload: &Value, open: &mut Open) -> Result<Vec<Delta>, ProviderError> {
+    let Some(item) = payload.get("item") else {
+        return Ok(Vec::new());
+    };
+    if text(item, "type") != Some("function_call") {
+        return Ok(Vec::new());
+    }
+
+    if text(item, "id").is_none_or(|item| item != open.item) {
+        return Err(ProviderError::Protocol {
+            provider: D::NAME,
+            problem: "a tool call finished that was not the one open".into(),
+        });
+    }
+
+    let streamed = std::mem::take(open).streamed;
+    let arguments = text(item, "arguments").filter(|arguments| !arguments.is_empty());
+
+    Ok(match arguments {
+        Some(arguments) if !streamed => vec![Delta::ToolArgs(arguments.into())],
+        _ => Vec::new(),
+    })
+}
+
+/// What a response that has stopped says, in the order somebody reads it.
+///
+/// What the request carried, then what the answer cost, then the stop, because
+/// the stop is the thing a reader is entitled to treat as the last word, and
+/// the two counts read in the order they happened. Both endings say it: tokens produced
+/// before a ceiling cut the answer short are tokens produced, and a turn that
+/// read the cost off a clean finish alone would report the truncated response
+/// as the one that cost nothing.
+fn ended<D: Dialect>(
+    payload: &Value,
+    stop: StopReason,
+    cache_write_reporting: bool,
+) -> Result<Vec<Delta>, ProviderError> {
+    Ok(D::usage(payload, cache_write_reporting)?
+        .into_iter()
+        .chain([Delta::Stopped(stop)])
+        .collect())
+}
+
+/// Normalizes the inclusive Responses usage object once at the wire boundary.
+///
+/// # Errors
+///
+/// [`ProviderError::Protocol`] where the counts contradict each other.
+pub(crate) fn usage<D: Dialect>(
+    payload: &Value,
+    cache_write_reporting: bool,
+) -> Result<Option<Delta>, ProviderError> {
+    let Some(counts) = Counts::of(payload) else {
+        return Ok(None);
+    };
+    counts.normalized::<D>(cache_write_reporting).map(Some)
+}
+
+/// The counts a response's `usage` holds, as numbers, before any of them is
+/// checked against another.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Counts {
+    /// `input_tokens`: the whole of what the request carried.
+    pub(crate) input: Option<u64>,
+    /// `input_tokens_details.cached_tokens`: the part of it read from the cache.
+    pub(crate) cache_read: Option<u64>,
+    /// `input_tokens_details.cache_write_tokens`: the part written to it.
+    pub(crate) cache_write: Option<u64>,
+    /// `output_tokens`.
+    pub(crate) output: Option<u64>,
+    /// `output_tokens_details.reasoning_tokens`.
+    pub(crate) reasoning: Option<u64>,
+    /// `total_tokens`, as reported.
+    pub(crate) total: Option<u64>,
+}
+
+impl Counts {
+    /// The counts under the `usage` of the response an event carries, or
+    /// nothing where it carries none.
+    pub(crate) fn of(payload: &Value) -> Option<Self> {
+        let usage = payload
+            .get("response")
+            .and_then(|response| response.get("usage"))?;
+        let input_details = usage.get("input_tokens_details");
+        Some(Self {
+            input: number(usage, "input_tokens"),
+            cache_read: input_details.and_then(|details| number(details, "cached_tokens")),
+            cache_write: input_details.and_then(|details| number(details, "cache_write_tokens")),
+            output: number(usage, "output_tokens"),
+            reasoning: usage
+                .get("output_tokens_details")
+                .and_then(|details| number(details, "reasoning_tokens")),
+            total: number(usage, "total_tokens"),
+        })
+    }
+
+    /// The counts as one usage report, with reasoning counted inside the
+    /// output and the total as the input and the output together.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Protocol`] where they do not agree.
+    pub(crate) fn normalized<D: Dialect>(
+        self,
+        cache_write_reporting: bool,
+    ) -> Result<Delta, ProviderError> {
+        let mut details = Vec::new();
+        detail::<D>(&mut details, "cached_tokens", self.cache_read)?;
+        detail::<D>(&mut details, "cache_write_tokens", self.cache_write)?;
+        detail::<D>(&mut details, "reasoning_tokens", self.reasoning)?;
+
+        let input = if cache_write_reporting || self.cache_write.is_some() {
+            InputTokenUsage::inclusive_read_write(self.input, self.cache_read, self.cache_write)
+        } else {
+            InputTokenUsage::inclusive_read(self.input, self.cache_read)
+        }
+        .map_err(usage_problem::<D>)?;
+        let normalized =
+            ProviderUsage::new(input, self.output, self.reasoning, self.total, &details)
+                .map_err(usage_problem::<D>)?;
+        Ok(Delta::Usage(normalized))
+    }
+}
+
+fn number(value: &Value, field: &str) -> Option<u64> {
+    value.get(field).and_then(Value::as_u64)
+}
+
+fn detail<D: Dialect>(
+    details: &mut Vec<ProviderNumericDetail>,
+    label: &'static str,
+    value: Option<u64>,
+) -> Result<(), ProviderError> {
+    if let Some(value) = value {
+        details.push(ProviderNumericDetail::new(label, value).map_err(usage_problem::<D>)?);
+    }
+    Ok(())
+}
+
+fn usage_problem<D: Dialect>(problem: UsageError) -> ProviderError {
+    ProviderError::Protocol {
+        provider: D::NAME,
+        problem: format!("invalid usage accounting: {problem}").into(),
+    }
+}
+
+/// Why a response that finished finished.
+///
+/// There is no field for it: a response that wants tools and a response that
+/// has answered both complete, and what tells them apart is whether a call was
+/// asked for along the way.
+///
+/// Remembered from the items rather than read back off the finished response,
+/// because only one of those two is always there. A published API may repeat
+/// the whole output list on the event that completes it; another service
+/// sends that list empty, having already narrated every item in it.
+/// Read from the list, every tool call such a service makes ends as a clean
+/// finish: the call is streamed, the turn is told it is over, the tool never
+/// runs, and what the user sees is a turn that drew nothing at all.
+/// Remembered, the stop reason agrees with what was delivered, which is the
+/// thing it has to agree with.
+fn stop(called: bool) -> StopReason {
+    if called {
+        StopReason::WantsTools
+    } else {
+        StopReason::Yielded
+    }
+}
+
+/// Why a response that did not finish stopped.
+///
+/// Neither of these is a finish. An answer cut off by a ceiling or withheld by a
+/// filter reads as a complete answer unless the turn says otherwise, and that is
+/// the one failure the user cannot see for themselves.
+pub(crate) fn cut(payload: &Value) -> StopReason {
+    let reason = payload
+        .get("response")
+        .and_then(|response| response.get("incomplete_details"))
+        .and_then(|details| text(details, "reason"));
+
+    match reason {
+        Some("content_filter") => StopReason::Filtered,
+        // `max_output_tokens`, and any reason this build has not heard of.
+        // Falling through to a ceiling rather than to a finish is the whole
+        // point: the response has already said it is incomplete, and the only
+        // question left is which way to say so.
+        _ => StopReason::OutOfTokens,
+    }
+}
+
+/// A response the provider gave up on part-way through.
+///
+/// `error` is a field that can be present and null (a vendor spelling "no
+/// error" that way rather than by leaving it out), so null is absent here. The
+/// alternative is reading a code and a message off nothing, finding neither,
+/// and reporting that the provider said nothing about a response that had said
+/// its status and why it stopped.
+fn failed<D: Dialect>(payload: &Value) -> ProviderError {
+    let response = payload.get("response");
+    let error = response
+        .and_then(|response| response.get("error"))
+        .filter(|error| !error.is_null());
+
+    if let Some(error) = error {
+        return upstream::<D>(error);
+    }
+
+    // Nothing under `error`, so what is left is what the response says about
+    // itself: why it is incomplete, and failing that its own status as the kind.
+    ProviderError::Upstream {
+        provider: D::NAME,
+        kind: response
+            .and_then(|response| text(response, "status"))
+            .unwrap_or("error")
+            .into(),
+        message: response
+            .and_then(|response| response.get("incomplete_details"))
+            .and_then(|details| text(details, "reason"))
+            .unwrap_or(SILENT)
+            .into(),
+    }
+}
+
+/// A failure the provider reported mid-response.
+fn upstream<D: Dialect>(error: &Value) -> ProviderError {
+    ProviderError::Upstream {
+        provider: D::NAME,
+        kind: text(error, "code")
+            .or_else(|| text(error, "type"))
+            .unwrap_or("error")
+            .into(),
+        message: text(error, "message").unwrap_or(SILENT).into(),
+    }
+}
+
+/// One string field.
+fn text<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
+    value.get(field).and_then(Value::as_str)
+}
+
+/// The payload as JSON.
+fn parse<D: Dialect>(data: &str) -> Result<Value, ProviderError> {
+    serde_json::from_str(data).map_err(|problem| ProviderError::Protocol {
+        provider: D::NAME,
+        // The payload itself is not carried: it is up to a whole event long and
+        // this message ends up in front of a user.
+        problem: format!("an event was not JSON: {problem}").into(),
+    })
+}

@@ -47,8 +47,11 @@ pub(crate) enum SseError {
 }
 
 /// One dispatched event.
+///
+/// Public in name only, for a dialect of a shared wire to be handed one; the
+/// module that holds it is the crate's own.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct SseEvent {
+pub struct SseEvent {
     /// What the peer called it. Empty when it sent only data.
     pub(crate) name: String,
     /// The payload, with multiple `data:` lines joined by newlines.

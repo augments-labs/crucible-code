@@ -392,21 +392,39 @@ elif [[ "$built" != "$decided" ]]; then
     failed=1
 fi
 
+# A vendor on a shared wire supplies a dialect; the wire itself, and the tests
+# that hold it, are every vendor's. A vendor's name there would be one vendor's
+# case written into all of them, so it belongs in that vendor's dialect instead.
+# Called with the wire's name, the names that may not appear, and the files.
+wire_names_no_vendor() {
+    local wire=$1 vendors=$2 shared named
+    shift 2
+    shared=$(git ls-files "$@")
+    if [[ -z "$shared" ]]; then
+        printf '    FAIL the shared %s module was not found; this check measured nothing\n' "$wire"
+        failed=1
+    elif named=$(printf '%s\n' "$shared" | xargs grep -n -i -E "$vendors"); then
+        printf '%s\n' "$named" | sed 's/^/    /'
+        printf '    FAIL the shared %s wire names a vendor; move it into the dialect\n' "$wire"
+        failed=1
+    fi
+}
+
 section "the shared Chat Completions wire names no vendor"
-# A vendor on this wire supplies a dialect; the wire itself, and the tests that
-# hold it, are every vendor's. A vendor's name here would be one vendor's case
-# written into all of them, so it belongs in that vendor's dialect instead.
-shared=$(git ls-files 'crates/crucible-provider/src/completions.rs' \
-    'crates/crucible-provider/src/completions/*')
-if [[ -z "$shared" ]]; then
-    printf '    FAIL the shared Chat Completions module was not found; this check measured nothing\n'
-    failed=1
-elif named=$(printf '%s\n' "$shared" | xargs grep -n -i -E \
-    'moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax'); then
-    printf '%s\n' "$named" | sed 's/^/    /'
-    printf '    FAIL the shared Chat Completions wire names a vendor; move it into the dialect\n'
-    failed=1
-fi
+wire_names_no_vendor 'Chat Completions' \
+    'moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax|\bmeta\b|muse|xai|grok' \
+    'crates/crucible-provider/src/completions.rs' \
+    'crates/crucible-provider/src/completions/*'
+
+section "the shared Responses wire names no vendor"
+# Its vendors, their products, and the one model whose turns go back as the
+# items it answered with. `meta` is matched only as a word of its own: inside
+# one it is `metadata`, which the cache code on this wire says on purpose, and
+# a check that failed on that would be one people learn to read past.
+wire_names_no_vendor 'Responses' \
+    'openai|chatgpt|codex|astra|\bmeta\b|muse|xai|grok|moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax' \
+    'crates/crucible-provider/src/responses.rs' \
+    'crates/crucible-provider/src/responses/*'
 
 section "accepted screens"
 # The whole-screen suite proves a capture matches its accepted picture. It
