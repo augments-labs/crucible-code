@@ -39,7 +39,7 @@ use crucible_types::{
 use serde_json::Value;
 
 use crate::endpoint::Endpoint;
-use crate::refusal::refused_worded;
+use crate::refusal::{Own, refused_worded};
 use crate::stream::Response;
 use crate::transport::Transport;
 
@@ -134,6 +134,15 @@ pub trait Dialect: Send + Sync + 'static {
         let _ = (status, body, endpoint);
         None
     }
+
+    /// The codes the vendor refuses a request too large for the model's window
+    /// with, beyond the ones every vendor's refusals are read for: a refusal
+    /// with one of them is [`ProviderError::WindowExceeded`], which the session
+    /// is compacted for and the question asked again. Matched against the
+    /// code under `error` or at the top level, as text or as a whole number by
+    /// its decimal spelling, never against the sentence beside it. None, by
+    /// default.
+    const OUTGREW: &'static [&'static str] = &[];
 
     /// Why the model stopped, for a reason the vendor has words of its own for.
     /// `None` leaves it to the reasons every vendor on this wire shares.
@@ -359,7 +368,10 @@ impl<D: Dialect> Provider for Chat<D> {
                     response,
                     &redactions,
                     cancel,
-                    |status, body| D::refused(status, body, &self.endpoint),
+                    Own {
+                        outgrew: || D::OUTGREW,
+                        worded: |status, body: &str| D::refused(status, body, &self.endpoint),
+                    },
                 )
                 .await);
             }

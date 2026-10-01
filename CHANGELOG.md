@@ -27,6 +27,11 @@ change in any release with no deprecation period.
   queued prompts and wrote them into the session before refusing them. Each now
   gets the warning a session with no model gives and takes no turn, and a line
   queued with no model does the same.
+- **A Z.ai request too long for the model makes room and asks again.** Z.ai's
+  "Prompt too long" refusal now compacts the session mid-turn and the turn
+  carries on, where it used to end the turn. Meta's refusal of an over-long
+  request carries no code and MiniMax's `1039` "Token limit exceeded" cannot be
+  told apart from a rate limit, so both still end the turn.
 
 ## [0.44.0] - 2026-10-01
 
