@@ -1058,7 +1058,7 @@ pub fn settle(
 /// fails every call teaches the model to keep trying it.
 ///
 /// Built at the start and again at each switch of model or provider, and held
-/// where the two tools read it at each call by [`crate::following::Following`].
+/// where the two tools read it at each call by `Following` (in `following.rs`).
 ///
 /// Nothing here fails the start. A source that cannot be built is a session
 /// without web tools, not a session that refuses to open — the user asked for a
