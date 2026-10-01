@@ -285,7 +285,8 @@ struct Left {
     since: Instant,
     /// Runner finalization has not yet bound the durable result receipt.
     accepting: bool,
-    /// The last stop asked for it was refused. Cleared when another is asked.
+    /// The last stop asked for it was refused. Cleared when another is asked,
+    /// and when its owner files its ending: an ended command is not running.
     refused: bool,
     /// What its owner found once it ended, for [`Background::reap`] to report.
     /// `None` until it has.
@@ -1159,6 +1160,8 @@ impl Owner {
         let err = err.join().is_err();
         self.with_entry(|left| {
             let printed = left.printed(out || err, complete);
+            // A stop refused before it ended no longer describes it.
+            left.refused = false;
             left.done = Some(Ended {
                 tool: super::NAME,
                 number: left.number,

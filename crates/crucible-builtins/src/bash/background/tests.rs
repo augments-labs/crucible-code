@@ -464,6 +464,29 @@ fn a_stop_refused_while_its_command_is_still_dying_is_finished_by_asking_again()
 }
 
 #[test]
+fn a_command_that_ended_after_a_refused_stop_is_not_marked_refused() {
+    // `Standing::refused` says the command is still running. One whose owner
+    // has filed its ending is not, whatever its last stop said.
+    let runtime = runtime();
+    let left = registry(&runtime);
+    let observed = Arc::new(Observed::default());
+    let number = keep(&left, &observed, false).number();
+    let dying = dying_after_a_refused_stop(&observed);
+
+    left.stop(number).expect("the stop was asked for");
+    dying.join().expect("the command ended");
+    waiting_until("its ending filed", || filed(&left, number));
+
+    assert!(
+        !refused(&left, number),
+        "an ended command is still marked refused"
+    );
+    assert_eq!(reaped(&left).number, number);
+    drop(left);
+    runtime.shutdown_timeout(Duration::from_secs(5));
+}
+
+#[test]
 fn reaping_waits_for_cleanup_before_reporting_exactly_one_completion() {
     let runtime = runtime();
     let left = registry(&runtime);
@@ -1581,6 +1604,17 @@ fn refused(left: &Background, number: usize) -> bool {
     left.running()
         .iter()
         .any(|standing| standing.number == number && standing.refused)
+}
+
+/// Whether the owner of the command running as `number` has filed its ending
+/// for [`Background::reap`] to take.
+fn filed(left: &Background, number: usize) -> bool {
+    left.standing.lock().is_ok_and(|standing| {
+        standing
+            .left
+            .iter()
+            .any(|entry| entry.number == number && entry.done.is_some())
+    })
 }
 
 /// Whether a stop asked for the command running as `number` is still waiting

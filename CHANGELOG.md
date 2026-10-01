@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A background command that ended after a refused stop no longer reads as
+  refused.** When a stop could not be confirmed in time, as on a busy Mac,
+  the command kept its refused mark after crucible had found it ended. Only a
+  command that is still running is marked refused now.
+
 ## [0.44.0] - 2026-10-01
 
 **Seven more vendors, the newest OpenAI and Anthropic models, and `/fast` for
