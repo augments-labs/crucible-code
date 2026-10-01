@@ -36,7 +36,9 @@ use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
 use crate::cli::converse::warning::{self, Chosen};
 use std::collections::BTreeMap;
 
-use crucible_app::providers::{InUse, Model, NO_MODEL_CHOSEN, Served, offered};
+use crucible_app::providers::{
+    InUse, Model, NO_MODEL_CHOSEN, Providers, Served, StoredCredentials, offered,
+};
 use crucible_app::startup::served;
 
 use super::{Asked, Terms, about, say};
@@ -136,22 +138,23 @@ fn narrowed(all: Vec<Selected>, using: &BTreeMap<&str, InUse>) -> Vec<Selected> 
 
 /// What heads the pane narrowed to `provider`: the provider and the words of
 /// the credential its models are served by, or nothing where it has none.
-fn headed(provider: &str, using: &BTreeMap<&str, InUse>) -> Option<String> {
+fn headed(provider: &str, using: &BTreeMap<&str, InUse>, glyphs: Glyphs) -> Option<String> {
+    let dot = glyphs.dot();
     using
         .get(provider)
-        .map(|in_use| format!("{provider} · {}", in_use.words))
+        .map(|in_use| format!("{provider} {dot} {}", in_use.words.replace('·', dot)))
 }
 
 /// The quiet row under the pane narrowed to `provider`: how many more of its
 /// models another credential would serve, and where it is given.
-fn closing(provider: Served, using: &BTreeMap<&str, InUse>) -> Option<String> {
+fn closing(provider: Served, using: &BTreeMap<&str, InUse>, glyphs: Glyphs) -> Option<String> {
     let serves = using.get(provider.name)?.serves?;
     let more = provider
         .models
         .iter()
         .filter(|model| !serves.contains(&model.name))
         .count();
-    (more > 0).then(|| format!("{more} more with an API key · /login"))
+    (more > 0).then(|| format!("{more} more with an API key {} /login", glyphs.dot()))
 }
 
 /// What the strip says where the marked model serves no rung.
@@ -441,17 +444,7 @@ fn stood<T: Terminal>(
     // sign-in serves decides the fast form a row's model has, and which of
     // its models each provider's credential in use serves decides its list.
     let stored = terms.logins.read();
-    let auth = crucible_app::startup::ProviderAuth {
-        settings: &terms.settings,
-        from: &*terms.environment,
-        stored: &stored,
-        subscriptions: &terms.subscriptions,
-    };
-    let using: BTreeMap<&str, InUse> = offered(&providers)
-        .filter_map(|provider| {
-            crucible_app::providers::in_use(provider, auth).map(|one| (provider.name, one))
-        })
-        .collect();
+    let using = in_use(terms, &providers, &stored);
     let all = narrowed(narrowing::every(&providers), &using);
     let routes = terms.consent.routes();
 
@@ -598,10 +591,10 @@ fn stood<T: Terminal>(
                 })
                 .collect();
 
-            let heading = only.and_then(|name| headed(name, &using));
+            let heading = only.and_then(|name| headed(name, &using, glyphs));
             let closing = only
                 .and_then(|name| served(&providers, name).ok())
-                .and_then(|provider| closing(provider, &using));
+                .and_then(|provider| closing(provider, &using, glyphs));
             let shelf = Shelf {
                 title: "Model",
                 now: &now,
@@ -839,21 +832,17 @@ fn listed<T: Terminal>(
     }
 
     let columns = renderer.columns();
-    let rows: Vec<Row> = offered(&terms.providers.snapshot())
-        .flat_map(|provider| provider.models.iter().map(move |model| (provider, model)))
-        .map(|(provider, model)| {
-            let named = if model.shown == model.name {
-                format!("/model {}/{}", provider.name, model.name)
-            } else {
-                about(
-                    &format!("/model {}/{}", provider.name, model.name),
-                    model.shown,
-                    terms.style().glyphs(),
-                )
-            };
-            Row::new().then(Slot::Quiet, clip(&named, columns))
-        })
-        .collect();
+    let providers = terms.providers.snapshot();
+    let stored = terms.logins.read();
+    let rows: Vec<Row> = lines(
+        narrowing::every(&providers),
+        &in_use(terms, &providers, &stored),
+        terms.consent.routes(),
+        terms.style().glyphs(),
+    )
+    .iter()
+    .map(|named| Row::new().then(Slot::Quiet, clip(named, columns)))
+    .collect();
 
     // A row at a time, so each passes through the window on its way up: the
     // list is taller than a window can be, and laid down at once only the
@@ -862,6 +851,55 @@ fn listed<T: Terminal>(
         renderer.present(&[row])?;
     }
     Ok(())
+}
+
+/// The line that asks for each model of `all` the credential in use serves,
+/// for a window with no shelf: the same models the shelf lists, and `trains`
+/// after one that is itself warned, as its row would say.
+fn lines(
+    all: Vec<Selected>,
+    using: &BTreeMap<&str, InUse>,
+    routes: &crucible_app::content_use::Routes,
+    glyphs: Glyphs,
+) -> Vec<String> {
+    narrowed(all, using)
+        .iter()
+        .map(|one| {
+            let (provider, model) = (one.provider, one.model);
+            let asks = format!("/model {}/{}", provider.name, model.name);
+            let named = if model.shown == model.name {
+                asks
+            } else {
+                about(&asks, model.shown, glyphs)
+            };
+            let route = crucible_app::content_use::model_route(provider.name, model.name);
+            if routes.warned(&route).is_some() {
+                about(&named, TRAINS, glyphs)
+            } else {
+                named
+            }
+        })
+        .collect()
+}
+
+/// The credential each offered provider is sent with, read off `stored`
+/// and the environment as a run would read it.
+fn in_use<'a>(
+    terms: &Terms,
+    providers: &'a Providers,
+    stored: &StoredCredentials,
+) -> BTreeMap<&'a str, InUse> {
+    let auth = crucible_app::startup::ProviderAuth {
+        settings: &terms.settings,
+        from: &*terms.environment,
+        stored,
+        subscriptions: &terms.subscriptions,
+    };
+    offered(providers)
+        .filter_map(|provider| {
+            crucible_app::providers::in_use(provider, auth).map(|one| (provider.name, one))
+        })
+        .collect()
 }
 
 /// The model in force as the shelf's title row says it, with the rung in

@@ -659,19 +659,36 @@ fn one_provider_marked_is_headed_by_its_credential_and_closed_by_what_a_key_adds
     let keyed = using(&[("openai", "API key", None)]);
 
     assert_eq!(
-        super::headed("openai", &signed_in).as_deref(),
+        super::headed("openai", &signed_in, Glyphs::Unicode).as_deref(),
         Some("openai · OpenAI sign-in")
     );
     assert_eq!(
-        super::closing(openai, &signed_in).as_deref(),
+        super::closing(openai, &signed_in, Glyphs::Unicode).as_deref(),
         Some("1 more with an API key · /login")
     );
     assert_eq!(
-        super::headed("openai", &keyed).as_deref(),
+        super::headed("openai", &keyed, Glyphs::Unicode).as_deref(),
         Some("openai · API key")
     );
-    assert_eq!(super::closing(openai, &keyed), None);
-    assert_eq!(super::headed("openai", &using(&[])), None);
+    assert_eq!(super::closing(openai, &keyed, Glyphs::Unicode), None);
+    assert_eq!(super::headed("openai", &using(&[]), Glyphs::Unicode), None);
+
+    // A font without the dot has the glyph set's in its place, in the
+    // credential's own words too.
+    let plan = using(&[(
+        "qwen",
+        "Qwen Coding Plan · aliyun.com key",
+        Some(&["qwen3.7-plus"]),
+    )]);
+    let qwen = crucible_app::startup::served(&providers, "qwen").expect("qwen");
+    assert_eq!(
+        super::headed("qwen", &plan, Glyphs::Ascii).as_deref(),
+        Some("qwen - Qwen Coding Plan - aliyun.com key")
+    );
+    assert_eq!(
+        super::closing(qwen, &plan, Glyphs::Ascii).as_deref(),
+        Some("3 more with an API key - /login")
+    );
 }
 
 #[test]
@@ -688,5 +705,36 @@ fn a_model_that_is_itself_warned_says_trains_before_anything_else() {
     assert_eq!(
         super::noted(false, &[], crucible_models::FastForm::Field(cost)),
         "no rung"
+    );
+}
+
+#[test]
+fn a_window_with_no_shelf_lists_what_the_credential_serves_and_says_trains() {
+    let providers = catalogue();
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
+    let routes = crucible_app::content_use::Routes::production();
+
+    let lines = super::lines(
+        super::narrowing::every(&providers),
+        &signed_in,
+        &routes,
+        Glyphs::Unicode,
+    );
+
+    assert!(
+        !lines.contains(&"/model openai/gpt-5.5".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model openai/gpt-6.1-sol".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model meta/muse-spark-1.3-contributor — trains".to_owned()),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(&"/model meta/muse-spark-1.3".to_owned()),
+        "{lines:?}"
     );
 }
