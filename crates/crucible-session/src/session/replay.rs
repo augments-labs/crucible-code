@@ -85,10 +85,15 @@ mod record_tests {
 
 /// Every session log in `directory`, oldest first.
 ///
-/// Session identifiers sort by start time as text, so this is time order and
-/// nothing has to be opened to put it in that order. Anything else in the
-/// directory is left out here rather than failing later: the name is the only
-/// thing that says a file is a log at all.
+/// Ordered by the start time each name carries, read by
+/// [`SessionId::started`], so nothing has to be opened to put them in order.
+/// Not by the name as text: a name older builds wrote sorts after every uuid
+/// name whatever its date, and ordered that way `--continue` would keep taking
+/// the newest old-build session over every session started since. Names that
+/// start in the same millisecond keep their text order, which for uuids is the
+/// order they were minted in. Anything else in the directory is left out here
+/// rather than failing later: the name is the only thing that says a file is a
+/// log at all.
 ///
 /// # Errors
 ///
@@ -103,17 +108,20 @@ pub(super) fn logs(directory: &Path) -> Result<Vec<PathBuf>, SessionError> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let named = path.file_stem().and_then(|stem| stem.to_str());
+        let named = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| SessionId::from_str(stem).ok());
 
         if path.extension().is_some_and(|end| end == SUFFIX)
-            && named.is_some_and(|stem| SessionId::from_str(stem).is_ok())
+            && let Some(id) = named
         {
-            logs.push(path);
+            logs.push((id.started(), id, path));
         }
     }
 
     logs.sort_unstable();
-    Ok(logs)
+    Ok(logs.into_iter().map(|(_, _, path)| path).collect())
 }
 
 /// The newest log recorded for `workspace`.

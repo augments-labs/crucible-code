@@ -104,6 +104,11 @@ change in any release with no deprecation period.
   --model foo` with no provider set up ended 0 after recording every piped
   prompt; it now says there is no model to ask and exits non-zero, as a run
   with no model does.
+- **`--continue`, the welcome list and `/resume` follow start time across old
+  and new session names.** Sessions named by builds before 0.25 sorted after
+  every newer one, so `--continue` picked up the newest old session and the
+  lists showed old sessions first or left newer ones out. An index an earlier
+  build kept is repaired once, and rolling back to 0.43.3 stays safe.
 
 ### Internal
 
