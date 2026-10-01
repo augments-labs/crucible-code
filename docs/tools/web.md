@@ -69,8 +69,10 @@ answered them. They keep the rule those builds applied: every search result is c
 when the session switches away from Google, to another provider or to none, and none
 is cleared when such a session is resumed or picked up under another provider.
 
-Meta and xAI serve search alone on the route crucible speaks to them. Meta
-has no fetch tool, and xAI opens pages only inside its search, with no
+Meta and xAI serve search alone on the route crucible speaks to them, and
+their search keeps the model the run started with: a run started on one of
+Meta's contributor models searches on it once its question has its yes, and
+on no other. Meta has no fetch tool, and xAI opens pages only inside its search, with no
 documented way to ask it to open one address, so neither offers `web_fetch`.
 
 The other five vendors new in this release get neither tool. DeepSeek and

@@ -187,19 +187,19 @@ API key; nothing is signed in to. With no `baseUrl` set, a row's requests go
 to its address followed by `/chat/completions`, or by `/responses` for Meta and
 xAI.
 
-| Row | List | Its keys start with | Address | Models the vendor serves there |
+| Row | List | Its keys | Address | Models the vendor serves there |
 | --- | --- | --- | --- | --- |
-| MiniMax · minimax.io | subscription | `sk-cp-` | `https://api.minimax.io/v1` | both |
-| MiniMax · minimaxi.com | subscription | `sk-cp-` | `https://api.minimax.cn/v1` | both |
-| Qwen Coding Plan · alibabacloud.com | subscription | `sk-sp-` | `https://coding-intl.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
-| Qwen Coding Plan · aliyun.com | subscription | `sk-sp-` | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
-| Qwen Token Plan · alibabacloud.com | subscription | `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
-| Qwen Token Plan · aliyun.com | subscription | `sk-sp-` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
+| MiniMax · minimax.io | subscription | start `sk-cp-` | `https://api.minimax.io/v1` | both |
+| MiniMax · minimaxi.com | subscription | start `sk-cp-` | `https://api.minimax.cn/v1` | both |
+| Qwen Coding Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://coding-intl.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
+| Qwen Coding Plan · aliyun.com | subscription | start `sk-sp-` | `https://coding.dashscope.aliyuncs.com/v1` | `qwen3.7-plus`, `qwen3.6-plus` |
+| Qwen Token Plan · alibabacloud.com | subscription | start `sk-sp-` | `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
+| Qwen Token Plan · aliyun.com | subscription | start `sk-sp-` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
 | DeepSeek | API key | | `https://api.deepseek.com` | both |
 | Meta | API key | | `https://api.meta.ai/v1` | all four |
-| MiMo | API key | not `tp-` or `ttp-` | `https://api.xiaomimimo.com/v1` | both |
-| MiniMax · minimax.io | API key | `sk-api-` | `https://api.minimax.io/v1` | both |
-| MiniMax · minimaxi.com | API key | `sk-api-` | `https://api.minimax.cn/v1` | both |
+| MiMo | API key | never start `tp-` or `ttp-` | `https://api.xiaomimimo.com/v1` | both |
+| MiniMax · minimax.io | API key | start `sk-api-` | `https://api.minimax.io/v1` | both |
+| MiniMax · minimaxi.com | API key | start `sk-api-` | `https://api.minimax.cn/v1` | both |
 | Qwen · alibabacloud.com | API key | | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | all four |
 | Qwen · aliyun.com | API key | | `https://dashscope.aliyuncs.com/compatible-mode/v1` | all four |
 | xAI | API key | | `https://api.x.ai/v1` | both |

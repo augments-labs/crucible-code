@@ -754,7 +754,7 @@ fn a_heading_names_the_models_pane_and_without_one_it_reads_models() {
     let providers = serving();
     let models = stocked();
     let headed = Shelf {
-        heading: Some("openai · OpenAI sign-in"),
+        heading: Some("openai · ChatGPT sign-in"),
         ..shelf(&providers, &models)
     };
     let plain = shelf(&providers, &models);
@@ -768,7 +768,7 @@ fn a_heading_names_the_models_pane_and_without_one_it_reads_models() {
             .unwrap_or_default()
     };
     assert!(
-        top_row(&headed).contains("openai · OpenAI sign-in"),
+        top_row(&headed).contains("openai · ChatGPT sign-in"),
         "{}",
         top_row(&headed)
     );

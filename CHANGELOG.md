@@ -53,7 +53,6 @@ change in any release with no deprecation period.
   belongs to another of the vendor's rows, such as a MiniMax Token Plan key on
   its pay-as-you-go row, is refused in the key box before it is stored or sent,
   and the box stays open for the right one.
-
 - **`/login` opens on two ways to pay.** It asks whether usage comes from your
   account's plan or your own API key, lists the rows of each with `signed in`
   on the one you hold, and says what a choice replaces before it replaces

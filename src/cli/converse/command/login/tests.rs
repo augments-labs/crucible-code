@@ -1256,3 +1256,30 @@ fn the_new_vendors_rows_are_narrowed_and_replaced_by_their_own_words() {
         Some("the API key held for Z.ai · z.ai")
     );
 }
+
+#[test]
+fn a_refused_key_is_answered_by_its_mark_and_never_its_text() {
+    use crucible_app::providers::Misfit;
+    use crucible_tui::Glyphs;
+
+    for (misfit, said) in [
+        (
+            Misfit::Unmarked("sk-api-"),
+            "! not a key for this row; its keys start sk-api-",
+        ),
+        (
+            Misfit::Refused("tp-"),
+            "! not a key for this row; keys starting tp- are another kind",
+        ),
+        (
+            Misfit::Shared("sk-sp-"),
+            "! keys starting sk-sp- are for another row; choose it by its plan and site",
+        ),
+        (
+            Misfit::Another("MiniMax · minimax.io"),
+            "! that is a key for MiniMax - minimax.io; choose that row",
+        ),
+    ] {
+        assert_eq!(super::unfitting(&misfit, Glyphs::Ascii), said);
+    }
+}

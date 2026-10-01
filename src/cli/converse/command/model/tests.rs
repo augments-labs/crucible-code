@@ -634,7 +634,7 @@ const SIGNED_IN: &[&str] = &[
 fn a_sign_in_lists_what_it_serves_and_a_key_lists_every_model() {
     let providers = catalogue();
     let all = super::narrowing::every(&providers);
-    let signed_in = using(&[("openai", "OpenAI sign-in", Some(SIGNED_IN))]);
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
 
     let listed: Vec<(&str, &str)> = super::narrowed(all.clone(), &signed_in)
         .iter()
@@ -655,12 +655,12 @@ fn a_sign_in_lists_what_it_serves_and_a_key_lists_every_model() {
 fn one_provider_marked_is_headed_by_its_credential_and_closed_by_what_a_key_adds() {
     let providers = catalogue();
     let openai = crucible_app::startup::served(&providers, "openai").expect("openai");
-    let signed_in = using(&[("openai", "OpenAI sign-in", Some(SIGNED_IN))]);
+    let signed_in = using(&[("openai", "ChatGPT sign-in", Some(SIGNED_IN))]);
     let keyed = using(&[("openai", "API key", None)]);
 
     assert_eq!(
         super::headed("openai", &signed_in, Glyphs::Unicode).as_deref(),
-        Some("openai · OpenAI sign-in")
+        Some("openai · ChatGPT sign-in")
     );
     assert_eq!(
         super::closing(openai, &signed_in, Glyphs::Unicode).as_deref(),

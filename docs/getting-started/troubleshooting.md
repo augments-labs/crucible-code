@@ -170,10 +170,11 @@ from `/login` or `/model`, where nothing was chosen.
 
 ### `<provider>: nothing was sent: <route> waits for an answer`
 
-A request was about to leave for a host of a route whose vendor uses what is
-sent, before that route had its yes. It was held, and nothing reached the host.
-Send a message on the route in a terminal to be asked, or see [content
-use](../providers/content-use.md).
+A request was about to leave on a route whose vendor uses what is sent, before
+that route had its yes. It was held, and nothing was sent. Send a message on
+the route in a terminal to be asked: for a route named `model:<provider>/<model>`,
+choose that model with `/model` first, since a web search keeps the model the
+run started with. Or see [content use](../providers/content-use.md).
 
 ### `crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>`
 

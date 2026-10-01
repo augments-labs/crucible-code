@@ -3314,8 +3314,8 @@ fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
 // The models pane under a credential that serves fewer than its provider
 // offers, and the note a warned model carries.
 
-/// `/model` over a home holding a `ChatGPT` sign-in, `columns` wide, with the
-/// mark walked onto `OpenAI` in the providers pane.
+/// `/model` over a home holding a `ChatGPT` sign-in, `columns` wide, narrowed
+/// to `OpenAI` in the providers pane and taken back in the models pane.
 fn signed_in_models(columns: u16) -> String {
     let case = format!("model-signed-in-{columns}");
     let document = fast::document("openai", "gpt-6-sol", false);
