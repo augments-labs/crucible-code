@@ -398,3 +398,38 @@ fn compact_with_no_model_to_ask_is_warned_of_as_a_prompt_is() {
     assert!(written.contains("No models available"), "{written}");
     assert!(!written.contains("worth replacing"), "{written}");
 }
+
+#[test]
+fn piped_compact_with_no_model_to_ask_fails_as_a_piped_prompt_does() {
+    // Down a pipe nobody can type `/model` after the warning, so a request for
+    // room with nobody to ask ends the run the way a prompt does, not `Ok`.
+    let sample = Sample::new("unserved-compact-piped");
+    let session =
+        Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
+    let conversation = standing_in(&session, "foo");
+
+    let mut renderer = Renderer::new(Recording::redirected(80, 24));
+    let mut input = Cursor::new(b"/compact\n".to_vec());
+
+    let ended = converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    );
+
+    let said = recorded(&sample, session);
+    assert!(said.is_empty(), "something was recorded: {said:?}");
+    let problem = ended.expect_err("a run that answered nothing to fail");
+    assert!(
+        matches!(
+            problem,
+            Fatal::Unanswerable(crucible_app::providers::NOTHING_TO_ASK)
+        ),
+        "{problem:?}"
+    );
+}

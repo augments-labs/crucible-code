@@ -56,8 +56,9 @@ pub struct Conversation {
     pub(crate) serving: Option<&'static str>,
     /// Whether some provider could be reached when nobody was chosen: set
     /// where the provider standing in for nobody is put in place, from the
-    /// same credentials the sentence it refuses with was chosen from, and read
-    /// only while [`Self::serving`] is `None`.
+    /// same credentials the sentence it refuses with was chosen from, read
+    /// again after every `/login` and `/logout` that leaves nobody chosen, and
+    /// read only while [`Self::serving`] is `None`.
     pub(crate) reachable: bool,
     /// The yes given to each route whose vendor uses what is sent, where the
     /// run holds one: a turn on such a route with no yes is asked about

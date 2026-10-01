@@ -13,6 +13,7 @@ use std::sync::mpsc;
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
+use crucible_app::switching::{LoggedIn, LoggedOut};
 use crucible_client_api::{
     Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Missing, Mode,
     ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending, PendingId, Progress, Prompt,
@@ -1186,6 +1187,66 @@ fn a_prompt_after_signing_out_says_whether_a_provider_or_a_credential_is_missing
         assert_eq!(response.outcome, Outcome::Unasked(missing), "{reachable:?}");
         assert_eq!(recorded(&tree, conversation)?, 0, "nothing was recorded");
     }
+    Ok(())
+}
+
+/// What is missing follows the store after the session signed out: the last
+/// key forgotten while nobody was being asked leaves a credential to set up,
+/// as a terminal reading the store again says.
+#[test]
+fn a_prompt_after_the_last_key_is_forgotten_says_a_credential_is_missing() -> Result<(), Failed> {
+    let tree = Tree::new("client-unasked-last-key")?;
+    let desk = Standing::stored(&tree)?;
+    desk.logins.keep("anthropic", "a-key-no-vendor-issued")?;
+    desk.logins.keep("google", "a-key-no-vendor-issued")?;
+    let mut conversation = unserved(&tree, Script::named("anthropic"), "m", Some("anthropic"))?;
+    let runtime = super::runtime()?;
+
+    let first = runtime.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+    assert!(matches!(first, LoggedOut::SignedOut { .. }), "{first:?}");
+    assert_eq!(
+        conversation.missing(),
+        Some(crucible_app::providers::Missing::Provider)
+    );
+    let second = runtime.block_on(conversation.log_out(desk.one("google")?, &desk.with()));
+    assert!(matches!(second, LoggedOut::Kept), "{second:?}");
+    let request = Wire::default().sent(prompt("hello")?)?;
+
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+
+    assert_eq!(response.outcome, Outcome::Unasked(Missing::Credential));
+    assert_eq!(recorded(&tree, conversation)?, 0, "nothing was recorded");
+    Ok(())
+}
+
+/// A key that cannot be used is still a change to the store, and what is
+/// missing is read off the store as it is now: here another crucible took the
+/// last usable key away before it was written.
+#[test]
+fn a_login_nothing_can_use_reads_again_what_is_missing() -> Result<(), Failed> {
+    let tree = Tree::new("client-unasked-unusable")?;
+    let desk = Standing::reaching(&tree, |one, stored| {
+        one.name != "openai" && stored.has_key(one.name)
+    })?;
+    desk.logins.keep("anthropic", "a-key-no-vendor-issued")?;
+    desk.logins.keep("google", "a-key-no-vendor-issued")?;
+    let mut conversation = unserved(&tree, Script::named("anthropic"), "m", Some("anthropic"))?;
+    let runtime = super::runtime()?;
+    runtime.block_on(conversation.log_out(desk.one("anthropic")?, &desk.with()));
+    assert_eq!(
+        conversation.missing(),
+        Some(crucible_app::providers::Missing::Provider)
+    );
+
+    desk.logins.forget("google")?;
+    desk.logins.keep("openai", "a-key-no-vendor-issued")?;
+    let logged = runtime.block_on(conversation.logged_in(desk.one("openai")?, &desk.with()));
+
+    assert!(matches!(logged, LoggedIn::Unusable(_)), "{logged:?}");
+    assert_eq!(
+        conversation.missing(),
+        Some(crucible_app::providers::Missing::Credential)
+    );
     Ok(())
 }
 

@@ -674,6 +674,12 @@ pub(crate) fn converse<T: Terminal>(
             match ran {
                 Ran::Again => continue,
                 Ran::Leave => break,
+                // Asked as a prompt is, before the question about a vendor
+                // a recap with nobody to ask would never reach.
+                Ran::Room(Compacting::Asked) if !answerable(&conversation) => {
+                    unanswered(&conversation, renderer, terms)?;
+                    continue;
+                }
                 Ran::Room(why) => {
                     making = Some(why);
                     continue;
@@ -818,7 +824,7 @@ fn unboxed<T: Terminal>(
 /// typed. A model named with nobody to ask it of, as `--model foo` is on a
 /// machine with nothing set up, is the same session: the provider standing in
 /// would refuse the turn, but only after the prompt was recorded as said to a
-/// model nobody asked. A typed prompt and a queued one are both asked this.
+/// model nobody asked. A typed prompt, a queued one and `/compact` are asked.
 ///
 /// The application decides it, so a client with no terminal is refused the
 /// same turns this one is.
@@ -826,7 +832,7 @@ fn answerable(conversation: &Conversation) -> bool {
     conversation.missing().is_none()
 }
 
-/// Says that a prompt has nobody to ask, where [`answerable`] said so.
+/// Says that a prompt or `/compact` has nobody to ask, where [`answerable`] said so.
 ///
 /// `/model` is what changes this answer, so it is said again here rather than
 /// only under the welcome the session opened with: by now that has scrolled
@@ -890,11 +896,8 @@ fn ran<T: Terminal>(
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
         Did::Unsent(refusal) => renderer.commit(&format!("! {refusal}"))?,
-        // Said as a prompt with nobody to ask says it, read off the
-        // credentials there are now.
-        Did::Unasked => {
-            draw::unconfigured(renderer, terms.unasked(took.conversation.serving()))?;
-        }
+        // Answered as a prompt with nobody to ask is, down a pipe too.
+        Did::Unasked => unanswered(&took.conversation, renderer, terms)?,
     }
 
     // And only the two one-line replies are a reply. A compaction that ran
@@ -1578,8 +1581,8 @@ fn sent(
                 Did::Reported
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
-            // Only `/compact` arrives here: a prompt with no model to ask is
-            // answered by [`answerable`] before any work is sent.
+            // Not reached from here: a prompt or `/compact` with no model to
+            // ask is answered by [`answerable`] before any work is sent.
             Ended::Unasked(_) => Did::Unasked,
             // Not reached from here: every route holding the send is asked
             // about on the drawing thread before the work is sent, each yes

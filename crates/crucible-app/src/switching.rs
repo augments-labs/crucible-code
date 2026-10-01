@@ -18,7 +18,7 @@
 
 use std::path::Path;
 
-use crucible_auth::{AuthError, Store};
+use crucible_auth::{AuthError, Store, StoredCredentials};
 use crucible_config::Settings;
 use crucible_models::Effort;
 use crucible_provider::Unavailable;
@@ -279,7 +279,10 @@ impl Conversation {
     pub async fn logged_in(&mut self, named: Served, with: &Switching<'_>) -> LoggedIn {
         let set = match (with.serving)(named, &with.logins.read()) {
             Ok(set) => set,
-            Err(problem) => return LoggedIn::Unusable(problem),
+            Err(problem) => {
+                self.reread(with);
+                return LoggedIn::Unusable(problem);
+            }
         };
         if self.serving.is_some_and(|serving| serving != named.name) {
             return LoggedIn::Elsewhere;
@@ -288,7 +291,10 @@ impl Conversation {
         let changed = self.serving != Some(named.name);
         let retained = match self.retire().await {
             Ok(retained) => retained,
-            Err(problem) => return LoggedIn::CacheHeld(problem),
+            Err(problem) => {
+                self.reread(with);
+                return LoggedIn::CacheHeld(problem);
+            }
         };
         self.runner.serve(set.provider);
         self.clearings_recorded().await;
@@ -328,9 +334,11 @@ impl Conversation {
         // second crucible having taken it in between leaves it gone, which is
         // what was asked for.
         if let Err(problem) = with.logins.forget(named.name) {
+            self.reread(with);
             return LoggedOut::Unforgotten { retained, problem };
         }
         if !answering {
+            self.reread(with);
             return LoggedOut::Kept;
         }
 
@@ -346,7 +354,7 @@ impl Conversation {
             };
         }
 
-        let reachable = offered(with.providers).any(|other| (with.serving)(other, &stored).is_ok());
+        let reachable = reachable(with, &stored);
         let warning = if reachable {
             NO_PROVIDER_CHOSEN
         } else {
@@ -360,6 +368,19 @@ impl Conversation {
         self.reachable = reachable;
         self.web.stop();
         LoggedOut::SignedOut { retained }
+    }
+
+    /// Reads again whether any provider could be set up from the store, where
+    /// nobody is being asked.
+    ///
+    /// Every path out of [`Self::logged_in`] and [`Self::log_out`] that leaves
+    /// nobody chosen ends here or in setting the flag from the same read, so
+    /// what [`Self::missing`] answers is the store as it is after the change,
+    /// as a terminal reading the store again would say it.
+    fn reread(&mut self, with: &Switching<'_>) {
+        if self.serving.is_none() {
+            self.reachable = reachable(with, &with.logins.read());
+        }
     }
 
     /// Builds the web sources again for `named` and the model now asked of it,
@@ -386,6 +407,11 @@ impl Conversation {
                 orphaned: result.orphaned,
             })
     }
+}
+
+/// Whether any provider offered can be set up from `stored`.
+fn reachable(with: &Switching<'_>, stored: &StoredCredentials) -> bool {
+    offered(with.providers).any(|other| (with.serving)(other, stored).is_ok())
 }
 
 /// Whether `model` on `provider` may be asked at `effort`.

@@ -1655,3 +1655,31 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
 }
+
+#[test]
+fn an_unasked_outcome_naming_nothing_it_knows_is_malformed() {
+    let response = Response {
+        correlation: Some(Correlation::new(3)),
+        outcome: Outcome::Unasked(Missing::Credential),
+    };
+    let frame: Value = serde_json::from_slice(&response.encode().unwrap()).unwrap();
+    assert_eq!(
+        frame.get("outcome"),
+        Some(&json!({"kind": "unasked", "missing": "credential"})),
+        "{frame}"
+    );
+    assert_eq!(
+        Response::decode(&framed(&frame)).map_err(Refusal::code),
+        Ok(response)
+    );
+
+    let nothing = with(
+        frame,
+        "outcome",
+        json!({"kind": "unasked", "missing": "nothing"}),
+    );
+    assert_eq!(
+        Response::decode(&framed(&nothing)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
+}
