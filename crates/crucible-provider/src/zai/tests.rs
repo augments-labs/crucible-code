@@ -179,3 +179,55 @@ fn z_ai_s_code_is_z_ai_s_alone() {
         "{answer:?}"
     );
 }
+
+/// Whether Z.ai answering `body` with a 400 is read as a request that outgrew
+/// the window.
+fn outgrows(body: &serde_json::Value) -> bool {
+    let (provider, _) = at::<ZaiChat>(Zai::ZAI, 400, &body.to_string());
+    let answer = read(&provider, asking("glm-5.3", question(), false, None));
+    match answer {
+        Err(ProviderError::WindowExceeded { provider: "zai" }) => true,
+        Err(ProviderError::Refused {
+            provider: "zai", ..
+        }) => false,
+        other => panic!("a refusal, not {other:?}"),
+    }
+}
+
+// The error page prints the code as a string under `error`; the OpenAPI
+// reference has it as an integer, at the top level with no wrapper. Each is
+// read.
+
+#[test]
+fn a_prompt_too_long_with_an_integer_code_under_error_outgrew_the_window() {
+    assert!(outgrows(
+        &json!({"error": {"code": 1261, "message": "Prompt too long"}})
+    ));
+}
+
+#[test]
+fn a_prompt_too_long_with_an_integer_code_at_the_top_level_outgrew_the_window() {
+    assert!(outgrows(
+        &json!({"code": 1261, "message": "Prompt too long"})
+    ));
+}
+
+#[test]
+fn a_prompt_too_long_with_a_string_code_at_the_top_level_outgrew_the_window() {
+    assert!(outgrows(
+        &json!({"code": "1261", "message": "Prompt too long"})
+    ));
+}
+
+#[test]
+fn another_code_in_those_shapes_is_still_only_a_refusal() {
+    for body in [
+        json!({"error": {"code": 1214, "message": "Parameter is invalid."}}),
+        json!({"code": 1214, "message": "Parameter is invalid."}),
+        // A number that is not exactly the code is not the code.
+        json!({"code": 12610, "message": "Prompt too long"}),
+        json!({"code": 1261.5, "message": "Prompt too long"}),
+    ] {
+        assert!(!outgrows(&body), "{body}");
+    }
+}

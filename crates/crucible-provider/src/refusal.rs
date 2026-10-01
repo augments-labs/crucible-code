@@ -463,17 +463,43 @@ const OUTGREW: &[&str] = &[
 /// The **code**, never the sentence. Matching prose would be reading three
 /// vendors' phrasing, in whatever language they answered in, and getting it
 /// wrong in the direction that compacts a session for a refusal about something
-/// else entirely. `own` is the vendor's codes, read beside [`OUTGREW`].
+/// else entirely.
+///
+/// [`OUTGREW`]'s words are read where every vendor that uses them puts them: as
+/// text under `error.code`. `own`, the vendor's codes, is read wherever a
+/// vendor that numbers its codes has been documented to put one: under
+/// `error` or at the top level with no wrapper, as text or as a whole number,
+/// compared by its decimal spelling.
 fn outgrew(body: &str, own: &[&str]) -> bool {
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
         return false;
     };
 
-    payload
-        .get("error")
-        .and_then(|error| error.get("code"))
+    let under = payload.get("error").and_then(|error| error.get("code"));
+    if under
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|code| OUTGREW.contains(&code) || own.contains(&code))
+        .is_some_and(|code| OUTGREW.contains(&code))
+    {
+        return true;
+    }
+    if own.is_empty() {
+        return false;
+    }
+    [under, payload.get("code")]
+        .into_iter()
+        .flatten()
+        .any(|code| spelled(code, own))
+}
+
+/// Whether `code`, as text or as a whole number, is one of `own`.
+fn spelled(code: &serde_json::Value, own: &[&str]) -> bool {
+    match code {
+        serde_json::Value::String(text) => own.contains(&text.as_str()),
+        serde_json::Value::Number(number) => number
+            .as_u64()
+            .is_some_and(|number| own.iter().any(|code| code.parse() == Ok(number))),
+        _ => false,
+    }
 }
 
 /// Why reading the bounded refusal stopped.
@@ -1134,6 +1160,24 @@ mod tests {
             plain_refused(400, reading(said)),
             ProviderError::WindowExceeded { .. }
         ));
+    }
+
+    #[test]
+    fn a_shared_code_is_read_only_as_the_word_under_error() {
+        // The vendor's own codes are read in more places; the shared words keep
+        // the one reading they always had.
+        for said in [
+            r#"{"code":"context_length_exceeded","message":"too long"}"#,
+            r#"{"error":{"code":["context_length_exceeded"]}}"#,
+        ] {
+            assert!(
+                matches!(
+                    plain_refused(400, reading(said)),
+                    ProviderError::Refused { .. }
+                ),
+                "{said}"
+            );
+        }
     }
 
     #[test]

@@ -40,13 +40,15 @@ impl Dialect for MiniMaxChat {
     const SHAPE: &'static str = "minimax-chat-completions-v1";
     const CEILING: &'static str = "max_completion_tokens";
     const FLAGS: &'static [(&'static str, bool)] = &[("reasoning_split", true)];
-    // No code of its own is read as a request too large for the window.
-    // `1039` "token limit" comes with "Please retry your requests later",
-    // beside `1002` "rate limit", which reads as a limit on tokens over time
-    // rather than on one request; compacting for a limit that is a rate
-    // would shorten a session for nothing. Another harness reads its overflow
-    // as `2013` "invalid params" with words about the window, and `2013` is
-    // every refused parameter. Neither is told apart by its code alone.
+    // No code of its own is read as a request too large for the window, so
+    // none is named under `OUTGREW`, and the integer it carries in
+    // `base_resp.status_code` is not read for one. Its code table does list
+    // `1039` "Token limit exceeded", but with "Please retry your requests
+    // later", beside `1002` "rate limit": it cannot be told apart from a limit
+    // on tokens over time, and compacting for a rate would shorten a session
+    // for nothing. Another harness reads its overflow as `2013` "invalid
+    // params" with words about the window, and `2013` is every refused
+    // parameter.
     type Kept = Thought;
 
     fn spells() -> Modalities {

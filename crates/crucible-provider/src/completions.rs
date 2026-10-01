@@ -138,8 +138,10 @@ pub trait Dialect: Send + Sync + 'static {
     /// The codes the vendor refuses a request too large for the model's window
     /// with, beyond the ones every vendor's refusals are read for: a refusal
     /// with one of them is [`ProviderError::WindowExceeded`], which the session
-    /// is compacted for and the question asked again. Matched against
-    /// `error.code`, never against the sentence beside it. None, by default.
+    /// is compacted for and the question asked again. Matched against the
+    /// code under `error` or at the top level, as text or as a whole number by
+    /// its decimal spelling, never against the sentence beside it. None, by
+    /// default.
     const OUTGREW: &'static [&'static str] = &[];
 
     /// Why the model stopped, for a reason the vendor has words of its own for.

@@ -181,8 +181,10 @@ alone in this release: a picture, a PDF, audio or video stays out of the
 request, whatever the model reads. A refusal from any of them reaches you in
 the vendor's own words, except Z.ai's refusal of a prompt too long for the
 model, which makes room and asks again as a
-[full window](../sessions/sessions.md#when-the-window-fills) does. Meta and
-MiniMax name no code for that refusal, so theirs ends the turn.
+[full window](../sessions/sessions.md#when-the-window-fills) does. The others
+end the turn on that refusal unless it carries a code crucible reads as a full
+window. Meta's carries no code, and MiniMax's `1039` "Token limit exceeded"
+cannot be told apart from a rate limit, so both end the turn.
 
 ### Rows and sites
 
