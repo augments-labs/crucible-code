@@ -62,7 +62,9 @@ use std::time::Duration;
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::content_use;
-use crucible_app::providers::{List, Providers, Row as Way, Rows, Served, key_variables, offered};
+use crucible_app::providers::{
+    List, Misfit, Providers, Row as Way, Rows, Served, key_variables, offered,
+};
 use crucible_app::subscription::Route;
 use crucible_app::switching::LoggedIn;
 use crucible_auth::{AuthError, Kind, LoginAttempt, LoginUpdate, Stopped};
@@ -351,7 +353,20 @@ fn reaching(way: &Way, rows: &Rows) -> String {
         }
         words.push(more);
     }
-    words.join(" ")
+    // Where the list and the site leave more than one row, as two plans of
+    // one site do, a word of the row's own name says which: taken only where
+    // it leaves fewer rows than were left without it.
+    for more in way.shown.split_whitespace() {
+        if alone(&words) {
+            break;
+        }
+        let mut tried = words.clone();
+        tried.push(more);
+        if matching(&tried, rows).len() < matching(&words, rows).len() {
+            words = tried;
+        }
+    }
+    words.join(" ").to_lowercase()
 }
 
 /// The first panel, the list of the kind chosen on it, and the screen of the
@@ -670,20 +685,50 @@ fn keyed<T: Terminal>(
 ) -> Result<Closed, Fatal> {
     let glyphs = walk.terms.style().glyphs();
     let replaces = replaced(way, walk.held, glyphs);
-    let asked = secret::ask(
-        walk.renderer,
-        walk.terms.style(),
-        &drawn(way.shown, glyphs),
-        replaces.as_deref(),
-        opened.leaves(),
-    )?;
-    match asked {
-        Asked::Key(key) => kept(way.stored, named, &key, walk)?,
-        Asked::Left if opened == Opened::Below => return Ok(Closed::Back),
-        Asked::Left => say(walk.renderer, LEFT)?,
-        Asked::Cramped => say(walk.renderer, CRAMPED)?,
+    loop {
+        let asked = secret::ask(
+            walk.renderer,
+            walk.terms.style(),
+            &drawn(way.shown, glyphs),
+            replaces.as_deref(),
+            opened.leaves(),
+        )?;
+        match asked {
+            // Refused before anything is stored or sent, and asked again: a
+            // key of another row is one somebody pasted into the wrong box,
+            // and the vendor's refusal of it would come a turn later and say
+            // only that the key is wrong.
+            Asked::Key(key) => match Rows::production().misfit(way, &key) {
+                Some(misfit) => say(walk.renderer, &unfitting(&misfit, glyphs))?,
+                None => {
+                    kept(way.stored, named, &key, walk)?;
+                    break;
+                }
+            },
+            Asked::Left if opened == Opened::Below => return Ok(Closed::Back),
+            Asked::Left => {
+                say(walk.renderer, LEFT)?;
+                break;
+            }
+            Asked::Cramped => {
+                say(walk.renderer, CRAMPED)?;
+                break;
+            }
+        }
     }
     Ok(Closed::Done)
+}
+
+/// The line a key that does not fit its row is refused with. It names the
+/// mark and never the key.
+fn unfitting(misfit: &Misfit, glyphs: Glyphs) -> String {
+    match misfit {
+        Misfit::Unmarked(mark) => format!("! not a key for this row; its keys start {mark}"),
+        Misfit::Another(row) => format!(
+            "! that is a key for {}; choose that row",
+            drawn(row, glyphs)
+        ),
+    }
 }
 
 /// The sign-in of `way`: its methods where it has more than one, then the
@@ -767,7 +812,13 @@ fn typed<T: Terminal>(
         })
         .collect();
 
-    Ok(renderer.present(&lines)?)
+    // A row at a time, so each passes through the window on its way up: the
+    // rows outnumber what a short window holds, and laid down at once only
+    // the ones that fit it are ever drawn.
+    for row in lines {
+        renderer.present(&[row])?;
+    }
+    Ok(())
 }
 
 /// One row as the line to type, and what typing it reaches: the words name
@@ -1138,11 +1189,18 @@ fn given<T: Terminal>(
     let replaces = way.and_then(|way| replaced(way, &held, glyphs));
     // The row's name, which says the site where the provider has two.
     let shown = way.map_or(Cow::Borrowed(named.shown), |way| drawn(way.shown, glyphs));
-    let asked = secret::ask(renderer, terms.style(), &shown, replaces.as_deref(), CANCEL)?;
-    match asked {
-        Asked::Key(key) => written(named, &key, renderer, conversation, terms),
-        Asked::Left => say(renderer, LEFT),
-        Asked::Cramped => say(renderer, CRAMPED),
+    loop {
+        let asked = secret::ask(renderer, terms.style(), &shown, replaces.as_deref(), CANCEL)?;
+        match asked {
+            // Refused before anything is stored or sent, and asked again, as
+            // a key chosen from the list is.
+            Asked::Key(key) => match way.and_then(|way| rows.misfit(way, &key)) {
+                Some(misfit) => say(renderer, &unfitting(&misfit, glyphs))?,
+                None => return written(named, &key, renderer, conversation, terms),
+            },
+            Asked::Left => return say(renderer, LEFT),
+            Asked::Cramped => return say(renderer, CRAMPED),
+        }
     }
 }
 
@@ -1170,7 +1228,13 @@ fn written<T: Terminal>(
         terms,
         held: &[],
     };
-    kept(named.name, named, key, &mut walk)
+    // Under the name of the row a key from the provider's variable belongs
+    // to: the bare provider name where 0.43.3 serves the provider, and the
+    // provider at its site where it does not.
+    let stored = Rows::production()
+        .environment(named.name)
+        .map_or(named.name, |way| way.stored);
+    kept(stored, named, key, &mut walk)
 }
 
 /// [`written`], under `stored`: the name of the row the key was given on.

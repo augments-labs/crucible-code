@@ -1543,3 +1543,114 @@ fn every_provider_keeps_its_window_and_a_new_one_starts_at_two_hundred_thousand(
         ]
     );
 }
+
+#[test]
+fn a_key_that_does_not_fit_its_row_is_refused_by_the_mark_it_carries() {
+    let rows = Rows::production();
+    let row = |shown: &str, list: List| {
+        rows.all()
+            .iter()
+            .find(|row| row.shown == shown && row.list == list)
+            .cloned()
+            .unwrap_or_else(|| panic!("no row {shown}"))
+    };
+    let minimax_key = row("MiniMax · minimax.io", List::Key);
+    let minimax_plan = row("MiniMax · minimax.io", List::Subscription);
+    let qwen_coding = row("Qwen Coding Plan · aliyun.com", List::Subscription);
+    let qwen_token = row("Qwen Token Plan · aliyun.com", List::Subscription);
+    let qwen_key = row("Qwen · aliyun.com", List::Key);
+    let mimo = row("MiMo", List::Key);
+
+    assert_eq!(
+        rows.misfit(&minimax_key, "sk-cp-plan-key"),
+        Some(Misfit::Unmarked("sk-api-"))
+    );
+    assert_eq!(
+        rows.misfit(&minimax_plan, "sk-api-pay-as-you-go"),
+        Some(Misfit::Unmarked("sk-cp-"))
+    );
+    assert_eq!(
+        rows.misfit(&qwen_coding, "sk-plain-key"),
+        Some(Misfit::Unmarked("sk-sp-"))
+    );
+    assert_eq!(
+        rows.misfit(&mimo, "tp-token-plan-key"),
+        Some(Misfit::Unmarked("sk-"))
+    );
+    assert_eq!(
+        rows.misfit(&mimo, "ttp-token-plan-key"),
+        Some(Misfit::Unmarked("sk-"))
+    );
+    // A row that knows no mark of its own still refuses another row's.
+    assert_eq!(
+        rows.misfit(&qwen_key, "sk-sp-plan-key"),
+        Some(Misfit::Another("Qwen Coding Plan · alibabacloud.com"))
+    );
+
+    for (fits, key) in [
+        (&minimax_key, "sk-api-pay-as-you-go"),
+        (&minimax_plan, "sk-cp-plan-key"),
+        (&qwen_coding, "sk-sp-plan-key"),
+        // A Token Plan key carries the Coding Plan's mark, and nothing in it
+        // tells the two apart: the vendor answers which it is.
+        (&qwen_token, "sk-sp-plan-key"),
+        (&qwen_key, "sk-plain-key"),
+        (&mimo, "sk-mimo-key"),
+    ] {
+        assert_eq!(rows.misfit(fits, key), None, "{} {key}", fits.shown);
+    }
+}
+
+#[test]
+fn the_credential_in_use_heads_the_models_it_serves() {
+    let settings = Settings::default();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let unset = holding(&[]);
+    let sample = Sample::new("credential-in-use");
+    let auth = |stored| authenticating(&settings, &unset, stored, &subscriptions);
+
+    // A ChatGPT sign-in serves every OpenAI model but the one it retired.
+    let signed = sample.subscribed("openai");
+    let openai = in_use(serving("openai"), auth(&signed)).expect("a sign-in");
+    assert_eq!(openai.words, "OpenAI sign-in");
+    let serves = openai.serves.expect("a narrower list");
+    assert!(!serves.contains(&"gpt-5.5"), "{serves:?}");
+    assert!(serves.contains(&"gpt-6.1-sol"), "{serves:?}");
+
+    // A plan's key serves its plan's models.
+    let coding = Sample::new("credential-in-use-coding").stored("qwen@coding-plan.aliyun.com");
+    let qwen = in_use(serving("qwen"), auth(&coding)).expect("a plan key");
+    assert_eq!(qwen.words, "Qwen Coding Plan · aliyun.com key");
+    assert_eq!(qwen.serves, Some(&["qwen3.7-plus", "qwen3.6-plus"][..]));
+    let token = Sample::new("credential-in-use-token").stored("qwen@token-plan.alibabacloud.com");
+    assert_eq!(
+        in_use(serving("qwen"), auth(&token)).and_then(|one| one.serves),
+        Some(&["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"][..])
+    );
+
+    // A key on the row a variable's key belongs to is an API key, and serves
+    // every model.
+    let keyed = Sample::new("credential-in-use-key").stored("qwen@alibabacloud.com");
+    assert_eq!(
+        in_use(serving("qwen"), auth(&keyed)),
+        Some(InUse {
+            words: "API key".to_owned(),
+            serves: None
+        })
+    );
+
+    // A key from the variable is named by the variable.
+    let nothing = StoredCredentials::default();
+    let exported = holding(&["DEEPSEEK_API_KEY"]);
+    assert_eq!(
+        in_use(
+            serving("deepseek"),
+            authenticating(&settings, &exported, &nothing, &subscriptions)
+        ),
+        Some(InUse {
+            words: "DEEPSEEK_API_KEY".to_owned(),
+            serves: None
+        })
+    );
+    assert_eq!(in_use(serving("deepseek"), auth(&nothing)), None);
+}

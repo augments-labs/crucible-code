@@ -299,6 +299,34 @@ impl Row {
         self.stored == self.provider
     }
 
+    /// The models its credential serves of those its provider offers, where
+    /// that is not all of them.
+    #[must_use]
+    pub fn serves(&self) -> Option<&'static [&'static str]> {
+        match (self.kind, self.stored) {
+            // The models a ChatGPT plan serves: every one the key does, but
+            // the generation the plan has retired.
+            (Kind::Account, "openai") => Some(&[
+                "gpt-6-astra",
+                "gpt-6.1-sol",
+                "gpt-6-sol",
+                "gpt-6-luna",
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+            ]),
+            (Kind::Key, "qwen@coding-plan.alibabacloud.com" | "qwen@coding-plan.aliyun.com") => {
+                Some(&["qwen3.7-plus", "qwen3.6-plus"])
+            }
+            // Not `qwen3.6-plus`, which one of the plan's two editions serves
+            // and the other does not, and nothing in a key says which.
+            (Kind::Key, "qwen@token-plan.alibabacloud.com" | "qwen@token-plan.aliyun.com") => {
+                Some(&["qwen3.8-max", "qwen3.8-flash", "qwen3.7-plus"])
+            }
+            _ => None,
+        }
+    }
+
     /// What its credential is called: `OpenAI sign-in`, `MoonshotAI · kimi.com
     /// key`.
     #[must_use]
@@ -308,6 +336,15 @@ impl Row {
             Kind::Key => format!("{} key", self.shown),
         }
     }
+}
+
+/// Why a key was refused on a row before anything was sent with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Misfit {
+    /// The row's keys start with this mark, and the key does not.
+    Unmarked(&'static str),
+    /// The key carries the mark of this other row of the same provider.
+    Another(&'static str),
 }
 
 /// Every row this build signs in with.
@@ -659,6 +696,21 @@ impl Rows {
         self.rows
             .iter()
             .find(|row| row.provider == provider && row.environment)
+    }
+
+    /// Why `key` does not fit `row`, or nothing where it may: it does not
+    /// start with the row's own mark, or, where the row knows no mark of its
+    /// own, it starts with the mark of another row of the same provider.
+    #[must_use]
+    pub fn misfit(&self, row: &Row, key: &str) -> Option<Misfit> {
+        if let Some(mark) = row.mark {
+            return (!key.starts_with(mark)).then_some(Misfit::Unmarked(mark));
+        }
+        self.rows
+            .iter()
+            .filter(|other| other.provider == row.provider && other != &row)
+            .find(|other| other.mark.is_some_and(|mark| key.starts_with(mark)))
+            .map(|other| Misfit::Another(other.shown))
     }
 
     /// The row of the credential `provider` is served by from the store.
@@ -1264,6 +1316,46 @@ pub fn available<'a>(
     auth: startup::ProviderAuth<'a>,
 ) -> impl Iterator<Item = Served> + 'a {
     offered(providers).filter(move |one| credential_source(*one, auth).is_some())
+}
+
+/// The credential a provider's requests are sent with, as `/model` heads its
+/// models: its words, and which of the provider's models it serves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InUse {
+    /// The `/login` row it was given on, `API key` for a key stored on the
+    /// row a variable's key belongs to, or the variable's name.
+    pub words: String,
+    /// The models it serves, where that is not every model offered.
+    pub serves: Option<&'static [&'static str]>,
+}
+
+/// The credential `one`'s requests are sent with, or nothing where it has none.
+#[must_use]
+pub fn in_use(one: Served, auth: startup::ProviderAuth<'_>) -> Option<InUse> {
+    let rows = Rows::production();
+    let held = || rows.held(one.name, auth.stored);
+    let (words, row) = match credential_source(one, auth)? {
+        CredentialSource::Subscription => {
+            let row = held()?;
+            (row.credential(), Some(row))
+        }
+        CredentialSource::Environment(variable) => {
+            (variable.into_string(), rows.environment(one.name))
+        }
+        CredentialSource::StoredKey => {
+            let row = held()?;
+            let words = if row.environment {
+                "API key".to_owned()
+            } else {
+                row.credential()
+            };
+            (words, Some(row))
+        }
+    };
+    Some(InUse {
+        words,
+        serves: row.and_then(Row::serves),
+    })
 }
 
 /// The source provider construction will select, without reading a secret out.

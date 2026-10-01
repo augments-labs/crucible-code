@@ -32,6 +32,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 mod fast;
+mod providers;
 mod screen;
 mod vendor;
 mod warning;
