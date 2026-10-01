@@ -255,7 +255,7 @@ pub(crate) const FACTS: &[Facts] = &[
         provider: "moonshot",
         model: "k3",
         window: 1_048_576,
-        output: 131_072,
+        output: 1_048_576,
         accepts: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
@@ -265,7 +265,7 @@ pub(crate) const FACTS: &[Facts] = &[
         provider: "moonshot",
         model: "k3-256k",
         window: 262_144,
-        output: 131_072,
+        output: 1_048_576,
         accepts: Modalities::empty()
             .insert(Modality::Text)
             .insert(Modality::Image)
