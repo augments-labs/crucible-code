@@ -892,8 +892,8 @@ fn a_folded_shelf_keeps_the_marked_provider_and_its_heading_in_view() {
         pane: Pane::Models,
         ..walking
     };
-    let headed = header(&reading, Glyphs::Unicode);
-    assert!(headed.contains("openai · ChatGPT sign-in"), "{headed}");
+    let top = header(&reading, Glyphs::Unicode);
+    assert!(top.contains("openai · ChatGPT sign-in"), "{top}");
 
     // And with nothing to head it, the strip.
     let plain = Shelf {

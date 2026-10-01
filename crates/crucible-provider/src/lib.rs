@@ -38,6 +38,8 @@ mod xai;
 mod zai;
 
 #[cfg(test)]
+mod dialects_tests;
+#[cfg(test)]
 mod renewing_tests;
 
 pub use anthropic::Anthropic;
