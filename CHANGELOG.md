@@ -8,6 +8,17 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-01
+
+**Seven more vendors, the newest OpenAI and Anthropic models, and `/fast` for
+a vendor's faster tier.** Meta, xAI, DeepSeek, Z.ai, Qwen, MiMo and MiniMax
+join as rows of `/login`, `/model` lists what your credential serves, and
+crucible asks once before sending anything to a vendor that may train on it.
+The Windows sandbox helper no longer sees your provider keys, and `--continue`
+resumes your latest session whichever build wrote it. Before rolling back to
+0.43.3, set `provider` to one it serves and delete `"fast": true` and the
+`contentUse` block from your configuration file.
+
 ### Added
 
 - **Crucible asks once before sending to a vendor that may train on it.** A
@@ -4658,7 +4669,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...v0.44.0
 [0.43.3]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/augments-labs/crucible-code/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/augments-labs/crucible-code/compare/v0.43.0...v0.43.1
