@@ -698,13 +698,14 @@ fn keyed<T: Terminal>(
             // key of another row is one somebody pasted into the wrong box,
             // and the vendor's refusal of it would come a turn later and say
             // only that the key is wrong.
-            Asked::Key(key) => match Rows::production().misfit(way, &key) {
-                Some(misfit) => say(walk.renderer, &unfitting(&misfit, glyphs))?,
-                None => {
+            Asked::Key(key) => {
+                if let Some(misfit) = Rows::production().misfit(way, &key) {
+                    say(walk.renderer, &unfitting(&misfit, glyphs))?;
+                } else {
                     kept(way.stored, named, &key, walk)?;
                     break;
                 }
-            },
+            }
             Asked::Left if opened == Opened::Below => return Ok(Closed::Back),
             Asked::Left => {
                 say(walk.renderer, LEFT)?;

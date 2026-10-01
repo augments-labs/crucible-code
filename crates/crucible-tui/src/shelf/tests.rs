@@ -759,7 +759,7 @@ fn a_heading_names_the_models_pane_and_without_one_it_reads_models() {
     };
     let plain = shelf(&providers, &models);
 
-    let header = |shelf: &Shelf<'_>| {
+    let top_row = |shelf: &Shelf<'_>| {
         shelf
             .within(80, 24, Glyphs::Unicode)
             .iter()
@@ -768,12 +768,12 @@ fn a_heading_names_the_models_pane_and_without_one_it_reads_models() {
             .unwrap_or_default()
     };
     assert!(
-        header(&headed).contains("openai · OpenAI sign-in"),
+        top_row(&headed).contains("openai · OpenAI sign-in"),
         "{}",
-        header(&headed)
+        top_row(&headed)
     );
-    assert!(!header(&headed).contains("Models"), "{}", header(&headed));
-    assert!(header(&plain).contains("Models"), "{}", header(&plain));
+    assert!(!top_row(&headed).contains("Models"), "{}", top_row(&headed));
+    assert!(top_row(&plain).contains("Models"), "{}", top_row(&plain));
 }
 
 #[test]
@@ -800,12 +800,16 @@ fn the_closing_row_stands_under_the_models_and_never_takes_the_mark() {
     let marked = rows
         .iter()
         .position(|row| {
-            let start: String = models[last].name.chars().take(8).collect();
+            let start: String = models
+                .get(last)
+                .map(|one| one.name.chars().take(8).collect())
+                .unwrap_or_default();
             row.contains(&format!("› {start}"))
         })
         .unwrap_or_else(|| panic!("no marked row: {rows:#?}"));
     assert!(marked < at, "{rows:#?}");
-    assert!(!rows[at].contains('›'), "{}", rows[at]);
+    let closing_row = rows.get(at).cloned().unwrap_or_default();
+    assert!(!closing_row.contains('›'), "{closing_row}");
 
     // Too many to fit and scrolled to the last: the closing row still stands,
     // under the last model, rather than being scrolled past, where the pane
@@ -825,7 +829,10 @@ fn the_closing_row_stands_under_the_models_and_never_takes_the_mark() {
     assert!(rows.iter().any(|row| row.contains(closing)), "{rows:#?}");
     assert!(
         rows.iter().any(|row| {
-            let start: String = many[many.len() - 1].name.chars().take(8).collect();
+            let start: String = many
+                .last()
+                .map(|one| one.name.chars().take(8).collect())
+                .unwrap_or_default();
             row.contains(&format!("› {start}"))
         }),
         "{rows:#?}"

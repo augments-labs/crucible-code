@@ -1410,7 +1410,10 @@ fn a_row_holding_its_providers_credential_says_signed_in_at_forty_columns() {
         "{top}"
     );
     for _ in 0..16 {
-        if window.picture().contains("signed in · may use what is sent") {
+        if window
+            .picture()
+            .contains("signed in · may use what is sent")
+        {
             break;
         }
         window.types("\x1b[B");

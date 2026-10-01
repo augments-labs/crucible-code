@@ -86,7 +86,7 @@ pub(crate) fn serialize_for<D: Dialect>(
     json.finish()
 }
 
-/// The cache metadata [`serialize`] adds for this exact request.
+/// The cache metadata [`serialize_for`] adds for this exact request.
 pub(crate) fn prompt_cache_encoding(request: &Request<'_>) -> PromptCacheEncoding {
     let Some(selected) = request
         .prompt_cache
