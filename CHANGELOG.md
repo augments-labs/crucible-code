@@ -71,6 +71,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **The Windows sandbox helper no longer sees your provider keys.**
+  `crucible-sandbox-broker.exe` was started with every variable of crucible's
+  own environment, provider API keys included. It now starts from a cleared
+  environment holding only `SystemRoot`; the confined command still gets
+  exactly the map it got before.
+
 - **The open platform address for a Kimi key is given whole.** The help text
   and the docs said to set `providers.moonshot.baseUrl` to
   `https://api.moonshot.ai/v1`, but crucible posts to that address as written,

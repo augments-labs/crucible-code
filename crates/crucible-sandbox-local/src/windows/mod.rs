@@ -5,7 +5,6 @@ use std::ffi::OsStr;
 use std::fs;
 use std::os::windows::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -200,10 +199,12 @@ impl SandboxSession for WindowsSession {
                     return Err(problem);
                 }
             };
-            let mut process = Command::new(self.broker.path());
-            process
-                .arg(crucible_sandbox_broker::WINDOWS_LAUNCH_MODE)
-                .current_dir(self.request.policy().working_directory());
+            let mut process = crate::windows_helper::command(
+                self.broker.path(),
+                self.request.policy().working_directory(),
+                |name| std::env::var_os(name),
+            );
+            process.arg(crucible_sandbox_broker::WINDOWS_LAUNCH_MODE);
             let reservation = self.reservation.take().ok_or(SandboxError::Concurrency)?;
             let stage = self.scratch.take().ok_or_else(|| {
                 SandboxError::Lifecycle(std::io::Error::other(
@@ -269,7 +270,7 @@ impl Drop for WindowsSession {
 }
 
 struct WindowsLaunch {
-    process: Option<Command>,
+    process: Option<std::process::Command>,
     plan: Option<super::process::SpawnPlan>,
     inspection: SandboxInspection,
     audit: crucible_sandbox::SandboxAudit,

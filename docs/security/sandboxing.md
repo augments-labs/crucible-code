@@ -429,7 +429,9 @@ host and replaces `TEMP` and `TMP` with one private command directory. SSH/GPG
 agent sockets, inherited descriptors or handles, provider keys, cloud
 configuration and arbitrary host variables do not cross the boundary
 automatically. Values reach the command through the backend's cleared process
-environment, never through its argument list.
+environment, never through its argument list. The helper each backend starts
+the command through is started from a cleared environment too: on Windows,
+`crucible-sandbox-broker.exe` keeps only `SystemRoot` from crucible's own.
 
 A secret projection carries a bounded opaque credential handle and user/account
 provenance alongside the host-resolved value. Handles and values are redacted
