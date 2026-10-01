@@ -43,8 +43,8 @@ change in any release with no deprecation period.
   again.** Neither sends a code for that refusal, so it ended the turn; crucible
   now reads each by its shape and opening words and compacts mid-turn instead,
   and does the same for MiniMax where its refusal has the wording matched.
-  Anthropic's and MiniMax's wording is not confirmed against their own pages,
-  so a refusal worded otherwise still ends the turn. On Google, DeepSeek, Qwen,
+  MiniMax's wording is not confirmed against its own pages, so a refusal
+  worded otherwise still ends the turn. On Google, DeepSeek, Qwen,
   xAI and MiMo a request too long for the model still ends the turn, and a
   lower `defaultContextWindow` avoids it.
 

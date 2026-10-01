@@ -68,19 +68,36 @@ fn a_prompt_too_long_for_the_model_is_compacted_for_rather_than_ending_the_turn(
 }
 
 #[test]
+fn the_documented_words_alone_are_a_prompt_too_long_whatever_follows_them() {
+    // The context windows page names the refusal by its opening words only,
+    // so what follows them is not required to be the counts seen in practice.
+    for said in [
+        "prompt is too long",
+        "prompt is too long: many tokens > 200000 maximum",
+    ] {
+        let problem = refused(400, &saying(said));
+
+        assert!(
+            matches!(
+                problem,
+                ProviderError::WindowExceeded {
+                    provider: "anthropic"
+                }
+            ),
+            "{said}: {problem:?}"
+        );
+    }
+}
+
+#[test]
 fn every_other_invalid_request_stays_a_refusal() {
     for (status, body) in [
         (400, saying("max_tokens: must be greater than 0")),
         (400, saying("messages: roles must alternate")),
-        // The words in another case, or without the counts that follow them.
+        // The words in another case.
         (
             400,
             saying("Prompt is too long: 208310 tokens > 200000 maximum"),
-        ),
-        (400, saying("prompt is too long")),
-        (
-            400,
-            saying("prompt is too long: many tokens > 200000 maximum"),
         ),
         // The same body under another status, or another type.
         (413, TOO_LONG.to_owned()),

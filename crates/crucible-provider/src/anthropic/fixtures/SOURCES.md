@@ -3,10 +3,10 @@
 `error-400-prompt-too-long.json`: constructed, not copied. Its envelope, a
 `type` of `error` around an `error` with a `type` and a `message`, is the one
 Anthropic's API errors page, https://platform.claude.com/docs/en/api/errors,
-describes for every refusal, and its `type` is that page's
-`invalid_request_error` for a 400. Its message follows the form "prompt is too
-long: N tokens > M maximum", with counts chosen here. No copy of that page is
-kept in this repository and it was not read for this fixture, so the message
-form is not confirmed against a primary source. If Anthropic words the refusal
-otherwise, it is not recognised and stays a refusal that ends the turn, so a
-mismatch fails safe.
+describes for every refusal. Anthropic's context windows page,
+https://platform.claude.com/docs/en/build-with-claude/context-windows, says
+that when the input alone exceeds the model's context window "the API returns a
+400 `invalid_request_error` ("prompt is too long") on every model". The counts
+after those words, "N tokens > M maximum", follow the form the refusal is seen
+with in practice and are not printed on either page, so the match requires only
+the documented opening words.

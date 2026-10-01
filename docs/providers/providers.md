@@ -319,8 +319,8 @@ When a request is refused as too long for the model, Anthropic, Meta, MiniMax
 and Z.ai make room and ask again, as a
 [full window](../sessions/sessions.md#when-the-window-fills) does. Anthropic's
 and Meta's refusals carry no code, so crucible reads each by its shape and the
-words it opens with; the words matched for Anthropic and MiniMax are not printed
-on their own pages, so a refusal worded otherwise ends the turn. On Google,
+words it opens with; the words matched for MiniMax are not printed on its own
+pages, so a refusal worded otherwise ends the turn. On Google,
 DeepSeek, Qwen, xAI and MiMo a request too long for the model still ends the
 turn; a lower `defaultContextWindow` compacts the session before it gets
 there.
