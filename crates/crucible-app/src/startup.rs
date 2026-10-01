@@ -677,11 +677,12 @@ pub fn moonshot(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn deepseek(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
-    let (endpoint, credential) = keyed(&wiring, DeepSeek::VENDOR)?;
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, DeepSeek::VENDOR)?;
     Ok(Box::new(DeepSeek::at(
         endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
     )))
 }
 
@@ -692,11 +693,12 @@ pub fn deepseek(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn meta(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
-    let (endpoint, credential) = keyed(&wiring, Meta::VENDOR)?;
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Meta::VENDOR)?;
     Ok(Box::new(Meta::at(
         endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
     )))
 }
 
@@ -707,11 +709,12 @@ pub fn meta(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn xai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
-    let (endpoint, credential) = keyed(&wiring, Xai::VENDOR)?;
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Xai::VENDOR)?;
     Ok(Box::new(Xai::at(
         endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
     )))
 }
 
@@ -722,11 +725,12 @@ pub fn xai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
-    let (endpoint, credential) = keyed(&wiring, Mimo::VENDOR)?;
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Mimo::VENDOR)?;
     Ok(Box::new(Mimo::at(
         endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
     )))
 }
 
@@ -738,11 +742,12 @@ pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
-    let (endpoint, credential) = keyed(&wiring, MiniMax::IO)?;
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
     Ok(Box::new(MiniMax::at(
         endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
     )))
 }
 
@@ -754,11 +759,12 @@ pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn qwen(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
-    let (endpoint, credential) = keyed(&wiring, Qwen::KEY_INTL)?;
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Qwen::KEY_INTL)?;
     Ok(Box::new(Qwen::at(
         endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
     )))
 }
 
@@ -770,18 +776,19 @@ pub fn qwen(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn zai(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
-    let (endpoint, credential) = keyed(&wiring, Zai::ZAI)?;
+    let http = wiring.http;
+    let (endpoint, credential) = keyed(wiring, Zai::ZAI)?;
     Ok(Box::new(Zai::at(
         endpoint,
         credential,
-        Box::new(wiring.http.clone()),
+        Box::new(http.clone()),
     )))
 }
 
 /// The key `wiring` resolves and the address it goes to, for a provider whose
 /// every credential is a key and whose own address is `vendor`.
 fn keyed(
-    wiring: &Wiring<'_>,
+    wiring: Wiring<'_>,
     vendor: Endpoint,
 ) -> Result<(Endpoint, Box<dyn Credential>), AppError> {
     credential(
@@ -790,7 +797,7 @@ fn keyed(
             variable: wiring.variable,
             vendor,
         },
-        wiring.sending.clone(),
+        wiring.sending,
         wiring.auth,
     )
 }
