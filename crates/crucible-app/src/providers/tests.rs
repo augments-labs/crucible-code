@@ -1617,7 +1617,7 @@ fn the_credential_in_use_heads_the_models_it_serves() {
     // A ChatGPT sign-in serves every OpenAI model but the one it retired.
     let signed = sample.subscribed("openai");
     let openai = in_use(serving("openai"), auth(&signed)).expect("a sign-in");
-    assert_eq!(openai.words, "OpenAI sign-in");
+    assert_eq!(openai.words, "ChatGPT sign-in");
     let serves = openai.serves.expect("a narrower list");
     assert!(!serves.contains(&"gpt-5.5"), "{serves:?}");
     assert!(serves.contains(&"gpt-6.1-sol"), "{serves:?}");

@@ -330,11 +330,13 @@ impl Row {
         }
     }
 
-    /// What its credential is called: `OpenAI sign-in`, `MoonshotAI · kimi.com
+    /// What its credential is called: `ChatGPT sign-in`, `MoonshotAI · kimi.com
     /// key`.
     #[must_use]
     pub fn credential(&self) -> String {
         match self.kind {
+            // Named for the plans it signs in with rather than its row.
+            Kind::Account if self.stored == "openai" => "ChatGPT sign-in".to_owned(),
             Kind::Account => format!("{} sign-in", self.shown),
             Kind::Key => format!("{} key", self.shown),
         }
