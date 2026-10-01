@@ -18,7 +18,7 @@ use crucible_credentials::{Credential, Outgoing};
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{Host, Search, SearchResponse, SourceError};
 
-use super::{Sending, host_of, openai_input, posted_openai, searched, sent, worded};
+use super::{Sending, host_of, openai_input, posted_openai, searched, sent};
 use crate::endpoint::Endpoint;
 use crate::json::Json;
 use crate::transport::Transport;
@@ -120,11 +120,11 @@ impl Search for MetaWeb {
                     outgoing,
                     body,
                     &cancel,
+                    true,
                 ))
                 .await
             })
-            .await
-            .map_err(worded)?;
+            .await?;
 
             searched(NAME, &answered, &redactions).map(SearchResponse::from)
         })

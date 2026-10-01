@@ -200,3 +200,21 @@ fn an_xai_failure_event_is_read_from_under_error() {
         "{said}"
     );
 }
+
+#[test]
+fn a_refusal_echoing_the_key_in_an_escape_never_says_the_key() {
+    // The sentence is lifted out of the body by decoding it, so a key the
+    // body carried in an escape arrives whole only after decoding, and is
+    // redacted then.
+    let body = r#"{"error":{"code":"unauthenticated","message":"bad key xai-do-not-l\u006fg-me"}}"#;
+
+    let problem = xai(401, body)
+        .0
+        .answered_search("x", &Cancel::new())
+        .expect_err("a refusal");
+
+    assert!(
+        !format!("{problem:?} {problem}").contains(XAI_KEY),
+        "{problem}"
+    );
+}

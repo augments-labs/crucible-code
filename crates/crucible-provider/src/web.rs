@@ -865,6 +865,7 @@ impl OpenAiWeb {
                     outgoing,
                     body,
                     &cancel,
+                    false,
                 ))
                 .await
             },
@@ -917,11 +918,16 @@ fn openai_input(body: &mut crate::json::Object<'_>, text: &str) {
 /// `response.completed` event carries the same whole response object the
 /// unstreamed API would have returned, so this frames the existing bounded body
 /// and hands that object to the existing result readers.
+///
+/// Where `lifted`, a refusal is said in the vendor's sentence rather than its
+/// whole body: lifted out by decoding the body, and redacted after, since a
+/// secret the body carried in an escape is only whole once decoded.
 async fn posted_openai(
     sending: Sending<'_>,
     mut outgoing: Outgoing,
     body: String,
     cancel: &Cancel,
+    lifted: bool,
 ) -> Result<Value, SourceError> {
     let Sending {
         named,
@@ -935,10 +941,15 @@ async fn posted_openai(
 
     if status != 200 {
         let answered = Box::pin(read(named, response, cancel)).await?;
+        let said = if lifted {
+            sentence(&answered).unwrap_or(answered)
+        } else {
+            answered
+        };
         return Err(SourceError::Refused {
             named,
             status,
-            message: redactions.redact(&answered).into(),
+            message: redactions.redact(&said).into(),
         });
     }
 
@@ -1206,30 +1217,11 @@ fn call_failure(call: &Value) -> String {
     }
 }
 
-/// A refused side request in the vendor's sentence rather than its whole body.
-///
-/// The two shapes the Responses vendors besides OpenAI refuse in: nested,
-/// `{error: {code, message}}`, and flat, `{code, error}`, where the code may
-/// be a word, a sentence or a number. A body in neither keeps its bytes. The
-/// body was redacted when it was read, and a sentence cut out of it carries
-/// nothing the body did not.
-fn worded(error: SourceError) -> SourceError {
-    match error {
-        SourceError::Refused {
-            named,
-            status,
-            message,
-        } => SourceError::Refused {
-            named,
-            status,
-            message: sentence(&message).map_or(message, Into::into),
-        },
-        other => other,
-    }
-}
-
 /// The vendor's sentence in a refused body, with its code in front where it
-/// gave one.
+/// gave one: the two shapes the Responses vendors besides OpenAI refuse in,
+/// nested, `{error: {code, message}}`, and flat, `{code, error}`, where the
+/// code may be a word, a sentence or a number. A body in neither keeps its
+/// bytes.
 fn sentence(body: &str) -> Option<String> {
     let value: Value = serde_json::from_str(body).ok()?;
     let (code, said) = match value.get("error")? {

@@ -20,7 +20,7 @@ use crucible_credentials::{Credential, Outgoing};
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_tools::{Host, Search, SearchResponse, SearchResult, SourceError};
 
-use super::{Sending, host_of, openai_input, posted_openai, searched, sent, worded};
+use super::{Sending, host_of, openai_input, posted_openai, searched, sent};
 use crate::endpoint::Endpoint;
 use crate::json::Json;
 use crate::transport::Transport;
@@ -122,11 +122,11 @@ impl Search for XaiWeb {
                     outgoing,
                     body,
                     &cancel,
+                    true,
                 ))
                 .await
             })
-            .await
-            .map_err(worded)?;
+            .await?;
 
             let found = searched(NAME, &answered, &redactions)?;
             Ok(found.into_iter().map(titled).collect::<Vec<_>>().into())

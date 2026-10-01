@@ -259,3 +259,19 @@ fn a_meta_search_reaches_the_vendor_host_a_rule_would_name() {
         }
     );
 }
+
+#[test]
+fn a_refusal_echoing_the_key_in_an_escape_never_says_the_key() {
+    let body =
+        r#"{"error":{"code":"invalid_api_key","message":"rejected LLM|meta-do-not-l\u006fg-me"}}"#;
+
+    let problem = meta(401, body)
+        .0
+        .answered_search("x", &Cancel::new())
+        .expect_err("a refusal");
+
+    assert!(
+        !format!("{problem:?} {problem}").contains(META_KEY),
+        "{problem}"
+    );
+}
