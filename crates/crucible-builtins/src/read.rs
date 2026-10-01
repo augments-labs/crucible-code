@@ -181,9 +181,10 @@ const EXTRACTED_INTO: &str = "converted-media";
 /// the pictures are files, and a file is a thing the agent has somewhere to go
 /// with.
 ///
-/// A video is on the list for the same reason and by a different road. Nothing
-/// crucible speaks to reads one, and everything it speaks to reads a picture —
-/// so the answer is not a converter at all but a sampler, and what comes out is
+/// A video is on the list for the same reason and by a different road. A tool
+/// answers with text or a picture and never a video, and more of the models
+/// crucible speaks to read a picture than read a video, so the answer is not a
+/// converter at all but a sampler, and what comes out is
 /// attached rather than read back. It is the same shape: what the file is, and
 /// what on this machine would do something about it.
 ///
@@ -467,8 +468,8 @@ fn conversion(requested: &str, named: impl Fn(&str) -> Option<String>) -> Option
         Becomes::Pictures => {
             let measured = measured.unwrap_or_default();
             format!(
-                ". It is {what} — nothing here reads one and everything here reads \
-                 a picture, so pull frames out and attach those. {measured} says how \
+                ". It is {what} — read hands no video to a model, so pull frames \
+                 out and attach those to a model that reads pictures. {measured} says how \
                  long it is, and {command} takes one a second and stops at twenty, \
                  which is about as many as one request carries. Sample a long \
                  recording sparsely rather than sampling the start of it."
@@ -1265,8 +1266,8 @@ mod tests {
 
         assert_eq!(
             said,
-            ". It is a video \u{2014} nothing here reads one and everything here reads a \
-             picture, so pull frames out and attach those. ffprobe -v error \
+            ". It is a video \u{2014} read hands no video to a model, so pull frames \
+             out and attach those to a model that reads pictures. ffprobe -v error \
              -show_entries format=duration -of csv=p=0 clip.mp4 says how long it is, \
              and ffmpeg -i clip.mp4 -vf fps=1 -frames:v 20 frame-%03d.jpg takes one a \
              second and stops at twenty, which is about as many as one request \

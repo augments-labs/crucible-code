@@ -192,13 +192,13 @@ impl Remaining {
 pub struct Recalled(Option<(usize, usize)>);
 
 impl Recalled {
-    /// The `at`th prompt back, of `of` a walk may ever reach.
+    /// The `at`th prompt of the window, of `of` a walk may ever reach.
     ///
-    /// Counted from the newest, so the first press back is `1` and the number
-    /// rises as the walk goes on. The pair reads as a position in a journey the
-    /// reader is making rather than as an address in a file they cannot see: on
-    /// the first press it says how far they have come and how far they may go,
-    /// and both halves keep meaning that for the whole of the walk.
+    /// Counted in the order the prompts were sent, so the first press back is
+    /// the newest prompt's place, as many as are kept, and the number falls as
+    /// the walk goes on until the oldest is `1`. On the first press the pair
+    /// says how many prompts the walk can reach and how many it ever could, and
+    /// the falling half then says how many are still behind the one shown.
     ///
     /// `of` is the window and not how much of it is filled, so it is the same
     /// number on the first day as on the hundredth.
