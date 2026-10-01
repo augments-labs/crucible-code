@@ -1,9 +1,9 @@
-//! A prompt arriving down a pipe with nobody to ask it of.
+//! A prompt with nobody to ask it of.
 //!
 //! Interactively each of these is a warning and the session carries on,
 //! because `/model` or `/login` is a key away. With input and output both
 //! redirected nobody can type either, so the run says why once, takes no
-//! turn, and ends with an error rather than `Ok`.
+//! turn, and ends with an error rather than `Ok`. Neither records the prompt.
 
 use crucible_types::Message;
 
@@ -123,6 +123,66 @@ fn a_piped_prompt_for_a_model_nothing_serves_fails_as_one_with_no_model_does() {
     // Said once, by the error: no turn was refused on the screen before it.
     let written = renderer.terminal().written();
     assert!(!written.contains("No models available"), "{written}");
+}
+
+#[test]
+fn a_typed_prompt_for_a_model_nothing_serves_is_warned_of_as_one_with_no_model_is() {
+    // At a terminal a session with no model answers a prompt with the warning
+    // and takes no turn. `--model foo` with nothing set up is the same session
+    // with a name in it: the provider standing in would refuse the turn, but
+    // only after the prompt was recorded as said to a model nobody asked.
+    let sample = Sample::new("unserved-typed");
+    let session =
+        Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
+    let conversation = Conversation::recording(Arc::clone(&session), None, |session| {
+        Runner::new(
+            Box::new(crucible_provider::Unavailable::new(
+                crucible_app::providers::NOTHING_TO_ASK,
+            )),
+            Tools::new(),
+            Agent::new(
+                AgentId::new("test"),
+                Model {
+                    name: "foo".into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
+
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"what is 2+2\n".to_vec());
+
+    converse(
+        conversation,
+        &mut renderer,
+        &plain(),
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    )
+    .expect("the session to carry on past the warning");
+
+    assert_eq!(session.finish(), None);
+    drop(session);
+    let (_, transcript) =
+        Session::resume(&sample.logs(), &sample.workspace()).expect("the session");
+    let said: Vec<_> = transcript
+        .messages()
+        .iter()
+        .filter(|message| matches!(message, Message::User { .. }))
+        .collect();
+    assert!(said.is_empty(), "a prompt was recorded: {said:?}");
+
+    let written = renderer.terminal().written();
+    assert!(written.contains("No models available"), "{written}");
 }
 
 /// What a piped prompt ends the run with, in a session that chose no provider.

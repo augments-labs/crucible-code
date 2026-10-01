@@ -705,7 +705,14 @@ pub(crate) fn converse<T: Terminal>(
         // that was never typed. `/model` is what changes this answer, so it is
         // said again here rather than only under the welcome the session opened
         // with — by now that has scrolled away.
-        if conversation.runner().model().is_empty() {
+        //
+        // A model named with nobody to ask it of, as `--model foo` is on a
+        // machine with nothing set up, is the same session: the provider
+        // standing in would refuse the turn, but only after the prompt was
+        // recorded as said to a model nobody asked.
+        if conversation.runner().model().is_empty()
+            || !conversation.runner().provider().reaches_a_model()
+        {
             let said = terms.unasked(conversation.serving());
 
             // Down a pipe there is nobody to type `/model`, so carrying on
@@ -718,15 +725,6 @@ pub(crate) fn converse<T: Terminal>(
 
             draw::unconfigured(renderer, said)?;
             continue;
-        }
-
-        // A model named with nobody to ask it of, as `--model foo` is on a
-        // machine with nothing set up: the provider standing in refuses every
-        // turn. At a terminal that refusal is the warning and `/login` is a
-        // key away. Down a pipe it is the run above, unanswerable to the last
-        // line, and it ends the same way rather than `Ok`.
-        if !renderer.is_terminal() && !conversation.runner().provider().reaches_a_model() {
-            return Err(Fatal::Unanswerable(terms.unasked(conversation.serving())));
         }
 
         let imported = attaching::imported(&held);
