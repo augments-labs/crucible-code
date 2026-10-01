@@ -174,7 +174,9 @@ A request was about to leave on a route whose vendor uses what is sent, before
 that route had its yes. It was held, and nothing was sent. Send a message on
 the route in a terminal to be asked: for a route named `model:<provider>/<model>`,
 choose that model with `/model` first, since a web search keeps the model the
-run started with. Or see [content use](../providers/content-use.md).
+run started with. To keep searches off that model instead, choose the model you
+want and start crucible again: the next run starts on it. Or see [content
+use](../providers/content-use.md).
 
 ### `crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>`
 
