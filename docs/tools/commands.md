@@ -8,6 +8,7 @@ which names the command rather than a directory.
 | --- | --- |
 | `command` | The command line, as a shell would read it. Required. |
 | `timeout` | Seconds to allow before stopping it. Defaults to 120; anything over 86400 is refused, and the command still stops at [`sandbox.limits.commandSeconds`](../configuration/configuration.md#sandbox) if that comes first. |
+| `background` | `true` leaves the command running and answers at once, for something with no end of its own. Not sent with `timeout`; at most four run at once. See [Leaving one running](#leaving-one-running). |
 | `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question) and again on the row that reports a backgrounded command ending. Optional, and nothing the command runs reads it. |
 | `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 

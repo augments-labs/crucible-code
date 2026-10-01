@@ -17,7 +17,7 @@ can only be about the whole tool: `deny ask_user` refuses every call to it.
 | `several` | Whether more than one of its answers may be chosen. Left out means one. |
 | `answers` | The answers it offers, best first. Required, at least 2 and at most 8, and no two the same. |
 | `answer` | What one answer is called. Required, and at most 500 bytes. |
-| `says` | One line saying what choosing it means, where the name does not say it. |
+| `says` | One line saying what choosing it means, where the name does not say it. At most 500 bytes. |
 | `shows` | What the answer would look like, row by row. At most 10 rows of at most 500 bytes each. |
 
 ## What you see

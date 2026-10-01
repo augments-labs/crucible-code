@@ -32,7 +32,8 @@ This is structural rather than a shortlist of three familiar shells. It covers
 launchers such as `sudo`, `env`, `timeout`, `xargs`, `chroot` and `ssh`; shell
 builtins and grammar that reinterpret what follows; shell names and their
 versioned forms; and interpreter families including Python, Node, PowerShell,
-Perl, Ruby, Lua and their versioned executables. A quoted, escaped, expanded or
+Perl, Ruby, Lua, `awk` (with `gawk` and `mawk`) and `sed`, and their versioned
+executables. A quoted, escaped, expanded or
 otherwise computed program name is refused too. Changing from `sh` to `dash`,
 or from `python` to `python3.14`, cannot make the same narrow-looking rule begin
 to match.
@@ -51,9 +52,7 @@ arbitrary command if asked the right way.
 - `cargo`: `build.rs`, runners and aliases in `.cargo/config.toml`
 - `npm`: lifecycle scripts
 - `make`: every recipe
-- `awk`: `system()`
 - `tar`: `--checkpoint-action`
-- `perl`: a language; whatever the one-liner says
 
 `allow: ["bash(git *)"]` grants a shell, one subcommand away. crucible does
 not pretend to police this; it would mean reimplementing each program's

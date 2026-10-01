@@ -85,7 +85,8 @@ converter it knows about, best first, and names the first one you have:
 | --- | --- |
 | `.docx` `.odt` `.rtf` | `pandoc`, then `textutil` on macOS, then `soffice` |
 | `.epub` | `pandoc` |
-| `.xlsx` `.xls` `.ods` | `soffice`, then `xlsx2csv` |
+| `.xlsx` | `soffice`, then `xlsx2csv` |
+| `.xls` `.ods` | `soffice` |
 | `.pptx` `.odp` | `soffice` |
 | `.pdf` | `pdftotext`, then `soffice` |
 
@@ -129,13 +130,15 @@ to very little.
 
 ### A video is read as the frames pulled out of it
 
-Nothing crucible speaks to reads a video, and everything it speaks to reads a
-picture. So a video is refused in the same shape as a document (turn it into
-something a model takes in, then hand that over), with a different second half:
+`read` hands a model no video: what a tool answers with is text or a picture. A
+video reaches a model only when you [attach it](../sessions/attachments.md) to
+one that takes video, and not every model reads a picture either. So a video is
+refused in the same shape as a document (turn it into something a model takes
+in, then hand that over), with a different second half:
 
 ```
-clip.mp4 is not a text file. It is a video — nothing here reads one and
-everything here reads a picture, so pull frames out and attach those. ffprobe
+clip.mp4 is not a text file. It is a video — read hands no video to a model, so
+pull frames out and attach those to a model that reads pictures. ffprobe
 -v error -show_entries format=duration -of csv=p=0 clip.mp4 says how long it is,
 and ffmpeg -i clip.mp4 -vf fps=1 -frames:v 20 frame-%03d.jpg takes one a second
 and stops at twenty, which is about as many as one request carries. Sample a
@@ -160,8 +163,8 @@ guessing at one is how an answer sounds right and is wrong.
 
 Three things are lost, and knowing which is what makes the frames readable:
 
-- **The soundtrack.** No model crucible offers accepts audio, so a video whose
-  content is speech becomes a video with no content.
+- **The soundtrack.** Frames carry no sound, and crucible attaches no audio
+  file, so a video whose content is speech becomes a video with no content.
 - **Everything between two sampled frames.** Good for *what is on this screen*,
   wrong for *what happened between these two moments*.
 - **Most of a long recording.** One request carries 4 MB of files, and twenty
@@ -188,7 +191,7 @@ that read is put to you the way a command is, and runs only on your yes.
 | `find` | The exact text to replace, indentation included. Required unless `edits` is sent. |
 | `replace` | What to put in its place. Empty deletes. Required unless `edits` is sent. |
 | `all` | Replace every occurrence instead of requiring exactly one. |
-| `edits` | Several changes (`find`, `replace` and `all` each) instead of one. |
+| `edits` | Several changes (`find`, `replace` and `all` each) instead of one, at most 256. An empty list is refused. |
 | `description` | One line saying what the call is for, shown to you on the [question](../permissions/permissions.md#the-question). Optional, and the tool never reads it. |
 | `explanation` | The long form of the same thing: a list of strings, one per paragraph, shown on the question when you press `ctrl+e`. Optional, and the tool never reads it. |
 

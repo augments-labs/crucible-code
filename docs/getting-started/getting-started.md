@@ -266,11 +266,14 @@ end the walk. Edit the line, by so much as a <kbd>Backspace</kbd>, and the walk
 ends where you edited it: the count goes, the line is yours again, and the one
 you had set aside is not coming back.
 
-The prompts are kept between sessions, per directory. A line you sent in one
-checkout is never offered under the arrow key in another, and each directory
-keeps its own hundred: the hundred-and-first prompt you send here is what the
-first one is spent on, and it goes from the file rather than sitting in it
-unreachable.
+The prompts are kept between sessions, in one `prompt.history` file beside the
+sessions, with the directory each was sent from. A line you sent in one checkout
+is never offered under the arrow key in another, and each directory keeps at
+most a hundred: the hundred-and-first prompt you send here is what the first one
+is spent on, and it goes from the file rather than sitting in it unreachable.
+The file holds at most 512 prompts across every directory, so prompts sent
+elsewhere can push this directory's oldest out. A prompt longer than 1024 bytes,
+usually a paste, is not kept at all.
 
 Where the prompt is more than one line, <kbd>↑</kbd> moves up through it and
 only reaches the history from the first line, and <kbd>↓</kbd> only from the
@@ -504,8 +507,8 @@ watching the bottom of the screen for it.
 
 The rest wait for their tool. A command that is still printing has its output to
 show and `ctrl+b` pointing at it, and a response that asked for four tools at
-once gets four answers in whatever order they finish, so writing those rows up
-front would take each result under the wrong call. Those stand above the working
+once has them run one after another in the order asked, so writing all four rows
+up front would put each result a row or more away from the call it answers. Those stand above the working
 row instead, with the mark pulsing on the beat the mark below it turns on, and
 each commits the moment its own tool answers: the same words in the same
 columns, with the motion gone. So a call still waiting is told from one that has
@@ -587,7 +590,9 @@ Local file lookups and web research in the same batch are counted together:
 ● Searched for 3 patterns, read 2 files, searched the web 2 times, fetched 4 pages
 ```
 
-Only the kinds that happened are named, in that order, and each carries its own
+Only the kinds that happened are named, always in this order: searched for
+patterns, read files, listed directories, ran commands, searched the web,
+fetched pages. Each carries its own
 number: a run that read one file says `read 1 file`. Two calls are enough to
 fold; a single lookup keeps the row it always had, since a count of one is the
 same width as the name it replaced and says less.
@@ -898,8 +903,8 @@ serves in one pane beside the models in the other, and the rungs the marked mode
 takes on a strip underneath. Model rows show exact API IDs, such as `gpt-6-astra`
 and `gemini-3.8-flash`; search also accepts display names.
 Type to narrow both panes at once: `openai` leaves everything that vendor
-serves, `sonnet` leaves the one model, and the line does not ask which kind of
-name it just got. <kbd>Tab</kbd> crosses between the panes, the up and down
+serves, `sonnet` leaves the two Sonnet models, and the line does not ask which
+kind of name it just got. <kbd>Tab</kbd> crosses between the panes, the up and down
 arrows walk whichever one the mark is in, the left and right arrows walk the
 rungs, and Enter takes the model and the rung under it together. Taking a row
 moves the session to whoever serves that model. Escape leaves it and changes
@@ -1183,6 +1188,11 @@ sessions never write a plan or ask a question about the world.
 | `web_search` | Searches the web | yes |
 | `web_fetch` | Reads one web page | yes |
 | `tool_search` | Finds a tool that is not in the list | no |
+
+`web_search` and `web_fetch` exist only where the provider serves them.
+Anthropic, Google, MoonshotAI and OpenAI serve both; Meta and xAI serve
+`web_search` alone; DeepSeek, MiMo, MiniMax, Qwen and Z.ai serve neither, and a
+session there has ten tools or fewer.
 
 Reads inside the workspace never ask; one that leads outside it puts the path
 to you first. Anything that changes a file or starts a process asks, until
