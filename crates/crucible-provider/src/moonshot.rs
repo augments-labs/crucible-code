@@ -73,6 +73,7 @@ impl Dialect for Kimi {
     const TITLE: &'static str = "Moonshot";
     const ADDRESSES: &'static [Endpoint] = &[CODING, CODING_AI, PLATFORM];
     const SHAPE: &'static str = "moonshot-chat-completions-v1";
+    type Kept = ();
 
     fn spells() -> Modalities {
         // `chat/completions` carries pictures and videos as nested URL parts,

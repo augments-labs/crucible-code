@@ -4,7 +4,7 @@
 //! an executable call/result protocol. Borrowed pieces go straight into the
 //! destination JSON string; no second transcript or private payload is built.
 
-use crucible_types::{Message, StopReason};
+use crucible_types::{Message, ProviderContinuation, StopReason};
 
 /// Older wire readers have no native continuation decoder. Preserve their
 /// existing unsigned history, but describe a foreign native answer and all of
@@ -16,9 +16,19 @@ pub(crate) struct LegacyHistory {
 
 impl LegacyHistory {
     pub(crate) fn neutral(&mut self, message: &Message) -> bool {
+        self.neutral_unless(message, |_| false)
+    }
+
+    /// The same, except that an answer whose private state `own` reads as this
+    /// reader's own is native rather than foreign.
+    pub(crate) fn neutral_unless(
+        &mut self,
+        message: &Message,
+        own: impl Fn(&ProviderContinuation) -> bool,
+    ) -> bool {
         match message {
             Message::Agent { continuation, .. } => {
-                self.foreign_results = continuation.is_some();
+                self.foreign_results = continuation.as_ref().is_some_and(|state| !own(state));
                 self.foreign_results
             }
             Message::ToolResults(_) => self.foreign_results,

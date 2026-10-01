@@ -97,6 +97,7 @@ pub(crate) struct Response<W: Wire> {
 
 impl<W: Wire> Response<W> {
     /// Reads `body` until it ends or `cancel` is raised.
+    #[cfg(test)]
     pub(crate) fn new(
         body: Box<dyn AsyncRead + Send + Unpin>,
         cancel: Cancel,

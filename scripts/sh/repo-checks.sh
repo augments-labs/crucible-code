@@ -401,7 +401,8 @@ shared=$(git ls-files 'crates/crucible-provider/src/completions.rs' \
 if [[ -z "$shared" ]]; then
     printf '    FAIL the shared Chat Completions module was not found; this check measured nothing\n'
     failed=1
-elif named=$(printf '%s\n' "$shared" | xargs grep -n -i -E 'moonshot|kimi'); then
+elif named=$(printf '%s\n' "$shared" | xargs grep -n -i -E \
+    'moonshot|kimi|deepseek|\bzai\b|z\.ai|bigmodel|\bglm|qwen|dashscope|aliyun|\bmimo\b|xiaomi|minimax'); then
     printf '%s\n' "$named" | sed 's/^/    /'
     printf '    FAIL the shared Chat Completions wire names a vendor; move it into the dialect\n'
     failed=1

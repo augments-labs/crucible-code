@@ -25,6 +25,7 @@ impl Dialect for Relay {
     const TITLE: &'static str = "Relay";
     const ADDRESSES: &'static [Endpoint] = &[RELAY];
     const SHAPE: &'static str = "relay-chat-completions-v1";
+    type Kept = ();
 
     fn spells() -> Modalities {
         Modalities::empty().insert(Modality::Text)

@@ -14,30 +14,40 @@
 
 mod anthropic;
 mod completions;
+mod deepseek;
 mod endpoint;
 #[cfg(test)]
 mod fake;
 mod google;
 mod history;
 mod json;
+mod mimo;
+mod minimax;
 mod moonshot;
 mod openai;
+mod qwen;
 mod refusal;
 mod sse;
 mod stream;
 mod transport;
 mod unavailable;
 mod web;
+mod zai;
 
 #[cfg(test)]
 mod renewing_tests;
 
 pub use anthropic::Anthropic;
+pub use deepseek::DeepSeek;
 pub use endpoint::{Endpoint, EndpointError};
 pub use google::Google;
+pub use mimo::Mimo;
+pub use minimax::MiniMax;
 pub use moonshot::Moonshot;
 pub use openai::OpenAi;
+pub use qwen::Qwen;
 pub use transport::http::HttpTurns;
 pub use transport::{PostResponse, Transport, TransportError};
 pub use unavailable::Unavailable;
 pub use web::{AnthropicWeb, GoogleWeb, MoonshotWeb, OpenAiWeb};
+pub use zai::Zai;

@@ -1,0 +1,303 @@
+[
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "reasoning_content": "The user",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "This image is",
+          "reasoning_content": " is asking what the image shows. I should describe the image in detail.",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": " a close-up portrait of a young girl, likely a toddler or preschool-aged child. Key details include:\n\n",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "- **Facial expression**: She has a sweet, subtle smile and is looking directly at the camera",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": " with large, expressive hazel/light brown eyes.\n- **Hair**: She has tousled, wavy",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": " light brown/auburn hair with wispy bangs that frame her face, appearing somewhat wild and",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": " natural.\n- **Clothing**: She's wearing a cream or off-white top with delicate lace or ruff",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "led detailing around the neckline, giving it a vintage or romantic feel.\n- **Lighting and mood",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "**: The photo uses soft, warm lighting that highlights her features and creates a gentle, painter",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "ly quality. The background is a neutral, muted olive-gray tone, which keeps the focus",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": " on her face.\n- **Style**: The overall aesthetic has an artistic, portrait-ph",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "index": 0,
+        "delta": {
+          "content": "otography quality, reminiscent of fine art children's portraiture, with shallow depth of field that softly",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  },
+  {
+    "id": "066a34c738d29f6687fbf54ab6c98c34",
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "delta": {
+          "content": " blurs the background.\n\nThe image evokes a sense of innocence, warmth, and charm.",
+          "role": "assistant",
+          "name": "MiniMax AI",
+          "audio_content": ""
+        }
+      }
+    ],
+    "created": 1780154823,
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "object": "chat.completion.chunk",
+    "usage": null,
+    "input_sensitive": false,
+    "output_sensitive": false,
+    "input_sensitive_type": 0,
+    "output_sensitive_type": 0,
+    "output_sensitive_int": 0
+  }
+]

@@ -1,0 +1,5 @@
+data: {"choices":[{"delta":{"content":"","role":"assistant"},"index":0,"finish_reason":null}],"object":"chat.completion.chunk","model":"qwen3.8-max"}
+
+data: {"choices":[{"delta":{"content":"我是"},"index":0,"finish_reason":null}],"object":"chat.completion.chunk","model":"qwen3.8-max"}
+
+data: [DONE]

@@ -14,27 +14,44 @@
 
 use crucible_models::{Attached, Content, Request};
 use crucible_types::{
-    Message, Modality, PromptCacheEncoding, PromptCacheIneligibleReason, PromptCacheMechanism,
-    StopReason, ToolCall, ToolResult, ToolSchema,
+    ContinuationPart, ContinuationScope, Message, Modality, PromptCacheEncoding,
+    PromptCacheIneligibleReason, PromptCacheMechanism, ProviderContinuation, StopReason, ToolCall,
+    ToolResult, ToolSchema,
 };
 
-use super::Dialect;
+use super::{Dialect, Reasoning};
 use crate::json::{Array, Json, Object, described};
 
-/// The whole request body, as `D` reads it.
+/// The whole request body, as `D` reads it, with no reasoning to send back.
+#[cfg(test)]
 pub(crate) fn serialize<D: Dialect>(request: &Request<'_>) -> String {
+    serialize_for::<D>(request, None)
+}
+
+/// The whole request body, as `D` reads it, sending back the reasoning kept
+/// under `scope` where the vendor wants it.
+pub(crate) fn serialize_for<D: Dialect>(
+    request: &Request<'_>,
+    scope: Option<ContinuationScope>,
+) -> String {
     let mut json = Json::new();
     json.object(|body| {
         body.text("model", request.model);
-        body.number("max_tokens", request.max_tokens);
+        body.number(D::CEILING, request.max_tokens);
         body.boolean("stream", true);
 
         // What a response cost, which this endpoint sends only when it is asked
         // to. It arrives after the answer in a chunk of its own, so asking for
         // it costs nothing but the field.
-        body.object("stream_options", |options| {
-            options.boolean("include_usage", true);
-        });
+        if D::USAGE_ASKED {
+            body.object("stream_options", |options| {
+                options.boolean("include_usage", true);
+            });
+        }
+
+        for (flag, set) in D::FLAGS {
+            body.boolean(flag, *set);
+        }
 
         if let Some(key) = request
             .prompt_cache
@@ -46,7 +63,7 @@ pub(crate) fn serialize<D: Dialect>(request: &Request<'_>) -> String {
         }
 
         body.array("messages", |messages| {
-            write_messages::<D>(messages, request);
+            write_messages::<D>(messages, request, back::<D>(request, scope));
         });
 
         // Beside `model` rather than nested, which is where this older wire
@@ -104,7 +121,7 @@ pub(crate) fn prompt_cache_encoding(request: &Request<'_>) -> PromptCacheEncodin
 /// the only place this wire has for them. It is a weaker promise than a field
 /// (the model may answer the instructions rather than obey them), and it is
 /// the one this endpoint offers.
-fn write_messages<D: Dialect>(messages: &mut Array<'_>, request: &Request<'_>) {
+fn write_messages<D: Dialect>(messages: &mut Array<'_>, request: &Request<'_>, back: Back) {
     let mut history = crate::history::LegacyHistory::default();
     if let Some(system) = request.system {
         messages.object(|message| {
@@ -114,15 +131,57 @@ fn write_messages<D: Dialect>(messages: &mut Array<'_>, request: &Request<'_>) {
     }
 
     for (nth, message) in request.transcript.messages().iter().enumerate() {
-        if history.neutral(message) || request.purpose == crucible_models::RequestPurpose::Recap {
+        // An answer whose reasoning this wire kept for this credential and
+        // address is this vendor's own, and goes back as an answer.
+        let own = |state: &ProviderContinuation| match back {
+            Back::Kept(scope) | Back::Every(scope) => {
+                state.protocol() == super::wire::PROTOCOL && state.scope() == scope
+            }
+            Back::Nothing => false,
+        };
+        if history.neutral_unless(message, own)
+            || request.purpose == crucible_models::RequestPurpose::Recap
+        {
             messages.object(|item| {
                 item.text("role", "user");
                 item.text_with("content", |write| crate::history::visible(message, write));
             });
             continue;
         }
-        append::<D>(messages, message, nth, request.attached);
+        append::<D>(messages, message, nth, request.attached, back);
     }
+}
+
+/// What this request sends back of the reasoning its earlier answers kept.
+#[derive(Debug, Clone, Copy)]
+enum Back {
+    /// Nothing: the vendor keeps none, or nothing was kept under this scope.
+    Nothing,
+    /// What each answer kept, under `scope`.
+    Kept(ContinuationScope),
+    /// The same, and empty for an answer that kept none.
+    Every(ContinuationScope),
+}
+
+/// What `request` sends back to `D`, given where it is going.
+fn back<D: Dialect>(request: &Request<'_>, scope: Option<ContinuationScope>) -> Back {
+    match (D::reasoning(request.model), scope) {
+        (Reasoning::Unread, _) | (_, None) => Back::Nothing,
+        (Reasoning::Required, Some(scope)) if !request.tools.is_empty() => Back::Every(scope),
+        (Reasoning::Returned | Reasoning::Required, Some(scope)) => Back::Kept(scope),
+    }
+}
+
+/// The reasoning an answer kept, where it was kept by this wire for this
+/// credential at this address: another vendor's private state is not this
+/// vendor's to read, and the same vendor reached another way is another scope.
+fn kept(continuation: Option<&ProviderContinuation>, scope: ContinuationScope) -> Option<&str> {
+    let state = continuation
+        .filter(|state| state.protocol() == super::wire::PROTOCOL && state.scope() == scope)?;
+    state.parts().iter().find_map(|part| match part {
+        ContinuationPart::Opaque(data) => Some(data.as_str()),
+        ContinuationPart::Text { .. } | ContinuationPart::Call { .. } => None,
+    })
 }
 
 /// One message, as however many this wire needs for it.
@@ -135,6 +194,7 @@ fn append<D: Dialect>(
     message: &Message,
     nth: usize,
     attached: &[Attached<'_>],
+    back: Back,
 ) {
     match message {
         Message::Context(fragment) => messages.object(|message| {
@@ -168,7 +228,7 @@ fn append<D: Dialect>(
             });
         }),
         Message::Agent {
-            continuation: _,
+            continuation,
             text,
             calls,
             stop,
@@ -188,6 +248,14 @@ fn append<D: Dialect>(
                 assistant.text("role", "assistant");
                 if !text.is_empty() {
                     assistant.text("content", text);
+                }
+                let reasoning = match back {
+                    Back::Nothing => None,
+                    Back::Kept(scope) => kept(continuation.as_ref(), scope),
+                    Back::Every(scope) => kept(continuation.as_ref(), scope).or(Some("")),
+                };
+                if let Some(reasoning) = reasoning {
+                    assistant.text("reasoning_content", reasoning);
                 }
                 if !calls.is_empty() {
                     assistant.array("tool_calls", |items| {
