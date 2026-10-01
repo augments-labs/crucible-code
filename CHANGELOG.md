@@ -8,6 +8,45 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+## [0.44.2] - 2026-10-01
+
+**Every model crucible knows now starts at its native context window, and a
+request too long for an Anthropic, Meta or MiniMax model makes room instead of
+ending the turn.** Most models now compact near a million tokens rather than
+200,000, so a long session costs more per turn; set `defaultContextWindow` or
+`contextWindow` to compact sooner. A front end with no terminal no longer
+records a prompt or `/compact` that no model can answer.
+
+### Changed
+
+- **Every model crucible knows now uses its native context window by
+  default.** Most offered models now manage against about a million tokens
+  instead of 200,000, so a session may grow to that size before it is
+  compacted, and each turn costs more as it grows; Gemini, xAI and OpenAI with
+  a key also charge more per token once a request passes a threshold. OpenAI's
+  models are held to 872,000, the most its ChatGPT sign-in takes. Set
+  `defaultContextWindow` or `contextWindow` under `providers.<name>` to compact
+  sooner.
+
+### Fixed
+
+- **A prompt or `/compact` with no model to ask records nothing, whatever
+  sends it.** A front end with no terminal could take a turn on a session with
+  no model chosen, or with nothing set up to serve the model named, and the
+  prompt was written into the session before it was refused. Both are now
+  answered with what is missing (a credential, a provider or a model) and
+  nothing is recorded or sent; at a terminal, `/compact` gives the warning a
+  prompt does and ends a piped run as one does, and "Carry on from summary" on
+  a resumed session gives that warning too.
+- **An Anthropic or Meta request too long for the model makes room and asks
+  again.** Neither sends a code for that refusal, so it ended the turn; crucible
+  now reads each by its shape and opening words and compacts mid-turn instead,
+  and does the same for MiniMax where its refusal has the wording matched.
+  MiniMax's wording is not confirmed against its own pages, so a refusal
+  worded otherwise still ends the turn. On Google, DeepSeek, Moonshot, Qwen,
+  xAI and MiMo a request too long for the model still ends the turn, and a
+  lower `defaultContextWindow` avoids it.
+
 ## [0.44.1] - 2026-10-01
 
 **Web search follows `/model`, and a prompt nothing can answer is no longer
@@ -4711,7 +4750,8 @@ that say what it is allowed to become.
   ordinary path and leaves a sticky bit where it was.
 - Linux x86-64 only. The release builds one artifact.
 
-[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...HEAD
+[Unreleased]: https://github.com/augments-labs/crucible-code/compare/v0.44.2...HEAD
+[0.44.2]: https://github.com/augments-labs/crucible-code/compare/v0.44.1...v0.44.2
 [0.44.1]: https://github.com/augments-labs/crucible-code/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augments-labs/crucible-code/compare/v0.43.3...v0.44.0
 [0.43.3]: https://github.com/augments-labs/crucible-code/compare/v0.43.2...v0.43.3

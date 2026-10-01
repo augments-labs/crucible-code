@@ -347,3 +347,116 @@ fn every_model_caches_its_prefix_on_its_own_and_takes_a_routing_key() {
         );
     }
 }
+
+/// Meta's own example of a request too large for the model.
+///
+/// <https://dev.meta.ai/docs/error-handling>, "Context window exceeded".
+const CONTEXT_WINDOW: &str = include_str!("fixtures/error-400-context-window.json");
+
+/// What a request answered with `status` and `body` fails with.
+fn refused(status: u16, body: &str) -> ProviderError {
+    let replay = std::sync::Arc::new(Replay::new(status, body));
+    let credential = HeaderKey::new(ApiKey::new(SECRET), Header::bearer());
+    let provider = Meta::at(Meta::VENDOR, Box::new(credential), Box::new(replay));
+    let cancel = Cancel::new();
+    match crucible_runtime::answered!(provider.stream(asking("Hello"), &cancel)) {
+        Err(problem) => problem,
+        Ok(_) => panic!("a refused request has no stream"),
+    }
+}
+
+#[test]
+fn a_request_too_large_for_the_model_is_compacted_for_rather_than_ending_the_turn() {
+    let problem = refused(400, CONTEXT_WINDOW);
+
+    assert!(
+        matches!(problem, ProviderError::WindowExceeded { provider: "meta" }),
+        "{problem:?}"
+    );
+    assert!(!problem.transient(), "the same request will not fit again");
+}
+
+#[test]
+fn every_other_documented_400_stays_a_refusal_in_meta_s_words() {
+    for (body, said) in [
+        (
+            include_str!("fixtures/error-400-validation.json"),
+            "`top_p`: The number must be `<= 1.0`.",
+        ),
+        (
+            include_str!("fixtures/error-400-call-id.json"),
+            "function_call_output call_id 'call_xyz'",
+        ),
+        (
+            include_str!("fixtures/error-400-reasoning-order.json"),
+            "Invalid conversation structure: reasoning items",
+        ),
+    ] {
+        let problem = refused(400, body);
+
+        assert!(
+            matches!(
+                &problem,
+                ProviderError::Refused { status: 400, message, .. } if message.contains(said)
+            ),
+            "{problem:?}"
+        );
+    }
+}
+
+#[test]
+fn the_words_alone_are_not_a_request_too_large() {
+    // Each body below is the documented one with a single part of its shape
+    // changed: the words are read only where the rest of it is the vendor's
+    // refusal of an over-long request.
+    let documented = json(CONTEXT_WINDOW);
+    let changed = |pointer: &str, value: Value| {
+        let mut body = documented.clone();
+        *body.pointer_mut(pointer).unwrap() = value;
+        body.to_string()
+    };
+    for (status, body) in [
+        (400, changed("/error/param", json!("input"))),
+        (400, changed("/error/code", json!("invalid_value"))),
+        (400, changed("/error/type", json!("server_error"))),
+        (
+            400,
+            changed(
+                "/error/message",
+                json!("However, The model's context length is only 1048576 tokens"),
+            ),
+        ),
+        (500, documented.to_string()),
+        (413, documented.to_string()),
+    ] {
+        let problem = refused(status, &body);
+
+        assert!(
+            matches!(problem, ProviderError::Refused { .. }),
+            "{status} {body}: {problem:?}"
+        );
+    }
+}
+
+#[test]
+fn the_words_echoed_inside_another_refusal_are_not_a_request_too_large() {
+    // A refusal of the documented shape that quotes the words back from what
+    // was sent, rather than saying them as its own sentence.
+    // Each anchor is tried alone: the words with neither end, with Meta's
+    // opening but another ending, and with Meta's ending but another opening.
+    for said in [
+        "Invalid input text: 'the model's context length is only 8 tokens' is not allowed",
+        "You passed 'the model's context length is only 8' which is not allowed",
+        "Invalid input text: 'the model's context length is only 8'. Please reduce the length of the input prompt",
+    ] {
+        let mut body = json(CONTEXT_WINDOW);
+        *body.pointer_mut("/error/message").unwrap() = json!(said);
+
+        let problem = refused(400, &body.to_string());
+
+        assert!(
+            matches!(problem, ProviderError::Refused { status: 400, .. }),
+            "{said}: {problem:?}"
+        );
+    }
+}

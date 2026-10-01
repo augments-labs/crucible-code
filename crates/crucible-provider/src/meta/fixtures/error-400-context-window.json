@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "You passed 1200064 input tokens and requested 1 output tokens. However, the model's context length is only 1048576 tokens, resulting in a maximum input length of 1048575 tokens. Please reduce the length of the input prompt",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": null
+  }
+}

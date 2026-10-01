@@ -367,7 +367,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "8e5be51eca5decbdf2461f7d9f16eec41b298c49a4ac253d7b897b4fe238f495"
+      "sha256": "1259bc66b7588fffa27afc1b8e467c98c6b9593242aa02bb280e062ea1d97cd3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_model_effort_80.snap",
@@ -375,7 +375,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "69648f18da2f6d552b7f210a9420e5636cbfb9f1c638ac838fe70c29812b6e46"
+      "sha256": "8439078ec65e8d4ab1d58114d132088dc804e58f1b0f10fbc9cb717191d61b46"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",
@@ -421,13 +421,13 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_40.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
       "opened": [],
-      "sha256": "d4c9fdbf910ed8e761b40f7ebe6a2ba2f22327f9764eb1b5d6b1f84f7e0d1574"
+      "sha256": "066647b0f7a9e357d511e7af3f64cb068230375323ae6b49a616a65451b9875f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_80.snap",
       "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
       "opened": [],
-      "sha256": "87a56c0827b29f3cc7f3d2bba39ecb46f0f9372ca75b9a80f9fc65c44a99f023"
+      "sha256": "790226823f0d8bc72501965bd07556864b082a626bb4c064312b00778ebe4c83"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__model_trains_80.snap",
@@ -436,7 +436,7 @@
         "Vendor::answering(\"Two plus two is four.\")",
         "Watched::keyless(\"model-trains\", 80, 24, &vendor)"
       ],
-      "sha256": "5a49f2a22f67ef62ba610251147cdad355b4fb98877d3f30913784c170e07f97"
+      "sha256": "632c5150674e199a8a720e7f25b2a29fa39554a51564a14e6aaa643dc29fc644"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",

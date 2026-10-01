@@ -49,7 +49,7 @@ use serde_json::Value;
 
 use crate::endpoint::Endpoint;
 use crate::json::Object;
-use crate::refusal::refused_at;
+use crate::refusal::{Rules, refused_at};
 use crate::sse::SseEvent;
 use crate::stream::Response;
 use crate::transport::Transport;
@@ -212,6 +212,16 @@ pub trait Dialect: Sized + Send + Sync + 'static {
         let _ = (route, model);
         FastForm::None
     }
+
+    /// The vendor's refusal of a request too large for the model's window,
+    /// where it sends that refusal with no code: a refusal this answers yes
+    /// for, from its status and its body read whole, is
+    /// [`ProviderError::WindowExceeded`], which the session is compacted for.
+    /// Written as the shape that refusal comes in and one exact phrase, case
+    /// and all, anchored where the vendor puts it; every other vendor's
+    /// refusals are told by their code alone.
+    /// None, by default.
+    const OVERLONG: Option<fn(u16, &Value) -> bool> = None;
 
     /// What tells a refusal of the fast tier on `route` from any other.
     fn fast_refused(route: Self::Route) -> Option<fn(u16, &str) -> bool> {
@@ -509,7 +519,17 @@ impl<D: Dialect> Provider for Responses<D> {
                 // A refusal of the tier is read for only where one is
                 // documented, and only for a request that asked for it.
                 let rule = self.vendor().filter(|_| fast).and_then(D::fast_refused);
-                let error = refused_at(D::NAME, rule, response, &redactions, cancel).await;
+                let error = refused_at(
+                    D::NAME,
+                    Rules {
+                        fast: rule,
+                        overlong: D::OVERLONG,
+                    },
+                    response,
+                    &redactions,
+                    cancel,
+                )
+                .await;
                 let error = D::refusal(error, &redactions);
                 return Err(if replays {
                     D::Replay::refusal(error)

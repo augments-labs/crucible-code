@@ -2,11 +2,13 @@
 //!
 //! The wire is [`crate::responses`], which writes the request, reads the
 //! response and sends one for the other, and `Responses<Muse>` is what ships.
-//! What is Meta's is here: its one address, and the two places its Responses
+//! What is Meta's is here: its one address, and the places its Responses
 //! differs from the plain wire. What the model said before calling a tool goes
 //! back marked as commentary, which the vendor answers with a 400 when it is
 //! not, and a stream may close with a `[DONE]` line after the event that ended
-//! it.
+//! it. And its refusal of a request too large for the model carries no code,
+//! so it is told apart by its shape and its words rather than left to end the
+//! turn.
 //!
 //! No `tool_choice` is ever sent: the vendor takes `auto` alone, which is what
 //! a request that names none gets. No reasoning is sent back either: the vendor
@@ -18,6 +20,7 @@
 
 use crucible_models::{PromptCacheCapabilities, PromptCacheProvenance};
 use crucible_types::{Modalities, Modality};
+use serde_json::Value;
 
 use crate::endpoint::Endpoint;
 use crate::responses::{Dialect, Plain, Responses};
@@ -52,8 +55,9 @@ impl Dialect for Muse {
 
     // A request too large for the model is refused with a 400 whose `code` is
     // null, as Meta's error page prints it, beside a sentence giving the
-    // counts. Refusals are told apart by their code alone, so this one ends
-    // the turn in Meta's words rather than compacting the session.
+    // counts. With no code to read, it is told by the shape that refusal has
+    // and the words in it: see [`outgrew`].
+    const OVERLONG: Option<fn(u16, &Value) -> bool> = Some(outgrew);
 
     fn route(endpoint: &Endpoint) {
         let _ = endpoint;
@@ -85,6 +89,41 @@ impl Dialect for Muse {
         // text alone until one is.
         Modalities::empty().insert(Modality::Text)
     }
+}
+
+/// The words of Meta's refusal of a request too large for the model, as its
+/// error page prints them, and of none of its other documented refusals.
+const OUTGROWN: &str = "the model's context length is only";
+
+/// How the message of that refusal opens, as its error page prints it.
+const OPENS: &str = "You passed ";
+
+/// How the message of that refusal ends, as its error page prints it.
+const ENDS: &str = "Please reduce the length of the input prompt";
+
+/// Whether a refusal is Meta's of a request too large for the model.
+///
+/// Meta sends no code for it, so the shape is read first and the words only
+/// then: a 400 of the type every refused request has, naming no parameter and
+/// no code, whose message opens with [`OPENS`], ends with [`ENDS`] and says
+/// [`OUTGROWN`] between them, exactly and in this case. Anchoring both ends
+/// keeps a refusal that quotes those words back from what was sent from
+/// reading as this one. Every other refusal its page prints names the
+/// parameter it is about, and stays a refusal in Meta's words.
+fn outgrew(status: u16, body: &Value) -> bool {
+    let Some(error) = body.get("error") else {
+        return false;
+    };
+    status == 400
+        && error.get("type").and_then(Value::as_str) == Some("invalid_request_error")
+        && error.get("param").is_some_and(Value::is_null)
+        && error.get("code").is_some_and(Value::is_null)
+        && error
+            .get("message")
+            .and_then(Value::as_str)
+            .and_then(|said| said.strip_prefix(OPENS))
+            .and_then(|said| said.strip_suffix(ENDS))
+            .is_some_and(|said| said.contains(OUTGROWN))
 }
 
 /// Meta's Responses API.

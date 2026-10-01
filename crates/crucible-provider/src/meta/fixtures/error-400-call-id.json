@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "function_call_output call_id 'call_xyz' does not match any function_call call_id in the same request",
+    "type": "invalid_request_error",
+    "param": "call_id",
+    "code": null
+  }
+}

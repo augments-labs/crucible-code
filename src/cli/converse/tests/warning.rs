@@ -105,3 +105,49 @@ fn a_route_its_vendor_says_nothing_about_is_never_asked_about() {
     assert!(ended.is_ok(), "{ended:?}");
     assert_eq!(asked, 1);
 }
+
+#[test]
+fn compact_with_no_model_to_ask_is_answered_before_the_route_is_asked_about() {
+    // Room is made by asking the model for a recap, so with no model chosen
+    // there is nothing to send and no vendor to ask about: the answer is the
+    // warning a prompt gets, not the question about what the vendor keeps.
+    let terms = Terms {
+        consent: serving_google(),
+        ..plain()
+    };
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        crucible_runner::Runner::new(
+            Box::new(Script::new(Vec::new())),
+            Tools::new(),
+            crucible_runner::Agent::new(
+                crucible_types::AgentId::new("test"),
+                crucible_runner::Model {
+                    name: String::new().into(),
+                    max_tokens: 64,
+                    window: None,
+                    accepts: None,
+                    effort: None,
+                },
+            ),
+            crucible_context::ContextInputs::new(std::env::temp_dir()),
+            session,
+        )
+    });
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    let mut input = Cursor::new(b"/compact\n".to_vec());
+
+    let ended = converse(
+        conversation,
+        &mut renderer,
+        &terms,
+        First {
+            card: &opening(),
+            arming: None,
+        },
+        &mut input,
+    );
+
+    assert!(ended.is_ok(), "{ended:?}");
+    let written = renderer.terminal().written();
+    assert!(written.contains("No model selected"), "{written}");
+}

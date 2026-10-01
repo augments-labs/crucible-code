@@ -1,6 +1,5 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1642
 expression: models
 ---
 80x24 cursor 4,16 scrolled 0
@@ -14,10 +13,10 @@ expression: models
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
 |│  Providers          │  Models                                        4 of 42 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│ › All             4 │ › gemini-3.8-flash         Google        200k  fast    │|
-|│   Anthropic       · │   gemini-3.7-flash         Google        200k  fast    │|
-|│   DeepSeek        · │   gemini-3.6-flash         Google        200k  fast    │|
-|│   Google          4 │   gemini-3.1-pro-preview   Google        200k  fast    │|
+|│ › All             4 │ › gemini-3.8-flash         Google        1.0M  fast    │|
+|│   Anthropic       · │   gemini-3.7-flash         Google        1.0M  fast    │|
+|│   DeepSeek        · │   gemini-3.6-flash         Google        1.0M  fast    │|
+|│   Google          4 │   gemini-3.1-pro-preview   Google        1.0M  fast    │|
 |│   Meta            · │                                                        │|
 |│   MiMo            · │                                                        │|
 |│   MiniMax         · │                                                        │|

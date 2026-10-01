@@ -14,7 +14,7 @@ use crucible_config::Settings;
 use crucible_context::SystemPrompt;
 
 use super::*;
-use crate::providers::{NO_MODEL_CHOSEN, NOTHING_TO_ASK};
+use crate::providers::{Missing, NO_MODEL_CHOSEN, NOTHING_TO_ASK};
 use crate::sample::{Sample, WRITTEN};
 
 /// Drives a future to its answer on a current-thread runtime of its own, the
@@ -583,6 +583,50 @@ fn a_session_with_nothing_chosen_starts_and_asks_for_no_model() {
     );
 }
 
+#[test]
+fn a_session_with_nothing_chosen_says_whether_a_provider_or_a_credential_is_missing() {
+    // The same credentials the welcome's sentence is chosen from decide what a
+    // turn is missing, so a client is told what the reader at a screen is.
+    for (key, missing) in [
+        (Some("a-key"), Missing::Provider),
+        (None, Missing::Credential),
+    ] {
+        let from = |name: &str| {
+            key.filter(|_| name == "ANTHROPIC_API_KEY")
+                .map(str::to_owned)
+        };
+        let sample = Sample::new("nothing-chosen-missing");
+        let (logs, workspace) = (sample.logs(), sample.workspace());
+
+        let conversation = assemble(&Startup {
+            providers: &catalogue(),
+            provider: None,
+            unasked: missing.sentence(),
+            model: None,
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &Services::new(),
+            settings: &Settings::default(),
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &from,
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        })
+        .expect("a session with nothing chosen still starts");
+
+        assert_eq!(conversation.missing(), Some(missing));
+    }
+}
+
 /// The specification one startup resolves to, for a model of `anthropic`.
 ///
 /// The startup is what `coding` reads its answer off, so the tests about the
@@ -640,79 +684,6 @@ fn a_rung_the_run_resolved_is_on_the_model_every_turn_is_asked_of() {
             .model()
             .effort,
         None
-    );
-}
-
-#[test]
-fn operational_windows_use_conservative_provider_defaults() {
-    let settings = Settings::default();
-
-    for (provider, model, held) in [
-        ("anthropic", "claude-sonnet-5", 200_000),
-        ("anthropic", "claude-haiku-4-5", 200_000),
-        ("openai", "gpt-5.6-sol", 272_000),
-        ("openai", "gpt-5.5", 272_000),
-        ("moonshot", "k3", 262_144),
-        ("moonshot", "kimi-for-coding-highspeed", 262_144),
-    ] {
-        assert_eq!(
-            window(&catalogue(), serving(provider), model, &settings),
-            held,
-            "{provider}/{model}"
-        );
-    }
-}
-
-#[test]
-fn unknown_models_do_not_bypass_the_providers_default_operational_window() {
-    let settings = Settings::default();
-
-    assert_eq!(
-        window(
-            &catalogue(),
-            serving("anthropic"),
-            "claude-future",
-            &settings
-        ),
-        200_000
-    );
-    assert_eq!(
-        window(&catalogue(), serving("openai"), "gpt-future", &settings),
-        272_000
-    );
-    assert_eq!(
-        window(&catalogue(), serving("moonshot"), "kimi-future", &settings),
-        262_144
-    );
-}
-
-#[test]
-fn an_explicit_context_window_can_opt_back_into_a_larger_window() {
-    let sample = Sample::new("context-window-opt-in");
-    let settings = sample.settings(
-        r#"{"providers":{"anthropic":{"contextWindow":{"claude-sonnet-5":1000000}},"openai":{"defaultContextWindow":872000},"moonshot":{"contextWindow":{"k3":1048576}}}}"#,
-    );
-
-    assert_eq!(
-        window(
-            &catalogue(),
-            serving("anthropic"),
-            "claude-sonnet-5",
-            &settings
-        ),
-        1_000_000
-    );
-    assert_eq!(
-        window(&catalogue(), serving("openai"), "gpt-5.6-sol", &settings),
-        872_000
-    );
-    assert_eq!(
-        window(&catalogue(), serving("openai"), "gpt-future", &settings),
-        872_000
-    );
-    assert_eq!(
-        window(&catalogue(), serving("moonshot"), "k3", &settings),
-        1_048_576
     );
 }
 
@@ -1379,6 +1350,8 @@ fn existing_user_configuration_is_private_before_settings_can_read_it() {
 mod conformance;
 mod following;
 mod lending;
+mod unserved;
+mod windows;
 
 /// Where `stored` sends a Moonshot request, with `exported` in its variable
 /// and `sending` configured, if anything.

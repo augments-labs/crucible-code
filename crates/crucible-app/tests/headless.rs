@@ -27,7 +27,7 @@ use crucible_app::providers::{
 use crucible_app::startup::{Reaching, served};
 use crucible_app::switching::{LoggedIn, LoggedOut, Retained, Rung, Switched, Switching};
 use crucible_app::{AppError, Conversation, remember};
-use crucible_auth::Store;
+use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{Home, Settings};
 use crucible_models::{
     Delta, DeltaStream, Effort, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError,
@@ -334,14 +334,27 @@ struct Desk {
 
 impl Desk {
     fn new(tree: &Tree, reachable: &'static [&'static str]) -> Result<Self, Failed> {
+        Self::reaching(tree, move |one, _| reachable.contains(&one.name))
+    }
+
+    /// One that reaches a provider only while a key for it is stored, the way
+    /// a machine with nothing in its environment does.
+    fn stored(tree: &Tree) -> Result<Self, Failed> {
+        Self::reaching(tree, |one, stored| stored.get(one.name).is_some())
+    }
+
+    fn reaching(
+        tree: &Tree,
+        answers: impl Fn(Served, &StoredCredentials) -> bool + 'static,
+    ) -> Result<Self, Failed> {
         let home = tree.home()?;
         let reached = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&reached);
-        let serving: Serving = Box::new(move |one: Served, _stored| {
+        let serving: Serving = Box::new(move |one: Served, stored| {
             if let Ok(mut seen) = seen.lock() {
                 seen.push(one.name);
             }
-            if reachable.contains(&one.name) {
+            if answers(one, stored) {
                 Ok(Resolved {
                     provider: Box::new(Script::named(one.name)),
                     source: CredentialSource::Environment(one.key.into()),
