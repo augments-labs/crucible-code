@@ -78,6 +78,8 @@ answers without asking for a tool. It can also end sooner, for example when:
 - A request fails and is not retried, or fails again on the retries described
   in
   [When a response goes away](../providers/providers.md#when-a-response-goes-away).
+  A request asked at the vendor's [fast](../providers/fast.md) speed and refused
+  for it is sent once more at standard speed first.
 - The conversation no longer fits the model's window and crucible cannot make
   room, for example because the recap came back incomplete, because making
   room freed nothing, or because `compaction.when` is `never`; see

@@ -57,6 +57,13 @@ const MOONSHOT_CACHE_CONTENT: &[PromptCacheContent] = &[
 /// crucible is what is calling.
 const AGENT: &str = concat!("crucible/", env!("CARGO_PKG_VERSION"));
 
+/// What Kimi Code's highspeed model costs, in the vendor's words.
+const HIGHSPEED: crucible_models::Cost = crucible_models::Cost {
+    price: "3x the quota",
+    speed: Some("6x the speed"),
+    caveat: None,
+};
+
 /// Kimi's dialect of Chat Completions.
 #[derive(Debug)]
 pub struct Kimi;
@@ -83,6 +90,12 @@ impl Dialect for Kimi {
 
     fn usage(payload: &Value) -> Result<Option<Delta>, ProviderError> {
         wire::usage(payload)
+    }
+
+    fn own_fast(model: &str) -> Option<crucible_models::Cost> {
+        // A fast model of its own rather than a switch: nothing in the request
+        // asks for it but its id, and it has no standard form to go back to.
+        (model == "kimi-for-coding-highspeed").then_some(HIGHSPEED)
     }
 
     fn prompt_cache(model: &str) -> PromptCacheCapabilities {
@@ -139,6 +152,8 @@ impl Chat<Kimi> {
 
 #[cfg(test)]
 mod differential;
+#[cfg(test)]
+mod fast_tests;
 #[cfg(test)]
 mod identity;
 #[cfg(test)]

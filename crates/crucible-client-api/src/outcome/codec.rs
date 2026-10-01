@@ -8,7 +8,7 @@ use serde_json::Value;
 use super::{
     CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Group, LoginOutcome, LogoutOutcome,
     ModelOutcome, NotesOutcome, Problem, Release, Resource, ResumeOutcome, Retained, RoomOutcome,
-    SandboxOutcome, Standing, Stop, ThemeOutcome, TurnOutcome, maybe_problem,
+    SandboxOutcome, SpeedOutcome, Standing, Stop, ThemeOutcome, TurnOutcome, maybe_problem,
 };
 use crate::error::{ErrorCode, Refusal};
 use crate::wire::{self, Fields, Writing};
@@ -221,6 +221,35 @@ impl EffortOutcome {
         };
         fields.done()?;
         Ok(effort)
+    }
+}
+
+impl SpeedOutcome {
+    pub(super) fn written(&self) -> Value {
+        match self {
+            Self::Unasked => Writing::kind("unasked"),
+            Self::Unsupported => Writing::kind("unsupported"),
+            Self::Own => Writing::kind("own"),
+            Self::Taken { unwritten } => {
+                noting(Writing::kind("taken"), "unwritten", unwritten.as_ref())
+            }
+        }
+        .finish()
+    }
+
+    pub(super) fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let speed = match fields.kind()?.as_str() {
+            "unasked" => Self::Unasked,
+            "unsupported" => Self::Unsupported,
+            "own" => Self::Own,
+            "taken" => Self::Taken {
+                unwritten: maybe_problem(&mut fields, "unwritten")?,
+            },
+            _ => return Err(ErrorCode::Malformed.into()),
+        };
+        fields.done()?;
+        Ok(speed)
     }
 }
 

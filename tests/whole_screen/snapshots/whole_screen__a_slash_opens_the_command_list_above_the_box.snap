@@ -1,16 +1,16 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 346
+assertion_line: 383
 expression: window.picture()
 ---
 80x24 cursor 20,5 scrolled 0
-|Warning: No models available. Use /login or set an API key environment variable.|
 |Then use /model to select a model.                                              |
 |                                                                                |
 |› /help            what these are                                               |
 |  /release-notes   what changed in each release                                 |
 |  /model           pick which model answers                                     |
 |  /effort          pick how hard it thinks                                      |
+|  /fast            pick how fast it answers                                     |
 |  /login           sign in to a provider account                                |
 |  /logout          remove a stored account or API key                           |
 |  /mode            ask · allowEdits · fullAccess                                |

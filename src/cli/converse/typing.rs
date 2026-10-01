@@ -775,6 +775,9 @@ pub(super) struct Says {
     pub(super) provider: &'static str,
     /// How hard it is being asked to think. `None` where no rung is in force.
     pub(super) effort: Option<&'static str>,
+    /// How fast the model is asked to answer, and was last served: the
+    /// label says `fast` after an answer served fast.
+    pub(super) pace: super::command::Pace,
     /// What the border and the sentence are both drawn in.
     pub(super) tone: Slot,
     /// A row under that, for something waiting on the very next key. `None` in
@@ -1756,6 +1759,7 @@ pub(super) fn saying(runner: &Runner) -> Says {
         model: runner.model().to_owned(),
         provider: runner.serving(),
         effort: runner.effort().map(Effort::as_str),
+        pace: super::command::Pace::of(runner),
         tone: tone(mode),
         asking: None,
         left: runner.left(),

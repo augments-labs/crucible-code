@@ -936,6 +936,30 @@ fn built(serving: Served, settings: &Settings) -> Box<dyn Provider> {
 }
 
 #[test]
+fn every_offered_models_fast_form_is_the_one_its_provider_answers() {
+    // The list is read before any provider is set up, and the provider answers
+    // for itself once it is: two sources of one fact, held to one answer here.
+    let settings = Settings::default();
+    let mut switched = 0;
+
+    for serving in every() {
+        let provider = built(serving, &settings);
+        for model in serving.models {
+            let listed = (serving.fast)(model.name);
+            assert_eq!(
+                listed,
+                provider.fast(model.name),
+                "{}/{}",
+                serving.name,
+                model.name
+            );
+            switched += usize::from(listed.switched());
+        }
+    }
+    assert!(switched > 0, "no offered model has a fast form to compare");
+}
+
+#[test]
 fn every_offered_model_keeps_its_own_reviewed_cache_record_through_the_registry() {
     // The offer list and the reviewed cache records are written in different
     // files by different hands, and a model in one and not the other is silent:

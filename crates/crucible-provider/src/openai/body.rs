@@ -27,11 +27,24 @@ use serde_json::Value;
 use super::Serving;
 use crate::json::{Array, Json, Object, described};
 
-/// The whole request body, as `serving` accepts it.
+/// The whole request body at standard speed, as `serving` accepts it and as
+/// the tests written before speed was asked for build it.
+#[cfg(test)]
 pub(super) fn serialize(
     request: &Request<'_>,
     serving: Serving,
     scope: Option<ContinuationScope>,
+) -> Result<String, ProviderError> {
+    serialize_at(request, serving, scope, false)
+}
+
+/// The whole request body, as `serving` accepts it, asking for the fast tier
+/// where `fast`.
+pub(super) fn serialize_at(
+    request: &Request<'_>,
+    serving: Serving,
+    scope: Option<ContinuationScope>,
+    fast: bool,
 ) -> Result<String, ProviderError> {
     let explicit_message = explicit_message(request);
     let mut efforts = scope
@@ -42,6 +55,9 @@ pub(super) fn serialize(
     let mut outcome = Ok(());
     json.object(|body| {
         body.text("model", request.model);
+        if fast {
+            body.text("service_tier", super::fast::TIER);
+        }
         body.boolean("stream", true);
 
         // This endpoint counts reasoning and visible output together. The
@@ -150,7 +166,7 @@ pub(super) fn serialize(
     outcome.map(|()| json.finish())
 }
 
-/// The cache metadata [`serialize`] adds for this exact request.
+/// The cache metadata [`serialize_at`] adds for this exact request.
 pub(super) fn prompt_cache_encoding(
     request: &Request<'_>,
     serving: Serving,

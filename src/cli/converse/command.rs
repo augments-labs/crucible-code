@@ -28,6 +28,7 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::providers::Served;
 use crucible_client_api as api;
+use crucible_models::{FastForm, Speed};
 use crucible_registry::{
     Collision, Provenance, Registered, Registry, RegistryError, RegistrySnapshot, SourceKind,
 };
@@ -45,6 +46,7 @@ use super::{Held, Terms, mode, picking, warning};
 mod cache;
 mod clear;
 mod effort;
+mod fast;
 mod login;
 mod logout;
 mod model;
@@ -67,6 +69,8 @@ pub(super) enum Command {
     Model,
     /// How hard it is asked to think.
     Effort,
+    /// How fast it is asked to answer, where its vendor serves a fast form.
+    Fast,
     /// A key for a provider, given to a box that does not echo it.
     Login,
     /// An account or API key Crucible stored, removed.
@@ -94,11 +98,12 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 14] = [
+const EVERY: [Command; 15] = [
     Command::Help,
     Command::ReleaseNotes,
     Command::Model,
     Command::Effort,
+    Command::Fast,
     Command::Login,
     Command::Logout,
     Command::Mode,
@@ -273,6 +278,7 @@ impl Command {
             Self::ReleaseNotes => "/release-notes",
             Self::Model => "/model",
             Self::Effort => "/effort",
+            Self::Fast => "/fast",
             Self::Login => "/login",
             Self::Logout => "/logout",
             Self::Mode => "/mode",
@@ -293,6 +299,7 @@ impl Command {
             Self::ReleaseNotes => "what changed in each release",
             Self::Model => "pick which model answers",
             Self::Effort => "pick how hard it thinks",
+            Self::Fast => "pick how fast it answers",
             // How you are signed in, rather than what crucible signs with. A
             // key is one of the ways in and the row is read by somebody who
             // does not know yet which of them is theirs.
@@ -345,7 +352,11 @@ impl Command {
             // and the command is told the same — stepped to and held for the
             // turn the loop starts next, the change a running turn's gate
             // cannot take.
-            Self::Model | Self::Mode => MidTurn::Deferred,
+            //
+            // The speed belongs to the next request, as the model does: the
+            // `/fast` panel opens now and the speed taken is asked for once
+            // the turn ends.
+            Self::Model | Self::Mode | Self::Fast => MidTurn::Deferred,
             Self::Effort => {
                 MidTurn::Refused("sets how hard it thinks, which the running turn has taken")
             }
@@ -476,6 +487,8 @@ struct Still;
 pub(super) enum Kept {
     /// A model picked and confirmed, to be applied when the runner is back.
     Model(Served, String),
+    /// A speed taken, to be asked for when the runner is back.
+    Speed(Speed),
 }
 
 /// Who is answering and for which model, by name: what a panel stood while the
@@ -488,6 +501,32 @@ pub(super) struct Asked<'a> {
     pub(super) model: &'a str,
     /// The rung it is asked on, where one is in force.
     pub(super) effort: Option<&'a str>,
+    /// How fast the model is asked to answer, and was last served.
+    pub(super) pace: Pace,
+}
+
+/// How the model in force is asked to answer fast, the speed it is asked at,
+/// and whether the last answer was served fast: read off the runner while it
+/// is this side's, for what is drawn while it is away.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Pace {
+    /// The model's fast form, as its provider answers.
+    pub(super) form: FastForm,
+    /// The speed it is asked at.
+    pub(super) speed: Speed,
+    /// Whether the last answer was served fast.
+    pub(super) served: bool,
+}
+
+impl Pace {
+    /// The pace of the model `runner` asks.
+    pub(super) fn of(runner: &crucible_runner::Runner) -> Self {
+        Self {
+            form: runner.provider().fast(runner.model()),
+            speed: runner.speed(),
+            served: runner.served().fast(),
+        }
+    }
 }
 
 pub(super) fn deferred<T: Terminal>(
@@ -529,6 +568,10 @@ pub(super) fn deferred<T: Terminal>(
             }
             // "go back": round to the picker.
         },
+        Owned::Known {
+            command: Command::Fast,
+            ..
+        } => Ok(fast::picked_while(renderer, terms, current, while_waiting)?.map(Kept::Speed)),
         // `/mode` has no picker to stand here: mid-turn it makes the step
         // shift+tab would, and the loop holds it for the next turn. Every other
         // command the classifier does not route here holds nothing either.
@@ -549,6 +592,16 @@ pub(super) fn apply_model<T: Terminal>(
     name: &str,
 ) -> Result<(), Fatal> {
     model::apply(renderer, conversation, terms, provider, name)
+}
+
+/// Asks for a speed taken mid-turn, as the turn it was taken over ends.
+pub(super) fn apply_speed<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    conversation: &mut Conversation,
+    terms: &Terms,
+    speed: Speed,
+) -> Result<(), Fatal> {
+    fast::taken(speed, renderer, conversation, terms)
 }
 
 /// Stands why a command cannot run now over the box until escape closes it.
@@ -761,6 +814,11 @@ fn answer<T: Terminal>(
             command: Command::Effort,
             rest,
         } => effort::run(rest, renderer, conversation, terms, held.answers.keys)?,
+
+        Wanted::Known {
+            command: Command::Fast,
+            rest,
+        } => fast::run(rest, renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Login,

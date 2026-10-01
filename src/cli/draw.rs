@@ -207,6 +207,15 @@ pub(crate) fn event<T: Terminal>(
             came_back(renderer, kept, &call, Shown::live(output), style)
         }
 
+        // The vendor would not serve the request fast and it has gone out again
+        // at standard speed. Something that happened to the session rather
+        // than a state it is in, so it is written down, once, where it happened.
+        Event::FastRefused {
+            provider,
+            reason,
+            resent,
+        } => refused_fast(renderer, (provider, &reason), resent, style),
+
         // The tail is settled either way; an answer that stopped early is
         // finished text as much as one that ran out of things to say.
         Event::TurnFinished { stop, .. } => {
@@ -250,6 +259,42 @@ pub(crate) fn event<T: Terminal>(
     // own being drawn), and a row that can no longer open anything stops
     // saying it can.
     withdraw(renderer, kept)
+}
+
+/// Says that the vendor refused to serve a request fast, and what became of it.
+///
+/// Hung under the turn the way a result is rather than drawn as a failure: the
+/// turn goes on at standard speed, and the row says so, or says only that fast
+/// is off where a stop ended the second send. The vendor's reason
+/// is folded flat first, as a failed turn's is, so where one row ends and the
+/// next begins is this program's to choose.
+fn refused_fast<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    (provider, reason): (&str, &str),
+    resent: bool,
+    style: Style,
+) -> Result<(), TerminalError> {
+    let glyphs = style.glyphs();
+    let mut lead = Row::new().then(Slot::Plain, " ".repeat(columns(glyphs.called()) + 1));
+    lead.push_structural(Slot::Quiet, glyphs.hangs());
+    lead.push(Slot::Quiet, " ");
+
+    let reason = flattened(reason);
+    let then = if resent {
+        "Sent again at standard speed; fast is off."
+    } else {
+        "Fast is off."
+    };
+    let said = format!(
+        "{provider} refused fast: {}. {then}",
+        reason.trim_end_matches('.')
+    );
+    let room = renderer.columns().saturating_sub(lead.columns());
+    let rows = hung_off(lead, &Row::plain(said), room);
+
+    renderer.settle()?;
+    renderer.apart()?;
+    renderer.present(&rows)
 }
 
 /// Writes the line a command that ended on its own leaves behind.

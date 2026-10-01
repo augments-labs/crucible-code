@@ -230,8 +230,9 @@ directory is a row of the screen spent on neither.
 The row under the box has two ends. At the left is the next key: the permission
 mode in force, the key that steps it, and how many commands are still running
 behind the box. At the right is what the session is talking to: the provider,
-the model, and the rung it is being asked on where one has been chosen. It sits
-beside the box because every key that changes it is typed into that box.
+the model, the rung it is being asked on where one has been chosen, and `fast`
+after an answer its vendor served fast. It sits beside the box because every
+key that changes it is typed into that box.
 
 The three are joined by a dot, `anthropic · claude-sonnet-5 · high`, and read
 the same on the `/model` panel and in its answer. What you type keeps its own
@@ -240,8 +241,8 @@ name says which model and never whose. A machine holding keys for two of them is
 a machine where that is a real question.
 
 The row is redrawn on every keystroke, and both ends move while a session runs:
-<kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort` and `/login` change the
-right. Where the window is too narrow for both, the right end gives way whole
+<kbd>Shift-Tab</kbd> steps the left, `/model`, `/effort`, `/fast` and `/login`
+change the right. Where the window is too narrow for both, the right end gives way whole
 rather than being cut, and the mode keeps its place.
 
 The arrows move a character, <kbd>Ctrl</kbd> or <kbd>Alt</kbd> held with one
@@ -874,6 +875,7 @@ back to correct.
 | `/release-notes` | Prints what changed in each release, or in the one you name |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
+| `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
 | `/login` | Signs in with your provider account |
 | `/logout` | Signs out from your provider account |
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
@@ -927,6 +929,8 @@ Enter depends on the command:
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already
   taken, so that half waits for `/effort` between turns.
+- **`/fast`** is held the same way: the panel opens now, and the speed taken is
+  asked for once the turn ends.
 - The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.

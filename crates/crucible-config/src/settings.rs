@@ -10,7 +10,7 @@
 
 use std::fmt;
 
-use crucible_models::Effort;
+use crucible_models::{Effort, Speed};
 use crucible_tools::Rules;
 use crucible_types::PromptCachePolicy;
 use serde_json::{Map, Value};
@@ -178,6 +178,28 @@ impl Settings {
             .as_str()?
             .parse()
             .ok()
+    }
+
+    /// The speed the user's own file asks this provider for.
+    ///
+    /// Fast only where the file says `true`; anything else, the key's absence
+    /// included, is standard. It holds only for the `model` beside it, which
+    /// `hastened` reads with it. Whether the model in force can be asked for
+    /// it is not this file's to know, and is decided where the request is
+    /// built.
+    #[must_use]
+    pub fn speed(&self, provider: &str) -> Speed {
+        let fast = self
+            .value
+            .get("providers")
+            .and_then(|all| all.get(provider))
+            .and_then(|chosen| chosen.get("fast"))
+            .and_then(Value::as_bool);
+        if fast == Some(true) {
+            Speed::Fast
+        } else {
+            Speed::Standard
+        }
     }
 
     /// The name of the variable this provider's key is read from.

@@ -611,3 +611,24 @@ fn a_start_that_takes_a_credential_out_takes_its_yes_first() {
     assert!(consent.asks("key:moonshot").is_none());
     let _ = std::fs::remove_dir_all(&home);
 }
+
+#[test]
+fn the_store_a_run_writes_through_takes_a_moved_providers_speed_out_first() {
+    // What fast costs was shown for the credential it was chosen under, so a
+    // key stored where none was held takes the speed with it.
+    let sample = Sample::new("store-speed");
+    let home = sample.found();
+    let file = crucible_config::user(&home);
+    crucible_app::remember::hastening(&file, "openai", "gpt-5.6-sol")
+        .expect("a speed written down");
+    let consent =
+        crucible_app::content_use::Consent::new(crucible_app::content_use::Routes::production());
+    let rows = crucible_app::providers::Rows::production();
+
+    credential_store(&home, &consent, &rows, &Settings::default())
+        .keep("openai", "fabricated-openai-key-never-sent")
+        .expect("a key stored");
+
+    let kept = std::fs::read_to_string(&file).expect("the user's file");
+    assert!(!kept.contains("\"fast\""), "{kept}");
+}

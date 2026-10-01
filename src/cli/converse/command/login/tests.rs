@@ -40,6 +40,7 @@ fn in_force(sample: &Sample) -> Terms {
         leaving: crucible_builtins::Background::new(),
         pending_model: Cell::new(None),
         pending_mode: Cell::new(None),
+        pending_speed: Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),

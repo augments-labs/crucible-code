@@ -23,6 +23,12 @@ change in any release with no deprecation period.
   every credential, though 0.43.3 does not use a kimi.ai one; a Kimi sign-in or
   Moonshot key stored there is the one 0.44 keeps at its next start, and it says
   which kimi.ai credential it removed.
+- **`/fast` asks a model for its vendor's fast form, at its price.** OpenAI,
+  Anthropic and Google models that have one show the vendor's price and caveat
+  before you choose, and the label adds `fast` only after an answer served fast;
+  where crucible recognises a refusal of fast, the request is sent once more at
+  standard speed. Before rolling back to 0.43.3, delete `"fast": true` from each
+  provider in your configuration file, or 0.43.3 stops on it.
 - **`/release-notes` prints what changed in each release.** Older releases get
   a row each with how many entries they added, changed and fixed, the ten
   newest are printed in full, and the one you are running is marked `this

@@ -260,6 +260,7 @@ fn under_the_box(provider: &str, model: &str, effort: Option<&str>, glyphs: Glyp
         model,
         provider,
         effort,
+        speed: None,
         asking: None,
         commands: crucible_tui::CommandCount::new(0, false),
         room: 10,
@@ -317,6 +318,7 @@ fn every_place_the_model_is_drawn_names_it_the_same_way() {
                         provider: Some(served.name),
                         model: model.name,
                         effort: effort.map(Effort::as_str),
+                        pace: super::super::Pace::default(),
                     };
                     assert_eq!(
                         titled(current, glyphs),
@@ -455,6 +457,7 @@ fn the_shelf_stood_while_a_turn_runs_names_the_rung_in_force() {
         provider: Some("anthropic"),
         model: "claude-sonnet-5",
         effort: Some("high"),
+        pace: super::super::Pace::default(),
     };
 
     assert_eq!(
@@ -480,6 +483,7 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
         provider: None,
         model: "claude-sonnet-5",
         effort: Some("high"),
+        pace: super::super::Pace::default(),
     };
 
     assert_eq!(
@@ -494,4 +498,106 @@ fn a_model_with_no_provider_answering_is_named_on_its_own() {
         under_the_box("", "claude-sonnet-5", Some("high"), Glyphs::Unicode),
         "claude-sonnet-5 · high"
     );
+}
+
+#[test]
+fn a_row_says_no_rung_before_it_says_fast_and_fast_for_either_kind_of_form() {
+    let cost = crucible_models::Cost {
+        price: "2x the price",
+        speed: None,
+        caveat: None,
+    };
+    let rungs = [Effort::High];
+
+    assert_eq!(
+        super::note(&rungs, crucible_models::FastForm::Field(cost)),
+        "fast"
+    );
+    assert_eq!(
+        super::note(&rungs, crucible_models::FastForm::Own(cost)),
+        "fast"
+    );
+    assert_eq!(super::note(&rungs, crucible_models::FastForm::None), "");
+    assert_eq!(
+        super::note(&[], crucible_models::FastForm::Field(cost)),
+        "no rung"
+    );
+}
+
+#[test]
+fn the_shelf_title_says_fast_only_after_an_answer_served_fast() {
+    let asked = |served| Asked {
+        provider: Some("openai"),
+        model: "gpt-6-astra",
+        effort: Some("high"),
+        pace: super::super::Pace {
+            served,
+            ..super::super::Pace::default()
+        },
+    };
+
+    assert_eq!(
+        titled(asked(true), Glyphs::Unicode),
+        "now  openai · gpt-6-astra · high · fast"
+    );
+    assert_eq!(
+        titled(asked(false), Glyphs::Unicode),
+        "now  openai · gpt-6-astra · high"
+    );
+}
+
+#[test]
+fn a_row_has_the_fast_form_of_the_route_its_provider_is_served_on() {
+    // A sign-in serves fast on fewer models than a key, and a configured
+    // address serves none: the note says what taking the row would ask.
+    let catalogue = catalogue();
+    let openai = offered(&catalogue)
+        .find(|served| served.name == "openai")
+        .expect("openai is offered");
+
+    assert!(super::routed(openai, "gpt-5.5", false, false).switched());
+    assert_eq!(
+        super::routed(openai, "gpt-5.5", false, true),
+        crucible_models::FastForm::None
+    );
+    assert!(super::routed(openai, "gpt-5.6-sol", false, true).switched());
+    assert_eq!(
+        super::routed(openai, "gpt-6-astra", true, false),
+        crucible_models::FastForm::None
+    );
+}
+
+#[test]
+fn a_row_reads_its_route_off_the_settings_and_the_store_in_force() {
+    // What the shelf hands the route: a `baseUrl` from the settings, and a
+    // sign-in from the store, each changing what a row says.
+    let catalogue = catalogue();
+    let openai = offered(&catalogue)
+        .find(|served| served.name == "openai")
+        .expect("openai is offered");
+    let plain = crucible_config::Settings::default();
+    let nothing = crucible_auth::StoredCredentials::default();
+    assert!(super::row_form(openai, "gpt-5.5", &plain, &nothing).switched());
+
+    let sample = Sample::new("row-route");
+    let based =
+        sample.user(r#"{"providers": {"openai": {"baseUrl": "https://gateway.example/v1"}}}"#);
+    assert_eq!(
+        super::row_form(openai, "gpt-5.5", &based, &nothing),
+        crucible_models::FastForm::None
+    );
+
+    let home = sample.found();
+    std::fs::create_dir_all(home.path()).expect("a home");
+    std::fs::write(
+        home.path().join("auth.json"),
+        r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#,
+    )
+    .expect("a store");
+    let signed = sample.store().read();
+    assert_eq!(
+        super::row_form(openai, "gpt-5.5", &plain, &signed),
+        crucible_models::FastForm::None
+    );
+    assert!(super::row_form(openai, "gpt-5.6-sol", &plain, &signed).switched());
 }

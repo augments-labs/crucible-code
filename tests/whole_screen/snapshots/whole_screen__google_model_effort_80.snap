@@ -1,5 +1,6 @@
 ---
 source: tests/whole_screen/main.rs
+assertion_line: 1628
 expression: models
 ---
 80x24 cursor 4,16 scrolled 0
@@ -13,10 +14,10 @@ expression: models
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
 |│  Providers          │  Models                                        4 of 18 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│ › All             4 │ › gemini-3.8-flash         Google        200k          │|
-|│   Anthropic       · │   gemini-3.7-flash         Google        200k          │|
-|│   Google          4 │   gemini-3.6-flash         Google        200k          │|
-|│   MoonshotAI      · │   gemini-3.1-pro-preview   Google        200k          │|
+|│ › All             4 │ › gemini-3.8-flash         Google        200k  fast    │|
+|│   Anthropic       · │   gemini-3.7-flash         Google        200k  fast    │|
+|│   Google          4 │   gemini-3.6-flash         Google        200k  fast    │|
+|│   MoonshotAI      · │   gemini-3.1-pro-preview   Google        200k  fast    │|
 |│   OpenAI          · │                                                        │|
 |│                     │                                                        │|
 |│                     │                                                        │|

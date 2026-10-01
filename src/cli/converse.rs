@@ -222,6 +222,8 @@ pub(crate) struct Terms {
     /// ends, when the runner is this side's again, so the row between turns
     /// names the model the next one is asked under.
     pub(crate) pending_model: Cell<Option<(Served, String)>>,
+    /// A speed taken off `/fast` mid-turn, held the same way.
+    pub(crate) pending_speed: Cell<Option<crucible_models::Speed>>,
     /// A mode shift+tab stepped to mid-turn, held for the turn the loop starts
     /// next.
     ///
@@ -892,15 +894,21 @@ fn ran<T: Terminal>(
     let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
     let mut conversation = took.conversation;
 
-    // A model picked and a mode stepped to while the work ran are put on the
+    // A speed, a model and a mode taken while the work ran are put on the
     // runner now, the moment it is this side's again, so the row between turns
     // and the next turn agree, and a step made between them moves from the
     // mode the row shows. After the reply above, which answered the line that
-    // asked for this work. A session leaving drops both, a confirmed `/model`
-    // pick included: it has no next turn, and the pick is not written down.
+    // asked for this work. The speed goes first: its price was the model in
+    // force's, and another model taken over the same turn resets it. A session
+    // leaving drops all three, a confirmed `/model` pick included: it has no
+    // next turn, and the pick is not written down.
     let model = terms.pending_model.take();
     let mode = terms.pending_mode.take();
+    let speed = terms.pending_speed.take();
     if !leaving {
+        if let Some(speed) = speed {
+            command::apply_speed(renderer, &mut conversation, terms, speed)?;
+        }
         if let Some((provider, name)) = model {
             command::apply_model(renderer, &mut conversation, terms, provider, &name)?;
         }
@@ -1308,13 +1316,18 @@ impl Turn<'_, '_> {
             provider: self.serving,
             model: &model,
             effort: self.says.effort,
+            pace: self.says.pace,
         };
         let picked = command::deferred(renderer, self.terms, current, command, &mut |renderer| {
             self.drain(renderer);
             Ok(())
         })?;
-        if let Some(command::Kept::Model(provider, name)) = picked {
-            self.terms.pending_model.set(Some((provider, name)));
+        match picked {
+            Some(command::Kept::Model(provider, name)) => {
+                self.terms.pending_model.set(Some((provider, name)));
+            }
+            Some(command::Kept::Speed(speed)) => self.terms.pending_speed.set(Some(speed)),
+            None => {}
         }
         Ok(())
     }
@@ -1804,6 +1817,7 @@ fn breaks(one: &Seen) -> bool {
             | Event::Steered { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
+            | Event::FastRefused { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => true,
         },

@@ -339,6 +339,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     });
     recorded(&mut conversation, &runtime);
 
+    if let Some(file) = startup.services.consent().file() {
+        conversation.hastened_as_kept(file);
+    }
     Ok(conversation.consenting(startup.services.consent().clone()))
 }
 

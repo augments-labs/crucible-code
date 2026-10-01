@@ -203,6 +203,10 @@ a session: a rung you can see on the screen cannot be un-seen by being handed a
 default this program is never told the name of. Remove the key from the file
 for that.
 
+Where a vendor serves a model faster for a higher price, `/fast` asks for it,
+after saying what it costs. [Fast](fast.md) lists which models have a fast form,
+the vendor's price for each, and when the speed goes back to standard.
+
 ### Asking crucible what it is
 
 Both answers are told to the model before every turn, so asking a session which

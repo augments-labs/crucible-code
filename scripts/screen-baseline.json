@@ -150,7 +150,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "5f673557452479283255b2ca69fa5cb469c920a6e7ca38e267dffeb8043f39a9"
+      "sha256": "0a5f1740a281ffafaa9191c6cb57a0f3105377f02b2017405f27390d0d0b3134"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -158,7 +158,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "49887facc4df7cd498d2d5e919bb435a9363256a0171bbcecbe755d37d8644a4"
+      "sha256": "33ece9ddd42ab4a78e4c3a0f64302240e3cc5305bba660e7e5ac1228f629d84c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -274,6 +274,78 @@
       "sha256": "fcb9a02fb1c4350a144fc036abc37114b0ebe4b2f86dcdafba83143b4517967b"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_lines_where_no_panel_fits.snap",
+      "case": "a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type",
+      "opened": [
+        "Watched::launched( \"fast-short\", 80, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: None, }, )"
+      ],
+      "sha256": "4982b1482534926fcd2c2400cea6105e991f2193b06dd090f0efe42b1d014c03"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_key_ascii_40.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "d5175fe8469fa349fa89d4970e539438649a93ebcd3ab71ac36a868afe2effc2"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_key_ascii_80.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "433312325e4fa01440a4dcfbd7f8215c707a8c7ec4fbbe9586faaea46db44478"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_key_unicode_40.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "943fd541903b87586164d5bacad48b8b1ba0bec944fc0dddac07a49b52ff5080"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_key_unicode_80.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "7d55490ecd868c3f10a2b62b9c49d23760e14d634a3860ef80687c9eb94c7753"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_ascii_40.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "e72c23d8c8b7f8433a45942c6b272542e5a41ef019be7296590e0173afbf9f1d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_ascii_80.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "7f0b9ca57fc66a61672f39c9f50bca2f52edafd0b95a3170acd656b65271efd4"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_unicode_40.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "6290b7d9c8d3198cf980f224123fb198f604db0ac251de592c9139b9eaf9caa7"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__fast_panel_sign_in_unicode_80.snap",
+      "case": "the_fast_panel_stands_over_a_model_with_a_fast_form",
+      "opened": [
+        "Watched::launched( &case, columns, 24, &watched::Launch { document: &document, env: &[(\"GEMINI_API_KEY\", fast::KEY)], args: &[], home: home.as_deref(), }, )"
+      ],
+      "sha256": "cfa9a15a0e93e7b52624fd4f4bfcf26f1d11fc32038b1989ee2274fda08fe325"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_api_key_login_40.snap",
       "case": "google_login_and_model_selection_keep_keys_private_and_offer_three_efforts",
       "opened": [
@@ -295,7 +367,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "83c994bdbcd7a5375ab323fa585b514a04dce82033d34100cdc9b5de4126d822"
+      "sha256": "6b5bb98b2a77ca745138f466dbeb7a0798d66ce7818106a913361cfde280f972"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_model_effort_80.snap",
@@ -303,7 +375,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "b31616b39914fe5c0f0cf2318083351cf2e2da2a456c6654f1395b7421449d36"
+      "sha256": "81374a8b0dc5afb35c346277991f4ef323971522ef309f11494db85941e40890"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",

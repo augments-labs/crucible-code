@@ -164,7 +164,10 @@ impl Conversation {
         run: &RunContext<'_>,
         spent: &mut Spend,
     ) -> Result<Room, TurnError> {
-        self.runner.compact(why, run, spent).await
+        let asked = self.runner.speed();
+        let made = self.runner.compact(why, run, spent).await;
+        self.refusal_written(asked);
+        made
     }
 
     /// The persistent prompt-cache resources this conversation remembers
@@ -240,7 +243,10 @@ impl Conversation {
         ask: &mut dyn Ask,
         run: &RunContext<'_>,
     ) -> Result<Turned, TurnError> {
-        self.runner.turn(prompt, attached, ask, run).await
+        let asked = self.runner.speed();
+        let turned = self.runner.turn(prompt, attached, ask, run).await;
+        self.refusal_written(asked);
+        turned
     }
 
     /// Starts a new session and records into it from here on, with nothing

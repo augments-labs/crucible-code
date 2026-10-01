@@ -28,6 +28,8 @@ use crate::stream::Wire;
 #[derive(Default)]
 pub(super) struct Messages {
     blocks: Option<super::continuation::Blocks>,
+    /// The speed the answer's usage said it was served at, once it has.
+    served: crucible_models::Served,
 }
 
 impl Messages {
@@ -42,6 +44,7 @@ impl Messages {
             } else {
                 None
             },
+            served: crucible_models::Served::Unsaid,
         })
     }
 }
@@ -49,7 +52,14 @@ impl Messages {
 impl Wire for Messages {
     const PROVIDER: &'static str = NAME;
 
+    fn served(&self) -> crucible_models::Served {
+        self.served
+    }
+
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        if let Some(served) = super::fast::served(&event.data) {
+            self.served = served;
+        }
         if let Some(blocks) = &mut self.blocks {
             blocks.deltas(event)
         } else {

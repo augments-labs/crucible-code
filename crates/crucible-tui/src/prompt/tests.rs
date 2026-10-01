@@ -80,6 +80,7 @@ fn typing(said: &str, column: usize) -> Prompt<'_> {
         model: "",
         provider: "",
         effort: None,
+        speed: None,
         asking: None,
         // Nothing, so that every test written before this row said what was
         // running is still a test about what it said before.
@@ -205,6 +206,30 @@ fn known_window_edges_are_named_on_the_same_row() {
         );
         assert_eq!(rows.len(), 5, "the reading took a row of its own");
     }
+}
+
+#[test]
+fn the_status_row_says_fast_only_where_it_is_told_an_answer_was_served_fast() {
+    let said = |prompt: &Prompt<'_>| {
+        prompt
+            .rows(120, Glyphs::Unicode)
+            .iter()
+            .map(|row| row.text().clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let fast = said(&Prompt {
+        speed: Some("fast"),
+        ..asking_of("")
+    });
+    let standard = said(&asking_of(""));
+
+    assert!(
+        fast.contains(&format!("{VENDOR} · {NAMED} · {RUNG} · fast")),
+        "{fast}"
+    );
+    assert!(!standard.contains("fast"), "{standard}");
 }
 
 #[test]

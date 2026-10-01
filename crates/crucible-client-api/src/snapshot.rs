@@ -18,7 +18,7 @@ use crucible_types::SessionId;
 use serde_json::Value;
 
 use crate::bounds::{Name, Text};
-use crate::command::{Mode, Rung};
+use crate::command::{Mode, Pace, Rung};
 use crate::error::{ErrorCode, Refusal};
 use crate::pending::Pending;
 use crate::request::Version;
@@ -95,6 +95,10 @@ pub struct Snapshot {
     pub model: Option<Model>,
     /// The effort in force, where one was asked for.
     pub effort: Option<Rung>,
+    /// The speed the model in force is asked to answer at.
+    pub speed: Pace,
+    /// The speed the last answer said it was served at, where it said.
+    pub served: Option<Pace>,
     /// The permission mode in force.
     pub mode: Mode,
     /// How many messages the conversation holds.
@@ -121,6 +125,8 @@ impl Snapshot {
                 self.model.as_ref().map(|model| written(model.text())),
             )
             .maybe("effort", self.effort.map(Rung::as_str))
+            .with("speed", self.speed.as_str())
+            .maybe("served", self.served.map(Pace::as_str))
             .with("mode", self.mode.as_str())
             .with("messages", self.messages)
             .with("turns", self.turns)
@@ -179,6 +185,11 @@ impl Snapshot {
                 .transpose()?,
             effort: fields
                 .maybe("effort")
+                .map(|value| value.as_str().unwrap_or_default().parse())
+                .transpose()?,
+            speed: fields.string("speed")?.parse()?,
+            served: fields
+                .maybe("served")
                 .map(|value| value.as_str().unwrap_or_default().parse())
                 .transpose()?,
             mode: fields.string("mode")?.parse()?,

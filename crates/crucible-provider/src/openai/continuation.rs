@@ -25,9 +25,16 @@ pub(super) fn problem(message: &'static str) -> ProviderError {
     }
 }
 
-/// Only status and typed window/cancel failures may escape private replay.
+/// Only status and typed window/cancel failures may escape private replay. A
+/// refusal of fast keeps its kind, so it is still sent once more at standard
+/// speed, and loses its words.
 pub(super) fn refusal(error: ProviderError) -> ProviderError {
     match error {
+        ProviderError::FastRefused { provider, .. } => ProviderError::FastRefused {
+            provider,
+            message: "OpenAI would not serve this model fast; private response details omitted"
+                .into(),
+        },
         ProviderError::Refused { status, .. } => ProviderError::Refused {
             provider: super::NAME,
             status,

@@ -121,6 +121,7 @@ fn terms(sample: &Sample) -> Terms {
         leaving: crucible_builtins::Background::new(),
         pending_model: std::cell::Cell::new(None),
         pending_mode: std::cell::Cell::new(None),
+        pending_speed: std::cell::Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: sample.root().join("unwritten-home.json"),
         logins: Store::in_home(&sample.root()),

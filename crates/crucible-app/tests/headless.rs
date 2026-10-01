@@ -49,6 +49,8 @@ mod client;
 mod crossing;
 #[path = "headless/searching.rs"]
 mod searching;
+#[path = "headless/speed.rs"]
+mod speed;
 
 /// Whatever stopped a test before its assertion.
 type Failed = Box<dyn std::error::Error>;
@@ -283,7 +285,7 @@ fn conversation(tree: &Tree, script: Script, guarded: bool) -> Result<Conversati
 /// provider it is asking.
 fn conversing(
     tree: &Tree,
-    script: Script,
+    script: impl Provider + 'static,
     guard: &Guard,
     serving: Option<&'static str>,
 ) -> Result<Conversation, Failed> {

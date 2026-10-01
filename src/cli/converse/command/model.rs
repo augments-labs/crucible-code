@@ -23,7 +23,7 @@ use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_app::switching::Switched;
 use crucible_client_api::{Command, Name};
-use crucible_models::Effort;
+use crucible_models::{Effort, FastForm};
 use crucible_tui::{
     Editor, Glyphs, Offered, Pane, Panel, Renderer, Row, Serving, Shelf, Slot, Stocked, Terminal,
     clip, fold, label,
@@ -66,6 +66,49 @@ fn nothing(glyphs: Glyphs) -> String {
 
 /// What the row of a model whose provider serves no rung says at its end.
 const NO_RUNG: &str = "no rung";
+
+/// What the row of a model with a fast form says at its end.
+const FAST: &str = "fast";
+
+/// The fast form `model` has on the route `served` is served on: none at a
+/// configured address, which is not the vendor's to answer for, and the
+/// sign-in's where a stored sign-in serves the provider.
+fn routed(served: Served, model: &str, based: bool, signed_in: bool) -> FastForm {
+    if based {
+        return FastForm::None;
+    }
+    match served.fast_signed_in.filter(|_| signed_in) {
+        Some(signed) => signed(model),
+        None => (served.fast)(model),
+    }
+}
+
+/// The fast form a row's model has on its provider's route, as the settings
+/// and the credential store say that route is.
+fn row_form(
+    served: Served,
+    model: &str,
+    settings: &crucible_config::Settings,
+    stored: &crucible_app::providers::StoredCredentials,
+) -> FastForm {
+    routed(
+        served,
+        model,
+        settings.base_url(served.name).is_some(),
+        stored.has_subscription(served.name),
+    )
+}
+
+/// The one note a model's row has room for: `no rung` before `fast`.
+fn note(rungs: &[Effort], form: FastForm) -> &'static str {
+    if rungs.is_empty() {
+        NO_RUNG
+    } else if form == FastForm::None {
+        ""
+    } else {
+        FAST
+    }
+}
 
 /// What the strip says where the marked model serves no rung.
 ///
@@ -145,6 +188,7 @@ pub(super) fn run<T: Terminal>(
             provider: conversation.serving(),
             model: runner.model(),
             effort: runner.effort().map(Effort::as_str),
+            pace: super::Pace::of(runner),
         };
         let mut on = None;
         loop {
@@ -350,6 +394,9 @@ fn stood<T: Terminal>(
     let all = narrowing::every(&providers);
     let glyphs = terms.style().glyphs();
     let (long, short) = keys(glyphs);
+    // Read once for the shelf, not once a frame: which providers a stored
+    // sign-in serves decides the fast form a row's model has.
+    let stored = terms.logins.read();
 
     // Which model is in force goes on the title row rather than beside an
     // entry: it is one fact about the session, and a pane whose rows all read
@@ -457,7 +504,19 @@ fn stood<T: Terminal>(
                 .models
                 .iter()
                 .zip(&windows)
-                .map(|(one, window)| Stocked {
+                .map(|(one, window)| {
+                    let now = Some(one.provider.name) == current.provider
+                        && one.model.name == current.model;
+                    // The model in force by the provider set up for it, which
+                    // knows the credential; the rest by their provider's route.
+                    let form = if now {
+                        current.pace.form
+                    } else {
+                        row_form(one.provider, one.model.name, &terms.settings, &stored)
+                    };
+                    (one, window, now, form)
+                })
+                .map(|(one, window, now, form)| Stocked {
                     name: one.model.name,
                     // Who serves it, until the shelf is one provider's — at
                     // which point the pane beside it is already saying so, once
@@ -468,13 +527,8 @@ fn stood<T: Terminal>(
                         ""
                     },
                     window,
-                    note: if one.model.rungs.is_empty() {
-                        NO_RUNG
-                    } else {
-                        ""
-                    },
-                    now: Some(one.provider.name) == current.provider
-                        && one.model.name == current.model,
+                    note: note(one.model.rungs, form),
+                    now,
                 })
                 .collect();
 
@@ -744,7 +798,7 @@ fn titled(current: Asked<'_>, glyphs: Glyphs) -> String {
                 current.provider.unwrap_or_default(),
                 name,
                 current.effort,
-                None,
+                current.pace.served.then_some("fast"),
                 glyphs
             )
         ),

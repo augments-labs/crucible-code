@@ -31,6 +31,7 @@
 // case would say less about what went wrong than the message on the `expect`.
 #![allow(clippy::expect_used, clippy::panic)]
 
+mod fast;
 mod screen;
 mod vendor;
 mod warning;
@@ -1372,7 +1373,7 @@ const KEY_HELD: &str =
     r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key"},"subscriptions":{}}"#;
 
 /// A store holding an OpenAI sign-in and nothing else, fabricated.
-const SIGN_IN_HELD: &str = r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
+pub(crate) const SIGN_IN_HELD: &str = r#"{"version":2,"keys":{},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
 
 /// A store holding an OpenAI sign-in, an Anthropic key and a kimi.com key.
 const HELD_THREE: &str = r#"{"version":2,"keys":{"anthropic":"fabricated-anthropic-key","moonshot":"fabricated-kimi-com-key"},"subscriptions":{"openai":{"access_token":"fabricated-openai-access","refresh_token":"fabricated-openai-refresh","details":{},"expires_at":4102444800,"refreshed_at":1790000000}}}"#;
@@ -3218,4 +3219,71 @@ fn room_asked_for_on_a_warned_route_is_asked_about_and_going_back_says_nothing_w
     let picture = window.picture();
     assert!(!picture.contains("your message is back"), "{picture}");
     assert_eq!(proxy.asked(), Vec::<String>::new());
+}
+
+#[test]
+fn the_fast_panel_stands_over_a_model_with_a_fast_form() {
+    // Under a key and under a sign-in, whose prices differ, in both glyph sets.
+    let credentials = [
+        ("key", "google", "gemini-3.8-flash"),
+        ("sign_in", "openai", "gpt-5.6-sol"),
+    ];
+    for (credential, provider, model) in credentials {
+        for (glyphs, ascii) in [("unicode", false), ("ascii", true)] {
+            for columns in [40, 80] {
+                let case = format!("fast-{credential}-{glyphs}-{columns}");
+                let document = fast::document(provider, model, ascii);
+                let home = (credential == "sign_in").then(|| fast::signed_in_home(&case));
+                let mut window = Watched::launched(
+                    &case,
+                    columns,
+                    24,
+                    &watched::Launch {
+                        document: &document,
+                        env: &[("GEMINI_API_KEY", fast::KEY)],
+                        args: &[],
+                        home: home.as_deref(),
+                    },
+                );
+                if let Some(home) = &home {
+                    let _ = std::fs::remove_dir_all(home);
+                }
+                window.types_until("/fast\r", "enter to choose");
+
+                let picture = window.picture();
+                assert!(picture.contains("Standard"), "{picture}");
+                assert!(picture.contains("Fast"), "{picture}");
+                assert!(!picture.contains("fabricated"), "{picture}");
+                insta::assert_snapshot!(
+                    format!("fast_panel_{credential}_{glyphs}_{columns}"),
+                    picture
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
+    // Nine rows hold the two lines and not the panel.
+    let document = fast::document("google", "gemini-3.8-flash", false);
+    let mut window = Watched::launched(
+        "fast-short",
+        80,
+        24,
+        &watched::Launch {
+            document: &document,
+            env: &[("GEMINI_API_KEY", fast::KEY)],
+            args: &[],
+            home: None,
+        },
+    );
+    window.resize(80, 9);
+    window.types_until("/fast\r", "/fast off");
+
+    let picture = window.picture();
+    assert!(picture.contains("/fast on"), "{picture}");
+    assert!(picture.contains("75-100% more than Standard"), "{picture}");
+    assert!(!picture.contains("enter to choose"), "{picture}");
+    insta::assert_snapshot!("fast_lines_where_no_panel_fits", picture);
 }

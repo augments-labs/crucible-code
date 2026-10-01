@@ -37,7 +37,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use crucible_credentials::Redactions;
-use crucible_models::{Delta, DeltaStream, ProviderError};
+use crucible_models::{Delta, DeltaStream, ProviderError, Served};
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::StopReason;
 use tokio::io::{AsyncRead, BufReader};
@@ -71,6 +71,12 @@ pub(crate) trait Wire: Default + Send {
     /// event that contradicts what is open, or the provider reporting a failure
     /// inside a response it had already started.
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError>;
+
+    /// What the events read so far said about the speed the answer was
+    /// served at; nothing, by default, which counts as standard.
+    fn served(&self) -> Served {
+        Served::Unsaid
+    }
 }
 
 /// A response being read.
@@ -210,5 +216,9 @@ impl<W: Wire> fmt::Debug for Response<W> {
 impl<W: Wire> DeltaStream for Response<W> {
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
         Box::pin(self.next_delta())
+    }
+
+    fn served(&self) -> Served {
+        self.wire.served()
     }
 }

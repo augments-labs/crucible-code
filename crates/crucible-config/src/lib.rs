@@ -70,8 +70,8 @@ pub use document::check::{
 pub use error::{Accepted, At, ConfigError};
 pub use home::{HOME, Home};
 pub use remember::{
-    accepting, allowing, asking, choosing, drawing, forgetting, reading, sandboxing, thinking,
-    unasked,
+    accepting, allowing, asking, choosing, drawing, forgetting, hastened, hastening, reading,
+    sandboxing, slowing, thinking, unasked,
 };
 pub use settings::{
     Color, Compaction, Glyphs, McpServer, SandboxSettings, ScrollSpeed, Sending, Settings,

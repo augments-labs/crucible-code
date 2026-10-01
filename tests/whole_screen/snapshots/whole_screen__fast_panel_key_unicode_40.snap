@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: picture
+---
+40x24 cursor 22,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /fast                                 |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Speed · google · gemini-3.8-flash · Goog|
+|                                        |
+|For Tier 2 and Tier 3 accounts only.    |
+|Google serves a priority request at     |
+|standard speed when priority is         |
+|congested, and bills it at the standard |
+|price.                                  |
+|                                        |
+|› Standard                              |
+|  The standard price and speed          |
+|                                        |
+|  Fast                                  |
+|  75-100% more than Standard            |
+|                                        |
+|enter to choose · esc to cancel         |
+|                                        |

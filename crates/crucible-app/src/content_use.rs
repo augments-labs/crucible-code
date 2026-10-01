@@ -24,7 +24,7 @@
 //! nothing walks around.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use crucible_auth::{Dropped, LettingGo};
@@ -496,6 +496,11 @@ impl Consent {
     /// first file given is the one kept.
     pub fn keeps_in(&self, file: PathBuf) {
         let _ = self.file.set(file);
+    }
+
+    /// The user's own configuration file, where one was given.
+    pub(crate) fn file(&self) -> Option<&Path> {
+        self.file.get().map(PathBuf::as_path)
     }
 
     /// Says yes to `warned`: written into the user's own file, then let go.

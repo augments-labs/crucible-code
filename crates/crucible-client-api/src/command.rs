@@ -53,6 +53,8 @@ pub enum Command {
     },
     /// Think this hard from the next turn on.
     SetEffort(Rung),
+    /// Ask the model in force to answer at this speed from the next turn on.
+    SetSpeed(Pace),
     /// Decide tool calls under this mode from the next one on.
     SetMode(Mode),
     /// Step to the next permission mode.
@@ -91,7 +93,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 19] = [
+    pub const KINDS: [&'static str; 20] = [
         "prompt",
         "compact",
         "cancel",
@@ -100,6 +102,7 @@ impl Command {
         "resume",
         "select_model",
         "set_effort",
+        "set_speed",
         "set_mode",
         "cycle_mode",
         "login",
@@ -125,6 +128,7 @@ impl Command {
             Self::Resume(_) => "resume",
             Self::SelectModel { .. } => "select_model",
             Self::SetEffort(_) => "set_effort",
+            Self::SetSpeed(_) => "set_speed",
             Self::SetMode(_) => "set_mode",
             Self::CycleMode => "cycle_mode",
             Self::Login { .. } => "login",
@@ -154,6 +158,7 @@ impl Command {
                 .with("model", model.as_str())
                 .maybe("effort", effort.map(Rung::as_str)),
             Self::SetEffort(rung) => object.with("effort", rung.as_str()),
+            Self::SetSpeed(pace) => object.with("speed", pace.as_str()),
             Self::SetMode(mode) => object.with("mode", mode.as_str()),
             Self::Login { provider } | Self::Logout { provider } => {
                 object.with("provider", provider.as_str())
@@ -191,6 +196,7 @@ impl Command {
                 effort: fields.maybe("effort").as_ref().map(word).transpose()?,
             },
             "set_effort" => Self::SetEffort(word(&fields.take("effort")?)?),
+            "set_speed" => Self::SetSpeed(word(&fields.take("speed")?)?),
             "set_mode" => Self::SetMode(word(&fields.take("mode")?)?),
             "cycle_mode" => Self::CycleMode,
             "login" => Self::Login {
@@ -307,6 +313,44 @@ impl Rung {
             Self::Xhigh => "xhigh",
             Self::Max => "max",
         }
+    }
+}
+
+/// How fast a model is asked to answer, as this protocol spells it.
+///
+/// The protocol's own words rather than the engine's, as a [`Rung`] is: the
+/// application maps one onto the other, and says so where a model has no fast
+/// form to ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Pace {
+    /// The vendor's ordinary service.
+    Standard,
+    /// The vendor's fast form, at its price.
+    Fast,
+}
+
+impl Pace {
+    /// Both, standard first.
+    pub const EVERY: [Self; 2] = [Self::Standard, Self::Fast];
+
+    /// The word it crosses as.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Fast => "fast",
+        }
+    }
+}
+
+impl FromStr for Pace {
+    type Err = Refusal;
+
+    fn from_str(word: &str) -> Result<Self, Refusal> {
+        Self::EVERY
+            .into_iter()
+            .find(|pace| pace.as_str() == word)
+            .ok_or_else(|| ErrorCode::InvalidArgument.into())
     }
 }
 

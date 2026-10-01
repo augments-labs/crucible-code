@@ -341,6 +341,7 @@ fn the_prompt_box_fits_the_window_it_is_typed_into() {
         model: "claude-opus-5",
         provider: "anthropic",
         effort: Some("high"),
+        speed: Some("fast"),
         asking: Some("queued"),
         commands: crate::CommandCount::new(2, true),
         room: 6,

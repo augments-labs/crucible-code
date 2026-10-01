@@ -94,6 +94,7 @@ pub(crate) fn plain() -> Terms {
         // a configuration anybody keeps.
         pending_model: Cell::new(None),
         pending_mode: Cell::new(None),
+        pending_speed: Cell::new(None),
         settings: crucible_config::Settings::default(),
         choosing: unwritten.join("config.json"),
 
@@ -1395,6 +1396,7 @@ fn a_turn_that_asks_a_loop_with_nobody_at_it_is_told_so_and_carries_on() {
 }
 
 mod command;
+mod fast;
 mod held;
 mod login;
 mod question;

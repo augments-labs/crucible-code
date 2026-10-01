@@ -272,6 +272,23 @@ pub enum EffortOutcome {
     },
 }
 
+/// How asking for a speed ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpeedOutcome {
+    /// There is no model in force to ask it of.
+    Unasked,
+    /// The model in force has no fast form.
+    Unsupported,
+    /// The model in force is itself a fast model, with no standard form to
+    /// switch to; the other models are chosen with the model.
+    Own,
+    /// It is the speed asked for from the next turn on.
+    Taken {
+        /// Why the choice will not outlive the host process, where it will not.
+        unwritten: Option<Problem>,
+    },
+}
+
 /// How adopting a stored credential ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginOutcome {
@@ -473,6 +490,8 @@ pub enum Outcome {
     Model(ModelOutcome),
     /// Asking for an effort ended.
     Effort(EffortOutcome),
+    /// Asking for a speed ended.
+    Speed(SpeedOutcome),
     /// This is the mode now in force.
     Mode(Mode),
     /// Adopting a credential ended.
@@ -559,7 +578,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 18] = [
+    pub const KINDS: [&'static str; 19] = [
         "refused",
         "turn",
         "room",
@@ -568,6 +587,7 @@ impl Outcome {
         "resumed",
         "model",
         "effort",
+        "speed",
         "mode",
         "login",
         "logout",
@@ -592,6 +612,7 @@ impl Outcome {
             Self::Resumed(_) => "resumed",
             Self::Model(_) => "model",
             Self::Effort(_) => "effort",
+            Self::Speed(_) => "speed",
             Self::Mode(_) => "mode",
             Self::Login(_) => "login",
             Self::Logout(_) => "logout",
@@ -616,6 +637,7 @@ impl Outcome {
             Self::Resumed(resumed) => object.with("resumed", resumed.written()),
             Self::Model(model) => object.with("model", model.written()),
             Self::Effort(effort) => object.with("effort", effort.written()),
+            Self::Speed(speed) => object.with("speed", speed.written()),
             Self::Mode(mode) => object.with("mode", mode.as_str()),
             Self::Login(login) => object.with("login", login.written()),
             Self::Logout(logout) => object.with("logout", logout.written()),
@@ -644,6 +666,7 @@ impl Outcome {
             "resumed" => Self::Resumed(ResumeOutcome::read(fields.take("resumed")?)?),
             "model" => Self::Model(ModelOutcome::read(fields.take("model")?)?),
             "effort" => Self::Effort(EffortOutcome::read(fields.take("effort")?)?),
+            "speed" => Self::Speed(SpeedOutcome::read(fields.take("speed")?)?),
             "mode" => Self::Mode(fields.string("mode")?.parse()?),
             "login" => Self::Login(LoginOutcome::read(fields.take("login")?)?),
             "logout" => Self::Logout(LogoutOutcome::read(fields.take("logout")?)?),

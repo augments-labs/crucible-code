@@ -34,6 +34,8 @@ pub(super) struct Responses {
     called: bool,
     /// Whether the exact requested model documents a cache-write usage bucket.
     cache_write_reporting: bool,
+    /// The tier the response said it was served at, once it has.
+    served: crucible_models::Served,
 }
 
 impl Responses {
@@ -64,7 +66,14 @@ impl Responses {
 impl Wire for Responses {
     const PROVIDER: &'static str = NAME;
 
+    fn served(&self) -> crucible_models::Served {
+        self.served
+    }
+
     fn deltas(&mut self, event: &SseEvent) -> Result<Vec<Delta>, ProviderError> {
+        if let Some(served) = super::fast::served(&event.data) {
+            self.served = served;
+        }
         if let Some(astra) = &mut self.astra {
             return astra.deltas(event);
         }

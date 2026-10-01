@@ -39,5 +39,5 @@ mod turning;
 
 pub use deciding::{Deciding, Front, Shown, TRIES, questions, warned};
 pub use performing::{Cleared, Desk, Performed, Resumed, keep, perform};
-pub use reading::{mode_out as mode, progress, rung, snapshot};
+pub use reading::{mode_out as mode, pace, progress, rung, snapshot};
 pub use turning::{Ended, interrupt, turn};
