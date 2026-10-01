@@ -39,6 +39,7 @@ use crucible_types::{AgentId, Message, Modalities, SessionId, Transcript};
 use crucible_workspace::Workspace;
 
 use crate::content_use::{self, Consent, Serving};
+use crate::following::Following;
 use crate::providers::{self, Providers, Served};
 use crate::selecting;
 use crate::services::Services;
@@ -247,7 +248,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // authorisation. Going through the same resolver is what keeps the two
     // answers the same credential — a second, simpler lookup here would have
     // billed a plan session's searches to whatever key the shell carried.
-    let reaching = web(startup, settings);
+    // Held in one place the two tools read at each call, so a switch of model
+    // or provider puts what it builds where they will find it.
+    let following = Following::new(startup.provider.map(|one| one.name), web(startup, settings));
 
     // Before the session, for the reason the provider is: the runtime every
     // turn runs on, and every command the sandbox starts is watched on, is
@@ -293,7 +296,7 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     // And every command left running is owned on the same runtime, by a task
     // of its own, so the thread that draws never asks a process anything.
     startup.leaving.watching_on(runtime.clone());
-    let offering = tools(startup, settings, reaching, Arc::clone(&sandbox))?;
+    let offering = tools(startup, settings, &following, Arc::clone(&sandbox))?;
 
     // Operator-authored instructions are the stable request prefix. Everything
     // that can move within the session is read by context assembly instead.
@@ -343,7 +346,9 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
     if let Some(file) = startup.services.consent().file() {
         conversation.hastened_as_kept(file);
     }
-    Ok(conversation.consenting(startup.services.consent().clone()))
+    Ok(conversation
+        .consenting(startup.services.consent().clone())
+        .following(following))
 }
 
 /// Waits on `runtime` for what picking the session up owes it, before the
@@ -1052,6 +1057,9 @@ pub fn settle(
 /// honest answer where nothing can serve it: a tool that is registered and
 /// fails every call teaches the model to keep trying it.
 ///
+/// Built at the start and again at each switch of model or provider, and held
+/// where the two tools read it at each call by `Following` (in `following.rs`).
+///
 /// Nothing here fails the start. A source that cannot be built is a session
 /// without web tools, not a session that refuses to open — the user asked for a
 /// coding agent, and losing search is not losing that.
@@ -1072,7 +1080,8 @@ impl fmt::Debug for Reaching {
 impl Reaching {
     /// No web tools at all: the answer for a provider that serves neither, and
     /// for a credential that could not be resolved.
-    fn nothing() -> Self {
+    #[must_use]
+    pub fn nothing() -> Self {
         Self {
             searching: None,
             fetching: None,
@@ -1107,6 +1116,16 @@ impl Reaching {
             fetching: None,
         }
     }
+
+    /// What answers a search, where anything does.
+    pub(crate) fn searched(&self) -> Option<Arc<dyn Search>> {
+        self.searching.clone()
+    }
+
+    /// What answers a fetch, where anything does.
+    pub(crate) fn fetched(&self) -> Option<Arc<dyn Fetch>> {
+        self.fetching.clone()
+    }
 }
 
 fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
@@ -1122,14 +1141,33 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
         stored: startup.stored,
         subscriptions: startup.subscriptions,
     };
-    let Ok(wiring) = wiring(serving, auth, startup.services.http()) else {
+    reached(
+        serving,
+        model,
+        auth,
+        startup.services.http(),
+        startup.services.consent(),
+    )
+}
+
+/// What answers the two web tools on `model` from `serving`, signed with the
+/// credential `auth` resolves for that provider.
+///
+/// Built for the model the session asks at the start and again at each switch
+/// of model or provider, and named in every request it makes. A model whose own
+/// route is warned gets sources that send nothing while that route has no yes.
+pub(crate) fn reached(
+    serving: Served,
+    model: &str,
+    auth: ProviderAuth<'_>,
+    http: &HttpTurns,
+    consent: &Consent,
+) -> Reaching {
+    let Ok(wiring) = wiring(serving, auth, http) else {
         return Reaching::nothing();
     };
 
     let reaching = (serving.reach)(wiring, model);
-    // Built once, for the model the run starts on, and named in every
-    // request it makes whichever model the session has moved to since.
-    let consent = startup.services.consent();
     let route = content_use::model_route(serving.name, model);
     match consent.routes().warned(&route) {
         Some(_) => reaching.asked(consent, &route),
@@ -1362,7 +1400,7 @@ fn key(
 fn tools(
     startup: &Startup<'_>,
     settings: &Settings,
-    reaching: Reaching,
+    web: &Following,
     sandbox: Arc<dyn crucible_sandbox::SandboxService>,
 ) -> Result<Tools, AppError> {
     // Read off the wiring rather than taken one by one. Five things a tool is
@@ -1427,15 +1465,15 @@ fn tools(
     // session without a question about the world never touches at all.
     defer(&mut tools, &mut held, TodoWrite::new(plan.clone()))?;
 
-    // Last, and only where this session has a source. One `Arc` serves both:
-    // the two tools ask it different questions, and a session whose vendor
-    // answers only one of them registers only that one the day such a source
-    // exists.
-    if let Some(searching) = reaching.searching {
-        defer(&mut tools, &mut held, WebSearch::new(searching))?;
+    // Last, and only where this session starts with a source. Both read the
+    // sources in force at each call, which a switch of model or provider
+    // replaces; a session whose vendor answers only one of them registers
+    // only that one.
+    if web.searches() {
+        defer(&mut tools, &mut held, WebSearch::new(Arc::new(web.clone())))?;
     }
-    if let Some(fetching) = reaching.fetching {
-        defer(&mut tools, &mut held, WebFetch::new(fetching))?;
+    if web.fetches() {
+        defer(&mut tools, &mut held, WebFetch::new(Arc::new(web.clone())))?;
     }
 
     // Advertised rather than deferred, and that is the one place this tool

@@ -181,6 +181,20 @@ pub trait Search: Send + Sync {
         None
     }
 
+    /// Why nothing would be sent, where this source has nowhere to send now.
+    ///
+    /// Asked when a call is checked, before it is put to the permission
+    /// question, so a call that could only answer that nothing was sent is
+    /// refused rather than asked about. `Ok`, the default, is a source that
+    /// always has somewhere to send.
+    ///
+    /// # Errors
+    ///
+    /// [`SourceError`] saying why nothing would be sent.
+    fn answering(&self) -> Result<(), SourceError> {
+        Ok(())
+    }
+
     /// Answers `query`.
     ///
     /// A shipped implementation waits for its request on the runtime this
@@ -211,6 +225,17 @@ pub trait Fetch: Send + Sync {
     /// An address this source cannot read into a host comes back as
     /// [`Host::Opaque`], which matches no rule but a blanket.
     fn reaches(&self, url: &str) -> Host;
+
+    /// Why nothing would be sent, where this source has nowhere to send now.
+    ///
+    /// As [`Search::answering`]: asked before the permission question.
+    ///
+    /// # Errors
+    ///
+    /// [`SourceError`] saying why nothing would be sent.
+    fn answering(&self) -> Result<(), SourceError> {
+        Ok(())
+    }
 
     /// Fetches `url`.
     ///

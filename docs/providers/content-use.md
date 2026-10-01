@@ -98,9 +98,9 @@ The two Meta contributor models are asked about when one is chosen in
 yes is kept for each model on its own. The Meta key row and the standard
 models, `muse-spark-1.3` and `muse-spark-1.2`, are not asked about: Meta's
 terms say it does not use what is sent to them to train its models. A web
-search keeps the model the run started on, so a run started on a contributor
-model searches on it, once it has its yes, after the session has moved to a
-standard one; start the run on the standard model to keep searches off it.
+search names the model the session is asking now, so it is held while that
+model is a contributor model without its yes, and goes out on the standard
+model once the session has moved to one.
 
 The Qwen rows of aliyun.com rest on the plan pages of that site, read in
 Chinese; Alibaba Cloud's service agreement says the same of both plans. The

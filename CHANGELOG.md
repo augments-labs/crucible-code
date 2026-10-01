@@ -32,6 +32,14 @@ change in any release with no deprecation period.
   carries on, where it used to end the turn. Meta's refusal of an over-long
   request carries no code and MiniMax's `1039` "Token limit exceeded" cannot be
   told apart from a rate limit, so both still end the turn.
+- **Web search follows `/model`.** A search named the model the run started on
+  after the session moved to another, so a run started on a Meta contributor
+  model kept searching on it, and a run that declined one held every search.
+  A search now names the model asked now, from the provider asked now, and is
+  held only while that model's route waits for its yes. After a switch to a
+  provider with no web search, or no usable credential for one, a web call
+  answers that nothing was sent, where before it went to the provider the run
+  started on.
 
 ## [0.44.0] - 2026-10-01
 

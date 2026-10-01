@@ -40,7 +40,7 @@ use clap::{Parser, Subcommand};
 use crucible_app::AppError;
 use crucible_app::content_use;
 use crucible_app::providers::{
-    Providers, Served, available, chosen, providers, re_serving, unasked,
+    Providers, Served, available, chosen, providers, re_serving, re_sourcing, unasked,
 };
 use crucible_app::services::{Services, Unfinished};
 use crucible_app::startup::{self, Startup, assemble, served};
@@ -758,6 +758,15 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // the session asking what the next run here would ask, rather than what
         // a second reading of the same files happened to say.
         serving: re_serving(
+            settings.clone(),
+            subscriptions.clone(),
+            Box::new(|name| std::env::var(name).ok()),
+            services.http().clone(),
+            services.consent().clone(),
+        ),
+        // And the web sources a switch builds again, through the same files,
+        // logins and environment, so a search names the model asked now.
+        sourcing: re_sourcing(
             settings.clone(),
             subscriptions.clone(),
             Box::new(|name| std::env::var(name).ok()),

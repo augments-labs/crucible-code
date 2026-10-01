@@ -136,7 +136,7 @@ fn registry() -> Result<(crucible_runner::Tools, Fixture), String> {
     let tools = tools(
         &startup,
         &settings,
-        reaching,
+        &crate::following::Following::new(None, reaching),
         Arc::new(LocalSandbox::new().watching_on(runtime.handle().clone())),
     )
     .map_err(|problem| problem.to_string())?;

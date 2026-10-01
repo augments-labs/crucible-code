@@ -82,6 +82,16 @@ pub enum ToolError {
         actual: usize,
     },
 
+    /// Nothing in force answers this tool, so the call was refused before it
+    /// was asked about and nothing was sent.
+    #[error("{tool}: {problem}")]
+    Unanswered {
+        /// Which tool has nothing to answer it.
+        tool: Box<str>,
+        /// Why, in words the model can act on.
+        problem: Box<str>,
+    },
+
     /// An admission from one immutable generation was presented to another.
     #[error("tool {tool} is not reachable in the admitted generation")]
     StaleGeneration {

@@ -22,9 +22,9 @@ use crucible_agents::{
 };
 use crucible_app::providers::{
     CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Resolved, Served, Serving,
-    providers,
+    Sourcing, providers,
 };
-use crucible_app::startup::served;
+use crucible_app::startup::{Reaching, served};
 use crucible_app::switching::{LoggedIn, LoggedOut, Retained, Rung, Switched, Switching};
 use crucible_app::{AppError, Conversation, remember};
 use crucible_auth::Store;
@@ -326,6 +326,7 @@ struct Desk {
     providers: Providers,
     settings: Settings,
     serving: Serving,
+    sourcing: Sourcing,
     logins: Store,
     choosing: PathBuf,
     reached: Arc<Mutex<Vec<&'static str>>>,
@@ -356,6 +357,7 @@ impl Desk {
             providers: providers()?.snapshot(),
             settings: Settings::default(),
             serving,
+            sourcing: Box::new(|_, _, _| Reaching::nothing()),
             logins: Store::in_home(home.path()),
             choosing: crucible_config::user(&home),
             reached,
@@ -367,6 +369,7 @@ impl Desk {
             providers: &self.providers,
             settings: &self.settings,
             serving: &self.serving,
+            sourcing: &self.sourcing,
             logins: &self.logins,
             choosing: &self.choosing,
         }

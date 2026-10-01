@@ -5,7 +5,8 @@
 //! a rung is checked before anything is retired, a provider is reached before
 //! the one answering is let go, the cache made under one identity is retired
 //! before another takes its place, and the name a session is asking under
-//! moves in the same step as the provider behind it. That order is the same
+//! moves in the same step as the provider behind it, with the web sources
+//! built again for both. That order is the same
 //! whatever is showing it, so it is decided here, from values no terminal has
 //! to supply, and answered with a value that says what happened and leaves
 //! every sentence about it to whoever is showing it.
@@ -25,8 +26,8 @@ use crucible_runtime::Cancel;
 use crucible_types::PromptCacheResourceError;
 
 use crate::providers::{
-    CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Served, Serving, offered,
-    rungs,
+    CredentialSource, NO_PROVIDER_CHOSEN, NOTHING_TO_ASK, Providers, Served, Serving, Sourcing,
+    offered, rungs,
 };
 use crate::remember::{self, RememberError};
 use crate::startup::{UNKNOWN_CEILING, accepts, ceiling, window};
@@ -44,6 +45,8 @@ pub struct Switching<'a> {
     pub settings: &'a Settings,
     /// Sets one provider up from the credentials in hand.
     pub serving: &'a Serving,
+    /// Builds the web sources for one provider and model from the same.
+    pub sourcing: &'a Sourcing,
     /// Where `/login` writes a credential and `/logout` forgets one.
     pub logins: &'a Store,
     /// The user configuration file a choice is written down in.
@@ -227,6 +230,9 @@ impl Conversation {
             Some(window(with.providers, selected, name, with.settings)),
             accepts(with.providers, provider, name),
         );
+        // And the web sources, for the model and provider now asked: a search
+        // names the model a turn would, signed as that provider's turns are.
+        self.reach(selected, with);
 
         // The provider first, because it is the half a machine holding two
         // credentials needs: a model written under a provider says what to ask
@@ -292,6 +298,7 @@ impl Conversation {
         if changed {
             self.runner.ask("", UNKNOWN_CEILING, None, None);
         }
+        self.reach(named, with);
         self.hastened_as_kept(with.choosing);
 
         LoggedIn::Serving {
@@ -331,6 +338,7 @@ impl Conversation {
         if let Ok(remaining) = (with.serving)(named, &stored) {
             self.runner.serve(remaining.provider);
             self.clearings_recorded().await;
+            self.reach(named, with);
             self.hastened_as_kept(with.choosing);
             return LoggedOut::StillServed {
                 retained,
@@ -349,7 +357,22 @@ impl Conversation {
         self.runner.serve(Box::new(Unavailable::new(warning)));
         self.clearings_recorded().await;
         self.serving = None;
+        self.web.stop();
         LoggedOut::SignedOut { retained }
+    }
+
+    /// Builds the web sources again for `named` and the model now asked of it,
+    /// from the credential it is set up with now; none where no model is.
+    fn reach(&self, named: Served, with: &Switching<'_>) {
+        let model = self.runner.model();
+        if model.is_empty() {
+            self.web.stop();
+        } else {
+            self.web.follow(
+                named.name,
+                (with.sourcing)(named, model, &with.logins.read()),
+            );
+        }
     }
 
     /// Retires the persistent cache resources only this conversation's
