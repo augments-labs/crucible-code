@@ -703,8 +703,11 @@ from the open platform says so in
 [configuration](../configuration/configuration.md):
 
 ```json
-{ "providers": { "moonshot": { "baseUrl": "https://api.moonshot.ai/v1" } } }
+{ "providers": { "moonshot": { "baseUrl": "https://api.moonshot.ai/v1/chat/completions" } } }
 ```
+
+`baseUrl` is the address requests are posted to, written whole: the API's
+base address with the path of the endpoint after it.
 
 The two consoles also spell their models differently. What `/model` offers is
 the coding console's spelling, that being the one crucible asks: `k3`,

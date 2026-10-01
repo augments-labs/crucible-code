@@ -72,6 +72,12 @@ change in any release with no deprecation period.
 
 ### Fixed
 
+- **The open platform address for a Kimi key is given whole.** The help text
+  and the docs said to set `providers.moonshot.baseUrl` to
+  `https://api.moonshot.ai/v1`, but crucible posts to that address as written,
+  so the request missed the endpoint; the address to set is
+  `https://api.moonshot.ai/v1/chat/completions`.
+
 - **A Kimi sign-in that does not complete leaves the credential store as it
   was.** It wrote an installation identity before its first request, so a
   sign-in that was refused, denied or left still changed the file.

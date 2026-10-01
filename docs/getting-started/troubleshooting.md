@@ -210,7 +210,9 @@ ending in ` [cut: the reply was longer than crucible reads]` or
 A 401 from MoonshotAI in its own words, with a key you know is good, is
 usually a key from the other console: a Kimi Code key is accepted at
 `https://api.kimi.com/coding/v1`, an Open Platform key only at
-`https://api.moonshot.ai/v1`, which is set with `providers.moonshot.baseUrl`.
+`https://api.moonshot.ai/v1`, which is set with `providers.moonshot.baseUrl` as
+`https://api.moonshot.ai/v1/chat/completions`, the whole address requests are
+posted to.
 See [when a response goes
 away](../providers/providers.md#when-a-response-goes-away) and [MoonshotAI
 issues a key against one console or the

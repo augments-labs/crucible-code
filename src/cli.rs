@@ -119,7 +119,8 @@ apiKeyEnv names.
 MoonshotAI issues a key against one of two consoles and refuses it at the \
 other, and nothing in the key says which. crucible asks the coding console; a \
 key from the open platform sets providers.moonshot.baseUrl to \
-https://api.moonshot.ai/v1.
+https://api.moonshot.ai/v1/chat/completions, the whole address requests are \
+posted to.
 
 A key in DASHSCOPE_API_KEY, MINIMAX_API_KEY or ZAI_API_KEY is sent to the \
 vendor's international site. A key of its mainland China site is given \
