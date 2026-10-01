@@ -1599,6 +1599,9 @@ mod acknowledged;
 /// Where a result stands in the log, and what reading it back from there gives.
 mod placed;
 
+/// Which session `--continue` takes when old and new names share a directory.
+mod latest;
+
 /// A reading a session might have been told about itself.
 fn reading(tokens: u64, spent: u64) -> Calibration {
     Calibration {

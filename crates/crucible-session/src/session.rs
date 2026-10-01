@@ -361,7 +361,7 @@ impl Session {
         // Narrowed here as well as in `start`, because this is the path that
         // reads what is in the directory rather than only adding to it. A
         // directory another account can write to lets them drop in a log with
-        // this workspace in its header and a name that sorts late, and
+        // this workspace in its header and a name dated later than any, and
         // `--continue` replays whatever it finds as though the user had typed
         // it.
         privacy::directory(directory).map_err(|source| SessionError::Directory {
