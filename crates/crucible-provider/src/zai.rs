@@ -55,8 +55,9 @@ impl Dialect for ZaiChat {
         match reason {
             // The answer was held back by the vendor's review.
             "sensitive" => Some(StopReason::Filtered),
-            // The conversation no longer fits the model.
-            "model_context_window_exceeded" => Some(StopReason::OutOfTokens),
+            // The conversation no longer fits the model: its remedy is room
+            // made in the window, not a longer answer.
+            "model_context_window_exceeded" => Some(StopReason::WindowExceeded),
             // `network_error` is the model failing part way, which every
             // other unknown reason already reads as: unfinished.
             _ => None,

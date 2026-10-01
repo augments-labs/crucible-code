@@ -71,7 +71,7 @@ fn the_documented_stream_reads_as_its_words_a_finish_and_its_counts() {
 fn the_reasons_to_stop_z_ai_has_words_of_its_own_for_are_read_as_they_mean() {
     for (reason, stop) in [
         ("sensitive", StopReason::Filtered),
-        ("model_context_window_exceeded", StopReason::OutOfTokens),
+        ("model_context_window_exceeded", StopReason::WindowExceeded),
         // A failure of the model's own, said where a reason goes: the turn
         // is unfinished, not complete.
         ("network_error", StopReason::Unknown),
