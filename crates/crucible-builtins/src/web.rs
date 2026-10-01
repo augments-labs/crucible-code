@@ -141,7 +141,8 @@ impl Tool for WebSearch {
     fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
         let args = Args::parse(SEARCH, args)?;
         args.text(QUERY)?;
-        args.count(LIMIT, RESULTS).map(drop)
+        args.count(LIMIT, RESULTS)?;
+        unanswered(SEARCH, self.source.answering())
     }
 
     /// The query, and where it goes.
@@ -317,7 +318,8 @@ impl DescribeTool for WebFetch {
 
 impl Tool for WebFetch {
     fn validate(&self, args: &ToolArgs) -> Result<(), ToolError> {
-        Args::parse(FETCH, args)?.text(URL).map(drop)
+        Args::parse(FETCH, args)?.text(URL)?;
+        unanswered(FETCH, self.source.answering())
     }
 
     /// Wherever the call is pointed, which is why this reads the arguments and
@@ -419,6 +421,18 @@ impl Tool for WebFetch {
             Ok(ToolOutput::ok(said))
         })
     }
+}
+
+/// A call refused as it is checked where its source has nowhere to send, so
+/// it is never put to the permission question it could only waste.
+fn unanswered(
+    tool: &'static str,
+    answering: Result<(), crucible_tools::SourceError>,
+) -> Result<(), ToolError> {
+    answering.map_err(|problem| ToolError::Unanswered {
+        tool: tool.into(),
+        problem: problem.to_string().into(),
+    })
 }
 
 /// What a failed source answers with.

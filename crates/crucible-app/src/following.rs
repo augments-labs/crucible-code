@@ -11,9 +11,11 @@
 //! yes, so the hold follows the model too.
 //!
 //! Which tools are registered stays what the run started with: the runner's
-//! tool set is fixed for the run. Where the provider in force serves no source
-//! for a registered tool, the tool answers that nothing was sent and sends
-//! nothing, to that provider or to the one the run started on.
+//! tool set is fixed for the run. Where the provider in force gives the session
+//! no source for a registered tool (it serves none, or its credential cannot be
+//! used for one), a call is refused as it is checked, before any permission
+//! question, saying that nothing was sent; nothing goes to that provider or to
+//! the one the run started on.
 //!
 //! A switch takes the conversation mutably and a turn runs on it the same way,
 //! so the source a call was approved against is the one it runs on: nothing
@@ -111,17 +113,21 @@ impl Following {
     }
 }
 
-/// What a tool answers where the provider in force serves no source for it.
+/// What a tool answers where the provider in force gives the session no
+/// source for it: one it does not serve, or one its credential cannot be used
+/// for.
 fn unserved(named: &'static str, tool: &str) -> SourceError {
     SourceError::Transport {
         named,
-        problem: format!("nothing was sent: the provider in force serves no {tool}").into(),
+        problem: format!("nothing was sent: the provider in force gives this session no {tool}")
+            .into(),
     }
 }
 
 /// Where a call would go where nothing would answer it: a host no rule names.
+/// Never asked in practice, since such a call is refused as it is checked.
 fn nowhere(tool: &str) -> Host {
-    Host::Opaque(format!("nothing: the provider in force serves no {tool}").into())
+    Host::Opaque(format!("nothing: the provider in force gives this session no {tool}").into())
 }
 
 impl Search for Following {
@@ -140,6 +146,13 @@ impl Search for Following {
 
     fn restricts(&self) -> Option<&'static str> {
         self.searching().1.and_then(|source| source.restricts())
+    }
+
+    fn answering(&self) -> Result<(), SourceError> {
+        match self.searching() {
+            (_, Some(source)) => source.answering(),
+            (named, None) => Err(unserved(named, "web search")),
+        }
     }
 
     fn search<'a>(
@@ -166,6 +179,13 @@ impl Fetch for Following {
         self.fetching()
             .1
             .map_or_else(|| nowhere("web fetch"), |source| source.reaches(url))
+    }
+
+    fn answering(&self) -> Result<(), SourceError> {
+        match self.fetching() {
+            (_, Some(source)) => source.answering(),
+            (named, None) => Err(unserved(named, "web fetch")),
+        }
     }
 
     fn fetch<'a>(
