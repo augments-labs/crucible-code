@@ -222,7 +222,8 @@ The same holds for the other vendors that bind a key to a site. A Qwen or
 MiniMax key is refused at the other site's address, and a Qwen plan's key
 anywhere but its plan's address; a key from `DASHSCOPE_API_KEY` or
 `MINIMAX_API_KEY` goes to the international site. Give a mainland China key on
-its own row in `/login`, or set `baseUrl` to its site's address. See [rows and
+its own row in `/login`, or set `baseUrl` to the whole address its site's
+requests go to, ending `/chat/completions`. See [rows and
 sites](../providers/providers.md#rows-and-sites).
 
 ### `anthropic: overloaded_error: Anthropic could not finish this request; private details omitted`

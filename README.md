@@ -21,8 +21,9 @@ continued later.
 ## Highlights
 
 - **Provider-independent sessions.** Anthropic, DeepSeek, Google, Meta, MiMo,
-  MiniMax, Moonshot, OpenAI, Qwen, xAI and Z.ai are wire adapters. Each provider uses either an API key or a supported account login;
-  switching login methods replaces that provider’s stored credential.
+  MiniMax, Moonshot, OpenAI, Qwen, xAI and Z.ai are wire adapters. Each
+  provider uses either an API key or a supported account login; switching
+  login methods replaces that provider’s stored credential.
 - **Permissioned tools.** Reads inside the workspace are available by default;
   file changes, commands and reads outside it are decided by rules and the
   active permission mode. OS sandboxing is opt-in with `sandbox.enabled: true`;
@@ -121,10 +122,10 @@ crucible
 ```
 
 You can instead start without an environment key and use `/login`, which asks
-how usage is paid for: your account with a subscription (OpenAI, or Kimi Code on
-kimi.ai or kimi.com), a plan's key (MiniMax, or Qwen's Coding Plan or Token
-Plan), or your own API key. Authentication does not silently
-choose a model; `/model` selects the provider, model and supported reasoning
+how usage is paid for: a subscription, where you sign in to your account
+(OpenAI, or Kimi Code on kimi.ai or kimi.com) or give a plan's key (MiniMax,
+or Qwen's Coding Plan or Token Plan), or your own API key. Authentication does
+not silently choose a model; `/model` selects the provider, model and supported reasoning
 effort explicitly.
 
 Google Gemini uses `GEMINI_API_KEY` or `/login google`; Google and Anthropic
@@ -136,8 +137,8 @@ models](docs/providers/providers.md#what-each-provider-serves).
 
 Where a vendor says it may train on what is sent (a ChatGPT plan, Kimi Code,
 the Kimi open platform, a Gemini key on unpaid quota, MiniMax, Qwen's plans on
-aliyun.com, Z.ai's bigmodel.cn key, or Meta's contributor models), Crucible asks once
-before anything is sent and remembers the answer; see [content
+aliyun.com, Z.ai's bigmodel.cn key, or Meta's contributor models), Crucible
+asks once before anything is sent and remembers the answer; see [content
 use](docs/providers/content-use.md).
 
 Useful commands:

@@ -121,7 +121,7 @@ asks for each.
 Each provider lists the models its credential in use serves: a ChatGPT
 sign-in leaves out `gpt-5.5`, and a Qwen plan key lists its plan's models.
 With one provider marked, the models pane is headed by the provider and that
-credential, as in `openai · OpenAI sign-in`, and a quiet row under the models,
+credential, as in `openai · ChatGPT sign-in`, and a quiet row under the models,
 which the mark never takes, counts what an API key would add and names
 `/login`. A row's note says `trains` on a model whose vendor may train on what
 is sent to it (see [Content use](content-use.md)),
@@ -197,7 +197,7 @@ xAI.
 | Qwen Token Plan · aliyun.com | subscription | `sk-sp-` | `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` | `qwen3.8-max`, `qwen3.8-flash`, `qwen3.7-plus` |
 | DeepSeek | API key | | `https://api.deepseek.com` | both |
 | Meta | API key | | `https://api.meta.ai/v1` | all four |
-| MiMo | API key | `sk-` | `https://api.xiaomimimo.com/v1` | both |
+| MiMo | API key | not `tp-` or `ttp-` | `https://api.xiaomimimo.com/v1` | both |
 | MiniMax · minimax.io | API key | `sk-api-` | `https://api.minimax.io/v1` | both |
 | MiniMax · minimaxi.com | API key | `sk-api-` | `https://api.minimax.cn/v1` | both |
 | Qwen · alibabacloud.com | API key | | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | all four |
@@ -209,7 +209,9 @@ xAI.
 A key in a provider's variable belongs to one row of it: for MiniMax and Qwen
 the international site's API key row, for Z.ai the z.ai row. A key of the
 mainland China site, or a plan's key, is given through `/login`, or reaches
-that site with `providers.<name>.baseUrl` set to its address. Qwen and MiniMax
+that site with `providers.<name>.baseUrl` set to the whole address its
+requests go to: the row's address followed by `/chat/completions`, since a
+`baseUrl` is posted to as written. Qwen and MiniMax
 bind a key to its site and refuse it at the other; Z.ai does not say what its
 other site makes of one.
 
@@ -645,10 +647,9 @@ One difference is worth knowing about because it decides which OpenAI models
 work at all. crucible talks to OpenAI over `/v1/responses` rather than
 `/v1/chat/completions`, because a model that reasons before answering refuses
 function tools on the older endpoint. Crucible needs tool calls to work with
-reasoning enabled. The cost is that other vendors serving an "OpenAI-compatible"
-API implement the older
-endpoint and not this one, so `openai` means OpenAI here rather than anything
-that speaks its shape. `moonshot` is that older endpoint, read by a provider of
+reasoning enabled. The cost is that most other vendors serving an
+"OpenAI-compatible" API implement the older endpoint and not this one, so
+`openai` means OpenAI here rather than anything that speaks its shape. `moonshot` is that older endpoint, read by a provider of
 its own, and so are `deepseek`, `zai`, `qwen`, `mimo` and `minimax`, each with
 its vendor's own ways of asking for reasoning and of reporting usage. `meta` and
 `xai` speak Responses, with what each vendor does differently kept beside it.
