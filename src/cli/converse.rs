@@ -1662,7 +1662,7 @@ struct Held<'a> {
     /// The prompts waiting behind a turn, which the turn adds to as lines are
     /// finished in the box under it. They are the next turn, in the order they
     /// were typed: the whole of the queue goes to one turn rather than a turn
-    /// each, which is what [`batched`] does with it.
+    /// each, which is what [`queueing::batched`] does with it.
     queued: Prompts,
     /// What the transcript had no room to say, waiting for Ctrl+O. Held for the
     /// whole session rather than for a turn: the row offering the key is read
