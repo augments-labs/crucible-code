@@ -601,3 +601,92 @@ fn a_row_reads_its_route_off_the_settings_and_the_store_in_force() {
     );
     assert!(super::row_form(openai, "gpt-5.6-sol", &plain, &signed).switched());
 }
+
+/// What one provider's credential in use is, as `/model` reads it.
+fn using<'a>(
+    entries: &[(&'a str, &str, Option<&'static [&'static str]>)],
+) -> std::collections::BTreeMap<&'a str, crucible_app::providers::InUse> {
+    entries
+        .iter()
+        .map(|(provider, words, serves)| {
+            (
+                *provider,
+                crucible_app::providers::InUse {
+                    words: (*words).to_owned(),
+                    serves: *serves,
+                },
+            )
+        })
+        .collect()
+}
+
+const SIGNED_IN: &[&str] = &[
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+];
+
+#[test]
+fn a_sign_in_lists_what_it_serves_and_a_key_lists_every_model() {
+    let providers = catalogue();
+    let all = super::narrowing::every(&providers);
+    let signed_in = using(&[("openai", "OpenAI sign-in", Some(SIGNED_IN))]);
+
+    let listed: Vec<(&str, &str)> = super::narrowed(all.clone(), &signed_in)
+        .iter()
+        .map(|one| (one.provider.name, one.model.name))
+        .collect();
+
+    assert!(!listed.contains(&("openai", "gpt-5.5")), "{listed:?}");
+    assert!(listed.contains(&("openai", "gpt-6.1-sol")), "{listed:?}");
+    // Another provider's models are untouched.
+    assert!(
+        listed.contains(&("anthropic", "claude-opus-5-5")),
+        "{listed:?}"
+    );
+    assert_eq!(super::narrowed(all.clone(), &using(&[])).len(), all.len());
+}
+
+#[test]
+fn one_provider_marked_is_headed_by_its_credential_and_closed_by_what_a_key_adds() {
+    let providers = catalogue();
+    let openai = crucible_app::startup::served(&providers, "openai").expect("openai");
+    let signed_in = using(&[("openai", "OpenAI sign-in", Some(SIGNED_IN))]);
+    let keyed = using(&[("openai", "API key", None)]);
+
+    assert_eq!(
+        super::headed("openai", &signed_in).as_deref(),
+        Some("openai · OpenAI sign-in")
+    );
+    assert_eq!(
+        super::closing(openai, &signed_in).as_deref(),
+        Some("1 more with an API key · /login")
+    );
+    assert_eq!(
+        super::headed("openai", &keyed).as_deref(),
+        Some("openai · API key")
+    );
+    assert_eq!(super::closing(openai, &keyed), None);
+    assert_eq!(super::headed("openai", &using(&[])), None);
+}
+
+#[test]
+fn a_model_that_is_itself_warned_says_trains_before_anything_else() {
+    let cost = crucible_models::Cost {
+        price: "2x the price",
+        speed: None,
+        caveat: None,
+    };
+    assert_eq!(
+        super::noted(true, &[], crucible_models::FastForm::Field(cost)),
+        "trains"
+    );
+    assert_eq!(
+        super::noted(false, &[], crucible_models::FastForm::Field(cost)),
+        "no rung"
+    );
+}

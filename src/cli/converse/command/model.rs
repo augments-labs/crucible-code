@@ -34,7 +34,9 @@ use crate::cli::choice::Choice;
 use crate::cli::client::astray;
 use crate::cli::converse::picking::{self, Shelved, Standing, Taken};
 use crate::cli::converse::warning::{self, Chosen};
-use crucible_app::providers::{Model, NO_MODEL_CHOSEN, Served, offered};
+use std::collections::BTreeMap;
+
+use crucible_app::providers::{InUse, Model, NO_MODEL_CHOSEN, Served, offered};
 use crucible_app::startup::served;
 
 use super::{Asked, Terms, about, say};
@@ -108,6 +110,48 @@ fn note(rungs: &[Effort], form: FastForm) -> &'static str {
     } else {
         FAST
     }
+}
+
+/// What a model that is itself warned says in the note column.
+const TRAINS: &str = "trains";
+
+/// The note of a row whose model is itself warned, `warned`: `trains` before
+/// anything about its rungs or its speed.
+fn noted(warned: bool, rungs: &[Effort], form: FastForm) -> &'static str {
+    if warned { TRAINS } else { note(rungs, form) }
+}
+
+/// The models of `all` each provider's credential in use serves, from
+/// `using`, the credential each provider is sent with.
+fn narrowed(all: Vec<Selected>, using: &BTreeMap<&str, InUse>) -> Vec<Selected> {
+    all.into_iter()
+        .filter(|one| {
+            using
+                .get(one.provider.name)
+                .and_then(|in_use| in_use.serves)
+                .is_none_or(|serves| serves.contains(&one.model.name))
+        })
+        .collect()
+}
+
+/// What heads the pane narrowed to `provider`: the provider and the words of
+/// the credential its models are served by, or nothing where it has none.
+fn headed(provider: &str, using: &BTreeMap<&str, InUse>) -> Option<String> {
+    using
+        .get(provider)
+        .map(|in_use| format!("{provider} · {}", in_use.words))
+}
+
+/// The quiet row under the pane narrowed to `provider`: how many more of its
+/// models another credential would serve, and where it is given.
+fn closing(provider: Served, using: &BTreeMap<&str, InUse>) -> Option<String> {
+    let serves = using.get(provider.name)?.serves?;
+    let more = provider
+        .models
+        .iter()
+        .filter(|model| !serves.contains(&model.name))
+        .count();
+    (more > 0).then(|| format!("{more} more with an API key · /login"))
 }
 
 /// What the strip says where the marked model serves no rung.
@@ -391,12 +435,25 @@ fn stood<T: Terminal>(
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<Shelved<Selected>, Fatal> {
     let providers = terms.providers.snapshot();
-    let all = narrowing::every(&providers);
     let glyphs = terms.style().glyphs();
     let (long, short) = keys(glyphs);
     // Read once for the shelf, not once a frame: which providers a stored
-    // sign-in serves decides the fast form a row's model has.
+    // sign-in serves decides the fast form a row's model has, and which of
+    // its models each provider's credential in use serves decides its list.
     let stored = terms.logins.read();
+    let auth = crucible_app::startup::ProviderAuth {
+        settings: &terms.settings,
+        from: &*terms.environment,
+        stored: &stored,
+        subscriptions: &terms.subscriptions,
+    };
+    let using: BTreeMap<&str, InUse> = offered(&providers)
+        .filter_map(|provider| {
+            crucible_app::providers::in_use(provider, auth).map(|one| (provider.name, one))
+        })
+        .collect();
+    let all = narrowed(narrowing::every(&providers), &using);
+    let routes = terms.consent.routes();
 
     // Which model is in force goes on the title row rather than beside an
     // entry: it is one fact about the session, and a pane whose rows all read
@@ -527,11 +584,24 @@ fn stood<T: Terminal>(
                         ""
                     },
                     window,
-                    note: note(one.model.rungs, form),
+                    note: noted(
+                        routes
+                            .warned(&crucible_app::content_use::model_route(
+                                one.provider.name,
+                                one.model.name,
+                            ))
+                            .is_some(),
+                        one.model.rungs,
+                        form,
+                    ),
                     now,
                 })
                 .collect();
 
+            let heading = only.and_then(|name| headed(name, &using));
+            let closing = only
+                .and_then(|name| served(&providers, name).ok())
+                .and_then(|provider| closing(provider, &using));
             let shelf = Shelf {
                 title: "Model",
                 now: &now,
@@ -550,6 +620,8 @@ fn stood<T: Terminal>(
                 keys: (&long, &short),
                 norung: &norung,
                 pointer: standing.pointer,
+                heading: heading.as_deref(),
+                closing: closing.as_deref(),
             };
 
             let rows = shelf.within(columns, room, glyphs);
@@ -783,7 +855,13 @@ fn listed<T: Terminal>(
         })
         .collect();
 
-    Ok(renderer.present(&rows)?)
+    // A row at a time, so each passes through the window on its way up: the
+    // list is taller than a window can be, and laid down at once only the
+    // rows that fit the window are ever drawn.
+    for row in rows {
+        renderer.present(&[row])?;
+    }
+    Ok(())
 }
 
 /// The model in force as the shelf's title row says it, with the rung in

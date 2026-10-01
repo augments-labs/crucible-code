@@ -602,6 +602,8 @@ fn a_shelf_fits_the_window_it_stands_in() {
         keys: (PROSE, LONG),
         norung: LONG,
         pointer: None,
+        heading: Some(LONG),
+        closing: Some(PROSE),
     };
     down("a shelf", |columns, room, glyphs| {
         shelf.within(columns, room, glyphs)

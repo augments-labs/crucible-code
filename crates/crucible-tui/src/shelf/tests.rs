@@ -127,6 +127,8 @@ fn shelf<'a>(providers: &'a [Serving<'a>], models: &'a [Stocked<'a>]) -> Shelf<'
         keys: KEYS,
         norung: "no rung",
         pointer: None,
+        heading: None,
+        closing: None,
     }
 }
 
@@ -745,4 +747,87 @@ fn nothing_rests_on_a_row_that_is_not_a_row_to_take() {
     shelf.pointer = Some((BODY, 40));
     assert_eq!(shelf.resting(100, CHROME), None);
     assert_eq!(shelf.resting(NARROWEST - 1, 30), None);
+}
+
+#[test]
+fn a_heading_names_the_models_pane_and_without_one_it_reads_models() {
+    let providers = serving();
+    let models = stocked();
+    let headed = Shelf {
+        heading: Some("openai · OpenAI sign-in"),
+        ..shelf(&providers, &models)
+    };
+    let plain = shelf(&providers, &models);
+
+    let header = |shelf: &Shelf<'_>| {
+        shelf
+            .within(80, 24, Glyphs::Unicode)
+            .iter()
+            .map(Row::text)
+            .find(|row| row.contains("Providers"))
+            .unwrap_or_default()
+    };
+    assert!(
+        header(&headed).contains("openai · OpenAI sign-in"),
+        "{}",
+        header(&headed)
+    );
+    assert!(!header(&headed).contains("Models"), "{}", header(&headed));
+    assert!(header(&plain).contains("Models"), "{}", header(&plain));
+}
+
+#[test]
+fn the_closing_row_stands_under_the_models_and_never_takes_the_mark() {
+    let providers = serving();
+    let models = stocked();
+    let last = models.len() - 1;
+    let closing = "1 more with an API key · /login";
+    let closed = Shelf {
+        closing: Some(closing),
+        model: last,
+        ..shelf(&providers, &models)
+    };
+
+    let rows: Vec<String> = closed
+        .within(80, 24, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect();
+    let at = rows
+        .iter()
+        .position(|row| row.contains(closing))
+        .unwrap_or_else(|| panic!("no closing row: {rows:#?}"));
+    let marked = rows
+        .iter()
+        .position(|row| {
+            let start: String = models[last].name.chars().take(8).collect();
+            row.contains(&format!("› {start}"))
+        })
+        .unwrap_or_else(|| panic!("no marked row: {rows:#?}"));
+    assert!(marked < at, "{rows:#?}");
+    assert!(!rows[at].contains('›'), "{}", rows[at]);
+
+    // Too many to fit and scrolled to the last: the closing row still stands,
+    // under the last model, rather than being scrolled past, where the pane
+    // has the rows for both.
+    let many = many();
+    let scrolled = Shelf {
+        closing: Some(closing),
+        models: &many,
+        model: many.len() - 1,
+        ..shelf(&providers, &many)
+    };
+    let rows: Vec<String> = scrolled
+        .within(80, 18, Glyphs::Unicode)
+        .iter()
+        .map(Row::text)
+        .collect();
+    assert!(rows.iter().any(|row| row.contains(closing)), "{rows:#?}");
+    assert!(
+        rows.iter().any(|row| {
+            let start: String = many[many.len() - 1].name.chars().take(8).collect();
+            row.contains(&format!("› {start}"))
+        }),
+        "{rows:#?}"
+    );
 }

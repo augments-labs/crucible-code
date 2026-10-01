@@ -179,6 +179,13 @@ pub struct Shelf<'a> {
     /// different things, and a reader whose hand is on the mouse is still owed
     /// the row the arrows left.
     pub pointer: Option<(usize, usize)>,
+    /// What heads the pane of models where it is narrowed to one provider:
+    /// the provider and the credential its models are served by. `None` heads
+    /// it `Models`.
+    pub heading: Option<&'a str>,
+    /// A quiet row under the models that says what another credential would
+    /// add, and how; it never takes the mark.
+    pub closing: Option<&'a str>,
 }
 
 /// Which row of the shelf the pointer is resting on, for a caller that has to
@@ -413,7 +420,8 @@ impl Shelf<'_> {
             header.push(Slot::Quiet, clip("  Providers", SERVES));
             header.pad(SERVES + 1);
             header.push(Slot::Quiet, glyphs.vertical());
-            header.push(Slot::Quiet, clip("  Models", inside));
+            let heading = format!("  {}", self.heading.unwrap_or("Models"));
+            header.push(Slot::Quiet, clip(&heading, inside));
 
             // How many of how many, against the right edge of the pane it
             // counts: a number on its own says how many are here, and what
@@ -501,6 +509,9 @@ impl Shelf<'_> {
     /// count would have been nothing, which is the width of a pane that ends
     /// exactly at the bottom.
     fn stocking_at(&self, body: usize) -> (usize, usize, usize) {
+        // The closing row keeps a row of its own under the models, so the
+        // models are scrolled in what is left.
+        let body = if self.closes(body) { body - 1 } else { body };
         if self.models.len() <= body {
             return (0, self.models.len(), 0);
         }
@@ -512,6 +523,13 @@ impl Shelf<'_> {
         } else {
             (from, seen, left)
         }
+    }
+
+    /// Whether the closing row has a row of its own in a pane `body` rows
+    /// tall. It gives way before the models do: only where they all still fit
+    /// beside it, or keep two rows, a marked one and the count.
+    fn closes(&self, body: usize) -> bool {
+        self.closing.is_some() && (self.models.len() < body || body >= 4)
     }
 
     /// Each row of the pane of providers, padded to its width.
@@ -582,6 +600,11 @@ impl Shelf<'_> {
 
         let (from, shown, left) = self.stocking_at(body);
         let ends = Ends::across(inside, self.models.iter().any(|one| !one.by.is_empty()));
+        // Under the last row the models take, the count included.
+        let closes = self
+            .closing
+            .filter(|_| self.closes(body))
+            .map(|said| (shown + usize::from(left > 0), said));
 
         (0..body)
             .map(|at| match self.models.get(from + at) {
@@ -600,7 +623,15 @@ impl Shelf<'_> {
                     row.push(Slot::Quiet, format!("{} {left} more", glyphs.dot()));
                     row.clipped(inside)
                 }
-                _ => Row::new(),
+                _ => match closes {
+                    Some((closing, said)) if closing == at => {
+                        let mut row = Row::new();
+                        row.pad(LEADING);
+                        row.push(Slot::Quiet, clip(said, inside - LEADING));
+                        row.clipped(inside)
+                    }
+                    _ => Row::new(),
+                },
             })
             .collect()
     }
