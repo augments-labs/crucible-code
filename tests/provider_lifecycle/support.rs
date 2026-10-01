@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use crucible_context::ContextInputs;
 use crucible_credentials::{ApiKey, Header, HeaderKey};
 use crucible_models::{Effort, Provider};
-use crucible_provider::{Anthropic, Endpoint, Google, HttpTurns, OpenAi, PostResponse};
+use crucible_provider::{Anthropic, DeepSeek, Endpoint, Google, HttpTurns, OpenAi, PostResponse};
 use crucible_runner::{Agent, Compaction, Model, RunPolicy, Runner, Tools};
 use crucible_runner::{EventEnvelope, Post, TurnError};
 use crucible_runtime::BoxFuture;
@@ -53,7 +53,7 @@ pub(crate) const MODELS: [&str; 6] = [
     "claude-fable-5-1",
     "gpt-6-astra",
 ];
-const KEY: &str = "fixture-only-api-key";
+pub(crate) const KEY: &str = "fixture-only-api-key";
 const WAIT: Duration = Duration::from_secs(10);
 
 pub(crate) struct Sample {
@@ -273,6 +273,8 @@ fn through(
         Box::new(Google::at(endpoint, credential, transport))
     } else if model.starts_with("claude-") {
         Box::new(Anthropic::at(endpoint, credential, transport))
+    } else if model.starts_with("deepseek-") {
+        Box::new(DeepSeek::at(endpoint, credential, transport))
     } else {
         Box::new(OpenAi::at(endpoint, credential, transport))
     }
@@ -343,6 +345,8 @@ impl Vendor {
                 "interactions?alt=sse"
             } else if model.starts_with("claude-") {
                 "messages"
+            } else if model.starts_with("deepseek-") {
+                "chat/completions"
             } else {
                 "responses"
             }
