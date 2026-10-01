@@ -609,6 +609,16 @@ fn a_shelf_fits_the_window_it_stands_in() {
         shelf.within(columns, room, glyphs)
     });
 
+    // Walking the providers, where a folded shelf windows its strip to keep
+    // the marked one, past two that cannot fit, in view.
+    let walking = Shelf {
+        pane: Pane::Providers,
+        ..shelf
+    };
+    down("a shelf walking its providers", |columns, room, glyphs| {
+        walking.within(columns, room, glyphs)
+    });
+
     let bare = Shelf {
         providers: &[],
         provider: 0,
