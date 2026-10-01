@@ -93,7 +93,7 @@
       "opened": [
         "Watched::allowing(\"model-mid-turn\", 100, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "293a8e202985303cf8eefef97cf96e46028cb2324df53a9e768e866106e24eae"
+      "sha256": "c3c79ff1af61b28c1c844375a520aaa613315c883196fd90d3f3e8150315809a"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_panel_that_was_left_writes_one_line_and_not_the_list_under_it.snap",
@@ -367,7 +367,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "6b5bb98b2a77ca745138f466dbeb7a0798d66ce7818106a913361cfde280f972"
+      "sha256": "8e5be51eca5decbdf2461f7d9f16eec41b298c49a4ac253d7b897b4fe238f495"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__google_model_effort_80.snap",
@@ -375,7 +375,7 @@
       "opened": [
         "Watched::open(&format!(\"google-login-{columns}\"), columns, 24)"
       ],
-      "sha256": "81374a8b0dc5afb35c346277991f4ef323971522ef309f11494db85941e40890"
+      "sha256": "69648f18da2f6d552b7f210a9420e5636cbfb9f1c638ac838fe70c29812b6e46"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__leaving_the_key_box_says_nothing_was_signed_in.snap",
@@ -391,7 +391,7 @@
       "opened": [
         "Watched::open(\"login-signed-in-40\", 40, 30)"
       ],
-      "sha256": "ceafc13eea2036b5e234b22e8d6ff236775b2d4998a0e90550982dbbc089ef46"
+      "sha256": "6bf64cd820ff2d365bbb02a0f3f078a8d3a92aed55c7685e2f098f2a37b83e32"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_keys_signed_in_40.snap",
@@ -399,7 +399,7 @@
       "opened": [
         "Watched::open(\"login-signed-in-40\", 40, 30)"
       ],
-      "sha256": "e39667602803ffffc451ec7ef4c071ae4d871c6752d873c82bfc8033bb295c9b"
+      "sha256": "184ac72e3dcff9c289ed6a331fd306d62f5f2530d5dc038e080dfb07be87988b"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__login_narrowed_40.snap",
@@ -416,6 +416,27 @@
         "Watched::open(&format!(\"login-narrowed-{columns}\"), columns, 30)"
       ],
       "sha256": "f10350976325d8e62cf0fe6c6021da5c787812f6d28003b1c6fa0d363af4313d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_40.snap",
+      "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
+      "opened": [],
+      "sha256": "974606f872716a882c2b5424d95fa7f57bc6de3fd3e1de52c46400c028088b55"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__model_signed_in_80.snap",
+      "case": "a_sign_in_heads_the_models_it_serves_and_says_what_a_key_would_add",
+      "opened": [],
+      "sha256": "307c6fb308f37d5c7368f5fad9ff0551bfc3a15a5c98b73344321adb5e4d1409"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__model_trains_80.snap",
+      "case": "a_contributor_model_says_trains_where_its_standard_twin_says_nothing",
+      "opened": [
+        "Vendor::answering(\"Two plus two is four.\")",
+        "Watched::keyless(\"model-trains\", 80, 24, &vendor)"
+      ],
+      "sha256": "5a49f2a22f67ef62ba610251147cdad355b4fb98877d3f30913784c170e07f97"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__no_release_at_40.snap",

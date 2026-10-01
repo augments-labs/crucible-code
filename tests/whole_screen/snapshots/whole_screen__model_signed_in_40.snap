@@ -1,30 +1,30 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 1632
-expression: models
+assertion_line: 3360
+expression: picture
 ---
-40x24 cursor 4,16 scrolled 0
+40x24 cursor 4,10 scrolled 0
 |› /model                                |
-|Model             now  nothing asked yet|
+|Model            now  openai · gpt-6-sol|
 |                                        |
 |╭──────────────────────────────────────╮|
-|│ Search  gemini                       │|
+|│ Search    a model, or a vendor       │|
 |╰──────────────────────────────────────╯|
 |                                        |
 |╭──────────────────────────────────────╮|
-|│  ‹All› · Anthropic · DeepSeek · Googl│|
+|│  All · Anthropic · DeepSeek · Google │|
 |├──────────────────────────────────────┤|
-|│ › gemini-3.8-flash     200k  fast    │|
-|│   gemini-3.7-flash     200k  fast    │|
-|│   gemini-3.6-flash     200k  fast    │|
-|│   gemini-3.1-pro-prev  200k  fast    │|
-|│                                      │|
-|│                                      │|
-|│                                      │|
-|│                                      │|
+|│ › gpt-6-astra          272k  fast    │|
+|│   gpt-6.1-sol          272k  fast    │|
+|│   gpt-6-sol            272k  ← now   │|
+|│   gpt-6-luna           272k  fast    │|
+|│   gpt-5.6-sol          272k  fast    │|
+|│   gpt-5.6-terra        272k  fast    │|
+|│   gpt-5.6-luna         272k  fast    │|
+|│   1 more with an API key · /login    │|
 |╰──────────────────────────────────────╯|
 |                                        |
-|  Effort   ‹ low ›  medium   high       |
+|  Effort   ‹ low ›  medium   high   xhig|
 |                                        |
 |  tab · ↑↓ · ←→ · enter · esc           |
 |                                        |
