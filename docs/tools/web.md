@@ -36,9 +36,11 @@ request is still connecting or reading.
 
 Both tools follow the session. After `/model` moves it to another model, a
 search names that model; after it moves to another provider, the search goes to
-that provider with the credential its turns use. Which tools appear is settled
-when the run starts: after a switch to a provider that serves neither, a call
-answers that nothing was sent, and a run that started on such a provider gets
+that provider with the credential its turns use, and `/login` or `/logout` on
+it changes the credential searches use too. Which tools appear is settled when
+the run starts: where the provider asked now serves no source for a tool, or its
+credential cannot be used for one, a call is refused before you are asked about
+it and answers that nothing was sent. A run that started on such a provider gets
 neither tool until it is started again on one that serves them.
 
 One difference worth knowing. OpenAI has no standalone fetch (opening a page is

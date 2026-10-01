@@ -36,7 +36,10 @@ change in any release with no deprecation period.
   after the session moved to another, so a run started on a Meta contributor
   model kept searching on it, and a run that declined one held every search.
   A search now names the model asked now, from the provider asked now, and is
-  held only while that model's route waits for its yes.
+  held only while that model's route waits for its yes. After a switch to a
+  provider with no web search, or no usable credential for one, a web call
+  answers that nothing was sent, where before it went to the provider the run
+  started on.
 
 ## [0.44.0] - 2026-10-01
 

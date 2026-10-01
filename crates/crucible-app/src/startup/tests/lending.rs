@@ -14,7 +14,7 @@ use crucible_types::{CredentialScopeId, Modalities, Modality, PromptCacheEncodin
 use super::*;
 
 /// Answers each request with the next round it was given.
-struct Rounds {
+pub(super) struct Rounds {
     scope: CredentialScopeId,
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
 }
@@ -68,6 +68,16 @@ impl Provider for Rounds {
     }
 }
 
+impl Rounds {
+    /// A provider answering its requests with `rounds`, in order.
+    pub(super) fn new(rounds: Vec<Vec<Delta>>) -> Self {
+        Self {
+            scope: CredentialScopeId::new(),
+            rounds: Mutex::new(rounds.into_iter()),
+        }
+    }
+}
+
 struct Reading(std::vec::IntoIter<Delta>);
 
 impl DeltaStream for Reading {
@@ -76,7 +86,7 @@ impl DeltaStream for Reading {
     }
 }
 
-struct Allows;
+pub(super) struct Allows;
 
 impl Ask for Allows {
     fn ask<'a>(

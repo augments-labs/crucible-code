@@ -1057,6 +1057,9 @@ pub fn settle(
 /// honest answer where nothing can serve it: a tool that is registered and
 /// fails every call teaches the model to keep trying it.
 ///
+/// Built at the start and again at each switch of model or provider, and held
+/// where the two tools read it at each call by [`crate::following::Following`].
+///
 /// Nothing here fails the start. A source that cannot be built is a session
 /// without web tools, not a session that refuses to open — the user asked for a
 /// coding agent, and losing search is not losing that.
