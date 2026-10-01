@@ -10,6 +10,7 @@ use tokio::runtime::Handle;
 
 use super::serving;
 use crate::runtime::WORKERS;
+use crate::sample::recording;
 
 /// Longer than a free runtime takes to run a task it was just handed, by
 /// orders of magnitude, and short enough that a stop handed to a runtime that
@@ -235,26 +236,6 @@ fn the_release_owner_lends_a_client_and_keeps_its_own_pool_unbuilt() {
          asked for it, or the check had built its own pool before its first use"
     );
     assert_eq!(stopped, Ok(()));
-}
-
-/// A listener standing where a warned route's model would be, counting every
-/// byte it is sent and answering each request with an empty 200.
-fn recording() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
-    use std::io::{Read as _, Write as _};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
-    let heard = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counting = Arc::clone(&heard);
-    std::thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            let mut buffer = [0; 4096];
-            let read = stream.read(&mut buffer).unwrap_or(0);
-            counting.fetch_add(read, Ordering::SeqCst);
-            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
-        }
-    });
-    (url, heard)
 }
 
 /// The one client provider turns and web posts share holds a warned route's

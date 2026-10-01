@@ -1825,3 +1825,64 @@ fn a_run_starts_at_the_speed_the_users_file_keeps_for_the_model_in_force() {
         assert_eq!(conversation.runner().speed(), asked, "kept {kept:?}");
     }
 }
+
+/// A web search on a model whose own route is warned waits for that route's
+/// yes as a turn on it does, even once the session has moved to a model that
+/// is not warned: the search was built for the model the run started on.
+#[test]
+fn a_search_on_a_warned_model_sends_nothing_until_its_yes() {
+    let (url, heard) = crate::sample::recording();
+    let sample = Sample::new("web-source-warned-model");
+    let (logs, workspace) = (sample.logs(), sample.workspace());
+    let settings = sample.user(&format!(
+        r#"{{"providers": {{"meta": {{"baseUrl": "{url}"}}}}}}"#
+    ));
+    let services = Services::new();
+    let model = "muse-spark-1.3-contributor";
+
+    let reaching = web(
+        &Startup {
+            providers: &catalogue(),
+            provider: Some(serving("meta")),
+            unasked: NO_MODEL_CHOSEN,
+            model: Some(model),
+            effort: None,
+            resuming: Resuming::No,
+            mode: Mode::Ask,
+            leaving: &crucible_builtins::Background::new(),
+            services: &services,
+            settings: &settings,
+            sessions: &logs,
+            workspace: &workspace,
+            ledger: &Ledger::new(),
+            revealed: &Revealed::new(),
+            plan: &Plan::new(),
+            asking: Arc::new(Nobody),
+            hosting: &[],
+            terminal: true,
+            from: &|_| Some("fabricated-meta-key".to_owned()),
+            stored: &StoredCredentials::default(),
+            subscriptions: &Subscriptions::production(&crucible_auth::Renewals::new()),
+        },
+        &settings,
+    );
+    let searching = reaching.searching.expect("Meta searches");
+    let runtime = services.runtime().handle().unwrap();
+    let search =
+        || runtime.block_on(searching.search("what the user is working on", &Cancel::new()));
+
+    let held = search().err().map(|problem| problem.to_string());
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(
+        heard.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "{held:?}"
+    );
+    let route = content_use::model_route("meta", model);
+    assert!(held.is_some_and(|said| said.contains(&route)));
+
+    services.consent().record(&route);
+    let _ = search();
+    assert!(heard.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    drop(services);
+}

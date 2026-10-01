@@ -21,7 +21,10 @@
 //! with no yes waits, whichever way the route was reached: `/login`, `/model`,
 //! a key from the environment, configuration, `--model` or a resumed session.
 //! What the front ends ask first is a courtesy on top of that; this is what
-//! nothing walks around.
+//! nothing walks around. A model's own route names no origin, since its
+//! vendor's address serves models nobody warned about too: a turn on it is
+//! asked about where it is sent, and a web source built for it before each
+//! request it makes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -32,6 +35,10 @@ use crucible_config::Settings;
 use crucible_http::{Hold, Origin};
 
 use crate::providers::{List, Row, Rows};
+
+mod asked;
+
+pub(crate) use asked::Asked;
 
 /// What a vendor says about one route, and where it says it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

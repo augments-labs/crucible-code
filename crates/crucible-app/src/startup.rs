@@ -1087,6 +1087,18 @@ impl Reaching {
         }
     }
 
+    /// The same sources, each sending nothing while `route` has no yes.
+    fn asked(self, consent: &Consent, route: &str) -> Self {
+        Self {
+            searching: self.searching.map(|source| -> Arc<dyn Search> {
+                Arc::new(content_use::Asked::new(source, consent, route.to_owned()))
+            }),
+            fetching: self.fetching.map(|source| -> Arc<dyn Fetch> {
+                Arc::new(content_use::Asked::new(source, consent, route.to_owned()))
+            }),
+        }
+    }
+
     /// A search and no fetch: a vendor whose wire serves the one and not the
     /// other.
     fn searching(source: Arc<dyn Search>) -> Self {
@@ -1114,7 +1126,15 @@ fn web(startup: &Startup<'_>, settings: &Settings) -> Reaching {
         return Reaching::nothing();
     };
 
-    (serving.reach)(wiring, model)
+    let reaching = (serving.reach)(wiring, model);
+    // Built once, for the model the run starts on, and named in every
+    // request it makes whichever model the session has moved to since.
+    let consent = startup.services.consent();
+    let route = content_use::model_route(serving.name, model);
+    match consent.routes().warned(&route) {
+        Some(_) => reaching.asked(consent, &route),
+        None => reaching,
+    }
 }
 
 /// Anthropic's own search and fetch, on the session's model.

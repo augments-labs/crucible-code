@@ -6,8 +6,9 @@
 //! the vendor's sentence and the page it comes from; `Use it anyway` writes
 //! the yes into the user's own file and lets the work go, and anything else
 //! sends nothing. Behind it, every client the run sends through holds the
-//! route's origins until the yes is given, so a path that reached a send
-//! without passing here still sends nothing.
+//! route's origins until the yes is given, and a web source built for a
+//! warned model asks that model's route before each request, so a path that
+//! reached a send without passing here still sends nothing.
 //!
 //! A key pressed before the panel was drawn does not answer it: whatever is
 //! waiting to be read when it is about to stand is dropped, so the Enter that

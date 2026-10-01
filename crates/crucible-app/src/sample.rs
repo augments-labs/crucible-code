@@ -6,6 +6,8 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{Home, Settings};
@@ -219,4 +221,24 @@ impl Drop for Sample {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.base);
     }
+}
+
+/// A listener standing where a warned route's model would be, counting every
+/// byte it is sent and answering each request with an empty 200.
+pub(crate) fn recording() -> (String, Arc<AtomicUsize>) {
+    use std::io::{Read as _, Write as _};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+    let heard = Arc::new(AtomicUsize::new(0));
+    let counting = Arc::clone(&heard);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buffer = [0; 4096];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            counting.fetch_add(read, Ordering::SeqCst);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+        }
+    });
+    (url, heard)
 }
