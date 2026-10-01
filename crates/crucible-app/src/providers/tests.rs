@@ -1558,7 +1558,7 @@ fn a_key_that_does_not_fit_its_row_is_refused_by_the_mark_it_carries() {
             .unwrap_or_else(|| panic!("no row {shown}"))
     };
     let minimax_key = row("MiniMax · minimax.io", List::Key);
-    let minimax_plan = row("MiniMax · minimax.io", List::Subscription);
+    let minimax_plan = row("MiniMax Token Plan · minimax.io", List::Subscription);
     let qwen_coding = row("Qwen Coding Plan · aliyun.com", List::Subscription);
     let qwen_token = row("Qwen Token Plan · aliyun.com", List::Subscription);
     let qwen_key = row("Qwen · aliyun.com", List::Key);
@@ -1708,4 +1708,38 @@ fn every_model_a_row_serves_is_one_its_provider_offers() {
             );
         }
     }
+}
+
+/// A `MiniMax` plan key and a `MiniMax` pay-as-you-go key reach the same address,
+/// so only the row's name tells `/model` and `/login` which is held.
+#[test]
+fn a_minimax_plan_key_is_named_apart_from_a_minimax_api_key() {
+    let rows = Rows::production();
+    let plans: Vec<&str> = rows
+        .all()
+        .iter()
+        .filter(|row| row.provider == "minimax" && row.list == List::Subscription)
+        .map(|row| row.shown)
+        .collect();
+    assert_eq!(
+        plans,
+        [
+            "MiniMax Token Plan · minimax.io",
+            "MiniMax Token Plan · minimaxi.com"
+        ]
+    );
+
+    let settings = Settings::default();
+    let subscriptions = Subscriptions::production(&crucible_auth::Renewals::new());
+    let unset = holding(&[]);
+    let words = |sample: &str, stored: &str| {
+        let held = Sample::new(sample).stored(stored);
+        let auth = authenticating(&settings, &unset, &held, &subscriptions);
+        in_use(serving("minimax"), auth)
+            .map_or_else(|| panic!("{stored} is in use"), |one| one.words)
+    };
+    let plan = words("minimax-named-plan", "minimax@token-plan.minimaxi.com");
+    let key = words("minimax-named-key", "minimax@minimaxi.com");
+    assert_eq!(plan, "MiniMax Token Plan · minimaxi.com key");
+    assert_ne!(plan, key);
 }
