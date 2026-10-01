@@ -2376,9 +2376,11 @@ fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
             .collect();
         let at = format!("{columns} columns:\n{picture}");
 
+        // The release's own row, not a line of some release's notes that
+        // happens to say the same words.
         let head = lines
             .iter()
-            .rposition(|line| line.contains("this version"))
+            .rposition(|line| line.starts_with('◆') && line.contains("this version"))
             .unwrap_or_else(|| panic!("no release marked as this version at {at}"));
         let closing = lines
             .iter()
