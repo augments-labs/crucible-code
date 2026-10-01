@@ -39,7 +39,7 @@ use crucible_types::{
 use serde_json::Value;
 
 use crate::endpoint::Endpoint;
-use crate::refusal::refused;
+use crate::refusal::refused_worded;
 use crate::stream::Response;
 use crate::transport::Transport;
 
@@ -123,6 +123,15 @@ pub trait Dialect: Send + Sync + 'static {
     /// part of an answer, where it has a way of its own to say one.
     fn failure(payload: &Value) -> Option<ProviderError> {
         let _ = payload;
+        None
+    }
+
+    /// What a refusal at `endpoint` means, as a line of crucible's own, where
+    /// the vendor's code says more than its sentence: a key the vendor says
+    /// belongs elsewhere names the row it was given on. `None`, by default,
+    /// leaves the vendor's sentence as it is.
+    fn refused(status: u16, body: &str, endpoint: &Endpoint) -> Option<String> {
+        let _ = (status, body, endpoint);
         None
     }
 
@@ -337,9 +346,14 @@ impl<D: Dialect> Provider for Chat<D> {
                 response.map_err(|problem| problem.for_provider(D::NAME).redacted(&redactions))?;
 
             if response.status() != 200 {
-                return Err(
-                    refused(D::NAME, response.status(), response, &redactions, cancel).await,
-                );
+                return Err(refused_worded(
+                    D::NAME,
+                    response,
+                    &redactions,
+                    cancel,
+                    |status, body| D::refused(status, body, &self.endpoint),
+                )
+                .await);
             }
 
             Ok(Box::new(Response::with_wire(

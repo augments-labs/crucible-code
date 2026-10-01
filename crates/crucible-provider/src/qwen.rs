@@ -3,8 +3,9 @@
 //!
 //! The wire is [`crate::completions`]; what is Qwen's is here: the six
 //! addresses its keys and plans are served at, the name it is told crucible
-//! goes by, what its cache is known to do, and which of its models want their
-//! reasoning back.
+//! goes by, what its cache is known to do, which of its models want their
+//! reasoning back, and what a key refused for belonging to the other site is
+//! told: the row it was given on, by the address it was sent to.
 //!
 //! A key is bound to the region that issued it, and a plan's key to its
 //! plan's address, so each row of `/login` names one of these.
@@ -96,6 +97,28 @@ impl Dialect for QwenChat {
         }
     }
 
+    fn refused(status: u16, body: &str, endpoint: &Endpoint) -> Option<String> {
+        // Decided by the code, which both of the vendor's guides print; the
+        // sentence beside it is worded two ways.
+        let error = serde_json::from_str::<Value>(body)
+            .ok()?
+            .get("error")?
+            .clone();
+        if status != 401 || error.get("code")?.as_str()? != "invalid_api_key" {
+            return None;
+        }
+        let row = Qwen::row(endpoint)?;
+        let said = error
+            .get("message")
+            .and_then(Value::as_str)
+            .map_or("invalid_api_key", str::trim);
+        Some(format!(
+            "the {row} key was refused: a Qwen key belongs to the site it was made on, and to \
+             that site's region, and is refused at the other's; give it on its own site's row. \
+             Qwen said: {said}"
+        ))
+    }
+
     fn prompt_cache(model: &str) -> PromptCacheCapabilities {
         let revision = match model {
             "qwen3.8-max" => "qwen3.8-max",
@@ -127,6 +150,25 @@ impl Chat<QwenChat> {
     pub const TOKEN_INTL: Endpoint = TOKEN_INTL;
     /// Where a Token Plan key of aliyun.com is served.
     pub const TOKEN_CN: Endpoint = TOKEN_CN;
+
+    /// The `/login` row whose key is sent to `endpoint`, as the row is shown,
+    /// for a line about that key; none for an address a setting named.
+    ///
+    /// The rows are the application's; a test there holds these names to
+    /// them.
+    #[must_use]
+    pub fn row(endpoint: &Endpoint) -> Option<&'static str> {
+        [
+            (KEY_INTL, "Qwen · alibabacloud.com"),
+            (KEY_CN, "Qwen · aliyun.com"),
+            (CODING_INTL, "Qwen Coding Plan · alibabacloud.com"),
+            (CODING_CN, "Qwen Coding Plan · aliyun.com"),
+            (TOKEN_INTL, "Qwen Token Plan · alibabacloud.com"),
+            (TOKEN_CN, "Qwen Token Plan · aliyun.com"),
+        ]
+        .into_iter()
+        .find_map(|(address, row)| (address == *endpoint).then_some(row))
+    }
 }
 
 #[cfg(test)]

@@ -186,3 +186,75 @@ fn a_3_8_answer_carries_its_reasoning_back_and_an_older_model_keeps_none() {
         "{deltas:?}"
     );
 }
+
+/// A key of one region sent to the other's address, as the international
+/// guide prints the answer.
+///
+/// <https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope>,
+/// read 2026-10-01. The trailing space is as printed.
+const WRONG_REGION: &str = r#"{
+    "error": {
+        "message": "Incorrect API key provided. ",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_api_key"
+    }
+}"#;
+
+/// The same answer as the mainland guide prints it, in other words.
+///
+/// <https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope>,
+/// read 2026-10-01.
+const WRONG_REGION_CN: &str = r#"{
+    "error": {
+        "message": "Invalid API-key provided.",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_api_key"
+    }
+}"#;
+
+/// What crucible says when `address` answers a key with `body`.
+fn refused_at(address: crate::endpoint::Endpoint, body: &str) -> (u16, String) {
+    let (provider, _) = at::<QwenChat>(address, 401, body);
+    match read(&provider, asking("qwen3.8-max", question(), false, None)) {
+        Err(ProviderError::Refused {
+            provider: "qwen",
+            status,
+            message,
+        }) => (status, message.into()),
+        other => panic!("a refusal, not {other:?}"),
+    }
+}
+
+#[test]
+fn a_key_for_the_other_site_is_refused_naming_the_row_it_was_given_on() {
+    // Matched on the code: the two guides word the message two ways.
+    for body in [WRONG_REGION, WRONG_REGION_CN] {
+        // A key given on the mainland row and sent to its address.
+        let (status, said) = refused_at(Qwen::KEY_CN, body);
+        assert_eq!(status, 401);
+        assert!(said.contains("Qwen · aliyun.com key"), "{said}");
+        assert!(said.contains("belongs to the site"), "{said}");
+        assert!(said.contains("region"), "{said}");
+
+        // A key from the environment, which is the international row's.
+        let (_, said) = refused_at(Qwen::KEY_INTL, body);
+        assert!(said.contains("Qwen · alibabacloud.com key"), "{said}");
+        assert!(said.contains("belongs to the site"), "{said}");
+    }
+
+    // The vendor's own words still close the line.
+    let (_, said) = refused_at(Qwen::KEY_INTL, WRONG_REGION);
+    assert!(said.contains("Incorrect API key provided."), "{said}");
+}
+
+#[test]
+fn another_refusal_of_a_key_is_left_in_the_vendor_s_words() {
+    let other = r#"{"error":{"message":"Access denied.","type":"invalid_request_error","code":"AccessDenied"}}"#;
+
+    let (status, said) = refused_at(Qwen::KEY_CN, other);
+
+    assert_eq!(status, 401);
+    assert_eq!(said, "Access denied.");
+}

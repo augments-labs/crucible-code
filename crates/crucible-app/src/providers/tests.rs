@@ -1654,3 +1654,27 @@ fn the_credential_in_use_heads_the_models_it_serves() {
     );
     assert_eq!(in_use(serving("deepseek"), auth(&nothing)), None);
 }
+
+/// The line a Qwen key refused for belonging to the other site names the row
+/// it was given on by the address it was sent to; that name is the row's own,
+/// and the key from the environment is the international key row's.
+#[test]
+fn every_qwen_row_is_named_by_its_address_as_the_row_shows_it() {
+    let rows = Rows::production();
+    let qwen: Vec<&Row> = rows
+        .all()
+        .iter()
+        .filter(|row| row.provider == "qwen")
+        .collect();
+    assert_eq!(qwen.len(), 6);
+    for row in qwen {
+        let address = row
+            .address
+            .as_ref()
+            .expect("every Qwen row names its address");
+        assert_eq!(Qwen::row(address), Some(row.shown), "{}", row.stored);
+    }
+    let environment = rows.environment("qwen").expect("a row for the variable");
+    assert_eq!(environment.shown, "Qwen · alibabacloud.com");
+    assert_eq!(environment.address, Some(Qwen::KEY_INTL));
+}

@@ -200,6 +200,45 @@ pub(crate) async fn refused_at(
     resolved(refusal, said, read)
 }
 
+/// [`refused`], for a vendor whose code says more than its sentence: where
+/// `worded` reads the whole body and its status as a line of crucible's own,
+/// that line is the message; anywhere else the refusal is what [`refused`]
+/// makes of it.
+///
+/// The body is read under the same bound and wait. A body that did not come
+/// whole is never reworded, since the code it would be read from may be what
+/// went missing.
+pub(crate) async fn refused_worded(
+    provider: &'static str,
+    body: PostResponse,
+    redactions: &Redactions,
+    cancel: &Cancel,
+    worded: impl FnOnce(u16, &str) -> Option<String>,
+) -> ProviderError {
+    let refusal = Refusal {
+        provider,
+        status: body.status(),
+        redactions,
+        cancel,
+    };
+    let mut said = Vec::new();
+    let mut reading = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
+    let read = fill_async(&mut reading, &mut said, MAX_WAIT, cancel).await;
+    let whole = usize::try_from(MAX_REFUSAL).is_ok_and(|most| said.len() <= most);
+    if read.is_ok()
+        && whole
+        && let Some(message) = worded(refusal.status, &String::from_utf8_lossy(&said))
+    {
+        return ProviderError::Refused {
+            provider,
+            status: refusal.status,
+            message: message.into(),
+        }
+        .redacted(redactions);
+    }
+    resolved(refusal, said, read)
+}
+
 /// The request facts needed while its refused body is read.
 #[derive(Clone, Copy)]
 struct Refusal<'a> {
