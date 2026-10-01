@@ -342,6 +342,13 @@ pub fn assemble(startup: &Startup<'_>) -> Result<Conversation, AppError> {
         }
     });
     recorded(&mut conversation, &runtime);
+    // With nobody chosen, what a turn is missing is decided from the same
+    // credentials the opening's sentence was: a provider to choose where one
+    // can be reached, and a credential to set up where none can.
+    conversation.reachable = startup.provider.is_none()
+        && providers::available(startup.providers, auth)
+            .next()
+            .is_some();
 
     if let Some(file) = startup.services.consent().file() {
         conversation.hastened_as_kept(file);

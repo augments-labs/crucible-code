@@ -1146,19 +1146,58 @@ pub const NO_MODEL_CHOSEN: &str =
 pub const NO_PROVIDER_CHOSEN: &str =
     "Warning: No provider selected. Use /model to select a provider and model.";
 
-/// Which of the three a session with no model has to say.
+/// What a session with no model to ask is missing.
+///
+/// One value per sentence above, so that a front end with a screen says the
+/// sentence and a client is told the value, each decided by [`missing`].
+///
+/// With nobody chosen, the terminal reads the store each time it says the
+/// sentence, while a client is answered from the store as the conversation
+/// last read it: at the launch and after each `/login` or `/logout`. A key
+/// another process stored or forgot in between is seen by the terminal first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Missing {
+    /// Nothing on this machine is set up to answer: [`NOTHING_TO_ASK`].
+    Credential,
+    /// A provider can be reached and none was chosen: [`NO_PROVIDER_CHOSEN`].
+    Provider,
+    /// A provider was chosen and no model of it: [`NO_MODEL_CHOSEN`].
+    Model,
+}
+
+impl Missing {
+    /// What crucible says about it.
+    #[must_use]
+    pub const fn sentence(self) -> &'static str {
+        match self {
+            Self::Credential => NOTHING_TO_ASK,
+            Self::Provider => NO_PROVIDER_CHOSEN,
+            Self::Model => NO_MODEL_CHOSEN,
+        }
+    }
+}
+
+/// Which of the three a session with no model is missing.
 ///
 /// The provider by name rather than by entry, because the name is what
 /// [`crate::Conversation::serving`] still holds by the time this is asked again.
 /// `any_credential` is whether [`available`] names a provider at all: with no
 /// provider chosen, it is what tells nothing set up from something set up and
 /// none chosen, and the welcome and every prompt after it have to agree on which.
-pub const fn unasked(provider: Option<&str>, any_credential: bool) -> &'static str {
+#[must_use]
+pub const fn missing(provider: Option<&str>, any_credential: bool) -> Missing {
     match (provider, any_credential) {
-        (Some(_), _) => NO_MODEL_CHOSEN,
-        (None, true) => NO_PROVIDER_CHOSEN,
-        (None, false) => NOTHING_TO_ASK,
+        (Some(_), _) => Missing::Model,
+        (None, true) => Missing::Provider,
+        (None, false) => Missing::Credential,
     }
+}
+
+/// Which of the three a session with no model has to say: [`missing`]'s
+/// sentence.
+#[must_use]
+pub const fn unasked(provider: Option<&str>, any_credential: bool) -> &'static str {
+    missing(provider, any_credential).sentence()
 }
 
 /// The provider names, for the sentence a name outside them gets back.

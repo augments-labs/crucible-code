@@ -54,6 +54,14 @@ pub struct Conversation {
     /// session log, and the registry names it for `/model`, the settings file
     /// and the credential store, which is the name every switch is decided by.
     pub(crate) serving: Option<&'static str>,
+    /// Whether some provider could be reached when nobody was chosen: set
+    /// where the provider standing in for nobody is put in place, from the
+    /// same credentials the sentence it refuses with was chosen from, read
+    /// again after every `/login` and `/logout` that leaves nobody chosen, and
+    /// read only while [`Self::serving`] is `None`. The store as this
+    /// conversation last read it, so a change another process makes in
+    /// between is not seen until then.
+    pub(crate) reachable: bool,
     /// The yes given to each route whose vendor uses what is sent, where the
     /// run holds one: a turn on such a route with no yes is asked about
     /// before anything is sent.
@@ -83,6 +91,7 @@ impl Conversation {
             runner: build(Arc::clone(&session)),
             session,
             serving,
+            reachable: false,
             consent: None,
             web: crate::following::Following::default(),
         }
@@ -145,6 +154,20 @@ impl Conversation {
     #[must_use]
     pub const fn serving(&self) -> Option<&'static str> {
         self.serving
+    }
+
+    /// What a turn of this conversation would be missing, where nothing can
+    /// answer one: no model named, or a provider standing in for nobody.
+    ///
+    /// Asked before a turn and not inside it, because a turn with no model is
+    /// not a turn: the prompt would be recorded, and a request naming nothing
+    /// would go out, or be refused by the provider standing in only after the
+    /// prompt was written down as said to a model nobody asked.
+    #[must_use]
+    pub fn missing(&self) -> Option<crate::providers::Missing> {
+        let answerable =
+            !self.runner.model().is_empty() && self.runner.provider().reaches_a_model();
+        (!answerable).then(|| crate::providers::missing(self.serving, self.reachable))
     }
 
     /// Steps to the next permission mode, and says which it is.
