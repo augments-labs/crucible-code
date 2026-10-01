@@ -1622,19 +1622,24 @@ fn policy(settings: &Settings) -> RunPolicy {
 
 /// The context-window size this session manages against.
 ///
-/// A configured figure is explicit and wins, including one that opts into a
-/// model's million-token window. Without one, known native limits are held under
-/// the provider record's conservative default: long context is available, but
-/// using it is a choice rather than the starting behavior. The record's cap
-/// also covers names released after this build. A provider this build has no
-/// record for never reaches here: the name was refused at the registry.
+/// A configured figure is explicit and wins, in either direction: it lowers a
+/// million-token window to what a person wants to pay for each turn, or raises
+/// one past what this build knows. Without one, a model with a row here starts
+/// at its own window, held under the provider record's most where a route
+/// crucible sends to takes less. A name released after this build has no row
+/// and starts at the record's conservative window. A provider this build has
+/// no record for never reaches here: the name was refused at the registry.
 pub fn window(providers: &Providers, serving: Served, model: &str, settings: &Settings) -> u32 {
     settings
         .context_window(serving.name, model)
         .unwrap_or_else(|| {
-            let native = providers::capabilities(providers, serving.name, model)
-                .map_or(serving.window, ModelCapabilities::window);
-            native.min(serving.window)
+            providers::capabilities(providers, serving.name, model).map_or(
+                serving.window,
+                |known| {
+                    let native = known.window();
+                    serving.most.map_or(native, |most| native.min(most))
+                },
+            )
         })
 }
 

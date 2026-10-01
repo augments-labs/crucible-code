@@ -295,18 +295,21 @@ choice that asks least of it, and this says which fact it was.
 
 ## How much context is used
 
-A model's native maximum is not necessarily the session's context window.
-Without an explicit configuration, the window is 200,000 tokens for Anthropic,
-Google and the seven vendors new in this release, 272,000 for OpenAI, and
-262,144 for Moonshot. A model with a smaller native limit
-stays smaller. The compaction reserve is separate and is subtracted when deciding
-whether another exchange fits.
+Without an explicit configuration, a model crucible knows manages against its
+native context window, which for most models offered here is about a million
+tokens. OpenAI's models are held to 872,000, the most its ChatGPT sign-in
+manages against, since a key and a sign-in serve the same names. A model name
+crucible has no record of starts at 200,000 tokens, or 272,000 for OpenAI and
+262,144 for Moonshot. The compaction reserve is separate and is subtracted when
+deciding whether another exchange fits. [Configuration](../configuration/configuration.md#providers)
+lists each model's figure.
 
-This is local context management, not a request parameter. Anthropic's current
-Opus, Sonnet and Fable models and Kimi K3 may accept 1M natively, while the
-OpenAI models offered here expose a larger maximum; Crucible still compacts at
-the figures above. To opt in deliberately, set the named model under
-`providers.<name>.contextWindow`, or set `defaultContextWindow` for that provider.
+This is local context management, not a request parameter. A session may grow
+to its window before it is compacted, and every turn sends all of it, so a
+large window costs more per turn, and some vendors charge more per token past
+a size of their own. To compact sooner, set a lower figure for the named model
+under `providers.<name>.contextWindow`, or `defaultContextWindow` for every
+model of that provider.
 
 ## How hard to think
 

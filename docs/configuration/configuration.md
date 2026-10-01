@@ -133,16 +133,22 @@ describe the model you had just left:
 { "providers": { "openai": { "contextWindow": { "gpt-5.6-sol": 272000 } } } }
 ```
 
-Without either setting, the session's context window is 200,000 tokens for
-Anthropic, Google, DeepSeek, Meta, MiMo, MiniMax, Qwen, xAI and Z.ai, 272,000
-for OpenAI, and 262,144 for Moonshot. A known
-model with a smaller native limit keeps the smaller figure, and an unknown model
-of a known provider gets that provider's default. Native 1M support therefore
-does not make 1M the session default.
+Without either setting, a model crucible knows starts at its native context
+window: 1,000,000 tokens for Claude Fable, Opus and Sonnet, DeepSeek,
+MiniMax-M3, Qwen and Z.ai; 1,048,576 for Gemini, Muse Spark, MiMo and Kimi K3;
+500,000 for Grok; 262,144 for Kimi K3-256k and the Kimi coding models; 204,800
+for MiniMax-M2.7; and 200,000 for Claude Haiku 4.5. OpenAI's models start at
+872,000, the most its ChatGPT sign-in manages against, because the window is
+chosen before crucible knows whether a key or a sign-in answers. A model name
+crucible has no record of starts at 200,000 tokens, or 272,000 for OpenAI and
+262,144 for Moonshot.
 
-Use `contextWindow` to opt a named model into a larger window, or
-`defaultContextWindow` for every otherwise-unnamed model of one provider. Neither
-is sent anywhere. The configured/default value is the window; the existing
+A session may grow to its window before it is compacted, and every turn sends
+all of it, so a larger window costs more per turn; some vendors also charge
+more per token past a size of their own. Use `defaultContextWindow` to lower the
+window for every model of one provider, or `contextWindow` for a named model, as
+in the example above; either can also raise a window past these figures.
+Neither is sent anywhere. The configured/default value is the window; the existing
 compaction reserve is applied separately, so automatic compaction starts when
 `carried + reserve >= window`. Setting a window too large may let a request reach
 the provider's real limit and be refused; setting one too small compacts earlier.

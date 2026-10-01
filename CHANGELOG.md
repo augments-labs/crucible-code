@@ -8,6 +8,15 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Changed
+
+- **Every model crucible knows now uses its native context window by
+  default.** Most offered models now manage against about a million tokens
+  instead of 200,000, so a session may grow to that size before it is
+  compacted, and each turn costs more as it grows. OpenAI's models are held to
+  872,000, the most its ChatGPT sign-in takes; set `defaultContextWindow` or
+  `contextWindow` under `providers.<name>` to compact sooner.
+
 ### Fixed
 
 - **A prompt or `/compact` with no model to ask records nothing, whatever

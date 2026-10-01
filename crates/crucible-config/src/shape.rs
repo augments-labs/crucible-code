@@ -285,7 +285,7 @@ const PROVIDER: Shape = Shape::Fields(&[
     },
     Field {
         name: "contextWindow",
-        about: "The context-window size in tokens, keyed by model name; an explicit value may opt into a larger native window",
+        about: "The context-window size in tokens, keyed by model name; an explicit value replaces the model's native window, lower or higher",
         shape: Shape::Named {
             declared: &[],
             others: &WINDOW,
