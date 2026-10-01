@@ -915,6 +915,10 @@ fn a_window_with_no_room_for_a_panel_is_given_every_row_as_the_line_to_type() {
         for way in rows.all() {
             let typed = format!("/login {} —", reaching(way, &rows));
             assert!(unfolded.contains(&typed), "{columns}: {typed}: {written}");
+            // Narrower than the window, it is never broken at all.
+            if typed.chars().count() < columns {
+                assert!(written.contains(&typed), "{columns}: {typed}: {written}");
+            }
         }
         assert_eq!(
             written.matches("/login ").count(),

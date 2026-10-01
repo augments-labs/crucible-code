@@ -842,8 +842,18 @@ fn the_closing_row_stands_under_the_models_and_never_takes_the_mark() {
 #[test]
 fn a_folded_shelf_keeps_the_marked_provider_and_its_heading_in_view() {
     let names = [
-        "All", "Anthropic", "DeepSeek", "Google", "Meta", "MiMo", "MiniMax", "MoonshotAI",
-        "OpenAI", "Qwen", "xAI", "Z.ai",
+        "All",
+        "Anthropic",
+        "DeepSeek",
+        "Google",
+        "Meta",
+        "MiMo",
+        "MiniMax",
+        "MoonshotAI",
+        "OpenAI",
+        "Qwen",
+        "xAI",
+        "Z.ai",
     ];
     let providers: Vec<Serving<'_>> = names
         .iter()

@@ -692,7 +692,7 @@ fn the_models_table_has_a_row_for_every_model_crucible_offers_and_no_others() {
 }
 
 #[test]
-fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
+fn the_models_table_says_every_model_reads_text_and_all_but_four_read_an_image() {
     assert!(
         !models::FACTS.is_empty(),
         "the table is generated and is never empty"
@@ -714,7 +714,7 @@ fn the_models_table_says_every_model_crucible_offers_reads_text_and_an_image() {
 }
 
 #[test]
-fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot() {
+fn the_models_table_gives_a_pdf_to_the_models_whose_vendors_read_one() {
     for facts in models::FACTS {
         let expected = matches!(
             facts.provider,
@@ -731,7 +731,7 @@ fn the_models_table_gives_a_pdf_to_anthropic_google_and_openai_but_not_moonshot(
 }
 
 #[test]
-fn the_models_table_gives_video_to_moonshot_and_google_and_audio_only_to_google() {
+fn the_models_table_gives_video_and_audio_to_the_models_whose_vendors_read_them() {
     for facts in models::FACTS {
         let video = matches!(
             facts.provider,
@@ -750,7 +750,10 @@ fn the_models_table_gives_video_to_moonshot_and_google_and_audio_only_to_google(
             facts.model,
         );
     }
-    assert!(accepting(Modality::Audio).contains(&"google"));
+    let mut audio = accepting(Modality::Audio);
+    audio.sort_unstable();
+    audio.dedup();
+    assert_eq!(audio, ["google", "meta", "mimo"]);
 }
 
 #[test]
@@ -1682,4 +1685,27 @@ fn every_qwen_row_is_named_by_its_address_as_the_row_shows_it() {
     let environment = rows.environment("qwen").expect("a row for the variable");
     assert_eq!(environment.shown, "Qwen · alibabacloud.com");
     assert_eq!(environment.address, Some(Qwen::KEY_INTL));
+}
+
+/// What a row's credential serves is written apart from what its provider
+/// offers, and `/model` keeps only the names in both: a name in one and not
+/// the other would hide a model without a word.
+#[test]
+fn every_model_a_row_serves_is_one_its_provider_offers() {
+    let providers = catalogue();
+    for row in Rows::production().all() {
+        let Some(serves) = row.serves() else {
+            continue;
+        };
+        let offered = crate::startup::served(&providers, row.provider)
+            .unwrap_or_else(|_| panic!("{} is offered", row.provider));
+        for name in serves {
+            assert!(
+                offered.models.iter().any(|model| model.name == *name),
+                "{} serves {name}, which {} does not offer",
+                row.shown,
+                row.provider
+            );
+        }
+    }
 }
