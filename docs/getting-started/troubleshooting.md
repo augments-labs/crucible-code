@@ -182,11 +182,11 @@ use](../providers/content-use.md).
 The provider the session asks now has no web search for it (or no web fetch,
 for the line ending that way): it serves none, or the credential it is set up
 with cannot be used for one, such as a Kimi open platform key. `/model`,
-`/login` and `/logout` can each leave the session there, and signing out
-leaves no provider at all, when the line starts with `web:`. The call was refused before you were asked about
-it, and nothing was sent. Which web tools a session offers is settled when it
-starts. Switch to a provider that serves the tool, or see [reaching the
-web](../tools/web.md).
+`/login` and `/logout` can each leave the session there; signing out leaves no
+provider at all, and the line then names `web` where a provider would be. The
+call was refused before you were asked about it, and nothing was sent. Which
+web tools a session offers is settled when it starts. Switch to a provider that
+serves the tool, or see [reaching the web](../tools/web.md).
 
 ### `crucible: <home>/config.json: contentUse is not a setting crucible has at line <n>, column <m>`
 
