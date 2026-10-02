@@ -612,8 +612,9 @@ expect 'a terminal download' "$downloaded" \
     "ok download            crucible-$version-linux-x86_64.tar.gz - 0.0 MB"
 expect 'a terminal download' "$downloaded" 'status=0'
 refused=$(visible "$(in_download INSTALL_TEST_CURL_FAIL=1)")
+# `x` is right-aligned under `ok`, so the label starts in the same column.
 expect 'a failed terminal download' "$refused" \
-    ' x download            curl: (22) The requested URL returned error: 404'
+    $'\r   x download            curl: (22) The requested URL returned error: 404'
 expect 'a failed terminal download' "$refused" 'Nothing was installed.'
 expect 'a failed terminal download' "$refused" 'status=22'
 status=0

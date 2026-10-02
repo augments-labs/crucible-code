@@ -105,12 +105,13 @@ wrapped() {
         sed -e 's/ *$//' -e "s/^/$indent/"
 }
 
-# One step's row: the mark (already coloured), the label, then the detail in
-# its colour. A detail that does not fit beside the label goes under it, each
-# ` · `-separated part on its own rows.
+# One step's row: the mark, the label, then the detail, the detail and the
+# mark each in their colour. The mark is padded before it is coloured, since
+# the padding would count the colour's codes. A detail that does not fit beside
+# the label goes under it, each ` · `-separated part on its own rows.
 row() {
-    local mark=$1 label=$2 detail=$3 tint=$4 part
-    printf '\r\033[K  %*s %s' "$mark_width" "$mark" "$label"
+    local mark=$1 label=$2 detail=$3 tint=$4 mark_tint=$5 part
+    printf '\r\033[K  %s%*s%s %s' "$mark_tint" "$mark_width" "$mark" "$plain" "$label"
     if [[ -z $detail ]]; then
         printf '\n'
     elif ((detail_column + ${#detail} <= columns)); then
@@ -197,7 +198,7 @@ step_begin() {
 step_done() {
     stop_spinner
     if ((fancy)); then
-        row "$green$done_mark$plain" "$step" "$1" "$dim"
+        row "$done_mark" "$step" "$1" "$dim" "$green"
     else
         printf 'install: %s: %s\n' "$step" "${2:-ok}"
     fi
@@ -212,7 +213,7 @@ fail() {
     stop_spinner
     if [[ -n $step ]]; then
         if ((fancy)); then
-            row "$red$fail_mark$plain" "$step" "$reason" "$red"
+            row "$fail_mark" "$step" "$reason" "$red" "$red"
             printf '\nNothing was installed.\n'
             step=
             exit "$status"
@@ -239,7 +240,7 @@ end_step() {
     stop_spinner
     [[ -n $step ]] || return 0
     if ((fancy)); then
-        row "$red$fail_mark$plain" "$step" "stopped with status $status" "$red"
+        row "$fail_mark" "$step" "stopped with status $status" "$red" "$red"
         printf '\nNothing was installed.\n'
     else
         printf 'install: %s: failed\n' "$step"
