@@ -12,6 +12,7 @@
 //! regenerates, `cargo test` compares it against the checked-in copy, and the
 //! parser accepts the key without being told about it separately.
 
+pub(crate) mod rows;
 pub(crate) mod schema;
 
 #[cfg(test)]

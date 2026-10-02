@@ -24,6 +24,7 @@ mod compaction;
 mod input;
 pub(crate) mod layers;
 pub(crate) mod mcp;
+mod menu;
 mod output;
 mod permissions;
 mod prompt;
@@ -36,6 +37,7 @@ pub use compaction::{Compaction, When};
 pub use input::Sending;
 pub use layers::{local, user};
 pub use mcp::McpServer;
+pub use menu::Forced;
 pub use output::{Color, Glyphs, ThemeChoice, ToolDetail};
 pub use sandbox::SandboxSettings;
 pub use updates::Updates;
@@ -63,6 +65,9 @@ pub struct Settings {
     /// is read where it is written — see [`Document::parse`] — and what survives
     /// the layering is the rule rather than its text.
     rules: Rules,
+    /// The keys of the menu rows a workspace layer states, which the user's
+    /// own file cannot change. Bounded by the rows there are.
+    pinned: Vec<&'static str>,
 }
 
 impl fmt::Debug for Settings {
@@ -76,6 +81,7 @@ impl fmt::Debug for Settings {
             .field("rules", &self.rules)
             .field("prompt_cache", &self.prompt_cache)
             .field("sandbox", &self.sandbox)
+            .field("pinned", &self.pinned)
             .finish()
     }
 }
@@ -103,6 +109,7 @@ impl Settings {
 
         let prompt_cache = prompt_cache::resolve(&documents)?;
         let sandbox = sandbox::resolve(&documents)?;
+        let pinned = menu::pinned(&documents);
 
         let mut value = Value::Object(Map::new());
         for document in &documents {
@@ -122,6 +129,7 @@ impl Settings {
             prompt_cache,
             sandbox,
             rules,
+            pinned,
         })
     }
 
