@@ -14,11 +14,11 @@ change in any release with no deprecation period.
   with bounds.** `1` and `2`, a leading `+` and a leading zero are refused with
   the range named; in a configuration file the value may now be a JSON integer
   as well as a string. Set a value of 3 or more to keep the setting.
-- **Every turn spends a quarter fewer bytes on crucible's own
-  instructions.** The system prompt and the descriptions of the tools sent
-  with every request are shorter, as are the compaction request and the tools
-  found by search, with no instruction dropped and no tool, argument or choice
-  renamed.
+- **A turn in the default tone spends about a quarter fewer bytes on
+  crucible's own instructions.** The system prompt and the descriptions of the
+  tools sent with every request are shorter, as are the compaction request and
+  the tools found by search, with no instruction dropped and no tool, argument
+  or choice renamed.
 
 ## [0.44.2] - 2026-10-01
 
