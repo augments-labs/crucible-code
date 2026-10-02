@@ -46,9 +46,11 @@ param(
     [switch]$AddToPath
 )
 
-# Everything runs inside this function so that a run through `iex`, which
-# shares the caller's scope, leaves the caller's strict mode, error preference
-# and variables as they were. It returns the exit status.
+# Everything runs inside this function, so the strict mode, error preference
+# and variables it sets stay inside it. Run through `iex`, which shares the
+# caller's scope, this text still defines the parameters above and the function
+# itself there; the lines at the end remove the variable they keep. It returns
+# the exit status.
 function Invoke-CrucibleInstall {
     param(
         [string]$Version,
@@ -632,16 +634,21 @@ function Invoke-CrucibleInstall {
     }
 }
 
-$crucibleInstallStatus = [int](@(Invoke-CrucibleInstall -Version $Version -Dir $Dir -Archive $Archive `
-            -Checksums $Checksums -DryRun $DryRun.IsPresent -AddToPath $AddToPath.IsPresent -Unknown $args) |
-        Select-Object -Last 1)
-# Run as this file, the status is the process's. Run through `iex`, which
-# shares the caller's scope, exiting would close the caller's window or end the
-# caller's script, so the status is left in LASTEXITCODE instead.
-$crucibleInstallIsFile = $false
+# Run as this file, or as a script block made from this text, the installer
+# has a scope of its own: $args holds the arguments no parameter took, and run
+# as a file its status is the process's. Run through `iex` it shares the
+# caller's scope, where $args holds the caller's own arguments and exiting would
+# close the caller's window or end the caller's script; so it takes no stray
+# arguments and leaves the status in LASTEXITCODE.
+$crucibleInstallScope = ''
 try {
-    $crucibleInstallIsFile = $MyInvocation.MyCommand.CommandType -eq 'ExternalScript' -and
-        $MyInvocation.MyCommand.ScriptContents.Contains('function Invoke-CrucibleInstall')
+    if (([string]$MyInvocation.MyCommand.ScriptBlock).Contains('function Invoke-CrucibleInstall')) {
+        $crucibleInstallScope = [string]$MyInvocation.MyCommand.CommandType
+    }
 } catch { }
-if ($crucibleInstallIsFile) { exit $crucibleInstallStatus }
-$global:LASTEXITCODE = $crucibleInstallStatus
+$global:LASTEXITCODE = [int](@(Invoke-CrucibleInstall -Version $Version -Dir $Dir -Archive $Archive `
+            -Checksums $Checksums -DryRun $DryRun.IsPresent -AddToPath $AddToPath.IsPresent `
+            -Unknown $(if ($crucibleInstallScope) { $args } else { @() })) |
+        Select-Object -Last 1)
+if ($crucibleInstallScope -eq 'ExternalScript') { exit $global:LASTEXITCODE }
+Remove-Variable -Name crucibleInstallScope -ErrorAction SilentlyContinue
