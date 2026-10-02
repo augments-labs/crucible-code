@@ -630,6 +630,7 @@ pub(crate) fn converse<T: Terminal>(
             clipboard: &mut held.clipboard,
             left,
             aside: &terms.aside,
+            queued: &held.queued,
             keys,
         };
         let asked = typing::ask(renderer, style, between)?;
@@ -637,7 +638,9 @@ pub(crate) fn converse<T: Terminal>(
         // Answered by the state that holds what it stands over, because the loop
         // that read the key holds neither. The box comes back either way, with the
         // line still in it.
-        if held.opened.asked(&asked, &held.kept) {
+        if held.opened.asked(&asked, &held.kept)
+            || held.viewing.asked(&asked, &held.queued, &terms.steer)
+        {
             continue;
         }
 
@@ -650,7 +653,7 @@ pub(crate) fn converse<T: Terminal>(
             Asked::Ended => break,
 
             // Taken above, by the state that holds what it stands over.
-            Asked::Expand | Asked::Clicked(_) => continue,
+            Asked::Expand | Asked::Clicked(_) | Asked::Queue => continue,
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.runner(), style, held.answers.input)? {

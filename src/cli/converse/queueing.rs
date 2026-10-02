@@ -45,6 +45,7 @@ use crate::cli::draw;
 use crate::cli::style::Style;
 
 use super::region::{self, Moved};
+use super::typing::Asked;
 use super::{
     Held, QUEUED_BYTES, QUEUED_LINES, Terms, Turning, Work, answerable, attaching, ran, unanswered,
 };
@@ -290,6 +291,26 @@ impl Standing {
 
         steer.hold();
         *self = Self::Open(0);
+    }
+
+    /// Answers what the box between turns reported, where it is this view's:
+    /// Ctrl+Q over the lines a used-up plan held stands the list, which the
+    /// loop then reads keys for until it is closed.
+    pub(super) fn asked(&mut self, asked: &Asked, queue: &Prompts, steer: &Steer) -> bool {
+        match asked {
+            Asked::Queue => self.open(queue, steer),
+
+            // Not this one's. A line, a turn nobody typed, the end of a
+            // session and the other view are answered elsewhere.
+            Asked::Said(_)
+            | Asked::Woke(_)
+            | Asked::Ended
+            | Asked::Untyped
+            | Asked::Expand
+            | Asked::Clicked(_) => return false,
+        }
+
+        true
     }
 
     /// Gives one key to the list, and answers whether a frame is owed.

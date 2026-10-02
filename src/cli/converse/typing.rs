@@ -64,7 +64,8 @@ use super::{Prompts, Retained, Terms};
 
 mod drawing;
 
-use drawing::{Bordering, Landed, Pointed, around, boxing, draw, landed, replacement};
+use drawing::{Bordering, Landed, Pointed, boxing, landed, replacement};
+pub(super) use drawing::{around, draw};
 
 /// What the row under the box says after the mode, when pressing the key again
 /// is all there is to do with it.
@@ -153,6 +154,13 @@ pub(super) enum Asked {
     /// Nothing comes out of the box for it. Nobody typed this, so the half-
     /// written line somebody left there is still there afterwards.
     Woke(String),
+    /// Ctrl+Q over the lines a used-up plan left queued: the queue is to be
+    /// stood open, and the box asked for again once it has been closed.
+    ///
+    /// Reported rather than stood here for the reason [`Asked::Expand`] is: the
+    /// view is the one a running turn opens with the same key, and the loop
+    /// above stands it in the one place both presses reach.
+    Queue,
 }
 
 /// A finished line and the local-command provenance established while typing.
@@ -350,6 +358,10 @@ pub(crate) struct Between<'a> {
     /// nobody took is a turn the model still owes, and this loop is what stands
     /// between the two.
     pub(crate) aside: &'a Aside,
+    /// The lines a used-up plan left waiting behind the turn it stopped, which
+    /// the box stands under and Ctrl+Q opens. Empty at every other prompt: the
+    /// loop above runs the queue as the next turn before it asks for a line.
+    pub(crate) queued: &'a Prompts,
     /// Whether there is a keyboard to read. A session with a terminal at only
     /// one end reads whole lines instead, and the caller is what does that.
     pub(crate) keys: bool,
@@ -468,6 +480,7 @@ pub(crate) fn ask<T: Terminal>(
         clipboard: board,
         left,
         aside,
+        queued,
         keys,
     } = between;
 
@@ -513,7 +526,7 @@ pub(crate) fn ask<T: Terminal>(
         renderer,
         editor,
         style,
-        around(planning, &open, &says, recalling.place()),
+        around(planning, &open, &says, recalling.place(), queued),
     )?;
 
     let mut following = None;
@@ -540,7 +553,7 @@ pub(crate) fn ask<T: Terminal>(
                     renderer,
                     editor,
                     style,
-                    around(planning, &open, &says, recalling.place()),
+                    around(planning, &open, &says, recalling.place(), queued),
                 )?;
                 continue;
             };
@@ -607,12 +620,17 @@ pub(crate) fn ask<T: Terminal>(
             // the box's own footing rather than something committed above it.
             Pressed::Plan => planning.expand(),
 
+            // The lines a used-up plan held are named over the box with this
+            // key on the frame, so it opens them here as it does under a turn.
+            // Handed back for the reason Ctrl+O is: the view is the loop's.
+            // Over an empty queue there is no frame and so no offer, and the
+            // key is one of the rest below.
+            Pressed::Queue if queued.waiting_count() > 0 => return Ok(Asked::Queue),
+
             // Nothing is standing, so there is nothing to back out of and
             // nothing to explain — except the offer above, which is on screen
-            // and has just been taken back. Ctrl+Q among them: between turns
-            // the queue is empty, or held after a used-up plan until the next
-            // turn is sent — the key is the panel's while a turn runs, and the
-            // panel is the turn's.
+            // and has just been taken back. Ctrl+Q among them, where nothing is
+            // queued.
             // The pointer moving under a held button and the button coming up
             // again among them: both belong to the selection, which was
             // offered every press before this one saw it, so neither reaches
@@ -744,7 +762,7 @@ pub(crate) fn ask<T: Terminal>(
                 renderer,
                 editor,
                 style,
-                around(planning, &open, &says, recalling.place()),
+                around(planning, &open, &says, recalling.place(), queued),
             )?;
         }
     }

@@ -8,7 +8,11 @@ use std::time::{Duration, SystemTime};
 
 use crucible_types::{Message, PlanWindows, Window, WindowReading};
 
-use crate::cli::converse::{Answers, Held, Work, queueing, ran};
+use crucible_app::Conversation;
+use crucible_tui::{Pressed, Recalled};
+
+use crate::cli::converse::typing::{self, Asked, Opened};
+use crate::cli::converse::{Answers, Held, Terms, Work, queueing, ran};
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
 
@@ -46,6 +50,17 @@ struct Stopped {
 /// used-up plan reporting `reading`, with [`QUEUED`] typed behind the last of
 /// them, and then the queue asked for the next turn as the loop asks it.
 fn stopped(name: &str, reading: Option<PlanWindows>, prompts: &[&str]) -> Stopped {
+    stopped_then(name, reading, prompts, |_, _, _| ()).0
+}
+
+/// [`stopped`], and then `then` at the prompt the loop asks for next, with the
+/// session as the stop left it.
+fn stopped_then<T>(
+    name: &str,
+    reading: Option<PlanWindows>,
+    prompts: &[&str],
+    then: impl FnOnce(&Conversation, &mut Held<'_>, &Terms) -> T,
+) -> (Stopped, T) {
     let sample = Sample::new(name);
     let session =
         Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
@@ -89,16 +104,18 @@ fn stopped(name: &str, reading: Option<PlanWindows>, prompts: &[&str]) -> Stoppe
         Style::plain(),
     )
     .expect("the queue to be asked");
+    let then = then(&conversation, &mut held, &terms);
     drop(conversation);
 
     let written = renderer.terminal().written().to_owned();
-    Stopped {
+    let stopped = Stopped {
         taken,
         asked: asked.load(Ordering::Relaxed),
         notices: written.matches(NOTICE).count(),
         waiting: held.queued.waiting_all().map(str::to_owned).collect(),
         said: recorded(&sample, session),
-    }
+    };
+    (stopped, then)
 }
 
 #[test]
@@ -137,4 +154,97 @@ fn plan_limit_before_sending_holds_the_queued_line_and_records_nothing_more() {
         vec![Message::said("fix the build"), Message::said("try again")],
         "the transcript does not end on the line recorded before the stop"
     );
+}
+
+/// The idle prompt's first frame, drawn as [`typing::ask`] draws it before it
+/// reads a key: the box, and what stands over it.
+fn idle(conversation: &Conversation, held: &Held<'_>) -> Vec<String> {
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    typing::draw(
+        &mut renderer,
+        &held.editor,
+        Style::plain(),
+        typing::around(
+            &held.planning,
+            &Opened::default(),
+            &typing::saying(conversation.runner()),
+            Recalled::default(),
+            &held.queued,
+        ),
+    )
+    .expect("the box to be drawn");
+
+    renderer.terminal().picture().rows()
+}
+
+#[test]
+fn plan_limit_draws_the_held_line_in_the_queue_box_over_the_idle_prompt() {
+    // Held and unseen, the line would run behind whatever the reader sends
+    // next without anything on screen having said it was still there. The box
+    // that names it while a turn runs names it here, with the key that opens
+    // it, directly over the prompt.
+    let (_, rows) = stopped_then(
+        "plan-limit-idle-box",
+        None,
+        &["fix the build"],
+        |conversation, held, _| idle(conversation, held),
+    );
+
+    let top = format!(
+        "\u{256d}\u{2500} 1 queued {}\u{256e}",
+        "\u{2500}".repeat(67)
+    );
+    let line = format!("\u{2502} \u{203a} {QUEUED:<74} \u{2502}");
+    let bottom = format!(
+        "\u{2570}{} ctrl+q edit \u{2500}\u{256f}",
+        "\u{2500}".repeat(64)
+    );
+    let opens = rows
+        .iter()
+        .position(|row| *row == top)
+        .unwrap_or_else(|| panic!("no queue box over the idle prompt: {rows:#?}"));
+
+    assert_eq!(rows.get(opens + 1), Some(&line), "{rows:#?}");
+    assert_eq!(rows.get(opens + 2), Some(&bottom), "{rows:#?}");
+    // The prompt's own reading row stands between the two, blank while no
+    // window has been reported, as it does under a running turn; the frame
+    // spends no parting blank of its own over it.
+    assert_eq!(rows.get(opens + 3), Some(&String::new()), "{rows:#?}");
+    assert!(
+        rows.get(opens + 4)
+            .is_some_and(|row| row.starts_with('\u{256d}')),
+        "the prompt does not stand directly under the queue box: {rows:#?}"
+    );
+}
+
+#[test]
+fn plan_limit_ctrl_q_at_the_idle_box_opens_the_queue_view_and_d_empties_it() {
+    // The box names the key, so the key has to work where the box stands. What
+    // it reaches is the view a running turn opens, and `d` there drops the line
+    // from the queue the stop held it in.
+    let (_, (opened, waiting, open)) = stopped_then(
+        "plan-limit-idle-view",
+        None,
+        &["fix the build"],
+        |_, held, terms| {
+            let taken = held
+                .viewing
+                .asked(&Asked::Queue, &held.queued, &terms.steer);
+            let opened = taken && held.viewing.is_open();
+
+            held.viewing.against(
+                &Pressed::Key(Key::Char('d')),
+                queueing::Reading {
+                    queue: &mut held.queued,
+                    editor: &mut held.editor,
+                    steer: &terms.steer,
+                },
+            );
+            (opened, held.queued.waiting_count(), held.viewing.is_open())
+        },
+    );
+
+    assert!(opened, "ctrl+q at the idle box did not open the queue view");
+    assert_eq!(waiting, 0, "d in the view left the line queued");
+    assert!(!open, "the view stood on over an empty queue");
 }
