@@ -121,6 +121,22 @@ try {
         Stop-Test 'cru.exe is not a copy of crucible.exe'
     }
     if (@(Get-ChildItem -LiteralPath $dir -Force).Count -ne 3) { Stop-Test 'the install left files beside the executables' }
+    Assert-Lacks $run.Err 'writable by other users' 'redirected install'
+
+    # A directory other users can change is named, with the one inside it
+    # that inherits their access, and the install still lands.
+    $shared = Join-Path $root 'shared'
+    $null = New-Item -ItemType Directory -Path $shared
+    $null = & icacls.exe $shared /grant '*S-1-5-32-545:(OI)(CI)M'
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'could not let Users modify the shared directory' }
+    $sharedBin = Join-Path $shared 'bin'
+    $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $sharedBin))
+    if ($run.Status -ne 0) { Stop-Test "an install below a shared directory exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Err "install: $shared is writable by other users, who could replace " 'shared directory'
+    Assert-Contains $run.Err "install: $sharedBin is writable by other users, who could replace " 'shared directory'
+    if (-not (Test-Path -LiteralPath (Join-Path $sharedBin 'crucible.exe') -PathType Leaf)) {
+        Stop-Test 'an install below a shared directory did not land'
+    }
 
     # Installing again replaces what the last install put there, and removes
     # what an earlier one moved aside and could not remove, by its exact name.

@@ -76,7 +76,9 @@ irm https://github.com/augments-labs/crucible-code/releases/latest/download/inst
 It detects the architecture, verifies the Windows archive against the release's
 `SHA256SUMS` before unpacking it, and installs `crucible.exe`,
 `crucible-sandbox-broker.exe` and a `cru.exe` copy in
-`%LOCALAPPDATA%\Programs\crucible\bin`, without asking for elevation. It says
+`%LOCALAPPDATA%\Programs\crucible\bin`, without asking for elevation. It
+points out that directory, or one above it, when other users can change it,
+since they could then replace what it installed. It says
 whether that directory is on your `PATH` and prints the command that adds it,
 but changes `PATH` only when asked to. To pass options, such as `-AddToPath`,
 `-Version`, `-Dir` or `-DryRun`, run it as a script block:

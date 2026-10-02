@@ -369,6 +369,42 @@ function Invoke-CrucibleInstall {
         return $false
     }
 
+    # The directory and those above it that other users can change, and so
+    # could replace the executables in it or, with -AddToPath, put commands
+    # of their own first on PATH; install.sh names a directory its group or
+    # others can write in the same way. An entry for the user, SYSTEM,
+    # Administrators or TrustedInstaller is expected, and so is one that only
+    # lets anyone create subdirectories, which every volume root grants and
+    # which replaces nothing. An entry that only passes to what is inside is
+    # judged where it applies, since the directory below inherits it.
+    function Get-Untrusted([string]$Path) {
+        $expected = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544',
+            'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+        $rights = [System.Security.AccessControl.FileSystemRights]
+        # Writing, deleting, changing permissions or ownership, and the
+        # generic write and all rights.
+        [long]$changes = [long]$rights::WriteData -bor [long]$rights::Delete -bor
+            [long]$rights::DeleteSubdirectoriesAndFiles -bor [long]$rights::ChangePermissions -bor
+            [long]$rights::TakeOwnership -bor 0x10000000 -bor 0x40000000
+        $inheritOnly = [int][System.Security.AccessControl.PropagationFlags]::InheritOnly
+        $at = $Path
+        while ($at) {
+            $rules = @()
+            try {
+                $acl = New-Object System.Security.AccessControl.DirectorySecurity($at,
+                    [System.Security.AccessControl.AccessControlSections]::Access)
+                $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+            } catch { }
+            foreach ($rule in $rules) {
+                if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+                    ([int]$rule.PropagationFlags -band $inheritOnly) -ne 0 -or
+                    $expected -contains $rule.IdentityReference.Value) { continue }
+                if (([long]$rule.FileSystemRights -band $changes) -ne 0) { $at; break }
+            }
+            $at = [System.IO.Path]::GetDirectoryName($at)
+        }
+    }
+
     # Puts the directory first on the user's PATH, keeping the value's
     # registry kind so entries such as %USERPROFILE%\bin keep expanding.
     function Add-UserPath([string]$Path) {
@@ -638,11 +674,14 @@ function Invoke-CrucibleInstall {
         if ($AddToPath -and -not $onPath) { Add-UserPath $destination }
         $installed = 'Installed crucible.exe, crucible-sandbox-broker.exe and cru.exe in '
         $nl = [Environment]::NewLine
-        $kept = @($stuck | ForEach-Object { "could not remove $_, a replaced copy still in use; the next install removes it" })
+        $warnings = @($stuck | ForEach-Object { "could not remove $_, a replaced copy still in use; the next install removes it" })
+        $warnings += @(Get-Untrusted $destination | ForEach-Object {
+                "$_ is writable by other users, who could replace $brokerPath; remove their write access to $_"
+            })
         # A log gets the whole path; the console gets it as Windows writes it.
         if (-not $fancy) {
             Write-Out ($installed + $destination + $nl)
-            foreach ($line in $kept) { [Console]::Error.WriteLine("install: $line") }
+            foreach ($line in $warnings) { [Console]::Error.WriteLine("install: $line") }
             if ($AddToPath -and -not $onPath) {
                 Write-Out ("Added $destination to your user PATH; open a new terminal to run crucible." + $nl)
             } elseif (-not $onPath) {
@@ -652,7 +691,7 @@ function Invoke-CrucibleInstall {
         }
         $installed += $where
         Write-Out ($nl + (Get-Wrapped '' $installed) + $nl)
-        foreach ($line in $kept) { [Console]::Error.WriteLine((Get-Wrapped '' $line)) }
+        foreach ($line in $warnings) { [Console]::Error.WriteLine((Get-Wrapped '' $line)) }
         Write-Out $nl
         if ($AddToPath -and -not $onPath) {
             Write-Out ($dim + (Get-Wrapped '' 'That directory is now first on your user PATH.') + $plain + $nl)
