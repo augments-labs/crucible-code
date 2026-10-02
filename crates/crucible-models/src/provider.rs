@@ -25,7 +25,8 @@ use crucible_runtime::{BoxFuture, Cancel};
 
 use crate::speed::{FastForm, Served, Speed};
 use crucible_types::{
-    Carried, Continuation, Modalities, Modality, PricingDate, PricingError, PromptCacheEncoding,
+    Carried, Continuation, Modalities, Modality, PlanWindows, PricingDate, PricingError,
+    PromptCacheEncoding,
     PromptCacheRetentionClass, ProviderUsage, Spend, StopReason, ToolId, ToolSchema, Transcript,
 };
 
@@ -584,6 +585,13 @@ pub trait DeltaStream: Send {
     /// of a response that says nothing, which counts as standard.
     fn served(&self) -> Served {
         Served::Unsaid
+    }
+
+    /// What the response said of the subscription's usage windows, read off
+    /// its head as it arrived. `None`, the default, is the answer of every
+    /// response that says nothing of them, or nothing crucible reads.
+    fn limits(&self) -> Option<PlanWindows> {
+        None
     }
 }
 
