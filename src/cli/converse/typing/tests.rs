@@ -810,22 +810,48 @@ fn a_list_with_too_little_room_shows_what_fits_and_counts_the_rest() {
 }
 
 #[test]
-fn a_cut_list_fits_every_width_and_every_room() {
+fn a_cut_list_fits_every_width_and_every_room_with_the_mark_anywhere() {
+    // One list per mark, drawn as the room shrinks and then grows again, so
+    // the row in view carried from one draw to the next is swept as well as
+    // the room and the width.
+    let every = command::filtering(&commands(), "/", Glyphs::Unicode).len();
+    let rooms: Vec<usize> = (0..24).rev().chain(0..24).collect();
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
-        let mut open = Opened::filtered(&commands(), "/", glyphs);
-        for _ in 0..5 {
-            open.down();
-        }
-        for room in 0..24 {
-            for columns in 1..=80 {
-                let rows = open.rows(columns, room, glyphs);
-                assert!(rows.len() <= room + 1, "{} rows in room {room}", rows.len());
-                for row in rows {
+        for mark in 0..every {
+            let mut open = Opened::filtered(&commands(), "/", glyphs);
+            while open.up() {}
+            for _ in 0..mark {
+                open.down();
+            }
+            let chosen = open.chosen().expect("a marked row");
+            for &room in &rooms {
+                // The first draw at a new room, which is the one a reader sees
+                // when the room changes: the marked row is one of those drawn.
+                let rows: Vec<String> = open.rows(60, room, glyphs).iter().map(Row::text).collect();
+                if !rows.is_empty() {
+                    let marked: Vec<&String> = rows
+                        .iter()
+                        .filter(|row| row.starts_with(glyphs.caret()))
+                        .collect();
                     assert!(
-                        row.columns() <= columns,
-                        "{:?} is wider than {columns} columns",
-                        row.text()
+                        matches!(marked.as_slice(), [one] if one.split_whitespace().any(|word| word == chosen)),
+                        "{chosen} at mark {mark} is not drawn in room {room}: {rows:#?}"
                     );
+                }
+                for columns in 1..=80 {
+                    let rows = open.rows(columns, room, glyphs);
+                    assert!(
+                        rows.len() <= room + 1,
+                        "{} rows in room {room}, mark {mark}",
+                        rows.len()
+                    );
+                    for row in &rows {
+                        assert!(
+                            row.columns() <= columns,
+                            "{:?} is wider than {columns} columns",
+                            row.text()
+                        );
+                    }
                 }
             }
         }
