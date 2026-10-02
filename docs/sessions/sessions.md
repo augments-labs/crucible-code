@@ -47,12 +47,18 @@ thumb, drawn heavier in the theme's accent, is the part of the whole transcript
 on screen, as long as that share of it and never shorter than a row; it sits at
 the bottom while you are at the newest line. A mark on the quiet track is a
 prompt you sent, at the place it falls in the whole transcript, and prompts too
-close to tell apart share one mark.
+close to tell apart share one mark. The prompt you are reading under has its
+mark drawn larger, `●`, quiet on the track and in the accent on the thumb: the
+one you last landed on by clicking its mark, while it starts on screen, and
+otherwise the latest prompt that starts at or above the screen's last row.
+With the pointer on the rail, the track and marks take the accent too, and the
+mark under the pointer is drawn larger, so you can see which prompt a click
+there lands on; moving off the rail puts it back.
 
 Click the rail off the thumb and the transcript moves so the thumb is centred
 there, or as near as the rail's ends allow; click a mark and you land on that
 prompt. A click on the thumb takes hold of it without moving it, and a mark the
-thumb covers is drawn as thumb. Keep the button down and drag to scroll with
+thumb covers is drawn as thumb, unless it is the prompt you are reading under. Keep the button down and drag to scroll with
 the pointer, holding the thumb where you took it, and drag it to the foot to
 follow the newest line again. The prompt box and everything
 standing over it stay where they are. The rail takes no keyboard binding, and a
@@ -64,7 +70,8 @@ transcript's text wraps one column narrower to leave it room, and a window
 narrower than 24 columns, where the prompt box also drops its frame, does not
 draw it. Set [`output.scrollRail`](../configuration/configuration.md) to
 `false` to give the column back to the text. With colour off, the thumb, track
-and marks still differ by shape.
+and marks still differ by shape, and with `output.glyphs` set to `ascii` the
+larger mark is `*`.
 
 ## Continuing
 
