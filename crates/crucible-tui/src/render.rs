@@ -581,7 +581,8 @@ impl<T: Terminal> Renderer<T> {
             // The caller has the pointable row in both of its palette
             // states. It replaces that row and the rest of the prompt in
             // one candidate rather than letting this write an
-            // intermediate frame.
+            // intermediate frame. A change of rail row rides the same flag:
+            // that replacement redraws the whole frame, rail and all.
             self.pointed_changed = true;
             return false;
         }
@@ -733,7 +734,7 @@ impl<T: Terminal> Renderer<T> {
         self.pointing
     }
 
-    /// Whether a pointer transition is waiting for a pointable prompt redraw.
+    /// Whether a pointer transition is waiting for a redraw.
     ///
     /// Taken once. Motion within the same effective target sets no new
     /// transition, so all-motion reporting does not turn into one frame per
