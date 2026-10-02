@@ -167,11 +167,14 @@ function Invoke-CrucibleInstall {
         Write-Out ("`r$esc[K  " + $frame.PadLeft($markWidth) + ' ' + $ui.Step + (' ' * $gap) + $Progress)
     }
 
+    # `-f` formats with the current culture, which may write a decimal comma;
+    # it is put back to a point so sizes read as install.sh's awk prints them.
     function Get-Megabytes([long]$Bytes) {
         return ('{0:0.0} MB' -f ($Bytes / 1000000.0)).Replace(',', '.')
     }
 
-    # The download so far against the size its response announced.
+    # The download so far against the size its response announced, its sizes
+    # written with a point as Get-Megabytes writes them.
     function Get-Bar([long]$Got, [long]$Total) {
         $sizes = ('{0:0.0} / {1:0.0} MB' -f ($Got / 1000000.0), ($Total / 1000000.0)).Replace(',', '.')
         $room = [Math]::Min(28, $columns - $detailColumn - 2 - $sizes.Length)
@@ -678,7 +681,8 @@ function Invoke-CrucibleInstall {
         $warnings += @(Get-Untrusted $destination | ForEach-Object {
                 "$_ is writable by other users, who could replace $brokerPath; remove their write access to $_"
             })
-        # A log gets the whole path; the console gets it as Windows writes it.
+        # A log gets the whole path, since PowerShell does not expand
+        # %LOCALAPPDATA%; the console gets it as Windows writes it.
         if (-not $fancy) {
             Write-Out ($installed + $destination + $nl)
             foreach ($line in $warnings) { [Console]::Error.WriteLine("install: $line") }

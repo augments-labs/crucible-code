@@ -65,7 +65,8 @@ deleting configuration, credentials and sessions requires the explicit
 `--purge --yes` pair. In a terminal the installer shows each step as it runs,
 with a bar while the archive downloads; piped, or under `NO_COLOR` or
 `TERM=dumb`, it prints one plain line per step instead. Either way a failure
-names the step that failed.
+while it detects the platform, downloads, verifies, unpacks or installs names
+that step.
 
 On Windows, in PowerShell 5.1 or 7, run the release installer:
 

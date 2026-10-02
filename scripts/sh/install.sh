@@ -58,8 +58,8 @@ readonly work
 # What is printed, and nothing else, depends on where it goes. A terminal on
 # both outputs gets the step list: a mark per step, colour, a spinner while one
 # runs and a bar while the archive downloads. A pipe, a log, `NO_COLOR` or
-# `TERM=dumb` gets one plain `install:` line per step and today's error lines on
-# standard error, so a script reading either still finds them.
+# `TERM=dumb` gets one plain `install:` line per step, and the error lines
+# install.sh has always printed on standard error.
 fancy=0
 if [[ -t 1 && -t 2 && -z ${NO_COLOR:-} && ${TERM:-} != dumb ]]; then
     fancy=1
@@ -195,9 +195,9 @@ banner() {
 step_begin() {
     step=$1
     if ((fancy)); then
-        # A background process inherits the exit trap and would run it if it
-        # were stopped early, cleaning up and reporting under this script's
-        # name; so it is started without one.
+        # Started without the exit trap, as a precaution: bash 5.3 does not
+        # pass it to a background process, but a shell that did would clean up
+        # and report under this script's name if the spinner ran it.
         trap - EXIT
         spin &
         spinner=$!
@@ -218,8 +218,8 @@ step_done() {
 }
 
 # Stops with `status`, naming the step that was running and why. Before the
-# first step, and on standard error in the plain form, the reason keeps the
-# wording it has always had.
+# first step, and on standard error in the plain form, the reason is worded as
+# install.sh has always worded it.
 fail() {
     local status=$1 reason=$2
     stop_spinner
@@ -549,6 +549,8 @@ landed=0
 broker_landed=0
 on_exit='end_step $?; rm -rf -- "$work"'
 trap "$on_exit" EXIT
+# The plain lines spell the directory as the step list does: `~` is what the
+# reader types back into this shell.
 where=$(shown "$destination")
 step_done "$where" "$where"
 

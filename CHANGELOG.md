@@ -40,8 +40,8 @@ change in any release with no deprecation period.
   unpack and install, draw a bar while the archive downloads, and end with
   where crucible went and the line that puts it on `PATH`. Piped, or under
   `NO_COLOR` or `TERM=dumb`, they print one plain `install:` line per step, and
-  a failure names its step; flags, downloads, destinations and exit codes are
-  unchanged.
+  a failure during one of those steps names it; flags, downloads, destinations
+  and exit codes are unchanged.
 - **A scroll rail on the transcript's right edge replaces the map behind the
   bottom-row label.** Its thumb shows which part of the transcript is on screen
   and a mark stands at each prompt; a click scrolls there, a drag on it scrolls

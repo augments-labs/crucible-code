@@ -42,8 +42,8 @@ function Invoke-Installer([string[]]$Arguments, [string]$Script = $installer) {
     }
 }
 
-# The installer is read as the system's ANSI code page by Windows PowerShell
-# 5.1 when it has no byte order mark, so every byte of it is ASCII.
+# Windows PowerShell 5.1 reads a script with no byte order mark in the
+# system's ANSI code page, so every byte of these two files is ASCII.
 foreach ($script in $installer, $PSCommandPath) {
     if (@([IO.File]::ReadAllBytes($script) | Where-Object { $_ -gt 127 }).Count -ne 0) {
         Stop-Test "$script contains a byte that is not ASCII"
@@ -250,7 +250,8 @@ exit 7
     $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $added, '-AddToPath'))
     if ($run.Status -ne 0) { Stop-Test "an install with -AddToPath exited $($run.Status): $($run.Err)" }
     Assert-Contains $run.Out "Added $added to your user PATH; open a new terminal to run crucible." '-AddToPath'
-    # The check above would have seen this change.
+    # Proves Test-UserPathAsFound can see a change, so the earlier pass was
+    # not vacuous.
     if (Test-UserPathAsFound) { Stop-Test 'the user PATH reads as found after -AddToPath changed it' }
     $wanted = $added
     $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString

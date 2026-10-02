@@ -76,7 +76,7 @@ fi
 
 # A removal in a terminal is shown as the installer shows its steps: a mark per
 # step, in colour. A dry run, a pipe, `NO_COLOR` or `TERM=dumb` keeps the plain
-# lines, which say the same.
+# lines it has always printed.
 fancy=0
 if ((!dry_run)) && [[ -t 1 && -t 2 && -z ${NO_COLOR:-} && ${TERM:-} != dumb ]]; then
     fancy=1
