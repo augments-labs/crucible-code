@@ -769,18 +769,30 @@ pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 /// `MiniMax`'s Chat Completions, with a key or a plan's key, sent to the
 /// site of the row it was given on.
 ///
+/// A key stored on a Token Plan row is told to the provider as one, so it asks
+/// after the plan's limits; nothing in the key says which it is. The variable
+/// answers before the store, and is a pay-as-you-go row's.
+///
 /// # Errors
 ///
 /// Whatever stops the credential being resolved or the address being used:
 /// [`AppError::Credential`], [`AppError::Address`] and their kin.
 pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let http = wiring.http;
+    let auth = wiring.auth;
+    let on_plan = ApiKey::from_lookup(wiring.variable, auth.from).is_err()
+        && auth.stored.held(wiring.named).is_some_and(|held| {
+            crate::providers::Rows::production()
+                .of(held.kind, &held.name)
+                .is_some_and(|row| row.list == crate::providers::List::Subscription)
+        });
     let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
-    Ok(Box::new(MiniMax::at(
-        endpoint,
-        credential,
-        Box::new(http.clone()),
-    )))
+    let transport = Box::new(http.clone());
+    Ok(Box::new(if on_plan {
+        MiniMax::on_plan(endpoint, credential, transport)
+    } else {
+        MiniMax::at(endpoint, credential, transport)
+    }))
 }
 
 /// Qwen's Chat Completions, with a key or a plan's key, sent to the address
