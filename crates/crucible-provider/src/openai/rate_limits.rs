@@ -9,8 +9,9 @@
 //! minutes and the second it starts again. The `codex` family is the plan's
 //! own; any other is the limit of the model whose slug its
 //! `x-<id>-limit-name` says, else one named by its id. No more families are
-//! read than a reading keeps groups, and the plan's own headers are kept ahead
-//! of any other's, so no number of families arriving first leaves it out.
+//! read than a reading keeps groups, and a reading that left one out says it
+//! is incomplete; the plan's own headers are kept ahead of any other's, so no
+//! number of families arriving first leaves it out.
 //!
 //! In an answer to asking, at [`usage`]'s address with the credential the
 //! provider already holds: `rate_limit` is the plan's own and each of
@@ -108,7 +109,9 @@ pub(super) fn headers(route: Serving) -> Option<Reads> {
 ///
 /// Each family is found by a header reporting how much of a window is used,
 /// and is no more than [`MAX_LIMIT_GROUPS`] of them: the plan's own first,
-/// wherever its headers arrived, then the others in the order they did.
+/// wherever its headers arrived, then the others in the order they did. A
+/// reading that left a family out, or that the transport handed only some of
+/// the headers it reads, says it is incomplete.
 pub(super) fn read(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
     let mut families: Vec<&str> = Vec::new();
     for name in named.names() {
@@ -124,6 +127,7 @@ pub(super) fn read(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
             families.push(family);
         }
     }
+    let cut = families.len() > MAX_LIMIT_GROUPS || named.left_out();
     families.truncate(MAX_LIMIT_GROUPS);
     let windows = families
         .iter()
@@ -137,6 +141,7 @@ pub(super) fn read(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
             PlanWindows::new(arrived),
             |windows, (scope, (window, reading))| windows.within(scope, window, reading),
         );
+    let windows = if cut { windows.cut() } else { windows };
     (!windows.is_empty()).then_some(windows)
 }
 
@@ -232,10 +237,12 @@ pub(super) fn usage(route: Serving) -> Option<Usage> {
 ///
 /// `rate_limit` is the plan's own, and each of `additional_rate_limits` is a
 /// limit of its own: the model's whose slug its `limit_name` says, else one
-/// named by its `metered_feature` that limits no model by name. Nothing else in the answer is read: not the plan's
-/// type, its credits or its spend control. A window that is null, of no
-/// length, or whose figures are not numbers in range is left out, and an
-/// answer that leaves every window out is an answer of none.
+/// named by its `metered_feature` that limits no model by name. No more of
+/// them are read than a reading keeps groups, and an answer with more says it
+/// is incomplete. Nothing else in the answer is read: not the plan's type, its
+/// credits or its spend control. A window that is null, of no length, or whose
+/// figures are not numbers in range is left out, and an answer that leaves
+/// every window out is an answer of none.
 fn asked(body: &Value, arrived: SystemTime) -> Option<PlanWindows> {
     let body = body.as_object()?;
     let mut windows = PlanWindows::new(arrived);
@@ -245,10 +252,11 @@ fn asked(body: &Value, arrived: SystemTime) -> Option<PlanWindows> {
     let additional = body
         .get("additional_rate_limits")
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .take(MAX_LIMIT_GROUPS);
-    for limit in additional {
+        .map_or(&[][..], Vec::as_slice);
+    if additional.len() > MAX_LIMIT_GROUPS {
+        windows = windows.cut();
+    }
+    for limit in additional.iter().take(MAX_LIMIT_GROUPS) {
         let field = |field: &str| limit.get(field).and_then(Value::as_str);
         let scope = field("limit_name")
             .and_then(model)

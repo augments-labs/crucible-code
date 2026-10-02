@@ -164,7 +164,7 @@ impl Progress {
             Self::Spent { tokens } => object.with("tokens", *tokens),
             Self::Context(context) => object.with("context", context.written()),
             Self::Used(used) => object.with("used", used.written()),
-            Self::Limits(limits) => object.with("limits", limits.written()),
+            Self::Limits(limits) => limits.written_into(object),
             Self::Finished { turn, stop } => object.with("turn", *turn).with("stop", stop.as_str()),
             Self::Failed(problem) => object.with("problem", problem.written()),
         }
@@ -225,7 +225,7 @@ impl Progress {
                 context => Self::Context(context),
             },
             "used" => Self::Used(Used::read(fields.take("used")?)?),
-            "limits" => Self::Limits(Limits::read(fields.take("limits")?)?),
+            "limits" => Self::Limits(Limits::taken(&mut fields)?),
             "finished" => Self::Finished {
                 turn: fields.number("turn")?,
                 stop: Stop::named(&fields.string("stop")?)?,

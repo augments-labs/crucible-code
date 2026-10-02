@@ -997,7 +997,8 @@ them. A window is named by its length (`5-hour`, `Daily`, `Weekly`, `Monthly`,
 `Yearly`, or a length such as `3-hour`), a limit counted in requests reads
 `412 of 1,500 used`, and one the vendor does not limit reads `unlimited`. A
 reset already behind the clock reads `since passed`, as the window has started
-again since it was read.
+again since it was read. Where the plan reports more limits than the panel
+keeps, `more limits not reported` follows the last one drawn.
 
 The panel opens at once with what crucible already holds, from the last
 response or the last answer, and with the ChatGPT sign-in it then asks ChatGPT

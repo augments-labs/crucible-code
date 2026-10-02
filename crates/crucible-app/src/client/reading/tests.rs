@@ -5,8 +5,8 @@ use crucible_runner::SessionCost;
 use std::time::{Duration, SystemTime};
 
 use crucible_types::{
-    CostAmount, GroupName, ModelGroup, ModelKey, PlanWindows, PricingCurrency, PricingUnit, Scope,
-    Window, WindowReading,
+    CostAmount, GroupName, MAX_LIMIT_GROUPS, ModelGroup, ModelKey, PlanWindows, PricingCurrency,
+    PricingUnit, Scope, Window, WindowReading,
 };
 
 use super::{cost, limits};
@@ -122,6 +122,7 @@ fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
                     ],
                 },
             ],
+            more: false,
         }
     );
     assert!(limits(&PlanWindows::new(SystemTime::UNIX_EPOCH), None).is_empty());
@@ -178,4 +179,37 @@ fn limit_a_model_group_is_drawn_by_the_catalogs_name_for_its_model_else_as_the_v
         drawn(unkeyed, Some("openai")).as_deref(),
         Some("gpt-6-astra")
     );
+}
+
+/// A reading of the plan-wide limit and `models` more, one for each model.
+fn reading_of(models: usize) -> PlanWindows {
+    (0..models).fold(
+        PlanWindows::new(SystemTime::UNIX_EPOCH).with(Window::Weekly, WindowReading::new(5, None)),
+        |reading, model| {
+            reading.within(
+                kept_for(&format!("model-{model}")),
+                Window::Weekly,
+                WindowReading::new(3, None),
+            )
+        },
+    )
+}
+
+#[test]
+fn limit_a_reading_cut_at_its_ceiling_crosses_saying_there_are_more() {
+    let full = limits(&reading_of(MAX_LIMIT_GROUPS - 1), Some("openai"));
+    assert_eq!(full.groups.len(), MAX_LIMIT_GROUPS);
+    assert!(!full.more);
+
+    let over = limits(&reading_of(MAX_LIMIT_GROUPS), Some("openai"));
+    assert_eq!(over.groups.len(), MAX_LIMIT_GROUPS);
+    assert!(over.more);
+
+    let said = limits(
+        &PlanWindows::new(SystemTime::UNIX_EPOCH)
+            .with(Window::Weekly, WindowReading::new(5, None))
+            .cut(),
+        None,
+    );
+    assert!(said.more);
 }

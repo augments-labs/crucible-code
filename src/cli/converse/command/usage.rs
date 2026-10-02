@@ -517,8 +517,9 @@ pub(crate) fn body(
 }
 
 /// The rows under `Plan limits` at `columns`: the plan-wide windows, then a
-/// group for each model the plan limits on its own, then a row saying whose
-/// plan is being asked, while it is.
+/// group for each model the plan limits on its own, then a row saying more
+/// were reported than crossed, where they were, then a row saying whose plan
+/// is being asked, while it is.
 fn limits(
     limits: &api::Limits,
     asking: Option<&str>,
@@ -563,6 +564,15 @@ fn limits(
             ));
         }
         rows.extend(drawn);
+    }
+    // What was cut at a ceiling is said to be missing, so what is drawn is
+    // not read as every limit the plan has.
+    if limits.more && !rows.is_empty() {
+        rows.push(
+            Row::new()
+                .then(Slot::Plain, "  ")
+                .then(Slot::Quiet, "more limits not reported"),
+        );
     }
     match asking {
         Some(provider) => rows.push(Row::new().then(Slot::Plain, "  ").then(

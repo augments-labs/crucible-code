@@ -36,6 +36,7 @@ fn plan(limits: Vec<Limit>) -> Limits {
             model: None,
             limits,
         }],
+        more: false,
     }
 }
 
@@ -112,6 +113,14 @@ fn with_a_group() -> api::Usage {
     usage
 }
 
+/// The session with a model group, where the vendor reported more limits
+/// than the reading kept.
+fn with_more() -> api::Usage {
+    let mut usage = with_a_group();
+    usage.limits.more = true;
+    usage
+}
+
 /// A plan that limits only per model and counts requests, one window of it
 /// unlimited and one model the plan does not include.
 fn counted_only() -> api::Usage {
@@ -132,6 +141,7 @@ fn counted_only() -> api::Usage {
                 ),
                 group("image-01", vec![counted(Window::Daily, 0, 0)]),
             ],
+            more: false,
         },
         ..weekly()
     }
@@ -354,6 +364,7 @@ fn usage_fits_every_width_down_to_one_column() {
             keyed(),
             stopped(),
             with_a_group(),
+            with_more(),
             counted_only(),
         ] {
             for columns in 1..=120 {
@@ -701,6 +712,41 @@ fn usage_while_asking_says_so_last_in_the_block() {
             &clock(),
         );
         assert_eq!(plan_limits(&alone), ["Plan limits", "  asking openai…"]);
+    }
+}
+
+#[test]
+fn usage_with_more_limits_than_crossed_says_so_below_the_block_and_over_asking() {
+    for columns in [80, 40, 12] {
+        let rows = body("", &with_more(), None, columns, Glyphs::Unicode, &clock());
+        let drawn = plan_limits(&rows);
+        let mut whole = plan_limits(&body(
+            "",
+            &with_a_group(),
+            None,
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        ));
+        let more = crucible_tui::clip("  more limits not reported", columns).to_owned();
+        whole.push(more.clone());
+        assert_eq!(drawn, whole, "at {columns}");
+        assert_eq!(
+            tone(rows.last().unwrap(), "more"),
+            Some(Slot::Quiet),
+            "at {columns}"
+        );
+
+        let asking = plan_limits(&body(
+            "",
+            &with_more(),
+            Some("openai"),
+            columns,
+            Glyphs::Unicode,
+            &clock(),
+        ));
+        let ask = crucible_tui::clip("  asking openai…", columns).to_owned();
+        assert!(asking.ends_with(&[more, ask]), "at {columns}: {asking:?}");
     }
 }
 

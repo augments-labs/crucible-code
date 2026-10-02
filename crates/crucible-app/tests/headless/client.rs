@@ -1607,6 +1607,7 @@ fn weekly_at_42() -> Result<Limits, Failed> {
                 resets_at: Some(1_700_600_000),
             }],
         }],
+        more: false,
     })
 }
 
@@ -1831,6 +1832,7 @@ fn plan_answered_as_crossed() -> Result<Limits, Failed> {
                 }],
             },
         ],
+        more: false,
     })
 }
 

@@ -98,7 +98,7 @@ const KEYS: [&str; 72] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 48] = [
+const MORE_KEYS: [&str; 49] = [
     "added",
     "api_ms",
     "cache_read",
@@ -108,6 +108,7 @@ const MORE_KEYS: [&str; 48] = [
     "currency",
     "input",
     "limits",
+    "more_limits",
     "minutes",
     "micros",
     "output",
@@ -455,7 +456,7 @@ fn contexts() -> [Context; 2] {
 }
 
 /// The plan-wide limit and one kept for a model, between them every window
-/// and every reading there is.
+/// and every reading there is, and more the vendor reported than were kept.
 fn plan_limits() -> Limits {
     let limit = |window, reading, resets_at| Limit {
         window,
@@ -489,6 +490,7 @@ fn plan_limits() -> Limits {
                 ],
             },
         ],
+        more: true,
     }
 }
 
@@ -551,6 +553,7 @@ fn usages() -> [Usage; 4] {
                         resets_at: Some(1_700_000_000),
                     }],
                 }],
+                more: false,
             },
         },
     ]
@@ -1917,7 +1920,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (2, 12_002_689_022_093_982_024),
+        (2, 17_377_940_167_198_915_265),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2121,8 +2124,37 @@ fn limit_every_window_and_reading_reads_back_as_it_was_written() {
         "{value}"
     );
     assert_eq!(value.pointer("/limits/0/model"), None, "{value}");
+    assert_eq!(value.pointer("/more_limits"), Some(&json!(true)), "{value}");
     assert!(!limits.is_empty());
     assert!(Limits::default().is_empty());
+
+    let whole = Progress::Limits(Limits::default());
+    let frame = whole.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/more_limits"),
+        Some(&json!(false)),
+        "{value}"
+    );
+    assert_eq!(Progress::decode(&frame).unwrap(), whole);
+}
+
+#[test]
+fn limit_a_usage_that_left_limits_out_reads_back_saying_so() {
+    let [counted, _, _, _] = usages();
+    assert!(counted.limits.more);
+    let response = Response {
+        correlation: Some(Correlation::new(5)),
+        outcome: Outcome::Usage(counted),
+    };
+    let frame = response.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/outcome/usage/more_limits"),
+        Some(&json!(true)),
+        "{value}"
+    );
+    assert_eq!(Response::decode(&frame).unwrap(), response);
 }
 
 /// A progress frame carrying `limits` as they were written.

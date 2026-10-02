@@ -254,13 +254,17 @@ fn stated(amount: CostAmount) -> Option<(Name, u64)> {
 }
 
 /// Every limit a vendor reported, the plan-wide one first, drawn in the
-/// words of `serving`, the provider that reported them.
+/// words of `serving`, the provider that reported them, and whether the
+/// vendor reported more than crosses: more than the reading kept, or a group
+/// left out here.
 pub(super) fn limits(windows: &PlanWindows, serving: Option<&str>) -> api::Limits {
+    let groups: Vec<api::LimitGroup> = windows
+        .groups()
+        .filter_map(|one| group(one, serving))
+        .collect();
     api::Limits {
-        groups: windows
-            .groups()
-            .filter_map(|one| group(one, serving))
-            .collect(),
+        more: windows.incomplete() || groups.len() < windows.groups().count(),
+        groups,
     }
 }
 

@@ -30,7 +30,9 @@
 //! with them: when the figures came is not carried, so a client tells a reset
 //! already past by comparing [`Limit::resets_at`] with its own clock, as the
 //! terminal does. Every list is bounded by the ceilings the plan's reading
-//! keeps, and a frame over them is refused.
+//! keeps, and a frame over them is refused. Where the vendor reported more
+//! than those ceilings kept, [`Limits::more`] says so, and a client says the
+//! rest were not reported rather than drawing what crossed as the whole.
 
 use crucible_types::{MAX_GROUP_WINDOWS, MAX_LIMIT_GROUPS, MAX_LIMIT_NAME_BYTES};
 use serde_json::Value;
@@ -304,6 +306,10 @@ impl LimitGroup {
 pub struct Limits {
     /// Each limit, at most [`MAX_LIMIT_GROUPS`].
     pub groups: Vec<LimitGroup>,
+    /// Whether the vendor reported a limit or a window that is not among
+    /// these, because a ceiling left it out: these are some of the plan's
+    /// limits, and a client says there are more.
+    pub more: bool,
 }
 
 impl Limits {
@@ -313,15 +319,23 @@ impl Limits {
         self.groups.iter().all(|group| group.limits.is_empty())
     }
 
-    /// Written as the list of its groups and nothing around it, which keeps
-    /// a window inside a `/usage` answer within half the nesting a frame may
-    /// have.
-    pub(crate) fn written(&self) -> Value {
-        Value::Array(self.groups.iter().map(LimitGroup::written).collect())
+    /// Written into the object that holds it, as the list of its groups
+    /// under `limits` and whether there are more under `more_limits` beside
+    /// it, rather than as an object of its own: that keeps a window inside a
+    /// `/usage` answer within half the nesting a frame may have.
+    pub(crate) fn written_into(&self, object: Writing) -> Writing {
+        object
+            .with(
+                "limits",
+                Value::Array(self.groups.iter().map(LimitGroup::written).collect()),
+            )
+            .with("more_limits", self.more)
     }
 
-    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
-        let Value::Array(groups) = value else {
+    /// Taken from the object that holds it, as [`Limits::written_into`] put
+    /// it there.
+    pub(crate) fn taken(fields: &mut Fields) -> Result<Self, Refusal> {
+        let Value::Array(groups) = fields.take("limits")? else {
             return Err(Refusal::new(ErrorCode::Malformed));
         };
         if groups.len() > MAX_LIMIT_GROUPS {
@@ -332,6 +346,7 @@ impl Limits {
                 .into_iter()
                 .map(LimitGroup::read)
                 .collect::<Result<_, _>>()?,
+            more: fields.flag("more_limits")?,
         })
     }
 }
@@ -410,10 +425,12 @@ pub struct Usage {
 
 impl Usage {
     pub(crate) fn written(&self) -> Value {
-        Writing::new()
-            .with("used", self.used.written())
-            .with("context", self.context.written())
-            .with("limits", self.limits.written())
+        self.limits
+            .written_into(
+                Writing::new()
+                    .with("used", self.used.written())
+                    .with("context", self.context.written()),
+            )
             .finish()
     }
 
@@ -422,7 +439,7 @@ impl Usage {
         let usage = Self {
             used: Used::read(fields.take("used")?)?,
             context: Context::read(fields.take("context")?)?,
-            limits: Limits::read(fields.take("limits")?)?,
+            limits: Limits::taken(&mut fields)?,
         };
         fields.done()?;
         Ok(usage)

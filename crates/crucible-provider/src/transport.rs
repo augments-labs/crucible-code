@@ -152,7 +152,15 @@ pub(crate) fn reads_none(name: &str) -> Wants {
 /// Behind one pointer, and none where nothing was read, so that a response
 /// of a provider that reads nothing is no larger for it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Named(Option<Box<Pairs>>);
+pub struct Named(Option<Box<Kept>>);
+
+/// Each header read that arrived and what it said, and whether one the
+/// provider reads was left out for want of room.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Kept {
+    pairs: Pairs,
+    left_out: bool,
+}
 
 /// Each header read that arrived, and what it said.
 type Pairs = Vec<(Box<str>, Box<str>)>;
@@ -166,31 +174,33 @@ impl Named {
         reads: Reads,
         arrived: impl IntoIterator<Item = (&'v str, &'v str)>,
     ) -> Self {
-        let mut kept: Pairs = Vec::new();
+        let mut kept = Kept::default();
         for (name, value) in arrived {
             let read = reads(name);
             if read == Wants::Not
                 || value.len() > NAMED_HEADER_BYTES
-                || kept.iter().any(|(each, _)| **each == *name)
+                || kept.pairs.iter().any(|(each, _)| **each == *name)
             {
                 continue;
             }
-            if kept.len() < NAMED_HEADERS {
-                kept.push((name.into(), value.into()));
+            if kept.pairs.len() < NAMED_HEADERS {
+                kept.pairs.push((name.into(), value.into()));
                 continue;
             }
+            kept.left_out = true;
             if read != Wants::Ahead {
                 continue;
             }
             if let Some(last) = kept
+                .pairs
                 .iter()
                 .rposition(|(each, _)| reads(each) == Wants::Kept)
             {
-                kept.remove(last);
-                kept.push((name.into(), value.into()));
+                kept.pairs.remove(last);
+                kept.pairs.push((name.into(), value.into()));
             }
         }
-        Self((!kept.is_empty()).then(|| Box::new(kept)))
+        Self((!kept.pairs.is_empty()).then(|| Box::new(kept)))
     }
 
     /// What the header called `name` said, where the provider reads it and it
@@ -198,6 +208,7 @@ impl Named {
     pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.0
             .as_deref()?
+            .pairs
             .iter()
             .find(|(named, _)| **named == *name)
             .map(|(_, value)| &**value)
@@ -207,7 +218,14 @@ impl Named {
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> + '_ {
         self.0
             .iter()
-            .flat_map(|pairs| pairs.iter().map(|(name, _)| &**name))
+            .flat_map(|kept| kept.pairs.iter().map(|(name, _)| &**name))
+    }
+
+    /// Whether a header the provider reads arrived and was left out because
+    /// [`NAMED_HEADERS`] were kept already, so that what was kept is not all
+    /// that was said.
+    pub(crate) fn left_out(&self) -> bool {
+        self.0.as_deref().is_some_and(|kept| kept.left_out)
     }
 }
 
@@ -919,6 +937,13 @@ mod tests {
             Some(&[last_other.as_str(), "x-ahead-1", "x-ahead-2"][..])
         );
         assert_eq!(named.get("unread"), None);
+        assert!(named.left_out());
+
+        let room = others
+            .iter()
+            .take(NAMED_HEADERS)
+            .map(|name| (name.as_str(), "1"));
+        assert!(!Named::kept(ranked, room).left_out());
     }
 
     #[tokio::test]

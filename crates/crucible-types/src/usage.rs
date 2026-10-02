@@ -809,18 +809,20 @@ impl LimitGroup {
     }
 
     /// This, with `window` read as `reading`: a window read twice keeps the
-    /// later reading, and one past the ceiling is not kept.
-    fn put(&mut self, window: Window, reading: WindowReading) {
+    /// later reading, and one past the ceiling is not kept. Whether it was.
+    fn put(&mut self, window: Window, reading: WindowReading) -> bool {
         match self.windows.binary_search_by(|(each, _)| each.cmp(&window)) {
             Ok(at) => {
                 if let Some(slot) = self.windows.get_mut(at) {
                     slot.1 = reading;
                 }
+                true
             }
             Err(at) if self.windows.len() < MAX_GROUP_WINDOWS => {
                 self.windows.insert(at, (window, reading));
+                true
             }
-            Err(_) => {}
+            Err(_) => false,
         }
     }
 }
@@ -831,7 +833,8 @@ impl LimitGroup {
 /// then a group for each model the vendor limits on its own, in the order
 /// they were first read. Every part is bounded — [`MAX_LIMIT_GROUPS`] groups,
 /// [`MAX_GROUP_WINDOWS`] windows in each, and a name of
-/// [`MAX_LIMIT_NAME_BYTES`] — and what arrives past a ceiling is not kept.
+/// [`MAX_LIMIT_NAME_BYTES`] — and what arrives past a ceiling is not kept,
+/// but is said to have been: see [`PlanWindows::incomplete`].
 ///
 /// It also holds the moment the reading arrived, so a reader can tell how old
 /// the figures are. A later reading replaces the groups it names and leaves
@@ -840,6 +843,8 @@ impl LimitGroup {
 pub struct PlanWindows {
     groups: Vec<LimitGroup>,
     arrived: SystemTime,
+    /// Whether the vendor reported a group or a window not kept here.
+    incomplete: bool,
 }
 
 impl PlanWindows {
@@ -849,6 +854,7 @@ impl PlanWindows {
         Self {
             groups: Vec::new(),
             arrived,
+            incomplete: false,
         }
     }
 
@@ -864,16 +870,32 @@ impl PlanWindows {
     #[must_use]
     pub fn within(mut self, scope: Scope, window: Window, reading: WindowReading) -> Self {
         if let Some(group) = self.groups.iter_mut().find(|group| group.scope == scope) {
-            group.put(window, reading);
+            self.incomplete |= !group.put(window, reading);
             return self;
         }
         let mut group = LimitGroup {
             scope,
             windows: Vec::new(),
         };
-        group.put(window, reading);
+        self.incomplete |= !group.put(window, reading);
         self.add(group);
         self
+    }
+
+    /// This, saying the vendor reported more than a reader kept: what a
+    /// reader that stopped reading at a ceiling of its own says.
+    #[must_use]
+    pub const fn cut(mut self) -> Self {
+        self.incomplete = true;
+        self
+    }
+
+    /// Whether the vendor reported a group or a window that is not here
+    /// because a ceiling left it out: these are some of the plan's limits,
+    /// not all of them.
+    #[must_use]
+    pub const fn incomplete(&self) -> bool {
+        self.incomplete
     }
 
     /// Every group, the plan-wide one first.
@@ -905,9 +927,12 @@ impl PlanWindows {
     /// This, brought up to date by `later`: each group `later` reports
     /// replaces the one of the same scope, and a group it does not name is
     /// kept as it was. A response's head names only the groups it is about,
-    /// so a group it is silent on is not one the plan stopped having.
+    /// so a group it is silent on is not one the plan stopped having, and a
+    /// reading that left one out is not made whole by one silent on it: the
+    /// two are incomplete where either was.
     #[must_use]
     pub fn merge(mut self, later: Self) -> Self {
+        self.incomplete |= later.incomplete;
         for group in later.groups {
             match self
                 .groups
@@ -955,6 +980,7 @@ impl PlanWindows {
     /// other after the ones already kept.
     fn add(&mut self, group: LimitGroup) {
         if self.groups.len() >= MAX_LIMIT_GROUPS {
+            self.incomplete = true;
             return;
         }
         if group.scope == Scope::Plan {
@@ -1387,6 +1413,52 @@ mod tests {
             many.groups().flat_map(LimitGroup::windows).count(),
             MAX_GROUP_WINDOWS
         );
+    }
+
+    #[test]
+    fn plan_limit_a_reading_past_a_ceiling_says_it_is_incomplete_and_one_at_it_does_not() {
+        let reading = WindowReading::new(5, None);
+        let groups = |count: usize| {
+            (0..count).fold(PlanWindows::new(UNIX_EPOCH), |windows, each| {
+                windows.within(model(&format!("model-{each}")), Window::Weekly, reading)
+            })
+        };
+        assert!(!groups(MAX_LIMIT_GROUPS).incomplete());
+        assert!(groups(MAX_LIMIT_GROUPS + 1).incomplete());
+
+        let windows = |count: u64| {
+            (1..=count).fold(PlanWindows::new(UNIX_EPOCH), |windows, minutes| {
+                windows.with(Window::of(minutes * 1_000).unwrap(), reading)
+            })
+        };
+        let at = u64::try_from(MAX_GROUP_WINDOWS).unwrap();
+        assert!(!windows(at).incomplete());
+        assert!(windows(at + 1).incomplete());
+        // A window read again is the same window, not one past the ceiling.
+        assert!(
+            !windows(at)
+                .with(Window::of(1_000).unwrap(), reading)
+                .incomplete()
+        );
+
+        assert!(PlanWindows::new(UNIX_EPOCH).cut().incomplete());
+        assert!(!PlanWindows::new(UNIX_EPOCH).incomplete());
+    }
+
+    #[test]
+    fn plan_limit_a_merge_is_incomplete_where_either_reading_was_or_it_cut_a_group() {
+        let reading = WindowReading::new(5, None);
+        let full = (0..MAX_LIMIT_GROUPS).fold(PlanWindows::new(at(1)), |windows, each| {
+            windows.within(model(&format!("model-{each}")), Window::Weekly, reading)
+        });
+        assert!(!full.clone().merge(PlanWindows::new(at(2))).incomplete());
+
+        let another = PlanWindows::new(at(2)).within(model("another"), Window::Weekly, reading);
+        assert!(full.clone().merge(another).incomplete());
+
+        let cut = PlanWindows::new(at(2)).cut();
+        assert!(PlanWindows::new(at(1)).merge(cut.clone()).incomplete());
+        assert!(cut.merge(PlanWindows::new(at(3))).incomplete());
     }
 
     #[test]

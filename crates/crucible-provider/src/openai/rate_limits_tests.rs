@@ -303,7 +303,9 @@ fn rate_limit_more_families_than_the_ceiling_keep_no_more_than_it() {
         .map(|(name, value)| (*name, value.as_str()))
         .collect();
 
-    let groups = grouped(limits(&headers));
+    let read = limits(&headers);
+    assert!(read.as_ref().is_some_and(PlanWindows::incomplete));
+    let groups = grouped(read);
 
     assert_eq!(groups.len(), MAX_LIMIT_GROUPS, "{groups:?}");
     assert_eq!(
@@ -319,6 +321,38 @@ fn rate_limit_more_families_than_the_ceiling_keep_no_more_than_it() {
         )),
         "{groups:?}"
     );
+}
+
+/// The plan's own family and `models` more, each whole.
+fn families(models: usize) -> Vec<(&'static str, String)> {
+    let mut sent: Vec<(&'static str, String)> = (0..models)
+        .flat_map(|family| {
+            family_of(
+                &format!("codex-f{family}"),
+                &format!("model-f{family}"),
+                "5",
+                "6",
+            )
+        })
+        .collect();
+    sent.extend(family_of("codex", "codex", "12", "31"));
+    sent
+}
+
+/// As many families as a reading keeps groups are all of them; one more is
+/// a reading that says it left some out.
+#[test]
+fn rate_limit_one_family_past_the_ceiling_is_a_reading_said_to_be_incomplete() {
+    for (models, incomplete) in [(MAX_LIMIT_GROUPS - 1, false), (MAX_LIMIT_GROUPS, true)] {
+        let sent = families(models);
+        let headers: Vec<(&'static str, &str)> = sent
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
+        let read = limits(&headers).unwrap();
+        assert_eq!(read.groups().count(), MAX_LIMIT_GROUPS, "{models}");
+        assert_eq!(read.incomplete(), incomplete, "{models}");
+    }
 }
 
 #[test]
@@ -833,6 +867,47 @@ async fn plan_limit_asked_a_used_up_model_limit_stops_its_model_and_no_other() {
         ]
     );
     assert_eq!(windows.exhausted("codex_bengalfox", before), None);
+}
+
+/// As many additional limits as a reading keeps groups beside the plan's own
+/// are all of them; one more is an answer that says it left some out.
+#[tokio::test]
+async fn plan_limit_asked_one_limit_past_the_ceiling_is_an_answer_said_to_be_incomplete() {
+    let limit = |each: usize| {
+        format!(
+            r#"{{"limit_name":"model-{each}","metered_feature":"feature_{each}","rate_limit":{{"primary_window":{},"secondary_window":null}}}}"#,
+            wham_window(5, 18_000, RESET)
+        )
+    };
+    for (additional, incomplete) in [
+        (MAX_LIMIT_GROUPS - 1, false),
+        (MAX_LIMIT_GROUPS, true),
+        (MAX_LIMIT_GROUPS + 3, true),
+    ] {
+        let limits: Vec<String> = (0..additional).map(limit).collect();
+        let body = wham(
+            &format!(
+                r#"{{"primary_window":null,"secondary_window":{}}}"#,
+                wham_window(31, 604_800, RESET)
+            ),
+            &format!(r#","additional_rate_limits":[{}]"#, limits.join(",")),
+        );
+        let read = answered(asked(200, &body).await);
+        assert_eq!(read.groups().count(), MAX_LIMIT_GROUPS, "{additional}");
+        assert_eq!(read.incomplete(), incomplete, "{additional}");
+    }
+
+    // With no limit of the plan's own, the ceiling is all models'.
+    for (additional, incomplete) in [(MAX_LIMIT_GROUPS, false), (MAX_LIMIT_GROUPS + 1, true)] {
+        let limits: Vec<String> = (0..additional).map(limit).collect();
+        let body = wham(
+            "null",
+            &format!(r#","additional_rate_limits":[{}]"#, limits.join(",")),
+        );
+        let read = answered(asked(200, &body).await);
+        assert_eq!(read.groups().count(), MAX_LIMIT_GROUPS, "{additional}");
+        assert_eq!(read.incomplete(), incomplete, "no plan, {additional}");
+    }
 }
 
 /// Nulls, and windows of no length, are windows not reported: the answer is
