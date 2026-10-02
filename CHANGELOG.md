@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **`/context` shows how the model's window is spent.** One bar across the
+  window and a row each for the system prompt, project instructions, tool
+  schemas, MCP tool schemas, messages, the reserve and what is free, with
+  tokens and share; free reads the same as `window left` on the prompt line.
+  It opens mid-turn too, showing the last request the turn built.
 - **The model can mark the answer it recommends.** In a question put by
   `ask_user`, one answer may be marked recommended and listed first, and it is
   drawn with `(Recommended)` after its name. What you choose and what is sent

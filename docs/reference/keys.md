@@ -266,6 +266,12 @@ takes the one marked, and <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or
 <kbd>Ctrl+D</kbd> leave with `cancelled, the speed is unchanged`. Typed while a
 turn runs, the speed taken is asked for once the turn ends.
 
+### `/context`
+
+<kbd>Esc</kbd>, <kbd>Enter</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd>
+close it, and a resize redraws it. Typed while a turn runs, it stands over the
+turn with the figures of the last request that turn built.
+
 ### `/theme`
 
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list in view, <kbd>←</kbd> and

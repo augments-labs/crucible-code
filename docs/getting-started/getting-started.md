@@ -885,6 +885,7 @@ back to correct.
 | --- | --- |
 | `/help` | Lists these |
 | `/release-notes` | Prints what changed in each release, or in the one you name |
+| `/context` | Shows how the model's window is spent by the next request, part by part |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
 | `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
@@ -928,6 +929,18 @@ so asking for them needs no network. Where a very narrow window would print more
 rows than the transcript keeps, the oldest rows are left out first, and the last
 row says how many.
 
+`/context` stands a panel over the prompt box: the model and the size of its
+window, one bar across the whole window, and a row for each part of the next
+request with its tokens and its share of the window. The parts are the system
+prompt, project instructions, the tool schemas advertised, those from MCP
+servers, the messages so far (tool results among them), the reserve kept for
+the answer and for compaction, and what is free. Project instructions are what
+`systemPrompt.append` adds, from whichever configuration file set it. Free is
+the figure the line above the box calls `window left`, the share of the room
+left before compaction, so the two always agree. A model whose window crucible
+does not know shows the tokens alone, with `window not known` in place of the
+size and no bar. Escape closes it.
+
 ### A command typed while a turn runs
 
 Most commands are for the space between turns, but a few can act over a running
@@ -935,8 +948,9 @@ one. Typing `/` while a turn runs opens the same command list the prompt opens,
 stood above the box, and the arrows walk it as they do there. What happens on
 Enter depends on the command:
 
-- **`/theme` and `/help`** are screen-only, and run at once, panel and all,
-  with the transcript going on behind them.
+- **`/theme`, `/help` and `/context`** are screen-only, and run at once, panel
+  and all, with the transcript going on behind them. `/context` shows the
+  figures of the last request the running turn built.
 - **`/model`** cannot reach the runner answering this turn, so it is picked and
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already
