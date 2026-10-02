@@ -540,5 +540,15 @@ fn the_release_notes_follow_the_colour_rule() {
         let rows = whole(&told, &forge(), columns, glyphs, 20_000);
 
         crate::colour_rule::holds("release notes", &rows, |_| false);
+
+        let heading = rows
+            .iter()
+            .find(|row| row.text().contains("0.36.0"))
+            .map(|row| row.spans().map(|(slot, _)| slot).collect::<Vec<_>>());
+        assert_eq!(
+            heading,
+            Some(vec![Slot::Accent, Slot::Strong, Slot::Quiet]),
+            "a release heading at {columns}: its mark, its version, its date"
+        );
     }
 }

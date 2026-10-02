@@ -897,4 +897,24 @@ fn the_resume_picker_follows_the_colour_rule() {
 
         crate::colour_rule::holds(name, &rows, marked);
     }
+
+    // The levels, on the list at rest: the selected session's caret is the
+    // accent, and when a session was last touched is quiet.
+    let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
+    let slot_of = |text: &str| {
+        rows.iter()
+            .flat_map(Row::spans)
+            .find(|(_, said)| said.contains(text))
+            .map(|(slot, _)| slot)
+    };
+    assert_eq!(
+        slot_of("\u{203a}"),
+        Some(Slot::Accent),
+        "the selected row's caret"
+    );
+    assert_eq!(
+        slot_of("now \u{b7} main"),
+        Some(Slot::Quiet),
+        "when, and where"
+    );
 }
