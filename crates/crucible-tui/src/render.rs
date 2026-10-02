@@ -267,6 +267,12 @@ pub struct Renderer<T: Terminal> {
     /// the row it was taken by, so a drag that starts on its middle does not
     /// jump to put its top there.
     grip: Option<usize>,
+    /// The prompt a press on its rail mark last landed on, by its stable line
+    /// number in the record.
+    ///
+    /// The rail's current prompt while that prompt starts in the band; a
+    /// prompt that has left the record names nothing.
+    landed: Option<usize>,
     /// How many rows of the transcript one notch of the wheel moves.
     ///
     /// Held here for the reason the palette and the glyphs are: it is settled
@@ -333,6 +339,7 @@ impl<T: Terminal> Renderer<T> {
             glyphs: Glyphs::default(),
             rails: false,
             grip: None,
+            landed: None,
             notch: NOTCH,
             taken: None,
             held: None,
@@ -489,10 +496,12 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// A press on the thumb takes hold of it where it was pressed and moves
     /// nothing, a mark the thumb covers included. A press on a mark off the
-    /// thumb lands on the prompt the mark stands for, and anywhere else on the
-    /// rail puts the thumb's middle there, as near as the rail's ends allow;
-    /// either way the thumb is then held where the pointer is. A drag moves the held thumb, and the transcript
-    /// with it, and the release lets go. A rail with no thumb — a record that
+    /// thumb lands on the prompt the mark stands for, which is then the rail's
+    /// current prompt for as long as it starts in the band, and anywhere else
+    /// on the rail puts the thumb's middle there, as near as the rail's ends
+    /// allow; either way the thumb is then held where the pointer is. A drag
+    /// moves the held thumb, and the transcript with it, and the release lets
+    /// go. A rail with no thumb — a record that
     /// fits — has nowhere to go, so a press on it moves nothing; it is still
     /// the rail's, so it names no line beside it, just as a pointer resting
     /// there lights none.
@@ -523,9 +532,16 @@ impl<T: Terminal> Renderer<T> {
                 };
                 let at = row - bands.transcript.start;
                 if !thumb.contains(&at) {
-                    let top = rail
-                        .prompt_at(at, self.record.prompts())
-                        .unwrap_or_else(|| rail.top_for(at.saturating_sub(thumb.len() / 2)));
+                    let top = if let Some(prompt) = rail.prompt_at(at, self.record.prompts()) {
+                        self.landed = self
+                            .record
+                            .landmarked()
+                            .find(|(_, row)| *row == prompt)
+                            .map(|(line, _)| line);
+                        prompt
+                    } else {
+                        rail.top_for(at.saturating_sub(thumb.len() / 2))
+                    };
                     self.record.seek(top, rows);
                 }
                 let thumb = self
@@ -586,7 +602,13 @@ impl<T: Terminal> Renderer<T> {
     fn rail(&self, bands: &Bands) -> Option<ScrollRail> {
         self.rail_column()?;
         let place = self.record.place(bands.transcript.len());
-        Some(ScrollRail::new(place, self.record.prompts()))
+        let landed = self.landed.and_then(|landed| {
+            self.record
+                .landmarked()
+                .find(|(line, _)| *line == landed)
+                .map(|(_, row)| row)
+        });
+        Some(ScrollRail::new(place, self.record.prompts(), landed))
     }
 
     /// The rail row the pointer is on, where it is on a rail with a thumb.

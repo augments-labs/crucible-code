@@ -896,10 +896,19 @@ impl Record {
     /// The walk is capped by [`MOST_LANDMARKS`], and a prompt whose line has
     /// spilled off the head leaves with it.
     pub(crate) fn prompts(&self) -> impl Iterator<Item = usize> + '_ {
-        self.landmarks
-            .iter()
-            .filter_map(|line| self.start_of(*line))
-            .map(|row| row.saturating_sub(self.before))
+        self.landmarked().map(|(_, row)| row)
+    }
+
+    /// Each prompt still retained, oldest first, as its stable line number
+    /// beside where it starts, in display rows into what is retained.
+    ///
+    /// What holds a prompt across scrolling, resizes and spills, where its
+    /// row moves and its line number does not. Capped as [`Self::prompts`] is.
+    pub(crate) fn landmarked(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.landmarks.iter().filter_map(|line| {
+            let row = self.start_of(*line)?;
+            Some((*line, row.saturating_sub(self.before)))
+        })
     }
 
     /// Moves the band's top to display row `row` of what is retained, and

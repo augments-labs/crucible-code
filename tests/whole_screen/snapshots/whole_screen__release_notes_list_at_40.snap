@@ -10,7 +10,7 @@ expression: shape(&picture)
 |variable. Then use /model to select a  ┃|
 |model.                                 ┃|
 |                                       ┃|
-|› /release-notes                       ┃|
+|› /release-notes                       ●|
 |────────────────────────────────────────|
 |                                        |
 |Release notes                           |

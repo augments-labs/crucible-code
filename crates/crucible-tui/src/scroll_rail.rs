@@ -9,16 +9,22 @@
 //! that scale to one row are one mark. A mark that falls on the thumb is drawn
 //! as thumb: the two share the cell and the thumb wins, so a press there takes
 //! the thumb, and a prompt under it is reached by moving the thumb off it.
+//! The one exception is the current prompt — the one a press on its mark last
+//! landed on while that prompt still starts in the band, else the latest that
+//! starts at or above the band's last row — whose mark is always drawn grown,
+//! on the thumb too, so a reader can see which prompt they are reading under.
 //! When the record fits the band there is nowhere else to be, and the rail is
 //! blank.
 //!
 //! The rail spends no hue of its own. The thumb is [`Slot::Accent`] and the
 //! track and its marks are [`Slot::Quiet`], two jobs every palette already
 //! answers, so every theme and a colourless run draw the rail their own way.
-//! Marks differ from the track by shape, not colour. A pointer on the rail
-//! lights the track and its marks in the accent too, and grows the mark it is
-//! on, so a reader can see which prompt a press there lands on; a mark the
-//! thumb covers stays covered.
+//! Marks differ from the track by shape, not colour, and take the colour of
+//! what they stand on: the current prompt's grown mark is quiet on the track
+//! and accent on the thumb. A pointer on the rail lights the track and its
+//! marks in the accent too, and grows the mark it is on, so a reader can see
+//! which prompt a press there lands on; a mark the thumb covers stays covered
+//! unless it is the current prompt's.
 //!
 //! Every cell is structural: the rail is the band's furniture, not the
 //! transcript's words, so a selection dragged across it highlights none of it
@@ -69,12 +75,20 @@ pub(crate) struct ScrollRail {
     thumb: Option<Range<usize>>,
     /// Which rail rows carry a prompt, one entry a row.
     marks: Vec<bool>,
+    /// The rail row of the current prompt's mark, where there is one.
+    current: Option<usize>,
 }
 
 impl ScrollRail {
     /// Lays the rail out over `place`, with a mark for each prompt starting
-    /// `prompts` display rows into the record.
-    pub(crate) fn new(place: Place, prompts: impl IntoIterator<Item = usize>) -> Self {
+    /// `prompts` display rows into the record, and the one starting `landed`
+    /// rows in current while it starts in the band, where a press on its mark
+    /// landed on one.
+    pub(crate) fn new(
+        place: Place,
+        prompts: impl IntoIterator<Item = usize>,
+        landed: Option<usize>,
+    ) -> Self {
         let Place { total, height, .. } = place;
         let mut marks = vec![false; height];
         // A band of no rows has no rail to put a thumb on, and a record that
@@ -85,6 +99,7 @@ impl ScrollRail {
                 height,
                 thumb: None,
                 marks,
+                current: None,
             };
         }
 
@@ -98,17 +113,32 @@ impl ScrollRail {
         let start = scaled(top, total, height);
         let end = scaled(top + height - 1, total, height) + 1;
 
+        // The current prompt: the one landed on while it starts in the band,
+        // else the latest that starts at or above the band's last row.
+        let band = top..top + height;
+        let mut landed_in_band = None;
+        let mut latest = None;
         for prompt in prompts {
             if let Some(mark) = marks.get_mut(scaled(prompt, total, height)) {
                 *mark = true;
             }
+            if landed == Some(prompt) && band.contains(&prompt) {
+                landed_in_band = Some(prompt);
+            }
+            if prompt < band.end {
+                latest = latest.max(Some(prompt));
+            }
         }
+        let current = landed_in_band
+            .or(latest)
+            .map(|prompt| scaled(prompt, total, height));
 
         Self {
             total,
             height,
             thumb: Some(start..end),
             marks,
+            current,
         }
     }
 
@@ -159,7 +189,8 @@ impl ScrollRail {
     ///
     /// No rows at all where the window cannot spare the column. Each row is
     /// one column, structural, and blank where the record fits, pointer or
-    /// none.
+    /// none. The current prompt's mark is grown wherever it falls, in the
+    /// accent on the thumb or under a pointer and quiet on a track at rest.
     pub(crate) fn rows(&self, columns: usize, glyphs: Glyphs, pointer: Option<usize>) -> Vec<Row> {
         if !spared(columns) {
             return Vec::new();
@@ -173,6 +204,14 @@ impl ScrollRail {
             .map(|at| {
                 let (slot, cell) = match &self.thumb {
                     None => (Slot::Plain, " "),
+                    Some(thumb) if self.current == Some(at) => {
+                        let slot = if thumb.contains(&at) {
+                            Slot::Accent
+                        } else {
+                            track
+                        };
+                        (slot, glyphs.grown())
+                    }
                     Some(thumb) if thumb.contains(&at) => (Slot::Accent, glyphs.thumb()),
                     Some(_) if self.marked(at) && pointer == Some(at) => (track, glyphs.grown()),
                     Some(_) if self.marked(at) => (track, glyphs.bullet()),
@@ -205,6 +244,7 @@ mod tests {
                 height: 10,
             },
             prompts.iter().copied(),
+            None,
         )
     }
 
@@ -255,21 +295,27 @@ mod tests {
     #[test]
     fn a_rail_marks_each_prompt_where_it_falls_in_the_whole_record() {
         // A hundred rows on ten: a prompt at row 35 is on rail row 3, and two
-        // prompts on one rail row are one mark.
+        // prompts on one rail row are one mark. The latest, above the band,
+        // is the current prompt, and grown.
         let rail = laid(100, 90, &[0, 35, 38, 72]);
         let rows = said(&rail, Glyphs::Unicode);
 
-        assert_eq!(rows, vec!["•", "│", "│", "•", "│", "│", "│", "•", "│", "┃"],);
+        assert_eq!(rows, vec!["•", "│", "│", "•", "│", "│", "│", "●", "│", "┃"],);
     }
 
     #[test]
-    fn a_rail_mark_on_the_thumb_is_drawn_as_thumb() {
-        let rail = laid(100, 0, &[0, 50]);
+    fn a_rail_mark_on_the_thumb_is_drawn_as_thumb_unless_it_is_the_current_prompt() {
+        // Ten rows of forty from the top: the thumb is rail rows 0 to 2, over
+        // the prompts at rows 0 and 4. The later of the two is current.
+        let rail = laid(40, 0, &[0, 4, 30]);
         let rows = said(&rail, Glyphs::Unicode);
 
         assert!(rail.marked(0));
-        assert_eq!(rows.first().map(String::as_str), Some("┃"));
-        assert_eq!(rows.get(5).map(String::as_str), Some("•"));
+        assert_eq!(
+            rows.iter().take(3).map(String::as_str).collect::<Vec<_>>(),
+            ["┃", "●", "┃"]
+        );
+        assert_eq!(rows.get(7).map(String::as_str), Some("•"));
     }
 
     #[test]
@@ -279,7 +325,7 @@ mod tests {
         let kinds: Vec<Option<Slot>> = rows.iter().map(|row| row.kinds().last()).collect();
         let text: Vec<String> = rows.iter().map(Row::text).collect();
 
-        assert_eq!(text, vec!["|", "|", "|", "-", "|", "|", "|", "|", "|", "#"],);
+        assert_eq!(text, vec!["|", "|", "|", "*", "|", "|", "|", "|", "|", "#"],);
         assert_eq!(kinds.last(), Some(&Some(Slot::Accent)));
         assert!(kinds.iter().take(9).all(|slot| *slot == Some(Slot::Quiet)));
     }

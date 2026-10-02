@@ -938,8 +938,9 @@ fn a_scroll_rail_left_off_gives_the_transcript_its_last_column() {
 fn a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks() {
     let mut window = two_long_turns("scroll-rail-mark", 80, 16);
 
-    // The second prompt's mark is the last one above the thumb.
-    let marks = rail_rows(&window.picture(), '\u{2022}');
+    // The second prompt's mark is the current prompt's, grown, above the
+    // thumb. Landed on, it is still grown, on the thumb.
+    let marks = rail_rows(&window.picture(), '\u{25cf}');
     let mark = *marks.last().expect("a mark on the rail");
     window.clicks_catching(mark, 79, "\u{203a} say it again");
 

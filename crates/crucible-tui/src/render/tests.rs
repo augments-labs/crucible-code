@@ -1561,7 +1561,7 @@ fn the_rail_thumb_stands_at_the_end_the_middle_and_the_top_of_the_transcript() {
     // rows long, and the prompts at lines 0, 20, 40 and 60 on rail rows 0, 2,
     // 5 and 7.
     let mut drawn = railed();
-    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+    assert_eq!(rail_of(&drawn), "•│•││•│●┃┃");
 
     drawn.scrolled(-35).unwrap();
     assert_eq!(
@@ -1573,10 +1573,10 @@ fn the_rail_thumb_stands_at_the_end_the_middle_and_the_top_of_the_transcript() {
             .collect::<Vec<_>>(),
         ["line", "35"]
     );
-    assert_eq!(rail_of(&drawn), "•│•│┃┃│•││");
+    assert_eq!(rail_of(&drawn), "•│•│┃●│•││");
 
     drawn.scrolled(-35).unwrap();
-    assert_eq!(rail_of(&drawn), "┃┃•││•│•││");
+    assert_eq!(rail_of(&drawn), "●┃•││•│•││");
 }
 
 #[test]
@@ -1591,7 +1591,7 @@ fn a_click_on_the_rail_seeks_there_and_goes_no_further() {
         "{:?}",
         drawn.screen().rows()
     );
-    assert_eq!(rail_of(&drawn), "•│┃┃│•│•││");
+    assert_eq!(rail_of(&drawn), "•│●┃│•│•││");
     assert_eq!(
         drawn
             .took(Pressed::Released { row: 3, column: 59 })
@@ -1606,7 +1606,7 @@ fn a_drag_on_the_rail_thumb_scrolls_the_transcript_with_it() {
     let starts = |drawn: &Drawn, line: &str| drawn.screen().row(0).starts_with(&format!("{line} "));
 
     // Taken by its last row, so that row follows the pointer.
-    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+    assert_eq!(rail_of(&drawn), "•│•││•│●┃┃");
     assert_eq!(rail_click(&mut drawn, 9), None);
     assert!(starts(&drawn, "line 70"), "the press on the thumb moved it");
 
@@ -1621,7 +1621,7 @@ fn a_drag_on_the_rail_thumb_scrolls_the_transcript_with_it() {
         None
     );
     assert!(starts(&drawn, "line 16"), "{:?}", drawn.screen().rows());
-    assert_eq!(rail_of(&drawn), "•│┃┃│•│•││");
+    assert_eq!(rail_of(&drawn), "•│●┃│•│•││");
 
     // Past the foot of the band is the foot of the record.
     assert_eq!(
@@ -1773,7 +1773,7 @@ fn a_pointer_on_the_rail_lights_its_track_and_marks_and_grows_the_mark_under_it(
 
     rail_hover(&mut drawn, 2);
 
-    assert_eq!(rail_of(&drawn), "•│●││•│•┃┃");
+    assert_eq!(rail_of(&drawn), "•│●││•│●┃┃");
     let frame = since(&drawn, from);
     for cell in ["│", "•", "●"] {
         assert!(
@@ -1783,6 +1783,7 @@ fn a_pointer_on_the_rail_lights_its_track_and_marks_and_grows_the_mark_under_it(
     }
     assert!(!frame.contains(&worn(Slot::Quiet, "│")), "{frame:?}");
     assert!(!frame.contains(&worn(Slot::Quiet, "•")), "{frame:?}");
+    assert!(!frame.contains(&worn(Slot::Quiet, "●")), "{frame:?}");
 }
 
 #[test]
@@ -1790,14 +1791,14 @@ fn a_pointer_moving_along_the_rail_grows_the_mark_it_arrives_at() {
     let mut drawn = railed();
 
     rail_hover(&mut drawn, 2);
-    assert_eq!(rail_of(&drawn), "•│●││•│•┃┃");
+    assert_eq!(rail_of(&drawn), "•│●││•│●┃┃");
     rail_hover(&mut drawn, 5);
-    assert_eq!(rail_of(&drawn), "•│•││●│•┃┃");
+    assert_eq!(rail_of(&drawn), "•│•││●│●┃┃");
     rail_hover(&mut drawn, 3);
-    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
-    // A mark the thumb covers stays covered: the thumb is what is there.
+    assert_eq!(rail_of(&drawn), "•│•││•│●┃┃");
+    // The thumb grows nothing under the pointer: the thumb is what is there.
     rail_hover(&mut drawn, 9);
-    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+    assert_eq!(rail_of(&drawn), "•│•││•│●┃┃");
 }
 
 #[test]
@@ -1811,7 +1812,7 @@ fn a_pointer_leaving_the_rail_puts_it_back_at_rest_on_the_next_frame() {
         None
     );
 
-    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+    assert_eq!(rail_of(&drawn), "•│•││•│●┃┃");
     let frame = since(&drawn, from);
     assert!(frame.contains(&worn(Slot::Quiet, "│")), "{frame:?}");
     assert!(frame.contains(&worn(Slot::Quiet, "•")), "{frame:?}");
@@ -1862,7 +1863,67 @@ fn an_ascii_rail_grows_the_mark_under_the_pointer_to_a_star() {
 
     rail_hover(&mut drawn, 5);
 
-    assert_eq!(rail_of(&drawn), "-|-||*|-##");
+    assert_eq!(rail_of(&drawn), "-|-||*|*##");
+}
+
+#[test]
+fn the_current_prompt_s_rail_mark_is_grown_quiet_on_the_track_and_accent_on_the_thumb() {
+    // At the foot the latest prompt, line 60, is above the band: its mark is
+    // grown on the track, in the track's colour.
+    let mut drawn = railed_in(colourful());
+    assert_eq!(rail_of(&drawn), "•│•││•│●┃┃");
+    let resting = since(&drawn, 0);
+    assert!(resting.contains(&worn(Slot::Quiet, "●")), "{resting:?}");
+    let from = resting.len();
+
+    // Thirty-five rows up the band holds line 40, and the thumb with it: the
+    // mark that was hidden there is grown on the thumb, in the thumb's colour.
+    drawn.scrolled(-35).unwrap();
+    assert_eq!(rail_of(&drawn), "•│•│┃●│•││");
+    let frame = since(&drawn, from);
+    assert!(frame.contains(&worn(Slot::Accent, "●")), "{frame:?}");
+    assert!(!frame.contains(&worn(Slot::Quiet, "●")), "{frame:?}");
+}
+
+#[test]
+fn an_ascii_rail_draws_the_current_prompt_s_mark_as_a_star_on_the_thumb_too() {
+    let mut drawn = railed();
+    drawn.draws(Glyphs::Ascii);
+
+    drawn.scrolled(-35).unwrap();
+    assert_eq!(rail_of(&drawn), "-|-|#*|-||");
+
+    drawn.scrolled(35).unwrap();
+    assert_eq!(rail_of(&drawn), "-|-||-|*##");
+}
+
+#[test]
+fn the_prompt_a_rail_click_lands_on_stays_current_while_it_is_in_the_band() {
+    // Prompts at lines 40 and 48 are on rail rows 5 and 6, and the band that
+    // starts at line 40 holds both. The latest of them would be current; the
+    // one the click landed on is.
+    let mut drawn = Drawn::new(60, 10);
+    drawn.rails(true);
+    for line in 0..80 {
+        if [0, 20, 40, 48, 60].contains(&line) {
+            drawn.landmark();
+        }
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    assert_eq!(rail_of(&drawn), "•│•││••●┃┃");
+
+    assert_eq!(rail_click(&mut drawn, 5), None);
+    assert!(
+        drawn.screen().row(0).starts_with("line 40 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    assert_eq!(rail_of(&drawn), "•│•││●┃•││");
+
+    // A row on, line 40 has left the band, and the latest prompt at or above
+    // the band's last row is current again.
+    drawn.scrolled(1).unwrap();
+    assert_eq!(rail_of(&drawn), "•│•││┃●•││");
 }
 
 #[test]
@@ -1900,7 +1961,7 @@ fn after_the_record_is_emptied_the_rail_thumb_still_reaches_the_foot() {
         "{:?}",
         drawn.screen().rows()
     );
-    assert_eq!(rail_of(&drawn), "•│││││││┃┃");
+    assert_eq!(rail_of(&drawn), "●│││││││┃┃");
 }
 
 /// The next number from a seeded generator, below `below`.

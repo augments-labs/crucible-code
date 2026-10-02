@@ -18,7 +18,7 @@ expression: window.picture()
 |Warning: No models available. Use /login or set an API key environment         ┃|
 |variable. Then use /model to select a model.                                   ┃|
 |                                                                               ┃|
-|› /login                                                                       ┃|
+|› /login                                                                       ●|
 |⎿ cancelled, nothing signed in                                                 ┃|
 |                                                                               ┃|
 |                                                                                |
