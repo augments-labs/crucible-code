@@ -122,7 +122,7 @@ try {
         Stop-Test 'cru.exe is not a copy of crucible.exe'
     }
     if (@(Get-ChildItem -LiteralPath $dir -Force).Count -ne 3) { Stop-Test 'the install left files beside the executables' }
-    Assert-Lacks $run.Err 'writable by other users' 'redirected install'
+    Assert-Lacks $run.Err ' replace ' 'redirected install'
 
     # A directory other users can change is named, with the one inside it
     # that inherits their access, and the install still lands.
@@ -137,6 +137,20 @@ try {
     Assert-Contains $run.Err "install: $sharedBin is writable by other users, who could replace " 'shared directory'
     if (-not (Test-Path -LiteralPath (Join-Path $sharedBin 'crucible.exe') -PathType Leaf)) {
         Stop-Test 'an install below a shared directory did not land'
+    }
+
+    # An entry that passes only to the files in a directory still lets other
+    # users replace what lands there, so the directory is named for it.
+    $passed = Join-Path $root 'passed'
+    $null = New-Item -ItemType Directory -Path $passed
+    $null = & icacls.exe $passed /grant '*S-1-5-32-545:(OI)(IO)M'
+    if ($LASTEXITCODE -ne 0) { Stop-Test 'could not let Users modify the files in a directory' }
+    $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $passed))
+    if ($run.Status -ne 0) { Stop-Test "an install into a directory passing access to its files exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Err "install: $passed is writable by other users, who could replace " 'access passed to files'
+    Assert-Lacks $run.Err "install: $root " 'access passed to files'
+    if (-not (Test-Path -LiteralPath (Join-Path $passed 'crucible.exe') -PathType Leaf)) {
+        Stop-Test 'an install into a directory passing access to its files did not land'
     }
 
     # Installing again replaces what the last install put there, and removes

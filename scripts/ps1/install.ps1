@@ -372,37 +372,68 @@ function Invoke-CrucibleInstall {
         return $false
     }
 
-    # The directory and those above it that other users can change, and so
-    # could replace the executables in it or, with -AddToPath, put commands
-    # of their own first on PATH; install.sh names a directory its group or
-    # others can write in the same way. An entry for the user, SYSTEM,
-    # Administrators or TrustedInstaller is expected, and so is one that only
-    # lets anyone create subdirectories, which every volume root grants and
-    # which replaces nothing. An entry that only passes to what is inside is
-    # judged where it applies, since the directory below inherits it.
-    function Get-Untrusted([string]$Path) {
+    # Why other users could replace the executables in the directory, or
+    # with -AddToPath put commands of their own first on PATH: one line for
+    # the directory and each above it that another account owns, that grants
+    # someone else a right to change it, or whose permissions cannot be read.
+    # install.sh names a directory that belongs to another user or that its
+    # group or others can write in the same way. The user, SYSTEM,
+    # Administrators, TrustedInstaller and CREATOR OWNER are expected, and so
+    # is an entry that only lets anyone create subdirectories, which every
+    # volume root grants and which replaces nothing. An entry that only
+    # passes to what is inside a directory is judged where it lands: on the
+    # directory below, which the walk reaches first, or on the installed
+    # `Files`, which are judged as the directory holding them.
+    function Get-Untrusted([string]$Path, [string[]]$Files, [string]$Broker) {
         $expected = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544',
-            'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+            'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464', 'S-1-3-0')
         $rights = [System.Security.AccessControl.FileSystemRights]
         # Writing, deleting, changing permissions or ownership, and the
-        # generic write and all rights.
+        # generic write and all rights. On a file, appending changes it too.
         [long]$changes = [long]$rights::WriteData -bor [long]$rights::Delete -bor
             [long]$rights::DeleteSubdirectoriesAndFiles -bor [long]$rights::ChangePermissions -bor
             [long]$rights::TakeOwnership -bor 0x10000000 -bor 0x40000000
+        [long]$fileChanges = $changes -bor [long]$rights::AppendData
         $inheritOnly = [int][System.Security.AccessControl.PropagationFlags]::InheritOnly
-        $at = $Path
-        while ($at) {
-            $rules = @()
+        $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor
+            [System.Security.AccessControl.AccessControlSections]::Owner
+        # What makes one directory or file changeable by someone else, or
+        # nothing when nothing does.
+        function Get-Exposure([string]$At, [bool]$IsFile) {
             try {
-                $acl = New-Object System.Security.AccessControl.DirectorySecurity($at,
-                    [System.Security.AccessControl.AccessControlSections]::Access)
-                $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
-            } catch { }
+                if ($IsFile) {
+                    $security = New-Object System.Security.AccessControl.FileSecurity($At, $sections)
+                } else {
+                    $security = New-Object System.Security.AccessControl.DirectorySecurity($At, $sections)
+                }
+                $owner = $security.GetOwner([Security.Principal.SecurityIdentifier])
+                $rules = @($security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+            } catch {
+                return 'unread'
+            }
+            if ($owner -and $expected -notcontains $owner.Value) { return 'owned' }
+            $wanted = if ($IsFile) { $fileChanges } else { $changes }
             foreach ($rule in $rules) {
                 if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
                     ([int]$rule.PropagationFlags -band $inheritOnly) -ne 0 -or
                     $expected -contains $rule.IdentityReference.Value) { continue }
-                if (([long]$rule.FileSystemRights -band $changes) -ne 0) { $at; break }
+                if (([long]$rule.FileSystemRights -band $wanted) -ne 0) { return 'writable' }
+            }
+            return $null
+        }
+        $at = $Path
+        while ($at) {
+            $exposure = Get-Exposure $at $false
+            if (-not $exposure -and $at -eq $Path) {
+                foreach ($file in $Files) {
+                    $exposure = Get-Exposure $file $true
+                    if ($exposure) { break }
+                }
+            }
+            switch ($exposure) {
+                'owned' { "$at belongs to another account, which could replace $Broker" }
+                'unread' { "the permissions of $at could not be read, so other users may be able to replace $Broker" }
+                'writable' { "$at is writable by other users, who could replace $Broker; remove their write access to $at" }
             }
             $at = [System.IO.Path]::GetDirectoryName($at)
         }
@@ -678,9 +709,7 @@ function Invoke-CrucibleInstall {
         $installed = 'Installed crucible.exe, crucible-sandbox-broker.exe and cru.exe in '
         $nl = [Environment]::NewLine
         $warnings = @($stuck | ForEach-Object { "could not remove $_, a replaced copy still in use; the next install removes it" })
-        $warnings += @(Get-Untrusted $destination | ForEach-Object {
-                "$_ is writable by other users, who could replace $brokerPath; remove their write access to $_"
-            })
+        $warnings += @(Get-Untrusted $destination @($brokerPath, $binaryPath, $aliasPath) $brokerPath)
         # A log gets the whole path, since PowerShell does not expand
         # %LOCALAPPDATA%; the console gets it as Windows writes it.
         if (-not $fancy) {
