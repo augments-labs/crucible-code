@@ -952,18 +952,19 @@ left before compaction, so the two always agree. A model whose window crucible
 does not know shows the tokens alone, with `window not known` in place of the
 size and no bar. Escape closes it.
 
-`/usage` stands a panel over the prompt box with what the session has used:
-its cost, the time its requests were out and the time since it started, the
-lines edits added and removed, and its tokens in, out, read from a cache and
-written to one. A session with a model crucible has no price for says `not
-priced` rather than `$0.00`. Under that is the same context bar `/context`
-draws, and then the plan limits: one bar for each of the 5-hour, weekly and
-monthly windows the vendor reported on its last response, with when each
-starts again in your local time. Only the ChatGPT sign-in reports them; an API
-key or any other sign-in says `limits not reported`. Opening the panel sends
-nothing: every figure on it is one crucible already holds, and the counts are
-this run's, starting again for a session picked up with `/resume`. Escape
-closes it.
+`/usage` stands a panel over the prompt box, headed with the provider and what
+pays for it (`API key`, or the sign-in's name, such as `ChatGPT sign-in`), with
+what the session has used: its cost, the time its requests were out and the
+time since it started, the lines edits added and removed, and its tokens in,
+out, read from a cache and written to one. A session with a model crucible has
+no price for says `not priced` rather than `$0.00`. Under that is the same
+context bar `/context` draws, and then the plan limits: one bar for each of the
+5-hour, weekly and monthly windows the vendor reported on its last response,
+with when each starts again in your local time. Only the ChatGPT sign-in
+reports them; an API key or any other sign-in says `limits not reported`.
+Opening the panel sends nothing: every figure on it is one crucible already
+holds, and the counts are this run's, starting again for a session picked up
+with `/resume`. Escape closes it.
 
 ### A command typed while a turn runs
 

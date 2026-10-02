@@ -24,6 +24,7 @@
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
+use crucible_app::providers::{CredentialSource, credential_source, in_use, offered};
 use crucible_app::startup::ProviderAuth;
 use crucible_client_api::{self as api, Cost, Window};
 use crucible_tui::{Bar, Fill, Glyphs, Part, Renderer, Row, Slot, Terminal};
@@ -170,8 +171,11 @@ impl<'a> Shown<'a> {
     }
 }
 
-/// Who is answering, and with which credential, as `/model` names it.
+/// Who is answering, and with which credential.
 ///
+/// Named as `/model` names it, except that a key read from a variable is
+/// `API key` rather than the variable's name: the heading says what pays, and
+/// where the key was read from is `/model`'s to say. A sign-in keeps its name.
 /// Read off the stored credentials as the panel opens; a provider that
 /// answers with none is named alone, and none answering names nothing.
 fn heading(terms: &Terms, serving: Option<&'static str>, glyphs: Glyphs) -> String {
@@ -186,14 +190,22 @@ fn heading(terms: &Terms, serving: Option<&'static str>, glyphs: Glyphs) -> Stri
         stored: &stored,
         subscriptions: &terms.subscriptions,
     };
-    crucible_app::providers::offered(&providers)
+    offered(&providers)
         .find(|one| one.name == name)
-        .and_then(|one| crucible_app::providers::in_use(one, auth))
+        .and_then(|one| match credential_source(one, auth)? {
+            CredentialSource::Environment(_) => Some(KEYED.to_owned()),
+            CredentialSource::StoredKey | CredentialSource::Subscription => {
+                in_use(one, auth).map(|used| used.words)
+            }
+        })
         .map_or_else(
             || name.to_owned(),
-            |used| format!("{name} {} {}", glyphs.dot(), used.words),
+            |words| format!("{name} {} {words}", glyphs.dot()),
         )
 }
+
+/// What the heading calls a key read from a variable.
+const KEYED: &str = "API key";
 
 /// Stands the panel until it is closed, or says there was no room.
 fn stood<T: Terminal>(

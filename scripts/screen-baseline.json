@@ -762,7 +762,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"usage-key-{columns}\"), columns, 30, &vendor)"
       ],
-      "sha256": "be71d75299fb2483fe0adaf3164576a50e3566e5a66386029e2f4e1af1993f0c"
+      "sha256": "3bd9ab736ad09bc3dfd45b2fe4e535e632e4b43fab20bfd5f528528993a34546"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_key_80.snap",
@@ -771,7 +771,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&format!(\"usage-key-{columns}\"), columns, 30, &vendor)"
       ],
-      "sha256": "d642ae0d6bbd8381878e47f07922c3d90ebce3336d9b1fb4f716202967e5035d"
+      "sha256": "99cbd628bbdc7ea4661da0e84169a9c3688c373ad7b520c54a51c887ed8bf1e3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__usage_mid_turn_80.snap",
@@ -779,7 +779,7 @@
       "opened": [
         "Watched::allowing(\"usage-mid-turn\", 80, 30, &vendor, \"bash(*)\")"
       ],
-      "sha256": "8883cbb4ff70a31c377320faefce94d452e43a1318c552f1ab8ea48240b3d76b"
+      "sha256": "cdbee8bf72cd80eced148deba450c98fc30107d12537ab86cd61e97d190728b4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_ascii.snap",

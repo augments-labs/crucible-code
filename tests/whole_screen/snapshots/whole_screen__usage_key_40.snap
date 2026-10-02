@@ -15,7 +15,7 @@ expression: timeless(&picture)
 |                                        |
 |────────────────────────────────────────|
 |                                        |
-|Usage · anthropic · ANTHROPIC_API_KEY   |
+|Usage · anthropic · API key             |
 |                                        |
 |Session                                 |
 |  Total cost     not priced             |

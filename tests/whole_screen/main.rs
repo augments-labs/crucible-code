@@ -4199,7 +4199,9 @@ fn usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape
         window.types_until("/usage\r", "esc to close");
 
         let picture = window.picture();
-        assert!(picture.contains("Usage"), "{picture}");
+        // A key is named for what it is, not for where it was read from.
+        assert!(picture.contains("Usage · anthropic · API key"), "{picture}");
+        assert!(!picture.contains("ANTHROPIC_API_KEY"), "{picture}");
         assert!(picture.contains("Plan limits"), "{picture}");
         assert!(picture.contains("limits not reported"), "{picture}");
         assert!(!picture.contains("$0.00"), "{picture}");
