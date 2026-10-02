@@ -386,9 +386,9 @@ impl Glyphs {
     /// The part of the scroll rail that stands for what is on screen.
     ///
     /// Heavier than [`Glyphs::vertical`], which is the track it runs along, so
-    /// the two read apart by weight where colour says nothing; and not
-    /// [`Glyphs::bullet`], which marks a prompt on the same track. One column
-    /// in both sets, because the rail is one column.
+    /// the two read apart by weight where colour says nothing; and neither
+    /// [`Glyphs::bullet`] nor [`Glyphs::grown`], which mark a prompt on the
+    /// same track. One column in both sets, because the rail is one column.
     #[must_use]
     pub(crate) fn thumb(self) -> &'static str {
         match self {
@@ -403,8 +403,9 @@ impl Glyphs {
     /// [`Glyphs::bullet`] is the small filled circle and this is the large
     /// one, so a grown mark reads as the same mark made larger rather than as
     /// a new kind of thing on the track. It is neither [`Glyphs::thumb`] nor
-    /// [`Glyphs::vertical`], since it may stand on either. One column in both
-    /// sets, because the rail is one column.
+    /// [`Glyphs::vertical`], since it may stand on either. In ASCII it is `*`,
+    /// since there is no larger `-`. One column in both sets, because the rail
+    /// is one column.
     #[must_use]
     pub(crate) fn grown(self) -> &'static str {
         match self {
