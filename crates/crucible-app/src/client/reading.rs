@@ -110,7 +110,8 @@ pub fn progress(
         // beside the context above: the session's totals as each response or
         // edit moved them, and the plan's limits once a response updated them.
         Event::Used { totals } => Progress::Used(used(totals)),
-        Event::PlanLimits { windows } => Progress::Limits(limits(windows, serving)),
+        // No model is named here, so a family's group keeps the vendor's name.
+        Event::PlanLimits { windows } => Progress::Limits(limits(windows, serving, None)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
@@ -204,7 +205,7 @@ pub fn usage(
         used: used(totals),
         context: context(model, breakdown),
         limits: limits.map_or_else(api::Limits::default, |windows| {
-            self::limits(windows, serving)
+            self::limits(windows, serving, Some(model))
         }),
     }
 }
@@ -254,13 +255,17 @@ fn stated(amount: CostAmount) -> Option<(Name, u64)> {
 }
 
 /// Every limit a vendor reported, the plan-wide one first, drawn in the
-/// words of `serving`, the provider that reported them, and whether the
-/// vendor reported more than crosses: more than the reading kept, or a group
-/// left out here.
-pub(super) fn limits(windows: &PlanWindows, serving: Option<&str>) -> api::Limits {
+/// words of `serving`, the provider that reported them, while `in_use` is the
+/// model the session asks, and whether the vendor reported more than crosses:
+/// more than the reading kept, or a group left out here.
+pub(super) fn limits(
+    windows: &PlanWindows,
+    serving: Option<&str>,
+    in_use: Option<&str>,
+) -> api::Limits {
     let groups: Vec<api::LimitGroup> = windows
         .groups()
-        .filter_map(|one| group(one, serving))
+        .filter_map(|one| group(one, serving, in_use))
         .collect();
     api::Limits {
         more: windows.incomplete() || groups.len() < windows.groups().count(),
@@ -273,11 +278,15 @@ pub(super) fn limits(windows: &PlanWindows, serving: Option<&str>) -> api::Limit
 /// A name a vendor gave is kept stripped of control and format characters
 /// and cut under the contract's ceiling, so it always crosses; a group whose
 /// name somehow did not would be left out rather than called plan-wide.
-fn group(group: &LimitGroup, serving: Option<&str>) -> Option<api::LimitGroup> {
+fn group(
+    group: &LimitGroup,
+    serving: Option<&str>,
+    in_use: Option<&str>,
+) -> Option<api::LimitGroup> {
     Some(api::LimitGroup {
         model: match group.scope() {
             Scope::Plan => None,
-            Scope::Model(model) => Some(Name::new(drawn(model, serving)).ok()?),
+            Scope::Model(model) => Some(Name::new(drawn(model, serving, in_use)).ok()?),
         },
         limits: group
             .windows()
@@ -294,11 +303,16 @@ fn group(group: &LimitGroup, serving: Option<&str>) -> Option<api::LimitGroup> {
 }
 
 /// What a model's group is called where a client draws it: the name the
-/// catalog of `serving` gives the model the group was kept for, else the
-/// name the vendor gave the group, as it gave it.
-fn drawn<'a>(group: &'a ModelGroup, serving: Option<&str>) -> &'a str {
+/// catalog of `serving` gives the model the group was kept for, or, for a
+/// family of models, `in_use` where the family holds it; else the name the
+/// vendor gave the group, as it gave it.
+fn drawn<'a>(group: &'a ModelGroup, serving: Option<&str>, in_use: Option<&str>) -> &'a str {
+    let model = group
+        .key()
+        .and_then(ModelKey::model)
+        .or_else(|| in_use.filter(|model| group.holds(model)));
     serving
-        .zip(group.key().and_then(ModelKey::model))
+        .zip(model)
         .and_then(|(provider, model)| providers::model_shown(provider, model))
         .unwrap_or_else(|| group.name().as_str())
 }
