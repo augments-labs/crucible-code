@@ -98,7 +98,7 @@ const KEYS: [&str; 72] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 48] = [
+const MORE_KEYS: [&str; 49] = [
     "added",
     "api_ms",
     "cache_read",
@@ -106,18 +106,19 @@ const MORE_KEYS: [&str; 48] = [
     "context",
     "cost",
     "currency",
-    "five_hour",
     "input",
     "limits",
+    "more_limits",
+    "minutes",
     "micros",
-    "monthly",
     "output",
     "removed",
     "resets_at",
+    "total",
+    "windows",
     "usage",
     "used",
     "wall_ms",
-    "weekly",
     "count",
     "date",
     "free",
@@ -341,6 +342,7 @@ fn commands() -> Vec<Command> {
         },
         Command::Context,
         Command::Usage,
+        Command::AskLimits,
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
@@ -453,15 +455,50 @@ fn contexts() -> [Context; 2] {
     ]
 }
 
+/// The plan-wide limit and one kept for a model, between them every window
+/// and every reading there is, and more the vendor reported than were kept.
+fn plan_limits() -> Limits {
+    let limit = |window, reading, resets_at| Limit {
+        window,
+        reading,
+        resets_at,
+    };
+    let percent = |used| Reading::Percent(Percent::new(used).unwrap());
+    Limits {
+        groups: vec![
+            LimitGroup {
+                model: None,
+                limits: vec![
+                    limit(Window::FiveHour, percent(23), Some(1_700_000_000)),
+                    limit(Window::Daily, Reading::Unlimited, None),
+                    limit(Window::Weekly, percent(42), None),
+                    limit(Window::Monthly, percent(100), Some(1_702_000_000)),
+                ],
+            },
+            LimitGroup {
+                model: Some(name("GPT-5.3-Codex-Spark")),
+                limits: vec![
+                    limit(
+                        Window::Lasting { minutes: 180 },
+                        Reading::Counted {
+                            used: 412,
+                            total: 1_500,
+                        },
+                        Some(1_700_000_000),
+                    ),
+                    limit(Window::Yearly, percent(7), None),
+                ],
+            },
+        ],
+        more: true,
+    }
+}
+
 /// What a session has used, by position: priced with every window reported,
 /// not priced with none, known only as a floor, and before anything was asked
 /// with one window. Callers destructure it by position, so keep this order.
 fn usages() -> [Usage; 4] {
     let [context, unknown] = contexts();
-    let limit = |used, resets_at| Limit {
-        used: Percent::new(used).unwrap(),
-        resets_at,
-    };
     let used = Used {
         cost: Cost::Priced {
             currency: name("USD"),
@@ -479,11 +516,7 @@ fn usages() -> [Usage; 4] {
     let counted = Usage {
         used: used.clone(),
         context,
-        limits: Limits {
-            five_hour: Some(limit(23, Some(1_700_000_000))),
-            weekly: Some(limit(42, None)),
-            monthly: Some(limit(100, Some(1_702_000_000))),
-        },
+        limits: plan_limits(),
     };
     [
         counted.clone(),
@@ -512,8 +545,15 @@ fn usages() -> [Usage; 4] {
             },
             context: unknown,
             limits: Limits {
-                weekly: Some(limit(0, Some(1_700_000_000))),
-                ..Limits::default()
+                groups: vec![LimitGroup {
+                    model: None,
+                    limits: vec![Limit {
+                        window: Window::Weekly,
+                        reading: Reading::Percent(Percent::new(0).unwrap()),
+                        resets_at: Some(1_700_000_000),
+                    }],
+                }],
+                more: false,
             },
         },
     ]
@@ -842,35 +882,36 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 27),
-        Command::Compact => (1, 27),
-        Command::Cancel => (2, 27),
-        Command::Decide(_) => (3, 27),
-        Command::Clear => (4, 27),
-        Command::Resume(_) => (5, 27),
+        Command::Prompt(_) => (0, 28),
+        Command::Compact => (1, 28),
+        Command::Cancel => (2, 28),
+        Command::Decide(_) => (3, 28),
+        Command::Clear => (4, 28),
+        Command::Resume(_) => (5, 28),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 27),
-        Command::SelectModel { effort: None, .. } => (7, 27),
-        Command::SetEffort(_) => (8, 27),
-        Command::SetMode(_) => (9, 27),
-        Command::CycleMode => (10, 27),
-        Command::Login { .. } => (11, 27),
-        Command::Logout { .. } => (12, 27),
-        Command::InspectCache => (13, 27),
-        Command::CleanCache => (14, 27),
-        Command::Sandbox { enabled: true } => (15, 27),
-        Command::Sandbox { enabled: false } => (16, 27),
-        Command::Theme(Theme::Drawing(_)) => (17, 27),
-        Command::Theme(Theme::Syntax(_)) => (18, 27),
-        Command::Help => (19, 27),
-        Command::ReleaseNotes { version: None } => (20, 27),
-        Command::ReleaseNotes { version: Some(_) } => (21, 27),
-        Command::Exit => (22, 27),
-        Command::SetSpeed(_) => (23, 27),
-        Command::Context => (24, 27),
-        Command::Usage => (25, 27),
-        Command::Setting { .. } => (26, 27),
+        } => (6, 28),
+        Command::SelectModel { effort: None, .. } => (7, 28),
+        Command::SetEffort(_) => (8, 28),
+        Command::SetMode(_) => (9, 28),
+        Command::CycleMode => (10, 28),
+        Command::Login { .. } => (11, 28),
+        Command::Logout { .. } => (12, 28),
+        Command::InspectCache => (13, 28),
+        Command::CleanCache => (14, 28),
+        Command::Sandbox { enabled: true } => (15, 28),
+        Command::Sandbox { enabled: false } => (16, 28),
+        Command::Theme(Theme::Drawing(_)) => (17, 28),
+        Command::Theme(Theme::Syntax(_)) => (18, 28),
+        Command::Help => (19, 28),
+        Command::ReleaseNotes { version: None } => (20, 28),
+        Command::ReleaseNotes { version: Some(_) } => (21, 28),
+        Command::Exit => (22, 28),
+        Command::SetSpeed(_) => (23, 28),
+        Command::Context => (24, 28),
+        Command::Usage => (25, 28),
+        Command::Setting { .. } => (26, 28),
+        Command::AskLimits => (27, 28),
     }
 }
 
@@ -1879,7 +1920,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (2, 14_657_618_173_854_786_696),
+        (2, 17_377_940_167_198_915_265),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -2056,5 +2097,144 @@ fn plan_limit_is_spoken_under_the_second_revision_and_not_the_first() {
     assert_eq!(
         refused(&framed(&frame)),
         (Some(41), ErrorCode::UnsupportedVersion)
+    );
+}
+
+#[test]
+fn limit_every_window_and_reading_reads_back_as_it_was_written() {
+    let limits = plan_limits();
+    let one = Progress::Limits(limits.clone());
+
+    let frame = one.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+
+    assert_eq!(Progress::decode(&frame).unwrap(), one);
+    assert_eq!(
+        value.pointer("/limits/1/model"),
+        Some(&json!("GPT-5.3-Codex-Spark")),
+        "{value}"
+    );
+    assert_eq!(
+        value.pointer("/limits/1/windows/0"),
+        Some(&json!({
+            "window": {"kind": "lasting", "minutes": 180},
+            "used": {"kind": "counted", "used": 412, "total": 1500},
+            "resets_at": 1_700_000_000,
+        })),
+        "{value}"
+    );
+    assert_eq!(value.pointer("/limits/0/model"), None, "{value}");
+    assert_eq!(value.pointer("/more_limits"), Some(&json!(true)), "{value}");
+    assert!(!limits.is_empty());
+    assert!(Limits::default().is_empty());
+
+    let whole = Progress::Limits(Limits::default());
+    let frame = whole.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/more_limits"),
+        Some(&json!(false)),
+        "{value}"
+    );
+    assert_eq!(Progress::decode(&frame).unwrap(), whole);
+}
+
+#[test]
+fn limit_a_usage_that_left_limits_out_reads_back_saying_so() {
+    let [counted, _, _, _] = usages();
+    assert!(counted.limits.more);
+    let response = Response {
+        correlation: Some(Correlation::new(5)),
+        outcome: Outcome::Usage(counted),
+    };
+    let frame = response.encode().unwrap();
+    let value: Value = serde_json::from_slice(&frame).unwrap();
+    assert_eq!(
+        value.pointer("/outcome/usage/more_limits"),
+        Some(&json!(true)),
+        "{value}"
+    );
+    assert_eq!(Response::decode(&frame).unwrap(), response);
+}
+
+/// A progress frame carrying `limits` as they were written.
+fn limits_frame(limits: &Value) -> Vec<u8> {
+    let frame = Progress::Limits(Limits::default()).encode().unwrap();
+    let mut value: Value = serde_json::from_slice(&frame).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("limits".to_owned(), limits.clone());
+    framed(&value)
+}
+
+#[test]
+fn limit_lists_over_the_plans_ceilings_are_refused() {
+    let window = json!({
+        "window": {"kind": "weekly"},
+        "used": {"kind": "percent", "used": 5},
+    });
+    let group = |windows: usize| json!({"windows": vec![window.clone(); windows]});
+
+    let groups = json!(vec![group(1); crucible_types::MAX_LIMIT_GROUPS + 1]);
+    let windows = json!([group(crucible_types::MAX_GROUP_WINDOWS + 1)]);
+    let named = json!([{
+        "model": "m".repeat(crucible_types::MAX_LIMIT_NAME_BYTES + 1),
+        "windows": [],
+    }]);
+    for over in [groups, windows, named] {
+        assert_eq!(
+            Progress::decode(&limits_frame(&over)).map_err(Refusal::code),
+            Err(ErrorCode::TooLarge),
+            "{over}"
+        );
+    }
+
+    let full = json!(vec![
+        group(crucible_types::MAX_GROUP_WINDOWS);
+        crucible_types::MAX_LIMIT_GROUPS
+    ]);
+    assert!(Progress::decode(&limits_frame(&full)).is_ok());
+}
+
+#[test]
+fn limit_readings_no_vendor_could_give_are_malformed() {
+    let reading =
+        |window: Value, used: Value| json!([{"windows": [{"window": window, "used": used}]}]);
+    let weekly = json!({"kind": "weekly"});
+    for wrong in [
+        reading(weekly.clone(), json!({"kind": "percent", "used": 101})),
+        reading(
+            weekly.clone(),
+            json!({"kind": "counted", "used": 3, "total": 0}),
+        ),
+        reading(
+            weekly.clone(),
+            json!({"kind": "counted", "used": 4, "total": 3}),
+        ),
+        reading(weekly.clone(), json!({"kind": "spent"})),
+        reading(
+            json!({"kind": "lasting", "minutes": 0}),
+            json!({"kind": "unlimited"}),
+        ),
+        reading(json!({"kind": "fortnightly"}), json!({"kind": "unlimited"})),
+        json!([{"model": "", "windows": []}]),
+        json!({"groups": []}),
+    ] {
+        assert!(Progress::decode(&limits_frame(&wrong)).is_err(), "{wrong}");
+    }
+}
+
+#[test]
+fn limit_asking_crosses_as_a_command_of_its_own() {
+    let frame = asking(&json!({"kind": "ask_limits"}));
+    let request = Request::decode(&framed(&frame)).unwrap();
+
+    assert_eq!(request.command(), &Command::AskLimits);
+    assert_eq!(Command::AskLimits.kind(), "ask_limits");
+    assert!(Command::KINDS.contains(&"ask_limits"));
+    assert_eq!(
+        Request::decode(&request.encode().unwrap()).unwrap(),
+        request
     );
 }

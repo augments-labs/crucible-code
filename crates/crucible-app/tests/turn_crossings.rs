@@ -204,12 +204,12 @@ fn nothing_shipped_glob_imports_what_a_turn_could_wait_through() {
 
 /// Every line mentioning `block_on` a shipped file may hold, trimmed, with how
 /// many times that file may hold it, and none of them is reached by a turn: the
-/// runtime owner's documentation of why it is built multi-thread, the five
+/// runtime owner's documentation of why it is built multi-thread, the six
 /// waits made from outside every turn — startup writing what a session picked
 /// up owes before any turn exists, `--sandbox` asking the backend it reports on
 /// before any conversation exists, the drawing thread answering a command,
-/// asking the backend the sandbox panel shows, and joining a turn that has
-/// ended — the runner's test helper that drives a turn to its end on a runtime
+/// taking back what a plan answered, asking the backend the sandbox panel
+/// shows, and joining a turn that has ended — the runner's test helper that drives a turn to its end on a runtime
 /// of the test's own, the two performance probes waiting, on their own main
 /// thread, for each call they time on a runtime of the probe's own, and the
 /// lines inside the `#[cfg(test)] mod tests` of the sandbox's redaction and of
@@ -254,11 +254,18 @@ const BLOCK_ON_ALLOWED: &[(&str, &str, usize)] = &[
         "runtime.block_on(crucible_app::sandbox::confinement(&here, &home))",
         1,
     ),
-    // The drawing thread, answering a command, asking the backend the sandbox
-    // panel shows, and joining a turn that ended.
+    // The drawing thread, answering a command, taking back what a plan asked
+    // between turns answered (waited for only where no key is read; a reader
+    // of keys takes it once it has come, or gives it up at a key), asking the
+    // backend the sandbox panel shows, and joining a turn that ended.
     (
         "src/cli/client.rs",
-        ".block_on(perform(conversation, &request, &self.desk(&providers)));",
+        ".block_on(perform(conversation, request, &self.desk(&providers)));",
+        1,
+    ),
+    (
+        "src/cli/client.rs",
+        "let performed = match self.runtime.block_on(&mut out.answer) {",
         1,
     ),
     (

@@ -231,7 +231,8 @@ impl<'a> AgentLoop<'a> {
             .runner
             .state
             .limits
-            .and_then(|limits| limits.exhausted(SystemTime::now()))
+            .as_ref()
+            .and_then(|limits| limits.exhausted(self.runner.model(), SystemTime::now()))
         {
             Some((window, resets_at)) => Err(TurnError::PlanLimit {
                 window: Some(window),

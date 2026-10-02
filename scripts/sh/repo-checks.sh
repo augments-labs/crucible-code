@@ -1298,9 +1298,11 @@ kinds=$(sed -n '/pub const KINDS: \[/,/\];/p' "$request_owner/command.rs" | grep
 # holds and changes nothing either. Changing a setting, the twenty-third, writes
 # one row of the settings menu to the user's file, and no row is a permission,
 # the sandbox or an account: the menu's own test refuses a row over a key that
-# loosens what crucible does unasked. One more is one nobody has asked this of.
-if (($(grep -c . <<<"$kinds") != 23)); then
-    printf '    FAIL the client contract no longer has the 23 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 23 in this check\n'
+# loosens what crucible does unasked. Asking a plan for its limits, the
+# twenty-fourth, reads figures the vendor keeps about the credential already in
+# use and changes nothing either. One more is one nobody has asked this of.
+if (($(grep -c . <<<"$kinds") != 24)); then
+    printf '    FAIL the client contract no longer has the 24 commands the five were picked out of; decide whether the new one changes what a session may do, then move the 24 in this check\n'
     failed=1
 fi
 while IFS= read -r word; do
@@ -1349,11 +1351,13 @@ done <<<"$decided"
 # an adapter that reads a format of its own and builds the command: the variants
 # are public, and no `decode` is named on that road. So the files that name one
 # of the five are written down too. They are the terminal, which builds them
-# from keys pressed on the host, and the application, which performs them. A
+# from keys pressed on the host, and the application, which performs them, or,
+# at the door that asks a plan for its limits, refuses them unperformed. A
 # file that joins them is one more place a session's mode, sandbox or account
 # can be changed from, and it is added here by somebody who looked at where its
 # commands come from.
-naming='crates/crucible-app/src/client/performing.rs
+naming='crates/crucible-app/src/client/asking.rs
+crates/crucible-app/src/client/performing.rs
 crates/crucible-app/src/client/turning.rs
 src/cli/converse.rs
 src/cli/converse/command.rs

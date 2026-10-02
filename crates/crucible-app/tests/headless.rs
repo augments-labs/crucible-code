@@ -30,8 +30,8 @@ use crucible_app::{AppError, Conversation, remember};
 use crucible_auth::{Store, StoredCredentials};
 use crucible_config::{Home, Settings};
 use crucible_models::{
-    Delta, DeltaStream, Effort, PromptCacheCapabilities, PromptCacheRoute, Provider, ProviderError,
-    Request,
+    Asked, Delta, DeltaStream, Effort, PromptCacheCapabilities, PromptCacheRoute, Provider,
+    ProviderError, Request,
 };
 use crucible_runner::{Event, EventEnvelope, Runner, Tools, Turned};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
@@ -117,6 +117,10 @@ struct Script {
     asked: Arc<AtomicUsize>,
     /// The plan windows every response says its vendor reported.
     limits: Option<PlanWindows>,
+    /// What its plan answers when asked, where it has a source to ask.
+    answering: Option<fn() -> Asked>,
+    /// How many times its plan was asked.
+    limits_asked: Arc<AtomicUsize>,
 }
 
 impl Script {
@@ -127,6 +131,16 @@ impl Script {
             rounds: Mutex::new(rounds.into_iter()),
             asked: Arc::default(),
             limits: None,
+            answering: None,
+            limits_asked: Arc::default(),
+        }
+    }
+
+    /// This, with a plan that answers `answer` each time it is asked.
+    fn answering(self, answer: fn() -> Asked) -> Self {
+        Self {
+            answering: Some(answer),
+            ..self
         }
     }
 
@@ -194,8 +208,17 @@ impl Provider for Script {
                 .next()
                 .unwrap_or_default();
 
-            Ok(Box::new(Reading(round.into_iter(), self.limits)) as Box<dyn DeltaStream>)
+            Ok(Box::new(Reading(round.into_iter(), self.limits.clone())) as Box<dyn DeltaStream>)
         })
+    }
+
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        let answer = self.answering?;
+        let asked = Arc::clone(&self.limits_asked);
+        Some(Box::pin(async move {
+            asked.fetch_add(1, Ordering::Relaxed);
+            answer()
+        }))
     }
 }
 
@@ -209,7 +232,7 @@ impl DeltaStream for Reading {
     }
 
     fn limits(&self) -> Option<PlanWindows> {
-        self.1
+        self.1.clone()
     }
 }
 

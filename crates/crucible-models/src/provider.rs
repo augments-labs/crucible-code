@@ -12,10 +12,12 @@
 //! `/cache cleanup` and the retirement ahead of an identity switch cross it on
 //! the thread that asked, which in the terminal is the one that draws.
 //!
-//! Opening a stream and reading from it are the two things here that wait on
-//! the world, so they hand back a [`BoxFuture`] that borrows no more than the
-//! call was given. Everything else a provider answers — its name, what it can
-//! spell, what it would encode for a request — describes it, and stays
+//! Opening a stream and reading from it wait on the world, so they hand back
+//! a [`BoxFuture`] that borrows no more than the call was given. So does
+//! asking a plan how much of its limits is used ([`Provider::ask_limits`]),
+//! whose future borrows nothing, so that it can be waited on away from the
+//! thread that asked. Everything else a provider answers — its name, what it
+//! can spell, what it would encode for a request — describes it, and stays
 //! synchronous.
 
 use std::fmt;
@@ -805,6 +807,32 @@ pub trait Provider: Send + Sync {
         let _ = model;
         FastForm::None
     }
+
+    /// Asks the vendor how much of the plan behind this credential is used,
+    /// where the vendor has a source a credential like it can read.
+    ///
+    /// `None` — the default — is no source: an API key, a gateway, or a plan
+    /// whose vendor publishes none. The future borrows nothing from the
+    /// provider, so it can be waited on away from the thread that asked; it
+    /// sends one request with the credential already given, to the vendor's
+    /// own host, and nothing else. Dropping it closes the request.
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        None
+    }
+}
+
+/// What asking a plan how much of its limits is used came to.
+#[derive(Debug)]
+pub enum Asked {
+    /// The plan's answer, which replaces what was known.
+    Answered(PlanWindows),
+
+    /// The source refused the credential or is not there to ask: asking again
+    /// with the same credential would be refused the same way.
+    Closed,
+
+    /// Anything else, which leaves what was known standing.
+    Failed(ProviderError),
 }
 
 impl fmt::Debug for dyn Provider {

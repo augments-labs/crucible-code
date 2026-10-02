@@ -8,7 +8,9 @@
 //! and `/mode`. **Config** is one row per setting the configuration declares
 //! a row for — the list and the reasons for every key without one belong to
 //! the configuration crate, which holds the two together. **Usage** is the
-//! body of `/usage`, drawn at the panel's width.
+//! body of `/usage`, drawn at the panel's width; turning to it between turns
+//! asks the plan as opening `/usage` does, and draws the answer when it comes;
+//! closed before it came, the panel gives the question up as `/usage` does.
 //!
 //! **A change is a request.** Enter or space asks the application, through the
 //! client contract, to write one key to the user's own file — the file and the
@@ -38,7 +40,7 @@ use crucible_tui::{
     Caret, Glyphs, Key, Pressed, Renderer, Row, Slot, TabRow, Terminal, columns, fold,
 };
 
-use crate::cli::client::astray;
+use crate::cli::client::{Out, astray};
 use crate::cli::style::glyph_set;
 use crate::cli::{Fatal, sends};
 
@@ -167,7 +169,7 @@ struct Opened {
 }
 
 /// Everything the panel shows and where the keys have left it.
-struct Panel<'a> {
+struct Panel {
     tab: Tab,
     lines: Vec<Line>,
     /// Which of the rows the search leaves is marked.
@@ -184,8 +186,13 @@ struct Panel<'a> {
     furthest: usize,
     status: Vec<Fact>,
     heading: String,
-    usage: &'a api::Usage,
+    usage: api::Usage,
     clock: Clock,
+    /// The question out to the plan, until it is answered.
+    out: Option<Out>,
+    /// The tab the panel was last looked at on with no key pressed, so that
+    /// turning to Usage is seen once.
+    looked: Option<Tab>,
     /// The syntax themes this build reads code in.
     themes: Vec<String>,
 }
@@ -215,7 +222,10 @@ pub(super) fn run<T: Terminal>(
         mode: conversation.runner().mode(),
         session: conversation.session().id().cloned(),
     };
-    stood(renderer, terms, &counted, |_| Ok(()))
+    let mut watch = |panel: &mut Panel| panel.watched(terms, conversation);
+    let out = stood(renderer, terms, &counted, |_| Ok(()), Some(&mut watch))?;
+    usage::closed(out, terms, conversation);
+    Ok(())
 }
 
 /// Opens the panel over a running turn, with what that turn last reported.
@@ -229,28 +239,48 @@ pub(super) fn live<T: Terminal>(
     counted: &Counted,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
-    stood(renderer, terms, counted, while_waiting)
+    // Nothing is asked over a running turn, so nothing is out once it closes.
+    stood(renderer, terms, counted, while_waiting, None).map(drop)
 }
 
 /// Stands the panel until it is closed, writing each change as it is asked
-/// for, and leaves a row for each change behind it.
+/// for, and leaves a row for each change behind it. With `watch`, the panel
+/// is looked at again every [`usage::BEAT`] with no key pressed; mid-turn
+/// there is no watch, and `while_waiting` keeps the turn's text moving.
+///
+/// Hands back the question the Usage tab put to the plan, where it was still
+/// out as the panel closed, for the caller to end with [`usage::closed`].
 fn stood<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     counted: &Counted,
     mut while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
-) -> Result<(), Fatal> {
+    mut watch: Option<&mut dyn FnMut(&mut Panel) -> Moved>,
+) -> Result<Option<Out>, Fatal> {
     let mut panel = Panel::new(terms, counted);
     let mut changed: Vec<String> = Vec::new();
     loop {
-        let ended = region::stand_while(
-            renderer,
-            |_| terms.style(),
-            &mut panel,
-            |panel, columns, room| panel.laid(columns, room, terms.style().glyphs()),
-            |pressed, panel| panel.walked(pressed),
-            &mut while_waiting,
-        )?;
+        let laid =
+            |panel: &mut Panel, columns, room| panel.laid(columns, room, terms.style().glyphs());
+        let ended = match watch.as_mut() {
+            Some(watch) => region::stand_watching(
+                renderer,
+                |_| terms.style(),
+                &mut panel,
+                laid,
+                |pressed, panel| panel.walked(pressed),
+                usage::BEAT,
+                |panel| watch(panel),
+            )?,
+            None => region::stand_while(
+                renderer,
+                |_| terms.style(),
+                &mut panel,
+                laid,
+                |pressed, panel| panel.walked(pressed),
+                &mut while_waiting,
+            )?,
+        };
         match ended {
             Ended::Took => {
                 if let Some(said) = settle(renderer, terms, &mut panel) {
@@ -260,10 +290,14 @@ fn stood<T: Terminal>(
                     changed.push(said);
                 }
             }
-            Ended::Left => return left(renderer, &changed),
+            Ended::Left => {
+                left(renderer, &changed)?;
+                return Ok(panel.out.take());
+            }
             Ended::Cramped => {
                 left(renderer, &changed)?;
-                return listed(renderer, terms);
+                listed(renderer, terms)?;
+                return Ok(panel.out.take());
             }
         }
     }
@@ -307,7 +341,7 @@ fn listed<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Result<(), 
 fn settle<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
-    panel: &mut Panel<'_>,
+    panel: &mut Panel,
 ) -> Option<String> {
     let (at, word) = panel.asked.take()?;
     let glyphs = terms.style().glyphs();
@@ -519,8 +553,8 @@ impl Line {
     }
 }
 
-impl<'a> Panel<'a> {
-    fn new(terms: &Terms, counted: &'a Counted) -> Self {
+impl Panel {
+    fn new(terms: &Terms, counted: &Counted) -> Self {
         let glyphs = terms.style().glyphs();
         let serving = counted.serving;
         let signed = serving.and_then(|name| usage::signed(terms, name));
@@ -550,8 +584,10 @@ impl<'a> Panel<'a> {
                 glyphs,
             ),
             heading,
-            usage: &counted.usage,
+            usage: counted.usage.clone(),
             clock: Clock::system(),
+            out: None,
+            looked: None,
             themes: crucible_tui::syntax::every_theme(),
         }
     }
@@ -581,6 +617,20 @@ impl<'a> Panel<'a> {
     #[cfg(test)]
     fn asked_word(&self) -> Option<&str> {
         self.asked.as_ref().map(|(_, word)| word.as_str())
+    }
+
+    /// What happened with no key pressed: the Usage tab turned to, which
+    /// asks the plan, or the plan's answer come.
+    fn watched(&mut self, terms: &Terms, conversation: &mut Conversation) -> Moved {
+        let turned = self.tab == Tab::Usage && self.looked != Some(Tab::Usage);
+        self.looked = Some(self.tab);
+        if turned && self.out.is_none() {
+            self.out = terms.ask_limits(conversation);
+            if self.out.is_some() {
+                return Moved::Redraw;
+            }
+        }
+        usage::answered_in(&mut self.out, &mut self.usage, terms, conversation, false)
     }
 
     /// What one key does.
@@ -863,7 +913,8 @@ impl<'a> Panel<'a> {
             },
             Tab::Usage => Body::counted(usage::body(
                 &self.heading,
-                self.usage,
+                &self.usage,
+                self.out.as_ref().map(Out::provider),
                 columns,
                 glyphs,
                 &self.clock,

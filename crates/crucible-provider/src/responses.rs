@@ -7,8 +7,9 @@
 //! called, the addresses the vendor serves and which of its services each one
 //! is, the headers it asks for beside the credential, the parts of the body
 //! only its own routes accept, how it asks for a fast answer and refuses one,
-//! how it counts what a response cost, how it words a failure, and what its
-//! prompt cache is known to do and to cost.
+//! how it counts what a response cost, how it words a failure, what its
+//! prompt cache is known to do and to cost, and where its plan says how much
+//! of its limits is used ([`asking`]).
 //!
 //! A vendor on this wire is a dialect and nothing else: a type that implements
 //! [`Dialect`], and a name for `Responses` over it. Every hook but the ones
@@ -29,16 +30,18 @@
 //! and so is a [`Credential`], which is what lets the whole protocol be tested
 //! against recorded bytes.
 
+mod asking;
 pub(crate) mod body;
 pub(crate) mod wire;
 
 use std::fmt;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_models::{
-    Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricing,
+    Asked, Delta, DeltaStream, FastForm, PromptCacheCapabilities, PromptCachePricing,
     PromptCacheProvenance, PromptCacheRoute, Provider, ProviderError, Request, Served, Speed,
 };
 use crucible_runtime::{BoxFuture, Cancel};
@@ -53,11 +56,22 @@ use crate::json::Object;
 use crate::refusal::{Plan, PlanRule, Rules, refused_at};
 use crate::sse::SseEvent;
 use crate::stream::{Limited, Response};
-use crate::transport::{Named, Transport};
+use crate::transport::{Named, Reads, Transport, reads_none};
 
 /// What writes a field the vendor's automatic prefix cache reads, into the
 /// body being written.
 pub(crate) type Hint = fn(&mut Object<'_>);
+
+/// Where a vendor's plan says how much of its limits is used, and how what it
+/// says there is read.
+#[derive(Debug, Clone, Copy)]
+pub struct Usage {
+    /// The address asked, on the vendor's own host.
+    pub(crate) url: &'static str,
+    /// The windows an answer says, read from one that arrived at the instant
+    /// given; `None` where it is not the shape the vendor answers in.
+    pub(crate) read: fn(&Value, SystemTime) -> Option<PlanWindows>,
+}
 
 /// What a price is asked for: one model, at one revision, for a prompt of
 /// one size kept for one time, on one day.
@@ -245,14 +259,23 @@ pub trait Dialect: Sized + Send + Sync + 'static {
         None
     }
 
-    /// The response headers `route` reports its subscription's usage windows
-    /// in, which the transport hands back and nothing else. None, by default.
-    fn limit_headers(route: Self::Route) -> &'static [&'static str] {
+    /// Which response headers `route` reports its subscription's usage
+    /// windows in, which the transport hands back and nothing else. None, by
+    /// default.
+    fn limit_headers(route: Self::Route) -> Option<Reads> {
         let _ = route;
-        &[]
+        None
     }
 
-    /// The usage windows `named`, the headers [`Self::limit_headers`] named,
+    /// Where `route`'s plan says how much of its limits is used, and how its
+    /// answer is read. None, by default: a route with no such source is never
+    /// asked.
+    fn usage_source(route: Self::Route) -> Option<Usage> {
+        let _ = route;
+        None
+    }
+
+    /// The usage windows `named`, the headers [`Self::limit_headers`] reads,
     /// say, read from a response that arrived at `arrived`; `None` where they
     /// report no window crucible knows.
     fn limits(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
@@ -357,8 +380,8 @@ impl Replay for Plain {
 
 /// A Responses provider, speaking `D`'s dialect.
 pub struct Responses<D: Dialect> {
-    credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    credential: Arc<dyn Credential>,
+    transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     credential_scope: CredentialScopeId,
     dialect: PhantomData<D>,
@@ -392,8 +415,8 @@ impl<D: Dialect> Responses<D> {
     ) -> Self {
         let credential_scope = credential.scope();
         Self {
-            credential,
-            transport,
+            credential: credential.into(),
+            transport: transport.into(),
             endpoint,
             credential_scope,
             dialect: PhantomData,
@@ -505,6 +528,19 @@ impl<D: Dialect> Provider for Responses<D> {
         self.stream_at(request, Speed::Standard, cancel)
     }
 
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        // Only the vendor's own services are asked: a gateway's address is not
+        // where the vendor keeps a plan.
+        let usage = self.vendor().and_then(D::usage_source)?;
+        Some(Box::pin(asking::ask(
+            D::NAME,
+            usage,
+            Arc::clone(&self.credential),
+            Arc::clone(&self.transport),
+            D::headers,
+        )))
+    }
+
     fn stream_at<'a>(
         &'a self,
         request: Request<'a>,
@@ -541,7 +577,9 @@ impl<D: Dialect> Provider for Responses<D> {
                     &mut outgoing,
                     body,
                     cancel,
-                    self.vendor().map_or(&[][..], D::limit_headers),
+                    self.vendor()
+                        .and_then(D::limit_headers)
+                        .unwrap_or(reads_none),
                 )
                 .await;
             let redactions = outgoing.redactions();
@@ -554,7 +592,7 @@ impl<D: Dialect> Provider for Responses<D> {
             let arrived = SystemTime::now();
             let limits = self
                 .vendor()
-                .filter(|route| !D::limit_headers(*route).is_empty())
+                .and_then(D::limit_headers)
                 .and_then(|_| D::limits(response.named(), arrived));
 
             if response.status() != 200 {
@@ -565,6 +603,7 @@ impl<D: Dialect> Provider for Responses<D> {
                     rule,
                     arrived,
                     reading: limits,
+                    model: request.model,
                 });
                 let error = refused_at(
                     D::NAME,

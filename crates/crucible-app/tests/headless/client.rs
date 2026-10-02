@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
@@ -17,11 +17,12 @@ use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_app::switching::{LoggedIn, LoggedOut};
 use crucible_client_api::{
     Capabilities, ClearOutcome, Command, Correlation, Cost, Decision, ErrorCode, Forced, Lasting,
-    Limit, Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending,
-    PendingId, Percent, Progress, Prompt, Refusal, Request, Response, ResumeOutcome, Ruling,
-    SettingOutcome, Snapshot, Stop, Theme, TurnOutcome,
+    Limit, LimitGroup, Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette,
+    Pending, PendingId, Percent, Progress, Prompt, Reading, Refusal, Request, Response,
+    ResumeOutcome, Ruling, SettingOutcome, Snapshot, Stop, Theme, TurnOutcome,
+    Window as LimitWindow,
 };
-use crucible_models::Delta;
+use crucible_models::{Asked, Delta, ProviderError};
 use crucible_runner::{EventEnvelope, Runner, Tools};
 use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
@@ -30,8 +31,8 @@ use crucible_tools::{
     ToolError, ToolOutput,
 };
 use crucible_types::{
-    AgentId, InputTokenUsage, PlanWindows, ProviderUsage, StopReason, ToolArgs, ToolId, Window,
-    WindowReading,
+    AgentId, GroupName, InputTokenUsage, ModelGroup, ModelKey, PlanWindows, ProviderUsage, Scope,
+    StopReason, ToolArgs, ToolId, Window, WindowReading,
 };
 
 use super::{Desk as Standing, Failed, Script, Tree, saying, unset};
@@ -290,8 +291,10 @@ fn turned(
     drop(events);
 
     let mut streamed = Vec::new();
+    let serving = conversation.serving();
     for envelope in reported.try_iter() {
-        if let Some(progress) = client::progress(request.capabilities(), &envelope.into_event()) {
+        let event = envelope.into_event();
+        if let Some(progress) = client::progress(request.capabilities(), &event, serving) {
             streamed.push(Progress::decode(&progress.encode()?)?);
         }
     }
@@ -1590,6 +1593,31 @@ fn context_mid_turn_is_streamed_by_the_turn_and_refused_as_busy_at_every_door_it
 /// What `/usage` is answered with, asked for over the wire, and that asking
 /// reached no provider the host lent.
 fn usage(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Failed> {
+    performed(conversation, tree, Command::Usage)
+}
+
+/// The plan limits the responses in these tests report: 42% of the week used.
+fn weekly_at_42() -> Result<Limits, Failed> {
+    Ok(Limits {
+        groups: vec![LimitGroup {
+            model: None,
+            limits: vec![Limit {
+                window: LimitWindow::Weekly,
+                reading: Reading::Percent(Percent::new(42).ok_or("a percent")?),
+                resets_at: Some(1_700_600_000),
+            }],
+        }],
+        more: false,
+    })
+}
+
+/// What `command` is answered with by [`client::perform`], asked for over the
+/// wire, and that asking reached no provider the host lent.
+fn performed(
+    conversation: &mut Conversation,
+    tree: &Tree,
+    command: Command,
+) -> Result<Outcome, Failed> {
     let standing = Standing::new(tree, &[])?;
     let workspace = tree.workspace()?;
     let sessions = tree.sessions();
@@ -1601,7 +1629,7 @@ fn usage(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Failed
         environment: unset,
         notes,
     };
-    let request = Wire::default().sent(Command::Usage)?;
+    let request = Wire::default().sent(command)?;
     let performed = super::runtime()?.block_on(client::perform(conversation, &request, &desk));
     assert!(standing.reached().is_empty());
 
@@ -1661,16 +1689,7 @@ fn usage_is_read_off_the_runner_and_asks_no_vendor_anything() -> Result<(), Fail
     assert!(usage.used.api_ms <= usage.used.wall_ms, "{usage:?}");
     assert_eq!(usage.context.model, before.model);
     assert_eq!(usage.context.left, before.left);
-    assert_eq!(
-        usage.limits,
-        Limits {
-            weekly: Some(Limit {
-                used: Percent::new(42).ok_or("a percent")?,
-                resets_at: Some(1_700_600_000),
-            }),
-            ..Limits::default()
-        }
-    );
+    assert_eq!(usage.limits, weekly_at_42()?);
     assert_eq!(client::snapshot(&conversation), before);
     Ok(())
 }
@@ -1749,16 +1768,7 @@ fn usage_mid_turn_is_streamed_with_the_figures_the_turn_last_reported() -> Resul
         })
         .next_back()
         .ok_or_else(|| format!("no plan windows were streamed: {streamed:?}"))?;
-    assert_eq!(
-        limits,
-        &Limits {
-            weekly: Some(Limit {
-                used: Percent::new(42).ok_or("a percent")?,
-                resets_at: Some(1_700_600_000),
-            }),
-            ..Limits::default()
-        }
-    );
+    assert_eq!(limits, &weekly_at_42()?);
 
     // What was streamed is what the turn left: asked once it ended, the
     // answer agrees.
@@ -1770,5 +1780,277 @@ fn usage_mid_turn_is_streamed_with_the_figures_the_turn_last_reported() -> Resul
         (used.input, used.output, used.cache_read)
     );
     assert_eq!(&usage.limits, limits);
+    Ok(())
+}
+
+/// What the plan the conversation asks through answers when asked as of `now`
+/// at the doors a client that keeps going while it waits uses, `None` where
+/// nothing was sent.
+fn asked_limits(conversation: &mut Conversation, now: Instant) -> Result<Option<Limits>, Failed> {
+    let request = Wire::default().sent(Command::AskLimits)?;
+    let Some(question) = client::asking(conversation, &request, now)? else {
+        return Ok(None);
+    };
+    let answered = super::runtime()?.block_on(question.answered());
+    match client::asked(conversation, answered).outcome() {
+        Outcome::Usage(usage) => Ok(Some(usage.limits)),
+        other => Err(format!("an answer was not read as usage: {other:?}").into()),
+    }
+}
+
+/// A plan's answer: 10% of five hours, and a model's group of its own.
+fn plan_answer() -> Asked {
+    let at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let slug = "gpt-5.3-codex-spark";
+    let spark = GroupName::new(slug).map_or(Scope::Plan, |name| {
+        Scope::Model(ModelGroup::new(name, ModelKey::exact(slug)))
+    });
+    Asked::Answered(
+        PlanWindows::new(at)
+            .with(Window::FiveHour, WindowReading::new(10, None))
+            .within(spark, Window::Weekly, WindowReading::new(3, None)),
+    )
+}
+
+fn plan_answered_as_crossed() -> Result<Limits, Failed> {
+    Ok(Limits {
+        groups: vec![
+            LimitGroup {
+                model: None,
+                limits: vec![Limit {
+                    window: LimitWindow::FiveHour,
+                    reading: Reading::Percent(Percent::new(10).ok_or("a percent")?),
+                    resets_at: None,
+                }],
+            },
+            LimitGroup {
+                model: Some(Name::new("gpt-5.3-codex-spark")?),
+                limits: vec![Limit {
+                    window: LimitWindow::Weekly,
+                    reading: Reading::Percent(Percent::new(3).ok_or("a percent")?),
+                    resets_at: None,
+                }],
+            },
+        ],
+        more: false,
+    })
+}
+
+/// Asked whole over the wire, as a client with nothing else to do sends it,
+/// the plan's answer replaces what the responses reported, and the next
+/// `/usage` reads it with nothing more sent.
+#[test]
+fn limit_an_answer_replaces_what_the_responses_reported() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-answer")?;
+    let resets = UNIX_EPOCH + Duration::from_secs(1_700_600_000);
+    let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .with(Window::Weekly, WindowReading::new(42, Some(resets)));
+    let script = Script::new(vec![reporting()?])
+        .limiting(windows)
+        .answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let request = Wire(500).sent(prompt("one")?)?;
+    turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    let Outcome::Usage(before) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+    assert_eq!(before.limits, weekly_at_42()?);
+
+    let Outcome::Usage(asked) = performed(&mut conversation, &tree, Command::AskLimits)? else {
+        return Err("asking was not answered with what the session used".into());
+    };
+
+    assert_eq!(sent.load(Ordering::Relaxed), 1);
+    assert_eq!(asked.limits, plan_answered_as_crossed()?);
+    let Outcome::Usage(after) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+    assert_eq!(after.limits, asked.limits);
+    assert_eq!(sent.load(Ordering::Relaxed), 1, "reading asks nobody");
+    Ok(())
+}
+
+#[test]
+fn limit_a_second_ask_within_a_minute_is_not_sent() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-floor")?;
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+
+    assert!(asked_limits(&mut conversation, first)?.is_some());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(59))?.is_none());
+    assert_eq!(sent.load(Ordering::Relaxed), 1);
+    assert!(asked_limits(&mut conversation, first + Duration::from_mins(1))?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 2);
+    Ok(())
+}
+
+/// A question given up on before the plan answered it still counts toward
+/// the minute: crucible cannot tell whether it had left, so every question
+/// started counts. The next opening within the minute asks nothing; one a
+/// minute later asks.
+#[test]
+fn limit_an_ask_given_up_unanswered_still_holds_the_minute() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-given-up")?;
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+    let request = Wire::default().sent(Command::AskLimits)?;
+
+    let question = client::asking(&mut conversation, &request, first)?;
+    assert!(question.is_some(), "the plan was not asked");
+    drop(question);
+
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(1))?.is_none());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(59))?.is_none());
+    assert!(asked_limits(&mut conversation, first + Duration::from_mins(1))?.is_some());
+    assert_eq!(
+        sent.load(Ordering::Relaxed),
+        1,
+        "only the one a minute later"
+    );
+    Ok(())
+}
+
+/// An ask the content-use hold refused never left, so it leaves the next
+/// opening free to ask, whether the conversation held it back or the client
+/// that would have sent it did.
+#[test]
+fn limit_an_ask_the_hold_refused_leaves_the_next_free_to_ask() -> Result<(), Failed> {
+    fn held() -> Asked {
+        Asked::Failed(ProviderError::Held("subscription:openai".into()))
+    }
+    let tree = Tree::new("client-limit-held-sent")?;
+    let script = Script::new(Vec::new()).answering(held);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+
+    assert!(asked_limits(&mut conversation, first)?.is_some());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(1))?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 2);
+    Ok(())
+}
+
+/// A credential the source refused (a 401, 403 or 404) is not asked again
+/// this session; any other failure is asked again once the minute is out,
+/// and leaves what was known standing.
+#[test]
+fn limit_a_refused_credential_is_not_asked_again_and_a_failed_ask_is() -> Result<(), Failed> {
+    fn refused() -> Asked {
+        Asked::Closed
+    }
+    fn failed() -> Asked {
+        Asked::Failed(ProviderError::Refused {
+            provider: "script",
+            status: 500,
+            message: "the plan's usage was not given".into(),
+        })
+    }
+    let later = Duration::from_mins(2);
+    for (answer, sends) in [(refused as fn() -> Asked, 1), (failed, 2)] {
+        let tree = Tree::new("client-limit-refused")?;
+        let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000)).with(
+            Window::Weekly,
+            WindowReading::new(42, Some(UNIX_EPOCH + Duration::from_secs(1_700_600_000))),
+        );
+        let script = Script::new(vec![reporting()?])
+            .limiting(windows)
+            .answering(answer);
+        let sent = Arc::clone(&script.limits_asked);
+        let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+        let request = Wire(500).sent(prompt("one")?)?;
+        turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+        let first = Instant::now();
+
+        let known = asked_limits(&mut conversation, first)?;
+        assert_eq!(known, Some(weekly_at_42()?), "what was known stands");
+        asked_limits(&mut conversation, first + later)?;
+
+        assert_eq!(sent.load(Ordering::Relaxed), sends, "{:?}", answer());
+    }
+    Ok(())
+}
+
+/// The plan's source is on a vendor's host like any other: while the use of
+/// what is sent there waits on the user's yes, nothing is asked of it.
+#[test]
+fn limit_nothing_is_asked_before_the_hold_allows_it() -> Result<(), Failed> {
+    use crucible_app::content_use::{Consent, Routes, Serving};
+
+    let tree = Tree::new("client-limit-held")?;
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let consent = Consent::new(Routes::production());
+    let mut conversation = conversation.consenting(consent.clone());
+    consent.served(
+        "openai",
+        Some(Serving {
+            route: Some("subscription:openai".to_owned()),
+            at: None,
+        }),
+    );
+    let first = Instant::now();
+
+    assert!(asked_limits(&mut conversation, first)?.is_none());
+    assert_eq!(sent.load(Ordering::Relaxed), 0);
+
+    consent.give("subscription:openai");
+    assert!(asked_limits(&mut conversation, first)?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+/// A provider with no source, and a conversation asking no provider, send
+/// nothing; asking is answered with what is known, as `/usage` is.
+#[test]
+fn limit_with_no_source_nothing_is_sent_and_what_is_known_is_answered() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-sourceless")?;
+    let script = Script::new(Vec::new());
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    assert!(asked_limits(&mut conversation, Instant::now())?.is_none());
+    let Outcome::Usage(usage) = performed(&mut conversation, &tree, Command::AskLimits)? else {
+        return Err("asking was not answered with what the session used".into());
+    };
+    assert!(usage.limits.is_empty(), "{usage:?}");
+
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, None)?;
+    assert!(asked_limits(&mut conversation, Instant::now())?.is_none());
+    assert_eq!(sent.load(Ordering::Relaxed), 0);
+    Ok(())
+}
+
+/// An answer is about the credential it was asked through: handed to a
+/// conversation asking through another, it is set aside.
+#[test]
+fn limit_an_answer_about_another_credential_is_set_aside() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-elsewhere")?;
+    let (mut here, _) = asking_on(
+        &tree,
+        Script::new(Vec::new()).answering(plan_answer),
+        Some("openai"),
+    )?;
+    let (mut there, _) = asking_on(
+        &tree,
+        Script::new(Vec::new()).answering(plan_answer),
+        Some("openai"),
+    )?;
+    let request = Wire::default().sent(Command::AskLimits)?;
+    let question =
+        client::asking(&mut here, &request, Instant::now())?.ok_or("the plan was not asked")?;
+    assert_eq!(question.provider(), "openai");
+    let answered = super::runtime()?.block_on(question.answered());
+
+    let Outcome::Usage(usage) = client::asked(&mut there, answered).outcome() else {
+        return Err("an answer was not read as usage".into());
+    };
+
+    assert!(usage.limits.is_empty(), "{usage:?}");
     Ok(())
 }

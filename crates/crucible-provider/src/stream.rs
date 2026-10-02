@@ -240,7 +240,7 @@ impl<S: DeltaStream> DeltaStream for Limited<S> {
     }
 
     fn limits(&self) -> Option<PlanWindows> {
-        Some(self.limits)
+        Some(self.limits.clone())
     }
 }
 

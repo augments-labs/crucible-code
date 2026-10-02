@@ -1252,6 +1252,20 @@ pub fn capabilities<'a>(
     providers.find(provider).and_then(|arm| arm.model(model))
 }
 
+/// What this build's offer list calls `model` of `provider`, where it offers
+/// it.
+///
+/// Matched exactly, as [`Arm::model`] is: a model this build was not built
+/// with is one it has no name for, and the caller keeps the vendor's.
+pub fn model_shown(provider: &str, model: &str) -> Option<&'static str> {
+    PROVIDERS
+        .iter()
+        .filter(|served| served.name == provider)
+        .flat_map(|served| served.models)
+        .find(|one| one.name == model)
+        .map(|one| one.shown)
+}
+
 /// How [`re_serving`] reads one environment variable by name, or learns it is
 /// not set.
 pub type Lookup = Box<dyn Fn(&str) -> Option<String>>;

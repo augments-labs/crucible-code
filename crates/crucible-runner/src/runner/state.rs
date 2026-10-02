@@ -77,10 +77,11 @@ pub struct RunState {
     /// What the session has used so far.
     pub(super) totals: Totals,
 
-    /// The plan windows the last response from the credential in force said
-    /// it had used, where it said.
+    /// The plan windows the credential in force was last said to have used,
+    /// where it was said.
     ///
-    /// One reading, overwritten by each response that carries one. The
+    /// One reading, replaced by an answer to asking the plan and updated by
+    /// each response since, limit by limit, as far as it names them. The
     /// runner serves one credential at a time, so the reading is that
     /// credential's; it is dropped when the provider or the model changes,
     /// because a window another credential or another model's family counted

@@ -468,13 +468,13 @@ pub enum Event {
         totals: Totals,
     },
 
-    /// How much of each plan window the vendor said had been used, read off
-    /// the headers of a response this turn received.
+    /// How much of each plan window the vendor said had been used, once the
+    /// headers of a response this turn received updated the reading.
     ///
     /// Only a vendor that sends its windows on its responses posts this, and
     /// only where the response carried a window the provider could read.
     PlanLimits {
-        /// The windows, as of the response that carried them.
+        /// The whole reading, as of the response that last updated it.
         windows: PlanWindows,
     },
 

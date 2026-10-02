@@ -69,6 +69,9 @@ pub struct Conversation {
     /// What the two web tools answer through: built for the provider and model
     /// being asked, and built again by each switch of either.
     pub(crate) web: crate::following::Following,
+    /// When the plan behind each credential was last asked how much of its
+    /// limits is used, and which credentials are not to be asked again.
+    pub(crate) asks: crate::client::asking::Asks,
 }
 
 impl Conversation {
@@ -94,6 +97,7 @@ impl Conversation {
             reachable: false,
             consent: None,
             web: crate::following::Following::default(),
+            asks: crate::client::asking::Asks::default(),
         }
     }
 
