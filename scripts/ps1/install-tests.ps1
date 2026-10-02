@@ -63,6 +63,23 @@ switch ($machine.ToUpperInvariant()) {
     default { Stop-Test "no fixture for architecture $machine" }
 }
 
+# The user's PATH as this run found it, value and registry kind, read before
+# any install so that one changing it shows.
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+function Get-UserPath {
+    if ($key.GetValueNames() -notcontains 'Path') { return $null }
+    return [pscustomobject]@{
+        Value = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        Kind = $key.GetValueKind('Path')
+    }
+}
+$foundPath = Get-UserPath
+function Test-UserPathAsFound {
+    $now = Get-UserPath
+    if ($null -eq $foundPath) { return $null -eq $now }
+    return $null -ne $now -and $now.Value -ceq $foundPath.Value -and $now.Kind -eq $foundPath.Kind
+}
+
 $root = Join-Path ([IO.Path]::GetTempPath()) ('crucible-install-tests-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $root
 $savedNoColor = $env:NO_COLOR
@@ -158,44 +175,43 @@ try {
     if ($run.Status -ne 2) { Stop-Test "an archive without checksums exited $($run.Status)" }
     Assert-Contains $run.Err 'install: -Archive requires -Checksums and -Version' 'archive without checksums'
 
-    # PATH is left alone unless -AddToPath asks, which puts the directory first
-    # on the user's PATH and keeps the value's registry kind.
-    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-    $hadPath = $key.GetValueNames() -contains 'Path'
-    $savedPath = $null
-    $savedKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
-    if ($hadPath) {
-        $savedPath = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        $savedKind = $key.GetValueKind('Path')
+    # Every install above ran without -AddToPath, and left PATH alone.
+    if (-not (Test-UserPathAsFound)) { Stop-Test 'an install without -AddToPath changed the user PATH' }
+
+    # -AddToPath puts the directory first on the user's PATH and keeps the
+    # value's registry kind.
+    $added = Join-Path $root 'added'
+    $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $added, '-AddToPath'))
+    if ($run.Status -ne 0) { Stop-Test "an install with -AddToPath exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Out "Added $added to your user PATH; open a new terminal to run crucible." '-AddToPath'
+    # The check above would have seen this change.
+    if (Test-UserPathAsFound) { Stop-Test 'the user PATH reads as found after -AddToPath changed it' }
+    $wanted = $added
+    $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    if ($null -ne $foundPath) {
+        if ($foundPath.Value) { $wanted = "$added;$($foundPath.Value)" }
+        $kind = $foundPath.Kind
     }
-    try {
-        if ([string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) -ne
-            [string]$savedPath) {
-            Stop-Test 'an install without -AddToPath changed the user PATH'
-        }
-        $added = Join-Path $root 'added'
-        $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $added, '-AddToPath'))
-        if ($run.Status -ne 0) { Stop-Test "an install with -AddToPath exited $($run.Status): $($run.Err)" }
-        Assert-Contains $run.Out "Added $added to your user PATH; open a new terminal to run crucible." '-AddToPath'
-        $now = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        $wanted = $added
-        if ($savedPath) { $wanted = "$added;$savedPath" }
-        if ($now -ne $wanted) { Stop-Test "-AddToPath left the user PATH as '$now'" }
-        if ($key.GetValueKind('Path') -ne $savedKind) { Stop-Test '-AddToPath changed the registry kind of the user PATH' }
-        # A second run finds the directory on PATH and adds nothing.
-        $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $added, '-AddToPath'))
-        if ($run.Status -ne 0) { Stop-Test "a second install with -AddToPath exited $($run.Status): $($run.Err)" }
-        Assert-Lacks $run.Out 'PATH' 'second -AddToPath'
-        if ([string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) -ne
-            $wanted) {
-            Stop-Test 'a second -AddToPath added the directory again'
-        }
-    } finally {
-        if ($hadPath) { $key.SetValue('Path', $savedPath, $savedKind) } else { $key.DeleteValue('Path', $false) }
-        $key.Dispose()
-    }
+    $now = Get-UserPath
+    if ($null -eq $now) { Stop-Test '-AddToPath left no user PATH' }
+    if ($now.Value -cne $wanted) { Stop-Test "-AddToPath left the user PATH as '$($now.Value)'" }
+    if ($now.Kind -ne $kind) { Stop-Test '-AddToPath changed the registry kind of the user PATH' }
+    # A second run finds the directory on PATH and adds nothing.
+    $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $added, '-AddToPath'))
+    if ($run.Status -ne 0) { Stop-Test "a second install with -AddToPath exited $($run.Status): $($run.Err)" }
+    Assert-Lacks $run.Out 'PATH' 'second -AddToPath'
+    $now = Get-UserPath
+    if ($null -eq $now -or $now.Value -cne $wanted) { Stop-Test 'a second -AddToPath changed the user PATH again' }
 } finally {
     $env:NO_COLOR = $savedNoColor
+    if (-not (Test-UserPathAsFound)) {
+        if ($null -ne $foundPath) {
+            $key.SetValue('Path', $foundPath.Value, $foundPath.Kind)
+        } else {
+            $key.DeleteValue('Path', $false)
+        }
+    }
+    $key.Dispose()
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 [Console]::Out.WriteLine('install-tests.ps1: ok')
