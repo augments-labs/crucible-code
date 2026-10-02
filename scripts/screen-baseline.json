@@ -278,7 +278,7 @@
       "opened": [
         "Watched::launched( \"reach-elsewhere\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "2261d2e681001872d1a2a36e8376b14d9d28e77f6c1348ab62dfda59c02ec510"
+      "sha256": "5b4ec0ecfba37397906b3526b13a99c06155b87375987417687caeff292cef8d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__escape_while_room_is_being_made_stops_it_and_replaces_nothing.snap",

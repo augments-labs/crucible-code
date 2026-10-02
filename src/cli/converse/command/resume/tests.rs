@@ -1224,12 +1224,24 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
         )
     );
 
+    // The foot under its preview says what Enter does there, which is not
+    // what it does on a session of this directory.
+    let marked = stood.marked().expect("marked");
+    assert_eq!(
+        taken(marked, sample.workspace().root()),
+        "Enter to see how to resume · Esc to cancel"
+    );
+
     // The next key takes it down.
     pressed(Pressed::Key(Key::End), &mut stood, &here);
     assert_eq!(stood.told, None);
 
     // A session of this directory is taken as it always was.
     stood.standing.marked = at(&home, &stood);
+    assert_eq!(
+        taken(stood.marked().expect("marked"), sample.workspace().root()),
+        TAKES
+    );
     assert_eq!(
         pressed(Pressed::Key(Key::Enter), &mut stood, &here),
         Moved::Took

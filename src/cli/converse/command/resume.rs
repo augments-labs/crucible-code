@@ -97,6 +97,14 @@ const KEPT: usize = 256;
 /// and the way out is half of that decision.
 const TAKES: &str = "Enter to resume · Esc to cancel";
 
+/// What Enter and Esc do, said under a session recorded in another directory.
+///
+/// Enter there does not resume: it says the command that does, in the
+/// directory the session belongs to. Short enough to be whole in the preview
+/// pane of an eighty-column window, where "Esc to cancel" is the half that
+/// would be cut.
+const SHOWS: &str = "Enter to see how to resume · Esc to cancel";
+
 /// What a workspace nothing was ever recorded in says.
 const NEVER: &str = "no earlier session for this workspace";
 
@@ -682,7 +690,7 @@ fn stood<T: Terminal>(
                 takes: if stood.standing.renaming.is_some() {
                     ""
                 } else {
-                    TAKES
+                    marked.map_or(TAKES, |session| taken(session, &here.root))
                 },
                 nothing: &empty,
                 noview: NOVIEW,
@@ -815,6 +823,15 @@ fn pressed(arrived: Pressed, stood: &mut Stood, here: &Here) -> Moved {
             Moved::Redraw
         }
         _ => Moved::Took,
+    }
+}
+
+/// What the preview's foot says Enter does on `session`, standing at `root`.
+fn taken(session: &Recorded, root: &Path) -> &'static str {
+    if session.workspace() == root {
+        TAKES
+    } else {
+        SHOWS
     }
 }
 

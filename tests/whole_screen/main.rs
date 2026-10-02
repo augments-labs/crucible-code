@@ -1962,6 +1962,11 @@ fn enter_on_another_projects_session_says_how_to_resume_it_there() {
             .any(|row| row.contains("│ │ › tidy the stylesheet")),
         "{picture}"
     );
+    // Its foot says what Enter does to it, which is not resuming it here.
+    assert!(
+        picture.contains("│ Enter to see how to resume · Esc to cancel"),
+        "{picture}"
+    );
 
     // The id is this run's own, and at eighty columns only its start fits.
     insta::assert_snapshot!(reaching::unnamed(&picture, &planted.website));
