@@ -95,6 +95,11 @@ pub struct Choice {
     pub name: Text,
     /// What it means, where the question said.
     pub says: Text,
+    /// Whether the question marked it as the one to pick. It travels as a
+    /// field of its own, so `name` stays what is sent back to choose it, and
+    /// only for the choice that is: a question marks at most one, so the
+    /// others cost no value of the frame's ceiling.
+    pub recommended: bool,
 }
 
 /// One question a model put to the person.
@@ -243,10 +248,15 @@ impl Asked {
             .choices
             .iter()
             .map(|choice| {
-                Writing::new()
+                let written = Writing::new()
                     .text("name", &choice.name)
-                    .text("says", &choice.says)
-                    .finish()
+                    .text("says", &choice.says);
+                if choice.recommended {
+                    written.with("recommended", true)
+                } else {
+                    written
+                }
+                .finish()
             })
             .collect();
 
@@ -272,6 +282,11 @@ impl Asked {
                     let choice = Choice {
                         name: fields.text("name")?,
                         says: fields.text("says")?,
+                        recommended: fields
+                            .maybe("recommended")
+                            .map(|value| value.as_bool().ok_or(ErrorCode::Malformed))
+                            .transpose()?
+                            .unwrap_or(false),
                     };
                     fields.done()?;
                     Ok(choice)

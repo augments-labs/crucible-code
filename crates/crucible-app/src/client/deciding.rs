@@ -429,6 +429,7 @@ fn put(question: &Question) -> Option<Asked> {
                 (!name.truncated()).then(|| Choice {
                     name,
                     says: Text::cut(answer.says()),
+                    recommended: answer.is_recommended(),
                 })
             })
             .collect::<Option<_>>()?,
