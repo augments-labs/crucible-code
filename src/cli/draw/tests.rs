@@ -2088,10 +2088,10 @@ fn ruled_turn(style: Style) -> Vec<Row> {
     renderer.tail(60)
 }
 
-/// Every word and mark `rows` show, picked out the way a reader would: runs of
-/// anything but whitespace and the ASCII punctuation markdown writes its
-/// markers in.
-fn words_and_marks(rows: &[Row]) -> std::collections::BTreeSet<String> {
+/// Every word and mark `rows` show, in the order they show them, picked out
+/// the way a reader would: runs of anything but whitespace and the ASCII
+/// punctuation markdown writes its markers in.
+fn words_and_marks(rows: &[Row]) -> Vec<String> {
     rows.iter()
         .map(Row::text)
         .flat_map(|said| {
@@ -2100,6 +2100,24 @@ fn words_and_marks(rows: &[Row]) -> std::collections::BTreeSet<String> {
                 .map(str::to_owned)
                 .collect::<Vec<_>>()
         })
+        .collect()
+}
+
+/// The words of `wanted` that `shown` does not say in the same order, each
+/// time it is said: a word said twice and shown once is one of them.
+fn unsaid(wanted: &[String], shown: &[String]) -> Vec<String> {
+    let mut rest = shown.iter();
+    wanted
+        .iter()
+        .filter(|word| {
+            let mut ahead = rest.clone();
+            let found = ahead.any(|one| one == *word);
+            if found {
+                rest = ahead;
+            }
+            !found
+        })
+        .cloned()
         .collect()
 }
 
@@ -2152,11 +2170,7 @@ fn the_transcript_with_colour_off_shows_every_word_and_mark_colour_does() {
     let coloured = ruled_turn(Style::coloured());
     let plain = ruled_turn(Style::plain());
 
-    let shown = words_and_marks(&plain);
-    let lost: Vec<String> = words_and_marks(&coloured)
-        .difference(&shown)
-        .cloned()
-        .collect();
+    let lost = unsaid(&words_and_marks(&coloured), &words_and_marks(&plain));
     assert!(
         lost.is_empty(),
         "colour off loses {lost:?}: {:#?}",
