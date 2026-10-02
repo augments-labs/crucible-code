@@ -920,18 +920,19 @@ started anywhere begins with both. See [Providers and
 models](../providers/providers.md).
 
 `/release-notes` opens a list of releases, newest first, each with its date and
-how many entries it holds; the one you are running is marked `this version`.
-The list shows the eight newest and a last row, `all N releases`, that opens the
+how many entries it holds; the one you are running is marked `this version`. The
+list shows the eight newest and a last row, `all N releases`, that opens the
 rest in place. <kbd>Up</kbd> and <kbd>Down</kbd> (or the wheel) move,
 <kbd>Enter</kbd> prints that release alone into the transcript, and
 <kbd>Esc</kbd> closes the list. `/release-notes 0.41.1`, or `v0.41.1`, prints
-that release without the list, and `/release-notes all` prints every release into
-the transcript, oldest first: a row each for the older ones, saying how many
-entries each group held, then the ten newest in full. Without a keyboard to walk
-the list, `/release-notes` prints that same output. The notes are the changelog
-of the build you are running, built into it, so asking for them needs no network. Where a very narrow window would print
-more rows than the transcript keeps, the oldest rows are left out first, and the
-last row says how many.
+that release without the list, and `/release-notes all` prints every release
+into the transcript, oldest first: a row each for the older ones, saying how
+many entries each group held, then the ten newest in full. Without a keyboard,
+or in a window too short to hold the list, `/release-notes` prints that same
+output. The notes are the changelog of the build you are running, built into it,
+so asking for them needs no network. Where a very narrow window would print more
+rows than the transcript keeps, the oldest rows are left out first, and the last
+row says how many.
 
 ### A command typed while a turn runs
 
@@ -951,8 +952,9 @@ Enter depends on the command:
 - The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
-- **`/release-notes`** would print a thousand rows into the answer being
-  written, so it is refused on the same panel; ask for it once the turn ends.
+- **`/release-notes`** would stand a list over the answer being written, or
+  print every release into it, so it is refused on the same panel; ask for it
+  once the turn ends.
 - **A word that names no command**, typed alone, stands the same panel with
   the nearest names on it, and is not queued. With words after it the line is
   a prompt, and waits for the turn like any other.
