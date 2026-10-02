@@ -125,13 +125,16 @@ row() {
 }
 
 # The download so far against the size its response announced, or nothing
-# while that size is unknown.
+# while that size is unknown. The size comes off the network, so only digits
+# are taken: bash arithmetic would read any other word as a variable to expand.
 progress() {
     [[ -n $download_to && -s $download_headers ]] || return 0
     local total got room bar=
-    total=$(tr -d '\r' <"$download_headers" |
-        awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }')
-    ((total > 0)) || return 0
+    total=$(tr -d '\r' <"$download_headers" | awk '
+        tolower($1) == "content-length:" { n = ($2 ~ /^[0-9]+$/) ? $2 : "" }
+        END { print n }')
+    [[ $total =~ ^[0-9]{1,15}$ ]] && ((10#$total > 0)) || return 0
+    total=$((10#$total))
     got=0
     [[ ! -f $download_to ]] || got=$(wc -c <"$download_to" | tr -d ' ')
     ((got <= total)) || got=$total

@@ -478,7 +478,8 @@ if [[ -n ${INSTALL_TEST_CURL_FAIL:-} ]]; then
 fi
 asset=${INSTALL_TEST_RELEASE:?}/${url##*/}
 size=$(wc -c <"$asset" | tr -d ' ')
-[[ -z $headers ]] || printf 'HTTP/2 200\r\ncontent-length: %s\r\n\r\n' "$size" >"$headers"
+[[ -z $headers ]] ||
+    printf 'HTTP/2 200\r\ncontent-length: %s\r\n\r\n' "${INSTALL_TEST_CURL_LENGTH:-$size}" >"$headers"
 if [[ -n ${INSTALL_TEST_CURL_SLOW:-} ]]; then
     # Half the archive, long enough for a terminal to draw the bar at half.
     head -c $((size / 2)) "$asset" >"$output"
@@ -613,6 +614,23 @@ expect 'a terminal download' "$downloaded" '.  0.0 / 0.0 MB'
 expect 'a terminal download' "$downloaded" \
     "ok download            crucible-$version-linux-x86_64.tar.gz - 0.0 MB"
 expect 'a terminal download' "$downloaded" 'status=0'
+# A size that is not a count of bytes draws no bar, and is never evaluated:
+# bash would read `inf` as a variable, and a subscript in its value would run.
+for length in 1e400 -nan 12abc; do
+    hostile=$(in_download INSTALL_TEST_CURL_SLOW=1 INSTALL_TEST_CURL_LENGTH="$length" \
+        a=1 inf="a[\$(touch $scratch/length-ran)]" nan="a[\$(touch $scratch/length-ran)]")
+    [[ ! -e $scratch/length-ran ]] || {
+        echo "a Content-Length of $length ran a command" >&2
+        exit 1
+    }
+    refuse "a Content-Length of $length" "$hostile" 'install.sh: line'
+    # The bar's sizes read `got / total MB`.
+    [[ ! $(visible "$hostile") =~ [0-9]\ /\ [0-9] ]] || {
+        printf 'a Content-Length of %s drew a bar:\n%s\n' "$length" "$hostile" >&2
+        exit 1
+    }
+    expect "a Content-Length of $length" "$hostile" 'status=0'
+done
 refused=$(visible "$(in_download INSTALL_TEST_CURL_FAIL=1)")
 # `x` is right-aligned under `ok`, so the label starts in the same column.
 expect 'a failed terminal download' "$refused" \
