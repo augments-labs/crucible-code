@@ -183,7 +183,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "8afd17957a4893a14455306192733764ad91b35900eafb114f171b43adf37c42"
+      "sha256": "252abdbdeee3cc94e6b115dbf711895f66accf40e419b52ef5fb00b049d2aa41"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -191,7 +191,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "4732e6fc880bea4f43446eab0ffaf8b56e3746f4c35ff5650c886155ac7f9575"
+      "sha256": "03f801a89dffb51062d7b5de190c8c8acc38e286cc2936f9df6fc1ca247d4043"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
