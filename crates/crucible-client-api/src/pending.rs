@@ -95,10 +95,11 @@ pub struct Choice {
     pub name: Text,
     /// What it means, where the question said.
     pub says: Text,
-    /// Whether the question marked it as the one to pick. It travels as a
-    /// field of its own, so `name` stays what is sent back to choose it, and
-    /// only for the choice that is: a question marks at most one, so the
-    /// others cost no value of the frame's ceiling.
+    /// Whether the question marked it as the one to pick. The question it
+    /// came from marks at most one choice, and that is the first, which
+    /// `crucible_types::Question` holds. It travels as a field of its own, so
+    /// `name` stays what is sent back to choose it, and only for the choice
+    /// that is, so the others cost no value of the frame's ceiling.
     pub recommended: bool,
 }
 
@@ -248,15 +249,11 @@ impl Asked {
             .choices
             .iter()
             .map(|choice| {
-                let written = Writing::new()
+                Writing::new()
                     .text("name", &choice.name)
-                    .text("says", &choice.says);
-                if choice.recommended {
-                    written.with("recommended", true)
-                } else {
-                    written
-                }
-                .finish()
+                    .text("says", &choice.says)
+                    .maybe("recommended", choice.recommended.then_some(true))
+                    .finish()
             })
             .collect();
 
