@@ -984,8 +984,9 @@ fn a_pointer_on_the_scroll_rail_grows_the_mark_under_it() {
 #[test]
 fn the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window() {
     // Landed on by a click on its mark, the second prompt is in the band and
-    // its grown mark stands on the thumb rather than under it. The picture at
-    // 80 columns is the one a click on a mark lands on.
+    // its grown mark stands on the thumb rather than under it. This is the
+    // 40-column case; the 80-column one is
+    // `a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks`.
     let mut window = two_long_turns("scroll-rail-current-40", 40, 16);
     let marks = rail_rows(&window.picture(), '\u{25cf}');
     let mark = *marks.last().expect("the current prompt's mark");
