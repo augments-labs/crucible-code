@@ -495,8 +495,9 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // Ctrl+W and Ctrl+U are the terminal's own, older than readline and
         // still what the line discipline does when nothing has taken it off.
         // Somebody who has never learned a binding here has already learned
-        // these two.
-        KeyCode::Char('w') if bound => Pressed::Key(Key::RubWord),
+        // these two. Ctrl+W keeps a spelling of its own, apart from Backspace
+        // held below, because a listing may read the letter as its own key.
+        KeyCode::Char('w') if bound => Pressed::Key(Key::WordErase),
         KeyCode::Char('u') if bound => Pressed::Key(Key::RubToStart),
         KeyCode::Char('k') if bound => Pressed::Key(Key::RubToEnd),
 
@@ -766,9 +767,11 @@ mod tests {
     fn the_edits_a_shell_answers_to_reach_the_editor_here_too() {
         // The letters are free, and somebody who has never learned a binding in
         // this program has already learned Ctrl+W and Ctrl+U from their shell.
+        // Ctrl+W is spelled apart from Backspace held, though the editor does
+        // the same with both: a listing may read the letter as its own key.
         assert_eq!(
             meaning(control(KeyCode::Char('w'))),
-            Pressed::Key(Key::RubWord)
+            Pressed::Key(Key::WordErase)
         );
         assert_eq!(
             meaning(control(KeyCode::Char('u'))),

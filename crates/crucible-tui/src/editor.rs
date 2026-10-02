@@ -183,6 +183,14 @@ pub enum Key {
     Delete,
     /// Rub out the word behind it, back to where that word starts.
     RubWord,
+    /// Ctrl+W: the same edit as [`Key::RubWord`], the line discipline's own
+    /// word erase.
+    ///
+    /// Kept apart from Backspace held, which asks for the same edit, because
+    /// a listing with a search line may read the letter as a key of its own.
+    /// A reader rubbing a word out of that search line with Backspace must
+    /// still get the word gone, rather than the list changed under them.
+    WordErase,
     /// Rub out the rest of the line behind it.
     RubToStart,
     /// Rub out the rest of the line ahead of it.
@@ -558,7 +566,7 @@ impl Editor {
             Key::Char(typed) => self.insert(typed),
             Key::Backspace => self.rub(),
             Key::Delete => self.rub_ahead(),
-            Key::RubWord => self.cut(self.word_back(), self.at),
+            Key::RubWord | Key::WordErase => self.cut(self.word_back(), self.at),
             Key::RubToStart => self.cut(self.line_start(), self.at),
             Key::RubToEnd => self.cut(self.at, self.line_end()),
             Key::Left => self.left(),

@@ -530,6 +530,7 @@ pub(super) const fn rewrites(key: Key) -> bool {
         | Key::Backspace
         | Key::Delete
         | Key::RubWord
+        | Key::WordErase
         | Key::RubToStart
         | Key::RubToEnd => true,
         // The last three never reach the line — they are answered above — and
