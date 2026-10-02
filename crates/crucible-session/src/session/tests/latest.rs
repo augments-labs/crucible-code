@@ -7,7 +7,7 @@
 //! sessions after it were.
 
 use super::*;
-use crate::session::recent::recent;
+use crate::session::recent::{Reach, Roots, recent};
 
 /// A log with this sample's workspace in its header and one prompt in it.
 fn planted(sample: &Sample, id: &str, asked: &str) {
@@ -66,7 +66,12 @@ fn continuing_and_the_listing_agree_on_which_session_is_newest() {
     continued(&sample);
     // `--continue` built the index the listing reads; its first row is the
     // session `--continue` chose.
-    let listed = recent(&sample.logs(), &sample.workspace(), 2);
+    let listed = recent(
+        &sample.logs(),
+        Roots::These(&[sample.workspace().root()]),
+        Reach::FirstFrame,
+        2,
+    );
     let order: Vec<&str> = listed.iter().map(|row| row.id().as_str()).collect();
 
     assert_eq!(
@@ -122,7 +127,12 @@ fn a_listing_an_earlier_build_indexed_by_name_shows_the_newest_first() {
     )
     .expect("a writable temporary directory");
 
-    let listed = recent(&sample.logs(), &sample.workspace(), 2);
+    let listed = recent(
+        &sample.logs(),
+        Roots::These(&[sample.workspace().root()]),
+        Reach::FirstFrame,
+        2,
+    );
     let order: Vec<&str> = listed.iter().map(|row| row.id().as_str()).collect();
 
     assert_eq!(

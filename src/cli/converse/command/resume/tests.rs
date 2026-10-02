@@ -165,9 +165,14 @@ fn on_the_list(sample: &Sample, id: &SessionId) -> Recorded {
     let since = std::time::Instant::now();
 
     loop {
-        if let Some(found) = recent(&sample.logs(), &sample.workspace(), SHOWN)
-            .into_iter()
-            .find(|session| session.id() == id)
+        if let Some(found) = recent(
+            &sample.logs(),
+            Roots::These(&[sample.workspace().root()]),
+            Reach::FirstFrame,
+            SHOWN,
+        )
+        .into_iter()
+        .find(|session| session.id() == id)
         {
             return found;
         }

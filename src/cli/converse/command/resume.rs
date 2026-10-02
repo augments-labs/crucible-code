@@ -35,7 +35,7 @@ use std::time::SystemTime;
 use crucible_app::Conversation;
 use crucible_app::client::{Performed, Resumed};
 use crucible_client_api::Command;
-use crucible_session::{Glimpse, Pruned, Recorded, glimpse, recent, retitle};
+use crucible_session::{Glimpse, Pruned, Reach, Recorded, Roots, glimpse, recent, retitle};
 use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
 use crucible_types::{Compacting, SessionId};
 use crucible_workspace::Workspace;
@@ -249,7 +249,12 @@ fn offered<T: Terminal>(
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
-    let listed = recent(&terms.sessions, &terms.workspace, OFFERED);
+    let listed = recent(
+        &terms.sessions,
+        Roots::These(&[terms.workspace.root()]),
+        Reach::FirstFrame,
+        OFFERED,
+    );
 
     // Read once, here, rather than per row: a list drawn against several
     // instants is several lists, each dated from a different now.
@@ -593,7 +598,12 @@ fn listing(listed: &[Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
 /// that exists nowhere.
 fn saved(title: &str, id: &SessionId, directory: &Path, workspace: &Workspace) -> Vec<Recorded> {
     drop(retitle(directory, id, title));
-    recent(directory, workspace, OFFERED)
+    recent(
+        directory,
+        Roots::These(&[workspace.root()]),
+        Reach::FirstFrame,
+        OFFERED,
+    )
 }
 
 /// The line under the preview: age, count, branch, and whether the session is

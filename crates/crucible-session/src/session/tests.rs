@@ -1325,7 +1325,12 @@ fn the_branch_a_session_starts_on_reaches_the_listing() {
     session.append(&said("work on the branch"));
     drop(session);
 
-    let offered = super::recent(&sample.logs(), &sample.workspace(), 4);
+    let offered = super::recent(
+        &sample.logs(),
+        super::Roots::These(&[sample.workspace().root()]),
+        super::Reach::FirstFrame,
+        4,
+    );
 
     assert_eq!(
         offered.first().and_then(super::Recorded::branch),
@@ -1346,7 +1351,12 @@ fn the_conversation_message_count_ignores_context_and_survives_a_resume() {
     session.append(&said("three"));
     drop(session);
 
-    let offered = super::recent(&sample.logs(), &sample.workspace(), 4);
+    let offered = super::recent(
+        &sample.logs(),
+        super::Roots::These(&[sample.workspace().root()]),
+        super::Reach::FirstFrame,
+        4,
+    );
     assert_eq!(offered.first().map(super::Recorded::messages), Some(3));
 
     let (continued, transcript) =
@@ -1359,7 +1369,12 @@ fn the_conversation_message_count_ignores_context_and_survives_a_resume() {
     continued.append(&answering("four"));
     drop(continued);
 
-    let offered = super::recent(&sample.logs(), &sample.workspace(), 4);
+    let offered = super::recent(
+        &sample.logs(),
+        super::Roots::These(&[sample.workspace().root()]),
+        super::Reach::FirstFrame,
+        4,
+    );
     assert_eq!(offered.first().map(super::Recorded::messages), Some(4));
 }
 

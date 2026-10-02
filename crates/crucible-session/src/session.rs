@@ -75,7 +75,7 @@ pub use glimpse::{Glimpse, glimpse};
 use log::{Placed, Placing, Request as LogRequest, Trouble, make, open, shorten};
 pub use places::Place;
 pub use prompts::{PROMPTS, prompts, remember};
-pub use recent::{Recorded, recent};
+pub use recent::{Reach, Recorded, Roots, recent};
 pub use replay::Pruned;
 use replay::{Replayed, belongs, newest, replay};
 

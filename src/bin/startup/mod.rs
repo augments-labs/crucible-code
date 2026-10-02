@@ -970,8 +970,12 @@ mod tests {
         )
         .expect("a workspace");
 
-        let recent =
-            crucible_session::recent(&home.path().join("sessions"), &workspace, USABLE.len());
+        let recent = crucible_session::recent(
+            &home.path().join("sessions"),
+            crucible_session::Roots::These(&[workspace.root()]),
+            crucible_session::Reach::FirstFrame,
+            USABLE.len(),
+        );
 
         assert_eq!(recent.len(), USABLE.len());
         assert!(recent.iter().all(|session| session.asked() == TITLE));

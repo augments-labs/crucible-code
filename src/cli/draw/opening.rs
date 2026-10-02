@@ -347,7 +347,12 @@ mod tests {
         // Dropping is what waits for the queue, so the file is whole after it.
         drop(session);
 
-        let sessions = crucible_session::recent(&scratch.logs(), &workspace, Welcome::WANTED);
+        let sessions = crucible_session::recent(
+            &scratch.logs(),
+            crucible_session::Roots::These(&[workspace.root()]),
+            crucible_session::Reach::FirstFrame,
+            Welcome::WANTED,
+        );
         assert_eq!(sessions.len(), 1, "the session that was just recorded");
 
         let screen = drawn(80, true, &workspace, &sessions);
