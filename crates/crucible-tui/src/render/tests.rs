@@ -1472,8 +1472,14 @@ fn a_cut_result_that_moved_out_from_under_a_still_pointer_goes_quiet_again() {
 /// tall, holding eighty numbered lines with a prompt mark before every
 /// twentieth. Following the foot, the band shows `line 70` to `line 79`.
 fn railed() -> Drawn {
+    railed_in(Palette::plain())
+}
+
+/// [`railed`], painted from `palette`.
+fn railed_in(palette: Palette) -> Drawn {
     let mut drawn = Drawn::new(60, 10);
     drawn.rails(true);
+    drawn.wears(palette);
     for line in 0..80 {
         if line % 20 == 0 {
             drawn.landmark();
@@ -1721,10 +1727,157 @@ fn a_pointer_on_the_rail_lights_no_cut_result() {
     drawn.take();
 
     drawn.took(Pressed::Hovered { row: 0, column: 39 }).unwrap();
-    assert_eq!(drawn.take(), "", "the rail lit the row beside it");
+    let frame = drawn.take();
+    for line in 0..8 {
+        let said = format!("cut {line}");
+        assert!(
+            !frame.contains(&said) || frame.contains(&quietly(&said)),
+            "the rail lit the row beside it: {frame:?}"
+        );
+    }
 
     drawn.took(Pressed::Hovered { row: 0, column: 0 }).unwrap();
     assert!(!drawn.take().is_empty(), "the row itself did not light");
+}
+
+/// A rail cell as the wire carries it, worn in `slot`.
+fn worn(slot: Slot, cell: &str) -> String {
+    format!("{}{cell}{}", colourful().open(slot), colourful().close())
+}
+
+/// A pointer moved to window row `row` of the rail's column.
+fn rail_hover(drawn: &mut Drawn, row: usize) {
+    let column = drawn.columns() - 1;
+    assert_eq!(drawn.took(Pressed::Hovered { row, column }).unwrap(), None);
+}
+
+/// What was written to the window after the first `from` bytes of it.
+///
+/// Read rather than taken, so the picture is still the whole window's.
+fn since(drawn: &Drawn, from: usize) -> String {
+    drawn
+        .terminal()
+        .written()
+        .get(from..)
+        .unwrap_or("")
+        .to_owned()
+}
+
+#[test]
+fn a_pointer_on_the_rail_lights_its_track_and_marks_and_grows_the_mark_under_it() {
+    let mut drawn = railed_in(colourful());
+    let resting = since(&drawn, 0);
+    assert!(resting.contains(&worn(Slot::Quiet, "│")), "{resting:?}");
+    assert!(resting.contains(&worn(Slot::Quiet, "•")), "{resting:?}");
+    let from = resting.len();
+
+    rail_hover(&mut drawn, 2);
+
+    assert_eq!(rail_of(&drawn), "•│●││•│•┃┃");
+    let frame = since(&drawn, from);
+    for cell in ["│", "•", "●"] {
+        assert!(
+            frame.contains(&worn(Slot::Accent, cell)),
+            "{cell}: {frame:?}"
+        );
+    }
+    assert!(!frame.contains(&worn(Slot::Quiet, "│")), "{frame:?}");
+    assert!(!frame.contains(&worn(Slot::Quiet, "•")), "{frame:?}");
+}
+
+#[test]
+fn a_pointer_moving_along_the_rail_grows_the_mark_it_arrives_at() {
+    let mut drawn = railed();
+
+    rail_hover(&mut drawn, 2);
+    assert_eq!(rail_of(&drawn), "•│●││•│•┃┃");
+    rail_hover(&mut drawn, 5);
+    assert_eq!(rail_of(&drawn), "•│•││●│•┃┃");
+    rail_hover(&mut drawn, 3);
+    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+    // A mark the thumb covers stays covered: the thumb is what is there.
+    rail_hover(&mut drawn, 9);
+    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+}
+
+#[test]
+fn a_pointer_leaving_the_rail_puts_it_back_at_rest_on_the_next_frame() {
+    let mut drawn = railed_in(colourful());
+    rail_hover(&mut drawn, 2);
+    let from = since(&drawn, 0).len();
+
+    assert_eq!(
+        drawn.took(Pressed::Hovered { row: 2, column: 0 }).unwrap(),
+        None
+    );
+
+    assert_eq!(rail_of(&drawn), "•│•││•│•┃┃");
+    let frame = since(&drawn, from);
+    assert!(frame.contains(&worn(Slot::Quiet, "│")), "{frame:?}");
+    assert!(frame.contains(&worn(Slot::Quiet, "•")), "{frame:?}");
+    assert!(!frame.contains(&worn(Slot::Accent, "│")), "{frame:?}");
+}
+
+#[test]
+fn a_pointer_on_the_rail_asks_for_a_frame_only_when_the_row_under_it_changes() {
+    // With a pointable prompt standing, the caller draws the frame, so what
+    // the renderer says is whether one is owed at all.
+    let mut drawn = railed();
+    let prompt = vec![Row::plain("prompt"), Row::plain("2 commands")];
+    let pointed = Row::new().then(Slot::Pointed, "2 commands");
+    drawn
+        .replace(
+            PromptRows {
+                rows: &prompt,
+                caret: Caret::default(),
+                pointed: Some((1, &pointed)),
+            },
+            &[],
+            Palette::plain(),
+        )
+        .unwrap();
+
+    rail_hover(&mut drawn, 3);
+    assert!(drawn.pointed_changed(), "entering the rail asked for none");
+    rail_hover(&mut drawn, 3);
+    assert!(
+        !drawn.pointed_changed(),
+        "resting on one rail row asked again"
+    );
+    rail_hover(&mut drawn, 4);
+    assert!(drawn.pointed_changed(), "moving a row asked for none");
+    drawn.took(Pressed::Hovered { row: 4, column: 0 }).unwrap();
+    assert!(drawn.pointed_changed(), "leaving the rail asked for none");
+    drawn.took(Pressed::Hovered { row: 4, column: 1 }).unwrap();
+    assert!(
+        !drawn.pointed_changed(),
+        "motion off the rail asked for one"
+    );
+}
+
+#[test]
+fn an_ascii_rail_grows_the_mark_under_the_pointer_to_a_star() {
+    let mut drawn = railed();
+    drawn.draws(Glyphs::Ascii);
+
+    rail_hover(&mut drawn, 5);
+
+    assert_eq!(rail_of(&drawn), "-|-||*|-##");
+}
+
+#[test]
+fn a_pointer_on_a_rail_over_a_record_that_fits_changes_nothing() {
+    let mut drawn = Drawn::new(60, 10);
+    drawn.rails(true);
+    drawn.wears(colourful());
+    drawn.landmark();
+    drawn.commit("one line").unwrap();
+    drawn.take();
+
+    rail_hover(&mut drawn, 0);
+
+    assert_eq!(drawn.take(), "");
+    assert_eq!(rail_of(&drawn), " ".repeat(10));
 }
 
 #[test]

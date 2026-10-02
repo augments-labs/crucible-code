@@ -397,6 +397,22 @@ impl Glyphs {
         }
     }
 
+    /// A prompt's mark on the scroll rail grown: the one under the pointer,
+    /// and the current prompt's.
+    ///
+    /// The filled circle [`Glyphs::bullet`] is the small one of, so a grown
+    /// mark reads as the same mark made larger rather than as a new kind of
+    /// thing on the track; and neither [`Glyphs::thumb`] nor
+    /// [`Glyphs::vertical`], since it may stand on either. One column in both
+    /// sets, because the rail is one column.
+    #[must_use]
+    pub(crate) fn grown(self) -> &'static str {
+        match self {
+            Self::Unicode => "●",
+            Self::Ascii => "*",
+        }
+    }
+
     /// The mark on a task nobody has started.
     #[must_use]
     pub fn open(self) -> &'static str {
@@ -503,6 +519,27 @@ mod tests {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
+        }
+    }
+
+    #[test]
+    fn the_rail_s_cells_are_one_column_and_four_different_marks_in_both_sets() {
+        // The rail is one column, and a reader tells its parts apart by shape
+        // alone where colour says nothing.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let cells = [
+                glyphs.vertical(),
+                glyphs.thumb(),
+                glyphs.bullet(),
+                glyphs.grown(),
+            ];
+            for (at, cell) in cells.iter().enumerate() {
+                assert_eq!(columns(cell), 1, "{glyphs:?}: {cell}");
+                assert!(
+                    !cells.iter().take(at).any(|before| before == cell),
+                    "{glyphs:?}: {cell}"
+                );
+            }
         }
     }
 

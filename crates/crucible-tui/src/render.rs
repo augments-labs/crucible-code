@@ -410,8 +410,11 @@ impl<T: Terminal> Renderer<T> {
         if let Pressed::Hovered { row, column } = arrived {
             let lit = self.pointed();
             let prompt_pointed = self.prompt_pointed();
+            let railed = self.rail_pointed(&bands);
             self.pointing = Some((row, column));
-            let changed = lit != self.pointed() || prompt_pointed != self.prompt_pointed();
+            let changed = lit != self.pointed()
+                || prompt_pointed != self.prompt_pointed()
+                || railed != self.rail_pointed(&bands);
             if changed && self.prompt_target.is_some() {
                 // The caller has the pointable row in both of its palette
                 // states. It replaces that row and the rest of the prompt in
@@ -584,6 +587,19 @@ impl<T: Terminal> Renderer<T> {
         self.rail_column()?;
         let place = self.record.place(bands.transcript.len());
         Some(ScrollRail::new(place, self.record.prompts()))
+    }
+
+    /// The rail row the pointer is on, where it is on a rail with a thumb.
+    ///
+    /// `None` off the rail's column, outside the band, and on a rail over a
+    /// record that fits, which is blank and answers no pointer.
+    fn rail_pointed(&self, bands: &Bands) -> Option<usize> {
+        let (row, column) = self.pointing?;
+        if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
+            return None;
+        }
+        self.rail(bands)?.thumb()?;
+        Some(row - bands.transcript.start)
     }
 
     /// The transcript band as it stands, for placing a drag's ends.
@@ -1697,9 +1713,10 @@ impl<T: Terminal> Renderer<T> {
         // is wider, padded where it is shorter — so every cell lands in the
         // same column. Empty where there is no rail.
         let folds = self.folds();
+        let railed = self.rail_pointed(&bands);
         let rail = self
             .rail(&bands)
-            .map(|rail| rail.rows(self.size.columns, self.glyphs))
+            .map(|rail| rail.rows(self.size.columns, self.glyphs, railed))
             .unwrap_or_default();
         let mut rail = rail.into_iter();
         let mut showing = self.record.view(bands.transcript.len()).into_iter();

@@ -15,7 +15,10 @@
 //! The rail spends no hue of its own. The thumb is [`Slot::Accent`] and the
 //! track and its marks are [`Slot::Quiet`], two jobs every palette already
 //! answers, so every theme and a colourless run draw the rail their own way.
-//! Marks differ from the track by shape, not colour.
+//! Marks differ from the track by shape, not colour. A pointer on the rail
+//! lights the track and its marks in the accent too, and grows the mark it is
+//! on, so a reader can see which prompt a press there lands on; a mark the
+//! thumb covers stays covered.
 //!
 //! Every cell is structural: the rail is the band's furniture, not the
 //! transcript's words, so a selection dragged across it highlights none of it
@@ -151,21 +154,29 @@ impl ScrollRail {
             .find(|prompt| scaled(*prompt, self.total, self.height) == row)
     }
 
-    /// The rail as cells, one row a band row, for a window `columns` wide.
+    /// The rail as cells, one row a band row, for a window `columns` wide,
+    /// with the pointer on rail row `pointer` where it is on the rail at all.
     ///
     /// No rows at all where the window cannot spare the column. Each row is
-    /// one column, structural, and blank where the record fits.
-    pub(crate) fn rows(&self, columns: usize, glyphs: Glyphs) -> Vec<Row> {
+    /// one column, structural, and blank where the record fits, pointer or
+    /// none.
+    pub(crate) fn rows(&self, columns: usize, glyphs: Glyphs, pointer: Option<usize>) -> Vec<Row> {
         if !spared(columns) {
             return Vec::new();
         }
+        let track = if pointer.is_some() {
+            Slot::Accent
+        } else {
+            Slot::Quiet
+        };
         (0..self.height)
             .map(|at| {
                 let (slot, cell) = match &self.thumb {
                     None => (Slot::Plain, " "),
                     Some(thumb) if thumb.contains(&at) => (Slot::Accent, glyphs.thumb()),
-                    Some(_) if self.marked(at) => (Slot::Quiet, glyphs.bullet()),
-                    Some(_) => (Slot::Quiet, glyphs.vertical()),
+                    Some(_) if self.marked(at) && pointer == Some(at) => (track, glyphs.grown()),
+                    Some(_) if self.marked(at) => (track, glyphs.bullet()),
+                    Some(_) => (track, glyphs.vertical()),
                 };
                 let mut row = Row::new();
                 row.push_structural(slot, cell);
@@ -199,7 +210,7 @@ mod tests {
 
     /// What each rail row says, as one string a row.
     fn said(rail: &ScrollRail, glyphs: Glyphs) -> Vec<String> {
-        rail.rows(80, glyphs).iter().map(Row::text).collect()
+        rail.rows(80, glyphs, None).iter().map(Row::text).collect()
     }
 
     #[test]
@@ -264,7 +275,7 @@ mod tests {
     #[test]
     fn the_rail_draws_its_thumb_in_the_accent_and_the_rest_quiet() {
         let rail = laid(100, 90, &[35]);
-        let rows = rail.rows(80, Glyphs::Ascii);
+        let rows = rail.rows(80, Glyphs::Ascii, None);
         let kinds: Vec<Option<Slot>> = rows.iter().map(|row| row.kinds().last()).collect();
         let text: Vec<String> = rows.iter().map(Row::text).collect();
 
@@ -276,7 +287,7 @@ mod tests {
     #[test]
     fn every_rail_cell_is_structural_and_one_column() {
         for rail in [laid(100, 45, &[12, 60]), laid(4, 0, &[0])] {
-            let rows = rail.rows(80, Glyphs::Unicode);
+            let rows = rail.rows(80, Glyphs::Unicode, None);
             assert_eq!(rows.len(), 10);
             for row in rows {
                 assert_eq!(row.columns(), 1);
@@ -289,8 +300,8 @@ mod tests {
     fn the_rail_is_not_drawn_at_the_narrowest_width_that_cannot_spare_it() {
         let rail = laid(100, 45, &[12]);
 
-        assert!(rail.rows(NARROWEST - 1, Glyphs::Unicode).is_empty());
-        assert_eq!(rail.rows(NARROWEST, Glyphs::Unicode).len(), 10);
+        assert!(rail.rows(NARROWEST - 1, Glyphs::Unicode, None).is_empty());
+        assert_eq!(rail.rows(NARROWEST, Glyphs::Unicode, None).len(), 10);
         assert!(!spared(NARROWEST - 1));
         assert!(spared(NARROWEST));
     }
