@@ -442,7 +442,8 @@ fn named(window: Window) -> String {
         Window::Weekly => crucible_types::Window::Weekly,
         Window::Monthly => crucible_types::Window::Monthly,
     };
-    let mut name = window.named().chars();
+    let named = window.named();
+    let mut name = named.chars();
     name.next()
         .map(|first| first.to_uppercase().chain(name).collect())
         .unwrap_or_default()

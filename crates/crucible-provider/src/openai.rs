@@ -72,9 +72,9 @@ use crucible_types::{
 use crate::endpoint::Endpoint;
 use crate::json::Object;
 use crate::refusal::PlanRule;
-use crate::responses::{Dialect, Hint, Priced, Replay, Responses};
+use crate::responses::{Dialect, Hint, Priced, Replay, Responses, Usage};
 use crate::sse::SseEvent;
-use crate::transport::Named;
+use crate::transport::{Named, Reads};
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "openai";
@@ -250,12 +250,16 @@ impl Dialect for Gpt {
         (route == Serving::Subscription).then_some(rate_limits::used_up as PlanRule)
     }
 
-    fn limit_headers(route: Serving) -> &'static [&'static str] {
+    fn limit_headers(route: Serving) -> Option<Reads> {
         rate_limits::headers(route)
     }
 
     fn limits(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
         rate_limits::read(named, arrived)
+    }
+
+    fn usage_source(route: Serving) -> Option<Usage> {
+        rate_limits::usage(route)
     }
 
     fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {

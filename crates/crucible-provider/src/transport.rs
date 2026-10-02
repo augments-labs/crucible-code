@@ -75,7 +75,8 @@ impl TransportError {
 
 /// The response header a vendor says the tier that served a request in: the
 /// one header the transport reads itself. A provider is handed others only by
-/// naming them ([`Named`]); every other header is left where it arrived.
+/// saying which it reads ([`Reads`]); every other header is left where it
+/// arrived.
 pub(crate) const SERVED_TIER: &str = "x-gemini-service-tier";
 
 /// What a response's [`SERVED_TIER`] header said.
@@ -106,50 +107,81 @@ impl Tier {
 
 /// The most bytes of one response header a provider is handed.
 ///
-/// A header a provider names is one it reads a figure or a time out of; a
-/// value longer than this is not one, and is left where it arrived.
+/// A header a provider reads is one it reads a figure, a time or a short name
+/// out of; a value longer than this is not one, and is left where it arrived.
 pub(crate) const NAMED_HEADER_BYTES: usize = 256;
 
-/// The response headers a provider named when it posted, as they arrived.
+/// The most response headers a provider is handed from one response.
 ///
-/// Only those names, at most one value each, each within
-/// [`NAMED_HEADER_BYTES`]: everything else a response carries stays where it
-/// arrived, and nothing here is read by the transport.
+/// A provider that reads a family of headers whose number a response decides
+/// is handed no more than this many of them, the first to arrive; the rest
+/// stay where they arrived.
+pub(crate) const NAMED_HEADERS: usize = 64;
+
+/// Which response headers a provider reads, by their lowercase name.
 ///
-/// Behind one pointer, and none where nothing was named, so that a response
-/// of a provider that names nothing is no larger for it.
+/// A function rather than a list, because a vendor may report a family of
+/// headers whose names a response decides: what is fixed is their shape.
+pub(crate) type Reads = fn(&str) -> bool;
+
+/// Reads no header: what a provider that reads none hands the transport.
+pub(crate) fn reads_none(name: &str) -> bool {
+    let _ = name;
+    false
+}
+
+/// The response headers a provider said it reads, as they arrived.
+///
+/// Only those, at most one value each, each within [`NAMED_HEADER_BYTES`] and
+/// no more than [`NAMED_HEADERS`] of them: everything else a response carries
+/// stays where it arrived, and nothing here is read by the transport.
+///
+/// Behind one pointer, and none where nothing was read, so that a response
+/// of a provider that reads nothing is no larger for it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Named(Option<Box<Pairs>>);
 
-/// Each named header that arrived, and what it said.
-type Pairs = Vec<(&'static str, Box<str>)>;
+/// Each header read that arrived, and what it said.
+type Pairs = Vec<(Box<str>, Box<str>)>;
 
 impl Named {
-    /// The headers among `asked` that `value_of` finds, each kept only when it
-    /// is text within [`NAMED_HEADER_BYTES`].
+    /// The headers among `arrived` that `reads` says the provider reads, each
+    /// kept only when it is text within [`NAMED_HEADER_BYTES`], the first value
+    /// of a name only, and no more than [`NAMED_HEADERS`] of them.
     pub(crate) fn kept<'v>(
-        asked: &'static [&'static str],
-        value_of: impl Fn(&str) -> Option<&'v str>,
+        reads: Reads,
+        arrived: impl IntoIterator<Item = (&'v str, &'v str)>,
     ) -> Self {
-        let kept: Vec<_> = asked
-            .iter()
-            .filter_map(|name| {
-                value_of(name)
-                    .filter(|value| value.len() <= NAMED_HEADER_BYTES)
-                    .map(|value| (*name, value.into()))
-            })
-            .collect();
+        let mut kept: Pairs = Vec::new();
+        for (name, value) in arrived {
+            if kept.len() >= NAMED_HEADERS {
+                break;
+            }
+            if reads(name)
+                && value.len() <= NAMED_HEADER_BYTES
+                && !kept.iter().any(|(each, _)| **each == *name)
+            {
+                kept.push((name.into(), value.into()));
+            }
+        }
         Self((!kept.is_empty()).then(|| Box::new(kept)))
     }
 
-    /// What the header called `name` said, where the provider named it and it
+    /// What the header called `name` said, where the provider reads it and it
     /// arrived within bounds.
     pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.0
             .as_deref()?
             .iter()
-            .find(|(named, _)| *named == name)
+            .find(|(named, _)| **named == *name)
             .map(|(_, value)| &**value)
+    }
+
+    /// The name of every header kept, in the order they arrived.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> + '_ {
+        self.0
+            .iter()
+            .flat_map(|pairs| pairs.iter().map(|(name, _)| &**name))
     }
 }
 
@@ -427,13 +459,13 @@ pub trait Transport: Send + Sync + fmt::Debug {
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>>;
 
-    /// The same post, handing back the response headers named in `reading`.
+    /// The same post, handing back the response headers `reading` says the
+    /// provider reads.
     ///
-    /// A provider names the headers it reads, and only those come back to it,
-    /// each within `NAMED_HEADER_BYTES`; every other header stays where it
-    /// arrived. A transport that answers from somewhere other than a
-    /// response's head hands back none, which is what this does unless it is
-    /// overridden.
+    /// Only those come back to it, as [`Named`] bounds them; every other
+    /// header stays where it arrived. A transport that answers from somewhere
+    /// other than a response's head hands back none, which is what this does
+    /// unless it is overridden.
     ///
     /// # Errors
     ///
@@ -448,10 +480,37 @@ pub trait Transport: Send + Sync + fmt::Debug {
         headers: &'a mut Outgoing,
         body: String,
         cancel: &'a Cancel,
-        reading: &'static [&'static str],
+        reading: Reads,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
         let _ = reading;
         self.post(url, headers, body, cancel)
+    }
+
+    /// Asks `url` for what it holds, with no body, and returns the response
+    /// as it begins to arrive.
+    ///
+    /// For a vendor's account of something it keeps, such as how much of a
+    /// plan is used, rather than for a turn. It goes out the way a post does:
+    /// through the same client, under the same hold, with the credential
+    /// `headers` carry registered for redaction. A transport that only posts
+    /// refuses it, which is what this does unless it is overridden.
+    ///
+    /// # Errors
+    ///
+    /// As [`post`](Self::post), and [`TransportError::Unreachable`] from a
+    /// transport that only posts.
+    fn get<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
+        let _ = (url, headers, cancel);
+        Box::pin(async {
+            Err(TransportError::Unreachable(
+                "this transport only posts".into(),
+            ))
+        })
     }
 }
 
@@ -470,10 +529,22 @@ pub(crate) struct Replay {
     sent: std::sync::Mutex<Vec<Sent>>,
 }
 
+/// The method of one request the provider made.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Method {
+    /// A post, with a body.
+    #[default]
+    Post,
+    /// A get, with none.
+    Get,
+}
+
 /// One request the provider made.
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct Sent {
+    pub(crate) method: Method,
     pub(crate) url: String,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: String,
@@ -527,6 +598,7 @@ impl Replay {
             .ok()
             .and_then(|sent| sent.last().cloned())
             .unwrap_or_else(|| Sent {
+                method: Method::Post,
                 url: String::new(),
                 headers: Vec::new(),
                 body: String::new(),
@@ -554,7 +626,7 @@ impl Transport for Replay {
         body: String,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
-        self.post_reading(url, headers, body, cancel, &[])
+        self.post_reading(url, headers, body, cancel, reads_none)
     }
 
     fn post_reading<'a>(
@@ -563,38 +635,69 @@ impl Transport for Replay {
         headers: &'a mut Outgoing,
         body: String,
         cancel: &'a Cancel,
-        reading: &'static [&'static str],
+        reading: Reads,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
+        Box::pin(async move { self.answer(Method::Post, url, headers, body, cancel, reading) })
+    }
+
+    fn get<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
+        cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
         Box::pin(async move {
-            if cancel.requested() {
-                return Err(TransportError::Cancelled);
-            }
-
-            if let Ok(mut sent) = self.sent.lock() {
-                sent.push(Sent {
-                    url: url.to_owned(),
-                    headers: headers
-                        .headers()
-                        .iter()
-                        .map(|(name, value)| (name.to_string(), value.to_string()))
-                        .collect(),
-                    body,
-                });
-            }
-
-            let named = Named::kept(reading, |name| {
-                self.answering
-                    .iter()
-                    .find(|(answered, _)| *answered == name)
-                    .map(|(_, value)| value.as_str())
-            });
-            Ok(PostResponse::recorded(
-                self.status,
-                std::io::Cursor::new(self.body.clone().into_bytes()),
-            )
-            .with_tier(Tier::read(self.tier.as_deref()))
-            .with_named(named))
+            self.answer(Method::Get, url, headers, String::new(), cancel, reads_none)
         })
+    }
+}
+
+#[cfg(test)]
+impl Replay {
+    /// Records the request and answers it as scripted, handing back the
+    /// response headers `reading` says the provider reads.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the request's own five, and the response headers it reads"
+    )]
+    fn answer(
+        &self,
+        method: Method,
+        url: &str,
+        headers: &mut Outgoing,
+        body: String,
+        cancel: &Cancel,
+        reading: Reads,
+    ) -> Result<PostResponse, TransportError> {
+        if cancel.requested() {
+            return Err(TransportError::Cancelled);
+        }
+
+        if let Ok(mut sent) = self.sent.lock() {
+            sent.push(Sent {
+                method,
+                url: url.to_owned(),
+                headers: headers
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect(),
+                body,
+            });
+        }
+
+        let named = Named::kept(
+            reading,
+            self.answering
+                .iter()
+                .map(|(name, value)| (*name, value.as_str())),
+        );
+        Ok(PostResponse::recorded(
+            self.status,
+            std::io::Cursor::new(self.body.clone().into_bytes()),
+        )
+        .with_tier(Tier::read(self.tier.as_deref()))
+        .with_named(named))
     }
 }
 
@@ -738,9 +841,18 @@ impl<T: Transport> Transport for std::sync::Arc<T> {
         headers: &'a mut Outgoing,
         body: String,
         cancel: &'a Cancel,
-        reading: &'static [&'static str],
+        reading: Reads,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
         (**self).post_reading(url, headers, body, cancel, reading)
+    }
+
+    fn get<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
+        (**self).get(url, headers, cancel)
     }
 }
 

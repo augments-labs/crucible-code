@@ -83,7 +83,7 @@ pub(crate) struct Script {
 
 /// A vendor's refusal of a used-up plan, and the windows its head reported,
 /// where it reported any.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct UsedUp {
     reading: Option<PlanWindows>,
 }
@@ -224,11 +224,12 @@ impl Provider for Script {
                 });
             }
 
-            if let Some(UsedUp { reading }) = self.used_up {
+            if let Some(UsedUp { reading }) = self.used_up.clone() {
                 return Err(ProviderError::PlanLimit {
                     provider: "script",
                     window: reading
-                        .and_then(|reading| reading.exhausted(SystemTime::now()))
+                        .as_ref()
+                        .and_then(|reading| reading.exhausted(request.model, SystemTime::now()))
                         .map(|(window, _)| window),
                     resets_at: Some(SystemTime::now() + Duration::from_hours(24)),
                     reading: reading.map(Box::new),

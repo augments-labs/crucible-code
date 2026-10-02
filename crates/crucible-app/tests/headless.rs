@@ -194,7 +194,7 @@ impl Provider for Script {
                 .next()
                 .unwrap_or_default();
 
-            Ok(Box::new(Reading(round.into_iter(), self.limits)) as Box<dyn DeltaStream>)
+            Ok(Box::new(Reading(round.into_iter(), self.limits.clone())) as Box<dyn DeltaStream>)
         })
     }
 }
@@ -209,7 +209,7 @@ impl DeltaStream for Reading {
     }
 
     fn limits(&self) -> Option<PlanWindows> {
-        self.1
+        self.1.clone()
     }
 }
 

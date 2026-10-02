@@ -600,15 +600,15 @@ impl Runner {
     }
 
     /// The plan windows the last response from the credential in force said
-    /// it had used, where its vendor reports them on responses.
+    /// it had used, plan-wide and per model, where its vendor reports them on
+    /// responses.
     ///
-    /// Read off a response that was sent for a turn; nothing is ever asked to
-    /// learn it. `None` until such a response arrives, for a vendor or a
-    /// credential that reports none, and again once the model or the provider
-    /// changes.
+    /// Read off a response that was sent for a turn. `None` until such a
+    /// response arrives, for a vendor or a credential that reports none, and
+    /// again once the model or the provider changes.
     #[must_use]
-    pub const fn plan_limits(&self) -> Option<PlanWindows> {
-        self.state.limits
+    pub fn plan_limits(&self) -> Option<PlanWindows> {
+        self.state.limits.clone()
     }
 
     /// The same, against the compaction answer given; the one reader both the
@@ -1741,7 +1741,7 @@ impl Runner {
                 ..
             }) = &streamed
             {
-                let windows = **reading;
+                let windows = (**reading).clone();
                 self.limited(Some(windows), listening.run.reporting());
             }
             (streamed?, observation)
@@ -1836,7 +1836,7 @@ impl Runner {
     /// standing, because it said nothing about the windows.
     fn limited(&mut self, windows: Option<PlanWindows>, events: Reporter<'_>) {
         if let Some(windows) = windows {
-            self.state.limits = Some(windows);
+            self.state.limits = Some(windows.clone());
             events.post(Event::PlanLimits { windows });
         }
     }

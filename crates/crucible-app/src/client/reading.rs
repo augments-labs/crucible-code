@@ -16,7 +16,7 @@ use crucible_client_api::{
 use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::Mode;
-use crucible_types::{CostAmount, PlanWindows, StopReason, Utc, Window};
+use crucible_types::{CostAmount, LimitGroup, PlanWindows, StopReason, Utc, Window};
 
 use crate::Conversation;
 use crate::switching::Retained;
@@ -245,7 +245,12 @@ fn stated(amount: CostAmount) -> Option<(Name, u64)> {
 /// Every window a vendor reported, each placed by name.
 pub(super) fn limits(windows: &PlanWindows) -> api::Limits {
     let mut limits = api::Limits::default();
-    for (window, reading) in windows.reported() {
+    for (window, reading) in windows
+        .groups()
+        .next()
+        .into_iter()
+        .flat_map(LimitGroup::windows)
+    {
         let limit = Percent::new(reading.percent()).map(|used| api::Limit {
             used,
             resets_at: reading
@@ -257,6 +262,7 @@ pub(super) fn limits(windows: &PlanWindows) -> api::Limits {
             Window::FiveHour => limits.five_hour = limit,
             Window::Weekly => limits.weekly = limit,
             Window::Monthly => limits.monthly = limit,
+            Window::Daily | Window::Yearly | Window::Lasting(_) => {}
         }
     }
     limits
