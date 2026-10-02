@@ -11,7 +11,7 @@ expression: shape(&picture)
 |Warning: No models available. Use /login or set an API key environment         ┃|
 |variable. Then use /model to select a model.                                   ┃|
 |                                                                               ┃|
-|› /release-notes                                                               ┃|
+|› /release-notes                                                               ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Release notes                                                                   |

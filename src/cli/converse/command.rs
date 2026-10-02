@@ -59,6 +59,8 @@ mod settings;
 mod theme;
 mod usage;
 
+pub(crate) use usage::Clock;
+
 /// What a line beginning `/` can ask for.
 ///
 /// Closed, and matched arm by arm where it is run, so a command added here is a

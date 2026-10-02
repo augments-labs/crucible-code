@@ -5,7 +5,8 @@
 //! that decision once at the wire boundary and hand the runner this shape.
 //! Missing fields remain `None`; absence is never rewritten as zero.
 
-use std::time::SystemTime;
+use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cache::{PromptCacheOutcome, PromptCacheUsageReporting};
 
@@ -449,6 +450,17 @@ pub enum Window {
 impl Window {
     /// Every window, in the order they are shown and read.
     pub const ALL: [Self; 3] = [Self::FiveHour, Self::Weekly, Self::Monthly];
+
+    /// What the window is called inside a sentence: crucible's name for it,
+    /// never words a response chose.
+    #[must_use]
+    pub const fn named(self) -> &'static str {
+        match self {
+            Self::FiveHour => "5-hour window",
+            Self::Weekly => "weekly window",
+            Self::Monthly => "monthly window",
+        }
+    }
 }
 
 /// How much of one window has been used, and when it starts again.
@@ -549,6 +561,66 @@ impl PlanWindows {
     #[must_use]
     pub const fn arrived(&self) -> SystemTime {
         self.arrived
+    }
+
+    /// The window this reading says is used up as of `now`, and when it
+    /// starts again.
+    ///
+    /// Used up is 100% with a reset still to come. A window at 100% with no
+    /// reset is not one: when it starts again is not known, so whether it
+    /// already has is not either, and only the vendor's refusal can say. Of
+    /// several, the one that starts again last, since nothing can be sent
+    /// before it does.
+    #[must_use]
+    pub fn exhausted(&self, now: SystemTime) -> Option<(Window, SystemTime)> {
+        self.reported()
+            .filter(|(_, reading)| reading.percent() >= 100)
+            .filter_map(|(window, reading)| {
+                reading
+                    .resets_at()
+                    .filter(|at| *at > now)
+                    .map(|at| (window, at))
+            })
+            .max_by_key(|(_, at)| *at)
+    }
+}
+
+/// An instant written as ISO 8601 in UTC, to the second:
+/// `2026-10-05T09:00:00Z`.
+///
+/// For a reader that is not somebody at a terminal, which is why no zone is
+/// read: the same instant is spelled the same on every machine. An instant
+/// before 1970 is written as its first second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Utc(SystemTime);
+
+impl Utc {
+    /// `at`, to be written.
+    #[must_use]
+    pub const fn new(at: SystemTime) -> Self {
+        Self(at)
+    }
+}
+
+impl fmt::Display for Utc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let seconds = self
+            .0
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let date = crate::PricingDate::from_unix_seconds(seconds);
+        let time = seconds % 86_400;
+        write!(
+            f,
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            date.year(),
+            date.month(),
+            date.day(),
+            time / 3_600,
+            time % 3_600 / 60,
+            time % 60
+        )
     }
 }
 
@@ -700,5 +772,67 @@ mod tests {
             windows.reading(Window::Weekly).map(WindowReading::percent),
             Some(40)
         );
+    }
+
+    fn at(seconds: u64) -> SystemTime {
+        UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn plan_limit_a_window_at_a_hundred_with_its_reset_to_come_is_exhausted() {
+        let now = at(1_000);
+        let windows = PlanWindows::new(now)
+            .with(Window::FiveHour, WindowReading::new(100, Some(at(2_000))))
+            .with(Window::Weekly, WindowReading::new(40, Some(at(9_000))));
+
+        assert_eq!(windows.exhausted(now), Some((Window::FiveHour, at(2_000))));
+    }
+
+    #[test]
+    fn plan_limit_of_several_used_up_the_one_that_starts_again_last_is_named() {
+        let now = at(1_000);
+        let windows = PlanWindows::new(now)
+            .with(Window::FiveHour, WindowReading::new(100, Some(at(2_000))))
+            .with(Window::Weekly, WindowReading::new(100, Some(at(9_000))))
+            .with(Window::Monthly, WindowReading::new(100, Some(at(5_000))));
+
+        assert_eq!(windows.exhausted(now), Some((Window::Weekly, at(9_000))));
+    }
+
+    #[test]
+    fn plan_limit_short_of_a_hundred_past_its_reset_or_with_none_is_not_exhausted() {
+        let now = at(1_000);
+        for reading in [
+            WindowReading::new(99, Some(at(2_000))),
+            WindowReading::new(100, Some(at(1_000))),
+            WindowReading::new(100, Some(at(500))),
+            WindowReading::new(100, None),
+        ] {
+            let windows = PlanWindows::new(now).with(Window::Weekly, reading);
+            assert_eq!(windows.exhausted(now), None, "{reading:?}");
+        }
+    }
+
+    #[test]
+    fn plan_limit_an_instant_is_written_as_iso_8601_in_utc() {
+        assert_eq!(Utc::new(at(0)).to_string(), "1970-01-01T00:00:00Z");
+        assert_eq!(
+            Utc::new(at(1_791_190_800)).to_string(),
+            "2026-10-05T09:00:00Z"
+        );
+        assert_eq!(
+            Utc::new(at(951_868_799)).to_string(),
+            "2000-02-29T23:59:59Z"
+        );
+        assert_eq!(
+            Utc::new(UNIX_EPOCH - std::time::Duration::from_secs(1)).to_string(),
+            "1970-01-01T00:00:00Z"
+        );
+    }
+
+    #[test]
+    fn plan_limit_each_window_has_a_name_of_crucibles_own() {
+        let names: Vec<_> = Window::ALL.into_iter().map(Window::named).collect();
+        assert_eq!(names, ["5-hour window", "weekly window", "monthly window"]);
     }
 }

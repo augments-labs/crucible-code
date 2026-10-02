@@ -14,7 +14,7 @@ expression: login
 |Warning: No models available. Use /login or set an API key environment         ┃|
 |variable. Then use /model to select a model.                                   ┃|
 |                                                                               ┃|
-|› /login google                                                                ┃|
+|› /login google                                                                ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Log in                                                                          |

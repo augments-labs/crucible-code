@@ -343,8 +343,13 @@ fn settled(calling: Calling) -> Settled {
 /// The lines themselves, cut to a row each, and how many there are — the count
 /// is its own field because a window can be too short to name them all, and the
 /// number is then the only place that says any are waiting at all.
+///
+/// The one panel for both places a queue stands over the box: under a running
+/// turn, and at the prompt between turns while a used-up plan holds the lines
+/// it stopped in front of. Two boxes drawn by two owners would be two pictures
+/// of one queue.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Queued {
+pub(super) struct Queued {
     /// The waiting lines, oldest first, each already cut to a row.
     lines: Vec<String>,
     /// How many are waiting. `lines` may be shorter: it holds as many as the
@@ -617,21 +622,7 @@ impl Turning {
         columns: usize,
         style: Style,
     ) {
-        let glyphs = style.glyphs();
-
-        // Every line is counted; as many as the panel names are cut and kept.
-        // The difference between the two is what a `… +2 more` row reads, and
-        // the reason the count is not `lines.len()`.
-        let mut count = 0;
-        let mut lines = Vec::new();
-        for said in waiting {
-            count += 1;
-            if lines.len() < NAMED {
-                lines.push(draw::clipped(said, columns, glyphs));
-            }
-        }
-
-        self.queued = Queued { lines, count };
+        self.queued = Queued::of(waiting, columns, style);
     }
 
     /// Takes the word from one event on its way to the screen, and hands back
@@ -1274,6 +1265,29 @@ impl Turning {
 }
 
 impl Queued {
+    /// The prompts `waiting`, cut to `columns` as the panel names them.
+    pub(super) fn of<'a>(
+        waiting: impl Iterator<Item = &'a str>,
+        columns: usize,
+        style: Style,
+    ) -> Self {
+        let glyphs = style.glyphs();
+
+        // Every line is counted; as many as the panel names are cut and kept.
+        // The difference between the two is what a `… +2 more` row reads, and
+        // the reason the count is not `lines.len()`.
+        let mut count = 0;
+        let mut lines = Vec::new();
+        for said in waiting {
+            count += 1;
+            if lines.len() < NAMED {
+                lines.push(draw::clipped(said, columns, glyphs));
+            }
+        }
+
+        Self { lines, count }
+    }
+
     /// The panel naming the prompts waiting behind the turn, boxed.
     ///
     /// A frame of its own rather than a row under the word, because it is a
@@ -1288,7 +1302,7 @@ impl Queued {
     /// draws nothing at all, and a window too short to open the frame keeps only
     /// the one line that says anything is waiting, since that is the fact that
     /// cannot go.
-    fn rows(&self, spare: usize, columns: usize, style: Style) -> Vec<Row> {
+    pub(super) fn rows(&self, spare: usize, columns: usize, style: Style) -> Vec<Row> {
         if self.count == 0 || spare == 0 {
             return Vec::new();
         }

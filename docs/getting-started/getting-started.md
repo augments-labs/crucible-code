@@ -424,7 +424,9 @@ the model reads all of it and then answers all of it. Three lines typed behind a
 turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
-write.
+write. A turn that stopped on a used-up plan is the exception: the queue waits
+over the box, where <kbd>Ctrl+Q</kbd> opens it to edit or delete, until you send
+a prompt, since sent on its own it would reach a plan that is spent.
 
 <kbd>Ctrl+Q</kbd> stands the whole queue where the box was, with a footer naming
 the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
@@ -991,8 +993,10 @@ context bar `/context` draws, and then the plan limits: one bar for each of the
 5-hour, weekly and monthly windows the vendor reported on its last response,
 with when each starts again in your local time; a reset already behind the
 clock reads `since passed`, as the window has started again since that
-response. Only the ChatGPT sign-in reports them; an API key or any other
-sign-in says `limits not reported`. Opening the panel sends nothing: every
+response. A window at 100% whose reset is still ahead ends the next turn
+before it is sent, with a notice naming the window and its reset. Only the
+ChatGPT sign-in reports them; an API key or any other sign-in says `limits not
+reported`. Opening the panel sends nothing: every
 figure on it is one crucible already holds, and the counts are this run's,
 starting again for a session picked up with `/resume`. Escape closes it.
 

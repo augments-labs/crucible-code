@@ -3,7 +3,7 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 60x24 cursor 23,0 scrolled 0
-|jumps over the lazy dog. the quick brown fox jumps over the•|
+|jumps over the lazy dog. the quick brown fox jumps over the●|
 |lazy dog. done.                                            ┃|
 |────────────────────────────────────────────────────────────|
 |                                                            |

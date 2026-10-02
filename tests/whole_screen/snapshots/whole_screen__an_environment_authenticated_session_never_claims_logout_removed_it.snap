@@ -17,7 +17,7 @@ expression: window.picture()
 |│ · ctrl+c     clears the line typed so far                                   │┃|
 |╰─────────────────────────────────────────────────────────────────────────────╯┃|
 |                                                                               ┃|
-|› /logout                                                                      ┃|
+|› /logout                                                                      ●|
 |⎿ anthropic still uses ANTHROPIC_API_KEY; unset it in the shell before         ┃|
 |  restarting                                                                   ┃|
 |                                                                               ┃|

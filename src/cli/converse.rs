@@ -55,7 +55,7 @@ use crucible_auth::Store;
 use crucible_builtins::{Background, Ledger, Plan};
 use crucible_client_api::{Command, ErrorCode, Prompt, Refusal};
 use crucible_context::Room;
-use crucible_runner::{Event, Runner, Turned};
+use crucible_runner::{Event, Runner, TurnError, Turned};
 use crucible_runtime::Cancel;
 use crucible_session::Session;
 use crucible_tui::{
@@ -606,7 +606,8 @@ pub(crate) fn converse<T: Terminal>(
         }
 
         // The lines queued during the last turn are the next turn, before the
-        // box is asked for another.
+        // box is asked for another — unless that turn stopped on a used-up
+        // plan, when they wait for the reader instead.
         let (back, taken) = queueing::taken(conversation, renderer, terms, &mut held, style)?;
         conversation = back;
 
@@ -635,6 +636,7 @@ pub(crate) fn converse<T: Terminal>(
             clipboard: &mut held.clipboard,
             left,
             aside: &terms.aside,
+            queued: &held.queued,
             keys,
         };
         let asked = typing::ask(renderer, style, between)?;
@@ -642,7 +644,9 @@ pub(crate) fn converse<T: Terminal>(
         // Answered by the state that holds what it stands over, because the loop
         // that read the key holds neither. The box comes back either way, with the
         // line still in it.
-        if held.opened.asked(&asked, &held.kept) {
+        if held.opened.asked(&asked, &held.kept)
+            || held.viewing.asked(&asked, &held.queued, &terms.steer)
+        {
             continue;
         }
 
@@ -655,7 +659,7 @@ pub(crate) fn converse<T: Terminal>(
             Asked::Ended => break,
 
             // Taken above, by the state that holds what it stands over.
-            Asked::Expand | Asked::Clicked(_) => continue,
+            Asked::Expand | Asked::Clicked(_) | Asked::Queue => continue,
 
             Asked::Untyped => {
                 match unboxed(renderer, conversation.runner(), style, held.answers.input)? {
@@ -900,7 +904,7 @@ fn ran<T: Terminal>(
     // request was made posted no event at all, so without this the reader is
     // handed a fresh prompt and no word on why nothing answered.
     match &took.did {
-        Did::Reported => {}
+        Did::Reported | Did::UsedUp => {}
         Did::Refused(turned) => draw::refused(renderer, turned)?,
         Did::Nothing => draw::unmade(renderer)?,
         Did::Stopped => draw::stopped(renderer)?,
@@ -913,9 +917,13 @@ fn ran<T: Terminal>(
     // posts the ruled record instead, which is true of the session rather than
     // of the line that asked for it — a rule is drawn from the first column,
     // and a mark shoved in front of one reads as a result that lost its start.
-    if let Some(from) = command.filter(|_| !matches!(took.did, Did::Reported)) {
+    if let Some(from) = command.filter(|_| !matches!(took.did, Did::Reported | Did::UsedUp)) {
         renderer.subordinate(from, style.glyphs())?;
     }
+
+    // Asked of every piece of work that ran, so the first one to end any other
+    // way lets the queue go again.
+    held.used_up = matches!(took.did, Did::UsedUp);
 
     let leaving = matches!(took.meanwhile, typing::Meanwhile::Leaving);
     let mut conversation = took.conversation;
@@ -1606,8 +1614,9 @@ fn sent(
             Ended::Room(Ok(Room::Nothing)) => Did::Nothing,
             Ended::Room(Ok(Room::Stopped)) => Did::Stopped,
             Ended::Turn(Err(problem)) | Ended::Room(Err(problem)) => {
+                let used_up = matches!(problem, TurnError::PlanLimit { .. });
                 reporting.post(Event::Failed { error: problem });
-                Did::Reported
+                if used_up { Did::UsedUp } else { Did::Reported }
             }
             Ended::Refused(refusal) => Did::Unsent(refusal),
             // Not reached from here: a prompt or `/compact` with no model to
@@ -1641,6 +1650,11 @@ enum Work {
 enum Did {
     /// It happened, and everything about it was reported as it happened.
     Reported,
+    /// It was reported as [`Self::Reported`] is, and it stopped on a used-up
+    /// plan. Told apart because the queue waits for the reader after it: the
+    /// lines in it, run as the next turn, would stop again or go to a vendor
+    /// that has said the plan is spent.
+    UsedUp,
     /// A guardrail turned the turn away, or could not decide about it. Carried
     /// back whole because the refusal may be the only thing the turn produced:
     /// a prompt refused before any request was made posts no event.
@@ -1714,6 +1728,10 @@ struct Held<'a> {
     /// were typed: the whole of the queue goes to one turn rather than a turn
     /// each, which is what [`queueing::batched`] does with it.
     queued: Prompts,
+    /// Whether the last work stopped on a used-up plan, which holds the queue
+    /// until the reader sends something: [`queueing::taken`] runs nothing
+    /// while it is set.
+    used_up: bool,
     /// What the transcript had no room to say, waiting for Ctrl+O. Held for the
     /// whole session rather than for a turn: the row offering the key is read
     /// after the turn that drew it has ended, which is when there is time to
@@ -1799,6 +1817,7 @@ impl<'a> Held<'a> {
             // also the one that has a second press to give away.
             editor: Editor::new().multiline().sends(sending),
             queued: Prompts::default(),
+            used_up: false,
             kept: Kept::default(),
             gathering: Gathering::default(),
             opened: Standing::default(),

@@ -18,7 +18,7 @@ expression: window.picture()
 |│ · ctrl+c     clears the line typed so far                                   │┃|
 |╰─────────────────────────────────────────────────────────────────────────────╯┃|
 |                                                                               ┃|
-|› what is 2+2                                                                  ┃|
+|› what is 2+2                                                                  ●|
 |                                                                               ┃|
 |Two plus two is four.                                                          ┃|
 |                                                                                |

@@ -18,7 +18,7 @@ expression: picture
 |variable. Then use /model to select a model.                                   ┃|
 |                                                                               ┃|
 |› /login                                                                       ┃|
-|⎿ ! the key could not be saved — crucible cannot write its login store; try    ┃|
+|⎿ ! the key could not be saved — crucible cannot write its login store; try    ●|
 |  /login again after fixing the permissions                                    ┃|
 |                                                                               ┃|
 |                                                                                |

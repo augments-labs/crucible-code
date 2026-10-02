@@ -801,6 +801,47 @@ fn a_failure_cannot_choose_where_its_rows_break() {
 }
 
 #[test]
+fn plan_limit_failure_draws_the_notice_in_place_of_the_error_sentence() {
+    // The stop is not a failure to be read as one: no Trouble colour, no
+    // sentence of the error's, and the notice's own words in their place.
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    renderer.wears(Style::coloured().palette());
+
+    event(
+        &mut renderer,
+        Event::Failed {
+            error: TurnError::PlanLimit {
+                window: None,
+                resets_at: None,
+                stopped: crucible_runner::PlanLimitStop::Refused,
+            },
+        },
+        &here(),
+        Style::plain(),
+        &mut Kept::default(),
+    )
+    .expect("the notice to draw");
+
+    let shown = renderer.terminal().picture().said();
+    assert_eq!(
+        shown,
+        [
+            "  ■ Usage limit reached · resets: not reported",
+            "    The vendor refused the request. Nothing was lost; send a prompt later to",
+            "    continue.",
+        ]
+    );
+    assert!(
+        !renderer
+            .terminal()
+            .written()
+            .contains("usage limit reached;"),
+        "{:?}",
+        renderer.terminal().written()
+    );
+}
+
+#[test]
 fn a_question_about_a_file_names_the_file() {
     // The path the workspace resolved, not the JSON the model sent: that is
     // what the user is being asked to consent to.

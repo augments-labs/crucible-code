@@ -429,6 +429,7 @@ impl Provider for Anthropic {
                     Rules {
                         fast: rule,
                         overlong: Some(overlong::outgrew),
+                        plan: None,
                     },
                     response,
                     &redactions,

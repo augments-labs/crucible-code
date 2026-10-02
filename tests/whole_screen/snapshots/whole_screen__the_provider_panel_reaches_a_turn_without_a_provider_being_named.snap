@@ -19,7 +19,7 @@ expression: window.picture()
 |⎿ anthropic · claude-test-1                                                    ┃|
 |                                                                               ┃|
 |› what is 2+2                                                                  ┃|
-|                                                                               ┃|
+|                                                                               ●|
 |Two plus two is four.                                                          ┃|
 |                                                                                |
 |                                                                 99% window left|

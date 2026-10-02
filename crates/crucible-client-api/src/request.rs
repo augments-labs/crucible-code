@@ -19,11 +19,11 @@ impl Version {
     ///
     /// It moves whenever a frame changes in a way a build speaking the old
     /// number would refuse or misread: a field added that must be there, one
-    /// renamed, moved or taken away. No release speaks this contract yet, which
-    /// is the only reason its frames have changed under the number 1; a test
-    /// holds the number and what the frames are made of together, so that after
-    /// the first release one cannot move without the other being looked at.
-    pub const CURRENT: Self = Self(1);
+    /// renamed, moved or taken away, or a word added that a build speaking the
+    /// old number would refuse as malformed, as the second revision added the
+    /// `plan_limit` code. A test holds the number and what the frames are made
+    /// of together, so that one cannot move without the other being looked at.
+    pub const CURRENT: Self = Self(2);
 
     /// The revision numbered `number`, spoken or not.
     #[must_use]

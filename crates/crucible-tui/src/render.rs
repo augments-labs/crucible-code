@@ -408,17 +408,7 @@ impl<T: Terminal> Renderer<T> {
 
         let bands = self.bands();
         if let Pressed::Hovered { row, column } = arrived {
-            let lit = self.pointed();
-            let prompt_pointed = self.prompt_pointed();
-            self.pointing = Some((row, column));
-            let changed = lit != self.pointed() || prompt_pointed != self.prompt_pointed();
-            if changed && self.prompt_target.is_some() {
-                // The caller has the pointable row in both of its palette
-                // states. It replaces that row and the rest of the prompt in
-                // one candidate rather than letting this write an
-                // intermediate frame.
-                self.pointed_changed = true;
-            } else if changed {
+            if self.points(row, column, &bands) {
                 self.draw()?;
             }
             return Ok(None);
@@ -486,13 +476,15 @@ impl<T: Terminal> Renderer<T> {
     ///
     /// A press on the thumb takes hold of it where it was pressed and moves
     /// nothing, a mark the thumb covers included. A press on a mark off the
-    /// thumb lands on the prompt the mark stands for, and anywhere else on the
-    /// rail puts the thumb's middle there, as near as the rail's ends allow;
-    /// either way the thumb is then held where the pointer is. A drag moves the held thumb, and the transcript
-    /// with it, and the release lets go. A rail with no thumb — a record that
-    /// fits — has nowhere to go, so a press on it moves nothing; it is still
-    /// the rail's, so it names no line beside it, just as a pointer resting
-    /// there lights none.
+    /// thumb lands on the prompt the mark stands for, which is then the rail's
+    /// current prompt for as long as it starts in the band and no prompt is
+    /// sent after it, and anywhere else on the rail puts the thumb's middle
+    /// there, as near as the rail's ends allow; either way the thumb is then
+    /// held where the pointer is. A drag moves the held thumb, and the
+    /// transcript with it, and the release lets go. A rail with no thumb — a
+    /// record that fits — has nowhere to go, so a press on it moves nothing; it
+    /// is still the rail's, so it names no line beside it, just as a pointer
+    /// resting there lights none.
     ///
     /// # Errors
     ///
@@ -520,9 +512,12 @@ impl<T: Terminal> Renderer<T> {
                 };
                 let at = row - bands.transcript.start;
                 if !thumb.contains(&at) {
-                    let top = rail
-                        .prompt_at(at, self.record.prompts())
-                        .unwrap_or_else(|| rail.top_for(at.saturating_sub(thumb.len() / 2)));
+                    let top = if let Some(prompt) = rail.prompt_at(at, self.record.prompts()) {
+                        self.record.lands(prompt);
+                        prompt
+                    } else {
+                        rail.top_for(at.saturating_sub(thumb.len() / 2))
+                    };
                     self.record.seek(top, rows);
                 }
                 let thumb = self
@@ -539,10 +534,14 @@ impl<T: Terminal> Renderer<T> {
                 self.draw()?;
                 Ok(true)
             }
-            Pressed::Dragged { row, .. } => {
+            Pressed::Dragged { row, column } => {
                 let Some(grip) = self.grip else {
                     return Ok(false);
                 };
+                // A drag reports where the pointer is as motion does, so the
+                // mark grown under it is the one under it now, not the one
+                // the press was on.
+                let mut owed = self.points(row, column, bands);
                 if let Some(rail) = self.rail(bands)
                     && let Some(thumb) = rail.thumb()
                 {
@@ -552,15 +551,42 @@ impl<T: Terminal> Renderer<T> {
                     let start = at
                         .saturating_sub(grip)
                         .min(rows.saturating_sub(thumb.len()));
-                    if self.record.seek(rail.top_for(start), rows) {
-                        self.draw()?;
-                    }
+                    owed |= self.record.seek(rail.top_for(start), rows);
+                }
+                if owed {
+                    self.draw()?;
                 }
                 Ok(true)
             }
             Pressed::Released { .. } => Ok(self.grip.take().is_some()),
             _ => Ok(false),
         }
+    }
+
+    /// Moves the pointer to `row` and `column`, and says whether this renderer
+    /// owes a frame for it: when what the pointer lights, the prompt row it is
+    /// on or the rail row it is on changed.
+    ///
+    /// Motion within the same targets owes nothing, so all-motion reporting
+    /// does not turn into one frame per cell.
+    fn points(&mut self, row: usize, column: usize, bands: &Bands) -> bool {
+        let lit = self.pointed();
+        let prompt_pointed = self.prompt_pointed();
+        let railed = self.rail_pointed(bands);
+        self.pointing = Some((row, column));
+        let changed = lit != self.pointed()
+            || prompt_pointed != self.prompt_pointed()
+            || railed != self.rail_pointed(bands);
+        if changed && self.prompt_target.is_some() {
+            // The caller has the pointable row in both of its palette
+            // states. It replaces that row and the rest of the prompt in
+            // one candidate rather than letting this write an
+            // intermediate frame. A change of rail row rides the same flag:
+            // that replacement redraws the whole frame, rail and all.
+            self.pointed_changed = true;
+            return false;
+        }
+        changed
     }
 
     /// The width the transcript is folded at: the window's, less the rail's
@@ -583,7 +609,24 @@ impl<T: Terminal> Renderer<T> {
     fn rail(&self, bands: &Bands) -> Option<ScrollRail> {
         self.rail_column()?;
         let place = self.record.place(bands.transcript.len());
-        Some(ScrollRail::new(place, self.record.prompts()))
+        Some(ScrollRail::new(
+            place,
+            self.record.prompts(),
+            self.record.landed(),
+        ))
+    }
+
+    /// The rail row the pointer is on, where it is on a rail with a thumb.
+    ///
+    /// `None` off the rail's column, outside the band, and on a rail over a
+    /// record that fits, which is blank and answers no pointer.
+    fn rail_pointed(&self, bands: &Bands) -> Option<usize> {
+        let (row, column) = self.pointing?;
+        if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
+            return None;
+        }
+        self.rail(bands)?.thumb()?;
+        Some(row - bands.transcript.start)
     }
 
     /// The transcript band as it stands, for placing a drag's ends.
@@ -691,7 +734,7 @@ impl<T: Terminal> Renderer<T> {
         self.pointing
     }
 
-    /// Whether a pointer transition is waiting for a pointable prompt redraw.
+    /// Whether a pointer transition is waiting for a redraw.
     ///
     /// Taken once. Motion within the same effective target sets no new
     /// transition, so all-motion reporting does not turn into one frame per
@@ -1702,9 +1745,10 @@ impl<T: Terminal> Renderer<T> {
         // is wider, padded where it is shorter — so every cell lands in the
         // same column. Empty where there is no rail.
         let folds = self.folds();
+        let railed = self.rail_pointed(&bands);
         let rail = self
             .rail(&bands)
-            .map(|rail| rail.rows(self.size.columns, self.glyphs))
+            .map(|rail| rail.rows(self.size.columns, self.glyphs, railed))
             .unwrap_or_default();
         let mut rail = rail.into_iter();
         let mut showing = self.record.view(bands.transcript.len()).into_iter();

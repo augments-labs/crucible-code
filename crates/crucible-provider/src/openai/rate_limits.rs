@@ -17,12 +17,18 @@
 //!
 //! The header names are those the Codex CLI reads, as its binary's strings
 //! spell them; no response from the backend was captured to write this.
+//!
+//! The backend refuses a request whose plan is used up with a body of its own
+//! shape, which [`used_up`] reads; the same refusal carries these headers, and
+//! they name the window.
 
 use std::time::{Duration, SystemTime};
 
 use crucible_types::{PlanWindows, Window, WindowReading};
+use serde_json::Value;
 
 use super::Serving;
+use crate::refusal::UsedUp;
 use crate::transport::Named;
 
 /// The headers one of the two windows is reported in.
@@ -114,4 +120,29 @@ fn percent(text: &str) -> Option<u8> {
         return None;
     }
     (0..=100_u8).rev().find(|whole| f64::from(*whole) <= used)
+}
+
+/// Whether `body`, a refused response that arrived at `arrived`, is the plan
+/// backend refusing a used-up plan, and when it says the plan starts again.
+///
+/// Told by `error.type` alone, as the Codex CLI tells it, and never by the
+/// message beside it. The reset is `error.resets_at`, a second since the
+/// epoch, or else `error.resets_in_seconds` counted from `arrived`; either
+/// that is not a whole count of seconds is as good as absent, and a refusal
+/// with neither is still a used-up plan whose reset was not reported.
+pub(super) fn used_up(body: &Value, arrived: SystemTime) -> Option<UsedUp> {
+    let error = body.get("error")?;
+    if error.get("type")?.as_str()? != "usage_limit_reached" {
+        return None;
+    }
+    let seconds = |field: &str| {
+        error
+            .get(field)
+            .and_then(Value::as_u64)
+            .map(Duration::from_secs)
+    };
+    let resets_at = seconds("resets_at")
+        .and_then(|since| SystemTime::UNIX_EPOCH.checked_add(since))
+        .or_else(|| seconds("resets_in_seconds").and_then(|wait| arrived.checked_add(wait)));
+    Some(UsedUp { resets_at })
 }

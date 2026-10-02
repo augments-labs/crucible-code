@@ -111,7 +111,8 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. |
 | <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
-| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+Q</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
+| <kbd>Ctrl+Q</kbd> | Stands the prompts left queued behind a turn that stopped on a used-up plan. See [The queue](#the-queue). Nothing while none are waiting. |
+| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
 
 ## While a turn runs
@@ -144,6 +145,7 @@ queue](#the-queue).
 | --- | --- |
 | Wheel | Scrolls the transcript, six rows a notch unless [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed) says otherwise, from 3 to 30. Sending a prompt takes you back to the foot. |
 | Pointer over a cut result | Lights it, every row of it. |
+| Pointer over the scroll rail | Lights the track and its marks, and draws the mark under the pointer larger. |
 | Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. |
 | Drag | Selects the rows you cover, anywhere in the window, and letting go copies them. At the top or the foot the transcript scrolls under the pointer, and the wheel scrolls it while the button is still down. Resizing lets go of the selection. |
 | Click on the scroll rail | Off the thumb, moves the transcript so the thumb is centred where you clicked, or as near as the rail's ends allow; a click on a prompt's mark lands on that prompt. A click on the thumb takes hold of it without moving it. |
@@ -420,7 +422,9 @@ With one row of room the view gives it to the transcript and closes.
 
 <kbd>Ctrl+Q</kbd> while a turn runs stands the prompts waiting behind it.
 While the view stands the turn takes none of them, and closing it releases
-them all at once.
+them all at once. Between turns it reaches the prompts left queued behind a
+turn that stopped on a used-up plan, which wait over the box in the same panel
+until you send a prompt; closing the view leaves them waiting there.
 
 | Key | What it does |
 | --- | --- |

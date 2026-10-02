@@ -165,7 +165,9 @@ impl Standing {
 
             // Not this one's. A line, a turn nobody typed and the end of a
             // session are the loop's.
-            Asked::Said(_) | Asked::Woke(_) | Asked::Ended | Asked::Untyped => return false,
+            Asked::Said(_) | Asked::Woke(_) | Asked::Ended | Asked::Untyped | Asked::Queue => {
+                return false;
+            }
         }
 
         true

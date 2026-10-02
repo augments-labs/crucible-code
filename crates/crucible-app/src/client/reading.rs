@@ -6,16 +6,17 @@
 //! bounded things about each that the contract has a word for, and an event
 //! with no word — a sandbox fact, a cache fact, a receipt — is not sent.
 
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crucible_client_api as api;
 use crucible_client_api::{
-    Capabilities, Capability, Model, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
+    Capabilities, Capability, ErrorCode, Model, Name, Percent, Problem, Progress, Snapshot, Stop,
+    Text,
 };
 use crucible_models::{Effort, Served, Speed};
-use crucible_runner::{Breakdown, Category, Event, SessionCost, Totals};
+use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::Mode;
-use crucible_types::{CostAmount, PlanWindows, StopReason, Window};
+use crucible_types::{CostAmount, PlanWindows, StopReason, Utc, Window};
 
 use crate::Conversation;
 use crate::switching::Retained;
@@ -108,7 +109,7 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
         },
-        Event::Failed { error } => Progress::Failed(Problem::failed(error)),
+        Event::Failed { error } => Progress::Failed(failed(error)),
         // A refusal whose second send a stop ended is no retry.
         Event::FastRefused { resent: false, .. }
         | Event::PromptCache { .. }
@@ -118,6 +119,44 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         | Event::Unread { .. }
         | Event::Steered { .. } => return None,
     })
+}
+
+/// What a client is told of a turn that ended on `error`.
+///
+/// A used-up plan has a code of its own, so that a client can tell a time to
+/// come back from a failure to report, and a sentence written here from the
+/// window's name and the reset in UTC: nothing the vendor wrote reaches it.
+/// Every other ending reads as what the terminal would have shown.
+pub(super) fn failed(error: &TurnError) -> Problem {
+    match error {
+        TurnError::PlanLimit {
+            window,
+            resets_at,
+            stopped,
+        } => Problem {
+            code: ErrorCode::PlanLimit,
+            message: Text::cut(&used_up(*window, *resets_at, *stopped)),
+        },
+        other => Problem::failed(other),
+    }
+}
+
+/// The sentence a client is told a used-up plan in.
+fn used_up(
+    window: Option<Window>,
+    resets_at: Option<SystemTime>,
+    stopped: PlanLimitStop,
+) -> String {
+    let window = window.map_or_else(String::new, |window| format!(" on the {}", window.named()));
+    let resets = resets_at.map_or_else(
+        || "the reset was not reported".to_owned(),
+        |at| format!("it resets at {}", Utc::new(at)),
+    );
+    let stopped = match stopped {
+        PlanLimitStop::BeforeSending => "the turn stopped before sending",
+        PlanLimitStop::Refused => "the vendor refused the request",
+    };
+    format!("the plan's usage limit is reached{window}; {resets}; {stopped}")
 }
 
 /// How the window of the next request to `model` is spent, as a client reads

@@ -77,6 +77,6 @@ pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use usage::{
     Calibration, Carried, InputTokenUsage, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES,
     MAX_PROVIDER_USAGE_DETAILS, PlanWindows, ProviderNumericDetail, ProviderUsage, Spend,
-    UsageError, Window, WindowReading,
+    UsageError, Utc, Window, WindowReading,
 };
 pub use version::later;

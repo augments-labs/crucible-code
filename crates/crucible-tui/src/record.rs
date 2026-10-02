@@ -173,10 +173,12 @@ pub(crate) struct Record {
     tall: VecDeque<u16>,
     /// The cumulative display-row end of each line at [`Self::columns`].
     ///
-    /// Absolute within the current width epoch: dropping a line advances
-    /// [`Self::before`] rather than subtracting from every end, so a seek from
-    /// the scroll rail can binary-search this list without work proportional
-    /// to the record on either append or spill.
+    /// Absolute within the current epoch, which a resize or emptying the
+    /// record starts afresh: dropping a line advances [`Self::before`] rather
+    /// than subtracting from every end, so a seek from the scroll rail can
+    /// binary-search this list without work proportional to the record on
+    /// either append or spill. An end kept past its epoch places the next
+    /// session's lines at the old one's rows, and the rail with them.
     ends: VecDeque<usize>,
     /// Display rows before the first retained line in the current width epoch.
     before: usize,
@@ -214,6 +216,15 @@ pub(crate) struct Record {
     /// to mark across a long transcript, not one allocation for every prompt
     /// in it.
     landmarks: VecDeque<usize>,
+    /// The prompt a press on its rail mark last landed on, as one of
+    /// [`Self::landmarks`].
+    ///
+    /// Held here rather than by whoever pressed, because a resize that lays
+    /// the opening out again renumbers every landmark under it, and this has
+    /// to move with them or it names another prompt. A prompt that has left
+    /// the record names nothing, and a prompt sent after it ends the landing:
+    /// the prompt being answered is the one read under.
+    landed: Option<usize>,
     /// Whether the last line is still being written to.
     ///
     /// A line is open from the first delta that lands in it until the newline
@@ -257,6 +268,7 @@ impl Record {
             following: true,
             opening: None,
             landmarks: VecDeque::new(),
+            landed: None,
             open: false,
         }
     }
@@ -360,7 +372,7 @@ impl Record {
         } else if self.top.line > opening.from {
             self.top.line = opening.from;
         }
-        for landmark in &mut self.landmarks {
+        for landmark in self.landmarks.iter_mut().chain(self.landed.as_mut()) {
             if *landmark >= past {
                 *landmark = (*landmark + lines).saturating_sub(opening.lines);
             } else if *landmark > opening.from {
@@ -528,6 +540,8 @@ impl Record {
         self.gone += self.lines.len() + 1;
         self.lines.clear();
         self.tall.clear();
+        self.ends.clear();
+        self.before = 0;
         self.weight = 0;
         self.rows = 0;
         self.top = Spot {
@@ -659,6 +673,7 @@ impl Record {
             return;
         }
         self.landmarks.push_back(line);
+        self.landed = None;
         while self.landmarks.len() > MOST_LANDMARKS {
             self.landmarks.pop_front();
         }
@@ -892,10 +907,42 @@ impl Record {
     /// The walk is capped by [`MOST_LANDMARKS`], and a prompt whose line has
     /// spilled off the head leaves with it.
     pub(crate) fn prompts(&self) -> impl Iterator<Item = usize> + '_ {
-        self.landmarks
-            .iter()
-            .filter_map(|line| self.start_of(*line))
-            .map(|row| row.saturating_sub(self.before))
+        self.landmarked().map(|(_, row)| row)
+    }
+
+    /// Each prompt still retained, oldest first, as its stable line number
+    /// beside where it starts, in display rows into what is retained.
+    ///
+    /// What holds a prompt across scrolling and spills, where its row moves
+    /// and its line number does not. A resize that lays the opening out again
+    /// renumbers every line under it, landmarks and [`Self::landed`] with
+    /// them, so only a number read back from here since the last resize is
+    /// one. Capped as [`Self::prompts`] is.
+    fn landmarked(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.landmarks.iter().filter_map(|line| {
+            let row = self.start_of(*line)?;
+            Some((*line, row.saturating_sub(self.before)))
+        })
+    }
+
+    /// Lands on the prompt that starts at display row `row` of what is
+    /// retained, so the scroll rail holds it as current; a row no prompt
+    /// starts on lands on nothing.
+    pub(crate) fn lands(&mut self, row: usize) {
+        let landed = self
+            .landmarked()
+            .find(|(_, start)| *start == row)
+            .map(|(line, _)| line);
+        self.landed = landed;
+    }
+
+    /// Where the prompt last landed on starts, in display rows into what is
+    /// retained, while it is still retained.
+    pub(crate) fn landed(&self) -> Option<usize> {
+        let line = self.landed?;
+        self.landmarked()
+            .find(|(landmark, _)| *landmark == line)
+            .map(|(_, row)| row)
     }
 
     /// Moves the band's top to display row `row` of what is retained, and

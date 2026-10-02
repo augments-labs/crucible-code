@@ -16,7 +16,7 @@ expression: refused
 |╰─────────────────────────────────────────────────────────╯┃|
 |                                                           ┃|
 |› start it                                                 ┃|
-|                                                           ┃|
+|                                                           ●|
 |● Bash(sleep 30)                                           ┃|
 |  ⎿ (no output yet) (+2 lines · ctrl+o to expand)          ┃|
 |                                                           ┃|
