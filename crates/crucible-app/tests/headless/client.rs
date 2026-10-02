@@ -1376,8 +1376,12 @@ fn context_of_a_model_with_no_reported_window_leaves_the_window_and_free_room_ou
     Ok(())
 }
 
+/// A client with no terminal reads `/context` mid-turn as the terminal draws
+/// it: from the figures each reading of the running turn carried, streamed to
+/// it as progress. Asked for at a door the turn leaves open, it waits.
 #[test]
-fn context_waits_for_the_turn_at_every_door_a_running_turn_leaves_open() -> Result<(), Failed> {
+fn context_mid_turn_is_streamed_by_the_turn_and_waits_at_every_door_it_leaves_open()
+-> Result<(), Failed> {
     let tree = Tree::new("client-context-busy")?;
     let standing = Standing::new(&tree, &[])?;
     let workspace = tree.workspace()?;
@@ -1394,8 +1398,35 @@ fn context_waits_for_the_turn_at_every_door_a_running_turn_leaves_open() -> Resu
 
     assert_eq!(client::keep(&request, &desk).outcome(), busy);
     assert_eq!(client::interrupt(&request, &Cancel::new()), busy);
-    let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    // A tool's results are a reading the turn carries before its next request.
+    let script = Script::new(vec![calling(), saying("after")]);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
     let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
     assert_eq!(response.outcome, busy);
+
+    let asked = Wire::default().sent(prompt("change it")?)?;
+    let mut remote = Remote::new(vec![Saying::Fitting(Ruling::Allow)]);
+    let (_, streamed) = turned(&mut conversation, &asked, &mut remote)?;
+    let carried: Vec<_> = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Context(context) => Some(context),
+            _ => None,
+        })
+        .collect();
+    assert!(!carried.is_empty(), "{streamed:?}");
+    for context in carried {
+        assert_eq!(context.model, None, "{context:?}");
+        assert_eq!(context.window, Some(200_000), "{context:?}");
+        assert!(context.left.is_some(), "{context:?}");
+        assert!(context.tools > 0 && context.messages > 0, "{context:?}");
+        let held =
+            context.system + context.instructions + context.tools + context.mcp + context.messages;
+        assert_eq!(
+            held + context.reserve + context.free,
+            200_000,
+            "{context:?}"
+        );
+    }
     Ok(())
 }

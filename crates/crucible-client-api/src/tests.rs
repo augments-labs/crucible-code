@@ -567,6 +567,7 @@ fn responses() -> Vec<Response> {
 }
 
 fn progress() -> Vec<Progress> {
+    let [whole, unknown] = contexts();
     vec![
         Progress::Started { turn: 1 },
         Progress::Delta { text: marked() },
@@ -583,6 +584,8 @@ fn progress() -> Vec<Progress> {
         Progress::Compacting { part: 2 },
         Progress::Compacted { replaced: 9 },
         Progress::Spent { tokens: 1234 },
+        Progress::Context(whole),
+        Progress::Context(unknown),
         Progress::Finished {
             turn: 1,
             stop: Stop::Cancelled,
@@ -1754,7 +1757,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 7_232_262_667_776_103_646),
+        (1, 3_479_318_969_913_473_177),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

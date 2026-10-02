@@ -93,6 +93,9 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         Event::Spent { spend } => Progress::Spent {
             tokens: spend.tokens(),
         },
+        // What the terminal's `/context` draws while a turn runs; the model
+        // is the snapshot's to say.
+        Event::Carried { breakdown, .. } => Progress::Context(counted(breakdown)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
@@ -103,7 +106,6 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         | Event::PromptCache { .. }
         | Event::Sandbox { .. }
         | Event::Wrote { .. }
-        | Event::Carried { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
         | Event::Steered { .. } => return None,
@@ -117,11 +119,20 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
 /// category this match, and so the contract, has to be told about. The
 /// reading of what is left is the one the prompt line and [`snapshot`] show.
 /// Called between turns by [`perform`](super::perform), and by the terminal
-/// mid-turn with the breakdown the last request was built under.
+/// mid-turn with the breakdown the last request was built under; a client
+/// with no terminal is streamed the same figures by [`progress`].
 #[must_use]
 pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
-    let mut context = api::Context {
+    api::Context {
         model: Model::new(model),
+        ..counted(breakdown)
+    }
+}
+
+/// The parts of `breakdown`, with no model named.
+fn counted(breakdown: &Breakdown) -> api::Context {
+    let mut context = api::Context {
+        model: None,
         window: breakdown.window().map(u64::from),
         left: breakdown.left().and_then(Percent::new),
         system: 0,
