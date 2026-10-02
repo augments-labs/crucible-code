@@ -12,7 +12,7 @@ expression: timeless(&usage)
 |│ · ctrl+c     clears the line typed so far                                   │┃|
 |╰─────────────────────────────────────────────────────────────────────────────╯┃|
 |                                                                               ┃|
-|› /settings                                                                    ┃|
+|› /settings                                                                    ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Settings     Status     Config   ‹ Usage ›                                      |

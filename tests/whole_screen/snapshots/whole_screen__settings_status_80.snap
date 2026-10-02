@@ -18,7 +18,7 @@ expression: sessionless(&status)
 |│ · ctrl+c     clears the line typed so far                                   │┃|
 |╰─────────────────────────────────────────────────────────────────────────────╯┃|
 |                                                                               ┃|
-|› /settings                                                                    ┃|
+|› /settings                                                                    ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |Settings   ‹ Status ›   Config     Usage                                        |
