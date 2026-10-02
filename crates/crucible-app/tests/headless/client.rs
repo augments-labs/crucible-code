@@ -1880,6 +1880,32 @@ fn limit_a_second_ask_within_a_minute_is_not_sent() -> Result<(), Failed> {
     Ok(())
 }
 
+/// A question given up on before the plan answered it taught nothing, so it
+/// holds nothing back: the next opening asks at once. One that was answered
+/// still holds the minute.
+#[test]
+fn limit_an_ask_abandoned_unanswered_leaves_the_next_free_to_ask() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-abandoned")?;
+    let script = Script::new(Vec::new()).answering(plan_answer);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+    let request = Wire::default().sent(Command::AskLimits)?;
+
+    let Some(question) = client::asking(&mut conversation, &request, first)? else {
+        return Err("the plan was not asked".into());
+    };
+    let put = question.put();
+    drop(question);
+    client::abandoned(&mut conversation, put);
+
+    let again = first + Duration::from_secs(1);
+    assert!(asked_limits(&mut conversation, again)?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 1, "only the second was sent");
+    assert!(asked_limits(&mut conversation, again + Duration::from_secs(1))?.is_none());
+    Ok(())
+}
+
 /// A credential the source refused (a 401, 403 or 404) is not asked again
 /// this session; any other failure is asked again once the minute is out,
 /// and leaves what was known standing.

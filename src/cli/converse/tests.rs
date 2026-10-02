@@ -242,6 +242,15 @@ pub(crate) fn asking_plan() -> (Conversation, crate::cli::fake::Asked) {
     (conversation, asked)
 }
 
+/// A conversation whose plan keeps a source of its limits and, asked, never
+/// answers.
+pub(crate) fn stalled_plan() -> Conversation {
+    let script = Script::new(Vec::new()).stalling();
+    paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    })
+}
+
 /// The whole loop over one script: what the terminal ended up with, and how
 /// many requests the script was given.
 fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {

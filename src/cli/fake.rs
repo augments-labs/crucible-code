@@ -83,6 +83,8 @@ pub(crate) struct Script {
     answering: Option<PlanWindows>,
     /// How many times the plan was asked.
     limits_asked: Asked,
+    /// Whether the plan, asked, never answers.
+    stalling: bool,
 }
 
 /// A vendor's refusal of a used-up plan, and the windows its head reported,
@@ -104,6 +106,7 @@ impl Script {
             used_up: None,
             answering: None,
             limits_asked: Asked::default(),
+            stalling: false,
         }
     }
 
@@ -112,6 +115,16 @@ impl Script {
     pub(crate) fn answering(self, windows: PlanWindows) -> Self {
         Self {
             answering: Some(windows),
+            ..self
+        }
+    }
+
+    /// A provider whose plan keeps a source of its limits and, asked, never
+    /// answers.
+    pub(crate) fn stalling(self) -> Self {
+        Self {
+            answering: Some(PlanWindows::new(std::time::SystemTime::now())),
+            stalling: true,
             ..self
         }
     }
@@ -195,8 +208,12 @@ impl Provider for Script {
     fn ask_limits(&self) -> Option<BoxFuture<'static, crucible_models::Asked>> {
         let windows = self.answering.clone()?;
         let asked = Arc::clone(&self.limits_asked);
+        let stalling = self.stalling;
         Some(Box::pin(async move {
             asked.fetch_add(1, Ordering::Relaxed);
+            if stalling {
+                std::future::pending::<()>().await;
+            }
             crucible_models::Asked::Answered(windows)
         }))
     }

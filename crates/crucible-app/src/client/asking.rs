@@ -19,7 +19,8 @@
 //! - of a vendor that uses what it is sent, until the use of what is sent
 //!   there has been agreed to — the content-use hold a turn waits on;
 //! - of the same credential more than once a minute, whatever came of the
-//!   last time;
+//!   last time — unless the last question was [`abandoned`] before it was
+//!   answered;
 //! - of a credential the source refused, or where the source was not there,
 //!   for the rest of the session.
 //!
@@ -82,6 +83,12 @@ impl Asks {
         self.sent.push((credential, now));
     }
 
+    /// The question `put` is forgotten, where it is still the last one put
+    /// through its credential.
+    fn unsent(&mut self, put: Put) {
+        self.sent.retain(|sent| *sent != (put.credential, put.at));
+    }
+
     /// `credential` is not to be asked again this session.
     fn close(&mut self, credential: Credential) {
         if self.closed.contains(&credential) {
@@ -99,6 +106,15 @@ impl Asks {
 pub struct Asking {
     credential: Credential,
     question: BoxFuture<'static, Asked>,
+    put: Put,
+}
+
+/// Which question was put to a plan, and when: what a front end that gives up
+/// waiting for the answer hands back to [`abandoned`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Put {
+    credential: Credential,
+    at: Instant,
 }
 
 impl Asking {
@@ -106,6 +122,13 @@ impl Asking {
     #[must_use]
     pub const fn provider(&self) -> &'static str {
         self.credential.0
+    }
+
+    /// Which question this is, for [`abandoned`] once its answer is no
+    /// longer wanted.
+    #[must_use]
+    pub const fn put(&self) -> Put {
+        self.put
     }
 
     /// Waits for the plan's answer. Dropping this before it ends closes the
@@ -193,7 +216,18 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
     Some(Asking {
         credential,
         question,
+        put: Put {
+            credential,
+            at: now,
+        },
     })
+}
+
+/// The question `put` was dropped before its answer was taken back, so
+/// `conversation` holds nothing back on its account: what was never answered
+/// taught nothing, and the next opening asks again at once.
+pub fn abandoned(conversation: &mut Conversation, put: Put) {
+    conversation.asks.unsent(put);
 }
 
 /// Takes what a plan answered back to `conversation`, and answers with what

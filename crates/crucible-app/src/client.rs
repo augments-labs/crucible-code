@@ -17,7 +17,8 @@
 //! point of them: a turn is stopped, and a look is written down, while the
 //! conversation is away. [`asking`](fn@asking) and [`asked`] are one command
 //! split around the question it puts to a vendor's plan, so the conversation is
-//! not held while the question is out; [`perform`] answers the same command
+//! not held while the question is out, and [`abandoned`] forgets a question
+//! given up before its answer came; [`perform`] answers the same command
 //! whole.
 //!
 //! What comes back is the application's own value — [`Performed`], [`Ended`] —
@@ -41,7 +42,7 @@ mod reading;
 mod tests;
 mod turning;
 
-pub use asking::{Answered, Asking, FLOOR, KEPT, asked, asking};
+pub use asking::{Answered, Asking, FLOOR, KEPT, Put, abandoned, asked, asking};
 pub use deciding::{Deciding, Front, Shown, TRIES, questions, warned};
 pub use performing::{Cleared, Desk, Performed, Resumed, Setting, keep, perform};
 pub use reading::{context, mode_out as mode, pace, progress, rung, snapshot, usage};

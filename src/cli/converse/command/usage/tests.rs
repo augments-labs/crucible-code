@@ -4,7 +4,7 @@ use crucible_client_api::{Limit, LimitGroup, Limits, Model, Name, Percent, Used}
 use jiff::tz::Offset;
 
 use super::super::{Command, MidTurn};
-use crate::cli::converse::tests::{asking_plan, plain};
+use crate::cli::converse::tests::{asking_plan, plain, stalled_plan};
 use crucible_tui::Recording;
 use std::sync::atomic::Ordering;
 
@@ -765,4 +765,57 @@ fn usage_opened_again_within_a_minute_asks_nothing_and_shows_the_last_answer() {
         assert!(written.contains("GPT-5.3-Codex-Spark"), "{written}");
     }
     assert_eq!(asked.load(Ordering::Relaxed), 1);
+}
+
+/// The panel as a key-reading wait left it, where there was no room to stand
+/// it and a key was pressed with the plan's answer still out.
+fn after_a_key(usage: api::Usage, conversation: &mut Conversation, terms: &Terms) -> Shown {
+    let mut shown = Shown::of(terms, conversation.serving(), usage);
+    shown.out = terms.ask_limits(conversation);
+    assert!(shown.out.is_some(), "the plan was not asked");
+    awaited(&mut shown, terms, conversation, |_| Ok(true)).unwrap();
+    shown
+}
+
+/// The block printed at 80 columns, after checking that at neither width
+/// it promises an answer: a printed block is never drawn again.
+fn printed(shown: &Shown) -> Vec<String> {
+    for columns in [80, 40] {
+        let at = plan_limits(&shown.body(columns, Glyphs::Unicode));
+        assert!(
+            !at.iter().any(|row| row.contains("asking")),
+            "at {columns}: {at:#?}"
+        );
+    }
+    plan_limits(&shown.body(80, Glyphs::Unicode))
+}
+
+#[test]
+fn usage_cramped_a_key_ends_the_wait_and_prints_what_is_known() {
+    let mut conversation = stalled_plan();
+    let terms = plain();
+
+    let shown = after_a_key(weekly(), &mut conversation, &terms);
+
+    let art = printed(&shown);
+    assert!(art.iter().any(|row| row.contains("31% used")), "{art:#?}");
+}
+
+#[test]
+fn usage_cramped_a_key_with_nothing_known_prints_limits_not_reported() {
+    let mut conversation = stalled_plan();
+    let terms = plain();
+
+    let shown = after_a_key(keyed(), &mut conversation, &terms);
+
+    assert_eq!(printed(&shown), ["Plan limits", "  limits not reported"]);
+}
+
+#[test]
+fn usage_cramped_a_wait_a_key_ended_leaves_the_next_opening_free_to_ask() {
+    let mut conversation = stalled_plan();
+    let terms = plain();
+    drop(after_a_key(keyed(), &mut conversation, &terms));
+
+    assert!(terms.ask_limits(&mut conversation).is_some());
 }

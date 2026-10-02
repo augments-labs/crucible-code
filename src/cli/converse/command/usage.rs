@@ -19,7 +19,8 @@
 //! answer comes and the block is drawn again. A plan that never answers, with
 //! nothing known, is said to have reported none. Printed rather than stood,
 //! the panel waits for the answer first, since a printed block cannot be
-//! drawn again.
+//! drawn again: where keys are read, only until a key is pressed, after which
+//! the question is given up and what is known is printed.
 //!
 //! A cost nobody priced reads `not priced`, never `$0.00`. A reset time is the
 //! reader's own wall clock, read in the system's zone as the panel opens; a
@@ -41,7 +42,7 @@ use crucible_app::client::Performed;
 use crucible_app::providers::{CredentialSource, credential_source, in_use, offered};
 use crucible_app::startup::ProviderAuth;
 use crucible_client_api::{self as api, Cost, Limit, Reading, Window};
-use crucible_tui::{Bar, Fill, Glyphs, Part, Renderer, Row, Slot, Terminal};
+use crucible_tui::{Bar, Fill, Glyphs, Part, Pressed, Renderer, Row, Slot, Terminal};
 use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
@@ -184,13 +185,63 @@ pub(super) fn run<T: Terminal>(
         if stood(renderer, terms, &mut shown, |_| Ok(()), Some(&mut watch))? != Ended::Cramped {
             return Ok(());
         }
+        // Printed once, so with the plan's answer in it rather than a promise
+        // of one; but no longer than until a key says not to wait.
+        awaited(&mut shown, terms, conversation, |beat| {
+            keyed_within(renderer, beat)
+        })?;
+    } else {
+        // Printed once, so with the plan's answer in it rather than a promise
+        // of one. No key is read here, so none is kept waiting.
+        shown.watched(terms, conversation, true);
     }
-    // Printed once, so with the plan's answer in it rather than a promise of
-    // one.
-    shown.watched(terms, conversation, true);
     // Hung under the line that asked, so laid out short of the mark.
     let columns = renderer.transcript_columns().saturating_sub(HUNG);
     Ok(renderer.present(&shown.body(columns, terms.style().glyphs()))?)
+}
+
+/// Waits for the plan's answer before a block is printed where keys are read,
+/// looking for it every [`BEAT`] and reading keys between. A key ends the
+/// wait: the question is given up and what is known is printed, so the
+/// keyboard is never held by a plan that is slow to answer. `pressed` says
+/// whether a key came within the time it is handed.
+fn awaited(
+    shown: &mut Shown,
+    terms: &Terms,
+    conversation: &mut Conversation,
+    mut pressed: impl FnMut(std::time::Duration) -> Result<bool, Fatal>,
+) -> Result<(), Fatal> {
+    while shown.out.as_ref().is_some_and(|out| !out.ended()) {
+        if pressed(BEAT)? {
+            if let Some(out) = shown.out.take_if(|out| !out.ended()) {
+                terms.abandon(conversation, out);
+            }
+            break;
+        }
+    }
+    // An answer that came in the meantime is taken in; one given up is gone.
+    shown.watched(terms, conversation, false);
+    Ok(())
+}
+
+/// Whether a key is pressed within `beat`. The key is read, and is spent on
+/// ending the wait; what the pointer or the selection took, a resize and what
+/// means nothing are not keys.
+fn keyed_within<T: Terminal>(
+    renderer: &mut Renderer<T>,
+    beat: std::time::Duration,
+) -> Result<bool, Fatal> {
+    if !renderer.waiting(beat)? {
+        return Ok(false);
+    }
+    Ok(match renderer.took(crucible_tui::pressed()?)? {
+        None | Some(Pressed::Ignored) => false,
+        Some(Pressed::Resized) => {
+            renderer.resized()?;
+            false
+        }
+        Some(_) => true,
+    })
 }
 
 /// Stands the panel over a running turn, with the figures that turn last
