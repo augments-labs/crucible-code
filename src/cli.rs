@@ -15,6 +15,8 @@
 mod browser;
 mod choice;
 mod client;
+#[cfg(test)]
+mod colour_rule;
 mod converse;
 mod counting;
 mod draw;

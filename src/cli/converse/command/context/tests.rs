@@ -261,3 +261,18 @@ fn context_closes_on_escape_and_the_keys_every_panel_closes_on() {
         assert_eq!(closing(&Pressed::Key(key)), Moved::Still, "{key:?}");
     }
 }
+
+#[test]
+fn context_follows_the_colour_rule() {
+    // The messages part is the bar's one accent, and its row below the bar
+    // is the legend's.
+    for (name, context) in [("known", spent()), ("unknown", unmeasured())] {
+        for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+            let rows = panel(&context, columns, glyphs);
+
+            crate::cli::colour_rule::holds(&format!("context {name} at {columns}"), &rows, |_| {
+                false
+            });
+        }
+    }
+}

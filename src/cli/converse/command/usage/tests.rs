@@ -472,3 +472,27 @@ fn a_windows_machine_reads_its_zone_from_the_database_built_in() {
     let clock = Clock::system();
     assert!(!clock.guessed, "{:?}", clock.zone);
 }
+
+#[test]
+fn usage_follows_the_colour_rule() {
+    // A bar's used part is the one accent on its row, whatever the provider
+    // reported and however narrow the window.
+    for (name, usage) in [
+        ("weekly", weekly()),
+        ("every window", every_window()),
+        ("keyed", keyed()),
+        ("stopped", stopped()),
+    ] {
+        for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+            let rows = panel(
+                "openai · ChatGPT sign-in",
+                &usage,
+                columns,
+                glyphs,
+                &clock(),
+            );
+
+            crate::cli::colour_rule::holds(&format!("usage {name} at {columns}"), &rows, |_| false);
+        }
+    }
+}

@@ -2036,3 +2036,70 @@ mod row_position;
 mod fast;
 
 mod recommended;
+
+#[test]
+fn the_transcript_follows_the_colour_rule() {
+    // A turn with every kind of row a transcript holds: model prose with code
+    // and a link in it, a call whose result was cut, a call that changed a
+    // file, and a run of calls folded to one line. Each row lands the eye on
+    // one accent at most, and says the same words in every theme.
+    let style = Style::coloured();
+    let mut renderer = Renderer::new(Recording::new(80, 60));
+    renderer.wears(style.palette());
+    let mut kept = Kept::default();
+
+    let mut turn = vec![
+        beat(Event::TurnStarted {
+            turn: TurnId::FIRST,
+        }),
+        delta(
+            "The test waits on a file the picker writes after it returns. I moved \
+             the wait into `wait_for_index`, as [the issue](https://example.com/1) asks.\n",
+        ),
+    ];
+    turn.extend(answered(
+        "Read(src/cli/converse/resume.rs)",
+        "one\ntwo\nthree",
+    ));
+    turn.push(Beat::Answered("Update(src/cli/converse/resume.rs)"));
+    turn.push(beat(Event::ToolFinished {
+        call: ToolId::new("a"),
+        output: ToolOutput::ok("changed resume.rs").showing(changed()),
+        receipt: None,
+    }));
+    turn.push(beat(Event::TurnFinished {
+        turn: TurnId::FIRST,
+        stop: StopReason::Yielded,
+    }));
+
+    for beat in turn {
+        match beat {
+            Beat::Draw(drawing) => event(&mut renderer, *drawing, &here(), style, &mut kept),
+            Beat::Answered(said) => returned(&mut renderer, said, style),
+        }
+        .expect("the turn to draw");
+    }
+    gathered(
+        &mut renderer,
+        "Read 3 files, searched for 2 patterns",
+        style,
+    )
+    .expect("the run to draw");
+
+    let rows = renderer.tail(60);
+    let said: Vec<String> = rows.iter().map(Row::text).collect();
+    for drawn in [
+        "● Read",
+        "ctrl+o",
+        "wait_for_index",
+        "+  # what stops",
+        "● Read 3",
+    ] {
+        assert!(
+            said.iter().any(|row| row.contains(drawn)),
+            "{drawn:?} is not in {said:#?}"
+        );
+    }
+
+    crate::cli::colour_rule::holds("transcript", &rows, |_| false);
+}
