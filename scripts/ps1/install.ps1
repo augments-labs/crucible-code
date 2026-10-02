@@ -416,6 +416,15 @@ function Invoke-CrucibleInstall {
         $client = $null
         if (-not $Archive) {
             if ($PSVersionTable.PSEdition -ne 'Core') {
+                # Windows PowerShell's HttpClient takes certificate checks from
+                # this process-wide callback, which a session may have set to
+                # accept anything. Both files would then come unchecked from
+                # whoever answers, and a matching pair proves nothing.
+                if ($null -ne [Net.ServicePointManager]::ServerCertificateValidationCallback) {
+                    Stop-Install 1 ('this session replaces certificate checks through ' +
+                        '[Net.ServicePointManager]::ServerCertificateValidationCallback; ' +
+                        'install from a new PowerShell window')
+                }
                 Add-Type -AssemblyName System.Net.Http
                 [Net.ServicePointManager]::SecurityProtocol =
                     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
