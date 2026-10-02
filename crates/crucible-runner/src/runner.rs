@@ -2043,9 +2043,11 @@ fn request_disposition<T>(result: &Result<T, ProviderError>) -> PromptCacheReque
             | ProviderError::Held(_)
             | ProviderError::FastRefused { .. },
         ) => PromptCacheRequestDisposition::NotSent,
-        Err(ProviderError::Refused { .. } | ProviderError::WindowExceeded { .. }) => {
-            PromptCacheRequestDisposition::Rejected
-        }
+        Err(
+            ProviderError::Refused { .. }
+            | ProviderError::WindowExceeded { .. }
+            | ProviderError::PlanLimit { .. },
+        ) => PromptCacheRequestDisposition::Rejected,
         Err(
             ProviderError::Limit { .. }
             | ProviderError::Transport { .. }
