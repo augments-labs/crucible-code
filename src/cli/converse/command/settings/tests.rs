@@ -214,13 +214,13 @@ fn a_settings_toggle_changes_the_running_value_and_the_file() {
     assert!(written.contains("\"theme\": \"dark\""), "{written}");
 
     // A row that only a new start reads is written and says so.
-    walk_to(&mut panel, "Glyphs");
+    walk_to(&mut panel, "Tone");
     key(&mut panel, Pressed::Key(Key::Enter));
     settle(&mut renderer, &terms, &mut panel);
     let rows = drawn(&mut panel, 80, 40);
     assert!(
         rows.iter()
-            .any(|row| row.contains("ascii · applies at next start")),
+            .any(|row| row.contains("explanatory · applies at next start")),
         "{rows:#?}"
     );
 
@@ -230,7 +230,7 @@ fn a_settings_toggle_changes_the_running_value_and_the_file() {
     let rows = drawn(&mut again, 80, 40);
     assert!(
         rows.iter()
-            .any(|row| row.contains("Glyphs") && row.ends_with("ascii")),
+            .any(|row| row.contains("Tone") && row.ends_with("explanatory · applies at next start")),
         "{rows:#?}"
     );
 }
@@ -372,10 +372,11 @@ fn running(
         RowId::SyntaxTheme => terms.reading.borrow().clone(),
         RowId::ScrollRail => Some(renderer.transcript_columns().to_string()),
         RowId::ScrollSpeed => Some(renderer.scroll_rows().to_string()),
-        RowId::Glyphs
-        | RowId::Colour
-        | RowId::ToolDetail
-        | RowId::Send
+        RowId::Glyphs => Some(format!("{:?}", terms.style().glyphs())),
+        // The detail is how wide a call's arguments may run in a wide window.
+        RowId::ToolDetail => Some(terms.style().args(1000).to_string()),
+        RowId::Send => Some(format!("{:?}", terms.sending.get())),
+        RowId::Colour
         | RowId::Tone
         | RowId::Compaction
         | RowId::UpdateCheck
@@ -468,6 +469,54 @@ fn the_settings_rows_that_apply_at_once_are_these() {
         .collect();
     assert_eq!(
         live,
-        ["Theme", "Syntax theme", "Scroll rail", "Mouse scroll speed"]
+        [
+            "Theme",
+            "Syntax theme",
+            "Glyphs",
+            "Tool detail",
+            "Scroll rail",
+            "Mouse scroll speed",
+            "Send with"
+        ]
     );
+}
+
+#[test]
+fn a_settings_row_only_a_new_start_reads_says_so_before_it_is_changed() {
+    let terms = plain();
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+    let rows = drawn(&mut panel, 100, 40);
+    let row = |label: &str| {
+        rows.iter()
+            .find(|row| row.contains(label))
+            .cloned()
+            .unwrap_or_else(|| panic!("no {label} row in {rows:#?}"))
+    };
+
+    for label in [
+        "Colour",
+        "Tone",
+        "Compaction",
+        "Prompt caching",
+        "Cache isolation",
+        "Cache retention",
+        "Persistent cache",
+    ] {
+        assert!(
+            row(label).ends_with("· applies at next start"),
+            "{label}: {rows:#?}"
+        );
+    }
+    // Read again by the running session, or only when it is next used: bare.
+    for label in [
+        "Theme",
+        "Glyphs",
+        "Tool detail",
+        "Scroll rail",
+        "Send with",
+        "Check for updates",
+    ] {
+        assert!(!row(label).contains("applies"), "{label}: {rows:#?}");
+    }
 }

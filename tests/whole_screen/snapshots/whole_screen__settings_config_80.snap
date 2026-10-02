@@ -19,17 +19,17 @@ expression: config
 |› Theme                                                                     auto|
 |  Syntax theme                                                  Monokai Extended|
 |  Glyphs                                                                 unicode|
-|  Colour                                                                    auto|
+|  Colour                                            auto · applies at next start|
 |  Tool detail                                                            compact|
 |  Scroll rail                                                                 on|
 |  Mouse scroll speed                                                       ‹ 6 ›|
 |  Send with                                                                enter|
-|  Tone                                                                   concise|
-|  Compaction                                                                full|
+|  Tone                                           concise · applies at next start|
+|  Compaction                                        full · applies at next start|
 |  Check for updates                                                        never|
-|  Prompt caching                                                          prefer|
-|  Cache isolation                                                        session|
-|  Cache retention                                                providerDefault|
-|  Persistent cache                                                        forbid|
+|  Prompt caching                                  prefer · applies at next start|
+|  Cache isolation                                session · applies at next start|
+|  Cache retention                        providerDefault · applies at next start|
+|  Persistent cache                                forbid · applies at next start|
 |                                                                                |
 |↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

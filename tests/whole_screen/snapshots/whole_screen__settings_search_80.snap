@@ -28,8 +28,8 @@ expression: search
 |│ cache                                                                        │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |                                                                                |
-|› Cache isolation                                                        session|
-|  Cache retention                                                providerDefault|
-|  Persistent cache                                                        forbid|
+|› Cache isolation                                session · applies at next start|
+|  Cache retention                        providerDefault · applies at next start|
+|  Persistent cache                                forbid · applies at next start|
 |                                                                                |
 |type to filter · ↓ to the rows · esc to clear                                   |

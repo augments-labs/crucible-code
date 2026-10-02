@@ -533,8 +533,8 @@ fn drawn(settings: &crucible_config::Settings) -> style::Output {
 /// The translation from what a document may say to what the editor understands,
 /// and the only place the two spellings meet. Nothing said is Return sending,
 /// which is what almost every terminal makes possible and every reader expects.
-fn sends(settings: &crucible_config::Settings) -> crucible_tui::Sending {
-    match settings.sending() {
+pub(crate) fn sends(said: Option<crucible_config::Sending>) -> crucible_tui::Sending {
+    match said {
         Some(crucible_config::Sending::AltEnter) => crucible_tui::Sending::AltEnter,
         Some(crucible_config::Sending::Enter) | None => crucible_tui::Sending::Enter,
     }
@@ -722,7 +722,7 @@ fn running(cli: &Cli, services: &Services, leaving: &Background) -> Result<(), F
         // Which press sends. Asked rather than worked out: a terminal that
         // keeps Shift and Return for itself reports nothing this program could
         // have read, and the reader is the one who can see that happening.
-        sending: sends(&settings),
+        sending: Cell::new(sends(settings.sending())),
         commands: converse::command::builtins(&settings.sandbox().enablement())?,
         providers,
         reading: RefCell::new(settings.syntax_theme().map(str::to_owned)),

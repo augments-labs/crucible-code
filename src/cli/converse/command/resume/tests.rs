@@ -143,7 +143,7 @@ fn terms(sample: &Sample) -> Terms {
         environment: Box::new(|_| None),
         sessions: sample.logs(),
         workspace: sample.workspace(),
-        sending: crucible_tui::Sending::default(),
+        sending: std::cell::Cell::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),

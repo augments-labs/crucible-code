@@ -46,12 +46,14 @@ impl Sending {
         matches!(self, Self::AltEnter)
     }
 
-    /// Reads one of [`shape::SEND`](crate::shape::SEND).
+    /// Reads one of the words `input.send` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
     ///
     /// `None` for anything else, which the shape refused before this could be
     /// reached — the test below is what keeps "cannot arrive" true as the set
     /// changes.
-    fn read(found: &str) -> Option<Self> {
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
         match found {
             "enter" => Some(Self::Enter),
             "altEnter" => Some(Self::AltEnter),

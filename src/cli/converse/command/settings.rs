@@ -13,10 +13,12 @@
 //! **A change is a request.** Enter or space asks the application, through the
 //! client contract, to write one key to the user's own file — the file and the
 //! splice `/theme` writes with. What a running session can take is put in
-//! force the moment it is written: the theme, the syntax theme, the scroll
-//! rail and the wheel's speed. Everything else is read once, at the start, and
-//! its row says so once it is changed. A file that cannot be written leaves a
-//! live change in force for this session and says so on the panel.
+//! force the moment it is written: the theme, the syntax theme, the glyphs,
+//! the tool detail, the scroll rail, the wheel's speed and the key that sends.
+//! What only a start reads says so on its row, changed or not, and [`takes`]
+//! is where each row is given one answer or the other. A file that cannot be
+//! written leaves a live change in force for this session and says so on the
+//! panel.
 //!
 //! **What somebody else decided is locked.** A row a project file or the shell
 //! states is shown with who set it and changes nothing: writing the user's
@@ -34,8 +36,9 @@ use crucible_config::{Forced, Row as Setting_, RowId, Values};
 use crucible_tools::Mode;
 use crucible_tui::{Caret, Glyphs, Key, Pressed, Renderer, Row, Slot, Terminal, columns, fold};
 
-use crate::cli::Fatal;
 use crate::cli::client::astray;
+use crate::cli::style::glyph_set;
+use crate::cli::{Fatal, sends};
 
 use super::region::{self, Ended, Moved};
 use super::usage::{self, Clock};
@@ -104,7 +107,7 @@ struct Line {
     value: String,
     /// Who decided it, where the user's own file does not.
     forced: Option<Forced>,
-    /// Written this session, and read only at the next start.
+    /// Read only at the next start, which its row says.
     later: bool,
 }
 
@@ -317,6 +320,7 @@ fn settle<T: Terminal>(
             line.later = match takes(row.id()) {
                 Takes::Now => !worn(row, &word, renderer, terms),
                 Takes::NextStart => true,
+                Takes::NextUse => false,
             };
             line.value.clone_from(&word);
             kept(terms, row, word);
@@ -355,28 +359,37 @@ fn settle<T: Terminal>(
 enum Takes {
     /// At once: the running session reads it again, and [`worn`] puts it there.
     Now,
-    /// Only a new start reads it.
+    /// Only a new start reads it, and its row says so.
     NextStart,
+    /// Read only when it is next used, which is at a start anyway, so there is
+    /// nothing to wait for and its row says nothing.
+    NextUse,
 }
 
 /// When a change to the row `id` reaches the running session.
 ///
 /// [`worn`] matches the same identity to put a change in force, and a test
-/// holds the two to one answer.
+/// holds the two to one answer. Colour is a new start's: the palette's depth
+/// is settled from the terminal and the environment, and the syntax theme's
+/// colours are only read where colour is on, so turning it on or off is a
+/// palette resolved again rather than a value set on the one in force.
 const fn takes(id: RowId) -> Takes {
     match id {
-        RowId::Theme | RowId::SyntaxTheme | RowId::ScrollRail | RowId::ScrollSpeed => Takes::Now,
-        RowId::Glyphs
-        | RowId::Colour
+        RowId::Theme
+        | RowId::SyntaxTheme
+        | RowId::Glyphs
         | RowId::ToolDetail
-        | RowId::Send
+        | RowId::ScrollRail
+        | RowId::ScrollSpeed
+        | RowId::Send => Takes::Now,
+        RowId::Colour
         | RowId::Tone
         | RowId::Compaction
-        | RowId::UpdateCheck
         | RowId::CacheMode
         | RowId::CacheIsolation
         | RowId::CacheRetention
         | RowId::CachePersistent => Takes::NextStart,
+        RowId::UpdateCheck => Takes::NextUse,
     }
 }
 
@@ -399,10 +412,21 @@ fn worn<T: Terminal>(
             .parse::<u16>()
             .map(|rows| renderer.rolls(i32::from(rows)))
             .is_ok(),
-        RowId::Glyphs
-        | RowId::Colour
-        | RowId::ToolDetail
-        | RowId::Send
+        RowId::Glyphs => crucible_config::Glyphs::read(word)
+            .map(|wanted| {
+                let glyphs = glyph_set(Some(wanted));
+                terms.style.set(terms.style().drawing(glyphs));
+                renderer.draws(glyphs);
+            })
+            .is_some(),
+        RowId::ToolDetail => crucible_config::ToolDetail::read(word)
+            .map(|detail| terms.style.set(terms.style().detailing(detail)))
+            .is_some(),
+        // The editor is the loop's, which hands it this once the panel closes.
+        RowId::Send => crucible_config::Sending::read(word)
+            .map(|said| terms.sending.set(sends(Some(said))))
+            .is_some(),
+        RowId::Colour
         | RowId::Tone
         | RowId::Compaction
         | RowId::UpdateCheck
@@ -467,7 +491,7 @@ impl Line {
             row,
             value,
             forced: terms.settings.forced(row, &from),
-            later: false,
+            later: takes(row.id()) == Takes::NextStart,
         }
     }
 

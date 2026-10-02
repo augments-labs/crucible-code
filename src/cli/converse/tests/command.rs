@@ -900,7 +900,7 @@ fn answered(command: &str) -> Vec<String> {
     let mut input = std::io::empty();
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers {
             input: &mut input,
             keys: false,

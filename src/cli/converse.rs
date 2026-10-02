@@ -278,11 +278,12 @@ pub(crate) struct Terms {
     pub(crate) workspace: crucible_workspace::Workspace,
     /// Which press finishes a prompt, and which one opens a line under it.
     ///
-    /// Read once at startup and never again: it is a fact about the keyboard in
-    /// front of somebody, and no command changes it. Not a `Cell` for that
-    /// reason, and not part of the style either — it is about what arrives from
-    /// the terminal rather than about what is drawn to it.
-    pub(crate) sending: Sending,
+    /// Read at startup and again when `/settings` changes it, which is why it
+    /// is a `Cell`: the panel is handed these terms and not the editor, so
+    /// the loop hands the editor this answer whenever a command returns. Not
+    /// part of the style — it is about what arrives from the terminal rather
+    /// than about what is drawn to it.
+    pub(crate) sending: Cell<Sending>,
     /// The commands a `/` line is read against.
     ///
     /// A registry rather than the list itself, because what is in it is a
@@ -482,7 +483,7 @@ pub(crate) fn converse<T: Terminal>(
     // Held in one value for the reason its own prose gives.
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers { input, keys },
         first.card,
     );
@@ -669,6 +670,8 @@ pub(crate) fn converse<T: Terminal>(
         // what was said to it, and `/help` was not.
         if local && let Some(wanted) = command::wanted(&terms.commands.snapshot(), &prompt) {
             let ran = command::run(wanted, renderer, &mut conversation, &mut held, terms)?;
+            // `/settings` may have changed which press sends.
+            held.editor.send_with(terms.sending.get());
             attaching::refresh_store(&mut held, importing(conversation.session()));
             match ran {
                 Ran::Again => continue,
@@ -1313,10 +1316,13 @@ impl Turn<'_, '_> {
                 .as_ref()
                 .map(|(_, id)| id.clone()),
         };
-        command::live(renderer, self.terms, command, &counted, &mut |renderer| {
+        let ran = command::live(renderer, self.terms, command, &counted, &mut |renderer| {
             self.drain(renderer);
             Ok(())
-        })
+        });
+        // `/settings` may have changed which press sends.
+        self.held.editor.send_with(self.terms.sending.get());
+        ran
     }
 
     /// Runs a command whose pick is held for the turn started next.

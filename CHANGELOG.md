@@ -23,8 +23,8 @@ change in any release with no deprecation period.
   Opening it sends no request; an API key says `limits not reported`.
 - **`/settings` changes a setting without editing JSON.** Its Config tab lists
   each switch and short choice, plus the mouse scroll speed, with a `/` search;
-  a change is written to your user file, and the theme, scroll rail and speed
-  change at once. Status shows the version, model, sign-in, paths, session,
+  a change is written to your user file, and what the screen and the keyboard
+  use changes at once. Status shows the version, model, sign-in, paths, session,
   sandbox and permission mode, read only, and Usage is the `/usage` panel.
 - **`/release-notes` opens a list of releases to choose from.** It shows the
   eight newest with their dates and entry counts, a row that reveals the rest,

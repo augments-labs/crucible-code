@@ -153,8 +153,10 @@ pub enum ToolDetail {
 }
 
 impl ToolDetail {
-    /// Reads one of [`shape::TOOL_DETAIL`](crate::shape::TOOL_DETAIL).
-    fn read(found: &str) -> Option<Self> {
+    /// Reads one of the words `output.toolDetail` accepts, spelled as a
+    /// document spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
         match found {
             "compact" => Some(Self::Compact),
             "full" => Some(Self::Full),
@@ -179,8 +181,10 @@ pub enum Glyphs {
 }
 
 impl Glyphs {
-    /// Reads one of [`shape::GLYPHS`](crate::shape::GLYPHS).
-    fn read(found: &str) -> Option<Self> {
+    /// Reads one of the words `output.glyphs` accepts, spelled as a document
+    /// spells it, as a settings menu hands one over.
+    #[must_use]
+    pub fn read(found: &str) -> Option<Self> {
         match found {
             "unicode" => Some(Self::Unicode),
             "ascii" => Some(Self::Ascii),

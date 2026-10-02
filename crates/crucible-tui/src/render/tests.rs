@@ -1861,3 +1861,28 @@ fn a_line_no_longer_held_is_not_amended_and_nothing_else_is() {
 
     assert!(drawn.render.record.wears(past - 1, Slot::Cut));
 }
+
+#[test]
+fn a_glyph_set_taken_mid_answer_leaves_the_answer_read_where_it_was() {
+    // `/settings` stands over a running turn, so a new set can arrive between
+    // two deltas of one answer. The marker already opened is still closed,
+    // and what is drawn after it is drawn in the new set.
+    let mut drawn = Drawn::new(80, 24);
+    drawn.wears(colourful());
+    drawn.stream("a **lo").unwrap();
+    drawn.draws(Glyphs::Ascii);
+    drawn.stream("ud** word\n- next\n").unwrap();
+    drawn.settle().unwrap();
+
+    let said = drawn.screen().said();
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some("a loud word"),
+        "{said:#?}"
+    );
+    assert!(
+        said.iter()
+            .any(|row| row.starts_with(Glyphs::Ascii.bullet()) && row.ends_with("next")),
+        "{said:#?}"
+    );
+}

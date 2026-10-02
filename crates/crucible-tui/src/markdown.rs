@@ -406,6 +406,12 @@ impl Markdown {
         }
     }
 
+    /// Draws what comes next with `glyphs`, leaving whatever the scan has
+    /// open where it is: a set can change between two deltas of one answer.
+    pub fn draws(&mut self, glyphs: Glyphs) {
+        self.glyphs = glyphs;
+    }
+
     /// The same reader, counting bare numbers against `forge`.
     #[must_use]
     pub fn counting(mut self, forge: Option<Forge>) -> Self {

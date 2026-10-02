@@ -683,7 +683,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "7b87105803181a549529d65c7f6a568e0d2280097648b0723386ef5ac967dbed"
+      "sha256": "aac924524f52d6984daa654b2b21770d96ca90ef2623926212ec2551b8cdc00f"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
@@ -692,7 +692,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "a71e78c505b919ab3edb852722e6fa7f28b25d92fe3db3be0479c85e19f88401"
+      "sha256": "e7647abbd040414e4d1d79e3026ee65751aa49d44122e9ec2ebbb39c6599742c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",
@@ -701,7 +701,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "5408a91cec3c0885d6276e8795c6cece1479cdca07453052a1ef81959a343ae0"
+      "sha256": "972aa2e9d19cac31487e6244a8ff1a98ca763d2ff73fbcb9e5e6a011b0d85b5e"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_80.snap",
@@ -710,7 +710,7 @@
         "Vendor::answering(\"Hello.\")",
         "Watched::answering(&case, columns, 30, &vendor)"
       ],
-      "sha256": "223808aff476355db4a6254b0407e5240444534b1f11961b4e7de3bb2f6e882c"
+      "sha256": "c3cd60ba39745f146a6d1eb280e58b4ee0eca35a200c0e722feebe59c4e11845"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_status_40.snap",

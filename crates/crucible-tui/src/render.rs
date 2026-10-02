@@ -796,13 +796,16 @@ impl<T: Terminal> Renderer<T> {
 
     /// Tells this renderer which characters it may draw with.
     ///
-    /// Said once, at startup, because which set a font has is settled before
-    /// the first frame and no command changes it. It reaches the transcript
-    /// through the markdown reader, which is the one thing here that puts a
-    /// character of its own in place of one the model wrote.
+    /// Said at startup, and again whenever the reader changes the setting. It
+    /// reaches the transcript through the markdown reader, which is the one
+    /// thing here that puts a character of its own in place of one the model
+    /// wrote. The reader is told rather than replaced, since a change can
+    /// arrive between two deltas of one answer and the scan has to go on where
+    /// it was; rows already written keep the characters they were drawn with.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
-        self.markdown = self.reader();
+        self.markdown.draws(glyphs);
+        self.painted.forget();
     }
 
     /// Tells this renderer which repository the answer's bare numbers count

@@ -50,8 +50,10 @@ cannot silently lose one another's settings.
 
 `/settings` lists, on its Config tab, every setting that is a switch, a short
 list of choices or the mouse scroll speed, and changes one in the user file.
-The theme, syntax theme, scroll rail and scroll speed change at once; any other
-row says `applies at next start`. A row a project file or the environment
+The theme, syntax theme, glyphs, tool detail, scroll rail, scroll speed and the
+key that sends change at once. Colour, tone, compaction and the four prompt
+caching rows say `applies at next start`, and the update check is read at the
+next start anyway, so it says nothing. A row a project file or the environment
 sets is shown with who set it and cannot be changed there, since the user file
 would not win. A project file that says anything about `promptCaching` sets
 all four of its rows, because that block is checked as a whole. Providers,

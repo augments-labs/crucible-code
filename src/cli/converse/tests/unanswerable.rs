@@ -485,7 +485,7 @@ fn a_resumed_compaction_with_no_model_sends_nothing_and_says_what_is_missing() {
     let mut input = Cursor::new(Vec::new());
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers {
             input: &mut input,
             keys: false,

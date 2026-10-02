@@ -236,6 +236,16 @@ impl Style {
         }
     }
 
+    /// The same style, drawn with a different glyph set.
+    pub(crate) fn drawing(self, glyphs: Glyphs) -> Self {
+        Self { glyphs, ..self }
+    }
+
+    /// The same style, showing a tool call in a different detail.
+    pub(crate) fn detailing(self, detail: ToolDetail) -> Self {
+        Self { detail, ..self }
+    }
+
     /// What a component's slots are worth here.
     pub(crate) fn palette(self) -> Palette {
         self.palette
