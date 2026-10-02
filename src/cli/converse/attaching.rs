@@ -188,7 +188,7 @@ pub(super) fn beside<T: Terminal>(
     draw::attached(renderer, &attachments, style)?;
 
     for said in &refusals {
-        let columns = renderer.columns();
+        let columns = renderer.transcript_columns();
         let rows: Vec<Row> = fold(&format!("! {said}"), columns)
             .into_iter()
             .map(|row| Row::new().then(crucible_tui::Slot::Plain, row))

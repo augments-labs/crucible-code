@@ -235,15 +235,6 @@ fn sliding(arrived: Pressed, at: &mut usize, count: usize) -> Moved {
     }
 }
 
-/// The rows the window keeps for itself while something stands in it.
-///
-/// The row that maps the transcript at the foot. A component is handed the
-/// whole height of the window and lays itself out against it, and that row is
-/// already spoken for — rows asked for past it are laid out and then dropped
-/// off the bottom, which costs the keys row first. Under-asking costs nothing:
-/// the transcript is above and fills what is left.
-const CHROME: usize = 1;
-
 /// What came off the shelf: a model, and the rung marked under it.
 ///
 /// `Option<usize>` rather than a rung index into nothing, because a model whose
@@ -332,7 +323,7 @@ pub(super) fn shelve<T: Terminal, M: Copy>(
         renderer,
         |_| style,
         standing,
-        |standing, columns, rows| laid(standing, columns, rows.saturating_sub(CHROME)),
+        |standing, columns, rows| laid(standing, columns, rows),
         searching,
         while_waiting,
     )?;

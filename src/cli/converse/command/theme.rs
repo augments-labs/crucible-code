@@ -575,11 +575,13 @@ fn taken<T: Terminal>(
     // Wrapped rather than clipped, for the reason `/model` wraps the same
     // sentence: short as the row is, a narrow enough window would still cut it,
     // and half of it says nothing about what was lost.
-    let rows: Vec<Row> =
-        crucible_tui::fold("drawn this way for this session only", renderer.columns())
-            .into_iter()
-            .map(|row| Row::new().then(Slot::Quiet, row))
-            .collect();
+    let rows: Vec<Row> = crucible_tui::fold(
+        "drawn this way for this session only",
+        renderer.transcript_columns(),
+    )
+    .into_iter()
+    .map(|row| Row::new().then(Slot::Quiet, row))
+    .collect();
 
     Ok(renderer.present(&rows)?)
 }
@@ -606,10 +608,13 @@ fn reading<T: Terminal>(
 
     renderer.commit(&problem)?;
 
-    let rows: Vec<Row> = fold("read this way for this session only", renderer.columns())
-        .into_iter()
-        .map(|row| Row::new().then(Slot::Quiet, row))
-        .collect();
+    let rows: Vec<Row> = fold(
+        "read this way for this session only",
+        renderer.transcript_columns(),
+    )
+    .into_iter()
+    .map(|row| Row::new().then(Slot::Quiet, row))
+    .collect();
 
     Ok(renderer.present(&rows)?)
 }

@@ -41,23 +41,30 @@ everything it drew is already in your own scrollback.
 
 ## Moving through the transcript
 
-The wheel moves the transcript a few rows at a time. For a long jump, use
-`transcript map →` at the bottom right, directly below the permission mode,
-model and effort. The arrow says it opens. Pointing turns the theme's exact
-accent into a compact background rectangle and switches the text to contrasting
-black or white. Click it and the whole bottom row becomes a map from `first` to
-`now`; hollow
-marks are prompts, and the filled mark is the place currently on screen.
+The wheel moves the transcript a few rows at a time. For a long jump, use the
+scroll rail: the transcript's last column, from its top row to its foot. The
+thumb, drawn heavier in the theme's accent, is the part of the whole transcript
+on screen, as long as that share of it and never shorter than a row; it sits at
+the bottom while you are at the newest line. A mark on the quiet track is a
+prompt you sent, at the place it falls in the whole transcript, and prompts too
+close to tell apart share one mark.
 
-Drag anywhere along the map for an absolute jump, or click a hollow prompt mark
-to land on that prompt. The prompt box and everything standing over it stay where
-they are. The wheel still makes precise adjustments while the map is open, moving
-the transcript and its mark together. Three seconds after the last drag, click or
-wheel turn, the map becomes the bottom-right control again. It takes no keyboard
-binding: Escape, Return, Space and the arrows keep their existing meanings.
+Click the rail off the thumb and the transcript moves so the thumb is centred
+there, or as near as the rail's ends allow; click a mark and you land on that
+prompt. A click on the thumb takes hold of it without moving it, and a mark the
+thumb covers is drawn as thumb. Keep the button down and drag to scroll with
+the pointer, holding the thumb where you took it, and drag it to the foot to
+follow the newest line again. The prompt box and everything
+standing over it stay where they are. The rail takes no keyboard binding, and a
+drag that selects text never takes it.
 
-The open map uses the theme's quiet and accent colours and the terminal's own
-background. With colour off, the same shapes carry the distinction.
+While the whole transcript fits on screen there is nowhere else to go, so the
+column stands blank, and a click there opens nothing beside it. The
+transcript's text wraps one column narrower to leave it room, and a window
+narrower than 24 columns, where the prompt box also drops its frame, does not
+draw it. Set [`output.scrollRail`](../configuration/configuration.md) to
+`false` to give the column back to the text. With colour off, the thumb, track
+and marks still differ by shape.
 
 ## Continuing
 

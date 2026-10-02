@@ -784,7 +784,7 @@ fn taken<T: Terminal>(
 
     // Wrapped rather than clipped: short as this row is, a narrow enough window
     // would still cut it, and half of it says nothing about what was lost.
-    let rows: Vec<Row> = fold("asked for this session only", renderer.columns())
+    let rows: Vec<Row> = fold("asked for this session only", renderer.transcript_columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
@@ -804,7 +804,7 @@ fn refused<T: Terminal>(
     renderer: &mut Renderer<T>,
     problem: &dyn std::fmt::Display,
 ) -> Result<(), Fatal> {
-    let rows: Vec<Row> = fold(&format!("! {problem}"), renderer.columns())
+    let rows: Vec<Row> = fold(&format!("! {problem}"), renderer.transcript_columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Trouble, row))
         .collect();

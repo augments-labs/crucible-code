@@ -171,7 +171,7 @@ fn picking<T: Terminal>(
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     let unclosed = match terms.perform(conversation, Command::Resume(id.clone())) {
         // Answered before the log is opened. This session's own claim is on
@@ -284,7 +284,7 @@ fn offered<T: Terminal>(
     // Read once, here, rather than per row: a list drawn against several
     // instants is several lists, each dated from a different now.
     let now = SystemTime::now();
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
 
     // What opens is this directory's list, even where it has nothing on it:
     // Ctrl+A is how a reader reaches a session recorded somewhere else, and a
@@ -811,7 +811,11 @@ fn stood<T: Terminal>(
         // looking at when the window closed in.
         Ended::Cramped => {
             let places = scoped(&stood.listed, stood.scope, here);
-            let rows = listing(&chosen(&stood.listed, &places), now, renderer.columns());
+            let rows = listing(
+                &chosen(&stood.listed, &places),
+                now,
+                renderer.transcript_columns(),
+            );
             renderer.present(&rows)?;
             Ok(None)
         }

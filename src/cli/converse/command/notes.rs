@@ -55,7 +55,7 @@ pub(super) fn run<T: Terminal>(
     glyphs: Glyphs,
 ) -> Result<(), Fatal> {
     let releases = releases(CHANGELOG);
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let newest = releases.last().map_or(RUNNING, |release| release.version);
     let dot = glyphs.dot();
 

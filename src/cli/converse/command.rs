@@ -610,8 +610,8 @@ pub(super) fn apply_speed<T: Terminal>(
 /// reason it cannot run while a turn is, and the key that closes it. A word
 /// that names no command has neither, and is said back with the names nearest
 /// to it, as it would be between turns. The turn
-/// goes on above — the panel stands where the working row, the box, the status
-/// and the map were, and the transcript keeps its own rows. Nothing of the turn
+/// goes on above — the panel stands where the working row, the box and the
+/// status were, and the transcript keeps its own rows. Nothing of the turn
 /// changes: the command did nothing, and this is the whole of what happened.
 pub(super) fn refused<T: Terminal>(
     renderer: &mut Renderer<T>,
@@ -778,7 +778,7 @@ fn answer<T: Terminal>(
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let style = terms.style();
     let glyphs = style.glyphs();
 
@@ -887,7 +887,7 @@ fn moded<T: Terminal>(
     terms: &Terms,
 ) -> Result<(), Fatal> {
     let style = terms.style();
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let ring = Row::new().then(Slot::Quiet, clip(mode::ring(style.glyphs()), columns));
 
     if said.is_empty() {
@@ -927,7 +927,7 @@ const HUNG: usize = 2;
 /// rows are hung after they are laid, and a row folded to the whole width is
 /// [`HUNG`] columns too wide once it is.
 fn say<T: Terminal>(renderer: &mut Renderer<T>, said: &str) -> Result<(), Fatal> {
-    let rows: Vec<Row> = fold(said, renderer.columns().saturating_sub(HUNG))
+    let rows: Vec<Row> = fold(said, renderer.transcript_columns().saturating_sub(HUNG))
         .into_iter()
         .map(|part| Row::new().then(Slot::Quiet, part))
         .collect();

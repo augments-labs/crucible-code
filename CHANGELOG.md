@@ -25,6 +25,12 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **A scroll rail on the transcript's right edge replaces the map behind the
+  bottom-row label.** Its thumb shows which part of the transcript is on screen
+  and a mark stands at each prompt; a click scrolls there, a drag on it scrolls
+  with the pointer, and a click on a mark lands on that prompt. It is on by
+  default and the transcript wraps one column narrower for it, so set
+  `output.scrollRail` to `false` to keep the full width.
 - **`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now takes 3 to 30, and its schema says so
   with bounds.** `1` and `2`, a leading `+` and a leading zero are refused with
   the range named; in a configuration file the value may now be a JSON integer

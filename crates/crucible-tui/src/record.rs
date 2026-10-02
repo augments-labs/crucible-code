@@ -33,6 +33,7 @@ use std::ops::Range;
 
 use crate::color::Slot;
 use crate::row::Row;
+use crate::scroll_rail::Place;
 
 /// The most retained units the record keeps.
 ///
@@ -54,10 +55,11 @@ pub(crate) const MOST: usize = 20_000;
 /// existing ceiling without making every ordinary line count its allocation.
 const RETAINED_ROW_BYTES: usize = 80;
 
-/// The most prompt landmarks the map keeps.
+/// The most prompt landmarks the record keeps for the scroll rail to mark.
 ///
-/// Enough to leave several on an ordinary-width track after a long session,
-/// fixed so a prompt per line cannot become a second record beside the record.
+/// More than the rows of any ordinary window, and fixed so a prompt per line
+/// cannot become a second record beside the record. Past it the oldest prompts
+/// are let go, so the oldest stretch of a very long session goes unmarked.
 const MOST_LANDMARKS: usize = 256;
 
 /// One line of the record, and whether a narrower window may re-fold it.
@@ -172,9 +174,9 @@ pub(crate) struct Record {
     /// The cumulative display-row end of each line at [`Self::columns`].
     ///
     /// Absolute within the current width epoch: dropping a line advances
-    /// [`Self::before`] rather than subtracting from every end, so an absolute
-    /// map seek can binary-search this list without work proportional to the
-    /// record on either append or spill.
+    /// [`Self::before`] rather than subtracting from every end, so a seek from
+    /// the scroll rail can binary-search this list without work proportional
+    /// to the record on either append or spill.
     ends: VecDeque<usize>,
     /// Display rows before the first retained line in the current width epoch.
     before: usize,
@@ -208,8 +210,9 @@ pub(crate) struct Record {
     opening: Option<Opening>,
     /// Prompt boundaries still retained, oldest first, in stable line numbers.
     ///
-    /// Fixed independently of the record: the map needs enough semantic places
-    /// to cross a long transcript, not one allocation for every prompt in it.
+    /// Fixed independently of the record: the scroll rail needs enough places
+    /// to mark across a long transcript, not one allocation for every prompt
+    /// in it.
     landmarks: VecDeque<usize>,
     /// Whether the last line is still being written to.
     ///
@@ -236,17 +239,6 @@ struct Spot {
     line: usize,
     /// How many of that line's display rows are above the band.
     into: u16,
-}
-
-/// The stable range an open transcript map travels over.
-///
-/// Frozen while the map stands so arriving text cannot move a destination
-/// under the pointer. Both ends are display-row positions in the width epoch
-/// the map opened in. A resize closes the map before starting another epoch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MapSpan {
-    first: usize,
-    last: usize,
 }
 
 impl Record {
@@ -879,102 +871,48 @@ impl Record {
         self.fold(line).into_iter().nth(usize::from(spot.into))
     }
 
-    /// The display-row range an absolute map can move the top of a band over.
+    /// Where a band `rows` tall stands in what the record retains, in display
+    /// rows: what the scroll rail is laid out from.
     ///
-    /// `None` where the record fits: there is no second place to seek, so a map
-    /// would be a control that can change nothing. The ends cached beside line
-    /// heights make every seek logarithmic without folding or walking the
-    /// record.
-    pub(crate) fn map_span(&self, rows: usize) -> Option<MapSpan> {
-        if rows == 0 {
-            return None;
+    /// The total is kept, and the top is one lookup in the cumulative ends
+    /// beside the line heights — or, while the band follows the foot, a walk
+    /// back over the lines the band shows — so a rail drawn on every frame
+    /// costs the band's height at most, never the record's or the session's.
+    pub(crate) fn place(&self, rows: usize) -> Place {
+        Place {
+            total: self.rows,
+            top: self.top_row(rows).saturating_sub(self.before),
+            height: rows,
         }
-        let first = self.before;
-        let last = self.row_of(self.foot(rows)).max(first);
-        (!self.lines.is_empty()).then_some(MapSpan { first, last })
     }
 
-    /// Which cell of a `cells`-wide map names the current top of the band.
-    pub(crate) fn map_position(&self, span: MapSpan, cells: usize) -> usize {
-        if cells <= 1 {
-            return 0;
-        }
-        if self.following {
-            return cells - 1;
-        }
-
-        project(self.row_of(self.top), span, cells)
-    }
-
-    /// Moves the band to the map cell `at`, and says whether it moved.
-    pub(crate) fn map_seek(&mut self, span: MapSpan, at: usize, cells: usize, rows: usize) -> bool {
-        let foot = self.foot(rows);
-        let first = span.first.max(self.before).min(self.row_of(foot));
-        let last = span.last.min(self.row_of(foot)).max(first);
-        let at = at.min(cells.saturating_sub(1));
-        let now = if cells <= 1 || at == 0 {
-            self.spot_at(first)
-        } else if at + 1 == cells {
-            foot
-        } else {
-            let range = last - first;
-            self.spot_at(first + at.saturating_mul(range) / (cells - 1))
-        };
-        let was = if self.following { foot } else { self.top };
-        self.top = now;
-        self.following = now == foot;
-        now != was
-    }
-
-    /// Moves the band to the prompt landmark drawn in map cell `at`.
+    /// Where each prompt still retained starts, in display rows into what is
+    /// retained, oldest first.
     ///
-    /// `false` where the cell is rail rather than a landmark, which is what
-    /// makes a click precise without turning the temporary map into a permanent
-    /// scrollbar. A drag uses [`Record::map_seek`] instead.
-    pub(crate) fn map_seek_landmark(
-        &mut self,
-        span: MapSpan,
-        at: usize,
-        cells: usize,
-        rows: usize,
-    ) -> bool {
-        let Some(row) = self
-            .landmarks
-            .iter()
-            .copied()
-            .filter_map(|line| self.start_of(line).map(|row| (line, row)))
-            .find(|(_, row)| span.contains(*row) && project(*row, span, cells) == at)
-            .map(|(_, row)| row)
-        else {
-            return false;
-        };
-
-        let foot = self.foot(rows);
-        let now = self.spot_at(row.min(self.row_of(foot)));
-        let was = if self.following { foot } else { self.top };
-        self.top = now;
-        self.following = now == foot;
-        now != was
-    }
-
-    /// Which map cells carry a prompt landmark.
-    ///
-    /// The returned vector is the track's width and the walk is capped by
-    /// [`MOST_LANDMARKS`], so drawing this row costs neither the record nor the
-    /// length of the session.
-    pub(crate) fn map_landmarks(&self, span: MapSpan, cells: usize) -> Vec<bool> {
-        let mut marked = vec![false; cells];
-        for row in self
-            .landmarks
+    /// The walk is capped by [`MOST_LANDMARKS`], and a prompt whose line has
+    /// spilled off the head leaves with it.
+    pub(crate) fn prompts(&self) -> impl Iterator<Item = usize> + '_ {
+        self.landmarks
             .iter()
             .filter_map(|line| self.start_of(*line))
-            .filter(|row| span.contains(*row))
-        {
-            if let Some(cell) = marked.get_mut(project(row, span, cells)) {
-                *cell = true;
-            }
-        }
-        marked
+            .map(|row| row.saturating_sub(self.before))
+    }
+
+    /// Moves the band's top to display row `row` of what is retained, and
+    /// says whether it moved.
+    ///
+    /// Never past the foot: a row the band cannot start on and still be full
+    /// is the foot, and the band follows the record again from there, as the
+    /// wheel leaves it when it reaches the end. A binary search through the
+    /// same cumulative ends [`Self::place`] reads, plus a walk bounded by the
+    /// band's height to find the foot.
+    pub(crate) fn seek(&mut self, row: usize, rows: usize) -> bool {
+        let foot = self.foot(rows);
+        let now = self.spot_at(self.before.saturating_add(row)).min(foot);
+        let was = if self.following { foot } else { self.top };
+        self.top = now;
+        self.following = now == foot;
+        now != was
     }
 
     /// The display-row position of `spot` in this width epoch.
@@ -1173,21 +1111,6 @@ impl Record {
 fn responsive_rows(mut rows: Vec<Row>) -> Vec<Row> {
     rows.truncate(MOST);
     rows
-}
-
-impl MapSpan {
-    fn contains(self, row: usize) -> bool {
-        (self.first..=self.last).contains(&row)
-    }
-}
-
-/// `row` projected onto a fixed-width absolute track.
-fn project(row: usize, span: MapSpan, cells: usize) -> usize {
-    if cells <= 1 || span.last <= span.first {
-        return 0;
-    }
-    let row = row.clamp(span.first, span.last);
-    (row - span.first).saturating_mul(cells - 1) / (span.last - span.first)
 }
 
 #[cfg(test)]
@@ -1619,23 +1542,71 @@ mod tests {
         assert_eq!(said(&record, 3), ["7", "8", "9"]);
     }
 
-    #[test]
-    fn absolute_map_travel_is_measured_in_folded_display_rows() {
+    /// A record ten columns wide whose first line folds to several rows.
+    fn folded() -> Record {
         let mut record = Record::new(10);
         record.write(
             Slot::Plain,
             "one two three four five six seven eight nine ten\n",
             None,
         );
+        record.landmark();
         record.write(Slot::Plain, "short\n", None);
         record.write(Slot::Plain, "another short\n", None);
-        let span = record.map_span(1).expect("the record to scroll");
+        record
+    }
 
-        assert!(record.map_seek(span, 1, 3, 1));
+    #[test]
+    fn the_rail_place_is_measured_in_folded_display_rows() {
+        // A line-count measure would say three lines and a prompt on the
+        // second; what the rail stands for is the rows those lines fold to.
+        let record = folded();
+        let rows = record.rows;
+        assert!(rows > 3, "{rows}");
 
-        // Half-way through the display rows is still inside the long first
-        // logical line. A line-count map would have landed on `short` instead.
-        assert_eq!(said(&record, 1), ["eight nine"]);
+        assert_eq!(
+            record.place(2),
+            Place {
+                total: rows,
+                top: rows - 2,
+                height: 2,
+            }
+        );
+        assert_eq!(record.prompts().collect::<Vec<_>>(), [rows - 3]);
+    }
+
+    #[test]
+    fn a_rail_seek_lands_on_the_display_row_asked_for_and_follows_at_the_foot() {
+        let mut record = folded();
+        let rows = record.rows;
+
+        // Into the long first line, which a line-count seek could not reach.
+        assert!(record.seek(1, 1));
+        assert!(!record.following());
+        assert_eq!(record.place(1).top, 1);
+        assert_eq!(said(&record, 1), ["three four"]);
+
+        // Past the foot is the foot, and the band follows it again.
+        assert!(record.seek(rows + 5, 1));
+        assert!(record.following());
+        assert_eq!(record.place(1).top, rows - 1);
+        assert!(!record.seek(rows - 1, 1));
+    }
+
+    #[test]
+    fn rail_prompts_leave_with_the_lines_they_started() {
+        let mut record = Record::new(40);
+        for line in 0..MOST + 10 {
+            if line % 5 == 0 {
+                record.landmark();
+            }
+            record.write(Slot::Plain, &format!("line {line}\n"), None);
+        }
+        let prompts: Vec<usize> = record.prompts().collect();
+
+        assert!(!prompts.is_empty());
+        assert!(prompts.iter().all(|row| *row < record.rows));
+        assert_eq!(prompts.last().copied(), Some(record.rows - 5));
     }
 
     #[test]

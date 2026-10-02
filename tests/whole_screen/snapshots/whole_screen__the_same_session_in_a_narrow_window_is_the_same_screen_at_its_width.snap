@@ -2,14 +2,15 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-40x24 cursor 20,4 scrolled 0
+40x24 cursor 21,4 scrolled 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
 |                                        |
-|Warning: No models available. Use /login|
-|or set an API key environment variable. |
-|Then use /model to select a model.      |
+|Warning: No models available. Use       |
+|/login or set an API key environment    |
+|variable. Then use /model to select a   |
+|model.                                  |
 |                                        |
 |                                        |
 |                                        |
@@ -26,4 +27,3 @@ expression: window.picture()
 |│ ›                                    │|
 |╰──────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)        |
-|                       transcript map → |

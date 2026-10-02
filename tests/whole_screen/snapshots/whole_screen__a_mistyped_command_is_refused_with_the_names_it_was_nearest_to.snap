@@ -1,29 +1,29 @@
 ---
 source: tests/whole_screen/main.rs
-expression: "refused_as_a_slip(\"mistyped\", 80)"
+expression: refused_as_a_slip(&mut window)
 ---
-80x24 cursor 20,4 scrolled 0
-|│  /…/workspace                    │                                           │|
-|│                                  │ Tips                                      │|
-|│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No models available. Use /login or set an API key environment variable.|
-|Then use /model to select a model.                                              |
-|                                                                                |
-|› /modle                                                                        |
-|⎿ ! no such command: /modle                                                     |
-|    nearest: /model, /mode                                                      |
-|                                                                                |
+80x24 cursor 21,4 scrolled 0
+|│ ─────────────────────────────────────────────────────────────────────────── ││|
+|│                                                                             ││|
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    ││|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|                                                                               ┃|
+|Warning: No models available. Use /login or set an API key environment         ┃|
+|variable. Then use /model to select a model.                                   ┃|
+|                                                                               ┃|
+|› /modle                                                                       ┃|
+|⎿ ! no such command: /modle                                                    ┃|
+|    nearest: /model, /mode                                                     ┃|
+|                                                                               ┃|
 |                                                                                |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
-|                                                               transcript map → |

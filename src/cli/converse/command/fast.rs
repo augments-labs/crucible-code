@@ -90,7 +90,7 @@ pub(super) fn run<T: Terminal>(
 
     let row = Row::new().then(
         Slot::Plain,
-        clip(asked.pace.speed.as_str(), renderer.columns()),
+        clip(asked.pace.speed.as_str(), renderer.transcript_columns()),
     );
     renderer.present(&[row])?;
     listing(renderer, cost, glyphs)
@@ -179,7 +179,7 @@ pub(super) fn taken<T: Terminal>(
         }
     };
 
-    let rows: Vec<Row> = fold(&said, renderer.columns())
+    let rows: Vec<Row> = fold(&said, renderer.transcript_columns())
         .into_iter()
         .map(|row| Row::new().then(Slot::Quiet, row))
         .collect();
@@ -281,7 +281,7 @@ fn listing<T: Terminal>(
     cost: Cost,
     glyphs: Glyphs,
 ) -> Result<(), Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let rows = [
         about("/fast on", &worded(cost, glyphs), glyphs),
         about("/fast off", STANDARD, glyphs),

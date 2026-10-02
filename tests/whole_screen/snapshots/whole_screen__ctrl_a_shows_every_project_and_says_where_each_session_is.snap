@@ -20,10 +20,10 @@ expression: window.picture()
 |│                              │ │                                             │|
 |│   tidy the stylesheet        │ │                                             │|
 |│   just now · main · …website │ │                                             │|
+|│                              │ │                                             │|
 |│                              │ │ ────────────────────────────────────────────│|
 |│                              │ │ just now · 1 message · main                 │|
 |│                              │ │ Enter to resume · Esc to cancel             │|
 |╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
 |                                                                                |
 | ctrl+a this project · ctrl+b this branch · ctrl+w worktrees · esc              |
-|                                                                                |

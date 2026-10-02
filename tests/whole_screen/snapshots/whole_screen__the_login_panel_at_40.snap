@@ -2,14 +2,15 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-40x24 cursor 22,0 scrolled 0
+40x24 cursor 23,0 scrolled 0
 |CRUCIBLE                                |
 |/…/workspace                            |
 |                                        |
 |                                        |
-|Warning: No models available. Use /login|
-|or set an API key environment variable. |
-|Then use /model to select a model.      |
+|Warning: No models available. Use       |
+|/login or set an API key environment    |
+|variable. Then use /model to select a   |
+|model.                                  |
 |                                        |
 |› /login                                |
 |                                        |
@@ -26,4 +27,3 @@ expression: picture
 |  API usage billing                     |
 |                                        |
 |esc to cancel                           |
-|                                        |

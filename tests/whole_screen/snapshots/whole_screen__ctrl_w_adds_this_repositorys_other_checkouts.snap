@@ -20,10 +20,10 @@ expression: window.picture()
 |│                              │ │                                             │|
 |│                              │ │                                             │|
 |│                              │ │                                             │|
+|│                              │ │                                             │|
 |│                              │ │ ────────────────────────────────────────────│|
 |│                              │ │ just now · 1 message · main                 │|
 |│                              │ │ Enter to resume · Esc to cancel             │|
 |╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
 |                                                                                |
 | ctrl+a all projects · ctrl+b this branch · ctrl+w hide worktrees · esc         |
-|                                                                                |

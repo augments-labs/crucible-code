@@ -144,10 +144,11 @@ queue](#the-queue).
 | Pointer over a cut result | Lights it, every row of it. |
 | Click on a cut result | Stands that one result, in the view <kbd>Ctrl+O</kbd> stands them all in. |
 | Drag | Selects the rows you cover, anywhere in the window, and letting go copies them. At the top or the foot the transcript scrolls under the pointer, and the wheel scrolls it while the button is still down. Resizing lets go of the selection. |
-| Click on `transcript map` | Opens the map along the bottom row. A click on it jumps there, and one on a prompt's mark lands on that prompt; a drag is exact; the wheel moves it. It closes three seconds after the last touch. |
+| Click on the scroll rail | Off the thumb, moves the transcript so the thumb is centred where you clicked, or as near as the rail's ends allow; a click on a prompt's mark lands on that prompt. A click on the thumb takes hold of it without moving it. |
+| Drag on the scroll rail | Scrolls the transcript with the pointer, holding the thumb where you took it; at the foot it follows the newest line again. |
 
 [Moving through the transcript](../sessions/sessions.md#moving-through-the-transcript)
-describes the map, and [Run it](../getting-started/getting-started.md#run-it)
+describes the scroll rail, and [Run it](../getting-started/getting-started.md#run-it)
 the drag.
 
 ## Answering a permission question

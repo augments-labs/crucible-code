@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x24 cursor 4,10 scrolled 0
-|› /model                                                                        |
+80x24 cursor 3,10 scrolled 0
 |Model                                                    now  openai · gpt-6-sol|
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
@@ -13,17 +12,18 @@ expression: picture
 |╭─────────────────────┬────────────────────────────────────────────────────────╮|
 |│  Providers          │  openai · ChatGPT sign-in                      7 of 41 │|
 |├─────────────────────┼────────────────────────────────────────────────────────┤|
-|│   Anthropic       7 │ › gpt-6-astra                            872k  fast    │|
-|│   DeepSeek        2 │   gpt-6.1-sol                            872k  fast    │|
-|│   Google          4 │   gpt-6-sol                              872k  ← now   │|
-|│   Meta            4 │   gpt-6-luna                             872k  fast    │|
-|│   MiMo            2 │   gpt-5.6-sol                            872k  fast    │|
-|│   MiniMax         2 │   gpt-5.6-terra                          872k  fast    │|
-|│   MoonshotAI      4 │   gpt-5.6-luna                           872k  fast    │|
-|│ › OpenAI          7 │   1 more with an API key · /login                      │|
+|│   All            41 │ › gpt-6-astra                            872k  fast    │|
+|│   Anthropic       7 │   gpt-6.1-sol                            872k  fast    │|
+|│   DeepSeek        2 │   gpt-6-sol                              872k  ← now   │|
+|│   Google          4 │   gpt-6-luna                             872k  fast    │|
+|│   Meta            4 │   gpt-5.6-sol                            872k  fast    │|
+|│   MiMo            2 │   gpt-5.6-terra                          872k  fast    │|
+|│   MiniMax         2 │   gpt-5.6-luna                           872k  fast    │|
+|│   MoonshotAI      4 │   1 more with an API key · /login                      │|
+|│ › OpenAI          7 │                                                        │|
+|│   Qwen            4 │                                                        │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
 |  Effort   ‹ low ›  medium   high   xhigh   max                                 |
 |                                                                                |
 |  tab pane · ↑↓ model · ←→ effort · enter takes both · esc to cancel            |
-|                                                                                |

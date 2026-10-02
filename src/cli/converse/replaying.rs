@@ -174,7 +174,7 @@ fn streamed<T: Terminal>(
                 renderer.apart()?;
                 renderer.present(&draw::compacted_rows(
                     details,
-                    renderer.columns(),
+                    renderer.transcript_columns(),
                     against.style.glyphs(),
                 ))?;
             }
@@ -332,7 +332,7 @@ fn said<T: Terminal>(
     batch: &mut Batch<'_>,
     message: &Message,
 ) -> Result<(), Fatal> {
-    let columns = renderer.columns();
+    let columns = renderer.transcript_columns();
     let style = against.style;
 
     // Whatever the batch before this one never answered goes down first, where

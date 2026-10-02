@@ -2,8 +2,9 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-60x24 cursor 22,0 scrolled 0
-|done.                                                       |
+60x24 cursor 23,0 scrolled 0
+|jumps over the lazy dog. the quick brown fox jumps over the•|
+|lazy dog. done.                                            ┃|
 |────────────────────────────────────────────────────────────|
 |                                                            |
 |› interface     code   (← → )                               |
@@ -26,4 +27,3 @@ expression: window.picture()
 |1337                                                        |
 |                                                            |
 |enter takes it · esc puts back the one in force             |
-|                                                            |

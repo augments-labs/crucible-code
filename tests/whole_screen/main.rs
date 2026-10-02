@@ -213,7 +213,12 @@ fn under(picture: &str, command: &str) -> String {
     let Some(row) = rows.get(at + 1) else {
         panic!("nothing under › {command}: {picture}")
     };
-    row.trim_matches('|').trim_end().to_owned()
+    // Less the scroll rail's cell, which stands at the end of a transcript row
+    // that is not the row's words.
+    row.trim_matches('|')
+        .trim_end_matches(['\u{2502}', '\u{2503}', '\u{2022}'])
+        .trim_end()
+        .to_owned()
 }
 
 #[test]
@@ -750,19 +755,90 @@ fn a_model_picked_mid_turn_is_confirmed_then_held() {
     insta::assert_snapshot!(window.picture());
 }
 
+/// The last word of the second answer [`two_long_turns`] is given.
+const AGAIN_END: &str = "again.";
+
+/// Two long answers, one after the other, each under the prompt that asked.
+///
+/// Two prompts, so the scroll rail has more than one mark to draw and a
+/// transcript several windows tall to stand in. Each answer ends on a word only
+/// it has, so the second is waited for rather than mistaken for the first.
+fn two_long_turns(case: &str, columns: u16, rows: u16) -> Watched {
+    let again = format!("{}{AGAIN_END}", taller_than_the_window());
+    let vendor = Vendor::answering_each(&[&a_long_answer(), &again]);
+    let mut window = Watched::answering(case, columns, rows, &vendor);
+    window.types_until("say something long\r", ANSWER_END);
+    window.types_until("say it again\r", AGAIN_END);
+    window
+}
+
+/// The zero-based rows of `picture` whose last cell is `cell`.
+fn rail_rows(picture: &str, cell: char) -> Vec<usize> {
+    picture
+        .lines()
+        .skip(1)
+        .enumerate()
+        .filter(|(_, line)| line.trim_end_matches('|').ends_with(cell))
+        .map(|(row, _)| row)
+        .collect()
+}
+
 #[test]
-fn the_transcript_map_drags_a_long_answer_back_to_its_first_retained_row() {
-    // A real SGR mouse click opens the control at the bottom right, then a
-    // second gesture drags its current place to the first cell. The
-    // transcript jumps from the answer's foot to the opening while the box
-    // stays on the same rows underneath it.
+fn the_scroll_rail_drags_a_long_answer_back_to_its_first_retained_row() {
+    // A real SGR mouse press on the thumb at the foot of the rail, dragged to
+    // the rail's first row. The transcript jumps from the answer's foot to the
+    // opening while the box stays on the same rows underneath it.
     let vendor = Vendor::answering(&a_long_answer());
-    let mut window = Watched::answering("transcript-map", 80, 16, &vendor);
+    let mut window = Watched::answering("scroll-rail", 80, 16, &vendor);
     window.types_until("say something long\r", ANSWER_END);
 
-    // The padded control begins at column 62; the open map track begins at 6.
-    window.clicks(15, 62);
-    window.drags((15, 69), (15, 6));
+    let thumb = rail_rows(&window.picture(), '\u{2503}');
+    let foot = *thumb.last().expect("a thumb on the rail");
+    window.drags((foot, 79), (0, 79));
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_scroll_rail_left_off_gives_the_transcript_its_last_column() {
+    let vendor = Vendor::answering(&a_long_answer());
+    let document = format!(
+        "{{\n  \"updates\": {{\"check\": \"never\"}},\n  \
+         \"output\": {{\"scrollRail\": false}},\n  \
+         \"providers\": {{\n    \"anthropic\": {{\n      \
+         \"model\": \"claude-test-1\",\n      \"baseUrl\": \"{}\"\n    }}\n  }}\n}}\n",
+        vendor.address()
+    );
+    let mut window = Watched::configured("scroll-rail-off", 80, 16, &document, true);
+    window.types_until("say something long\r", ANSWER_END);
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks() {
+    let mut window = two_long_turns("scroll-rail-mark", 80, 16);
+
+    // The second prompt's mark is the last one above the thumb.
+    let marks = rail_rows(&window.picture(), '\u{2022}');
+    let mark = *marks.last().expect("a mark on the rail");
+    window.clicks_catching(mark, 79, "\u{203a} say it again");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it() {
+    let mut window = two_long_turns("scroll-rail-narrow", 40, 16);
+
+    // A row of bare track in the transcript's band, the middle one of them, so
+    // the click seeks rather than landing on a prompt or taking the thumb.
+    let track: Vec<usize> = rail_rows(&window.picture(), '\u{2502}')
+        .into_iter()
+        .filter(|row| *row < 10)
+        .collect();
+    let row = *track.get(track.len() / 2).expect("track on the rail");
+    window.clicks(row, 39);
 
     insta::assert_snapshot!(window.picture());
 }
@@ -3500,7 +3576,7 @@ fn the_fast_panel_stands_over_a_model_with_a_fast_form() {
 
 #[test]
 fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
-    // Nine rows hold the two lines and not the panel.
+    // Eight rows hold the two lines and not the panel.
     let document = fast::document("google", "gemini-3.8-flash", false);
     let mut window = Watched::launched(
         "fast-short",
@@ -3513,7 +3589,7 @@ fn a_window_too_short_for_the_fast_panel_is_given_the_lines_to_type() {
             home: None,
         },
     );
-    window.resize(80, 9);
+    window.resize(80, 8);
     window.types_until("/fast\r", "/fast off");
 
     let picture = window.picture();

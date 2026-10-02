@@ -395,6 +395,11 @@
           ],
           "type": "string"
         },
+        "scrollRail": {
+          "default": true,
+          "description": "Whether the transcript has a one-column rail on its right edge showing where the screen is and where each prompt was; a click or a drag on it scrolls there",
+          "type": "boolean"
+        },
         "syntaxTheme": {
           "default": "Monokai Extended",
           "description": "Which theme fenced code is drawn in — a name from /theme, such as Monokai Extended, GitHub, Dracula or Nord",

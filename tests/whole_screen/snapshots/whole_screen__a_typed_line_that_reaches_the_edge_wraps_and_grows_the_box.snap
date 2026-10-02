@@ -2,23 +2,24 @@
 source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
-80x24 cursor 20,68 scrolled 0
-|│  █   █▄▄ █  █ █   █ █▄█ █   █▄▄  │ No recent sessions                        │|
-|│  ▀▄▄ █ █ ▀▄▄▀ ▀▄▄ █ █▄█ █▄▄ █▄▄  │                                           │|
-|│                                  │ ───────────────────────────────────────── │|
-|│  /…/workspace                    │                                           │|
-|│                                  │ Tips                                      │|
-|│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|                                                                                |
-|Warning: No models available. Use /login or set an API key environment variable.|
-|Then use /model to select a model.                                              |
-|                                                                                |
+80x24 cursor 21,68 scrolled 0
+|│                                                                             ││|
+|│ No recent sessions                                                          ││|
+|│                                                                             ││|
+|│ ─────────────────────────────────────────────────────────────────────────── ││|
+|│                                                                             │┃|
+|│ Tips                                                                        │┃|
+|│                                                                             │┃|
+|│ · /          opens the command list                                         │┃|
+|│ · \ enter    adds a line without sending                                    │┃|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|                                                                               ┃|
+|Warning: No models available. Use /login or set an API key environment         ┃|
+|variable. Then use /model to select a model.                                   ┃|
+|                                                                               ┃|
 |                                                                                |
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
@@ -26,4 +27,3 @@ expression: window.picture()
 |│   over the lazy dog. the quick brown fox jumps over the lazy dog.            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |ask mode on (shift+tab to cycle)                                                |
-|                                                               transcript map → |

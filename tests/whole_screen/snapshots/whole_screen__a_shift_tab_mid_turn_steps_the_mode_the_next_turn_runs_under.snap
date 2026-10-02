@@ -2,22 +2,23 @@
 source: tests/whole_screen/main.rs
 expression: on_the_first_beat(&window.picture())
 ---
-80x24 cursor 20,4 scrolled 0
-|│  /…/workspace                    │                                           │|
-|│                                  │ Tips                                      │|
-|│                                  │                                           │|
-|│                                  │ · /          opens the command list       │|
-|│                                  │ · \ enter    adds a line without sending  │|
-|│                                  │ · shift+tab  steps the permission mode    │|
-|│                                  │ · ctrl+c     clears the line typed so far │|
-|╰──────────────────────────────────────────────────────────────────────────────╯|
-|                                                                                |
-|› start it                                                                      |
-|                                                                                |
-|● Bash(sleep 30)                                                                |
-|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                               |
-|                                                                                |
-|It is started. That is all.                                                     |
+80x24 cursor 21,4 scrolled 0
+|│ ─────────────────────────────────────────────────────────────────────────── ││|
+|│                                                                             ││|
+|│ Tips                                                                        ││|
+|│                                                                             ││|
+|│ · /          opens the command list                                         ││|
+|│ · \ enter    adds a line without sending                                    │┃|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› start it                                                                     ┃|
+|                                                                               ┃|
+|● Bash(sleep 30)                                                               ┃|
+|  ⎿ (no output yet) (+2 lines · ctrl+o to expand)                              ┃|
+|                                                                               ┃|
+|It is started. That is all.                                                    ┃|
 |                                                                                |
 |✳ writing (0s · ↓ 4 · esc to interrupt)                                         |
 |                                                                                |
@@ -26,4 +27,3 @@ expression: on_the_first_beat(&window.picture())
 |│ ›                                                                            │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
 |allow edits on (shift+tab to cycle) · 1 command        anthropic · claude-test-1|
-|                                                               transcript map → |
