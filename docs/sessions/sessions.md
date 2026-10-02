@@ -51,19 +51,18 @@ close to tell apart share one mark. The prompt you are reading under has its
 mark drawn larger, `●`, quiet on the track and in the accent on the thumb: the
 one you last landed on by clicking its mark, while it starts on screen and
 until you send another, and otherwise the latest prompt that starts at or above
-the screen's last row.
-With the pointer on the rail, the track and marks take the accent too, and the
-mark under the pointer is drawn larger, so you can see which prompt a click
-there lands on; moving off the rail puts it back.
+the screen's last row. With the pointer on the rail, the track and marks take
+the accent too, and the mark under the pointer is drawn larger, so you can see
+which prompt a click there lands on; moving off the rail puts it back.
 
 Click the rail off the thumb and the transcript moves so the thumb is centred
 there, or as near as the rail's ends allow; click a mark and you land on that
 prompt. A click on the thumb takes hold of it without moving it, and a mark the
-thumb covers is drawn as thumb, unless it is the prompt you are reading under. Keep the button down and drag to scroll with
-the pointer, holding the thumb where you took it, and drag it to the foot to
-follow the newest line again. The prompt box and everything
-standing over it stay where they are. The rail takes no keyboard binding, and a
-drag that selects text never takes it.
+thumb covers is drawn as thumb, unless it is the prompt you are reading under.
+Keep the button down and drag to scroll with the pointer, holding the thumb
+where you took it, and drag it to the foot to follow the newest line again. The
+prompt box and everything standing over it stay where they are. The rail takes
+no keyboard binding, and a drag that selects text never takes it.
 
 While the whole transcript fits on screen there is nowhere else to go, so the
 column stands blank, and a click there opens nothing beside it. The

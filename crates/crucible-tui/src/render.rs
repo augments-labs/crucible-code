@@ -477,14 +477,14 @@ impl<T: Terminal> Renderer<T> {
     /// A press on the thumb takes hold of it where it was pressed and moves
     /// nothing, a mark the thumb covers included. A press on a mark off the
     /// thumb lands on the prompt the mark stands for, which is then the rail's
-    /// current prompt for as long as it starts in the band, and anywhere else
-    /// on the rail puts the thumb's middle there, as near as the rail's ends
-    /// allow; either way the thumb is then held where the pointer is. A drag
-    /// moves the held thumb, and the transcript with it, and the release lets
-    /// go. A rail with no thumb — a record that
-    /// fits — has nowhere to go, so a press on it moves nothing; it is still
-    /// the rail's, so it names no line beside it, just as a pointer resting
-    /// there lights none.
+    /// current prompt for as long as it starts in the band and no prompt is
+    /// sent after it, and anywhere else on the rail puts the thumb's middle
+    /// there, as near as the rail's ends allow; either way the thumb is then
+    /// held where the pointer is. A drag moves the held thumb, and the
+    /// transcript with it, and the release lets go. A rail with no thumb — a
+    /// record that fits — has nowhere to go, so a press on it moves nothing; it
+    /// is still the rail's, so it names no line beside it, just as a pointer
+    /// resting there lights none.
     ///
     /// # Errors
     ///
