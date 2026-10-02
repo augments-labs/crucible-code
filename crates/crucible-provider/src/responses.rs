@@ -30,7 +30,7 @@
 //! and so is a [`Credential`], which is what lets the whole protocol be tested
 //! against recorded bytes.
 
-mod asking;
+pub(crate) mod asking;
 pub(crate) mod body;
 pub(crate) mod wire;
 

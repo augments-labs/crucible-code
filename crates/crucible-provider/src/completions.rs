@@ -26,10 +26,11 @@ pub(crate) mod wire;
 
 use std::fmt;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use crucible_credentials::{Credential, Outgoing};
 use crucible_models::{
-    Cost, Delta, DeltaStream, Effort, FastForm, PromptCacheCapabilities, PromptCacheRoute,
+    Asked, Cost, Delta, DeltaStream, Effort, FastForm, PromptCacheCapabilities, PromptCacheRoute,
     Provider, ProviderError, Request,
 };
 use crucible_runtime::{BoxFuture, Cancel};
@@ -40,6 +41,7 @@ use serde_json::Value;
 
 use crate::endpoint::Endpoint;
 use crate::refusal::{Own, refused_worded};
+use crate::responses::{Usage, asking};
 use crate::stream::Response;
 use crate::transport::Transport;
 
@@ -212,21 +214,30 @@ pub(crate) fn automatic(
 
 /// A Chat Completions provider, speaking `D`'s dialect.
 pub struct Chat<D: Dialect> {
-    credential: Box<dyn Credential>,
-    transport: Box<dyn Transport>,
+    credential: Arc<dyn Credential>,
+    transport: Arc<dyn Transport>,
     endpoint: Endpoint,
     credential_scope: CredentialScopeId,
+    /// Where the plan behind the credential says how much of its limits is
+    /// used, for a credential the wiring said has one.
+    limits: Option<Usage>,
     dialect: PhantomData<D>,
 }
 
 impl<D: Dialect> fmt::Debug for Chat<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(D::TITLE)
+        let mut shown = f.debug_struct(D::TITLE);
+        shown
             .field("credential", &self.credential)
             .field("transport", &self.transport)
             .field("endpoint", &self.endpoint)
-            .field("credential_scope", &self.credential_scope)
-            .finish()
+            .field("credential_scope", &self.credential_scope);
+        // Shown only where it is set, so a provider with no plan to ask shows
+        // as it did before it could have one.
+        if let Some(limits) = &self.limits {
+            shown.field("limits", limits);
+        }
+        shown.finish()
     }
 }
 
@@ -254,12 +265,21 @@ impl<D: Dialect> Chat<D> {
     ) -> Self {
         let credential_scope = credential.scope();
         Self {
-            credential,
-            transport,
+            credential: credential.into(),
+            transport: transport.into(),
             endpoint,
             credential_scope,
+            limits: None,
             dialect: PhantomData,
         }
+    }
+
+    /// The same provider, asking `usage` for its plan's limits when asked:
+    /// for a credential the wiring knows is a plan's, since nothing in the
+    /// credential says so to the provider.
+    pub(crate) const fn asking(mut self, usage: Usage) -> Self {
+        self.limits = Some(usage);
+        self
     }
 
     /// Where reasoning kept for `request` is bound, or nothing where the vendor
@@ -345,6 +365,19 @@ impl<D: Dialect> Provider for Chat<D> {
 
     fn prompt_cache_encoding(&self, request: &Request<'_>) -> PromptCacheEncoding {
         body::prompt_cache_encoding(request)
+    }
+
+    fn ask_limits(&self) -> Option<BoxFuture<'static, Asked>> {
+        // Only the vendor's own services are asked: a gateway's address is not
+        // where the vendor keeps a plan.
+        let usage = self.limits.filter(|_| self.vendor())?;
+        Some(Box::pin(asking::ask(
+            D::NAME,
+            usage,
+            Arc::clone(&self.credential),
+            Arc::clone(&self.transport),
+            D::headers,
+        )))
     }
 
     fn stream<'a>(
