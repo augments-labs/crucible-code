@@ -884,7 +884,7 @@ back to correct.
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists these |
-| `/release-notes` | Prints what changed in each release, or in the one you name |
+| `/release-notes` | Lists the releases to open one, or prints the one you name |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
 | `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
@@ -919,11 +919,17 @@ this run is set up for, and the provider beside it, so the next crucible
 started anywhere begins with both. See [Providers and
 models](../providers/providers.md).
 
-`/release-notes` prints every release crucible has had into the transcript,
-oldest first: a row each for the older ones, saying how many entries each group
-held, then the ten newest in full, the one you are running last and marked
-`this version`. `/release-notes 0.41.1`, or `v0.41.1`, prints that release
-alone. The notes are the changelog of the build you are running, built into it,
+`/release-notes` opens a list of releases, newest first, each with its date and
+how many entries it holds; the one you are running is marked `this version`. The
+list shows the eight newest and a last row, `all N releases`, that opens the
+rest in place. <kbd>Up</kbd> and <kbd>Down</kbd> (or the wheel) move,
+<kbd>Enter</kbd> prints that release alone into the transcript, and
+<kbd>Esc</kbd> closes the list. `/release-notes 0.41.1`, or `v0.41.1`, prints
+that release without the list, and `/release-notes all` prints every release
+into the transcript, oldest first: a row each for the older ones, saying how
+many entries each group held, then the ten newest in full. Without a keyboard,
+or in a window too short to hold the list, `/release-notes` prints that same
+output. The notes are the changelog of the build you are running, built into it,
 so asking for them needs no network. Where a very narrow window would print more
 rows than the transcript keeps, the oldest rows are left out first, and the last
 row says how many.
@@ -946,8 +952,9 @@ Enter depends on the command:
 - The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
-- **`/release-notes`** would print a thousand rows into the answer being
-  written, so it is refused on the same panel; ask for it once the turn ends.
+- **`/release-notes`** would stand a list over the answer being written, or
+  print every release into it, so it is refused on the same panel; ask for it
+  once the turn ends.
 - **A word that names no command**, typed alone, stands the same panel with
   the nearest names on it, and is not queued. With words after it the line is
   a prompt, and waits for the turn like any other.

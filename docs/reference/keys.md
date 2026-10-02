@@ -322,7 +322,10 @@ footer `esc to cancel`.
 ### `/help`, and a command refused mid-turn
 
 `/help` writes the list of commands into the transcript, and there is nothing
-to close; so does `/release-notes`, which is refused while a turn runs. While a
+to close. `/release-notes` stands a list of releases: <kbd>Up</kbd> and
+<kbd>Down</kbd> move, <kbd>Enter</kbd> prints the one chosen into the
+transcript, <kbd>Esc</kbd> closes it, and the foot of the list names these keys.
+It is refused while a turn runs. While a
 turn runs `/help` stands as a panel instead: any key closes it, and
 so does a click on its rows or a wheel notch, and a resize redraws it. A
 command that cannot act while a turn runs stands a panel saying so, with
