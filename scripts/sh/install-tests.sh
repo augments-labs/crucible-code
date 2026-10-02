@@ -228,7 +228,9 @@ fi
 
 # Runs a command with a terminal on standard input and output, `cols` wide, and
 # prints what the terminal was sent followed by `status=<exit status>`. The
-# status is printed from inside, since not every `script` returns it.
+# status is printed from inside, since not every `script` returns it. A case
+# that means a locale sets LC_ALL, which outranks any LC_CTYPE or LANG the
+# caller exported.
 in_terminal() {
     local cols=$1 command
     shift
@@ -335,7 +337,7 @@ expect 'a piped mismatch' "$mismatch_out" 'install: verify checksum: failed'
     printf 'a piped mismatch changed its error: %s\n' "$(cat "$scratch/mismatch.err")" >&2
     exit 1
 }
-mismatch=$(in_terminal 80 env TERM=xterm LANG=C "$INSTALL" --version "$version" \
+mismatch=$(in_terminal 80 env TERM=xterm LC_ALL=C "$INSTALL" --version "$version" \
     --dir "$mismatch_bin" \
     --archive "$bad_sum/$stem.tar.gz" --checksums "$bad_sum/SHA256SUMS")
 expect 'a mismatch in a terminal' "$(visible "$mismatch")" 'x verify checksum'
@@ -348,7 +350,7 @@ expect 'a mismatch in a terminal' "$mismatch" 'status=1'
 }
 
 echo '==> at 40 columns every line fits, with details under their step'
-narrow=$(in_terminal 40 env TERM=xterm LANG=C "$INSTALL" --version "$version" \
+narrow=$(in_terminal 40 env TERM=xterm LC_ALL=C "$INSTALL" --version "$version" \
     --dir "$scratch/a-directory-whose-name-is-too-long-for-the-row" \
     --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
 expect 'a narrow terminal' "$narrow" 'status=0'
@@ -368,7 +370,7 @@ done <<<"$narrow"
 echo '==> uninstall marks its steps in a terminal and stays plain when piped'
 look_bin=$scratch/look-bin
 install_from "$asset" "$look_bin" >/dev/null
-removed=$(in_terminal 80 env TERM=xterm LANG=C CRUCIBLE_CODE_HOME="$scratch/look-home" \
+removed=$(in_terminal 80 env TERM=xterm LC_ALL=C CRUCIBLE_CODE_HOME="$scratch/look-home" \
     "$UNINSTALL" --dir "$look_bin")
 expect 'uninstall in a terminal' "$removed" "$ESC["
 expect 'uninstall in a terminal' "$(visible "$removed")" 'ok remove'
@@ -598,7 +600,7 @@ echo '==> a terminal download shows its bar, its size, and why it failed'
 download_release=$scratch/download-release
 discovery_release "$download_release" linux x86_64
 in_download() {
-    in_terminal 80 env TERM=xterm LANG=C INSTALL_TEST_SYSTEM=Linux INSTALL_TEST_MACHINE=x86_64 \
+    in_terminal 80 env TERM=xterm LC_ALL=C INSTALL_TEST_SYSTEM=Linux INSTALL_TEST_MACHINE=x86_64 \
         INSTALL_TEST_VERSION="$version" INSTALL_TEST_RELEASE="$download_release" \
         INSTALL_TEST_CURL_LOG="$scratch/download.urls" PATH="$discovery_tools:$PATH" "$@" \
         "$INSTALL" --dry-run --version "$version" --dir "$scratch/download-bin"
