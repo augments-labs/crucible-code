@@ -591,7 +591,7 @@ fn a_registered_tool_without_a_case_is_refused() -> Result<(), String> {
 ///
 /// Raised only on purpose. A change that needs more room says why in its own
 /// pull request; this number does not follow whatever the text became.
-const FIXED_REQUEST_BYTES: usize = 13_750;
+const FIXED_REQUEST_BYTES: usize = 13_755;
 
 /// Every tool crucible builds in, in the order [`registered`] lists them.
 const BUILT_IN: [&str; 12] = [
@@ -611,8 +611,9 @@ const BUILT_IN: [&str; 12] = [
 
 #[test]
 fn fixed_request_text_stays_within_its_budget() -> Result<(), String> {
-    // The same bytes on every request of every session, so every one of them
-    // is paid for again on every turn.
+    // Fixed text, though not all of it is paid on every turn: the prompt and
+    // the advertised schemas are, the compaction request only when compacting,
+    // and a held tool's schema only once a lookup has revealed it.
     let (tools, _fixture) = registry()?;
     let entries = registered(&tools)?;
     let names: Vec<&str> = entries

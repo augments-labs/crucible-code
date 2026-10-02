@@ -50,7 +50,7 @@ pub(crate) fn fields(under: &str, lead: &str, tail: &str) -> [Field; 2] {
         Field {
             name: SAID,
             about: format!(
-                "What this call is for: one row of about fifty characters, leading with the \
+                "What this call is for: one row of about 50 characters, leading with the \
                  point, shown under the {under} to whoever approves it."
             ),
             needed: false,
@@ -59,8 +59,8 @@ pub(crate) fn fields(under: &str, lead: &str, tail: &str) -> [Field; 2] {
         Field {
             name: TOLD,
             about: format!(
-                "{lead}, why, and what it costs if wrong, one string per paragraph, for that \
-                 person to open with a key. Do not restate the {under}. {tail}"
+                "{lead}, why, and what it costs if wrong, one string per paragraph for whoever \
+                 approves it, not yourself. Do not restate the {under}. {tail}"
             ),
             needed: false,
             shape: Shape::List {

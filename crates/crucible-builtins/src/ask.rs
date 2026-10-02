@@ -109,8 +109,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
         about: "Asks the person at the keyboard to choose, and waits. Use it when the work forks \
                 on what only they can settle and a wrong guess would waste the turn; not for what \
-                the workspace or they already told you. Ask once, with every question the fork \
-                needs."
+                reading the workspace would show or to confirm what they said. Ask once, with \
+                every question the fork needs."
             .into(),
         fields: vec![Field {
             name: QUESTIONS,

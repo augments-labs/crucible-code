@@ -510,7 +510,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
         fields: vec![
             Field {
                 name: PATH,
-                about: "The file to read, relative to the workspace root.".into(),
+                about: "The file, relative to the workspace root.".into(),
                 needed: true,
                 shape: Shape::Text,
             },

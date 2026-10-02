@@ -6,7 +6,7 @@ result      None
 provenance  Provenance { kind: Builtin, id: "crucible:ask_user", label: "[redacted]" }
 schema
 {
-  "description": "Asks the person at the keyboard to choose, and waits. Use it when the work forks on what only they can settle and a wrong guess would waste the turn; not for what the workspace or they already told you. Ask once, with every question the fork needs.",
+  "description": "Asks the person at the keyboard to choose, and waits. Use it when the work forks on what only they can settle and a wrong guess would waste the turn; not for what reading the workspace would show or to confirm what they said. Ask once, with every question the fork needs.",
   "type": "object",
   "properties": {
     "questions": {
@@ -78,7 +78,7 @@ schema
   "properties": {
     "command": {
       "type": "string",
-      "description": "The command line to run, as a shell would read it."
+      "description": "The command line, as a shell would read it."
     },
     "timeout": {
       "type": "integer",
@@ -92,14 +92,14 @@ schema
     },
     "description": {
       "type": "string",
-      "description": "What this call is for: one row of about fifty characters, leading with the point, shown under the command to whoever approves it."
+      "description": "What this call is for: one row of about 50 characters, leading with the point, shown under the command to whoever approves it."
     },
     "explanation": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "What the command does, why, and what it costs if wrong, one string per paragraph, for that person to open with a key. Do not restate the command. Account for each command the line runs."
+      "description": "What the command does, why, and what it costs if wrong, one string per paragraph for whoever approves it, not yourself. Do not restate the command. Account for each command the line runs."
     }
   },
   "required": ["command"]
@@ -138,11 +138,11 @@ schema
   "properties": {
     "path": {
       "type": "string",
-      "description": "The file to change, relative to the workspace root."
+      "description": "The file, relative to the workspace root."
     },
     "find": {
       "type": "string",
-      "description": "The exact text to replace, with its indentation. Use with replace for one change, or edits for several."
+      "description": "The exact text to replace, with its indentation. Pair with replace."
     },
     "replace": {
       "type": "string",
@@ -150,7 +150,7 @@ schema
     },
     "all": {
       "type": "boolean",
-      "description": "Replace every occurrence, not exactly one. Defaults to false."
+      "description": "Replace every occurrence. Defaults to false."
     },
     "edits": {
       "type": "array",
@@ -168,7 +168,7 @@ schema
           },
           "all": {
             "type": "boolean",
-            "description": "Replace every occurrence, not exactly one. Defaults to false."
+            "description": "Replace every occurrence. Defaults to false."
           }
         },
         "required": ["find", "replace"]
@@ -177,14 +177,14 @@ schema
     },
     "description": {
       "type": "string",
-      "description": "What this call is for: one row of about fifty characters, leading with the point, shown under the path to whoever approves it."
+      "description": "What this call is for: one row of about 50 characters, leading with the point, shown under the path to whoever approves it."
     },
     "explanation": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "What the change does, why, and what it costs if wrong, one string per paragraph, for that person to open with a key. Do not restate the path. Account for each place a change lands."
+      "description": "What the change does, why, and what it costs if wrong, one string per paragraph for whoever approves it, not yourself. Do not restate the path. Account for each place a change lands."
     }
   },
   "required": ["path"]
@@ -289,7 +289,7 @@ schema
   "properties": {
     "path": {
       "type": "string",
-      "description": "The file to read, relative to the workspace root."
+      "description": "The file, relative to the workspace root."
     },
     "offset": {
       "type": "integer",
@@ -417,7 +417,7 @@ schema
   "properties": {
     "path": {
       "type": "string",
-      "description": "The file to write, relative to the workspace root."
+      "description": "The file, relative to the workspace root."
     },
     "content": {
       "type": "string",
@@ -425,14 +425,14 @@ schema
     },
     "description": {
       "type": "string",
-      "description": "What this call is for: one row of about fifty characters, leading with the point, shown under the path to whoever approves it."
+      "description": "What this call is for: one row of about 50 characters, leading with the point, shown under the path to whoever approves it."
     },
     "explanation": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "What the file is becoming, why, and what it costs if wrong, one string per paragraph, for that person to open with a key. Do not restate the path. Replacing a file, account for what it holds now."
+      "description": "What the file is becoming, why, and what it costs if wrong, one string per paragraph for whoever approves it, not yourself. Do not restate the path. Replacing a file, account for what it holds now."
     }
   },
   "required": ["path", "content"]

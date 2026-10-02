@@ -76,7 +76,7 @@ fn change(within: &str) -> Vec<Field> {
         },
         Field {
             name: ALL,
-            about: "Replace every occurrence, not exactly one. Defaults to false.".into(),
+            about: "Replace every occurrence. Defaults to false.".into(),
             needed: false,
             shape: Shape::Flag,
         },
@@ -95,11 +95,11 @@ fn change(within: &str) -> Vec<Field> {
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     let mut fields = vec![Field {
         name: PATH,
-        about: "The file to change, relative to the workspace root.".into(),
+        about: "The file, relative to the workspace root.".into(),
         needed: true,
         shape: Shape::Text,
     }];
-    let mut single = change(" Use with replace for one change, or edits for several.");
+    let mut single = change(" Pair with replace.");
     for one in &mut single {
         one.needed = false;
     }

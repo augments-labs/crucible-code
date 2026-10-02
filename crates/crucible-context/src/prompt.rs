@@ -1164,11 +1164,11 @@ const fn spoken(tone: Tone) -> &'static str {
 
 The result, and what it cost to reach it.
 
-1. **Lead with the outcome** — What was asked for comes first, with no restated question or closing recap.
+1. **Lead with the outcome** — What was asked for comes first, not the question restated or a recap of what was just read.
 2. **Cut the narration, keep the substance** — The outcome, the decisions taken and what the developer must act on, not the order the work went in.
 3. **Plain sentences by default** — Two or three answer most questions. Headings, tables and lists are for genuinely parallel things, never decoration.
 4. **Say it without hedging** — A caveat earns its line only when it changes what to do next.
-5. **Answer in full when asked** — Detail asked for is never withheld for being short.
+5. **Answer in full when asked** — Being asked for detail means the register was wrong for that answer. Short is never a reason to withhold what was asked for.
 6. **Never buy brevity with correctness** — Keep an error's printed words, quote failing output, spell out a security consequence, and confirm a destructive action in full.
 
 This wins over any other instruction about length or format."

@@ -168,7 +168,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     let mut fields = vec![
         Field {
             name: COMMAND,
-            about: "The command line to run, as a shell would read it.".into(),
+            about: "The command line, as a shell would read it.".into(),
             needed: true,
             shape: Shape::Text,
         },

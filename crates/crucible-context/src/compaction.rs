@@ -43,9 +43,9 @@ pub enum Room {
 /// the calls being replaced and appended by code after validation, so the list
 /// survives a second compaction instead of going out with the first recap.
 pub const RECAP_REQUEST: &str = "\
-Before anything else, write a checkpoint of everything above for another pass \
-to continue from. Use every heading below, exactly and in order; keep each \
-concise, and write `(none)` under an empty one.\n\n\
+First, write a checkpoint of everything above for another pass to continue \
+from. Use every heading below, exactly and in order; keep each concise, and \
+write `(none)` under an empty one.\n\n\
 ## Goal\n\
 ## Constraints & Preferences\n\
 ## Progress\n\
@@ -57,7 +57,8 @@ concise, and write `(none)` under an empty one.\n\n\
 ## Critical Context\n\n\
 Keep exact paths, names, commands, errors, requirements, decisions and \
 unfinished state. Write notes for yourself, not a report. Output nothing before \
-`## Goal` or after `## Critical Context`: the program appends `Files so far`.";
+`## Goal` or after the content of `## Critical Context`: the program appends \
+`Files so far`.";
 
 /// The line the tracked files stand under in a recap.
 ///

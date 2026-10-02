@@ -49,7 +49,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     let mut fields = vec![
         Field {
             name: PATH,
-            about: "The file to write, relative to the workspace root.".into(),
+            about: "The file, relative to the workspace root.".into(),
             needed: true,
             shape: Shape::Text,
         },
