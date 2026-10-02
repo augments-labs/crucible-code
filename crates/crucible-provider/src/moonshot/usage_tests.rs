@@ -206,7 +206,8 @@ async fn kimi_usage_a_ratio_is_a_share_rounded_down() {
 }
 
 /// A ratio past one is a window used up, which stops a turn on any model
-/// until it starts again: Kimi's limits are the plan's own.
+/// until it starts again: Kimi's limits are the plan's own. So is a ratio too
+/// large to be multiplied out as a percentage.
 #[tokio::test]
 async fn kimi_usage_a_ratio_past_one_is_a_window_used_up() {
     let body = usages(&[(
@@ -225,10 +226,18 @@ async fn kimi_usage_a_ratio_past_one_is_a_window_used_up() {
             "{model}"
         );
     }
+
+    let body = usages(&[("limit_5h", r#"{"used_ratio":1e307}"#)]);
+    assert_eq!(
+        answered(asked(200, &body).await).reading(Window::FiveHour),
+        Some(WindowReading::new(100, None))
+    );
 }
 
 /// A reset time that is not one leaves the window read without a reset, as
-/// Kimi's own client shows it.
+/// Kimi's own client shows it; so does one before 1970, which no window of a
+/// plan asked now starts again at, the zero time some services write for
+/// none among them.
 #[tokio::test]
 async fn kimi_usage_a_bad_reset_time_is_a_window_with_no_reset() {
     for reset in [
@@ -238,6 +247,9 @@ async fn kimi_usage_a_bad_reset_time_is_a_window_with_no_reset() {
         r#""""#,
         "1791042000",
         "null",
+        r#""0001-01-01T00:00:00Z""#,
+        r#""1600-12-31T23:59:59Z""#,
+        r#""1969-12-31T23:59:59.5Z""#,
     ] {
         let body = usages(&[(
             "limit_5h",

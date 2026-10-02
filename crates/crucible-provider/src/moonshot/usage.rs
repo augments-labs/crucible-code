@@ -17,13 +17,14 @@
 //!
 //! Every window is the plan's own: Kimi reports no limit of one model. A key
 //! missing is a window not reported, and a window whose figures are not
-//! numbers in range is left out. A reset that is not an instant leaves its
-//! window read with no reset, as Kimi's own client shows it.
+//! numbers in range is left out. A reset that is not an instant, or is one
+//! before 1970, leaves its window read with no reset, as Kimi's own client
+//! shows it.
 //!
 //! The field names are those Kimi's clients read; no answer from the service
 //! was captured to write this.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crucible_types::{PlanWindows, Window, WindowReading};
 use serde_json::{Map, Value};
@@ -103,18 +104,33 @@ fn shared(limit: &Value) -> Option<WindowReading> {
         .get("reset_time")
         .and_then(Value::as_str)
         .and_then(|reset| reset.parse::<jiff::Timestamp>().ok())
-        .map(SystemTime::from);
+        .and_then(instant);
     Some(WindowReading::new(percent(ratio)?, resets_at))
 }
 
+/// The instant `reset` is, where it is one from 1970 on; `None` before.
+///
+/// Built from its seconds rather than through `jiff`'s conversion, which
+/// panics where the platform's clock cannot hold the instant, as Windows's
+/// cannot before 1601; and no window of a plan asked now starts again
+/// before 1970, so an instant there, such as the zero time some services
+/// write for none, says no reset.
+fn instant(reset: jiff::Timestamp) -> Option<SystemTime> {
+    let seconds = u64::try_from(reset.as_second()).ok()?;
+    let nanos = u32::try_from(reset.subsec_nanosecond()).ok()?;
+    SystemTime::UNIX_EPOCH.checked_add(Duration::new(seconds, nanos))
+}
+
 /// A ratio used as a whole percentage, rounded down so it never says more is
-/// used than was, and read as 100 past it; `None` for anything that is not a
-/// number from zero up.
+/// used than was, and read as 100 past it, however far; `None` for anything
+/// that is not a number from zero up.
 fn percent(ratio: f64) -> Option<u8> {
-    let used = ratio * 100.0 + SLACK;
-    if !used.is_finite() {
+    if !ratio.is_finite() {
         return None;
     }
+    // A ratio too large to multiply out is past one all the same: the product
+    // is infinite, and every whole percentage is under it.
+    let used = ratio * 100.0 + SLACK;
     (0..=100_u8).rev().find(|whole| f64::from(*whole) <= used)
 }
 
