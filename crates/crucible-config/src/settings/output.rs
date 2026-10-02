@@ -5,6 +5,8 @@
 //! decides anything about a terminal — that is `Style`'s job, one crate up,
 //! from these answers and what the terminal itself reports.
 
+use serde_json::Value;
+
 use super::Settings;
 
 impl Settings {
@@ -40,6 +42,21 @@ impl Settings {
     #[must_use]
     pub fn syntax_theme(&self) -> Option<&str> {
         self.output("syntaxTheme")
+    }
+
+    /// Whether the transcript has a scroll rail on its right edge.
+    ///
+    /// A yes or no rather than an `Option`, unlike the answers above: nothing
+    /// on the command line can say otherwise, so what the files fall back to
+    /// is the answer, and it is the one the schema states. Only a `false`
+    /// turns it off.
+    #[must_use]
+    pub fn scroll_rail(&self) -> bool {
+        self.value
+            .get("output")
+            .and_then(|block| block.get("scrollRail"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
     }
 
     /// One string out of the `output` block.
@@ -274,6 +291,16 @@ mod tests {
     }
 
     #[test]
+    fn the_scroll_rail_is_drawn_unless_a_layer_turns_it_off() {
+        let off = Document::sample(r#"{"output": {"scrollRail": false}}"#, Origin::User);
+        let on = Document::sample(r#"{"output": {"scrollRail": true}}"#, Origin::ProjectLocal);
+
+        assert!(Settings::resolve(Vec::new()).scroll_rail());
+        assert!(!Settings::resolve(vec![off.clone()]).scroll_rail());
+        assert!(Settings::resolve(vec![off, on]).scroll_rail());
+    }
+
+    #[test]
     fn the_defaults_the_schema_states_for_output_are_the_ones_it_falls_back_to() {
         assert_eq!(
             Color::read(shape::usual(&["output", "color"])),
@@ -290,6 +317,10 @@ mod tests {
         assert_eq!(
             ToolDetail::read(shape::usual(&["output", "toolDetail"])),
             Some(ToolDetail::default())
+        );
+        assert_eq!(
+            shape::usual(&["output", "scrollRail"]).parse::<bool>(),
+            Ok(Settings::resolve(Vec::new()).scroll_rail())
         );
     }
 }

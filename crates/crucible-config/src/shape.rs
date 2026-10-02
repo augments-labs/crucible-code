@@ -510,6 +510,15 @@ const OUTPUT: &[Field] = &[
         needed: false,
         widens: false,
     },
+    Field {
+        name: "scrollRail",
+        about: "Whether the transcript has a one-column rail on its right edge showing where the screen is and where each prompt was; a click or a drag on it scrolls there",
+        shape: Shape::Flag,
+        examples: &[],
+        usual: Some("true"),
+        needed: false,
+        widens: false,
+    },
 ];
 
 /// Every answer `input.send` accepts.
