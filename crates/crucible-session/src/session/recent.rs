@@ -39,7 +39,7 @@ const EXAMINED: usize = 64;
 /// wanted is one argument swap away from a first frame that opens every log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
-    /// The newest [`EXAMINED`] logs: the welcome screen, before the first
+    /// The newest sixty-four logs: the welcome screen, before the first
     /// frame, where the cost of each log opened is paid by every launch.
     FirstFrame,
     /// Every session the index names. For a listing somebody asked for after
