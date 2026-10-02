@@ -282,6 +282,21 @@ redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
 runs, it stands over the turn with the totals and plan windows that turn last
 reported.
 
+### `/settings`
+
+<kbd>←</kbd>, <kbd>→</kbd>, <kbd>Tab</kbd> and <kbd>Shift+Tab</kbd> switch
+between the Status, Config and Usage tabs, and <kbd>Esc</kbd>,
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> close the panel. On Config,
+<kbd>↑</kbd> and <kbd>↓</kbd> walk the rows and <kbd>Enter</kbd> or
+<kbd>Space</kbd> changes the one marked: a switch flips, a list of three or
+fewer moves to the next choice, a longer list opens under the row, and the
+scroll speed steps up, back to 3 after 30. On the scroll speed <kbd>←</kbd>
+and <kbd>→</kbd> step it down and up instead. <kbd>/</kbd> starts a search
+that keeps the rows whose label holds what is typed; <kbd>↓</kbd> goes from it
+to the rows and <kbd>Esc</kbd> clears it. In an opened list <kbd>↑</kbd> and
+<kbd>↓</kbd> walk, <kbd>Enter</kbd> picks and <kbd>Esc</kbd> leaves the row as
+it was. Typed while a turn runs, it stands over the turn.
+
 ### `/theme`
 
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list in view, <kbd>←</kbd> and

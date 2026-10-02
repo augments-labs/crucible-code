@@ -154,6 +154,7 @@ Useful commands:
 /fast        ask the model for its vendor's fast form, at its price
 /login       add an account or API-key credential
 /mode        inspect or change the permission mode
+/settings    change a setting, and see what is in force
 /resume      continue an earlier session in this workspace
 /help        show every command
 ```

@@ -40,13 +40,24 @@ of the shell that launched it.
 The command line is a fourth layer and is nearer than all three: `--model
 openai/gpt-5.6-terra` wins over anything a file says.
 
-When `/model`, `/effort`, `/fast`, `/login`, `/theme`, `/sandbox enable` or
-`disable`, answering **Use it anyway**, removing a credential, or telling
+When `/model`, `/effort`, `/fast`, `/login`, `/theme`, `/settings`, `/sandbox
+enable` or `disable`, answering **Use it anyway**, removing a credential, or telling
 `/resume` to stop asking about a large session changes the user file, crucible
 prepares an owner-only sibling and replaces the complete document atomically. A failed
 write before that commit leaves the previous file whole. An owner-only lock
 spans the bounded reread through the commit, so simultaneous crucible processes
 cannot silently lose one another's settings.
+
+`/settings` lists, on its Config tab, every setting that is a switch, a short
+list of choices or the mouse scroll speed, and changes one in the user file.
+The theme, syntax theme, scroll rail and scroll speed change at once; any other
+row says `applies at next start`. A row a project file or the environment
+sets is shown with who set it and cannot be changed there, since the user file
+would not win. A project file that says anything about `promptCaching` sets
+all four of its rows, because that block is checked as a whole. Providers,
+credentials, MCP servers, extensions, the system prompt, permission rules and
+the sandbox's policy are not rows; the sandbox and the permission mode are
+shown on the Status tab and changed with `/sandbox` and `/mode`.
 
 A file that is not there is not an error. A file that *is* there and will not
 open is, and says so. Silently skipping it would turn a permissions mistake
