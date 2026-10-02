@@ -424,7 +424,9 @@ the model reads all of it and then answers all of it. Three lines typed behind a
 turn are one thing you wanted said, and answering the first before reading the
 third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
-write.
+write. A turn that stopped on a used-up plan is the exception: the queue waits
+over the box, where <kbd>Ctrl+Q</kbd> opens it to edit or delete, until you send
+a prompt, since sent on its own it would reach a plan that is spent.
 
 <kbd>Ctrl+Q</kbd> stands the whole queue where the box was, with a footer naming
 the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
