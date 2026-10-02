@@ -481,15 +481,15 @@ fn a_client_that_never_asked_for_progress_is_handed_none() {
     let retrying = crucible_runner::Event::Retrying;
 
     assert_eq!(
-        progress(Capabilities::every(), &retrying),
+        progress(Capabilities::every(), &retrying, None),
         Some(Progress::Retrying)
     );
 
     let without = Capabilities::none()
         .with(Capability::Permissions)
         .with(Capability::Questions);
-    assert_eq!(progress(without, &retrying), None);
-    assert_eq!(progress(Capabilities::none(), &retrying), None);
+    assert_eq!(progress(without, &retrying, None), None);
+    assert_eq!(progress(Capabilities::none(), &retrying, None), None);
 }
 
 /// What a client is told of a turn that ended `turned`.
@@ -640,10 +640,10 @@ fn a_refusal_of_fast_is_retrying_only_where_the_request_went_again() {
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &refused(true)),
+        progress(Capabilities::every(), &refused(true), None),
         Some(Progress::Retrying)
     );
-    assert_eq!(progress(Capabilities::every(), &refused(false)), None);
+    assert_eq!(progress(Capabilities::every(), &refused(false), None), None);
 }
 
 /// A turn ended on a used-up plan, the weekly window's reset `at` where known.
@@ -674,7 +674,7 @@ fn plan_limit_reaches_a_client_by_its_code_with_the_window_and_the_reset_in_utc(
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &failed),
+        progress(Capabilities::every(), &failed, None),
         Some(Progress::Failed(crucible_client_api::Problem {
             code: ErrorCode::PlanLimit,
             message: crucible_client_api::Text::cut(
@@ -692,7 +692,7 @@ fn plan_limit_with_no_reset_says_so_in_crucibles_words_alone() {
     };
 
     assert_eq!(
-        progress(Capabilities::every(), &failed),
+        progress(Capabilities::every(), &failed, None),
         Some(Progress::Failed(crucible_client_api::Problem {
             code: ErrorCode::PlanLimit,
             message: crucible_client_api::Text::cut(

@@ -599,16 +599,27 @@ impl Runner {
         self.state.totals
     }
 
-    /// The plan windows the last response from the credential in force said
-    /// it had used, where its vendor reports them on responses.
+    /// The plan windows the credential in force was last said to have used,
+    /// plan-wide and per model, where its vendor says.
     ///
-    /// Read off a response that was sent for a turn; nothing is ever asked to
-    /// learn it. `None` until such a response arrives, for a vendor or a
-    /// credential that reports none, and again once the model or the provider
-    /// changes.
+    /// The last answer to asking the plan, brought up to date by each response
+    /// since whose headers named a limit: a response updates the limits it
+    /// names and leaves the rest. `None` until either arrives, for a vendor or
+    /// a credential that reports none, and again once the model or the
+    /// provider changes.
     #[must_use]
-    pub const fn plan_limits(&self) -> Option<PlanWindows> {
-        self.state.limits
+    pub fn plan_limits(&self) -> Option<PlanWindows> {
+        self.state.limits.clone()
+    }
+
+    /// Keeps what the vendor answered when the plan behind the credential in
+    /// force was asked, in place of the reading before it.
+    ///
+    /// The answer is the plan's whole account, so a limit it leaves out is
+    /// one it no longer reports. The caller hands over only an answer for the
+    /// credential still in force.
+    pub fn answered_limits(&mut self, windows: PlanWindows) {
+        self.state.limits = Some(windows);
     }
 
     /// The same, against the compaction answer given; the one reader both the
@@ -1741,7 +1752,7 @@ impl Runner {
                 ..
             }) = &streamed
             {
-                let windows = **reading;
+                let windows = (**reading).clone();
                 self.limited(Some(windows), listening.run.reporting());
             }
             (streamed?, observation)
@@ -1828,15 +1839,21 @@ impl Runner {
         });
     }
 
-    /// Keeps the plan windows a response's headers reported, and says so.
+    /// Brings the reading up to date with the plan windows a response's
+    /// headers reported, and says what it now is.
     ///
     /// Read as the response opens, since headers arrive before any of the
     /// body: a turn the user stops still leaves the reading its response
-    /// carried. A response that reported none leaves the last reading
-    /// standing, because it said nothing about the windows.
+    /// carried. A response names only the limits it is about, so a limit it
+    /// does not name keeps its last reading, and a response that reported
+    /// none leaves the whole reading standing.
     fn limited(&mut self, windows: Option<PlanWindows>, events: Reporter<'_>) {
         if let Some(windows) = windows {
-            self.state.limits = Some(windows);
+            let windows = match self.state.limits.take() {
+                Some(known) => known.merge(windows),
+                None => windows,
+            };
+            self.state.limits = Some(windows.clone());
             events.post(Event::PlanLimits { windows });
         }
     }

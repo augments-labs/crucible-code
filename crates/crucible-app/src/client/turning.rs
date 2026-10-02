@@ -130,12 +130,13 @@ pub async fn turn(
         | Command::ReleaseNotes { .. }
         | Command::Context
         | Command::Usage
+        | Command::AskLimits
         | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
 }
 
 /// The warned route a turn of `conversation` would go on with no yes.
-fn unanswered(conversation: &Conversation) -> Option<Warned> {
+pub(super) fn unanswered(conversation: &Conversation) -> Option<Warned> {
     conversation
         .consent()?
         .unanswered(conversation.serving()?, conversation.runner().model())
@@ -177,6 +178,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::ReleaseNotes { .. }
         | Command::Context
         | Command::Usage
+        | Command::AskLimits
         | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }

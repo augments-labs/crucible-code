@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crucible_client_api::{
     CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, Forced,
@@ -16,7 +17,7 @@ use crucible_tools::Mode;
 use crucible_types::{PromptCacheResourceError, PromptCacheResourceRecord, SessionId};
 use crucible_workspace::Workspace;
 
-use super::reading;
+use super::{asking, reading};
 use crate::Conversation;
 use crate::providers::{CredentialSource, Served, offered};
 use crate::remember::{self, RememberError};
@@ -150,9 +151,9 @@ pub enum Performed {
         /// The runner's count of it.
         breakdown: Breakdown,
     },
-    /// `/usage`: what the session has used, and the plan windows its vendor
-    /// last reported, read off the runner as it was asked; nothing is asked
-    /// of a vendor.
+    /// `/usage`: what the session has used, and the plan's limits as the
+    /// runner holds them once it was asked. Only [`Command::AskLimits`] asks
+    /// a vendor anything, and only as [`asking`](fn@super::asking) allows.
     Usage(Box<Usage>),
     /// `/exit`.
     Leaving,
@@ -245,15 +246,16 @@ pub async fn perform(
             model: conversation.runner().model().into(),
             breakdown: conversation.runner().breakdown(),
         },
-        Command::Usage => {
-            let runner = conversation.runner();
-            Performed::Usage(Box::new(reading::usage(
-                runner.model(),
-                &runner.breakdown(),
-                &runner.totals(),
-                runner.plan_limits().as_ref(),
-            )))
-        }
+        Command::Usage => asking::usage(conversation),
+        // Asked and awaited in a row: a client that would rather keep going
+        // while the plan answers starts the question with `asking` instead.
+        Command::AskLimits => match asking::started(conversation, Instant::now()) {
+            Some(question) => {
+                let answered = question.answered().await;
+                asking::asked(conversation, answered)
+            }
+            None => asking::usage(conversation),
+        },
         Command::Exit => Performed::Leaving,
     }
 }
@@ -312,6 +314,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::ReleaseNotes { .. }
         | Command::Context
         | Command::Usage
+        | Command::AskLimits
         | Command::Exit => Performed::Refused(ErrorCode::Busy.into()),
     }
 }

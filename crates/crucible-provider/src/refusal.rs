@@ -209,8 +209,7 @@ pub struct UsedUp {
 }
 
 /// What a refused response is read for a used-up plan with.
-#[derive(Clone, Copy)]
-pub(crate) struct Plan {
+pub(crate) struct Plan<'m> {
     /// The vendor's shape for that refusal.
     pub(crate) rule: PlanRule,
     /// When the response arrived, which a reset given as seconds to wait
@@ -219,18 +218,20 @@ pub(crate) struct Plan {
     /// What the refused response's head reported of the plan's windows, which
     /// names the window that is used up.
     pub(crate) reading: Option<PlanWindows>,
+    /// The model the refused request asked for: a window used up in a group
+    /// named for another model is not the one that refused it.
+    pub(crate) model: &'m str,
 }
 
 /// The refusals a vendor on [`refused_at`] tells apart in a shape of its own.
-#[derive(Clone, Copy)]
-pub(crate) struct Rules {
+pub(crate) struct Rules<'m> {
     /// Its refusal of the fast form, for a request that asked for one.
     pub(crate) fast: Option<FastRule>,
     /// Its refusal of a request too large for the window, for a vendor that
     /// sends no code for it: see [`Overlong`].
     pub(crate) overlong: Option<Overlong>,
     /// Its refusal of a used-up plan, where it has one: see [`PlanRule`].
-    pub(crate) plan: Option<Plan>,
+    pub(crate) plan: Option<Plan<'m>>,
 }
 
 /// [`refused`], for a request that may have asked for a fast form: a refusal
@@ -247,7 +248,7 @@ pub(crate) async fn refused_at(
         fast,
         overlong,
         plan,
-    }: Rules,
+    }: Rules<'_>,
     body: PostResponse,
     redactions: &Redactions,
     cancel: &Cancel,
@@ -287,14 +288,15 @@ pub(crate) async fn refused_at(
 /// response's head reports used up; `None` where it is not one.
 ///
 /// Nothing of `text` is kept, so there is nothing to redact.
-fn used_up(provider: &'static str, plan: Plan, text: &str) -> Option<ProviderError> {
+fn used_up(provider: &'static str, plan: Plan<'_>, text: &str) -> Option<ProviderError> {
     let body = serde_json::from_str(text).ok()?;
     let UsedUp { resets_at } = (plan.rule)(&body, plan.arrived)?;
     Some(ProviderError::PlanLimit {
         provider,
         window: plan
             .reading
-            .and_then(|reading| reading.exhausted(plan.arrived))
+            .as_ref()
+            .and_then(|reading| reading.exhausted(plan.model, plan.arrived))
             .map(|(window, _)| window),
         resets_at,
         reading: plan.reading.map(Box::new),

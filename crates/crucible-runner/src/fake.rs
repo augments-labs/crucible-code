@@ -164,7 +164,7 @@ pub(crate) struct Script {
 
 /// A vendor's refusal of a used-up plan: the reset it gave, and the windows
 /// the refusal's head reported.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct UsedUp {
     resets_at: Option<SystemTime>,
     reading: Option<PlanWindows>,
@@ -690,11 +690,12 @@ impl Provider for Script {
                 return Err(ProviderError::WindowExceeded { provider: SCRIPT });
             }
 
-            if let Some(UsedUp { resets_at, reading }) = self.used_up {
+            if let Some(UsedUp { resets_at, reading }) = self.used_up.clone() {
                 return Err(ProviderError::PlanLimit {
                     provider: SCRIPT,
                     window: reading
-                        .and_then(|reading| reading.exhausted(SystemTime::now()))
+                        .as_ref()
+                        .and_then(|reading| reading.exhausted(request.model, SystemTime::now()))
                         .map(|(window, _)| window),
                     resets_at,
                     reading: reading.map(Box::new),
@@ -911,7 +912,7 @@ impl DeltaStream for Recited {
     }
 
     fn limits(&self) -> Option<PlanWindows> {
-        self.limits
+        self.limits.clone()
     }
 
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {

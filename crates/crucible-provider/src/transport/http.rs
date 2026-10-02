@@ -19,7 +19,7 @@ use crucible_http::{ConnectError, Http, HttpError};
 use crucible_runtime::{BoxFuture, Cancel};
 use hyper::Method;
 
-use super::{Named, PostResponse, SERVED_TIER, Tier, Transport, TransportError};
+use super::{Named, PostResponse, Reads, SERVED_TIER, Tier, Transport, TransportError, reads_none};
 use crate::Endpoint;
 
 /// The longest any one post takes from entering the shared client to its
@@ -54,19 +54,20 @@ impl HttpTurns {
         Self { http: None }
     }
 
-    /// Awaits one post under the caller's cancel and the whole request bound,
-    /// handing back the response headers named in `reading`.
+    /// Awaits one request under the caller's cancel and the whole request
+    /// bound, handing back the response headers `reading` says are read.
     #[allow(
         clippy::too_many_arguments,
-        reason = "the post's own four, and the response headers it reads"
+        reason = "the request's own five, and the response headers it reads"
     )]
     async fn send(
         &self,
+        method: Method,
         url: &str,
         headers: &mut Outgoing,
         body: String,
         cancel: &Cancel,
-        reading: &'static [&'static str],
+        reading: Reads,
     ) -> Result<PostResponse, TransportError> {
         if cancel.requested() {
             return Err(TransportError::Cancelled);
@@ -80,7 +81,7 @@ impl HttpTurns {
             return Err(TransportError::Unreachable("TLS setup failed".into()));
         };
 
-        let sent = bounded(cancel, REQUEST, http.send(Method::POST, url, headers, body)).await;
+        let sent = bounded(cancel, REQUEST, http.send(method, url, headers, body)).await;
         let Some(sent) = sent else {
             return Err(if cancel.requested() {
                 TransportError::Cancelled
@@ -99,12 +100,12 @@ impl HttpTurns {
                     .get(SERVED_TIER)
                     .and_then(|value| value.to_str().ok()),
             );
-            let named = Named::kept(reading, |name| {
-                response
-                    .headers()
-                    .get(name)
-                    .and_then(|value| value.to_str().ok())
-            });
+            let named = Named::kept(
+                reading,
+                response.headers().iter().filter_map(|(name, value)| {
+                    value.to_str().ok().map(|value| (name.as_str(), value))
+                }),
+            );
             PostResponse::network(response.status().as_u16(), response.into_body())
                 .with_tier(tier)
                 .with_named(named)
@@ -121,7 +122,7 @@ impl Transport for HttpTurns {
         body: String,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
-        Box::pin(self.send(url, headers, body, cancel, &[]))
+        Box::pin(self.send(Method::POST, url, headers, body, cancel, reads_none))
     }
 
     fn post_reading<'a>(
@@ -130,9 +131,18 @@ impl Transport for HttpTurns {
         headers: &'a mut Outgoing,
         body: String,
         cancel: &'a Cancel,
-        reading: &'static [&'static str],
+        reading: Reads,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
-        Box::pin(self.send(url, headers, body, cancel, reading))
+        Box::pin(self.send(Method::POST, url, headers, body, cancel, reading))
+    }
+
+    fn get<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
+        cancel: &'a Cancel,
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
+        Box::pin(self.send(Method::GET, url, headers, String::new(), cancel, reads_none))
     }
 }
 
@@ -387,7 +397,7 @@ mod tests {
         }
     }
 
-    /// A provider is handed the response headers it named and no others, each
+    /// A provider is handed the response headers it reads and no others, each
     /// only where it is text within the bound; the transport reads none of
     /// them itself.
     #[tokio::test]
@@ -404,7 +414,13 @@ mod tests {
                 &mut Outgoing::new(),
                 "{}".to_owned(),
                 &Cancel::new(),
-                &["x-named", "x-long", "x-missing"],
+                |name| {
+                    if matches!(name, "x-named" | "x-long" | "x-missing") {
+                        super::super::Wants::Kept
+                    } else {
+                        super::super::Wants::Not
+                    }
+                },
             )
             .await
             .unwrap();

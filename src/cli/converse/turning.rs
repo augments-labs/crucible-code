@@ -756,7 +756,7 @@ impl Turning {
                 self.breakdown = *breakdown;
             }
             Event::Used { totals } => self.totals = *totals,
-            Event::PlanLimits { windows } => self.limits = Some(*windows),
+            Event::PlanLimits { windows } => self.limits = Some(windows.clone()),
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
                 self.part = (*part).min(99);
@@ -944,8 +944,8 @@ impl Turning {
 
     /// The plan windows last reported: those the turn started with, then each
     /// [`Event::PlanLimits`] since.
-    pub(super) const fn limits(&self) -> Option<PlanWindows> {
-        self.limits
+    pub(super) fn limits(&self) -> Option<PlanWindows> {
+        self.limits.clone()
     }
 
     /// The row that says the turn is running, as the footing draws it.
