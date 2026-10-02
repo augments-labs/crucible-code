@@ -85,8 +85,9 @@ pub enum Progress {
     /// totals as of the last response that ended or edit that changed lines.
     /// It is sent at those two points only, not as a response's tokens arrive.
     Used(Used),
-    /// The plan windows a response of the running turn reported, as `/usage`
-    /// reads them while it runs. Only a vendor that reports them sends this.
+    /// The plan's limits as they stand once a response of the running turn
+    /// reported some, as `/usage` reads them while it runs. Only a vendor that
+    /// reports them sends this.
     Limits(Limits),
     /// A turn reported that it finished.
     Finished {
@@ -163,7 +164,7 @@ impl Progress {
             Self::Spent { tokens } => object.with("tokens", *tokens),
             Self::Context(context) => object.with("context", context.written()),
             Self::Used(used) => object.with("used", used.written()),
-            Self::Limits(limits) => object.with("limits", limits.written()),
+            Self::Limits(limits) => limits.written_into(object),
             Self::Finished { turn, stop } => object.with("turn", *turn).with("stop", stop.as_str()),
             Self::Failed(problem) => object.with("problem", problem.written()),
         }
@@ -224,7 +225,7 @@ impl Progress {
                 context => Self::Context(context),
             },
             "used" => Self::Used(Used::read(fields.take("used")?)?),
-            "limits" => Self::Limits(Limits::read(fields.take("limits")?)?),
+            "limits" => Self::Limits(Limits::taken(&mut fields)?),
             "finished" => Self::Finished {
                 turn: fields.number("turn")?,
                 stop: Stop::named(&fields.string("stop")?)?,

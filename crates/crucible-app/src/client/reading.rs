@@ -16,10 +16,12 @@ use crucible_client_api::{
 use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::Mode;
-use crucible_types::{CostAmount, PlanWindows, StopReason, Utc, Window};
+use crucible_types::{
+    CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
+};
 
-use crate::Conversation;
 use crate::switching::Retained;
+use crate::{Conversation, providers};
 
 /// Where `conversation` stands.
 ///
@@ -63,7 +65,11 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
 /// Called by a consumer with no terminal — today the one the headless tests
 /// drive; the terminal draws a turn from the runner's events as they stand.
 #[must_use]
-pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
+pub fn progress(
+    capabilities: Capabilities,
+    event: &Event,
+    serving: Option<&str>,
+) -> Option<Progress> {
     if !capabilities.has(Capability::Progress) {
         return None;
     }
@@ -102,9 +108,9 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         Event::Carried { breakdown } => Progress::Context(counted(breakdown)),
         // What a client with no terminal reads as `/usage` while a turn runs,
         // beside the context above: the session's totals as each response or
-        // edit moved them, and the plan windows a response carried.
+        // edit moved them, and the plan's limits once a response updated them.
         Event::Used { totals } => Progress::Used(used(totals)),
-        Event::PlanLimits { windows } => Progress::Limits(limits(windows)),
+        Event::PlanLimits { windows } => Progress::Limits(limits(windows, serving)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
@@ -176,25 +182,30 @@ pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
     }
 }
 
-/// What a session has used, and the plan windows its vendor last reported,
+/// What a session has used, and the plan's limits as far as its vendor said,
 /// as a client reads them.
 ///
-/// Every figure is one the runner already holds: reading this sends nothing
-/// anywhere, so no request is made to learn a limit. The wall time is read as
-/// this is called. Called between turns by [`perform`](super::perform), and
-/// by the terminal mid-turn with the figures that turn last reported; a client
-/// with no terminal is streamed the same figures by [`progress`].
+/// Every figure is one the runner already holds, and reading them sends
+/// nothing anywhere: the limits are what the last response or the last
+/// answer to [`asking`](fn@super::asking) left, and asking is apart from this.
+/// The wall time is read as this is called. Called between turns by
+/// [`perform`](super::perform), and by the terminal mid-turn with the figures
+/// that turn last reported; a client with no terminal is streamed the same
+/// figures by [`progress`].
 #[must_use]
 pub fn usage(
     model: &str,
     breakdown: &Breakdown,
     totals: &Totals,
     limits: Option<&PlanWindows>,
+    serving: Option<&str>,
 ) -> api::Usage {
     api::Usage {
         used: used(totals),
         context: context(model, breakdown),
-        limits: limits.map_or_else(api::Limits::default, self::limits),
+        limits: limits.map_or_else(api::Limits::default, |windows| {
+            self::limits(windows, serving)
+        }),
     }
 }
 
@@ -242,24 +253,77 @@ fn stated(amount: CostAmount) -> Option<(Name, u64)> {
     Some((Name::new(amount.currency().as_str()).ok()?, micros))
 }
 
-/// Every window a vendor reported, each placed by name.
-pub(super) fn limits(windows: &PlanWindows) -> api::Limits {
-    let mut limits = api::Limits::default();
-    for (window, reading) in windows.reported() {
-        let limit = Percent::new(reading.percent()).map(|used| api::Limit {
-            used,
-            resets_at: reading
-                .resets_at()
-                .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
-                .map(|since| since.as_secs()),
-        });
-        match window {
-            Window::FiveHour => limits.five_hour = limit,
-            Window::Weekly => limits.weekly = limit,
-            Window::Monthly => limits.monthly = limit,
-        }
+/// Every limit a vendor reported, the plan-wide one first, drawn in the
+/// words of `serving`, the provider that reported them, and whether the
+/// vendor reported more than crosses: more than the reading kept, or a group
+/// left out here.
+pub(super) fn limits(windows: &PlanWindows, serving: Option<&str>) -> api::Limits {
+    let groups: Vec<api::LimitGroup> = windows
+        .groups()
+        .filter_map(|one| group(one, serving))
+        .collect();
+    api::Limits {
+        more: windows.incomplete() || groups.len() < windows.groups().count(),
+        groups,
     }
-    limits
+}
+
+/// One limit and its windows, shortest first.
+///
+/// A name a vendor gave is kept stripped of control and format characters
+/// and cut under the contract's ceiling, so it always crosses; a group whose
+/// name somehow did not would be left out rather than called plan-wide.
+fn group(group: &LimitGroup, serving: Option<&str>) -> Option<api::LimitGroup> {
+    Some(api::LimitGroup {
+        model: match group.scope() {
+            Scope::Plan => None,
+            Scope::Model(model) => Some(Name::new(drawn(model, serving)).ok()?),
+        },
+        limits: group
+            .windows()
+            .map(|(window, reading)| api::Limit {
+                window: self::window(window),
+                reading: self::reading(reading.used()),
+                resets_at: reading
+                    .resets_at()
+                    .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+                    .map(|since| since.as_secs()),
+            })
+            .collect(),
+    })
+}
+
+/// What a model's group is called where a client draws it: the name the
+/// catalog of `serving` gives the model the group was kept for, else the
+/// name the vendor gave the group, as it gave it.
+fn drawn<'a>(group: &'a ModelGroup, serving: Option<&str>) -> &'a str {
+    serving
+        .zip(group.key().and_then(ModelKey::model))
+        .and_then(|(provider, model)| providers::model_shown(provider, model))
+        .unwrap_or_else(|| group.name().as_str())
+}
+
+/// A window as a client names it.
+const fn window(window: Window) -> api::Window {
+    match window {
+        Window::FiveHour => api::Window::FiveHour,
+        Window::Daily => api::Window::Daily,
+        Window::Weekly => api::Window::Weekly,
+        Window::Monthly => api::Window::Monthly,
+        Window::Yearly => api::Window::Yearly,
+        Window::Lasting(minutes) => api::Window::Lasting { minutes },
+    }
+}
+
+/// How much of a window is used, in the vendor's measure.
+fn reading(used: Used) -> api::Reading {
+    match used {
+        Used::Percent(percent) => api::Reading::Percent(
+            Percent::new(percent.min(Percent::WHOLE.get())).unwrap_or(Percent::WHOLE),
+        ),
+        Used::Counted { used, total } => api::Reading::Counted { used, total },
+        Used::Unlimited => api::Reading::Unlimited,
+    }
 }
 
 /// The parts of `breakdown`, with no model named.

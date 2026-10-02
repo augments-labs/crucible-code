@@ -40,7 +40,11 @@ pub(crate) fn rows(
     let detail = window
         .map(Window::named)
         .into_iter()
-        .chain(Some(reset.as_deref().unwrap_or("resets: not reported")))
+        .chain(Some(
+            reset
+                .clone()
+                .unwrap_or_else(|| "resets: not reported".to_owned()),
+        ))
         .collect::<Vec<_>>()
         .join(&format!(" {} ", glyphs.dot()));
     let next = if reset.is_some() {

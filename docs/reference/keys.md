@@ -280,15 +280,17 @@ include anything it has recorded since its last request.
 ### `/usage`
 
 <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
-redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
-runs, it stands over the turn with the totals and plan windows that turn last
-reported.
+redraws it; <kbd>Enter</kbd> and every other key do nothing. While it asks the
+plan for its limits, keys work as ever, and the block is drawn again when the
+answer comes. Typed while a turn runs, it stands over the turn with the totals
+and plan windows that turn last reported, and asks nothing.
 
 ### `/settings`
 
 <kbd>←</kbd>, <kbd>→</kbd>, <kbd>Tab</kbd> and <kbd>Shift+Tab</kbd> switch
 between the Status, Config and Usage tabs, and <kbd>Esc</kbd>,
-<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> close the panel. On Config,
+<kbd>Ctrl+C</kbd> or <kbd>Ctrl+D</kbd> close the panel. Turning to Usage between
+turns asks the plan for its limits as `/usage` does. On Config,
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the rows and <kbd>Enter</kbd> or
 <kbd>Space</kbd> changes the one marked: a switch flips, a list of three or
 fewer moves to the next choice, a longer list opens under the row, and the

@@ -101,16 +101,25 @@ pub enum Command {
     },
     /// Show how the window of the next request is spent. Changes nothing.
     Context,
-    /// Show what the session has used, and the plan windows a vendor
+    /// Show what the session has used, and the plan limits a vendor
     /// reported. Changes nothing, and asks no vendor anything.
     Usage,
+    /// Ask the plan of the provider being asked how much of each of its
+    /// limits is used, and show what the session has used with the answer.
+    ///
+    /// Only a sign-in whose vendor keeps a source of those figures is asked,
+    /// at most once a minute, and only once the use of what is sent there has
+    /// been agreed to; a credential the source refuses is not asked again in
+    /// the session. Otherwise nothing is sent, and the answer is what
+    /// [`Command::Usage`] would have been.
+    AskLimits,
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 23] = [
+    pub const KINDS: [&'static str; 24] = [
         "prompt",
         "compact",
         "cancel",
@@ -133,6 +142,7 @@ impl Command {
         "release_notes",
         "context",
         "usage",
+        "ask_limits",
         "exit",
     ];
 
@@ -162,6 +172,7 @@ impl Command {
             Self::ReleaseNotes { .. } => "release_notes",
             Self::Context => "context",
             Self::Usage => "usage",
+            Self::AskLimits => "ask_limits",
             Self::Exit => "exit",
         }
     }
@@ -203,6 +214,7 @@ impl Command {
             | Self::Help
             | Self::Context
             | Self::Usage
+            | Self::AskLimits
             | Self::Exit => object,
         }
         .finish()
@@ -255,6 +267,7 @@ impl Command {
             },
             "context" => Self::Context,
             "usage" => Self::Usage,
+            "ask_limits" => Self::AskLimits,
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
         };

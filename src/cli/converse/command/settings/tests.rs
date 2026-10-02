@@ -2,7 +2,7 @@ use crucible_client_api::{Context, Cost, Limits, Model, Percent, Used};
 use crucible_tui::{Glyphs, Key, Pressed, Recording, Renderer, Row};
 
 use super::*;
-use crate::cli::converse::tests::{keeping, plain};
+use crate::cli::converse::tests::{asking_plan, keeping, plain};
 use crate::cli::sample::Sample;
 
 /// A session that has used nothing yet.
@@ -45,22 +45,22 @@ fn text(rows: &[Row]) -> Vec<String> {
 }
 
 /// What the panel draws at `columns` by `room`, as text.
-fn drawn(panel: &mut Panel<'_>, columns: usize, room: usize) -> Vec<String> {
+fn drawn(panel: &mut Panel, columns: usize, room: usize) -> Vec<String> {
     text(&panel.laid(columns, room, Glyphs::Unicode).0)
 }
 
-fn key(panel: &mut Panel<'_>, pressed: Pressed) -> Moved {
+fn key(panel: &mut Panel, pressed: Pressed) -> Moved {
     panel.walked(pressed)
 }
 
-fn typed(panel: &mut Panel<'_>, word: &str) {
+fn typed(panel: &mut Panel, word: &str) {
     for letter in word.chars() {
         key(panel, Pressed::Key(Key::Char(letter)));
     }
 }
 
 /// Walks the mark to the row labelled `label`, from the top.
-fn walk_to(panel: &mut Panel<'_>, label: &str) {
+fn walk_to(panel: &mut Panel, label: &str) {
     for _ in 0..crucible_config::rows().len() {
         key(panel, Pressed::Up);
     }
@@ -79,7 +79,7 @@ fn settings_tabs_switch_with_tab_shift_tab_and_the_arrows() {
     let counted = counted();
     let mut panel = Panel::new(&terms, &counted);
 
-    let tabs = |panel: &mut Panel<'_>| drawn(panel, 80, 40).get(2).cloned().unwrap_or_default();
+    let tabs = |panel: &mut Panel| drawn(panel, 80, 40).get(2).cloned().unwrap_or_default();
     assert!(
         tabs(&mut panel).contains("‹ Config ›"),
         "{:?}",
@@ -286,7 +286,7 @@ fn the_settings_panel_fits_every_width_and_height_or_draws_nothing() {
     let counted = counted();
 
     // Every view a reader can reach: each tab, a search, an opened choice.
-    let views: [&dyn Fn(&mut Panel<'_>); 5] = [
+    let views: [&dyn Fn(&mut Panel); 5] = [
         &|_| {},
         &|panel| {
             key(panel, Pressed::Tab);
@@ -623,5 +623,97 @@ fn a_glyph_set_chosen_in_settings_is_the_one_the_next_answer_is_drawn_in() {
             .iter()
             .any(|row| row.contains(Glyphs::Unicode.bullet())),
         "{said:#?}"
+    );
+}
+
+#[test]
+fn usage_tab_asks_the_plan_when_turned_to_and_draws_its_answer() {
+    let (mut conversation, asked) = asking_plan();
+    let terms = plain();
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+
+    // Nothing is asked while another tab is shown.
+    assert_eq!(panel.watched(&terms, &mut conversation), Moved::Still);
+    assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 0);
+
+    panel.turn(Tab::Usage);
+    assert_eq!(panel.watched(&terms, &mut conversation), Moved::Redraw);
+    let drawn_now = drawn(&mut panel, 80, 40);
+    assert!(
+        drawn_now
+            .iter()
+            .any(|row| row.ends_with("asking anthropic…")),
+        "{drawn_now:#?}"
+    );
+
+    // The answer comes off the drawing thread, and the next look draws it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !panel
+        .out
+        .as_ref()
+        .is_some_and(crate::cli::client::Out::ended)
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the plan never answered"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(panel.watched(&terms, &mut conversation), Moved::Redraw);
+    let answered = drawn(&mut panel, 80, 40);
+    assert!(
+        answered.iter().any(|row| row == "  gpt-5.3-codex-spark"),
+        "{answered:#?}"
+    );
+    assert!(
+        !answered.iter().any(|row| row.contains("asking")),
+        "{answered:#?}"
+    );
+
+    // Turned away and back within the minute, it is not asked again.
+    panel.turn(Tab::Config);
+    panel.watched(&terms, &mut conversation);
+    panel.turn(Tab::Usage);
+    panel.watched(&terms, &mut conversation);
+    assert!(panel.out.is_none());
+    assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[test]
+fn usage_tab_closed_with_the_question_out_answers_it_and_the_next_opening_asks_nothing() {
+    let mut conversation = crate::cli::converse::tests::stalled_plan();
+    let (client, journal) = crate::cli::client::Client::noting();
+    let mut terms = plain();
+    terms.client = client;
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+    panel.turn(Tab::Usage);
+    assert_eq!(panel.watched(&terms, &mut conversation), Moved::Redraw);
+    assert!(panel.out.is_some(), "the plan was not asked");
+
+    usage::closed(panel.out.take(), &terms, &mut conversation);
+
+    // The request is answered, with what was known, as the panel closes.
+    assert!(
+        matches!(
+            journal.noted().as_slice(),
+            [crate::cli::client::tests::Noted::Answered {
+                asked: api::Command::AskLimits,
+                outcome: api::Outcome::Usage(_),
+                ..
+            }]
+        ),
+        "{:#?}",
+        journal.noted()
+    );
+    // The question was out, so it counts toward the minute: the tab opened
+    // again at once asks nothing.
+    let mut again = Panel::new(&terms, &counted);
+    again.turn(Tab::Usage);
+    again.watched(&terms, &mut conversation);
+    assert!(
+        again.out.is_none(),
+        "the plan was asked again within the minute"
     );
 }
