@@ -136,11 +136,12 @@ const QUEUED_BYTES: usize = Editor::MAX_BYTES;
 /// changes after it has started, so it is read from the engine that holds it
 /// every time it is drawn rather than copied here and kept in step.
 pub(crate) struct Terms {
-    /// Whether to write colour, how much of a tool call to show, and which
-    /// table of colours to draw with.
+    /// Whether to write colour, which characters to draw with, how much of a
+    /// tool call to show, and which table of colours to draw with.
     ///
-    /// In a cell because one command changes it: `/theme` picks a different
-    /// table, and everything drawn after it is drawn in that one. Settled once
+    /// In a cell because two commands change it: `/theme` picks a different
+    /// table, and `/settings` a different table, glyph set or tool detail, and
+    /// everything drawn after either is drawn with what it chose. Settled once
     /// at startup and again only when somebody says so — never per event, which
     /// is the thing `Style`'s own module doc is about.
     pub(crate) style: Cell<Style>,

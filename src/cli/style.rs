@@ -1,9 +1,10 @@
 //! What the `output` block and the terminal together decided.
 //!
-//! Resolved once, at startup, into plain answers the drawing can read without
-//! asking anything: whether to write colour and how much of it, which
-//! characters to draw with, and how much of a line to show. None of those may
-//! be asked per event — two are syscalls and the third is a file.
+//! Settled at startup, and again only when a command says so, into plain
+//! answers the drawing can read without asking anything: whether to write
+//! colour and how much of it, which characters to draw with, and how much of a
+//! line to show. None of those may be asked per event — two are syscalls and
+//! the third is a file.
 
 use crucible_config::{Color, Glyphs as Wanted, ThemeChoice, ToolDetail};
 use crucible_tui::{Glyphs, Ground, Palette, Theme};
