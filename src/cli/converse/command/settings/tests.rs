@@ -520,3 +520,40 @@ fn a_settings_row_only_a_new_start_reads_says_so_before_it_is_changed() {
         assert!(!row(label).contains("applies"), "{label}: {rows:#?}");
     }
 }
+
+#[test]
+fn a_settings_change_the_user_file_cannot_take_is_still_in_force_and_says_so() {
+    let sample = Sample::new("settings-unwritable");
+    let terms = keeping(&sample);
+    // Something that is not a file stands where the file goes, so no write
+    // can land there whoever runs the test.
+    std::fs::create_dir_all(sample.user_file()).expect("a directory in the file's place");
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    renderer.rails(true);
+    let before = renderer.transcript_columns();
+    let mut panel = Panel::new(&terms, &counted);
+
+    walk_to(&mut panel, "Scroll rail");
+    assert_eq!(key(&mut panel, Pressed::Key(Key::Enter)), Moved::Took);
+    let left = settle(&mut renderer, &terms, &mut panel);
+
+    assert_eq!(left, None, "nothing is left in the transcript");
+    assert_eq!(
+        renderer.transcript_columns(),
+        before + 1,
+        "the rail is gone"
+    );
+    let note = panel.note.clone().unwrap_or_default();
+    assert!(note.starts_with("! not written: "), "{note}");
+    assert!(
+        note.ends_with(" · in force for this session only"),
+        "{note}"
+    );
+    let rows = drawn(&mut panel, 80, 40);
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Scroll rail") && row.ends_with("off")),
+        "{rows:#?}"
+    );
+}
