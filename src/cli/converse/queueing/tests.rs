@@ -1,4 +1,4 @@
-use crucible_tui::Key;
+use crucible_tui::{Key, Recording};
 
 use super::super::Retained;
 use super::*;
@@ -351,6 +351,46 @@ fn the_view_scrolls_by_wrapped_rows_and_keeps_a_tall_line_drawn_from_its_start()
     // A line taller than all the room is drawn from its first row.
     let drawn = said(&rows(&queue, 0, 40, CHROME + 2 + 1, Style::plain())).join("\n");
     assert!(drawn.contains("\u{203a} alpha beta gamma delta"), "{drawn}");
+}
+
+#[test]
+fn a_window_that_holds_the_list_only_without_the_working_row_draws_the_whole_list() {
+    // The row that says a turn is running is the first to give way: the list is
+    // what the reader opened, and a window one row short of both draws the list
+    // whole rather than the row and no list (which would close the view).
+    let (queue, steer) = queued(&["first"]);
+    let turning = Turning::started(None);
+    let working = turning.working(80, Style::plain()).text();
+
+    // Seven rows is the least the list takes at this width, and one row of the
+    // window always stays with the transcript.
+    let drawn = |window: usize| {
+        let mut standing = Standing::default();
+        standing.open(&queue, &steer);
+        let mut render = Renderer::new(Recording::new(80, window));
+        let stood = under(
+            &mut render,
+            Style::plain(),
+            &queue,
+            &mut standing,
+            &steer,
+            &turning,
+        )
+        .expect("drawn");
+        (stood, render.terminal().written().to_owned())
+    };
+
+    let (stood, tight) = drawn(8);
+    assert!(stood);
+    assert!(tight.contains("first"), "{tight:?}");
+    assert!(tight.contains("esc to close"), "{tight:?}");
+    assert!(!tight.contains(working.trim()), "{tight:?}");
+
+    // One row more and the row stands over the rule as well.
+    let (stood, roomy) = drawn(9);
+    assert!(stood);
+    assert!(roomy.contains(working.trim()), "{roomy:?}");
+    assert!(roomy.contains("first"), "{roomy:?}");
 }
 
 #[test]

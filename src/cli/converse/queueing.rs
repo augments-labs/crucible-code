@@ -480,8 +480,8 @@ fn laid(open: &mut Open<'_>, columns: usize, rows: usize, style: Style) -> Vec<R
 /// the rest stand two columns in under it. A line is read whole here where the
 /// box cut it to a row, so it wraps and hangs under its own first word. The
 /// marked line is always among those drawn: a window short of the whole queue
-/// scrolls to it. No rows at all where there is nothing left to name, which both callers read as the
-/// view closing.
+/// scrolls to it. No rows at all where there is nothing left to name, which
+/// both callers read as the view closing.
 fn rows(queue: &Prompts, at: usize, columns: usize, rows: usize, style: Style) -> Vec<Row> {
     use crucible_tui::{Slot, fold};
 

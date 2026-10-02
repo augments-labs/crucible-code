@@ -1058,8 +1058,10 @@ impl Turning {
         // The blank under the footing parts it from the line below it. The
         // queue box is a frame of its own and needs no parting: left last, its
         // bottom edge stands directly over the line under it. A plan under the
-        // box is a thing beside it, so that blank stays.
-        let boxed = !panel_rows.is_empty() && panel.is_empty();
+        // box is a thing beside it, so that blank stays. So does the blank under
+        // the one row that only counts the queue: that is a row of the footing
+        // like the word above it, not a frame, and a frame is more than one row.
+        let boxed = panel_rows.len() > 1 && panel.is_empty();
         rows.extend(panel_rows);
 
         rows.append(&mut panel);

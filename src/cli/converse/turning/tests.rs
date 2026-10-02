@@ -1288,6 +1288,46 @@ fn the_queue_box_ends_the_footing_so_the_line_under_it_stands_directly_beneath()
 }
 
 #[test]
+fn the_one_row_queue_count_keeps_the_blank_every_other_footing_ends_in() {
+    // The blank is dropped only under a frame, which needs no parting from the
+    // line below it. The one row that says how many are waiting, drawn where
+    // there is no room (or no width) for the frame, is a row of the footing
+    // like the working row and keeps the blank under it.
+    let said = queueing(&["one", "two"], Prompt::FRAMED_AT - 1, 24);
+
+    assert!(said.iter().any(|row| row.contains("2 queued")), "{said:?}");
+    assert!(
+        said.iter().all(|row| !row.starts_with('\u{256d}')),
+        "no frame in {said:?}"
+    );
+    assert_eq!(said.last(), Some(&String::new()), "{said:?}");
+}
+
+#[test]
+fn a_plan_under_the_queue_box_keeps_the_blank_under_the_footing() {
+    // The plan stands under the box rather than being the box's own, so the
+    // footing's last row is the blank that parts it from the line below.
+    let mut turning = Turning::started(None);
+    turning.queueing(["one", "two"].into_iter(), 80, Style::plain());
+
+    let said: Vec<String> = turning
+        .rows(&planned(2), "", 80, Style::plain(), 40)
+        .iter()
+        .map(Row::text)
+        .collect();
+
+    let edge = said
+        .iter()
+        .position(|row| row.starts_with('\u{2570}'))
+        .unwrap_or_else(|| panic!("no frame in {said:?}"));
+    assert!(
+        edge + 1 < said.len(),
+        "a plan stands under the box: {said:?}"
+    );
+    assert_eq!(said.last(), Some(&String::new()), "{said:?}");
+}
+
+#[test]
 fn the_queue_overflow_row_counts_and_leaves_the_key_to_the_border() {
     // The key is named once, in the border, and the row says what it is for.
     let said = queueing(&["one", "two", "three", "four", "five"], 80, 24);

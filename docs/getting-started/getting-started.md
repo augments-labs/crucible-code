@@ -388,11 +388,11 @@ words, one of them being typed and the rest already sent for:
 The bottom edge names the key that opens the queue, for one waiting prompt as
 for many. Three are named and the rest are counted, oldest first, which is the
 order they will be said in. A line too wide for the window is cut at the right.
-On a window too narrow to open a frame the panel is one indented row saying how many are
-waiting, since that is the fact that cannot go, and on one too short for
-everything standing over the box it gives its rows up before the row saying a
-turn is running does: a queued prompt has its own turn coming, and that row is
-written nowhere else.
+On a window too narrow to open a frame the panel is one indented row saying
+how many are waiting, since that is the fact that cannot go, and on one too
+short for everything standing over the box it gives its rows up before the row
+saying a turn is running does: a queued prompt has its own turn coming, and
+that row is written nowhere else.
 
 They go together. When the turn ends the whole queue is one turn: the oldest is
 its prompt and the rest are handed to the same turn before it asks anything, so
