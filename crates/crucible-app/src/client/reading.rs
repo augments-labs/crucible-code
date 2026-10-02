@@ -204,7 +204,7 @@ fn stated(amount: CostAmount) -> Option<(Name, u64)> {
 }
 
 /// Every window a vendor reported, each placed by name.
-fn limits(windows: &PlanWindows) -> api::Limits {
+pub(super) fn limits(windows: &PlanWindows) -> api::Limits {
     let mut limits = api::Limits::default();
     for (window, reading) in windows.reported() {
         let limit = Percent::new(reading.percent()).map(|used| api::Limit {

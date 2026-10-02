@@ -2,9 +2,14 @@
 
 use crucible_client_api as api;
 use crucible_runner::SessionCost;
-use crucible_types::{CostAmount, PricingCurrency, PricingUnit};
+use std::collections::BTreeSet;
+use std::time::SystemTime;
 
-use super::cost;
+use crucible_types::{
+    CostAmount, PlanWindows, PricingCurrency, PricingUnit, Window, WindowReading,
+};
+
+use super::{cost, limits};
 
 const USD: PricingCurrency = PricingCurrency::new("USD");
 
@@ -57,4 +62,31 @@ fn usage_a_cost_too_large_to_cross_is_not_priced_rather_than_capped() {
             micros: u64::MAX,
         }
     );
+}
+
+#[test]
+fn usage_every_plan_window_has_a_slot_of_its_own_on_the_wire() {
+    // The two `Window` enums are coupled through the match in `limits`: a
+    // window added to one and not the other, or two placed in one slot,
+    // would drop a reading or cross it under another name.
+    let mut slots = BTreeSet::new();
+    for window in Window::ALL {
+        let reported =
+            PlanWindows::new(SystemTime::UNIX_EPOCH).with(window, WindowReading::new(7, None));
+        let crossed = limits(&reported);
+        let filled: Vec<usize> = api::Window::EVERY
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| crossed.of(**slot).is_some())
+            .map(|(at, _)| at)
+            .collect();
+        assert_eq!(filled.len(), 1, "{window:?} fills exactly one slot");
+        slots.extend(filled);
+    }
+    assert_eq!(
+        slots.len(),
+        Window::ALL.len(),
+        "no two windows share a slot"
+    );
+    assert_eq!(api::Window::EVERY.len(), Window::ALL.len());
 }
