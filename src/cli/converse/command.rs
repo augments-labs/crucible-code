@@ -64,7 +64,8 @@ mod theme;
 pub(super) enum Command {
     /// What these are.
     Help,
-    /// Every release crucible has had, or one of them in full.
+    /// A list of the releases to open one from, one of them in full, or every
+    /// release with `all`.
     ReleaseNotes,
     /// Which model answers.
     Model,
@@ -747,7 +748,7 @@ pub(super) fn run<T: Terminal>(
     // The one answer not hung off the line that asked: a timeline has a rail
     // of its own down the left, and a thousand rows indented under a mark
     // would be a second one beside it. One release and the refusals are set
-    // apart the same way, as the list's look draws them.
+    // apart the same way, as the timeline's look draws them.
     if let Wanted::Known {
         command: Command::ReleaseNotes,
         rest,

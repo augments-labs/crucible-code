@@ -9,14 +9,21 @@
 //!
 //! What a release is, and how its entries are counted, are [`super::notes`]'s,
 //! which is the one place that knows how the changelog is written; this reads
-//! them and draws. It lives beside that module because the command owns
-//! nothing that stands over the box, and `notes` is held to the values it
-//! takes from the changelog alone.
+//! them and draws. It lives beside that module because `notes.rs` is held by
+//! `scripts/python/notes-reach.py` to the changelog alone, and may not name
+//! the `region` that stands a list over the box.
 //!
-//! The rows are the panel's single-row entries, laid out here rather than by
-//! [`crucible_tui::Panel`], whose entries are a name over a description: the
-//! three columns line up across rows, and the date is the first thing given up
-//! when the window is narrow, since the count is what a reader picks by.
+//! The rows are one row each, laid out here rather than by
+//! [`crucible_tui::Panel`], whose entries are two rows, a name over a
+//! description, and rather than by [`crucible_tui::Menu`], which aligns a name
+//! and a description and not three columns: the columns line up across rows,
+//! and the date is the first thing given up when the window is narrow, since
+//! the count is what a reader picks by.
+//!
+//! A window with no room for the list when it is first drawn is given what
+//! `/release-notes all` prints instead. One that loses the room after the list
+//! was drawn, by a resize, ends it as escape does and writes nothing: the
+//! reader was walking it, and the whole changelog is not what they asked for.
 
 use crucible_tui::{Glyphs, Key, Pressed, Renderer, Row, Slot, Terminal, clip, columns, fold};
 
@@ -44,8 +51,8 @@ const CHROME: usize = 5;
 /// release between them. The closed list has no counts and needs one row.
 const FLOOR: usize = 3;
 
-/// Columns from the version's column to the date's, and to the count's where
-/// there is no date.
+/// Columns between the widest version and the date, and between the widest
+/// version and the count where there is no date.
 const BEFORE_DATE: usize = 6;
 const BEFORE_COUNT: usize = 4;
 
@@ -61,7 +68,8 @@ const ENTRIES: &str = "entries";
 
 /// Stands the list where the box was, and puts the release taken off it into
 /// the transcript. Says whether it did: `false` is a window with no room to
-/// stand the list in, and what is owed is the command's other answer.
+/// stand the list in from the first, and what is owed is the command's other
+/// answer.
 ///
 /// Escape writes nothing. The command's own row is already in the transcript,
 /// and a row saying the list was dropped would be the only thing under it.
@@ -92,7 +100,8 @@ pub(super) fn run<T: Terminal>(renderer: &mut Renderer<T>, terms: &Terms) -> Res
             Ok(true)
         }
         Ended::Left => Ok(true),
-        Ended::Cramped => Ok(false),
+        // Drawn once, then no room: walked, and nothing is owed.
+        Ended::Cramped => Ok(listing.shown),
     }
 }
 
@@ -114,6 +123,9 @@ pub(super) struct Listing<'a> {
     from: usize,
     /// The release that was taken, once one has been.
     taken: Option<usize>,
+    /// Whether the rows were ever drawn, which is what tells a window that
+    /// shrank under the list from one that never had room for it.
+    shown: bool,
 }
 
 impl<'a> Listing<'a> {
@@ -132,6 +144,7 @@ impl<'a> Listing<'a> {
             all: false,
             from: 0,
             taken: None,
+            shown: false,
         }
     }
 
@@ -142,8 +155,9 @@ impl<'a> Listing<'a> {
 
     /// What one key does to it.
     ///
-    /// Every key is named rather than caught by a rest arm, for the reason every
-    /// other standing component names its own.
+    /// Every kind of press is named rather than caught by a rest arm, for the
+    /// reason every other standing component names its own; only the keys
+    /// that do nothing here share an arm.
     // An event token is handed over, not lent: the handler takes the one thing
     // the reader produced, and a reference would say the caller kept a say in it.
     #[allow(clippy::needless_pass_by_value)]
@@ -207,6 +221,9 @@ impl<'a> Listing<'a> {
         let foot = format!("{up}{down} to walk {dot} enter opens it {dot} esc to close");
         let foot = fold(&foot, columns);
 
+        // The opened list is held to nine rows however tall the window is: the
+        // two counts and seven releases, as tall as the closed list's eight
+        // and its reveal row, so opening it in place does not move the foot.
         let height = room.saturating_sub(CHROME + foot.len()).min(if self.all {
             LISTED + 1
         } else {
@@ -215,6 +232,8 @@ impl<'a> Listing<'a> {
         if height < if self.all { FLOOR } else { 1 } {
             return Vec::new();
         }
+
+        self.shown = true;
 
         // The opened list keeps a row for each count, so the releases between
         // them stay where they are as the window moves and the counts come and
@@ -317,9 +336,9 @@ impl<'a> Listing<'a> {
         self.versions.iter().map(measure).max().unwrap_or_default()
     }
 
-    /// The columns the count's number is right-aligned in: two, as the first
-    /// column that a release with a dozen entries needs, and more for a
-    /// changelog that has grown past them.
+    /// The columns the count's number is right-aligned in: as many as the
+    /// largest count needs, and never fewer than two, so the columns do not
+    /// move as the counts cross ten.
     fn number(&self) -> usize {
         let most = self.entries.iter().copied().max().unwrap_or_default();
         most.to_string().len().max(2)

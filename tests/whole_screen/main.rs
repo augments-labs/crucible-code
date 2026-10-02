@@ -2986,6 +2986,22 @@ fn release_notes_list_escape_leaves_the_transcript_as_it_was() {
 }
 
 #[test]
+fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing() {
+    let mut window = Watched::open("release-notes-list-cramped", 80, 24);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.resize(80, 6);
+    window.resize(80, 24);
+    let picture = window.picture();
+
+    // Walked and abandoned, as escape does: neither the list nor the
+    // `all` output, which is what a window that never had room is given.
+    for gone in ["enter opens it", "newest in full", "\u{25c6}", "\u{25c7}"] {
+        assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
+    }
+    assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+}
+
+#[test]
 fn release_notes_mid_turn_are_refused_on_the_panel() {
     let vendor = a_turn_still_running();
     let mut window = Watched::allowing("release-notes-mid-turn", 60, 24, &vendor, "bash(*)");

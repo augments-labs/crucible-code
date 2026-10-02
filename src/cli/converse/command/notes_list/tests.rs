@@ -293,8 +293,8 @@ fn release_notes_list_opened_counts_what_is_above_and_below_the_rows_shown() {
     // counts: the reveal opens on the ninth, two rows of those before it.
     let text = changelog_of(30);
     let mut listing = Listing::new(releases(&text), "0.30.0");
-    listing.rows(80, 24, Glyphs::Unicode);
-    pressed(&mut listing, down(8).chain([enter()]));
+    let _ = listing.rows(80, 24, Glyphs::Unicode);
+    let _ = pressed(&mut listing, down(8).chain([enter()]));
     let rows = said(&listing.rows(80, 24, Glyphs::Unicode));
 
     assert_eq!(rows.get(4).map(String::as_str), Some("  \u{2191} 6 newer"));
@@ -315,8 +315,6 @@ fn release_notes_list_opened_counts_what_is_above_and_below_the_rows_shown() {
         rows.get(12).map(String::as_str),
         Some("  \u{2193} 17 older")
     );
-    // Every release is above, shown or below.
-    assert_eq!(6 + 7 + 17, 30);
 }
 
 #[test]
