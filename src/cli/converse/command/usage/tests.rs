@@ -858,16 +858,17 @@ fn usage_cramped_a_key_with_nothing_known_prints_limits_not_reported() {
 }
 
 #[test]
-fn usage_cramped_a_wait_a_key_ended_leaves_the_next_opening_free_to_ask() {
+fn usage_cramped_a_wait_a_key_ended_still_holds_the_minute() {
     let mut conversation = stalled_plan();
     let terms = plain();
     drop(after_a_key(keyed(), &mut conversation, &terms));
 
-    assert!(terms.ask_limits(&mut conversation).is_some());
+    // The question was out, so it counts: the next opening asks nothing.
+    assert!(terms.ask_limits(&mut conversation).is_none());
 }
 
 #[test]
-fn usage_closed_with_the_question_out_gives_it_up_and_the_next_opening_asks() {
+fn usage_closed_with_the_question_out_answers_it_and_the_next_opening_asks_nothing() {
     let mut conversation = stalled_plan();
     let (client, journal) = crate::cli::client::Client::noting();
     let mut terms = plain();
@@ -884,15 +885,35 @@ fn usage_closed_with_the_question_out_gives_it_up_and_the_next_opening_asks() {
             journal.noted().as_slice(),
             [crate::cli::client::tests::Noted::Answered {
                 asked: api::Command::AskLimits,
+                outcome: api::Outcome::Usage(_),
                 ..
             }]
         ),
         "{:#?}",
         journal.noted()
     );
-    // And it holds nothing back: the panel opened again at once asks again.
+    // The question was out, so it counts toward the minute: the panel opened
+    // again at once asks nothing, and is answered with what is known.
     assert!(
-        terms.ask_limits(&mut conversation).is_some(),
-        "the plan was not asked again"
+        terms.ask_limits(&mut conversation).is_none(),
+        "the plan was asked again within the minute"
+    );
+    assert!(
+        matches!(
+            journal.noted().as_slice(),
+            [
+                crate::cli::client::tests::Noted::Answered {
+                    asked: api::Command::AskLimits,
+                    ..
+                },
+                crate::cli::client::tests::Noted::Answered {
+                    asked: api::Command::AskLimits,
+                    outcome: api::Outcome::Usage(_),
+                    ..
+                }
+            ]
+        ),
+        "{:#?}",
+        journal.noted()
     );
 }

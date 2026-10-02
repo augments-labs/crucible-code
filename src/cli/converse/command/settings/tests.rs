@@ -681,7 +681,7 @@ fn usage_tab_asks_the_plan_when_turned_to_and_draws_its_answer() {
 }
 
 #[test]
-fn usage_tab_closed_with_the_question_out_gives_it_up_and_the_next_opening_asks() {
+fn usage_tab_closed_with_the_question_out_answers_it_and_the_next_opening_asks_nothing() {
     let mut conversation = crate::cli::converse::tests::stalled_plan();
     let (client, journal) = crate::cli::client::Client::noting();
     let mut terms = plain();
@@ -700,15 +700,20 @@ fn usage_tab_closed_with_the_question_out_gives_it_up_and_the_next_opening_asks(
             journal.noted().as_slice(),
             [crate::cli::client::tests::Noted::Answered {
                 asked: api::Command::AskLimits,
+                outcome: api::Outcome::Usage(_),
                 ..
             }]
         ),
         "{:#?}",
         journal.noted()
     );
-    // And it holds nothing back: the panel opened again at once asks again.
+    // The question was out, so it counts toward the minute: the tab opened
+    // again at once asks nothing.
     let mut again = Panel::new(&terms, &counted);
     again.turn(Tab::Usage);
-    assert_eq!(again.watched(&terms, &mut conversation), Moved::Redraw);
-    assert!(again.out.is_some(), "the plan was not asked again");
+    again.watched(&terms, &mut conversation);
+    assert!(
+        again.out.is_none(),
+        "the plan was asked again within the minute"
+    );
 }

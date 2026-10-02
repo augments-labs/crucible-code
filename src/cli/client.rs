@@ -18,9 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_app::Conversation;
-use crucible_app::client::{
-    Answered, Desk, Performed, Put, abandoned, asked, asking, interrupt, keep, perform,
-};
+use crucible_app::client::{Answered, Desk, Performed, asked, asking, interrupt, keep, perform};
 use crucible_app::providers::Providers;
 use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Theme,
@@ -148,15 +146,14 @@ impl Terms {
 /// the drawing thread goes on drawing and reading keys.
 ///
 /// It ends by [`Terms::asked`], which takes the answer back, or by
-/// [`Terms::abandon`], which gives the question up: the request is answered
-/// with what is known and holds nothing back, so the next opening asks again.
-/// A panel closed with the question out ends it one of those two ways. Merely
-/// dropped, the question is stopped and nothing more: its request is never
-/// answered, and the plan is not asked again until a minute has passed.
+/// [`Terms::abandon`], which gives the question up and answers the request
+/// with what is known. A panel closed with the question out ends it one of
+/// those two ways. Merely dropped, the question is stopped and nothing more:
+/// its request is never answered. However it ends, it counts toward the
+/// minute, so the plan is not asked again until a minute has passed.
 pub(crate) struct Out {
     request: Request,
     provider: &'static str,
-    put: Put,
     answer: tokio::task::JoinHandle<Answered>,
 }
 
@@ -193,7 +190,6 @@ impl Terms {
         };
         Some(Out {
             provider: question.provider(),
-            put: question.put(),
             answer: self.runtime.spawn(question.answered()),
             request,
         })
@@ -217,14 +213,13 @@ impl Terms {
     }
 
     /// Gives up the question `out` before its answer came: the request is
-    /// closed, answered with what is known, and holds nothing back on its
-    /// account, so the next opening asks again.
+    /// closed and answered with what is known. The question still counts
+    /// toward the minute, so the next opening within it asks nothing.
     pub(crate) fn abandon(&self, conversation: &mut Conversation, out: Out) {
         out.answer.abort();
-        // Answered while the question still counts as put moments ago, so the
-        // door that answers it whole sends nothing; only then is it forgotten.
+        // The question counts as put moments ago, so the door that answers it
+        // whole sends nothing.
         self.performed(conversation, &out.request);
-        abandoned(conversation, out.put);
         drop(out);
     }
 }

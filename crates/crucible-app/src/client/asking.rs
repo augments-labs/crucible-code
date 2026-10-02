@@ -19,8 +19,10 @@
 //! - of a vendor that uses what it is sent, until the use of what is sent
 //!   there has been agreed to — the content-use hold a turn waits on;
 //! - of the same credential more than once a minute, whatever came of the
-//!   last time — unless the last question was [`abandoned`] before it was
-//!   answered;
+//!   last time: answered, failed, or given up before its answer came. A
+//!   question counts from when it is started, since nothing tells one given
+//!   up before it left from one given up after; one the client sending it
+//!   held back never left, and does not count;
 //! - of a credential the source refused, or where the source was not there,
 //!   for the rest of the session.
 //!
@@ -36,7 +38,7 @@
 use std::time::{Duration, Instant};
 
 use crucible_client_api::{Command, ErrorCode, Refusal, Request};
-use crucible_models::Asked;
+use crucible_models::{Asked, ProviderError};
 use crucible_runtime::BoxFuture;
 use crucible_types::CredentialScopeId;
 
@@ -83,10 +85,10 @@ impl Asks {
         self.sent.push((credential, now));
     }
 
-    /// The question `put` is forgotten, where it is still the last one put
-    /// through its credential.
-    fn unsent(&mut self, put: Put) {
-        self.sent.retain(|sent| *sent != (put.credential, put.at));
+    /// The question put through `credential` at `at` never left, so it is
+    /// forgotten, where it is still the last one put through its credential.
+    fn unsent(&mut self, credential: Credential, at: Instant) {
+        self.sent.retain(|sent| *sent != (credential, at));
     }
 
     /// `credential` is not to be asked again this session.
@@ -106,14 +108,7 @@ impl Asks {
 pub struct Asking {
     credential: Credential,
     question: BoxFuture<'static, Asked>,
-    put: Put,
-}
-
-/// Which question was put to a plan, and when: what a front end that gives up
-/// waiting for the answer hands back to [`abandoned`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Put {
-    credential: Credential,
+    /// When the question was started.
     at: Instant,
 }
 
@@ -124,18 +119,13 @@ impl Asking {
         self.credential.0
     }
 
-    /// Which question this is, for [`abandoned`] once its answer is no
-    /// longer wanted.
-    #[must_use]
-    pub const fn put(&self) -> Put {
-        self.put
-    }
-
     /// Waits for the plan's answer. Dropping this before it ends closes the
-    /// request, and nothing is remembered of an answer that never came.
+    /// request, and nothing is remembered of an answer that never came; the
+    /// question still counts toward the minute.
     pub async fn answered(self) -> Answered {
         Answered {
             credential: self.credential,
+            at: self.at,
             asked: self.question.await,
         }
     }
@@ -153,6 +143,8 @@ impl std::fmt::Debug for Asking {
 #[derive(Debug)]
 pub struct Answered {
     credential: Credential,
+    /// When the question was started.
+    at: Instant,
     asked: Asked,
 }
 
@@ -216,18 +208,8 @@ pub(super) fn started(conversation: &mut Conversation, now: Instant) -> Option<A
     Some(Asking {
         credential,
         question,
-        put: Put {
-            credential,
-            at: now,
-        },
+        at: now,
     })
-}
-
-/// The question `put` was dropped before its answer was taken back, so
-/// `conversation` holds nothing back on its account: what was never answered
-/// taught nothing, and the next opening asks again at once.
-pub fn abandoned(conversation: &mut Conversation, put: Put) {
-    conversation.asks.unsent(put);
 }
 
 /// Takes what a plan answered back to `conversation`, and answers with what
@@ -238,6 +220,11 @@ pub fn asked(conversation: &mut Conversation, answered: Answered) -> Performed {
             conversation.runner.answered_limits(windows);
         }
         Asked::Closed => conversation.asks.close(answered.credential),
+        // The client that would have sent it held it back: nothing left, so
+        // nothing counts toward the minute.
+        Asked::Failed(ProviderError::Held(_)) => {
+            conversation.asks.unsent(answered.credential, answered.at);
+        }
         Asked::Answered(_) | Asked::Failed(_) => {}
     }
     usage(conversation)

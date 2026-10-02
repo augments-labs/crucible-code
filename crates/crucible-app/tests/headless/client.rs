@@ -1887,29 +1887,51 @@ fn limit_a_second_ask_within_a_minute_is_not_sent() -> Result<(), Failed> {
     Ok(())
 }
 
-/// A question given up on before the plan answered it taught nothing, so it
-/// holds nothing back: the next opening asks at once. One that was answered
-/// still holds the minute.
+/// A question given up on before the plan answered it still counts toward
+/// the minute: crucible cannot tell whether it had left, so every question
+/// started counts. The next opening within the minute asks nothing; one a
+/// minute later asks.
 #[test]
-fn limit_an_ask_abandoned_unanswered_leaves_the_next_free_to_ask() -> Result<(), Failed> {
-    let tree = Tree::new("client-limit-abandoned")?;
+fn limit_an_ask_given_up_unanswered_still_holds_the_minute() -> Result<(), Failed> {
+    let tree = Tree::new("client-limit-given-up")?;
     let script = Script::new(Vec::new()).answering(plan_answer);
     let sent = Arc::clone(&script.limits_asked);
     let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
     let first = Instant::now();
     let request = Wire::default().sent(Command::AskLimits)?;
 
-    let Some(question) = client::asking(&mut conversation, &request, first)? else {
-        return Err("the plan was not asked".into());
-    };
-    let put = question.put();
+    let question = client::asking(&mut conversation, &request, first)?;
+    assert!(question.is_some(), "the plan was not asked");
     drop(question);
-    client::abandoned(&mut conversation, put);
 
-    let again = first + Duration::from_secs(1);
-    assert!(asked_limits(&mut conversation, again)?.is_some());
-    assert_eq!(sent.load(Ordering::Relaxed), 1, "only the second was sent");
-    assert!(asked_limits(&mut conversation, again + Duration::from_secs(1))?.is_none());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(1))?.is_none());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(59))?.is_none());
+    assert!(asked_limits(&mut conversation, first + Duration::from_mins(1))?.is_some());
+    assert_eq!(
+        sent.load(Ordering::Relaxed),
+        1,
+        "only the one a minute later"
+    );
+    Ok(())
+}
+
+/// An ask the content-use hold refused never left, so it leaves the next
+/// opening free to ask, whether the conversation held it back or the client
+/// that would have sent it did.
+#[test]
+fn limit_an_ask_the_hold_refused_leaves_the_next_free_to_ask() -> Result<(), Failed> {
+    fn held() -> Asked {
+        Asked::Failed(ProviderError::Held("subscription:openai".into()))
+    }
+    let tree = Tree::new("client-limit-held-sent")?;
+    let script = Script::new(Vec::new()).answering(held);
+    let sent = Arc::clone(&script.limits_asked);
+    let (mut conversation, _) = asking_on(&tree, script, Some("openai"))?;
+    let first = Instant::now();
+
+    assert!(asked_limits(&mut conversation, first)?.is_some());
+    assert!(asked_limits(&mut conversation, first + Duration::from_secs(1))?.is_some());
+    assert_eq!(sent.load(Ordering::Relaxed), 2);
     Ok(())
 }
 

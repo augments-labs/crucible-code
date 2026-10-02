@@ -22,8 +22,9 @@
 //! drawn again: where keys are read, only until a key is pressed, after which
 //! the question is given up and what is known is printed. A panel closed with
 //! the question still out gives it up the same way, so the request is
-//! answered and the next opening asks again rather than waiting out a minute
-//! for an answer nobody saw.
+//! answered with what is known. A question given up still counts toward the
+//! minute, so opening the panel again within it asks nothing and shows what
+//! is known.
 //!
 //! A cost nobody priced reads `not priced`, never `$0.00`. A reset time is the
 //! reader's own wall clock, read in the system's zone as the panel opens; a
@@ -231,7 +232,7 @@ fn awaited(
 /// Ends the question `out` as a panel that stood is closed. An answer that
 /// came is taken back to the conversation, so the next opening shows it; one
 /// still to come is given up, as a key ends a wait for it, so the request is
-/// answered with what is known and the next opening is free to ask again.
+/// answered with what is known; it still counts toward the minute.
 pub(super) fn closed(out: Option<Out>, terms: &Terms, conversation: &mut Conversation) {
     match out {
         Some(out) if out.ended() => drop(terms.asked(conversation, out)),
