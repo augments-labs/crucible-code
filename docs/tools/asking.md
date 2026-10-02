@@ -45,13 +45,14 @@ on marked, then that question and its answers numbered under it.
   esc to cancel · ←→ between questions · n for a note
 ```
 
-An answer the agent marked as the one it would pick is the first, and its name
-ends with `(Recommended)`. The label is only drawn: it is not part of the name
-you choose or that is sent back.
-
 A `□` is a question you have not answered and a `✓` is one you have, so the row
 across the top is both where you are and how much is left. It appears only where
 there is more than one question.
+
+In the list of answers, the one the agent would pick is the first, and its name
+ends with `(Recommended)`. The label is only drawn: it is not part of the name
+you choose or that is sent back, so the read-back of several answers shows the
+name alone.
 
 Where a question takes several answers, each one carries a bracketed mark of its
 own, `[ ]` and `[✓]`. Bracketed on purpose: the row above says whether a
