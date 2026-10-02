@@ -651,6 +651,94 @@ fn a_mistyped_command_with_words_after_it_mid_turn_is_queued_as_a_prompt() {
     assert!(!queued.contains("esc to close"), "{queued}");
 }
 
+/// A turn held open with one prompt waiting behind it, in a window `columns`
+/// wide, and the vendor that holds it open for the caller to keep.
+fn with_a_prompt_waiting(case: &str, columns: u16, vendor: &Vendor) -> Watched {
+    let mut window = Watched::allowing(case, columns, 24, vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("and add a test for the windows path\r", "1 queued");
+    window
+}
+
+/// The picture from the top edge of the queue box down.
+///
+/// Not the whole screen: the working row above it counts seconds, and a picture
+/// that held the count would be one a loaded machine draws a second later.
+fn from_the_queue_box(picture: &str) -> String {
+    picture
+        .lines()
+        .skip_while(|row| !row.contains("╭─ 1 queued"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_single_waiting_prompt_is_told_the_key_that_opens_the_queue() {
+    // The key used to appear only once the box overflowed, so a reader with one
+    // prompt waiting had nothing on screen saying it could be taken back. It
+    // is drawn into the box's bottom edge, which costs the screen no row.
+    let vendor = a_turn_still_running();
+    let window = with_a_prompt_waiting("queue-hint", 80, &vendor);
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
+        "{picture}"
+    );
+    insta::assert_snapshot!(from_the_queue_box(&picture));
+}
+
+#[test]
+fn a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window() {
+    let vendor = a_turn_still_running();
+    let window = with_a_prompt_waiting("queue-hint-narrow", 40, &vendor);
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
+        "{picture}"
+    );
+    insta::assert_snapshot!(from_the_queue_box(&picture));
+}
+
+#[test]
+fn the_open_queue_names_the_keys_that_work_on_a_waiting_prompt() {
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    let picture = window.picture();
+    assert!(picture.contains("e edit"), "{picture}");
+    insta::assert_snapshot!(picture);
+}
+
+#[test]
+fn the_open_queue_wraps_its_keys_in_a_narrow_window() {
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open-narrow", 40, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn deleting_the_only_waiting_prompt_closes_the_queue_and_leaves_the_box_empty() {
+    // Taking it back would put its words in the box; deleting must not.
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-delete", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    window.types("d");
+
+    // What is typed next lands in a box holding nothing else: a prompt taken
+    // back would be in it already, and the line would read as the two joined.
+    window.types_and_catches("hi", "│ › hi");
+    let picture = window.picture();
+    assert!(!picture.contains("queued"), "{picture}");
+    assert!(!picture.contains("windows path"), "{picture}");
+}
+
 #[test]
 fn a_theme_panel_opens_while_a_turn_is_still_running() {
     // The turn is held open behind a finished answer — not made long enough to

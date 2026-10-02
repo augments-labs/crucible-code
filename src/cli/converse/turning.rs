@@ -80,9 +80,27 @@ const STOPS: &str = "esc to interrupt";
 /// more` row, and Ctrl+Q opens the list that holds them all.
 const NAMED: usize = 3;
 
+/// The key that opens the queue, and what it is for, as the bottom edge of the
+/// panel says them whenever anything is waiting.
+///
+/// On the edge rather than in a row so that the hint costs the panel nothing:
+/// one prompt waiting is as much a queue as five, and it is the reader with one
+/// who has not yet found out it can be taken back.
+const OPENS: &str = "ctrl+q";
+const OPENS_TO: &str = "edit";
+
+/// What the hint spends on the bottom edge: the words, the space on either side
+/// of them, and the one stretch of edge that stands it off the corner.
+const HINT: usize = OPENS.len() + 1 + OPENS_TO.len() + INLAID;
+
+// A frame is drawn from `Prompt::FRAMED_AT` columns, and the hint is not cut
+// where it does not fit: it fits at the narrowest frame or this does not build.
+const _: () = assert!(Prompt::FRAMED_AT - 2 >= HINT);
+
 /// What the panel's last row says when the queue outgrew the names above it.
 ///
-/// The count is what the row is for; the key beside it is where the rest are.
+/// The count is what the row is for; the key that opens the rest is on the
+/// bottom edge, where it is for every queue and not only a long one.
 const MORE: &str = "more";
 
 /// The rows this puts above the box, blanks included.
@@ -1198,7 +1216,8 @@ impl Queued {
     ///
     /// As many lines as `spare` rows allow are named, each led by the mark a
     /// line is typed after — they are the reader's own words, waiting — and past
-    /// that the rest are a count on the last row. An empty queue draws nothing
+    /// that the rest are a count on the last row. The bottom edge names the key
+    /// that opens the whole queue, for one line as for many. An empty queue draws nothing
     /// at all, and a window too short to open the frame keeps only the one line
     /// that says anything is waiting, since that is the fact that cannot go.
     fn rows(&self, spare: usize, columns: usize, style: Style) -> Vec<Row> {
@@ -1289,7 +1308,7 @@ impl Queued {
         }
 
         if over > 0 {
-            let said = format!("… +{over} {MORE}  (ctrl+q to see all)");
+            let said = format!("… +{over} {MORE}");
             rows.push(Self::framed(
                 Row::new(),
                 Row::new().then(Slot::Quiet, draw::clipped(&said, inner, glyphs)),
@@ -1298,10 +1317,19 @@ impl Queued {
             ));
         }
 
+        // Stood off the corner by an edge and a space on each side, as the
+        // title is on the edge above. The key is the one accent on the row: it
+        // is the one thing on it to press.
         rows.push(
             Row::new()
                 .then(Prompt::BORDER, bl)
-                .then(Prompt::BORDER, edge.repeat(across))
+                .then(Prompt::BORDER, edge.repeat(across - HINT))
+                .then(Slot::Plain, " ")
+                .then(Slot::Accent, OPENS)
+                .then(Slot::Plain, " ")
+                .then(Slot::Quiet, OPENS_TO)
+                .then(Slot::Plain, " ")
+                .then(Prompt::BORDER, edge)
                 .then(Prompt::BORDER, br),
         );
 
