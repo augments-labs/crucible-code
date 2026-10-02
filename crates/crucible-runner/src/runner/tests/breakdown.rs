@@ -75,18 +75,18 @@ fn context_breakdown_is_posted_with_every_reading_a_turn_makes() {
     scripted.runner.state.window = Some(200_000);
     scripted.turn("go").expect("a measured turn");
 
-    let posted: Vec<(Option<u8>, Breakdown)> = scripted
+    let posted: Vec<Breakdown> = scripted
         .seen
         .try_iter()
         .filter_map(|event| match event {
-            Event::Carried { left, breakdown } => Some((left, breakdown)),
+            Event::Carried { breakdown } => Some(breakdown),
             _ => None,
         })
         .collect();
 
     assert!(!posted.is_empty(), "the turn posted no reading");
-    for (left, breakdown) in posted {
-        assert_eq!(breakdown.left(), left, "{breakdown:?}");
+    for breakdown in posted {
+        assert!(breakdown.left().is_some(), "{breakdown:?}");
         assert_eq!(breakdown.window(), Some(200_000), "{breakdown:?}");
         assert!(carried_by(&breakdown) > 0, "{breakdown:?}");
     }

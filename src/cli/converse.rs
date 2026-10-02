@@ -1411,7 +1411,7 @@ fn take<T: Terminal>(
     // Started before the worker rather than on the first thing it reports, so
     // that what the clock measures is what somebody is waiting for. A turn that
     // spends its first ten seconds connecting has spent them.
-    let mut turning = Turning::started(says.left).counting(conversation.runner().breakdown());
+    let mut turning = Turning::started(conversation.runner().breakdown());
 
     // A turn can start with prompts already behind it: room is made before the
     // queue is read, so a line typed during the last turn is still waiting when

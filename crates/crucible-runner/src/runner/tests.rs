@@ -456,7 +456,7 @@ impl Scripted {
         self.seen
             .try_iter()
             .filter_map(|event| match event {
-                Event::Carried { left, .. } => Some(left),
+                Event::Carried { breakdown } => Some(breakdown.left()),
                 _ => None,
             })
             .collect()
@@ -738,7 +738,7 @@ impl Steering {
         self.seen
             .try_iter()
             .filter_map(|event| match event {
-                Event::Carried { left, .. } => Some(left),
+                Event::Carried { breakdown } => Some(breakdown.left()),
                 _ => None,
             })
             .collect()

@@ -193,9 +193,9 @@ impl Runner {
                 };
                 self.store.display_compacted(compacted, pruned).await;
                 events.post(crate::Event::Compacted { compacted });
-                events.post(crate::Event::carried(
-                    self.breakdown_under(run.policy().compaction),
-                ));
+                events.post(crate::Event::Carried {
+                    breakdown: self.breakdown_under(run.policy().compaction),
+                });
                 return Ok(Room::Made(compacted));
             }
 
@@ -319,9 +319,9 @@ impl Runner {
         };
         self.store.display_compacted(compacted, pruned).await;
         events.post(crate::Event::Compacted { compacted });
-        events.post(crate::Event::carried(
-            self.breakdown_under(run.policy().compaction),
-        ));
+        events.post(crate::Event::Carried {
+            breakdown: self.breakdown_under(run.policy().compaction),
+        });
 
         Ok(Room::Made(compacted))
     }

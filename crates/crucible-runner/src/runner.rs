@@ -1837,7 +1837,9 @@ impl Runner {
                         })),
                     )
                     .await;
-                    events.post(Event::carried(counting.breakdown()));
+                    events.post(Event::Carried {
+                        breakdown: counting.breakdown(),
+                    });
                 }
                 Delta::Spent(said) => {
                     counting.spent = before.and(said);
@@ -1848,7 +1850,9 @@ impl Runner {
                     // Output occupies the same context window as input. Report
                     // the percentage again as it grows rather than leaving the
                     // opening input count on screen for the whole response.
-                    events.post(Event::carried(counting.breakdown()));
+                    events.post(Event::Carried {
+                        breakdown: counting.breakdown(),
+                    });
                 }
                 // Not added to the spend beside it, and not accumulated at
                 // all. What a request carried is a level rather than a total —
@@ -1879,7 +1883,9 @@ impl Runner {
                         counting.window = None;
                     }
 
-                    events.post(Event::carried(counting.breakdown()));
+                    events.post(Event::Carried {
+                        breakdown: counting.breakdown(),
+                    });
                 }
                 Delta::Stopped(stop) => answer.stopped(stop)?,
             }
@@ -1894,7 +1900,7 @@ impl Runner {
         counting.load.produced(bytes);
         let breakdown = counting.breakdown();
         if breakdown.left() != before {
-            events.post(Event::carried(breakdown));
+            events.post(Event::Carried { breakdown });
         }
     }
 

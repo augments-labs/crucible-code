@@ -134,23 +134,25 @@ impl<'a> AgentLoop<'a> {
             self.runner
                 .record(run.ancestry(), Message::said(line))
                 .await?;
-            events.post(Event::carried(
-                self.runner
+            events.post(Event::Carried {
+                breakdown: self
+                    .runner
                     .state
                     .load
                     .breakdown(counting.window, counting.reserve),
-            ));
+            });
         }
         for note in run.aside().take() {
             self.runner
                 .record(run.ancestry(), Message::said(note))
                 .await?;
-            events.post(Event::carried(
-                self.runner
+            events.post(Event::Carried {
+                breakdown: self
+                    .runner
                     .state
                     .load
                     .breakdown(counting.window, counting.reserve),
-            ));
+            });
         }
         Ok(())
     }
@@ -311,7 +313,9 @@ impl<'a> AgentLoop<'a> {
                 // case no preceding load event exists. State the zero the same
                 // arithmetic reached before replacing it with the compaction
                 // activity, so the two cannot appear to disagree.
-                events.post(Event::carried(counting.breakdown()));
+                events.post(Event::Carried {
+                    breakdown: counting.breakdown(),
+                });
                 match self
                     .room(Compacting::Full, &mut fruitless, counting)
                     .await?
@@ -476,12 +480,13 @@ impl<'a> AgentLoop<'a> {
             self.runner
                 .record(run.ancestry(), Message::ToolResults(results))
                 .await?;
-            events.post(Event::carried(
-                self.runner
+            events.post(Event::Carried {
+                breakdown: self
+                    .runner
                     .state
                     .load
                     .breakdown(counting.window, counting.reserve),
-            ));
+            });
 
             match went {
                 Went::On => {}

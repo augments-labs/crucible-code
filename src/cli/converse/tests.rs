@@ -189,6 +189,29 @@ pub(crate) fn scripted(script: Script, offered: Tools, session: Arc<Session>) ->
     )
 }
 
+/// What a session nothing has been sent in yet carries, as its runner
+/// measures it against a known window: a breakdown with a percentage to read
+/// off it, where [`crucible_runner::Breakdown::default`] has none.
+pub(crate) fn measured() -> crucible_runner::Breakdown {
+    Runner::new(
+        Box::new(Script::new(Vec::new())),
+        Tools::new(),
+        Agent::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: Some(200_000),
+                accepts: None,
+                effort: None,
+            },
+        ),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        Arc::new(Session::nowhere()),
+    )
+    .breakdown()
+}
+
 /// A conversation that answers nothing and records nowhere, for a command
 /// that asks the application about something other than the conversation.
 pub(crate) fn silent() -> Conversation {
@@ -318,7 +341,7 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
         },
         &opening,
     );
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(crucible_runner::Breakdown::default());
     let mut says = typing::under(&scripted(
         Script::new(Vec::new()),
         Tools::new(),

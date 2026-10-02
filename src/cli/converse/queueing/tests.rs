@@ -1,3 +1,4 @@
+use crucible_runner::Breakdown;
 use crucible_tui::{Key, Recording};
 
 use super::super::Retained;
@@ -359,7 +360,7 @@ fn a_window_that_holds_the_list_only_without_the_working_row_draws_the_whole_lis
     // what the reader opened, and a window one row short of both draws the list
     // whole rather than the row and no list (which would close the view).
     let (queue, steer) = queued(&["first"]);
-    let turning = Turning::started(None);
+    let turning = Turning::started(Breakdown::default());
     let working = turning.working(80, Style::plain()).text();
 
     // Seven rows is the least the list takes at this width, and one row of the
