@@ -340,6 +340,27 @@ impl Glyphs {
         }
     }
 
+    /// A cell inked whole, for the spent part of a bar that runs unbroken.
+    ///
+    /// Not [`Glyphs::filled`]: its square has a gap on each side, so a row of
+    /// them reads as separate marks rather than as one length.
+    #[must_use]
+    pub(crate) fn solid(self) -> &'static str {
+        match self {
+            Self::Unicode => "█",
+            Self::Ascii => "#",
+        }
+    }
+
+    /// A shaded cell, for the free part of the same bar.
+    #[must_use]
+    pub(crate) fn shaded(self) -> &'static str {
+        match self {
+            Self::Unicode => "░",
+            Self::Ascii => ".",
+        }
+    }
+
     /// The mark on a release told in one row.
     ///
     /// Hollow where [`Glyphs::told`] is filled: the two stand in one column
