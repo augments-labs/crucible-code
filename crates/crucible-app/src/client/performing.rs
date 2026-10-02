@@ -7,6 +7,7 @@ use crucible_client_api::{
     CacheOutcome, CleanOutcome, ClearOutcome, Command, EffortOutcome, ErrorCode, LoginOutcome,
     LogoutOutcome, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Problem, Refusal, Request,
     Resource, Response, ResumeOutcome, SandboxOutcome, SpeedOutcome, Standing, Theme, ThemeOutcome,
+    Usage,
 };
 use crucible_runner::{Breakdown, PromptCacheCleanup};
 use crucible_runtime::Cancel;
@@ -130,6 +131,10 @@ pub enum Performed {
         /// The runner's count of it.
         breakdown: Breakdown,
     },
+    /// `/usage`: what the session has used, and the plan windows its vendor
+    /// last reported, read off the runner as it was asked; nothing is asked
+    /// of a vendor.
+    Usage(Box<Usage>),
     /// `/exit`.
     Leaving,
 }
@@ -221,6 +226,15 @@ pub async fn perform(
             model: conversation.runner().model().into(),
             breakdown: conversation.runner().breakdown(),
         },
+        Command::Usage => {
+            let runner = conversation.runner();
+            Performed::Usage(Box::new(reading::usage(
+                runner.model(),
+                &runner.breakdown(),
+                &runner.totals(),
+                runner.plan_limits().as_ref(),
+            )))
+        }
         Command::Exit => Performed::Leaving,
     }
 }
@@ -269,6 +283,7 @@ pub fn keep(request: &Request, desk: &Desk<'_>) -> Performed {
         | Command::Help
         | Command::ReleaseNotes { .. }
         | Command::Context
+        | Command::Usage
         | Command::Exit => Performed::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -396,6 +411,7 @@ impl Performed {
             Self::Context { model, breakdown } => {
                 Outcome::Context(reading::context(model, breakdown))
             }
+            Self::Usage(usage) => Outcome::Usage(usage.as_ref().clone()),
             Self::Leaving => Outcome::Leaving,
         }
     }

@@ -73,6 +73,7 @@ pub mod pending;
 pub mod progress;
 pub mod request;
 pub mod snapshot;
+pub mod usage;
 mod wire;
 
 pub use bounds::{Name, Said, Text};
@@ -89,6 +90,7 @@ pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, 
 pub use progress::Progress;
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
 pub use snapshot::{Model, Percent, Snapshot};
+pub use usage::{Cost, Limit, Limits, Usage, Window};
 
 #[cfg(test)]
 mod tests;

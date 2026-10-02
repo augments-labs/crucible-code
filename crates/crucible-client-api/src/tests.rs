@@ -98,8 +98,26 @@ const KEYS: [&str; 72] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 27] = [
+const MORE_KEYS: [&str; 45] = [
+    "added",
+    "api_ms",
+    "cache_read",
+    "cache_write",
     "context",
+    "cost",
+    "currency",
+    "five_hour",
+    "input",
+    "limits",
+    "micros",
+    "monthly",
+    "output",
+    "removed",
+    "resets_at",
+    "usage",
+    "used",
+    "wall_ms",
+    "weekly",
     "count",
     "date",
     "free",
@@ -315,6 +333,7 @@ fn commands() -> Vec<Command> {
             version: Some(name("v0.41.1")),
         },
         Command::Context,
+        Command::Usage,
         Command::Exit,
     ];
     commands.extend(decisions().into_iter().map(Command::Decide));
@@ -423,6 +442,53 @@ fn contexts() -> [Context; 2] {
             messages: 41_600,
             reserve: 0,
             free: 0,
+        },
+    ]
+}
+
+/// What a session has used: priced with every window reported, not priced
+/// with none, and before anything was asked with one.
+fn usages() -> [Usage; 3] {
+    let [context, unknown] = contexts();
+    let limit = |used, resets_at| Limit {
+        used: Percent::new(used).unwrap(),
+        resets_at,
+    };
+    let counted = Usage {
+        cost: Cost::Priced {
+            currency: name("USD"),
+            micros: 1_840_000,
+        },
+        api_ms: 252_000,
+        wall_ms: 4_920_000,
+        added: 214,
+        removed: 37,
+        input: 1_420_000,
+        output: 38_100,
+        cache_read: 1_210_000,
+        cache_write: 92_400,
+        context,
+        limits: Limits {
+            five_hour: Some(limit(23, Some(1_700_000_000))),
+            weekly: Some(limit(42, None)),
+            monthly: Some(limit(100, Some(1_702_000_000))),
+        },
+    };
+    [
+        counted.clone(),
+        Usage {
+            cost: Cost::NotPriced,
+            limits: Limits::default(),
+            ..counted.clone()
+        },
+        Usage {
+            cost: Cost::Unspent,
+            context: unknown,
+            limits: Limits {
+                weekly: Some(limit(0, Some(1_700_000_000))),
+                ..Limits::default()
+            },
+            ..counted
         },
     ]
 }
@@ -537,6 +603,7 @@ fn outcomes() -> Vec<Outcome> {
         Outcome::Leaving,
     ];
     outcomes.extend(contexts().into_iter().map(Outcome::Context));
+    outcomes.extend(usages().into_iter().map(Outcome::Usage));
     outcomes.extend(login_outcomes());
     outcomes.extend(turn_outcomes().into_iter().map(Outcome::Turn));
     outcomes.extend(Mode::EVERY.into_iter().map(Outcome::Mode));
@@ -738,33 +805,34 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 25),
-        Command::Compact => (1, 25),
-        Command::Cancel => (2, 25),
-        Command::Decide(_) => (3, 25),
-        Command::Clear => (4, 25),
-        Command::Resume(_) => (5, 25),
+        Command::Prompt(_) => (0, 26),
+        Command::Compact => (1, 26),
+        Command::Cancel => (2, 26),
+        Command::Decide(_) => (3, 26),
+        Command::Clear => (4, 26),
+        Command::Resume(_) => (5, 26),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 25),
-        Command::SelectModel { effort: None, .. } => (7, 25),
-        Command::SetEffort(_) => (8, 25),
-        Command::SetMode(_) => (9, 25),
-        Command::CycleMode => (10, 25),
-        Command::Login { .. } => (11, 25),
-        Command::Logout { .. } => (12, 25),
-        Command::InspectCache => (13, 25),
-        Command::CleanCache => (14, 25),
-        Command::Sandbox { enabled: true } => (15, 25),
-        Command::Sandbox { enabled: false } => (16, 25),
-        Command::Theme(Theme::Drawing(_)) => (17, 25),
-        Command::Theme(Theme::Syntax(_)) => (18, 25),
-        Command::Help => (19, 25),
-        Command::ReleaseNotes { version: None } => (20, 25),
-        Command::ReleaseNotes { version: Some(_) } => (21, 25),
-        Command::Exit => (22, 25),
-        Command::SetSpeed(_) => (23, 25),
-        Command::Context => (24, 25),
+        } => (6, 26),
+        Command::SelectModel { effort: None, .. } => (7, 26),
+        Command::SetEffort(_) => (8, 26),
+        Command::SetMode(_) => (9, 26),
+        Command::CycleMode => (10, 26),
+        Command::Login { .. } => (11, 26),
+        Command::Logout { .. } => (12, 26),
+        Command::InspectCache => (13, 26),
+        Command::CleanCache => (14, 26),
+        Command::Sandbox { enabled: true } => (15, 26),
+        Command::Sandbox { enabled: false } => (16, 26),
+        Command::Theme(Theme::Drawing(_)) => (17, 26),
+        Command::Theme(Theme::Syntax(_)) => (18, 26),
+        Command::Help => (19, 26),
+        Command::ReleaseNotes { version: None } => (20, 26),
+        Command::ReleaseNotes { version: Some(_) } => (21, 26),
+        Command::Exit => (22, 26),
+        Command::SetSpeed(_) => (23, 26),
+        Command::Context => (24, 26),
+        Command::Usage => (25, 26),
     }
 }
 
@@ -798,6 +866,11 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         | Outcome::Help(_)
         | Outcome::Context(_)
         | Outcome::Leaving => (0, 1),
+        Outcome::Usage(usage) => match usage.cost {
+            Cost::Unspent => (0, 3),
+            Cost::Priced { .. } => (1, 3),
+            Cost::NotPriced => (2, 3),
+        },
         Outcome::Turn(turn) => turn_arm(turn),
         Outcome::Unasked(missing) => match missing {
             Missing::Credential => (0, 3),
@@ -1761,7 +1834,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 7_417_588_706_528_553_540),
+        (1, 17_284_216_353_544_635_037),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
