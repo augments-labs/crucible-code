@@ -536,6 +536,14 @@ impl Watched {
         self.types(&format!("\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m"));
     }
 
+    /// Moves the pointer, no button held, onto one zero-based cell and waits
+    /// for the screen to settle.
+    pub(crate) fn hovers(&mut self, row: usize, column: usize) {
+        let x = column + 1;
+        let y = row + 1;
+        self.types(&format!("\x1b[<35;{x};{y}M"));
+    }
+
     /// Drags the left button between two zero-based cells and waits for the
     /// screen to settle.
     pub(crate) fn drags(&mut self, from: (usize, usize), to: (usize, usize)) {

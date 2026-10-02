@@ -948,6 +948,51 @@ fn a_click_on_a_scroll_rail_mark_lands_on_the_prompt_it_marks() {
 }
 
 #[test]
+fn the_scroll_rail_at_rest_grows_the_current_prompt_s_mark() {
+    // At the foot of the second answer its prompt is above the band, and its
+    // mark is the grown one; the first prompt's is a plain mark.
+    for columns in [80, 40] {
+        let window = two_long_turns(&format!("scroll-rail-rest-{columns}"), columns, 16);
+
+        insta::assert_snapshot!(
+            format!("scroll_rail_at_rest_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn a_pointer_on_the_scroll_rail_grows_the_mark_under_it() {
+    // A real SGR motion report with no button held, onto the first prompt's
+    // mark: it grows beside the current prompt's.
+    for columns in [80, 40] {
+        let mut window = two_long_turns(&format!("scroll-rail-hover-{columns}"), columns, 16);
+        let rail = usize::from(columns) - 1;
+        let marks = rail_rows(&window.picture(), '\u{2022}');
+        let mark = *marks.first().expect("a mark on the rail");
+        window.hovers(mark, rail);
+
+        insta::assert_snapshot!(
+            format!("scroll_rail_hovered_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window() {
+    // Landed on by a click on its mark, the second prompt is in the band and
+    // its grown mark stands on the thumb rather than under it. The picture at
+    // 80 columns is the one a click on a mark lands on.
+    let mut window = two_long_turns("scroll-rail-current-40", 40, 16);
+    let marks = rail_rows(&window.picture(), '\u{25cf}');
+    let mark = *marks.last().expect("the current prompt's mark");
+    window.clicks_catching(mark, 39, "\u{203a} say it again");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
 fn a_click_on_the_scroll_rail_in_a_narrow_window_scrolls_back_to_it() {
     let mut window = two_long_turns("scroll-rail-narrow", 40, 16);
 
