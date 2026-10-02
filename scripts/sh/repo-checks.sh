@@ -46,14 +46,14 @@ case $scan in
 esac
 
 section "script layout"
-# `scripts/sh` holds what a shell runs and `scripts/python` what python3 runs,
-# so a reader looking for one language opens one directory. Nothing else in the
-# tree names a script, and every reference in the repository spells the
-# language directory, so a file left at the top drops out of both gates
-# silently rather than failing.
-for script in scripts/*.sh scripts/*.py; do
+# `scripts/sh` holds what a shell runs, `scripts/python` what python3 runs and
+# `scripts/ps1` what PowerShell runs, so a reader looking for one language opens
+# one directory. Nothing else in the tree names a script, and every reference in
+# the repository spells the language directory, so a file left at the top drops
+# out of every gate silently rather than failing.
+for script in scripts/*.sh scripts/*.py scripts/*.ps1; do
     if [[ -e $script ]]; then
-        printf '    FAIL %s belongs under scripts/sh or scripts/python\n' "$script"
+        printf '    FAIL %s belongs under scripts/sh, scripts/python or scripts/ps1\n' "$script"
         failed=1
     fi
 done
@@ -65,7 +65,11 @@ for stray in $(find scripts -mindepth 2 -name '*.py' -not -path 'scripts/python/
     printf '    FAIL %s is Python outside scripts/python\n' "$stray"
     failed=1
 done
-for language in sh python; do
+for stray in $(find scripts -mindepth 2 -name '*.ps1' -not -path 'scripts/ps1/*'); do
+    printf '    FAIL %s is PowerShell outside scripts/ps1\n' "$stray"
+    failed=1
+done
+for language in sh python ps1; do
     if [[ -z $(find "scripts/$language" -maxdepth 1 -type f -print -quit 2>/dev/null) ]]; then
         printf '    FAIL scripts/%s holds nothing; the split it names is gone\n' "$language"
         failed=1
@@ -96,7 +100,20 @@ for script in scripts/sh/install.sh scripts/sh/uninstall.sh scripts/sh/install-t
     fi
 done
 if ! scripts/sh/install-tests.sh; then
-    printf '    FAIL the installer did not preserve its checksum, ownership, or rollback contract\n'
+    printf '    FAIL the installer did not preserve its checksum, ownership, rollback or output contract\n'
+    failed=1
+fi
+# install.ps1 is the Windows peer of install.sh, so the release stages, sums,
+# attests and publishes it wherever it does install.sh. Its tests need a
+# Windows runner, and run in rust-ci.yml.
+while IFS= read -r line; do
+    if [[ $line != *install.ps1* ]]; then
+        printf '    FAIL release.yml handles install.sh without install.ps1: %s\n' "${line#"${line%%[![:space:]]*}"}"
+        failed=1
+    fi
+done < <(grep -E 'install\.sh.*(release-metadata/|SHA256SUMS|assets/uninstall\.sh)' .github/workflows/release.yml)
+if ! grep -qE '^ +assets/install\.ps1$' .github/workflows/release.yml; then
+    printf '    FAIL release.yml does not attest install.ps1 beside install.sh\n'
     failed=1
 fi
 

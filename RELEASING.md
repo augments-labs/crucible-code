@@ -226,8 +226,11 @@ a release short of this one carries a warning saying so. Read the warnings on a
 release run before announcing it.
 
 `install.sh` and `uninstall.sh` are standalone release assets and are also in
-every archive. The Bash installer is for Unix targets; Windows uses the bare
-executable and the manual checksum path documented in Getting started.
+every archive. The Bash installer is for Unix targets. `install.ps1`, the
+PowerShell installer for Windows, is a standalone release asset only: it
+downloads and verifies the Windows archive, so carrying it inside that archive
+would change nothing. Each installer is in `SHA256SUMS` and attested like the
+archives.
 
 An artifact is named for the version it holds rather than for the tag it was cut
 from, so there is no `v` in it — the `v` belongs to git. The triple is what the

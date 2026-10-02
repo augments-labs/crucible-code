@@ -37,9 +37,21 @@ change in any release with no deprecation period.
   repository's other worktrees, each named on the keys row by what it does next.
   Enter on another directory's session says the `cd … && crucible --resume <id>`
   that picks it up there, on two rows where one is too narrow to hold it.
+- **Windows has an installer.** In PowerShell 5.1 or 7,
+  `irm https://github.com/augments-labs/crucible-code/releases/latest/download/install.ps1 | iex`
+  verifies the Windows archive against `SHA256SUMS` before unpacking it into
+  `%LOCALAPPDATA%\Programs\crucible\bin`, and says how to put that directory
+  on `PATH`, which it changes only under `-AddToPath`.
 
 ### Changed
 
+- **The installers show each step as it runs.** In a terminal, `install.sh`
+  and `install.ps1` mark each of detect platform, download, verify checksum,
+  unpack and install, draw a bar while the archive downloads, and end with
+  where crucible went and how to put it on `PATH`. Piped, or under
+  `NO_COLOR` or `TERM=dumb`, they print one plain `install:` line per step, and
+  a failure during one of those steps names it; flags, downloads, destinations
+  and exit codes are unchanged.
 - **The queue box always says how to open the queue, and the queue can delete a
   message.** `ctrl+q edit` is on the box's bottom edge for one waiting message
   as for many, and the open queue ends in a footer naming <kbd>↑</kbd><kbd>↓</kbd>,
