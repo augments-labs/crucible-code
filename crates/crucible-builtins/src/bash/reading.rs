@@ -39,16 +39,13 @@ const NUMBER: &str = "number";
 /// arguments.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Answers with what a command left running has printed so far. Use it instead of \
-                running something else to find out how one is going: the number is the one the \
-                call that left it running was answered with. A command that has already ended \
-                is not here — what it printed arrives on its own when it ends."
+        about: "What a command left running has printed so far; use it rather than another \
+                command to see how one is going. An ended one is not here: its output arrives on \
+                its own."
             .into(),
         fields: vec![Field {
             name: NUMBER,
-            about: "The number the command is running as, as the call that left it running \
-                    answered with."
-                .into(),
+            about: "The number the call that left it running answered with.".into(),
             needed: true,
             shape: Shape::Count(Whole {
                 least: 1,

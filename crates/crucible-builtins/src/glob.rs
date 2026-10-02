@@ -64,20 +64,18 @@ const CEILING: usize = 1_000;
 /// meets.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Lists files in the workspace whose path matches a glob. Skips anything \
-                gitignored."
-            .into(),
+        about: "Lists workspace files whose path matches a glob. Skips anything gitignored.".into(),
         fields: vec![
             Field {
                 name: PATTERN,
-                about: "The glob to match, for example **/*.rs or src/**/mod.rs.".into(),
+                about: "The glob to match, such as **/*.rs or src/**/mod.rs.".into(),
                 needed: true,
                 shape: Shape::Text,
             },
             Field {
                 name: PATH,
                 about: "A directory to search under, relative to the workspace root. Defaults to \
-                        the whole workspace."
+                        all of it."
                     .into(),
                 needed: false,
                 shape: Shape::Text,
@@ -85,9 +83,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
             Field {
                 name: LIMIT,
                 about: format!(
-                    "How many paths to return. Defaults to {PATHS}, and never more than \
-                     {CEILING} however large a number is sent. The answer is cut at {OUTPUT} \
-                     bytes as well, whichever comes first."
+                    "Most paths to return. Defaults to {PATHS}, at most {CEILING}. The answer is \
+                     also cut at {OUTPUT} bytes."
                 ),
                 needed: false,
                 shape: Shape::Count(Whole {
@@ -98,9 +95,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
             Field {
                 name: SORT,
                 about: format!(
-                    "What order to answer in, and therefore which paths a limit keeps. {PATH} is \
-                     alphabetical and the default; {MODIFIED} is most recently changed first, for \
-                     finding what a project has been working on."
+                    "{PATH} is alphabetical and the default; {MODIFIED} is newest first, to find \
+                     recent work. Decides which paths limit keeps."
                 ),
                 needed: false,
                 shape: Shape::Choice(&[PATH, MODIFIED]),

@@ -64,23 +64,19 @@ fn change(within: &str) -> Vec<Field> {
     vec![
         Field {
             name: FIND,
-            about: format!(
-                "The exact text to replace, copied from the file including its indentation.\
-                 {within}"
-            ),
+            about: format!("The exact text to replace, with its indentation.{within}"),
             needed: true,
             shape: Shape::Text,
         },
         Field {
             name: REPLACE,
-            about: "The text to put in its place. Empty to delete the text found.".into(),
+            about: "Its replacement; empty deletes the text.".into(),
             needed: true,
             shape: Shape::Text,
         },
         Field {
             name: ALL,
-            about: "Replace every occurrence instead of requiring exactly one. Defaults to false."
-                .into(),
+            about: "Replace every occurrence. Defaults to false.".into(),
             needed: false,
             shape: Shape::Flag,
         },
@@ -99,20 +95,19 @@ fn change(within: &str) -> Vec<Field> {
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     let mut fields = vec![Field {
         name: PATH,
-        about: "The file to change, relative to the workspace root.".into(),
+        about: "The file, relative to the workspace root.".into(),
         needed: true,
         shape: Shape::Text,
     }];
-    let mut single = change(" Send this and replace for a single change, or edits for several.");
+    let mut single = change(" Pair with replace.");
     for one in &mut single {
         one.needed = false;
     }
     fields.append(&mut single);
     fields.push(Field {
         name: EDITS,
-        about: "Several changes to make to the file in one call, instead of find and replace. \
-                They are made in order, each one looking at what the one before it left. If any \
-                of them cannot be made, none of them is made and the file is left as it was."
+        about: "Several changes instead of find and replace, each made on what the one before \
+                left. If any fails, none is made."
             .into(),
         needed: false,
         shape: Shape::List {
@@ -124,14 +119,12 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     fields.extend(crate::account::fields(
         "path",
         "What the change does",
-        "Where the call makes several changes, or replaces every occurrence, account for each \
-         place it lands.",
+        "Account for each place a change lands.",
     ));
     Schema {
         about: format!(
-            "Replaces exact text in a file in the workspace, either once or several times in one \
-             call. The text to find must appear exactly once unless all is true. Source and \
-             result must each be no larger than {FILE_LIMIT} bytes."
+            "Replaces exact text in a workspace file. The text to find must appear exactly once \
+             unless all is true. Source and result are each at most {FILE_LIMIT} bytes."
         ),
         fields,
     }

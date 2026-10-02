@@ -43,10 +43,9 @@ pub enum Room {
 /// the calls being replaced and appended by code after validation, so the list
 /// survives a second compaction instead of going out with the first recap.
 pub const RECAP_REQUEST: &str = "\
-Before anything else, create a structured context checkpoint from everything \
-above so another model pass can continue the work. Use exactly every heading \
-and subheading below, in this order. Keep each section concise. Write `(none)` \
-where a section has nothing to say rather than omitting it.\n\n\
+First, write a checkpoint of everything above for another pass to continue \
+from. Use every heading below, exactly and in order; keep each concise, and \
+write `(none)` under an empty one.\n\n\
 ## Goal\n\
 ## Constraints & Preferences\n\
 ## Progress\n\
@@ -56,11 +55,10 @@ where a section has nothing to say rather than omitting it.\n\n\
 ## Decisions\n\
 ## Next Steps\n\
 ## Critical Context\n\n\
-Preserve exact file paths, function and type names, commands, error messages, \
-requirements, decisions and unfinished state. Write operational notes for \
-yourself, not a report to the user. End after the content of \
-`## Critical Context`; the exact `Files so far` list is appended by the program. \
-Output nothing before `## Goal` or after that final section.";
+Keep exact paths, names, commands, errors, requirements, decisions and \
+unfinished state. Write notes for yourself, not a report. Output nothing before \
+`## Goal` or after the content of `## Critical Context`: the program appends \
+`Files so far`.";
 
 /// The line the tracked files stand under in a recap.
 ///
