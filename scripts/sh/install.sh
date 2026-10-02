@@ -81,6 +81,8 @@ if ((fancy)); then
 fi
 # The detail of a step starts here, after the indent, the mark and the label.
 detail_column=$((2 + mark_width + 1 + 20))
+# Set by the banner, which decides once where every detail goes.
+narrow=0
 step=
 spinner=
 download_to=
@@ -109,14 +111,15 @@ wrapped() {
 
 # One step's row: the mark, the label, then the detail, the detail and the
 # mark each in their colour. The mark is padded before it is coloured, since
-# the padding would count the colour's codes. A detail that does not fit beside
-# the label goes under it, each ` · `-separated part on its own rows.
+# the padding would count the colour's codes. In a narrow terminal, and for a
+# detail that does not fit beside the label, the detail goes under it, each
+# ` · `-separated part on its own rows.
 row() {
     local mark=$1 label=$2 detail=$3 tint=$4 mark_tint=$5 part
     printf '\r\033[K  %s%*s%s %s' "$mark_tint" "$mark_width" "$mark" "$plain" "$label"
     if [[ -z $detail ]]; then
         printf '\n'
-    elif ((detail_column + ${#detail} <= columns)); then
+    elif ((!narrow && detail_column + ${#detail} <= columns)); then
         printf '%*s%s%s%s\n' $((20 - ${#label})) '' "$tint" "$detail" "$plain"
     else
         printf '\n'
@@ -177,7 +180,11 @@ stop_spinner() {
     spinner=
 }
 
+# A terminal is narrow when the download's row, the widest a run draws, could
+# not hold its detail beside its label.
 banner() {
+    local widest="crucible-$version-$1.tar.gz $dot 999.9 MB"
+    ((detail_column + ${#widest} <= columns)) || narrow=1
     if ((fancy)); then
         printf '\n%scrucible %s%s%s\n\n' "$bold" "$version" "$plain" "${1:+ $dot $1}"
     else

@@ -106,7 +106,8 @@ function Invoke-CrucibleInstall {
     }
     # The detail of a step starts here, after the indent, the mark and the label.
     $detailColumn = 2 + $markWidth + 1 + 20
-    $ui = @{ Step = ''; Frame = 0; Drawn = [DateTime]::MinValue; Status = 0 }
+    # Narrow is set by the banner, which decides once where every detail goes.
+    $ui = @{ Step = ''; Frame = 0; Drawn = [DateTime]::MinValue; Status = 0; Narrow = $false }
 
     function Write-Out([string]$Text) { [Console]::Out.Write($Text) }
 
@@ -129,14 +130,15 @@ function Invoke-CrucibleInstall {
         return (($rows | ForEach-Object { "$Indent$_" }) -join [Environment]::NewLine)
     }
 
-    # One step's row: the mark, the label, then the detail in its colour. A
-    # detail that does not fit beside the label goes under it, with each
-    # part between its dots on rows of its own.
+    # One step's row: the mark, the label, then the detail in its colour. In
+    # a narrow console, and for a detail that does not fit beside the label,
+    # the detail goes under it, with each part between its dots on rows of its
+    # own.
     function Write-Row([string]$Mark, [string]$Tint, [string]$Detail) {
         Write-Out ("`r$esc[K  " + $Tint + $Mark.PadLeft($markWidth) + $plain + ' ' + $ui.Step)
         if (-not $Detail) {
             Write-Out ([Environment]::NewLine)
-        } elseif ($detailColumn + $Detail.Length -le $columns) {
+        } elseif (-not $ui.Narrow -and $detailColumn + $Detail.Length -le $columns) {
             $detailTint = $dim
             if ($Tint -eq $red) { $detailTint = $red }
             Write-Out ((' ' * (20 - $ui.Step.Length)) + $detailTint + $Detail + $plain + [Environment]::NewLine)
@@ -181,7 +183,11 @@ function Invoke-CrucibleInstall {
         return ($fill * $filled) + $dim + ($rest * ($room - $filled)) + $plain + "  $dim$sizes$plain"
     }
 
+    # A console is narrow when the download's row, the widest a run draws,
+    # could not hold its detail beside its label.
     function Write-Banner([string]$Platform) {
+        $widest = "crucible-$Version-$Platform.tar.gz $dot 999.9 MB"
+        $ui.Narrow = $detailColumn + $widest.Length -gt $columns
         if ($fancy) {
             $suffix = ''
             if ($Platform) { $suffix = " $dot $Platform" }

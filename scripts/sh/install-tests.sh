@@ -354,6 +354,12 @@ narrow=$(in_terminal 40 env TERM=xterm LC_ALL=C "$INSTALL" --version "$version" 
     --dir "$scratch/a-directory-whose-name-is-too-long-for-the-row" \
     --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
 expect 'a narrow terminal' "$narrow" 'status=0'
+# Every detail sits under its step, even one that would fit beside it, so the
+# list reads as one column.
+for step in "detect platform"$'\r\n'"    $platform-$architecture" \
+    "verify checksum"$'\r\n'"    SHA256SUMS"; do
+    expect 'a narrow terminal' "$(visible "$narrow")" $'\r'"  ok $step"
+done
 while IFS= read -r row; do
     row=${row%$'\r'}
     row=${row##*$'\r'}
