@@ -172,6 +172,7 @@ pub(super) fn heard(arrived: Pressed) -> Heard {
         | Pressed::Copy
         | Pressed::PasteImage
         | Pressed::Rename
+        | Pressed::All
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

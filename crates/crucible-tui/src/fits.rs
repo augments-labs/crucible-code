@@ -638,24 +638,28 @@ fn a_shelf_fits_the_window_it_stands_in() {
 fn a_picker_fits_the_window_it_stands_in() {
     // The other component that fills its room, so the height half of the sweep
     // is the one doing the work again. The fixtures are the states its
-    // arithmetic is least safe in — a title and a branch far too long for the
-    // list's share of the split, a preview row that will not break, a rename in
-    // flight, and then nothing at all with a query still standing.
+    // arithmetic is least safe in — a title, a branch and a directory far too
+    // long for the list's share of the split, a preview row that will not
+    // break, a rename in flight, a notice wider than the window, and then
+    // nothing at all with a query still standing.
     const SESSIONS: [Kept<'static>; 3] = [
         Kept {
             title: LONG,
             when: PROSE,
             branch: LONG,
+            place: LONG,
         },
         Kept {
             title: PROSE,
             when: LONG,
             branch: "",
+            place: PROSE,
         },
         Kept {
             title: "a",
             when: "now",
             branch: LONG,
+            place: "",
         },
     ];
     let preview: Vec<Row> = [LONG, PROSE, "", LONG]
@@ -678,6 +682,7 @@ fn a_picker_fits_the_window_it_stands_in() {
         nothing: PROSE,
         noview: LONG,
         keys: (PROSE, LONG),
+        notice: Some(LONG),
         pointer: Some((6, 3)),
     };
     down("a picker", |columns, room, glyphs| {

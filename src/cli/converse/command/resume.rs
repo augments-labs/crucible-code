@@ -414,6 +414,7 @@ fn stood<T: Terminal>(
                     title: session.title(),
                     when,
                     branch: session.branch().unwrap_or_default(),
+                    place: "",
                 })
                 .collect();
 
@@ -497,6 +498,7 @@ fn stood<T: Terminal>(
                 nothing: &empty,
                 noview: NOVIEW,
                 keys: (&long, &short),
+                notice: None,
                 pointer: stood.standing.pointer,
             };
 

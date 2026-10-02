@@ -126,6 +126,13 @@ pub enum Pressed {
     /// the one "rename" starts with. A component with nothing to rename reads
     /// it as any other key it has no use for.
     Rename,
+    /// Ctrl+A: widen a listing to everything it could list, or back.
+    ///
+    /// Readline's start-of-line, which the box answers with Home, so the
+    /// letter is free; it is the one "all" starts with. Like [`Pressed::Rename`]
+    /// it means something only where a listing has a narrower and a wider
+    /// reach, and every other component reads it as a key it has no use for.
+    All,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
     /// The up arrow: back one row through whatever is listed above the box.
@@ -464,6 +471,10 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // and it is the one "rename" starts with.
         KeyCode::Char('r') if bound => Pressed::Rename,
 
+        // Ctrl+A is readline's start-of-line, which the box already answers
+        // with Home. The letter is free, and it is the one "all" starts with.
+        KeyCode::Char('a') if bound => Pressed::All,
+
         // A word either way, spelled the three ways the terminals here spell
         // it: control and an arrow on Linux and Windows, alt and an arrow on
         // macOS, and the pair readline has answered to for as long as there
@@ -632,6 +643,14 @@ mod tests {
         // that want with the up arrow through what was asked before — so the
         // letter is free for the component that renames what its mark is on.
         assert_eq!(meaning(control(KeyCode::Char('r'))), Pressed::Rename);
+    }
+
+    #[test]
+    fn ctrl_a_arrives_as_the_press_that_widens_a_listing() {
+        // Readline's start-of-line, which the box answers with Home. Alt with
+        // the same letter is still nothing, for the reason any alt binding is.
+        assert_eq!(meaning(control(KeyCode::Char('a'))), Pressed::All);
+        assert_eq!(meaning(alt(KeyCode::Char('a'))), Pressed::Ignored);
     }
 
     #[test]
@@ -872,14 +891,14 @@ mod tests {
 
     #[test]
     fn a_binding_this_release_has_no_meaning_for_types_nothing() {
-        // Ctrl-A is the start of a line in one program and select-all in the
-        // next. Typing a bare `a` for it would be the worst of the three.
-        assert_eq!(meaning(control(KeyCode::Char('a'))), Pressed::Ignored);
+        // Ctrl-X is a prefix in one program and cut in the next. Typing a bare
+        // `x` for it would be the worst of the three.
+        assert_eq!(meaning(control(KeyCode::Char('x'))), Pressed::Ignored);
 
         // Alt is the modifier a reader is most likely to be holding for
         // something this program has never heard of — a window manager's, an
         // emulator's — and the letter under it is not what they meant to type.
-        assert_eq!(meaning(alt(KeyCode::Char('a'))), Pressed::Ignored);
+        assert_eq!(meaning(alt(KeyCode::Char('x'))), Pressed::Ignored);
     }
 
     #[test]

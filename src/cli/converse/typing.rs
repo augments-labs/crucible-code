@@ -622,6 +622,7 @@ pub(crate) fn ask<T: Terminal>(
             | Pressed::Queue
             | Pressed::Tab
             | Pressed::Rename
+            | Pressed::All
             | Pressed::Dragged { .. }
             | Pressed::Hovered { .. }
             | Pressed::Released { .. }
@@ -1619,6 +1620,7 @@ fn meant(arrived: Pressed) -> Meant {
         Pressed::Explain
         | Pressed::Tab
         | Pressed::Rename
+        | Pressed::All
         | Pressed::Dragged { .. }
         | Pressed::Hovered { .. }
         | Pressed::Released { .. }

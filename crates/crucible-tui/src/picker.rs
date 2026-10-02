@@ -8,8 +8,10 @@
 //! caller reads as *there was no room to stand one*.
 //!
 //! It is handed strings and pre-drawn rows and knows no domain type. What
-//! narrowed the query, what the preview holds, and what the metadata line says
-//! are all decided before they arrive. Nothing here names a colour: every span
+//! narrowed the query, what the preview holds, what the metadata line says and
+//! what a notice under the panes tells the reader are all decided before they
+//! arrive. A directory on a row comes from a file, so the caller flattens it
+//! before handing it here. Nothing here names a colour: every span
 //! asks for a [`Slot`] and the palette settles what one is worth.
 //!
 //! The preview is drawn from the *end* of the rows it was handed: what a
@@ -27,7 +29,8 @@ use crate::width::{clip, columns as wide, windowed};
 /// The rows a picker spends on everything that is not a row of the split.
 ///
 /// The three the search line's frame costs, the heading under it, its blank,
-/// the two the panes' frames cost, the blank over the keys, and the keys.
+/// the two the panes' frames cost, the row over the keys — blank unless there
+/// is a notice to stand on it — and the keys.
 const CHROME: usize = 9;
 
 /// The fewest body rows a picker stands in: one entry of the list.
@@ -75,6 +78,9 @@ pub struct Kept<'a> {
     pub when: &'a str,
     /// The branch it was recorded on, or empty where nothing was.
     pub branch: &'a str,
+    /// The directory it was recorded in, where that is not the one the picker
+    /// was opened in; empty for a session of this directory.
+    pub place: &'a str,
 }
 
 /// What a place on the picker answers to, for a caller that has to act on it.
@@ -146,6 +152,10 @@ pub struct Picker<'a> {
     pub noview: &'a str,
     /// The keys row, and the short form for a narrow window.
     pub keys: (&'a str, &'a str),
+    /// What the picker has to tell the reader about the last key they pressed,
+    /// said on the row between the panes and the keys. `None` leaves that row
+    /// blank.
+    pub notice: Option<&'a str>,
     /// Where the pointer is resting: a row of what [`Picker::within`] answered,
     /// and a column of the window. `None` is a pointer never reported.
     pub pointer: Option<(usize, usize)>,
@@ -191,7 +201,7 @@ impl Picker<'_> {
         rows.push(self.edged(columns, glyphs, glyphs.top()));
         rows.extend(self.split(columns, body, glyphs, under));
         rows.push(self.edged(columns, glyphs, glyphs.bottom()));
-        rows.push(Row::new());
+        rows.push(self.noticed(columns));
         rows.push(self.keyed(columns));
         rows
     }
@@ -416,11 +426,14 @@ impl Picker<'_> {
                             return row;
                         }
 
-                        let aged = if one.branch.is_empty() {
-                            one.when.to_owned()
-                        } else {
-                            format!("{} {} {}", one.when, glyphs.dot(), one.branch)
-                        };
+                        // The directory last: it is there only on a row from
+                        // somewhere else, and the age the rows line up on
+                        // stays where it is on every one.
+                        let aged = [one.when, one.branch, one.place]
+                            .into_iter()
+                            .filter(|said| !said.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(&format!(" {} ", glyphs.dot()));
                         row.push(lit(on, Slot::Quiet), clip(&aged, word).to_owned());
                         row.fill(lit(on, Slot::Plain), inside);
                         row
@@ -470,6 +483,19 @@ impl Picker<'_> {
                 Row::new().then(Slot::Plain, " ").join(said)
             })
             .collect()
+    }
+
+    /// The row between the panes and the keys: blank, or what the picker was
+    /// handed to tell the reader, cut where the window ends.
+    fn noticed(&self, columns: usize) -> Row {
+        let Some(notice) = self.notice else {
+            return Row::new();
+        };
+
+        let mut row = Row::new();
+        row.push(Slot::Plain, " ");
+        row.push(Slot::Plain, clip(notice, columns.saturating_sub(2)));
+        row.clipped(columns)
     }
 
     /// What the keys do, in the longest form the window has room for.

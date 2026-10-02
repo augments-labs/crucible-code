@@ -7,26 +7,31 @@ const FIVE: [Kept<'static>; 5] = [
         title: "Prompt history with arrow navigation",
         when: "now",
         branch: "main",
+        place: "",
     },
     Kept {
         title: "/plugin",
         when: "7 hours ago",
         branch: "fix/background-command-offer",
+        place: "",
     },
     Kept {
         title: "/plugin",
         when: "8 hours ago",
         branch: "fix/minor-session-display",
+        place: "",
     },
     Kept {
         title: "/clear",
         when: "13 hours ago",
         branch: "main",
+        place: "",
     },
     Kept {
         title: "Release 0.23.0 smoke gates",
         when: "17 hours ago",
         branch: "main",
+        place: "",
     },
 ];
 
@@ -71,6 +76,7 @@ fn picker<'a>(sessions: &'a [Kept<'a>], preview: &'a [Row]) -> Picker<'a> {
         nothing: "no earlier session for this workspace",
         noview: "nothing to show",
         keys: KEYS,
+        notice: None,
         pointer: None,
     }
 }
@@ -211,6 +217,51 @@ fn each_pane_stands_in_its_own_rounded_frame() {
     assert_eq!(over.matches('╮').count(), 2, "{over:?}");
     assert_eq!(under.matches('╰').count(), 2, "{under:?}");
     assert_eq!(under.matches('╯').count(), 2, "{under:?}");
+}
+
+#[test]
+fn a_session_from_another_directory_names_it_under_its_title() {
+    // The directory goes last on the row under the title, after the branch,
+    // so a list mixing directories still lines its ages up on the left. Kept
+    // short here: the list's share of a hundred columns is thirty-six.
+    let elsewhere = [
+        Kept {
+            place: "~/other",
+            ..FIVE[3]
+        },
+        Kept {
+            branch: "",
+            place: "~/third",
+            ..FIVE[4]
+        },
+    ];
+    let preview = tail();
+    let rows = picker(&elsewhere, &preview).within(100, 30, Glyphs::Unicode);
+
+    let first = said(&rows, LISTED + 1);
+    let second = said(&rows, LISTED + 4);
+    assert!(first.contains("13 hours ago · main · ~/other"), "{first:?}");
+    assert!(second.contains("17 hours ago · ~/third"), "{second:?}");
+}
+
+#[test]
+fn a_notice_stands_on_the_row_between_the_panes_and_the_keys() {
+    let preview = tail();
+    let mut picker = picker(&FIVE, &preview);
+    picker.notice = Some("In ~/other: cd ~/other && crucible --resume 1");
+
+    let rows = picker.within(100, 30, Glyphs::Unicode);
+
+    let under = said(&rows, 30 - 2);
+    assert!(
+        under.contains("In ~/other: cd ~/other && crucible --resume 1"),
+        "{under:?}"
+    );
+    assert!(
+        said(&rows, 30 - 1).contains("↑↓ to walk"),
+        "{:?}",
+        said(&rows, 30 - 1)
+    );
 }
 
 #[test]
@@ -385,6 +436,7 @@ fn the_marked_session_is_on_screen_on_every_rung_of_the_scroll() {
         title,
         when: "now",
         branch: "main",
+        place: "",
     })
     .collect();
     let preview = tail();
@@ -510,6 +562,7 @@ fn a_scrolled_list_answers_with_the_session_the_reader_can_see() {
         title,
         when: "now",
         branch: "main",
+        place: "",
     })
     .collect();
     let preview = tail();
