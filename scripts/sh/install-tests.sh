@@ -367,6 +367,26 @@ while IFS= read -r row; do
     }
 done <<<"$narrow"
 
+echo '==> a terminal with no controlling terminal behind it prints no shell error'
+# A new session has no controlling terminal, so /dev/tty cannot be opened even
+# though both outputs are still a terminal.
+if command -v setsid >/dev/null; then
+    ttyless_bin=$scratch/ttyless-bin
+    ttyless=$(in_terminal 80 setsid -w env TERM=xterm LC_ALL=C "$INSTALL" \
+        --version "$version" --dir "$ttyless_bin" \
+        --archive "$asset/$stem.tar.gz" --checksums "$asset/SHA256SUMS")
+    refuse 'install with no controlling terminal' "$ttyless" '/dev/tty'
+    expect 'install with no controlling terminal' "$(visible "$ttyless")" 'ok install'
+    expect 'install with no controlling terminal' "$ttyless" 'status=0'
+    ttyless=$(in_terminal 80 setsid -w env TERM=xterm LC_ALL=C \
+        CRUCIBLE_CODE_HOME="$scratch/ttyless-home" "$UNINSTALL" --dir "$ttyless_bin")
+    refuse 'uninstall with no controlling terminal' "$ttyless" '/dev/tty'
+    expect 'uninstall with no controlling terminal' "$(visible "$ttyless")" 'ok remove'
+    expect 'uninstall with no controlling terminal' "$ttyless" 'status=0'
+else
+    echo '    skipped: this host has no setsid to start a session without a terminal'
+fi
+
 echo '==> uninstall marks its steps in a terminal and stays plain when piped'
 look_bin=$scratch/look-bin
 install_from "$asset" "$look_bin" >/dev/null

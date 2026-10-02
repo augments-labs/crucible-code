@@ -74,7 +74,9 @@ mark_width=${#done_mark}
 readonly bold=$'\033[1m' dim=$'\033[2m' red=$'\033[31m' green=$'\033[32m' plain=$'\033[0m'
 columns=80
 if ((fancy)); then
-    columns=$(stty size </dev/tty 2>/dev/null | awk '{ print $2 }') || true
+    # Errors are silenced first: a session with no controlling terminal
+    # cannot open /dev/tty, and the shell itself would say so.
+    columns=$(stty size 2>/dev/null </dev/tty | awk '{ print $2 }') || true
     [[ $columns =~ ^[0-9]+$ ]] && ((columns >= 20)) || columns=80
 fi
 # The detail of a step starts here, after the indent, the mark and the label.

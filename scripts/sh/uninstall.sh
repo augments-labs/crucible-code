@@ -98,7 +98,9 @@ shown() {
 
 columns=80
 if ((fancy)); then
-    columns=$(stty size </dev/tty 2>/dev/null | awk '{ print $2 }') || true
+    # Errors are silenced first: a session with no controlling terminal
+    # cannot open /dev/tty, and the shell itself would say so.
+    columns=$(stty size 2>/dev/null </dev/tty | awk '{ print $2 }') || true
     [[ $columns =~ ^[0-9]+$ ]] && ((columns >= 20)) || columns=80
 fi
 
