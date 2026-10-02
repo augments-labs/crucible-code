@@ -221,6 +221,27 @@ pub(crate) fn silent() -> Conversation {
     })
 }
 
+/// A conversation whose plan keeps a source of its limits and answers a
+/// weekly window plan-wide and a group for one model each time it is asked,
+/// and a handle on how many times it was.
+pub(crate) fn asking_plan() -> (Conversation, crate::cli::fake::Asked) {
+    use crucible_types::{GroupName, PlanWindows, Scope, Window, WindowReading};
+    let spark = GroupName::new("GPT-5.3-Codex-Spark").expect("a name");
+    let windows = PlanWindows::new(std::time::SystemTime::now())
+        .with(Window::Weekly, WindowReading::new(31, None))
+        .within(
+            Scope::Model(spark),
+            Window::FiveHour,
+            WindowReading::new(12, None),
+        );
+    let script = Script::new(Vec::new()).answering(windows);
+    let asked = script.limits_asked();
+    let conversation = paired(Arc::new(Session::nowhere()), |session| {
+        scripted(script, Tools::new(), session)
+    });
+    (conversation, asked)
+}
+
 /// The whole loop over one script: what the terminal ended up with, and how
 /// many requests the script was given.
 fn over(script: Script, offered: Tools, typed: &str) -> (String, usize) {

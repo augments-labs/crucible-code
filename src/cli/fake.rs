@@ -79,6 +79,10 @@ pub(crate) struct Script {
     refusing: bool,
     /// The refusal of a used-up plan every request meets, where one does.
     used_up: Option<UsedUp>,
+    /// What the plan answers when it is asked, where it keeps a source.
+    answering: Option<PlanWindows>,
+    /// How many times the plan was asked.
+    limits_asked: Asked,
 }
 
 /// A vendor's refusal of a used-up plan, and the windows its head reported,
@@ -98,7 +102,24 @@ impl Script {
             sent: Sent::default(),
             refusing: false,
             used_up: None,
+            answering: None,
+            limits_asked: Asked::default(),
         }
+    }
+
+    /// A provider whose plan keeps a source of its limits, and answers
+    /// `windows` each time it is asked.
+    pub(crate) fn answering(self, windows: PlanWindows) -> Self {
+        Self {
+            answering: Some(windows),
+            ..self
+        }
+    }
+
+    /// A handle on how many times the plan was asked, taken the same way as
+    /// [`Self::asked`].
+    pub(crate) fn limits_asked(&self) -> Asked {
+        Arc::clone(&self.limits_asked)
     }
 
     /// A provider that will not answer at all.
@@ -169,6 +190,15 @@ impl Provider for Script {
 
     fn prompt_cache_encoding(&self, _request: &Request<'_>) -> PromptCacheEncoding {
         PromptCacheEncoding::NoControlIntended
+    }
+
+    fn ask_limits(&self) -> Option<BoxFuture<'static, crucible_models::Asked>> {
+        let windows = self.answering.clone()?;
+        let asked = Arc::clone(&self.limits_asked);
+        Some(Box::pin(async move {
+            asked.fetch_add(1, Ordering::Relaxed);
+            crucible_models::Asked::Answered(windows)
+        }))
     }
 
     fn stream<'a>(

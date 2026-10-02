@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crucible_app::Conversation;
-use crucible_app::client::{Desk, Performed, interrupt, keep, perform};
+use crucible_app::client::{Answered, Desk, Performed, asked, asking, interrupt, keep, perform};
 use crucible_app::providers::Providers;
 use crucible_client_api::{
     Capabilities, Command, Correlation, Decision, Name, Outcome, Pending, Refusal, Request, Theme,
@@ -132,6 +132,85 @@ impl Terms {
         self.client
             .answered(&request, conversation, || performed.outcome());
 
+        performed
+    }
+}
+
+/// A plan being asked how much of its limits is used, on the runtime, while
+/// the drawing thread goes on drawing and reading keys.
+///
+/// Dropped before the answer was taken back, the question is abandoned and
+/// its request closed: a panel closed before the plan answered has nowhere to
+/// show what it said.
+pub(crate) struct Out {
+    request: Request,
+    provider: &'static str,
+    answer: tokio::task::JoinHandle<Answered>,
+}
+
+impl Out {
+    /// The registry name of the provider whose plan is being asked.
+    pub(crate) const fn provider(&self) -> &'static str {
+        self.provider
+    }
+
+    /// Whether the plan has answered, or the question has otherwise ended.
+    pub(crate) fn ended(&self) -> bool {
+        self.answer.is_finished()
+    }
+}
+
+impl Drop for Out {
+    fn drop(&mut self) {
+        self.answer.abort();
+    }
+}
+
+impl Terms {
+    /// Asks the plan of the provider `conversation` is asking how much of its
+    /// limits is used, where the application asks it at all, and hands back
+    /// the question still out. Nothing is waited for here.
+    pub(crate) fn ask_limits(&self, conversation: &mut Conversation) -> Option<Out> {
+        let request = self.client.asking(Command::AskLimits);
+        let Ok(Some(question)) = asking(conversation, &request, std::time::Instant::now()) else {
+            // Nothing was sent; the request is answered with what is known,
+            // as the application answers it whole.
+            self.known(conversation, &request);
+            return None;
+        };
+        Some(Out {
+            provider: question.provider(),
+            answer: self.runtime.spawn(question.answered()),
+            request,
+        })
+    }
+
+    /// Takes what the plan `out` asked answered back to `conversation`, and
+    /// hands back the usage as it now stands for the caller to draw. Waits for
+    /// the answer where it has not come yet, so a caller that must not wait
+    /// asks [`Out::ended`] first.
+    pub(crate) fn asked(&self, conversation: &mut Conversation, mut out: Out) -> Performed {
+        let performed = match self.runtime.block_on(&mut out.answer) {
+            Ok(answered) => asked(conversation, answered),
+            // The question panicked or was abandoned: nothing was learned.
+            Err(_) => return self.known(conversation, &out.request),
+        };
+        self.client
+            .answered(&out.request, conversation, || performed.outcome());
+        performed
+    }
+
+    /// Answers `request`, a question to the plan that was not put or never
+    /// came back, through the door that answers it whole. Whatever kept it
+    /// from being put still holds, or it was put moments ago, so that door
+    /// sends nothing and answers with what is known.
+    fn known(&self, conversation: &mut Conversation, request: &Request) -> Performed {
+        let providers = self.providers.snapshot();
+        let performed =
+            self.runtime
+                .block_on(perform(conversation, request, &self.desk(&providers)));
+        self.client
+            .answered(request, conversation, || performed.outcome());
         performed
     }
 }

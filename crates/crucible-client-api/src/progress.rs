@@ -85,8 +85,9 @@ pub enum Progress {
     /// totals as of the last response that ended or edit that changed lines.
     /// It is sent at those two points only, not as a response's tokens arrive.
     Used(Used),
-    /// The plan windows a response of the running turn reported, as `/usage`
-    /// reads them while it runs. Only a vendor that reports them sends this.
+    /// The plan's limits as they stand once a response of the running turn
+    /// reported some, as `/usage` reads them while it runs. Only a vendor that
+    /// reports them sends this.
     Limits(Limits),
     /// A turn reported that it finished.
     Finished {

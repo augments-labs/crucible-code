@@ -2,11 +2,10 @@
 
 use crucible_client_api as api;
 use crucible_runner::SessionCost;
-use std::collections::BTreeSet;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crucible_types::{
-    CostAmount, PlanWindows, PricingCurrency, PricingUnit, Window, WindowReading,
+    CostAmount, GroupName, PlanWindows, PricingCurrency, PricingUnit, Scope, Window, WindowReading,
 };
 
 use super::{cost, limits};
@@ -65,25 +64,64 @@ fn usage_a_cost_too_large_to_cross_is_not_priced_rather_than_capped() {
 }
 
 #[test]
-fn usage_every_plan_window_has_a_slot_of_its_own_on_the_wire() {
-    // The two `Window` enums are coupled through the match in `limits`: a
-    // window added to one and not the other, or two placed in one slot,
-    // would drop a reading or cross it under another name.
-    let mut slots = BTreeSet::new();
-    let every = [Window::FiveHour, Window::Weekly, Window::Monthly];
-    for window in every {
-        let reported =
-            PlanWindows::new(SystemTime::UNIX_EPOCH).with(window, WindowReading::new(7, None));
-        let crossed = limits(&reported);
-        let filled: Vec<usize> = api::Window::EVERY
-            .iter()
-            .enumerate()
-            .filter(|(_, slot)| crossed.of(**slot).is_some())
-            .map(|(at, _)| at)
-            .collect();
-        assert_eq!(filled.len(), 1, "{window:?} fills exactly one slot");
-        slots.extend(filled);
-    }
-    assert_eq!(slots.len(), every.len(), "no two windows share a slot");
-    assert_eq!(api::Window::EVERY.len(), every.len());
+fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
+    // The two `Window` enums are coupled through the match in `window`: a
+    // window added to one and not the other fails to compile there, and one
+    // crossed under another's name fails here.
+    let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let spark = Scope::Model(GroupName::new("GPT-5.3-Codex-Spark").unwrap());
+    let reported = PlanWindows::new(SystemTime::UNIX_EPOCH)
+        .within(
+            spark.clone(),
+            Window::Lasting(180),
+            WindowReading::new(7, None),
+        )
+        .with(Window::Monthly, WindowReading::unlimited())
+        .with(Window::FiveHour, WindowReading::new(23, Some(at)))
+        .with(
+            Window::Daily,
+            WindowReading::counted(412, 1_500, None).unwrap(),
+        )
+        .with(Window::Weekly, WindowReading::new(100, None))
+        .within(spark, Window::Yearly, WindowReading::new(1, None));
+
+    let crossed = limits(&reported);
+
+    let limit = |window, reading, resets_at| api::Limit {
+        window,
+        reading,
+        resets_at,
+    };
+    let percent = |used| api::Reading::Percent(api::Percent::new(used).unwrap());
+    assert_eq!(
+        crossed,
+        api::Limits {
+            groups: vec![
+                api::LimitGroup {
+                    model: None,
+                    limits: vec![
+                        limit(api::Window::FiveHour, percent(23), Some(1_700_000_000)),
+                        limit(
+                            api::Window::Daily,
+                            api::Reading::Counted {
+                                used: 412,
+                                total: 1_500,
+                            },
+                            None,
+                        ),
+                        limit(api::Window::Weekly, percent(100), None),
+                        limit(api::Window::Monthly, api::Reading::Unlimited, None),
+                    ],
+                },
+                api::LimitGroup {
+                    model: Some(api::Name::new("GPT-5.3-Codex-Spark").unwrap()),
+                    limits: vec![
+                        limit(api::Window::Lasting { minutes: 180 }, percent(7), None),
+                        limit(api::Window::Yearly, percent(1), None),
+                    ],
+                },
+            ],
+        }
+    );
+    assert!(limits(&PlanWindows::new(SystemTime::UNIX_EPOCH)).is_empty());
 }

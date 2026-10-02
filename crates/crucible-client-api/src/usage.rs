@@ -1,10 +1,13 @@
-//! What a session has used, and how much of each plan window a vendor said
-//! was gone.
+//! What a session has used, and how much of each limit its plan has a vendor
+//! said was gone.
 //!
-//! A [`Usage`] is read off the conversation when a client asks for it, and
-//! asking sends nothing anywhere: every figure in it is one the conversation
-//! already holds. Its numbers are counts and amounts, never what they were
-//! counted from.
+//! A [`Usage`] is read off the conversation when a client asks for it with
+//! [`Command::Usage`](crate::Command::Usage), and that sends nothing anywhere:
+//! every figure in it is one the conversation already holds. Asked for with
+//! [`Command::AskLimits`](crate::Command::AskLimits), the same value comes
+//! back after the plan's vendor, where it keeps a source a sign-in can read,
+//! was asked how much of each limit is used. Its numbers are counts and
+//! amounts, never what they were counted from.
 //!
 //! **A cost that is not known is not zero.** [`Cost`] says so in its own arm,
 //! so a client cannot draw `$0.00` for a session it has no price for, and a
@@ -14,16 +17,22 @@
 //! While a turn runs, the same figures are streamed rather than asked for,
 //! beside the [`Context`] `/context` is streamed: [`Used`] crosses as progress
 //! of its own when a response ends and when an edit changes lines, and
-//! [`Limits`] when a response reports its windows. A client with no terminal
-//! reads `/usage` mid-turn from what the turn last sent, as the terminal does.
+//! [`Limits`] when a response reports some of its plan's limits. A client with
+//! no terminal reads `/usage` mid-turn from what the turn last sent, as the
+//! terminal does.
 //!
-//! **Plan windows are the vendor's figure from the last response that carried
-//! them.** At most one per [`Window`], and none at all for a vendor or a
-//! credential that does not report them; a client says "not reported" rather
-//! than inventing a bar. No age crosses with them: when that response came is
-//! not carried, so a client tells a reset already past by comparing
-//! [`Limit::resets_at`] with its own clock, as the terminal does.
+//! **Plan limits are the vendor's figures, and only those.** A plan has one
+//! limit for everything and may keep others for models of their own, each a
+//! [`LimitGroup`] of windows named by their length. None at all are sent for a
+//! vendor or a credential that reports none; a client says "not reported"
+//! rather than inventing a bar. A model's name is the vendor's, cut and
+//! stripped, and the only words of a vendor's that cross here. No age crosses
+//! with them: when the figures came is not carried, so a client tells a reset
+//! already past by comparing [`Limit::resets_at`] with its own clock, as the
+//! terminal does. Every list is bounded by the ceilings the plan's reading
+//! keeps, and a frame over them is refused.
 
+use crucible_types::{MAX_GROUP_WINDOWS, MAX_LIMIT_GROUPS, MAX_LIMIT_NAME_BYTES};
 use serde_json::Value;
 
 use crate::bounds::Name;
@@ -95,35 +104,120 @@ impl Cost {
     }
 }
 
-/// A span a plan's use is counted over.
+/// A span a plan's use is counted over, named by its length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Window {
     /// Five hours.
     FiveHour,
+    /// A day.
+    Daily,
     /// A week.
     Weekly,
     /// A month.
     Monthly,
+    /// A year.
+    Yearly,
+    /// Any other length.
+    Lasting {
+        /// How long the window is, in minutes; never 0.
+        minutes: u32,
+    },
 }
 
 impl Window {
-    /// Every window, in the order a client shows them.
-    pub const EVERY: [Self; 3] = [Self::FiveHour, Self::Weekly, Self::Monthly];
-
-    const fn field(self) -> &'static str {
+    fn written(self) -> Value {
         match self {
-            Self::FiveHour => "five_hour",
-            Self::Weekly => "weekly",
-            Self::Monthly => "monthly",
+            Self::FiveHour => Writing::kind("five_hour"),
+            Self::Daily => Writing::kind("daily"),
+            Self::Weekly => Writing::kind("weekly"),
+            Self::Monthly => Writing::kind("monthly"),
+            Self::Yearly => Writing::kind("yearly"),
+            Self::Lasting { minutes } => Writing::kind("lasting").with("minutes", minutes),
         }
+        .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let window = match fields.kind()?.as_str() {
+            "five_hour" => Self::FiveHour,
+            "daily" => Self::Daily,
+            "weekly" => Self::Weekly,
+            "monthly" => Self::Monthly,
+            "yearly" => Self::Yearly,
+            "lasting" => Self::Lasting {
+                minutes: u32::try_from(fields.number("minutes")?)
+                    .ok()
+                    .filter(|minutes| *minutes > 0)
+                    .ok_or_else(|| Refusal::new(ErrorCode::Malformed))?,
+            },
+            _ => return Err(Refusal::new(ErrorCode::Malformed)),
+        };
+        fields.done()?;
+        Ok(window)
+    }
+}
+
+/// How much of one window is used, in the vendor's measure of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    /// A share of the window.
+    Percent(Percent),
+    /// `used` of the `total` the window allows.
+    Counted {
+        /// How many have been used, never past `total`.
+        used: u64,
+        /// How many the window allows, never 0.
+        total: u64,
+    },
+    /// A window the vendor says has no limit.
+    Unlimited,
+}
+
+impl Reading {
+    fn written(self) -> Value {
+        match self {
+            Self::Percent(percent) => Writing::kind("percent").with("used", percent.get()),
+            Self::Counted { used, total } => Writing::kind("counted")
+                .with("used", used)
+                .with("total", total),
+            Self::Unlimited => Writing::kind("unlimited"),
+        }
+        .finish()
+    }
+
+    fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let reading = match fields.kind()?.as_str() {
+            "percent" => Self::Percent(
+                u8::try_from(fields.number("used")?)
+                    .ok()
+                    .and_then(Percent::new)
+                    .ok_or_else(|| Refusal::new(ErrorCode::Malformed))?,
+            ),
+            "counted" => {
+                let used = fields.number("used")?;
+                let total = fields.number("total")?;
+                if total == 0 || used > total {
+                    return Err(Refusal::new(ErrorCode::Malformed));
+                }
+                Self::Counted { used, total }
+            }
+            "unlimited" => Self::Unlimited,
+            _ => return Err(Refusal::new(ErrorCode::Malformed)),
+        };
+        fields.done()?;
+        Ok(reading)
     }
 }
 
 /// How much of one window is used, and when it starts again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limit {
-    /// How much of the window is used.
-    pub used: Percent,
+    /// The span the use is counted over.
+    pub window: Window,
+    /// How much of it is used.
+    pub reading: Reading,
     /// When the window starts again, in seconds since the Unix epoch, where
     /// the vendor said.
     pub resets_at: Option<u64>,
@@ -132,7 +226,8 @@ pub struct Limit {
 impl Limit {
     fn written(self) -> Value {
         Writing::new()
-            .with("used", self.used.get())
+            .with("window", self.window.written())
+            .with("used", self.reading.written())
             .maybe("resets_at", self.resets_at)
             .finish()
     }
@@ -140,10 +235,8 @@ impl Limit {
     fn read(value: Value) -> Result<Self, Refusal> {
         let mut fields = Fields::of(value)?;
         let limit = Self {
-            used: u8::try_from(fields.number("used")?)
-                .ok()
-                .and_then(Percent::new)
-                .ok_or_else(|| Refusal::new(ErrorCode::Malformed))?,
+            window: Window::read(fields.take("window")?)?,
+            reading: Reading::read(fields.take("used")?)?,
             resets_at: fields.maybe_number("resets_at")?,
         };
         fields.done()?;
@@ -151,53 +244,95 @@ impl Limit {
     }
 }
 
-/// The plan windows a vendor reported, one reading at most per window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Limits {
-    /// The five-hour window, where it was reported.
-    pub five_hour: Option<Limit>,
-    /// The weekly window, where it was reported.
-    pub weekly: Option<Limit>,
-    /// The monthly window, where it was reported.
-    pub monthly: Option<Limit>,
+/// The windows of one limit a plan has: plan-wide, or one the vendor keeps
+/// for a model of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimitGroup {
+    /// The vendor's name for the model the limit is kept for, cut and
+    /// stripped of control characters, or `None` for the plan-wide limit.
+    pub model: Option<Name>,
+    /// Its windows, shortest first, at most
+    /// [`MAX_GROUP_WINDOWS`](crucible_types::MAX_GROUP_WINDOWS).
+    pub limits: Vec<Limit>,
 }
 
-impl Limits {
-    /// The reading of `window`, where there is one.
-    #[must_use]
-    pub const fn of(&self, window: Window) -> Option<Limit> {
-        match window {
-            Window::FiveHour => self.five_hour,
-            Window::Weekly => self.weekly,
-            Window::Monthly => self.monthly,
-        }
-    }
-
-    /// Whether no window was reported.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.five_hour.is_none() && self.weekly.is_none() && self.monthly.is_none()
-    }
-
-    pub(crate) fn written(&self) -> Value {
-        Window::EVERY
-            .into_iter()
-            .fold(Writing::new(), |object, window| {
-                object.maybe(window.field(), self.of(window).map(Limit::written))
-            })
+impl LimitGroup {
+    fn written(&self) -> Value {
+        Writing::new()
+            .maybe("model", self.model.as_ref().map(Name::as_str))
+            .with(
+                "windows",
+                self.limits
+                    .iter()
+                    .map(|limit| limit.written())
+                    .collect::<Vec<_>>(),
+            )
             .finish()
     }
 
-    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
+    fn read(value: Value) -> Result<Self, Refusal> {
         let mut fields = Fields::of(value)?;
-        let mut each = |window: Window| fields.maybe(window.field()).map(Limit::read).transpose();
-        let limits = Self {
-            five_hour: each(Window::FiveHour)?,
-            weekly: each(Window::Weekly)?,
-            monthly: each(Window::Monthly)?,
+        let model = fields
+            .maybe("model")
+            .map(|value| {
+                let said = value.as_str().ok_or(ErrorCode::Malformed)?;
+                if said.len() > MAX_LIMIT_NAME_BYTES {
+                    return Err(Refusal::new(ErrorCode::TooLarge));
+                }
+                Name::new(said)
+            })
+            .transpose()?;
+        let limits = fields.list("windows")?;
+        if limits.len() > MAX_GROUP_WINDOWS {
+            return Err(Refusal::new(ErrorCode::TooLarge));
+        }
+        let group = Self {
+            model,
+            limits: limits
+                .into_iter()
+                .map(Limit::read)
+                .collect::<Result<_, _>>()?,
         };
         fields.done()?;
-        Ok(limits)
+        Ok(group)
+    }
+}
+
+/// The limits a plan has, as far as its vendor said: the plan-wide one first
+/// where there is one, then one for each model the vendor keeps a limit for.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Limits {
+    /// Each limit, at most [`MAX_LIMIT_GROUPS`](crucible_types::MAX_LIMIT_GROUPS).
+    pub groups: Vec<LimitGroup>,
+}
+
+impl Limits {
+    /// Whether no window was reported.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.groups.iter().all(|group| group.limits.is_empty())
+    }
+
+    /// Written as the list of its groups and nothing around it, which keeps
+    /// a window inside a `/usage` answer within half the nesting a frame may
+    /// have.
+    pub(crate) fn written(&self) -> Value {
+        Value::Array(self.groups.iter().map(LimitGroup::written).collect())
+    }
+
+    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
+        let Value::Array(groups) = value else {
+            return Err(Refusal::new(ErrorCode::Malformed));
+        };
+        if groups.len() > MAX_LIMIT_GROUPS {
+            return Err(Refusal::new(ErrorCode::TooLarge));
+        }
+        Ok(Self {
+            groups: groups
+                .into_iter()
+                .map(LimitGroup::read)
+                .collect::<Result<_, _>>()?,
+        })
     }
 }
 
