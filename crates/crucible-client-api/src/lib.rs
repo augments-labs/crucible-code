@@ -90,7 +90,7 @@ pub use pending::{Asked, Choice, Decision, Effect, Lasting, Pending, PendingId, 
 pub use progress::Progress;
 pub use request::{Capabilities, Capability, Correlation, Refused, Request, Version};
 pub use snapshot::{Model, Percent, Snapshot};
-pub use usage::{Cost, Limit, Limits, Usage, Window};
+pub use usage::{Cost, Limit, Limits, Usage, Used, Window};
 
 #[cfg(test)]
 mod tests;

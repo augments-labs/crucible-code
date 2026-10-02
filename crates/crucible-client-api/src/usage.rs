@@ -9,6 +9,12 @@
 //! **A cost that is not known is not zero.** [`Cost`] says so in its own arm,
 //! so a client cannot draw `$0.00` for a session it has no price for.
 //!
+//! While a turn runs, the same figures are streamed rather than asked for:
+//! [`Used`] and [`Limits`] each cross as progress of their own whenever the
+//! turn's figures move, beside the [`Context`] `/context` is streamed, so a
+//! client with no terminal reads `/usage` mid-turn from what the turn last
+//! reported, as the terminal does.
+//!
 //! **Plan windows are the vendor's figure, as of the last response that
 //! carried them.** At most one per [`Window`], and none at all for a vendor or
 //! a credential that does not report them; a client says "not reported" rather
@@ -150,7 +156,7 @@ impl Limits {
         self.five_hour.is_none() && self.weekly.is_none() && self.monthly.is_none()
     }
 
-    fn written(&self) -> Value {
+    pub(crate) fn written(&self) -> Value {
         Window::EVERY
             .into_iter()
             .fold(Writing::new(), |object, window| {
@@ -159,7 +165,7 @@ impl Limits {
             .finish()
     }
 
-    fn read(value: Value) -> Result<Self, Refusal> {
+    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
         let mut fields = Fields::of(value)?;
         let mut each = |window: Window| fields.maybe(window.field()).map(Limit::read).transpose();
         let limits = Self {
@@ -172,9 +178,14 @@ impl Limits {
     }
 }
 
-/// What the session has used so far.
+/// What the session's requests and edits have added up to so far.
+///
+/// Read whole between turns as part of a [`Usage`], and streamed as
+/// [`Progress::Used`](crate::Progress::Used) while a turn runs, each time the
+/// turn's figures move: what a client with no terminal reads `/usage` from
+/// mid-turn, as the terminal does.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Usage {
+pub struct Used {
     /// What it has cost.
     pub cost: Cost,
     /// How long its requests have been out, in milliseconds, summed.
@@ -193,13 +204,9 @@ pub struct Usage {
     pub cache_read: u64,
     /// Input tokens written to a provider's cache.
     pub cache_write: u64,
-    /// How the window of the next request is spent.
-    pub context: Context,
-    /// The plan windows the vendor reported, where it did.
-    pub limits: Limits,
 }
 
-impl Usage {
+impl Used {
     pub(crate) fn written(&self) -> Value {
         Writing::new()
             .with("cost", self.cost.written())
@@ -211,14 +218,12 @@ impl Usage {
             .with("output", self.output)
             .with("cache_read", self.cache_read)
             .with("cache_write", self.cache_write)
-            .with("context", self.context.written())
-            .with("limits", self.limits.written())
             .finish()
     }
 
     pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
         let mut fields = Fields::of(value)?;
-        let usage = Self {
+        let used = Self {
             cost: Cost::read(fields.take("cost")?)?,
             api_ms: fields.number("api_ms")?,
             wall_ms: fields.number("wall_ms")?,
@@ -228,6 +233,36 @@ impl Usage {
             output: fields.number("output")?,
             cache_read: fields.number("cache_read")?,
             cache_write: fields.number("cache_write")?,
+        };
+        fields.done()?;
+        Ok(used)
+    }
+}
+
+/// What the session has used so far.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Usage {
+    /// What its requests and edits have added up to.
+    pub used: Used,
+    /// How the window of the next request is spent.
+    pub context: Context,
+    /// The plan windows the vendor reported, where it did.
+    pub limits: Limits,
+}
+
+impl Usage {
+    pub(crate) fn written(&self) -> Value {
+        Writing::new()
+            .with("used", self.used.written())
+            .with("context", self.context.written())
+            .with("limits", self.limits.written())
+            .finish()
+    }
+
+    pub(crate) fn read(value: Value) -> Result<Self, Refusal> {
+        let mut fields = Fields::of(value)?;
+        let usage = Self {
+            used: Used::read(fields.take("used")?)?,
             context: Context::read(fields.take("context")?)?,
             limits: Limits::read(fields.take("limits")?)?,
         };

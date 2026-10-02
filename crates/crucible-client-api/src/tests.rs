@@ -454,7 +454,7 @@ fn usages() -> [Usage; 3] {
         used: Percent::new(used).unwrap(),
         resets_at,
     };
-    let counted = Usage {
+    let used = Used {
         cost: Cost::Priced {
             currency: name("USD"),
             micros: 1_840_000,
@@ -467,6 +467,9 @@ fn usages() -> [Usage; 3] {
         output: 38_100,
         cache_read: 1_210_000,
         cache_write: 92_400,
+    };
+    let counted = Usage {
+        used: used.clone(),
         context,
         limits: Limits {
             five_hour: Some(limit(23, Some(1_700_000_000))),
@@ -477,18 +480,23 @@ fn usages() -> [Usage; 3] {
     [
         counted.clone(),
         Usage {
-            cost: Cost::NotPriced,
+            used: Used {
+                cost: Cost::NotPriced,
+                ..used.clone()
+            },
             limits: Limits::default(),
             ..counted.clone()
         },
         Usage {
-            cost: Cost::Unspent,
+            used: Used {
+                cost: Cost::Unspent,
+                ..used
+            },
             context: unknown,
             limits: Limits {
                 weekly: Some(limit(0, Some(1_700_000_000))),
                 ..Limits::default()
             },
-            ..counted
         },
     ]
 }
@@ -635,6 +643,7 @@ fn responses() -> Vec<Response> {
 
 fn progress() -> Vec<Progress> {
     let [whole, unknown] = contexts();
+    let [counted, unpriced, unspent] = usages();
     vec![
         Progress::Started { turn: 1 },
         Progress::Delta { text: marked() },
@@ -657,6 +666,12 @@ fn progress() -> Vec<Progress> {
             ..whole
         }),
         Progress::Context(unknown),
+        // Every cost and every window, each streamed as `/usage` reads it.
+        Progress::Used(counted.used),
+        Progress::Used(unpriced.used),
+        Progress::Used(unspent.used),
+        Progress::Limits(counted.limits),
+        Progress::Limits(unspent.limits),
         Progress::Finished {
             turn: 1,
             stop: Stop::Cancelled,
@@ -866,7 +881,7 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         | Outcome::Help(_)
         | Outcome::Context(_)
         | Outcome::Leaving => (0, 1),
-        Outcome::Usage(usage) => match usage.cost {
+        Outcome::Usage(usage) => match usage.used.cost {
             Cost::Unspent => (0, 3),
             Cost::Priced { .. } => (1, 3),
             Cost::NotPriced => (2, 3),
@@ -1834,7 +1849,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 17_284_216_353_544_635_037),
+        (1, 1_415_442_550_756_244_763),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

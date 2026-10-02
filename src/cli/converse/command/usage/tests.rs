@@ -1,6 +1,6 @@
 use super::*;
 
-use crucible_client_api::{Limit, Limits, Model, Name, Percent};
+use crucible_client_api::{Limit, Limits, Model, Name, Percent, Used};
 use jiff::tz::Offset;
 
 use super::super::{Command, MidTurn};
@@ -28,15 +28,17 @@ fn limit(used: u8, resets_at: u64) -> Limit {
 /// The session the mockup draws: an unpriced model, a weekly window only.
 fn weekly() -> api::Usage {
     api::Usage {
-        cost: Cost::NotPriced,
-        api_ms: 252_000,
-        wall_ms: 2_285_000,
-        added: 212,
-        removed: 87,
-        input: 1_420_000,
-        output: 38_100,
-        cache_read: 1_210_000,
-        cache_write: 0,
+        used: Used {
+            cost: Cost::NotPriced,
+            api_ms: 252_000,
+            wall_ms: 2_285_000,
+            added: 212,
+            removed: 87,
+            input: 1_420_000,
+            output: 38_100,
+            cache_read: 1_210_000,
+            cache_write: 0,
+        },
         context: api::Context {
             model: Model::new("gpt-6-sol"),
             window: Some(872_000),
@@ -70,14 +72,18 @@ fn every_window() -> api::Usage {
 
 /// An API key on a priced model: no windows.
 fn keyed() -> api::Usage {
+    let weekly = weekly();
     api::Usage {
-        cost: Cost::Priced {
-            currency: Name::new("USD").unwrap(),
-            micros: 1_840_000,
+        used: Used {
+            cost: Cost::Priced {
+                currency: Name::new("USD").unwrap(),
+                micros: 1_840_000,
+            },
+            cache_write: 92_400,
+            ..weekly.used
         },
-        cache_write: 92_400,
         limits: Limits::default(),
-        ..weekly()
+        ..weekly
     }
 }
 

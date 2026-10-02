@@ -99,6 +99,11 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         // runs; the terminal takes the same figures from the runner's event.
         // The model is the snapshot's to say.
         Event::Carried { breakdown } => Progress::Context(counted(breakdown)),
+        // What a client with no terminal reads as `/usage` while a turn runs,
+        // beside the context above: the session's totals as each response or
+        // edit moved them, and the plan windows a response carried.
+        Event::Used { totals } => Progress::Used(used(totals)),
+        Event::PlanLimits { windows } => Progress::Limits(limits(windows)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
@@ -111,10 +116,6 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         | Event::Wrote { .. }
         | Event::Aged { .. }
         | Event::Unread { .. }
-        // The session's totals and the plan windows are asked for with
-        // `Command::Usage`, between turns; they are not streamed.
-        | Event::Used { .. }
-        | Event::PlanLimits { .. }
         | Event::Steered { .. } => return None,
     })
 }
@@ -142,7 +143,8 @@ pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
 /// Every figure is one the runner already holds: reading this sends nothing
 /// anywhere, so no request is made to learn a limit. The wall time is read as
 /// this is called. Called between turns by [`perform`](super::perform), and
-/// by the terminal mid-turn with the figures that turn last reported.
+/// by the terminal mid-turn with the figures that turn last reported; a client
+/// with no terminal is streamed the same figures by [`progress`].
 #[must_use]
 pub fn usage(
     model: &str,
@@ -150,8 +152,19 @@ pub fn usage(
     totals: &Totals,
     limits: Option<&PlanWindows>,
 ) -> api::Usage {
-    let millis = |of: Duration| u64::try_from(of.as_millis()).unwrap_or(u64::MAX);
     api::Usage {
+        used: used(totals),
+        context: context(model, breakdown),
+        limits: limits.map_or_else(api::Limits::default, self::limits),
+    }
+}
+
+/// What the session's requests and edits have added up to, as a client reads
+/// it. The wall time is read as this is called: as the figures moved, for one
+/// streamed mid-turn.
+fn used(totals: &Totals) -> api::Used {
+    let millis = |of: Duration| u64::try_from(of.as_millis()).unwrap_or(u64::MAX);
+    api::Used {
         cost: cost(totals.cost()),
         api_ms: millis(totals.api()),
         wall_ms: millis(totals.started().elapsed()),
@@ -161,8 +174,6 @@ pub fn usage(
         output: totals.output(),
         cache_read: totals.cache_read(),
         cache_write: totals.cache_write(),
-        context: context(model, breakdown),
-        limits: limits.map_or_else(api::Limits::default, self::limits),
     }
 }
 

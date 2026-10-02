@@ -1495,11 +1495,19 @@ fn usage_is_read_off_the_runner_and_asks_no_vendor_anything() -> Result<(), Fail
     };
 
     assert_eq!(asked.load(Ordering::Relaxed), 2, "no request was sent");
-    assert_eq!((usage.input, usage.output), (200, 20), "{usage:?}");
-    assert_eq!((usage.cache_read, usage.cache_write), (40, 0), "{usage:?}");
+    assert_eq!(
+        (usage.used.input, usage.used.output),
+        (200, 20),
+        "{usage:?}"
+    );
+    assert_eq!(
+        (usage.used.cache_read, usage.used.cache_write),
+        (40, 0),
+        "{usage:?}"
+    );
     // The script's model has no price: the cost is not known, not zero.
-    assert_eq!(usage.cost, Cost::NotPriced, "{usage:?}");
-    assert!(usage.api_ms <= usage.wall_ms, "{usage:?}");
+    assert_eq!(usage.used.cost, Cost::NotPriced, "{usage:?}");
+    assert!(usage.used.api_ms <= usage.used.wall_ms, "{usage:?}");
     assert_eq!(usage.context.model, before.model);
     assert_eq!(usage.context.left, before.left);
     assert_eq!(
@@ -1528,17 +1536,21 @@ fn usage_before_anything_is_asked_is_unspent_with_no_limits_reported() -> Result
     };
 
     assert_eq!(asked.load(Ordering::Relaxed), 0, "no request was sent");
-    assert_eq!(usage.cost, Cost::Unspent, "{usage:?}");
-    assert_eq!((usage.input, usage.output, usage.api_ms), (0, 0, 0));
+    assert_eq!(usage.used.cost, Cost::Unspent, "{usage:?}");
+    assert_eq!(
+        (usage.used.input, usage.used.output, usage.used.api_ms),
+        (0, 0, 0)
+    );
     assert!(usage.limits.is_empty(), "{usage:?}");
     Ok(())
 }
 
-/// A turn has the conversation, so a client with no terminal asking for
-/// `/usage` at a door the turn leaves open is refused as busy, as `/context`
-/// is; the figures are its to ask for once the turn ends.
+/// A client with no terminal reads `/usage` mid-turn as the terminal draws it:
+/// from the totals and plan windows the running turn last reported, streamed
+/// to it as progress, as `/context` is. Asked for at a door the turn leaves
+/// open, it is refused as busy; the turn is what holds the figures.
 #[test]
-fn usage_mid_turn_is_refused_as_busy_at_every_door_it_leaves_open() -> Result<(), Failed> {
+fn usage_mid_turn_is_streamed_with_the_figures_the_turn_last_reported() -> Result<(), Failed> {
     let tree = Tree::new("client-usage-busy")?;
     let standing = Standing::new(&tree, &[])?;
     let workspace = tree.workspace()?;
@@ -1555,8 +1567,56 @@ fn usage_mid_turn_is_refused_as_busy_at_every_door_it_leaves_open() -> Result<()
 
     assert_eq!(client::keep(&request, &desk).outcome(), busy);
     assert_eq!(client::interrupt(&request, &Cancel::new()), busy);
-    let (mut conversation, _) = asking(&tree, Script::new(vec![saying("never")]))?;
+    let resets = UNIX_EPOCH + Duration::from_secs(1_700_600_000);
+    let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .with(Window::Weekly, WindowReading::new(42, Some(resets)));
+    let script = Script::new(vec![reporting()?]).limiting(windows);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
     let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
     assert_eq!(response.outcome, busy);
+
+    let asked = Wire::default().sent(prompt("one")?)?;
+    let (_, streamed) = turned(&mut conversation, &asked, &mut Remote::new(Vec::new()))?;
+    let used = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Used(used) => Some(used),
+            _ => None,
+        })
+        .next_back()
+        .ok_or_else(|| format!("no figures were streamed: {streamed:?}"))?;
+    assert_eq!((used.input, used.output), (100, 10), "{used:?}");
+    assert_eq!((used.cache_read, used.cache_write), (20, 0), "{used:?}");
+    assert_eq!(used.cost, Cost::NotPriced, "{used:?}");
+    assert!(used.api_ms <= used.wall_ms, "{used:?}");
+    let limits = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Limits(limits) => Some(limits),
+            _ => None,
+        })
+        .next_back()
+        .ok_or_else(|| format!("no plan windows were streamed: {streamed:?}"))?;
+    assert_eq!(
+        limits,
+        &Limits {
+            weekly: Some(Limit {
+                used: Percent::new(42).ok_or("a percent")?,
+                resets_at: Some(1_700_600_000),
+            }),
+            ..Limits::default()
+        }
+    );
+
+    // What was streamed is what the turn left: asked once it ended, the
+    // answer agrees.
+    let Outcome::Usage(usage) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+    assert_eq!(
+        (usage.used.input, usage.used.output, usage.used.cache_read),
+        (used.input, used.output, used.cache_read)
+    );
+    assert_eq!(&usage.limits, limits);
     Ok(())
 }

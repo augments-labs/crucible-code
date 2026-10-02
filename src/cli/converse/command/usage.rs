@@ -262,25 +262,25 @@ pub(crate) fn body(
         Glyphs::Unicode => "\u{2212}",
         Glyphs::Ascii => "-",
     };
-    let (cost_slot, cost) = self::cost(&usage.cost);
+    let (cost_slot, cost) = self::cost(&usage.used.cost);
 
     let mut rows = vec![
         Row::new().then(Slot::Strong, title),
         Row::new(),
         Row::new().then(Slot::Plain, "Session"),
         labelled("Total cost", at).then(cost_slot, cost),
-        labelled("API time", at).then(Slot::Plain, took(usage.api_ms)),
-        labelled("Wall time", at).then(Slot::Plain, took(usage.wall_ms)),
+        labelled("API time", at).then(Slot::Plain, took(usage.used.api_ms)),
+        labelled("Wall time", at).then(Slot::Plain, took(usage.used.wall_ms)),
         labelled("Lines changed", at).then(
             Slot::Plain,
-            format!("+{} {minus}{}", usage.added, usage.removed),
+            format!("+{} {minus}{}", usage.used.added, usage.used.removed),
         ),
     ];
     let tokens = [
-        format!("{} in", count(usage.input)),
-        format!("{} out", count(usage.output)),
-        format!("{} cache read", count(usage.cache_read)),
-        format!("{} cache write", count(usage.cache_write)),
+        format!("{} in", count(usage.used.input)),
+        format!("{} out", count(usage.used.output)),
+        format!("{} cache read", count(usage.used.cache_read)),
+        format!("{} cache write", count(usage.used.cache_write)),
     ];
     let lines = wrapped(&tokens, glyphs.dot(), columns.saturating_sub(at));
     for (line, words) in lines.into_iter().enumerate() {
