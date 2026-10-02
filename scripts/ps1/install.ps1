@@ -730,6 +730,12 @@ function Invoke-CrucibleInstall {
             Write-Out ($dim + (Get-Wrapped '' 'That directory is now first on your user PATH.') + $plain + $nl)
         } elseif ($onPath) {
             Write-Out ($dim + (Get-Wrapped '' 'That directory is on your PATH.') + $plain + $nl)
+        } elseif ($destination -match '[^\x00-\x7E]' -and [Console]::OutputEncoding.CodePage -ne 65001) {
+            # A console that is not UTF-8 shows some characters as the ASCII
+            # they resemble, such as a full-width quote as a quote, so a
+            # command naming this directory would not be the one pasted.
+            Write-Out ($dim + (Get-Wrapped '' "That directory is not on your PATH. Add $where to your user PATH.") +
+                $plain + $nl)
         } else {
             Write-Out ($dim + (Get-Wrapped '' 'That directory is not on your PATH. Add it for your user with:') +
                 $plain + $nl + $nl)
