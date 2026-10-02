@@ -25,6 +25,11 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The queue box always says how to open the queue, and the queue can delete a
+  message.** `ctrl+q edit` is on the box's bottom edge for one waiting message
+  as for many, and the open queue ends in a footer naming <kbd>↑</kbd><kbd>↓</kbd>,
+  <kbd>e</kbd> to edit, <kbd>d</kbd> to delete and <kbd>Esc</kbd>. Messages wrap
+  there instead of being cut; <kbd>x</kbd> still edits.
 - **A scroll rail on the transcript's right edge replaces the map behind the
   bottom-row label.** Its thumb shows which part of the transcript is on screen
   and a mark stands at each prompt; a click scrolls there, a drag on it scrolls
