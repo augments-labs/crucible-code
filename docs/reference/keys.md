@@ -219,7 +219,7 @@ a panel, it is not stood.
 | --- | --- |
 | Typing, paste | Narrows the list to the sessions whose title or branch holds the text, or the directory a row shows, ignoring case. With no match the list says `no session holds "the text"`, or `no session on <branch>` where <kbd>Ctrl+B</kbd> left nothing and nothing is typed. |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Walks the list. In a window 70 columns or wider, the preview beside it follows the mark. |
-| <kbd>Enter</kbd> | Picks up the marked session. On one recorded in another directory, the picker stays open and says under the list the `cd … && crucible --resume <id>` that picks it up there. Nothing while nothing matches. |
+| <kbd>Enter</kbd> | Picks up the marked session. On one recorded in another directory, whose preview says `Enter to see how to resume`, the picker stays open and says under the list the `cd … && crucible --resume <id>` that picks it up there, broken after the `&&` onto a second row where one is too narrow. Nothing while nothing matches. |
 | <kbd>Ctrl+A</kbd> | Shows every project's sessions; again, only this one's. |
 | <kbd>Ctrl+B</kbd> | Keeps the sessions recorded on the branch checked out here; again, every branch's. Nothing, and left off the keys row, where no branch is checked out. |
 | <kbd>Ctrl+W</kbd> | Adds the sessions of this repository's other worktrees; again, takes them away. <kbd>Ctrl+Backspace</kbd> and <kbd>Alt-Backspace</kbd> still rub out a word of the search. |

@@ -216,7 +216,10 @@ session's own line rather than waiting for Enter to find out.
 The picker looks through every session the index names, not the handful the
 opening screen reads, and lists up to 100 of them. It opens on this
 directory's, and three keys change what it shows, each pressed again to undo
-it:
+it. It opens even where this directory has none of its own, saying
+`no earlier session for this workspace` on its empty list, as long as another
+directory has one for these keys to reach; where none has, `/resume` says that
+line and stands nothing.
 
 - <kbd>Ctrl+A</kbd> shows every project's sessions.
 - <kbd>Ctrl+B</kbd> keeps only those recorded on the branch checked out here.
@@ -225,18 +228,29 @@ it:
   found by reading its `.git` directory; git itself is not run.
 
 The heading says what is shown, as `Resume a session · 3 of 12 · ~/code/app`,
-`all projects` or `this repository's worktrees`, followed by the branch while
-<kbd>Ctrl+B</kbd> holds. A session from another directory shows that directory
-after its branch, and a search matches it too. The sessions were read once when
-the picker opened, so a key only filters them again.
+`all projects` or `this repository's worktrees`, with the branch ahead of it
+while <kbd>Ctrl+B</kbd> holds: `Resume a session · 3 of 12 · main · ~/code/app`.
+At eighty columns the keys row names each of the three by what it does next,
+as `ctrl+a all projects · ctrl+b this branch · ctrl+w worktrees · esc`; a
+narrower window gets the keys alone. A session from another directory shows
+that directory after its branch, and a search matches it too. The sessions were
+read once when the picker opened, so a key only filters them again.
 
 A session recorded in another directory cannot be resumed from this one, since
-it belongs to that directory's files. Enter on one leaves the picker open on it
-and says, under the list, how to pick it up there:
+it belongs to that directory's files, and the foot of its preview says
+`Enter to see how to resume`. Enter on one leaves the picker open on it and
+says, under the list, how to pick it up there:
 
 ```text
-In ~/code/website: cd ~/code/website && crucible --resume 019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1
+cd ~/code/website && crucible --resume 019854c2-9a1e-73f1-b0d6-2f1c4e7a58d1
 ```
+
+Where the window is too narrow for that on one row, it is broken after the `&&`,
+where a shell reads on to the next line, so pasting both rows runs it. In any
+window at least 56 columns wide the id is whole on its row; a directory too long
+for its row loses its front, marked `…`. On
+Windows the directory is written whole rather than under `~`, in double quotes
+where it needs them, which cmd and PowerShell both read.
 
 The preview reads a bounded message tail and uses the live transcript's message
 renderer. It omits supplemental diff bodies and compaction notices; selecting

@@ -1067,11 +1067,12 @@ first, and the end of whichever one is marked drawn in the other.
 │                              │ │ Enter to resume · Esc to cancel             │
 ╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯
 
- ↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc
+ ctrl+a all projects · ctrl+b this branch · ctrl+w worktrees · esc
 ```
 
-The keys row names what each key does in full where the window is wide enough,
-and only the keys at eighty columns. <kbd>Ctrl+A</kbd> shows every project's
+The keys row names what each key does in full where the window is wide enough;
+at eighty columns it names each of the three toggles by what it does next, and
+a narrower window gets only the keys. <kbd>Ctrl+A</kbd> shows every project's
 sessions, <kbd>Ctrl+B</kbd> keeps this branch's and <kbd>Ctrl+W</kbd> adds this
 repository's other worktrees; [Switching without
 restarting](../sessions/sessions.md#switching-without-restarting) says what
