@@ -2102,8 +2102,11 @@ fn the_rail_thumb_and_marks_stand_on_the_rows_the_drawn_band_scales_to() {
                     drawn.commit(&format!("› p{case}x{line}")).unwrap();
                     continue;
                 }
-                // Every word distinct, so every row the record draws is too,
-                // and a long unbroken run now and then to be cut mid-word.
+                // Every word distinct, so every row of words is too, and now
+                // and then a long unbroken run to be cut mid-word. The run is
+                // numbered pieces, `q<run>n<piece>`, each far shorter than the
+                // narrowest fold, so every full row of it holds a piece no
+                // other row does and the band is found in one place.
                 let mut text = Vec::new();
                 for _ in 0..next(seed, 40) {
                     word += 1;
@@ -2112,7 +2115,9 @@ fn the_rail_thumb_and_marks_stand_on_the_rows_the_drawn_band_scales_to() {
                 }
                 if next(seed, 8) == 0 {
                     word += 1;
-                    text.push(format!("r{word}{}", "z".repeat(next(seed, 200))));
+                    let run: String = (0..200).map(|piece| format!("q{word}n{piece}")).collect();
+                    let run = run.get(..next(seed, 200)).unwrap_or("");
+                    text.push(format!("r{word}{run}"));
                 }
                 let text = text.join(" ");
                 drawn.commit(&format!("l{case}x{line} {text}")).unwrap();
