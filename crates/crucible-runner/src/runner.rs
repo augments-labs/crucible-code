@@ -1780,8 +1780,9 @@ impl Runner {
         }
     }
 
-    /// What one usage report costs: in full for the attempt's cache facts,
-    /// and as the session's cost reads it.
+    /// What one usage report costs, as a pair: the first is the itemized
+    /// cost recorded on the prompt-cache attempt, and the second is the price
+    /// [`Totals`] adds into the session's cost.
     fn priced(
         &self,
         usage: &ProviderUsage,

@@ -47,12 +47,13 @@ pub enum SessionCost {
     Unspent,
     /// Every response was priced, and this is their sum.
     Priced(CostAmount),
-    /// A response ended before the provider said what it cost, so this sum
-    /// is less than what the session spent.
+    /// A response ended before the provider said what it cost, so the
+    /// session spent this or more.
     AtLeast(CostAmount),
-    /// At least one response could not be priced: the model has no price, a
-    /// completed response reported no usage to price, or the amounts are in
-    /// currencies that do not add up to one figure.
+    /// No sum is the session's: a model has no price, a report fits none, a
+    /// completed response reported no usage to price, the amounts are in
+    /// currencies that do not add up to one figure, or the sum is too large
+    /// to carry.
     NotPriced,
 }
 
@@ -129,7 +130,10 @@ impl SessionCost {
 /// What is known of the cost of the response being read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pending {
-    /// It has not been said where the request went.
+    /// Its model's price has not been asked: no request for it has gone out,
+    /// or the one made was never sent or was turned away. Ended so, it adds
+    /// nothing where nothing was reported, and is not priced where something
+    /// was.
     Unasked,
     /// Its model has no price, or its last report fits none.
     Unpriced,

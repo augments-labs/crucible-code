@@ -11,11 +11,11 @@
 //! sum that leaves out an answer stopped before the provider said what it
 //! cost has an arm of its own as well, so it is not drawn as the whole.
 //!
-//! While a turn runs, the same figures are streamed rather than asked for:
-//! [`Used`] and [`Limits`] each cross as progress of their own whenever the
-//! turn's figures move, beside the [`Context`] `/context` is streamed, so a
-//! client with no terminal reads `/usage` mid-turn from what the turn last
-//! reported, as the terminal does.
+//! While a turn runs, the same figures are streamed rather than asked for,
+//! beside the [`Context`] `/context` is streamed: [`Used`] crosses as progress
+//! of its own when a response ends and when an edit changes lines, and
+//! [`Limits`] when a response reports its windows. A client with no terminal
+//! reads `/usage` mid-turn from what the turn last sent, as the terminal does.
 //!
 //! **Plan windows are the vendor's figure from the last response that carried
 //! them.** At most one per [`Window`], and none at all for a vendor or a
@@ -45,14 +45,18 @@ pub enum Cost {
         micros: u64,
     },
     /// An answer ended before the provider said what it cost, so the session
-    /// cost at least this, and more by an amount nobody reported.
+    /// cost this or more: what that answer was billed beyond its last report
+    /// is not known, and may be nothing.
     AtLeast {
         /// The currency the prices are in, as its code: `USD`.
         currency: Name,
         /// The sum known, in millionths of the currency.
         micros: u64,
     },
-    /// At least one response could not be priced, so no sum is the session's.
+    /// No sum is the session's: a model had no price, a report fit none, a
+    /// response completed without saying what it used, amounts were in
+    /// currencies that do not add up, the sum was too large for `micros` to
+    /// carry, or its currency has a code this contract cannot name.
     NotPriced,
 }
 
@@ -200,9 +204,9 @@ impl Limits {
 /// What the session's requests and edits have added up to so far.
 ///
 /// Read whole between turns as part of a [`Usage`], and streamed as
-/// [`Progress::Used`](crate::Progress::Used) while a turn runs, each time the
-/// turn's figures move: what a client with no terminal reads `/usage` from
-/// mid-turn, as the terminal does.
+/// [`Progress::Used`](crate::Progress::Used) while a turn runs, when a
+/// response ends and when an edit changes lines: what a client with no
+/// terminal reads `/usage` from mid-turn, as the terminal does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Used {
     /// What it has cost.

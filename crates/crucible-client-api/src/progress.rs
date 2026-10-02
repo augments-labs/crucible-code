@@ -82,7 +82,8 @@ pub enum Progress {
     /// not change it, and it is the snapshot's to say.
     Context(Context),
     /// What the session has used, as `/usage` reads it while a turn runs: the
-    /// totals the turn last reported, sent again each time they move.
+    /// totals as of the last response that ended or edit that changed lines.
+    /// It is sent at those two points only, not as a response's tokens arrive.
     Used(Used),
     /// The plan windows a response of the running turn reported, as `/usage`
     /// reads them while it runs. Only a vendor that reports them sends this.

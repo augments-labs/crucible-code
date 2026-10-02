@@ -160,8 +160,8 @@ pub fn usage(
 }
 
 /// What the session's requests and edits have added up to, as a client reads
-/// it. The wall time is read as this is called: as the figures moved, for one
-/// streamed mid-turn.
+/// it. The wall time is read as this is called: as the response ended or the
+/// edit counted, for one streamed mid-turn.
 fn used(totals: &Totals) -> api::Used {
     let millis = |of: Duration| u64::try_from(of.as_millis()).unwrap_or(u64::MAX);
     api::Used {

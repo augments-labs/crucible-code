@@ -446,8 +446,9 @@ fn contexts() -> [Context; 2] {
     ]
 }
 
-/// What a session has used: priced with every window reported, not priced
-/// with none, before anything was asked with one, and known only as a floor.
+/// What a session has used, by position: priced with every window reported,
+/// not priced with none, known only as a floor, and before anything was asked
+/// with one window. Callers destructure it by position, so keep this order.
 fn usages() -> [Usage; 4] {
     let [context, unknown] = contexts();
     let limit = |used, resets_at| Limit {

@@ -985,8 +985,7 @@ no price for says `not priced` rather than `$0.00`, as does one where an answer
 finished without saying what it used. A cost that reads `at least $0.40`
 includes an answer that was stopped before the provider said what it cost: its
 tokens are counted as far as it reported them, and the rest of the session is
-priced in full, so the session cost that much and an amount nobody reported
-on top. Under that is the same
+priced in full, so the session cost that much or more. Under that is the same
 context bar `/context` draws, and then the plan limits: one bar for each of the
 5-hour, weekly and monthly windows the vendor reported on its last response,
 with when each starts again in your local time; a reset already behind the

@@ -1,12 +1,13 @@
 //! What the plan backend says of a `ChatGPT` plan's usage windows.
 //!
 //! A plan is limited over windows of time, and the backend it is served by
-//! says, in the head of every response it sends, how much of up to two of
-//! them has been used: a *primary* and a *secondary* window, each as a
-//! percentage used, its length in minutes and the second it starts again.
-//! They are read here, off responses crucible already receives. Nothing is
-//! ever asked to learn them, and an API key's route is not read at all: the
-//! published API says nothing of a plan.
+//! can say, in a response's headers, how much of up to two of them has been
+//! used: a *primary* and a *secondary* window, each as a percentage used, its
+//! length in minutes and the second it starts again. They are read here,
+//! off a response crucible already receives, wherever it carries them;
+//! nothing here assumes every response does. Nothing is ever asked to learn
+//! them, and an API key's route is not read at all: the published API says
+//! nothing of a plan.
 //!
 //! Which window is which is decided by its length, never by the header that
 //! carried it or by any text in it: five hours, a week, or a month of 28 to 31
@@ -77,8 +78,9 @@ pub(super) fn read(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
 }
 
 /// The window `reported` names, where its length is one crucible knows and
-/// each of its figures is a number in range. A reset time is optional; one
-/// that is there and is not a second since the epoch is not.
+/// each of its figures is a number in range. A reset time may be absent, but
+/// one that is present and is not a count of seconds since the epoch leaves
+/// the whole window out.
 fn window(named: &Named, reported: &Reported) -> Option<(Window, WindowReading)> {
     let window = length(named.get(reported.minutes)?.parse().ok()?)?;
     let percent = percent(named.get(reported.used)?)?;

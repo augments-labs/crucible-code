@@ -430,8 +430,8 @@ pub trait Transport: Send + Sync + fmt::Debug {
     /// The same post, handing back the response headers named in `reading`.
     ///
     /// A provider names the headers it reads, and only those come back to it,
-    /// each within 256 bytes; every other header stays where
-    /// it arrived. A transport that answers from somewhere other than a
+    /// each within [`NAMED_HEADER_BYTES`]; every other header stays where it
+    /// arrived. A transport that answers from somewhere other than a
     /// response's head hands back none, which is what this does unless it is
     /// overridden.
     ///
