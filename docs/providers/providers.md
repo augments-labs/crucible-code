@@ -714,6 +714,14 @@ A refusal about the request rather than the moment is reported the first time: a
 key without access, a model name nobody serves, a response that did not parse.
 Asking again would spend your time to reach the same sentence.
 
+A refusal saying the plan is used up is about a later time rather than this
+moment, so it is not asked again either. On the ChatGPT sign-in the turn ends on a notice
+naming the window and its reset, where the vendor gave them; where its last
+response already put a window at 100% with the reset still ahead, the next
+turn ends the same way before anything is sent. Changing the model or the
+provider lets that reading go, and the next turn is sent. The notice is under
+[Troubleshooting](../getting-started/troubleshooting.md).
+
 ## MoonshotAI issues a key against one console or the other
 
 Here a working key can still be refused, and the refusal does not say why.

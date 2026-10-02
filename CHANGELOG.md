@@ -43,6 +43,11 @@ change in any release with no deprecation period.
   verifies the Windows archive against `SHA256SUMS` before unpacking it into
   `%LOCALAPPDATA%\Programs\crucible\bin`, and says how to put that directory
   on `PATH`, which it changes only under `-AddToPath`.
+- **A used-up ChatGPT plan stops the turn instead of failing it.** A window
+  already at 100% with its reset ahead ends the next turn before anything is
+  sent, and the vendor's own usage-limit refusal is no longer asked again;
+  either way a notice names the window and when it resets, in local time.
+  Clients with no terminal get the `plan_limit` code at protocol revision 2.
 
 ### Changed
 

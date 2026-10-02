@@ -285,6 +285,19 @@ the third, and the last is a stop crucible could not name, so asking again is
 what there is to try. `! stopped` is a turn you ended with <kbd>Esc</kbd>. See
 [when an answer stops early](getting-started.md#when-an-answer-stops-early).
 
+### `■ Usage limit reached · weekly window · resets Mon 09:00`
+
+The plan behind the ChatGPT sign-in is used up for that window, and the turn
+ended there. The line under it says which way: `The turn stopped before
+sending` where the last response already put a window at 100% with its reset
+still ahead, so nothing went out; `The vendor refused the request` where the
+vendor said so itself. Either way nothing in the transcript was lost and the
+refusal is not asked again, since asking before the reset reaches the same
+answer. Send a prompt once the window starts again; `/usage` shows the window
+at 100% and when it resets, in your local time. `resets soon` is a reset the
+clock has reached, and `resets: not reported` is a refusal that named none, so
+send later. The mark is `#` where the glyphs are ASCII.
+
 ## The network and proxies
 
 ### `anthropic: TLS setup failed`

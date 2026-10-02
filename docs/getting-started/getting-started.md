@@ -990,8 +990,10 @@ context bar `/context` draws, and then the plan limits: one bar for each of the
 5-hour, weekly and monthly windows the vendor reported on its last response,
 with when each starts again in your local time; a reset already behind the
 clock reads `since passed`, as the window has started again since that
-response. Only the ChatGPT sign-in reports them; an API key or any other
-sign-in says `limits not reported`. Opening the panel sends nothing: every
+response. A window at 100% whose reset is still ahead ends the next turn
+before it is sent, with a notice naming the window and its reset. Only the
+ChatGPT sign-in reports them; an API key or any other sign-in says `limits not
+reported`. Opening the panel sends nothing: every
 figure on it is one crucible already holds, and the counts are this run's,
 starting again for a session picked up with `/resume`. Escape closes it.
 
