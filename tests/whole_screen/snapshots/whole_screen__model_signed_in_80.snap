@@ -2,8 +2,7 @@
 source: tests/whole_screen/main.rs
 expression: picture
 ---
-80x24 cursor 4,10 scrolled 0
-|› /model                                                                       ┃|
+80x24 cursor 3,10 scrolled 0
 |Model                                                    now  openai · gpt-6-sol|
 |                                                                                |
 |╭──────────────────────────────────────────────────────────────────────────────╮|
@@ -22,6 +21,7 @@ expression: picture
 |│   MiniMax         2 │   gpt-5.6-luna                           872k  fast    │|
 |│   MoonshotAI      4 │   1 more with an API key · /login                      │|
 |│ › OpenAI          7 │                                                        │|
+|│   Qwen            4 │                                                        │|
 |╰─────────────────────┴────────────────────────────────────────────────────────╯|
 |                                                                                |
 |  Effort   ‹ low ›  medium   high   xhigh   max                                 |
