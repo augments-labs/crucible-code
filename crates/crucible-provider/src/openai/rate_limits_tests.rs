@@ -266,27 +266,59 @@ fn rate_limit_a_family_with_no_limit_name_is_named_by_its_id() {
     }
 }
 
-/// More families than a reading keeps groups for: the first ones are read,
-/// and the plan's own is never the one left out.
+/// Every header of a whole family `id`, as the backend sends one: both
+/// windows' three figures, and the limit's name.
+fn family_of(id: &str, name: &str, primary: &str, secondary: &str) -> Vec<(&'static str, String)> {
+    let header =
+        |rest: &str| -> &'static str { Box::leak(format!("x-{id}-{rest}").into_boxed_str()) };
+    vec![
+        (header("primary-used-percent"), primary.to_owned()),
+        (header("primary-window-minutes"), "300".to_owned()),
+        (header("primary-reset-at"), RESET.to_string()),
+        (header("secondary-used-percent"), secondary.to_owned()),
+        (header("secondary-window-minutes"), "10080".to_owned()),
+        (header("secondary-reset-at"), RESET.to_string()),
+        (header("limit-name"), name.to_owned()),
+    ]
+}
+
+/// More whole families than a reading keeps groups for, the plan's own
+/// arriving last: the first ones are read, and the plan's own is never the
+/// one left out, however many headers arrived before it.
 #[test]
 fn rate_limit_more_families_than_the_ceiling_keep_no_more_than_it() {
-    let families = MAX_LIMIT_GROUPS + 4;
-    let mut headers: Vec<(&'static str, &str)> = (0..families)
+    let mut sent: Vec<(&'static str, String)> = (0..MAX_LIMIT_GROUPS + 4)
         .flat_map(|family| {
-            let used: &'static str =
-                Box::leak(format!("x-codex-f{family}-primary-used-percent").into_boxed_str());
-            let minutes: &'static str =
-                Box::leak(format!("x-codex-f{family}-primary-window-minutes").into_boxed_str());
-            [(used, "5"), (minutes, "300")]
+            family_of(
+                &format!("codex-f{family}"),
+                &format!("model-f{family}"),
+                "5",
+                "6",
+            )
         })
         .collect();
-    headers.push(("x-codex-primary-used-percent", "31"));
-    headers.push(("x-codex-primary-window-minutes", "10080"));
+    sent.extend(family_of("codex", "codex", "12", "31"));
+    let headers: Vec<(&'static str, &str)> = sent
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
 
     let groups = grouped(limits(&headers));
 
     assert_eq!(groups.len(), MAX_LIMIT_GROUPS, "{groups:?}");
-    assert_eq!(groups.first(), Some(&(None, vec![(Window::Weekly, 31)])));
+    assert_eq!(
+        groups.first(),
+        Some(&(None, vec![(Window::FiveHour, 12), (Window::Weekly, 31)])),
+        "{groups:?}"
+    );
+    assert_eq!(
+        groups.get(1),
+        Some(&(
+            Some("model-f0".to_owned()),
+            vec![(Window::FiveHour, 5), (Window::Weekly, 6)]
+        )),
+        "{groups:?}"
+    );
 }
 
 #[test]

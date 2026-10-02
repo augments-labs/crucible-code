@@ -414,7 +414,13 @@ mod tests {
                 &mut Outgoing::new(),
                 "{}".to_owned(),
                 &Cancel::new(),
-                |name| matches!(name, "x-named" | "x-long" | "x-missing"),
+                |name| {
+                    if matches!(name, "x-named" | "x-long" | "x-missing") {
+                        super::super::Wants::Kept
+                    } else {
+                        super::super::Wants::Not
+                    }
+                },
             )
             .await
             .unwrap();

@@ -114,20 +114,33 @@ pub(crate) const NAMED_HEADER_BYTES: usize = 256;
 /// The most response headers a provider is handed from one response.
 ///
 /// A provider that reads a family of headers whose number a response decides
-/// is handed no more than this many of them, the first to arrive; the rest
-/// stay where they arrived.
+/// is handed no more than this many of them, the first to arrive, except
+/// that one it reads [`Wants::Ahead`] takes the place of the last
+/// [`Wants::Kept`] one to arrive; the rest stay where they arrived.
 pub(crate) const NAMED_HEADERS: usize = 64;
+
+/// Whether a provider reads a response header, and what it gives way to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wants {
+    /// Not read.
+    Not,
+    /// Read where there is room for it.
+    Kept,
+    /// Read ahead of every [`Wants::Kept`] header: where there is no room
+    /// left, it takes the place of the last of those to arrive.
+    Ahead,
+}
 
 /// Which response headers a provider reads, by their lowercase name.
 ///
 /// A function rather than a list, because a vendor may report a family of
 /// headers whose names a response decides: what is fixed is their shape.
-pub(crate) type Reads = fn(&str) -> bool;
+pub(crate) type Reads = fn(&str) -> Wants;
 
 /// Reads no header: what a provider that reads none hands the transport.
-pub(crate) fn reads_none(name: &str) -> bool {
+pub(crate) fn reads_none(name: &str) -> Wants {
     let _ = name;
-    false
+    Wants::Not
 }
 
 /// The response headers a provider said it reads, as they arrived.
@@ -147,20 +160,33 @@ type Pairs = Vec<(Box<str>, Box<str>)>;
 impl Named {
     /// The headers among `arrived` that `reads` says the provider reads, each
     /// kept only when it is text within [`NAMED_HEADER_BYTES`], the first value
-    /// of a name only, and no more than [`NAMED_HEADERS`] of them.
+    /// of a name only, and no more than [`NAMED_HEADERS`] of them, those read
+    /// [`Wants::Ahead`] before the others.
     pub(crate) fn kept<'v>(
         reads: Reads,
         arrived: impl IntoIterator<Item = (&'v str, &'v str)>,
     ) -> Self {
         let mut kept: Pairs = Vec::new();
         for (name, value) in arrived {
-            if kept.len() >= NAMED_HEADERS {
-                break;
-            }
-            if reads(name)
-                && value.len() <= NAMED_HEADER_BYTES
-                && !kept.iter().any(|(each, _)| **each == *name)
+            let read = reads(name);
+            if read == Wants::Not
+                || value.len() > NAMED_HEADER_BYTES
+                || kept.iter().any(|(each, _)| **each == *name)
             {
+                continue;
+            }
+            if kept.len() < NAMED_HEADERS {
+                kept.push((name.into(), value.into()));
+                continue;
+            }
+            if read != Wants::Ahead {
+                continue;
+            }
+            if let Some(last) = kept
+                .iter()
+                .rposition(|(each, _)| reads(each) == Wants::Kept)
+            {
+                kept.remove(last);
                 kept.push((name.into(), value.into()));
             }
         }
@@ -177,7 +203,7 @@ impl Named {
             .map(|(_, value)| &**value)
     }
 
-    /// The name of every header kept, in the order they arrived.
+    /// The name of every header kept, in the order they were kept.
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> + '_ {
         self.0
             .iter()
@@ -859,6 +885,41 @@ impl<T: Transport> Transport for std::sync::Arc<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reads every `x-` header, and `x-ahead-` ones ahead of the rest.
+    fn ranked(name: &str) -> Wants {
+        if name.starts_with("x-ahead-") {
+            Wants::Ahead
+        } else if name.starts_with("x-") {
+            Wants::Kept
+        } else {
+            Wants::Not
+        }
+    }
+
+    #[test]
+    fn named_headers_read_ahead_take_the_place_of_the_last_others_to_arrive() {
+        let others: Vec<String> = (0..NAMED_HEADERS + 3)
+            .map(|each| format!("x-other-{each}"))
+            .collect();
+        let arrived = others
+            .iter()
+            .map(String::as_str)
+            .chain(["x-ahead-1", "x-ahead-2", "unread"])
+            .map(|name| (name, "1"));
+
+        let named = Named::kept(ranked, arrived);
+
+        let kept: Vec<&str> = named.names().collect();
+        assert_eq!(kept.len(), NAMED_HEADERS);
+        assert_eq!(kept.first(), Some(&"x-other-0"));
+        let last_other = format!("x-other-{}", NAMED_HEADERS - 3);
+        assert_eq!(
+            kept.get(NAMED_HEADERS - 3..),
+            Some(&[last_other.as_str(), "x-ahead-1", "x-ahead-2"][..])
+        );
+        assert_eq!(named.get("unread"), None);
+    }
 
     #[tokio::test]
     async fn a_replay_keeps_what_was_sent() {

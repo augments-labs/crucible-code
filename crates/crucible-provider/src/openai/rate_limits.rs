@@ -9,7 +9,8 @@
 //! minutes and the second it starts again. The `codex` family is the plan's
 //! own; any other is the limit of the model whose slug its
 //! `x-<id>-limit-name` says, else one named by its id. No more families are
-//! read than a reading keeps groups.
+//! read than a reading keeps groups, and the plan's own headers are kept ahead
+//! of any other's, so no number of families arriving first leaves it out.
 //!
 //! In an answer to asking, at [`usage`]'s address with the credential the
 //! provider already holds: `rate_limit` is the plan's own and each of
@@ -46,7 +47,7 @@ use serde_json::Value;
 use super::Serving;
 use crate::refusal::UsedUp;
 use crate::responses::Usage;
-use crate::transport::{Named, Reads};
+use crate::transport::{Named, Reads, Wants};
 
 /// Every header of a family opens with this.
 const OPENS: &str = "x-";
@@ -67,22 +68,31 @@ const RESET: &str = "reset-at";
 /// What follows a family's id in the header naming its limit.
 const LIMIT_NAME: &str = "limit-name";
 
-/// Whether `name` is a header of a family: `x-<id>-<slot>-<figure>`, or
-/// `x-<id>-limit-name`.
-fn reads(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix(OPENS) else {
-        return false;
-    };
+/// Whether `name` is a header of a family, `x-<id>-<slot>-<figure>` or
+/// `x-<id>-limit-name`: the plan's own read ahead of any other, so that no
+/// number of others arriving first leaves it out.
+fn reads(name: &str) -> Wants {
+    match id(name) {
+        Some(PLAN) => Wants::Ahead,
+        Some(_) => Wants::Kept,
+        None => Wants::Not,
+    }
+}
+
+/// The id of the family `name` is a header of, where it is one.
+fn id(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix(OPENS)?;
     rest.strip_suffix(LIMIT_NAME)
         .and_then(|id| id.strip_suffix('-'))
-        .is_some_and(|id| !id.is_empty())
-        || [USED, MINUTES, RESET].iter().any(|figure| {
-            rest.strip_suffix(figure)
-                .and_then(|slot| slot.strip_suffix('-'))
-                .and_then(|slot| SLOTS.iter().find_map(|each| slot.strip_suffix(each)))
-                .and_then(|id| id.strip_suffix('-'))
-                .is_some_and(|id| !id.is_empty())
+        .or_else(|| {
+            [USED, MINUTES, RESET].iter().find_map(|figure| {
+                rest.strip_suffix(figure)
+                    .and_then(|slot| slot.strip_suffix('-'))
+                    .and_then(|slot| SLOTS.iter().find_map(|each| slot.strip_suffix(each)))
+                    .and_then(|id| id.strip_suffix('-'))
+            })
         })
+        .filter(|id| !id.is_empty())
 }
 
 /// The headers read on `route`: the plan backend's, and none on the API.
