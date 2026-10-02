@@ -400,9 +400,9 @@ impl Glyphs {
     /// A prompt's mark on the scroll rail grown: the one under the pointer,
     /// and the current prompt's.
     ///
-    /// The filled circle [`Glyphs::bullet`] is the small one of, so a grown
-    /// mark reads as the same mark made larger rather than as a new kind of
-    /// thing on the track; and neither [`Glyphs::thumb`] nor
+    /// [`Glyphs::bullet`] is the small filled circle and this is the large
+    /// one, so a grown mark reads as the same mark made larger rather than as
+    /// a new kind of thing on the track. It is neither [`Glyphs::thumb`] nor
     /// [`Glyphs::vertical`], since it may stand on either. One column in both
     /// sets, because the rail is one column.
     #[must_use]
