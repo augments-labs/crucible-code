@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crucible_models::{
     Delta, DeltaStream, Effort, PriceRate, PromptCacheCapabilities, PromptCachePricing,
@@ -152,6 +153,8 @@ pub(crate) struct Script {
     /// The plan windows each answer's headers report, in the order the
     /// answers go out; an answer past the end reports none.
     limits: Mutex<VecDeque<Option<PlanWindows>>>,
+    /// How long each request is out before its answer starts.
+    waits: Duration,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -208,7 +211,15 @@ impl Script {
             reach: Reach::Model,
             fast: FastFixture::default(),
             limits: Mutex::new(VecDeque::new()),
+            waits: Duration::ZERO,
         }
+    }
+
+    /// Answers each request only once `waits` has passed, as a vendor
+    /// keeps a request out before it says anything.
+    pub(crate) const fn waiting(mut self, waits: Duration) -> Self {
+        self.waits = waits;
+        self
     }
 
     /// Answers whose headers report these plan windows, one per answer in
@@ -622,6 +633,10 @@ impl Provider for Script {
                     .is_some(),
                 speed,
             });
+
+            if !self.waits.is_zero() {
+                std::thread::sleep(self.waits);
+            }
 
             // Before anything is answered: the line is meant to arrive while the
             // request is out, not once it has been read.

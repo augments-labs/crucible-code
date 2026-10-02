@@ -52,6 +52,9 @@ fn weekly(percent: u8) -> PlanWindows {
     )
 }
 
+/// How long the script keeps each request out before answering.
+const WAITS: Duration = Duration::from_millis(5);
+
 /// The last totals a turn posted.
 fn posted(scripted: &Scripted) -> Option<Totals> {
     scripted
@@ -73,7 +76,8 @@ fn usage_totals_add_up_every_response_of_two_turns() {
         reporting(StopReason::Yielded),
         reporting(StopReason::Yielded),
     ])
-    .priced();
+    .priced()
+    .waiting(WAITS);
     let mut scripted = Scripted::new(script, tools([Fixed::new("read")]), Verdict::Allow);
     assert_eq!(scripted.runner.totals().cost(), SessionCost::Unspent);
 
@@ -93,6 +97,10 @@ fn usage_totals_add_up_every_response_of_two_turns() {
     };
     assert_eq!(cost.femtocurrency(), 3 * 132_000_000_000);
     assert_eq!(cost.currency().as_str(), "USD");
+    // Each of the three requests was out for at least what the script kept
+    // it, and that time is counted.
+    assert!(totals.api() > Duration::ZERO, "{:?}", totals.api());
+    assert!(totals.api() >= 3 * WAITS, "{:?}", totals.api());
     assert!(
         totals.api() <= totals.started().elapsed(),
         "time waiting on requests cannot exceed the time the session has run"
