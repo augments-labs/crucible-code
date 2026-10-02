@@ -244,14 +244,14 @@ fn context_opens_while_a_turn_runs() {
 }
 
 #[test]
-fn context_closes_on_escape_as_every_panel_does_and_on_nothing_else() {
-    // Escape is the key the footer names. Interrupt and end of input close it
-    // too, as they close every picker, so a panel never holds a reader who
-    // reached for the key that stops things.
+fn context_closes_on_the_keys_every_esc_to_close_panel_closes_on() {
+    // Escape is the key the footer names. Enter, interrupt and end of input
+    // close it too, as they close the other panel with that footer, so a
+    // panel never holds a reader who reached for the key that stops things.
     assert_eq!(closing(&Pressed::Escape), Moved::Left);
+    assert_eq!(closing(&Pressed::Key(Key::Enter)), Moved::Left);
     assert_eq!(closing(&Pressed::Key(Key::Interrupt)), Moved::Left);
     assert_eq!(closing(&Pressed::Key(Key::Eof)), Moved::Left);
     assert_eq!(closing(&Pressed::Resized), Moved::Redraw);
-    assert_eq!(closing(&Pressed::Key(Key::Enter)), Moved::Still);
     assert_eq!(closing(&Pressed::Key(Key::Char('q'))), Moved::Still);
 }
