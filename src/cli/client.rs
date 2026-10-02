@@ -147,9 +147,12 @@ impl Terms {
 /// A plan being asked how much of its limits is used, on the runtime, while
 /// the drawing thread goes on drawing and reading keys.
 ///
-/// Dropped before the answer was taken back, the question is abandoned and
-/// its request closed: a panel closed before the plan answered has nowhere to
-/// show what it said.
+/// It ends by [`Terms::asked`], which takes the answer back, or by
+/// [`Terms::abandon`], which gives the question up: the request is answered
+/// with what is known and holds nothing back, so the next opening asks again.
+/// A panel closed with the question out ends it one of those two ways. Merely
+/// dropped, the question is stopped and nothing more: its request is never
+/// answered, and the plan is not asked again until a minute has passed.
 pub(crate) struct Out {
     request: Request,
     provider: &'static str,

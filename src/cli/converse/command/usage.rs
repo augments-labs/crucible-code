@@ -20,7 +20,10 @@
 //! nothing known, is said to have reported none. Printed rather than stood,
 //! the panel waits for the answer first, since a printed block cannot be
 //! drawn again: where keys are read, only until a key is pressed, after which
-//! the question is given up and what is known is printed.
+//! the question is given up and what is known is printed. A panel closed with
+//! the question still out gives it up the same way, so the request is
+//! answered and the next opening asks again rather than waiting out a minute
+//! for an answer nobody saw.
 //!
 //! A cost nobody priced reads `not priced`, never `$0.00`. A reset time is the
 //! reader's own wall clock, read in the system's zone as the panel opens; a
@@ -183,6 +186,7 @@ pub(super) fn run<T: Terminal>(
     if keys {
         let mut watch = |shown: &mut Shown| shown.watched(terms, conversation, false);
         if stood(renderer, terms, &mut shown, |_| Ok(()), Some(&mut watch))? != Ended::Cramped {
+            closed(shown.out.take(), terms, conversation);
             return Ok(());
         }
         // Printed once, so with the plan's answer in it rather than a promise
@@ -222,6 +226,18 @@ fn awaited(
     // An answer that came in the meantime is taken in; one given up is gone.
     shown.watched(terms, conversation, false);
     Ok(())
+}
+
+/// Ends the question `out` as a panel that stood is closed. An answer that
+/// came is taken back to the conversation, so the next opening shows it; one
+/// still to come is given up, as a key ends a wait for it, so the request is
+/// answered with what is known and the next opening is free to ask again.
+pub(super) fn closed(out: Option<Out>, terms: &Terms, conversation: &mut Conversation) {
+    match out {
+        Some(out) if out.ended() => drop(terms.asked(conversation, out)),
+        Some(out) => terms.abandon(conversation, out),
+        None => {}
+    }
 }
 
 /// Whether a key is pressed within `beat`. The key is read, and is spent on

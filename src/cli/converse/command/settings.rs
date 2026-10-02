@@ -9,7 +9,8 @@
 //! a row for — the list and the reasons for every key without one belong to
 //! the configuration crate, which holds the two together. **Usage** is the
 //! body of `/usage`, drawn at the panel's width; turning to it between turns
-//! asks the plan as opening `/usage` does, and draws the answer when it comes.
+//! asks the plan as opening `/usage` does, and draws the answer when it comes;
+//! closed before it came, the panel gives the question up as `/usage` does.
 //!
 //! **A change is a request.** Enter or space asks the application, through the
 //! client contract, to write one key to the user's own file — the file and the
@@ -222,7 +223,9 @@ pub(super) fn run<T: Terminal>(
         session: conversation.session().id().cloned(),
     };
     let mut watch = |panel: &mut Panel| panel.watched(terms, conversation);
-    stood(renderer, terms, &counted, |_| Ok(()), Some(&mut watch))
+    let out = stood(renderer, terms, &counted, |_| Ok(()), Some(&mut watch))?;
+    usage::closed(out, terms, conversation);
+    Ok(())
 }
 
 /// Opens the panel over a running turn, with what that turn last reported.
@@ -236,20 +239,24 @@ pub(super) fn live<T: Terminal>(
     counted: &Counted,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
-    stood(renderer, terms, counted, while_waiting, None)
+    // Nothing is asked over a running turn, so nothing is out once it closes.
+    stood(renderer, terms, counted, while_waiting, None).map(drop)
 }
 
 /// Stands the panel until it is closed, writing each change as it is asked
 /// for, and leaves a row for each change behind it. With `watch`, the panel
 /// is looked at again every [`usage::BEAT`] with no key pressed; mid-turn
 /// there is no watch, and `while_waiting` keeps the turn's text moving.
+///
+/// Hands back the question the Usage tab put to the plan, where it was still
+/// out as the panel closed, for the caller to end with [`usage::closed`].
 fn stood<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     counted: &Counted,
     mut while_waiting: impl FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
     mut watch: Option<&mut dyn FnMut(&mut Panel) -> Moved>,
-) -> Result<(), Fatal> {
+) -> Result<Option<Out>, Fatal> {
     let mut panel = Panel::new(terms, counted);
     let mut changed: Vec<String> = Vec::new();
     loop {
@@ -283,10 +290,14 @@ fn stood<T: Terminal>(
                     changed.push(said);
                 }
             }
-            Ended::Left => return left(renderer, &changed),
+            Ended::Left => {
+                left(renderer, &changed)?;
+                return Ok(panel.out.take());
+            }
             Ended::Cramped => {
                 left(renderer, &changed)?;
-                return listed(renderer, terms);
+                listed(renderer, terms)?;
+                return Ok(panel.out.take());
             }
         }
     }

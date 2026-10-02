@@ -865,3 +865,34 @@ fn usage_cramped_a_wait_a_key_ended_leaves_the_next_opening_free_to_ask() {
 
     assert!(terms.ask_limits(&mut conversation).is_some());
 }
+
+#[test]
+fn usage_closed_with_the_question_out_gives_it_up_and_the_next_opening_asks() {
+    let mut conversation = stalled_plan();
+    let (client, journal) = crate::cli::client::Client::noting();
+    let mut terms = plain();
+    terms.client = client;
+    let mut shown = Shown::of(&terms, conversation.serving(), keyed());
+    shown.out = terms.ask_limits(&mut conversation);
+    assert!(shown.out.is_some(), "the plan was not asked");
+
+    closed(shown.out.take(), &terms, &mut conversation);
+
+    // The request is answered, with what was known, as the panel closes.
+    assert!(
+        matches!(
+            journal.noted().as_slice(),
+            [crate::cli::client::tests::Noted::Answered {
+                asked: api::Command::AskLimits,
+                ..
+            }]
+        ),
+        "{:#?}",
+        journal.noted()
+    );
+    // And it holds nothing back: the panel opened again at once asks again.
+    assert!(
+        terms.ask_limits(&mut conversation).is_some(),
+        "the plan was not asked again"
+    );
+}

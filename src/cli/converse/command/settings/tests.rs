@@ -679,3 +679,36 @@ fn usage_tab_asks_the_plan_when_turned_to_and_draws_its_answer() {
     assert!(panel.out.is_none());
     assert_eq!(asked.load(std::sync::atomic::Ordering::Relaxed), 1);
 }
+
+#[test]
+fn usage_tab_closed_with_the_question_out_gives_it_up_and_the_next_opening_asks() {
+    let mut conversation = crate::cli::converse::tests::stalled_plan();
+    let (client, journal) = crate::cli::client::Client::noting();
+    let mut terms = plain();
+    terms.client = client;
+    let counted = counted();
+    let mut panel = Panel::new(&terms, &counted);
+    panel.turn(Tab::Usage);
+    assert_eq!(panel.watched(&terms, &mut conversation), Moved::Redraw);
+    assert!(panel.out.is_some(), "the plan was not asked");
+
+    usage::closed(panel.out.take(), &terms, &mut conversation);
+
+    // The request is answered, with what was known, as the panel closes.
+    assert!(
+        matches!(
+            journal.noted().as_slice(),
+            [crate::cli::client::tests::Noted::Answered {
+                asked: api::Command::AskLimits,
+                ..
+            }]
+        ),
+        "{:#?}",
+        journal.noted()
+    );
+    // And it holds nothing back: the panel opened again at once asks again.
+    let mut again = Panel::new(&terms, &counted);
+    again.turn(Tab::Usage);
+    assert_eq!(again.watched(&terms, &mut conversation), Moved::Redraw);
+    assert!(again.out.is_some(), "the plan was not asked again");
+}
