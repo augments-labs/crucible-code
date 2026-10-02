@@ -1451,13 +1451,41 @@ fn a_directory_is_written_under_home_and_quoted_where_a_shell_needs_it() {
         homed(&home.join("a\u{1b}b"), Some(&home)),
         format!("~{sep}a b")
     );
+}
 
+#[cfg(not(windows))]
+#[test]
+fn a_posix_shell_reads_the_directory_back_whole() {
     assert_eq!(quoted("~/code/crucible-code"), "~/code/crucible-code");
     assert_eq!(quoted("/srv/x_y@1.2+3=4:5,6%7"), "/srv/x_y@1.2+3=4:5,6%7");
     assert_eq!(quoted("~/my code"), "~/'my code'");
     assert_eq!(quoted("/srv/it's"), r"'/srv/it'\''s'");
     assert_eq!(quoted("~"), "~");
     assert_eq!(quoted("/a;rm -rf b"), "'/a;rm -rf b'");
+
+    // Under home, where a POSIX shell expands `~` back.
+    let home = under(&["home", "ada"]);
+    assert_eq!(commanded(&home.join("my code"), Some(&home)), "~/'my code'");
+}
+
+#[cfg(windows)]
+#[test]
+fn cmd_and_powershell_read_the_directory_back_whole() {
+    // Double quotes are the quoting both shells share, and a directory
+    // without a character either acts on is left bare.
+    assert_eq!(quoted(r"C:\code\crucible-code"), r"C:\code\crucible-code");
+    assert_eq!(quoted(r"C:\a b"), r#""C:\a b""#);
+    assert_eq!(quoted(r"C:\a&b"), r#""C:\a&b""#);
+    // A double quote cannot be in a Windows name, and is the one character
+    // that would end the quoting in both: it is not written.
+    assert_eq!(quoted(r#"C:\a" & del b"#), r#""C:\a & del b""#);
+
+    // Whole, never under `~`, which cmd reads as a directory of that name.
+    let home = under(&["Users", "ada"]);
+    assert_eq!(
+        commanded(&home.join("my code"), Some(&home)),
+        format!("\"{}\"", home.join("my code").display())
+    );
 }
 
 #[test]

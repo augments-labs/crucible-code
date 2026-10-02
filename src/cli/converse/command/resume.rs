@@ -427,12 +427,46 @@ fn homed(path: &Path, home: Option<&Path>) -> String {
     crate::cli::draw::flattened(said)
 }
 
-/// `place` as a shell reads it back as the same directory.
+/// The directory a `cd` is handed, in the spelling the shell it is pasted
+/// into reads back as that directory: under `~`, which a POSIX shell expands.
+#[cfg(not(windows))]
+fn commanded(path: &Path, home: Option<&Path>) -> String {
+    quoted(&homed(path, home))
+}
+
+/// The directory a `cd` is handed, in the spelling the shell it is pasted
+/// into reads back as that directory: whole, because cmd reads `~` as a
+/// directory of that name rather than the home directory.
+#[cfg(windows)]
+fn commanded(path: &Path, _home: Option<&Path>) -> String {
+    quoted(&homed(path, None))
+}
+
+/// `place` as cmd and PowerShell both read it back as the same directory.
+///
+/// Left bare where every character is one neither treats specially, which is
+/// most directories, and otherwise in double quotes, the one quoting the two
+/// share. A double quote cannot be in a Windows name and is the one character
+/// that would end the quoting in both, so it is not written. Inside the quotes
+/// cmd still expands `%NAME%`, and PowerShell `$name` and a backtick: no
+/// quoting both shells read alike keeps those literal.
+#[cfg(windows)]
+fn quoted(place: &str) -> String {
+    let place: String = place.chars().filter(|&c| c != '"').collect();
+    let bare = !place.is_empty()
+        && place
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@+=,.-:\\".contains(c));
+    if bare { place } else { format!("\"{place}\"") }
+}
+
+/// `place` as a POSIX shell reads it back as the same directory.
 ///
 /// Left bare where every character is one no shell treats specially, which is
 /// most directories, and otherwise in single quotes, inside which nothing is
 /// special but the quote itself. A leading `~/` stays outside the quotes,
 /// because quoted it is a directory named `~` rather than the home directory.
+#[cfg(not(windows))]
 fn quoted(place: &str) -> String {
     let (tilde, rest) = match place.strip_prefix("~/") {
         Some(rest) => ("~/", rest),
@@ -469,7 +503,7 @@ fn elsewhere(
     glyphs: Glyphs,
 ) -> Vec<String> {
     let room = columns.saturating_sub(2);
-    let place = quoted(&homed(session.workspace(), home));
+    let place = commanded(session.workspace(), home);
     let resume = format!("crucible --resume {}", session.id().as_str());
 
     let whole = format!("cd {place} && {resume}");
