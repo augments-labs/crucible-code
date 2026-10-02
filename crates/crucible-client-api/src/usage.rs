@@ -251,8 +251,7 @@ pub struct LimitGroup {
     /// The vendor's name for the model the limit is kept for, cut and
     /// stripped of control characters, or `None` for the plan-wide limit.
     pub model: Option<Name>,
-    /// Its windows, shortest first, at most
-    /// [`MAX_GROUP_WINDOWS`](crucible_types::MAX_GROUP_WINDOWS).
+    /// Its windows, shortest first, at most [`MAX_GROUP_WINDOWS`].
     pub limits: Vec<Limit>,
 }
 
@@ -302,7 +301,7 @@ impl LimitGroup {
 /// where there is one, then one for each model the vendor keeps a limit for.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Limits {
-    /// Each limit, at most [`MAX_LIMIT_GROUPS`](crucible_types::MAX_LIMIT_GROUPS).
+    /// Each limit, at most [`MAX_LIMIT_GROUPS`].
     pub groups: Vec<LimitGroup>,
 }
 

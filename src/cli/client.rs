@@ -124,13 +124,19 @@ impl Terms {
     /// asks, and is never inside that runtime, so it can wait on it.
     pub(crate) fn perform(&self, conversation: &mut Conversation, command: Command) -> Performed {
         let request = self.client.asking(command);
+        self.performed(conversation, &request)
+    }
+
+    /// Carries out `request` through the door that answers it whole, waiting
+    /// for it, and tells whoever is listening what came of it.
+    fn performed(&self, conversation: &mut Conversation, request: &Request) -> Performed {
         let providers = self.providers.snapshot();
         let performed =
             self.runtime
-                .block_on(perform(conversation, &request, &self.desk(&providers)));
+                .block_on(perform(conversation, request, &self.desk(&providers)));
 
         self.client
-            .answered(&request, conversation, || performed.outcome());
+            .answered(request, conversation, || performed.outcome());
 
         performed
     }
@@ -174,8 +180,9 @@ impl Terms {
         let request = self.client.asking(Command::AskLimits);
         let Ok(Some(question)) = asking(conversation, &request, std::time::Instant::now()) else {
             // Nothing was sent; the request is answered with what is known,
-            // as the application answers it whole.
-            self.known(conversation, &request);
+            // through the door that answers it whole. Whatever kept it from
+            // being put still holds there, so that door sends nothing either.
+            self.performed(conversation, &request);
             return None;
         };
         Some(Out {
@@ -192,25 +199,13 @@ impl Terms {
     pub(crate) fn asked(&self, conversation: &mut Conversation, mut out: Out) -> Performed {
         let performed = match self.runtime.block_on(&mut out.answer) {
             Ok(answered) => asked(conversation, answered),
-            // The question panicked or was abandoned: nothing was learned.
-            Err(_) => return self.known(conversation, &out.request),
+            // The question panicked or was abandoned: nothing was learned. It
+            // was put moments ago, so the door that answers it whole sends
+            // nothing and answers with what is known.
+            Err(_) => return self.performed(conversation, &out.request),
         };
         self.client
             .answered(&out.request, conversation, || performed.outcome());
-        performed
-    }
-
-    /// Answers `request`, a question to the plan that was not put or never
-    /// came back, through the door that answers it whole. Whatever kept it
-    /// from being put still holds, or it was put moments ago, so that door
-    /// sends nothing and answers with what is known.
-    fn known(&self, conversation: &mut Conversation, request: &Request) -> Performed {
-        let providers = self.providers.snapshot();
-        let performed =
-            self.runtime
-                .block_on(perform(conversation, request, &self.desk(&providers)));
-        self.client
-            .answered(request, conversation, || performed.outcome());
         performed
     }
 }
