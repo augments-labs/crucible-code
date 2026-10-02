@@ -51,6 +51,7 @@ mod login;
 mod logout;
 mod model;
 pub(crate) mod notes;
+mod notes_list;
 mod resume;
 mod sandbox;
 mod theme;
@@ -752,8 +753,15 @@ pub(super) fn run<T: Terminal>(
         rest,
     } = wanted
     {
-        notes::run(rest, renderer, terms.style().glyphs())?;
-        renderer.commit("")?;
+        // Nothing after it, and a keyboard to walk with: the list of releases.
+        // Anywhere it cannot be stood, or with no keyboard, the command prints
+        // what `/release-notes all` does.
+        let walked =
+            rest.trim().is_empty() && held.answers.keys && notes_list::run(renderer, terms)?;
+        if !walked {
+            notes::run(rest, renderer, terms.style().glyphs())?;
+            renderer.commit("")?;
+        }
         return Ok(Ran::Again);
     }
 

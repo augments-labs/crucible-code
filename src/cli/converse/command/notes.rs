@@ -22,7 +22,7 @@ use crate::cli::Fatal;
 pub(super) const CHANGELOG: &str = include_str!("../../../../CHANGELOG.md");
 
 /// The version this binary is.
-const RUNNING: &str = env!("CARGO_PKG_VERSION");
+pub(super) const RUNNING: &str = env!("CARGO_PKG_VERSION");
 
 /// How many of the newest releases are told in full.
 const FULL: usize = 10;
@@ -40,11 +40,13 @@ fn forge() -> Forge {
     )
 }
 
-/// Runs `/release-notes`: every release with nothing after it, and the one
-/// named with a version after it.
+/// Runs `/release-notes`: every release with `all` or, where there is no
+/// keyboard to walk the list with, nothing after it; and the one named with a
+/// version after it.
 ///
 /// Printed into the transcript, where it is read by scrolling and copied like
-/// anything else there, rather than stood over the box.
+/// anything else there, rather than stood over the box. The list a keyboard
+/// walks with nothing after the command is stood by `notes_list`.
 ///
 /// # Errors
 ///
@@ -62,7 +64,7 @@ pub(super) fn run<T: Terminal>(
     renderer.apart()?;
     let words: Vec<&str> = rest.split_whitespace().collect();
     match words.as_slice() {
-        [] => renderer.present(&whole(&releases, columns, glyphs))?,
+        [] | ["all"] => renderer.present(&whole(&releases, columns, glyphs))?,
         [word] => match asked(word) {
             Some(version) => match releases.iter().find(|release| release.version == version) {
                 Some(release) => renderer.present(&alone(release, columns, glyphs))?,

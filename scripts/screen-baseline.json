@@ -593,6 +593,22 @@
       "sha256": "f3ddb938ccc029878660a5e6fe087ab9086e11d29161b76ed69feebc3c9667fe"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_40.snap",
+      "case": "release_notes_list_opens_one_version_from_the_revealed_rows",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-open-{columns}\"), columns, 24)"
+      ],
+      "sha256": "b248cb466f4a81e743069de937682404302308e41499337cfeac3ea03945ff2c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_80.snap",
+      "case": "release_notes_list_opens_one_version_from_the_revealed_rows",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-open-{columns}\"), columns, 24)"
+      ],
+      "sha256": "adf8d92083feb19ef94646cfe48c8553141b8b10e50776a26b1b66990be6404c"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill.snap",
       "case": "the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill",
       "opened": [

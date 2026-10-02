@@ -48,6 +48,19 @@ fn every_release_is_printed_here_and_no_turn_is_taken() {
 }
 
 #[test]
+fn all_prints_every_release_at_once_as_the_bare_form_does_with_no_keyboard() {
+    let (every, asked) = noted("/release-notes all\n");
+
+    assert_eq!(asked, 0, "{every}");
+    assert!(every.contains("ten newest in full"), "{every}");
+    assert!(
+        every.contains("/release-notes <version> prints one"),
+        "{every}"
+    );
+    assert!(!every.contains("not a version"), "{every}");
+}
+
+#[test]
 fn one_release_is_printed_in_full_by_its_number_with_or_without_a_v() {
     for typed in ["/release-notes 0.41.1\n", "/release-notes v0.41.1\n"] {
         let (written, asked) = noted(typed);
