@@ -1318,7 +1318,11 @@ fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
     );
     assert_eq!(stood.standing.marked, marked);
     assert_eq!(stood.told.as_ref(), Some(&away));
-    let root = yonder.root().display().to_string();
+    // Written as the command writes it: as typed, without the `\\?\` that
+    // resolving put on the root on Windows.
+    let root = crucible_workspace::typed(yonder.root())
+        .display()
+        .to_string();
     let command = format!("cd {root} && crucible --resume {}", away.as_str());
     assert_eq!(
         elsewhere(
@@ -1372,10 +1376,11 @@ fn the_command_to_resume_elsewhere_breaks_after_its_and_and_never_cuts_the_id() 
     assert_eq!(away.as_str().len(), 36, "{away:?}");
 
     let rows = elsewhere(session, None, 80, Glyphs::Unicode);
+    let root = crucible_workspace::typed(yonder.root());
     assert_eq!(rows.len(), 2, "{rows:?}");
     let (first, second) = (rows.first().expect("one"), rows.get(1).expect("two"));
     assert!(
-        wide(&format!("cd {} &&", yonder.root().display())) > 78,
+        wide(&format!("cd {} &&", root.display())) > 78,
         "the directory alone is wider than the window"
     );
     assert!(first.starts_with("cd "), "{first:?}");
@@ -1425,7 +1430,7 @@ fn the_command_to_resume_elsewhere_breaks_after_its_and_and_never_cuts_the_id() 
         short,
         [format!(
             "cd {} && crucible --resume {}",
-            yonder.root().display(),
+            root.display(),
             away.as_str()
         )]
     );
