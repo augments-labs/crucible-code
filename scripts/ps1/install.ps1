@@ -244,13 +244,25 @@ function Invoke-CrucibleInstall {
         return $Task.Result
     }
 
+    # Redirects are followed here, not by the client, so every hop is checked
+    # before it is requested: each must be HTTPS, as install.sh's curl
+    # --proto '=https' requires, and there are at most ten.
     function Get-Response($Client, [string]$Url, $Method) {
-        $request = New-Object System.Net.Http.HttpRequestMessage($Method, $Url)
-        $response = Wait-Task ($Client.SendAsync($request,
-            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead)) { '' }
-        # Redirects are followed only while they stay on HTTPS.
-        if ($response.RequestMessage.RequestUri.Scheme -ne 'https') {
-            Stop-Install 1 "refusing $($response.RequestMessage.RequestUri), which is not HTTPS"
+        $uri = New-Object System.Uri($Url)
+        $hops = 0
+        while ($true) {
+            if ($uri.Scheme -ne 'https') { Stop-Install 1 "refusing $uri, which is not HTTPS" }
+            $request = New-Object System.Net.Http.HttpRequestMessage($Method, $uri)
+            $response = Wait-Task ($Client.SendAsync($request,
+                [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead)) { '' }
+            $status = [int]$response.StatusCode
+            $location = $response.Headers.Location
+            if ($status -lt 300 -or $status -gt 399 -or $null -eq $location) { break }
+            $response.Dispose()
+            $hops++
+            if ($hops -gt 10) { Stop-Install 1 "$Url redirected more than 10 times" }
+            if (-not $location.IsAbsoluteUri) { $location = New-Object System.Uri($uri, $location) }
+            $uri = $location
         }
         if (-not $response.IsSuccessStatusCode) {
             Stop-Install 1 ("{0} answered {1} {2}" -f $Url, [int]$response.StatusCode, $response.ReasonPhrase)
@@ -399,7 +411,9 @@ function Invoke-CrucibleInstall {
                 [Net.ServicePointManager]::SecurityProtocol =
                     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
             }
-            $client = New-Object System.Net.Http.HttpClient
+            $handler = New-Object System.Net.Http.HttpClientHandler
+            $handler.AllowAutoRedirect = $false
+            $client = New-Object System.Net.Http.HttpClient($handler)
             $client.DefaultRequestHeaders.UserAgent.ParseAdd('crucible-install')
             if (-not $Version) {
                 try {
