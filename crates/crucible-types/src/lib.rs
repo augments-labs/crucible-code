@@ -77,7 +77,7 @@ pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use usage::{
     Calibration, Carried, GroupName, InputTokenUsage, LimitGroup, MAX_GROUP_WINDOWS,
     MAX_LIMIT_GROUPS, MAX_LIMIT_NAME_BYTES, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES,
-    MAX_PROVIDER_USAGE_DETAILS, PlanWindows, ProviderNumericDetail, ProviderUsage, Scope, Spend,
-    UsageError, Used, Utc, Window, WindowReading,
+    MAX_PROVIDER_USAGE_DETAILS, ModelGroup, ModelKey, PlanWindows, ProviderNumericDetail,
+    ProviderUsage, Scope, Spend, UsageError, Used, Utc, Window, WindowReading,
 };
 pub use version::later;

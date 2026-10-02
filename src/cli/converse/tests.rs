@@ -225,8 +225,11 @@ pub(crate) fn silent() -> Conversation {
 /// weekly window plan-wide and a group for one model each time it is asked,
 /// and a handle on how many times it was.
 pub(crate) fn asking_plan() -> (Conversation, crate::cli::fake::Asked) {
-    use crucible_types::{GroupName, PlanWindows, Scope, Window, WindowReading};
-    let spark = GroupName::new("GPT-5.3-Codex-Spark").expect("a name");
+    use crucible_types::{
+        GroupName, ModelGroup, ModelKey, PlanWindows, Scope, Window, WindowReading,
+    };
+    let slug = "gpt-5.3-codex-spark";
+    let spark = ModelGroup::new(GroupName::new(slug).expect("a name"), ModelKey::exact(slug));
     let windows = PlanWindows::new(std::time::SystemTime::now())
         .with(Window::Weekly, WindowReading::new(31, None))
         .within(

@@ -7,8 +7,9 @@
 //! wherever it carries them: a family of headers per limit, `x-<id>-primary-*`
 //! and `x-<id>-secondary-*`, each window as a percentage used, its length in
 //! minutes and the second it starts again. The `codex` family is the plan's
-//! own; any other is named by its `x-<id>-limit-name`, else by its id. No
-//! more families are read than a reading keeps groups.
+//! own; any other is the limit of the model whose slug its
+//! `x-<id>-limit-name` says, else one named by its id. No more families are
+//! read than a reading keeps groups.
 //!
 //! In an answer to asking, at [`usage`]'s address with the credential the
 //! provider already holds: `rate_limit` is the plan's own and each of
@@ -20,8 +21,13 @@
 //! Which window is which is decided by its length, never by the header or
 //! field that carried it or by any text in it. A window whose figures are not
 //! numbers in range is left out, and a response that leaves every window out
-//! reads as one that reported none. A group's name is only ever shown and
-//! matched whole against a model's; it is never parsed.
+//! reads as one that reported none.
+//!
+//! Which model a group limits is decided here, as the Codex CLI decides it:
+//! by the limit's name, which is the model's slug, matched whole against the
+//! id a request asks for. That is the group's key, kept apart from the name
+//! it is drawn with; a limit with no name limits no model by name. Neither is
+//! ever parsed.
 //!
 //! The header and field names are those the Codex CLI reads; no response
 //! from the backend was captured to write this.
@@ -32,7 +38,9 @@
 
 use std::time::{Duration, SystemTime};
 
-use crucible_types::{GroupName, MAX_LIMIT_GROUPS, PlanWindows, Scope, Window, WindowReading};
+use crucible_types::{
+    GroupName, MAX_LIMIT_GROUPS, ModelGroup, ModelKey, PlanWindows, Scope, Window, WindowReading,
+};
 use serde_json::Value;
 
 use super::Serving;
@@ -135,19 +143,33 @@ fn family(name: &str) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
-/// Whose limit `family` is: the plan's own, or one named by its
-/// `x-<id>-limit-name` header, else by its id as the Codex CLI spells it,
-/// lowercase with every `-` an `_`; `None` for an id that is no name.
+/// Whose limit `family` is: the plan's own, or the model whose slug its
+/// `x-<id>-limit-name` header says. One with no such header limits no model
+/// by name, and is named by its id as the Codex CLI spells it, lowercase with
+/// every `-` an `_`; `None` for an id that is no name.
 fn scope(named: &Named, family: &str) -> Option<Scope> {
     if family == PLAN {
         return Some(Scope::Plan);
     }
     let id = family.to_ascii_lowercase().replace('-', "_");
-    named
-        .get(&format!("{OPENS}{family}-{LIMIT_NAME}"))
-        .and_then(GroupName::new)
-        .or_else(|| GroupName::new(&id))
-        .map(Scope::Model)
+    match named.get(&format!("{OPENS}{family}-{LIMIT_NAME}")) {
+        Some(slug) => model(slug).or_else(|| unkeyed(&id)),
+        None => unkeyed(&id),
+    }
+}
+
+/// The group kept for the model whose slug is `slug`, as the backend names
+/// a limit's model: it holds back a request to that model, matched whole as
+/// the Codex CLI matches it, and is drawn as the slug says until a reader
+/// knows the model by another name. `None` for a slug that is no name.
+fn model(slug: &str) -> Option<Scope> {
+    let name = GroupName::new(slug)?;
+    Some(Scope::Model(ModelGroup::new(name, ModelKey::exact(slug))))
+}
+
+/// A group named `name` that limits no model by name.
+fn unkeyed(name: &str) -> Option<Scope> {
+    Some(Scope::Model(ModelGroup::new(GroupName::new(name)?, None)))
 }
 
 /// The window `family` reports in `slot`, where it has a length and each of
@@ -199,8 +221,8 @@ pub(super) fn usage(route: Serving) -> Option<Usage> {
 /// arrived at `arrived`; `None` where it is not an object.
 ///
 /// `rate_limit` is the plan's own, and each of `additional_rate_limits` is a
-/// limit of its own named by its `limit_name`, else by its
-/// `metered_feature`. Nothing else in the answer is read: not the plan's
+/// limit of its own: the model's whose slug its `limit_name` says, else one
+/// named by its `metered_feature` that limits no model by name. Nothing else in the answer is read: not the plan's
 /// type, its credits or its spend control. A window that is null, of no
 /// length, or whose figures are not numbers in range is left out, and an
 /// answer that leaves every window out is an answer of none.
@@ -217,11 +239,12 @@ fn asked(body: &Value, arrived: SystemTime) -> Option<PlanWindows> {
         .flatten()
         .take(MAX_LIMIT_GROUPS);
     for limit in additional {
-        let named = ["limit_name", "metered_feature"]
-            .iter()
-            .find_map(|field| limit.get(*field)?.as_str().and_then(GroupName::new));
-        if let (Some(name), Some(rate_limit)) = (named, limit.get("rate_limit")) {
-            windows = limit_windows(windows, &Scope::Model(name), rate_limit, arrived);
+        let field = |field: &str| limit.get(field).and_then(Value::as_str);
+        let scope = field("limit_name")
+            .and_then(model)
+            .or_else(|| field("metered_feature").and_then(unkeyed));
+        if let (Some(scope), Some(rate_limit)) = (scope, limit.get("rate_limit")) {
+            windows = limit_windows(windows, &scope, rate_limit, arrived);
         }
     }
     Some(windows)

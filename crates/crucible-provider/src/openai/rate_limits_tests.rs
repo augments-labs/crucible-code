@@ -85,7 +85,7 @@ fn grouped(windows: Option<PlanWindows>) -> Grouped {
                 .map(|group| {
                     let model = match group.scope() {
                         Scope::Plan => None,
-                        Scope::Model(name) => Some(name.as_str().to_owned()),
+                        Scope::Model(group) => Some(group.name().as_str().to_owned()),
                     };
                     let read = group
                         .windows()
@@ -194,7 +194,7 @@ fn rate_limit_a_family_named_for_a_model_is_read_as_a_group_of_its_own() {
         ("x-codex-bengalfox-primary-reset-at", &reset),
         ("x-codex-bengalfox-secondary-used-percent", "4"),
         ("x-codex-bengalfox-secondary-window-minutes", "10080"),
-        ("x-codex-bengalfox-limit-name", "GPT-5.3-Codex-Spark"),
+        ("x-codex-bengalfox-limit-name", "gpt-5.3-codex-spark"),
     ]);
 
     assert_eq!(
@@ -202,7 +202,7 @@ fn rate_limit_a_family_named_for_a_model_is_read_as_a_group_of_its_own() {
         [
             (None, vec![(Window::Weekly, 31)]),
             (
-                Some("GPT-5.3-Codex-Spark".to_owned()),
+                Some("gpt-5.3-codex-spark".to_owned()),
                 vec![(Window::FiveHour, 12), (Window::Weekly, 4)]
             ),
         ]
@@ -212,6 +212,39 @@ fn rate_limit_a_family_named_for_a_model_is_read_as_a_group_of_its_own() {
         .and_then(|windows| windows.groups().nth(1))
         .and_then(|group| group.reading(Window::FiveHour));
     assert_eq!(spark, Some(WindowReading::new(12, Some(at(RESET)))));
+}
+
+/// A family's `limit-name` is the slug of the model it limits, and a used-up
+/// window of it holds back a request to that model, matched whole as it is
+/// spelled, and to no other. A family the head names by its id alone limits
+/// no model by name, whatever its id reads like.
+#[test]
+fn rate_limit_a_used_up_model_family_stops_its_model_and_no_other() {
+    let reset = RESET.to_string();
+    let before = at(RESET - 60);
+    let spent = [
+        ("x-codex-primary-used-percent", "31"),
+        ("x-codex-primary-window-minutes", "10080"),
+        ("x-codex-bengalfox-primary-used-percent", "100"),
+        ("x-codex-bengalfox-primary-window-minutes", "300"),
+        ("x-codex-bengalfox-primary-reset-at", reset.as_str()),
+    ];
+    let mut named = spent.to_vec();
+    named.push(("x-codex-bengalfox-limit-name", "gpt-5.3-codex-spark"));
+
+    let windows = limits(&named).expect("a plan-wide and a model's window");
+    assert_eq!(
+        windows.exhausted("gpt-5.3-codex-spark", before),
+        Some((Window::FiveHour, at(RESET)))
+    );
+    for other in ["gpt-5.5", "GPT-5.3-Codex-Spark", "gpt-5.3-codex"] {
+        assert_eq!(windows.exhausted(other, before), None, "{other}");
+    }
+
+    let unnamed = limits(&spent).expect("a plan-wide and a family's window");
+    for model in ["codex_bengalfox", "codex-bengalfox", "gpt-5.3-codex-spark"] {
+        assert_eq!(unnamed.exhausted(model, before), None, "{model}");
+    }
 }
 
 /// A family whose limit is not named is named by its own id, as the Codex
@@ -702,7 +735,7 @@ async fn plan_limit_asked_an_additional_limit_is_a_group_named_for_its_model() {
             wham_window(31, 604_800, RESET)
         ),
         &format!(
-            r#","additional_rate_limits":[{{"limit_name":"GPT-5.3-Codex-Spark","metered_feature":"codex_bengalfox","rate_limit":{{"allowed":true,"limit_reached":false,"primary_window":{},"secondary_window":{}}}}},{{"limit_name":"unmetered","metered_feature":"codex_other"}}]"#,
+            r#","additional_rate_limits":[{{"limit_name":"gpt-5.3-codex-spark","metered_feature":"codex_bengalfox","rate_limit":{{"allowed":true,"limit_reached":false,"primary_window":{},"secondary_window":{}}}}},{{"limit_name":"unmetered","metered_feature":"codex_other"}}]"#,
             wham_window(12, 18_000, RESET),
             wham_window(4, 604_800, RESET),
         ),
@@ -713,11 +746,61 @@ async fn plan_limit_asked_an_additional_limit_is_a_group_named_for_its_model() {
         [
             (None, vec![(Window::Weekly, 31)]),
             (
-                Some("GPT-5.3-Codex-Spark".to_owned()),
+                Some("gpt-5.3-codex-spark".to_owned()),
                 vec![(Window::FiveHour, 12), (Window::Weekly, 4)]
             ),
         ]
     );
+}
+
+/// An additional limit's `limit_name` is the slug of the model it limits: a
+/// used-up window of it stops a request to that model and no other. One with
+/// only a `metered_feature` is named by it and limits no model by name.
+#[tokio::test]
+async fn plan_limit_asked_a_used_up_model_limit_stops_its_model_and_no_other() {
+    let before = at(RESET - 60);
+    let spent = format!(
+        r#"{{"primary_window":{},"secondary_window":null}}"#,
+        wham_window(100, 18_000, RESET)
+    );
+    let plan = format!(
+        r#"{{"primary_window":null,"secondary_window":{}}}"#,
+        wham_window(31, 604_800, RESET)
+    );
+
+    let named = wham(
+        &plan,
+        &format!(
+            r#","additional_rate_limits":[{{"limit_name":"gpt-5.3-codex-spark","metered_feature":"codex_bengalfox","rate_limit":{spent}}}]"#
+        ),
+    );
+    let windows = answered(asked(200, &named).await);
+    assert_eq!(
+        windows.exhausted("gpt-5.3-codex-spark", before),
+        Some((Window::FiveHour, at(RESET)))
+    );
+    for other in ["gpt-5.5", "GPT-5.3-Codex-Spark", "codex_bengalfox"] {
+        assert_eq!(windows.exhausted(other, before), None, "{other}");
+    }
+
+    let metered = wham(
+        &plan,
+        &format!(
+            r#","additional_rate_limits":[{{"metered_feature":"codex_bengalfox","rate_limit":{spent}}}]"#
+        ),
+    );
+    let windows = answered(asked(200, &metered).await);
+    assert_eq!(
+        grouped(Some(windows.clone())),
+        [
+            (None, vec![(Window::Weekly, 31)]),
+            (
+                Some("codex_bengalfox".to_owned()),
+                vec![(Window::FiveHour, 100)]
+            ),
+        ]
+    );
+    assert_eq!(windows.exhausted("codex_bengalfox", before), None);
 }
 
 /// Nulls, and windows of no length, are windows not reported: the answer is

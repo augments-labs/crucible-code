@@ -5,7 +5,8 @@ use crucible_runner::SessionCost;
 use std::time::{Duration, SystemTime};
 
 use crucible_types::{
-    CostAmount, GroupName, PlanWindows, PricingCurrency, PricingUnit, Scope, Window, WindowReading,
+    CostAmount, GroupName, ModelGroup, ModelKey, PlanWindows, PricingCurrency, PricingUnit, Scope,
+    Window, WindowReading,
 };
 
 use super::{cost, limits};
@@ -69,7 +70,7 @@ fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
     // window added to one and not the other fails to compile there, and one
     // crossed under another's name fails here.
     let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-    let spark = Scope::Model(GroupName::new("GPT-5.3-Codex-Spark").unwrap());
+    let spark = kept_for("gpt-5.3-codex-spark");
     let reported = PlanWindows::new(SystemTime::UNIX_EPOCH)
         .within(
             spark.clone(),
@@ -85,7 +86,7 @@ fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
         .with(Window::Weekly, WindowReading::new(100, None))
         .within(spark, Window::Yearly, WindowReading::new(1, None));
 
-    let crossed = limits(&reported);
+    let crossed = limits(&reported, Some("openai"));
 
     let limit = |window, reading, resets_at| api::Limit {
         window,
@@ -114,7 +115,7 @@ fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
                     ],
                 },
                 api::LimitGroup {
-                    model: Some(api::Name::new("GPT-5.3-Codex-Spark").unwrap()),
+                    model: Some(api::Name::new("gpt-5.3-codex-spark").unwrap()),
                     limits: vec![
                         limit(api::Window::Lasting { minutes: 180 }, percent(7), None),
                         limit(api::Window::Yearly, percent(1), None),
@@ -123,5 +124,58 @@ fn limit_every_window_reading_and_group_crosses_under_its_own_name() {
             ],
         }
     );
-    assert!(limits(&PlanWindows::new(SystemTime::UNIX_EPOCH)).is_empty());
+    assert!(limits(&PlanWindows::new(SystemTime::UNIX_EPOCH), None).is_empty());
+}
+
+/// The group a provider module keeps for the model whose slug is `slug`,
+/// named as the vendor named it.
+fn kept_for(slug: &str) -> Scope {
+    Scope::Model(ModelGroup::new(
+        GroupName::new(slug).unwrap(),
+        ModelKey::exact(slug),
+    ))
+}
+
+/// What the one model's group in a reading of `scope` crosses as, read in
+/// the words of `serving`.
+fn drawn(scope: Scope, serving: Option<&str>) -> Option<String> {
+    let reported = PlanWindows::new(SystemTime::UNIX_EPOCH).within(
+        scope,
+        Window::FiveHour,
+        WindowReading::new(7, None),
+    );
+    let crossed = limits(&reported, serving);
+    let model = crossed.groups.first()?.model.as_ref()?;
+    Some(model.as_str().to_owned())
+}
+
+#[test]
+fn limit_a_model_group_is_drawn_by_the_catalogs_name_for_its_model_else_as_the_vendor_named_it() {
+    assert_eq!(
+        drawn(kept_for("gpt-6-astra"), Some("openai")).as_deref(),
+        Some("GPT-6 Astra")
+    );
+    assert_eq!(
+        drawn(kept_for("gpt-5.3-codex-spark"), Some("openai")).as_deref(),
+        Some("gpt-5.3-codex-spark")
+    );
+    // Another provider's catalog does not name it, and neither does none.
+    assert_eq!(
+        drawn(kept_for("gpt-6-astra"), Some("anthropic")).as_deref(),
+        Some("gpt-6-astra")
+    );
+    assert_eq!(
+        drawn(kept_for("gpt-6-astra"), None).as_deref(),
+        Some("gpt-6-astra")
+    );
+    // A group kept for no model by name is drawn as the vendor named it,
+    // even where that name is a model the catalog knows.
+    let unkeyed = Scope::Model(ModelGroup::new(
+        GroupName::new("gpt-6-astra").unwrap(),
+        None,
+    ));
+    assert_eq!(
+        drawn(unkeyed, Some("openai")).as_deref(),
+        Some("gpt-6-astra")
+    );
 }

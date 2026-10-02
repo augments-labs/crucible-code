@@ -639,14 +639,17 @@ impl WindowReading {
     }
 }
 
-/// Most bytes a vendor's name for a group of limits is kept to.
+/// Most bytes a vendor's name for a group of limits is kept to, and the id of
+/// the model a group is kept for.
 pub const MAX_LIMIT_NAME_BYTES: usize = 64;
 /// Most groups of limits one reading keeps, the plan-wide group among them.
 pub const MAX_LIMIT_GROUPS: usize = 8;
 /// Most windows one group of limits keeps.
 pub const MAX_GROUP_WINDOWS: usize = 6;
 
-/// A vendor's name for a group of limits, kept to be shown and compared.
+/// A vendor's name for a group of limits, kept to be shown and to tell one
+/// group from another; which requests a group holds back is its
+/// [`ModelKey`]'s to say.
 ///
 /// It is text a response chose, so it is never read for meaning: control
 /// characters are taken out, it is cut to [`MAX_LIMIT_NAME_BYTES`] on a
@@ -686,6 +689,82 @@ impl GroupName {
     }
 }
 
+/// Which requests a model's group of limits holds back, as the provider
+/// module that read the group said.
+///
+/// Kept apart from the group's name, which is only ever drawn: the key is
+/// what a request's model id is matched against, and the name is never read
+/// for it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ModelKey {
+    /// A request to the model whose id is exactly this, spelled as the
+    /// request spells it.
+    Exact(Box<str>),
+}
+
+impl ModelKey {
+    /// The model whose id is exactly `id`; `None` for an id that is empty,
+    /// holds a control character, or is longer than [`MAX_LIMIT_NAME_BYTES`]:
+    /// no model's id is, and one cut to fit would be another model's.
+    #[must_use]
+    pub fn exact(id: &str) -> Option<Self> {
+        (!id.is_empty() && id.len() <= MAX_LIMIT_NAME_BYTES && !id.chars().any(char::is_control))
+            .then(|| Self::Exact(id.into()))
+    }
+
+    /// Whether a request to the model `model` is one this holds back.
+    #[must_use]
+    pub fn holds(&self, model: &str) -> bool {
+        match self {
+            Self::Exact(id) => **id == *model,
+        }
+    }
+
+    /// The one model this names, where it names one: what a reader looks
+    /// the group's model up by.
+    #[must_use]
+    pub fn model(&self) -> Option<&str> {
+        match self {
+            Self::Exact(id) => Some(id),
+        }
+    }
+}
+
+/// A group of limits a vendor keeps for one model: the name it is drawn
+/// with, and which requests it holds back.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ModelGroup {
+    name: GroupName,
+    key: Option<ModelKey>,
+}
+
+impl ModelGroup {
+    /// The group drawn as `name`, holding back the requests `key` says; with
+    /// no key, it holds back none by itself.
+    #[must_use]
+    pub const fn new(name: GroupName, key: Option<ModelKey>) -> Self {
+        Self { name, key }
+    }
+
+    /// What the vendor called the group, to be drawn.
+    #[must_use]
+    pub const fn name(&self) -> &GroupName {
+        &self.name
+    }
+
+    /// Which requests it holds back, where the provider module said.
+    #[must_use]
+    pub const fn key(&self) -> Option<&ModelKey> {
+        self.key.as_ref()
+    }
+
+    /// Whether a request to `model` is one this group holds back.
+    #[must_use]
+    pub fn holds(&self, model: &str) -> bool {
+        self.key.as_ref().is_some_and(|key| key.holds(model))
+    }
+}
+
 /// Whom a group of limits holds back.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Scope {
@@ -693,10 +772,10 @@ pub enum Scope {
     Plan,
     /// Requests to one model only.
     ///
-    /// Named by the provider module that read it with the name of the model
-    /// it applies to, so deciding which model a group holds back is that
-    /// module's, and a request to any other model is not held back by it.
-    Model(GroupName),
+    /// Which model is the provider module's to say, by the group's
+    /// [`ModelKey`]: a request to any other model is not held back by it,
+    /// and neither is one to a model named only in its drawn name.
+    Model(ModelGroup),
 }
 
 /// One group of a plan's limits: whom it holds back, and its windows.
@@ -844,9 +923,9 @@ impl PlanWindows {
     }
 
     /// The window that holds back a request to `model` as of `now`, and when
-    /// it starts again: a used-up plan-wide window, or a used-up window of the
-    /// group named for `model`. A group named for another model holds back
-    /// nothing asked of this one.
+    /// it starts again: a used-up plan-wide window, or a used-up window of a
+    /// group whose [`ModelKey`] holds `model`. A group kept for another model,
+    /// or with no key, holds back nothing asked of this one.
     ///
     /// Used up is spent with a reset still to come. A spent window with no
     /// reset is not one: when it starts again is not known, so whether it
@@ -859,7 +938,7 @@ impl PlanWindows {
             .iter()
             .filter(|group| match &group.scope {
                 Scope::Plan => true,
-                Scope::Model(name) => name.as_str() == model,
+                Scope::Model(group) => group.holds(model),
             })
             .flat_map(LimitGroup::windows)
             .filter(|(_, reading)| reading.spent())
@@ -1278,8 +1357,12 @@ mod tests {
         assert_eq!(GroupName::new(&exact).unwrap().as_str(), exact);
     }
 
+    /// The group a provider module keeps for the model `name`, drawn as it.
     fn model(name: &str) -> Scope {
-        Scope::Model(GroupName::new(name).unwrap())
+        Scope::Model(ModelGroup::new(
+            GroupName::new(name).unwrap(),
+            ModelKey::exact(name),
+        ))
     }
 
     #[test]
@@ -1378,5 +1461,45 @@ mod tests {
             counted.exhausted(MODEL, now),
             Some((Window::Daily, at(2_000)))
         );
+    }
+
+    #[test]
+    fn plan_limit_a_model_group_holds_back_what_its_key_says_and_not_what_it_is_called() {
+        let now = at(1_000);
+        let spent = WindowReading::new(100, Some(at(2_000)));
+        let drawn = |key: Option<ModelKey>| {
+            let group = ModelGroup::new(GroupName::new(MODEL).unwrap(), key);
+            PlanWindows::new(now).within(Scope::Model(group), Window::FiveHour, spent)
+        };
+
+        assert_eq!(drawn(None).exhausted(MODEL, now), None);
+        assert_eq!(drawn(ModelKey::exact("spark")).exhausted(MODEL, now), None);
+        assert_eq!(
+            drawn(ModelKey::exact("spark")).exhausted("spark", now),
+            Some((Window::FiveHour, at(2_000)))
+        );
+        assert_eq!(
+            drawn(ModelKey::exact("spark")).exhausted("Spark", now),
+            None
+        );
+        assert_eq!(
+            drawn(ModelKey::exact("spark")).exhausted("spark-2", now),
+            None
+        );
+    }
+
+    #[test]
+    fn plan_limit_a_model_key_is_an_id_kept_whole_or_none() {
+        let key = ModelKey::exact("gpt-5.3-codex-spark").unwrap();
+        assert_eq!(key.model(), Some("gpt-5.3-codex-spark"));
+        assert!(key.holds("gpt-5.3-codex-spark"));
+        assert!(!key.holds("gpt-5.3-codex-spark "));
+
+        let exact = "m".repeat(MAX_LIMIT_NAME_BYTES);
+        assert!(ModelKey::exact(&exact).is_some());
+        let long = "m".repeat(MAX_LIMIT_NAME_BYTES + 1);
+        assert_eq!(ModelKey::exact(&long), None);
+        assert_eq!(ModelKey::exact(""), None);
+        assert_eq!(ModelKey::exact("gpt\u{1b}[31m"), None);
     }
 }

@@ -252,6 +252,7 @@ pub(super) fn usage(conversation: &Conversation) -> Performed {
         &runner.breakdown(),
         &runner.totals(),
         runner.plan_limits().as_ref(),
+        conversation.serving(),
     )))
 }
 

@@ -31,8 +31,8 @@ use crucible_tools::{
     ToolError, ToolOutput,
 };
 use crucible_types::{
-    AgentId, GroupName, InputTokenUsage, PlanWindows, ProviderUsage, Scope, StopReason, ToolArgs,
-    ToolId, Window, WindowReading,
+    AgentId, GroupName, InputTokenUsage, ModelGroup, ModelKey, PlanWindows, ProviderUsage, Scope,
+    StopReason, ToolArgs, ToolId, Window, WindowReading,
 };
 
 use super::{Desk as Standing, Failed, Script, Tree, saying, unset};
@@ -291,8 +291,10 @@ fn turned(
     drop(events);
 
     let mut streamed = Vec::new();
+    let serving = conversation.serving();
     for envelope in reported.try_iter() {
-        if let Some(progress) = client::progress(request.capabilities(), &envelope.into_event()) {
+        let event = envelope.into_event();
+        if let Some(progress) = client::progress(request.capabilities(), &event, serving) {
             streamed.push(Progress::decode(&progress.encode()?)?);
         }
     }
@@ -1798,7 +1800,10 @@ fn asked_limits(conversation: &mut Conversation, now: Instant) -> Result<Option<
 /// A plan's answer: 10% of five hours, and a model's group of its own.
 fn plan_answer() -> Asked {
     let at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-    let spark = GroupName::new("GPT-5.3-Codex-Spark").map_or(Scope::Plan, Scope::Model);
+    let slug = "gpt-5.3-codex-spark";
+    let spark = GroupName::new(slug).map_or(Scope::Plan, |name| {
+        Scope::Model(ModelGroup::new(name, ModelKey::exact(slug)))
+    });
     Asked::Answered(
         PlanWindows::new(at)
             .with(Window::FiveHour, WindowReading::new(10, None))
@@ -1818,7 +1823,7 @@ fn plan_answered_as_crossed() -> Result<Limits, Failed> {
                 }],
             },
             LimitGroup {
-                model: Some(Name::new("GPT-5.3-Codex-Spark")?),
+                model: Some(Name::new("gpt-5.3-codex-spark")?),
                 limits: vec![Limit {
                     window: LimitWindow::Weekly,
                     reading: Reading::Percent(Percent::new(3).ok_or("a percent")?),

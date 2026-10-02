@@ -663,7 +663,7 @@ fn usage_tab_asks_the_plan_when_turned_to_and_draws_its_answer() {
     assert_eq!(panel.watched(&terms, &mut conversation), Moved::Redraw);
     let answered = drawn(&mut panel, 80, 40);
     assert!(
-        answered.iter().any(|row| row == "  GPT-5.3-Codex-Spark"),
+        answered.iter().any(|row| row == "  gpt-5.3-codex-spark"),
         "{answered:#?}"
     );
     assert!(

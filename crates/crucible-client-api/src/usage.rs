@@ -248,8 +248,9 @@ impl Limit {
 /// for a model of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LimitGroup {
-    /// The vendor's name for the model the limit is kept for, cut and
-    /// stripped of control characters, or `None` for the plan-wide limit.
+    /// What the model the limit is kept for is called: the name crucible
+    /// knows the model by, else the vendor's name for the limit, cut and
+    /// stripped of control characters. `None` for the plan-wide limit.
     pub model: Option<Name>,
     /// Its windows, shortest first, at most [`MAX_GROUP_WINDOWS`].
     pub limits: Vec<Limit>,

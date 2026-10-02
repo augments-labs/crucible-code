@@ -16,10 +16,12 @@ use crucible_client_api::{
 use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, PlanLimitStop, SessionCost, Totals, TurnError};
 use crucible_tools::Mode;
-use crucible_types::{CostAmount, LimitGroup, PlanWindows, Scope, StopReason, Used, Utc, Window};
+use crucible_types::{
+    CostAmount, LimitGroup, ModelGroup, ModelKey, PlanWindows, Scope, StopReason, Used, Utc, Window,
+};
 
-use crate::Conversation;
 use crate::switching::Retained;
+use crate::{Conversation, providers};
 
 /// Where `conversation` stands.
 ///
@@ -63,7 +65,11 @@ pub fn snapshot(conversation: &Conversation) -> Snapshot {
 /// Called by a consumer with no terminal — today the one the headless tests
 /// drive; the terminal draws a turn from the runner's events as they stand.
 #[must_use]
-pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
+pub fn progress(
+    capabilities: Capabilities,
+    event: &Event,
+    serving: Option<&str>,
+) -> Option<Progress> {
     if !capabilities.has(Capability::Progress) {
         return None;
     }
@@ -104,7 +110,7 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         // beside the context above: the session's totals as each response or
         // edit moved them, and the plan's limits once a response updated them.
         Event::Used { totals } => Progress::Used(used(totals)),
-        Event::PlanLimits { windows } => Progress::Limits(limits(windows)),
+        Event::PlanLimits { windows } => Progress::Limits(limits(windows, serving)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
@@ -192,11 +198,14 @@ pub fn usage(
     breakdown: &Breakdown,
     totals: &Totals,
     limits: Option<&PlanWindows>,
+    serving: Option<&str>,
 ) -> api::Usage {
     api::Usage {
         used: used(totals),
         context: context(model, breakdown),
-        limits: limits.map_or_else(api::Limits::default, self::limits),
+        limits: limits.map_or_else(api::Limits::default, |windows| {
+            self::limits(windows, serving)
+        }),
     }
 }
 
@@ -244,10 +253,14 @@ fn stated(amount: CostAmount) -> Option<(Name, u64)> {
     Some((Name::new(amount.currency().as_str()).ok()?, micros))
 }
 
-/// Every limit a vendor reported, the plan-wide one first.
-pub(super) fn limits(windows: &PlanWindows) -> api::Limits {
+/// Every limit a vendor reported, the plan-wide one first, drawn in the
+/// words of `serving`, the provider that reported them.
+pub(super) fn limits(windows: &PlanWindows, serving: Option<&str>) -> api::Limits {
     api::Limits {
-        groups: windows.groups().filter_map(group).collect(),
+        groups: windows
+            .groups()
+            .filter_map(|one| group(one, serving))
+            .collect(),
     }
 }
 
@@ -256,11 +269,11 @@ pub(super) fn limits(windows: &PlanWindows) -> api::Limits {
 /// A name a vendor gave is kept stripped of control characters and cut under
 /// the contract's ceiling, so it always crosses; a group whose name somehow
 /// did not would be left out rather than called plan-wide.
-fn group(group: &LimitGroup) -> Option<api::LimitGroup> {
+fn group(group: &LimitGroup, serving: Option<&str>) -> Option<api::LimitGroup> {
     Some(api::LimitGroup {
         model: match group.scope() {
             Scope::Plan => None,
-            Scope::Model(name) => Some(Name::new(name.as_str()).ok()?),
+            Scope::Model(model) => Some(Name::new(drawn(model, serving)).ok()?),
         },
         limits: group
             .windows()
@@ -274,6 +287,16 @@ fn group(group: &LimitGroup) -> Option<api::LimitGroup> {
             })
             .collect(),
     })
+}
+
+/// What a model's group is called where a client draws it: the name the
+/// catalog of `serving` gives the model the group was kept for, else the
+/// name the vendor gave the group, as it gave it.
+fn drawn<'a>(group: &'a ModelGroup, serving: Option<&str>) -> &'a str {
+    serving
+        .zip(group.key().and_then(ModelKey::model))
+        .and_then(|(provider, model)| providers::model_shown(provider, model))
+        .unwrap_or_else(|| group.name().as_str())
 }
 
 /// A window as a client names it.

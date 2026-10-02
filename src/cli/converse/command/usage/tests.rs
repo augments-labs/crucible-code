@@ -748,7 +748,7 @@ fn usage_printed_waits_for_the_plan_and_draws_what_it_answered() {
 
     let written = renderer.terminal().written().to_string();
     assert_eq!(asked.load(Ordering::Relaxed), 1);
-    assert!(written.contains("GPT-5.3-Codex-Spark"), "{written}");
+    assert!(written.contains("gpt-5.3-codex-spark"), "{written}");
     assert!(written.contains("31% used"), "{written}");
     // A printed block cannot be drawn again, so it never promises an answer.
     assert!(!written.contains("asking"), "{written}");
@@ -762,7 +762,7 @@ fn usage_opened_again_within_a_minute_asks_nothing_and_shows_the_last_answer() {
         let mut renderer = Renderer::new(Recording::new(80, 40));
         run(&mut renderer, &mut conversation, &terms, false).unwrap();
         let written = renderer.terminal().written().to_string();
-        assert!(written.contains("GPT-5.3-Codex-Spark"), "{written}");
+        assert!(written.contains("gpt-5.3-codex-spark"), "{written}");
     }
     assert_eq!(asked.load(Ordering::Relaxed), 1);
 }

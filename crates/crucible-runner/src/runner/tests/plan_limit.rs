@@ -6,7 +6,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crucible_types::{GroupName, PlanWindows, Scope, Window, WindowReading};
+use crucible_types::{GroupName, ModelGroup, ModelKey, PlanWindows, Scope, Window, WindowReading};
 
 use super::*;
 use crate::PlanLimitStop;
@@ -21,11 +21,14 @@ fn weekly(percent: u8, resets_at: Option<SystemTime>) -> PlanWindows {
     PlanWindows::new(SystemTime::now()).with(Window::Weekly, WindowReading::new(percent, resets_at))
 }
 
-/// A reading with the weekly window of the limit named for `model`
+/// A reading with the weekly window of the limit kept for `model`
 /// `percent` used, starting again at `resets_at`.
 fn weekly_for(model: &str, percent: u8, resets_at: Option<SystemTime>) -> PlanWindows {
     PlanWindows::new(SystemTime::now()).within(
-        Scope::Model(GroupName::new(model).expect("a model's name")),
+        Scope::Model(ModelGroup::new(
+            GroupName::new(model).expect("a model's name"),
+            ModelKey::exact(model),
+        )),
         Window::Weekly,
         WindowReading::new(percent, resets_at),
     )
@@ -296,7 +299,7 @@ fn plan_limit_a_used_up_window_of_another_models_limit_lets_the_turn_go_out() {
 fn models_weekly(limits: &PlanWindows) -> Option<WindowReading> {
     limits
         .groups()
-        .find(|group| matches!(group.scope(), Scope::Model(name) if name.as_str() == "claude-test"))
+        .find(|group| matches!(group.scope(), Scope::Model(group) if group.holds("claude-test")))
         .and_then(|group| group.reading(Window::Weekly))
 }
 
