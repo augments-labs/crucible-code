@@ -645,11 +645,16 @@ function Invoke-CrucibleInstall {
             Write-Out ($dim + (Get-Wrapped '' 'That directory is not on your PATH. Add it for your user with:') +
                 $plain + $nl + $nl)
             # Pasted whole into PowerShell, so never wrapped beyond its own
-            # three lines. A directory outside %LOCALAPPDATA% is quoted
-            # literally.
-            $literal = "'" + $destination.Replace("'", "''") + ";'"
-            if ($where.StartsWith('%LOCALAPPDATA%')) {
-                $literal = '"$env:LOCALAPPDATA' + $where.Substring('%LOCALAPPDATA%'.Length).Replace('`', '``').Replace('$', '`$') + ';"'
+            # three lines. PowerShell reads U+2018 to U+201B as single quotes
+            # and U+201C to U+201E as double quotes, so a directory is quoted
+            # literally with every single quote of any kind doubled, as
+            # PowerShell's own code generation does. Below %LOCALAPPDATA% it
+            # is named through $env:LOCALAPPDATA instead, but only when the
+            # rest holds nothing double quotes would read.
+            $literal = "'" + ($destination -replace "['\u2018-\u201B]", '$0$0') + ";'"
+            $below = $where.Substring([Math]::Min($where.Length, '%LOCALAPPDATA%'.Length))
+            if ($where.StartsWith('%LOCALAPPDATA%') -and $below -notmatch '[`$"\u201C-\u201E]') {
+                $literal = '"$env:LOCALAPPDATA' + $below + ';"'
             }
             Write-Out ("  [Environment]::SetEnvironmentVariable('Path'," + $nl +
                 "    $literal +" + $nl +
