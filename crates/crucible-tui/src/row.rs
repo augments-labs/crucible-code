@@ -387,6 +387,34 @@ impl Row {
         self.0.iter().map(|span| (span.slot, span.text.as_str()))
     }
 
+    /// How many accent spans the colour rule in `crate::color` counts on this
+    /// row.
+    ///
+    /// A span is a run of [`Slot::Accent`] that shows something, and runs
+    /// parted only by blank text are one: the `›` of a selected line and the
+    /// words after it are one thing to land on, drawn as two runs. Blank text
+    /// in the accent counts for nothing, because it puts nothing in front of
+    /// the eye.
+    #[must_use]
+    pub fn accents(&self) -> usize {
+        let mut counted = 0;
+        let mut inside = false;
+
+        for span in &self.0 {
+            if span.text.trim().is_empty() {
+                continue;
+            }
+            if span.slot == Slot::Accent {
+                counted += usize::from(!inside);
+                inside = true;
+            } else {
+                inside = false;
+            }
+        }
+
+        counted
+    }
+
     /// The row as a terminal is sent it.
     ///
     /// The palette is borrowed rather than copied. It used to be a handful of
@@ -502,6 +530,36 @@ mod tests {
     /// The same, on a terminal that will take an address as well.
     fn addressed() -> Palette {
         colourful().addressing(true)
+    }
+
+    #[test]
+    fn the_colour_rule_counts_accent_runs_joined_across_blanks_and_nothing_else() {
+        let none = Row::new()
+            .then(Slot::Strong, "4")
+            .then(Slot::Quiet, " lines, removed ")
+            .then(Slot::Strong, "2")
+            .then(Slot::Code, "wait")
+            .then(Slot::Pointed, "here");
+        let one = Row::new()
+            .then(Slot::Accent, "›")
+            .then(Slot::Plain, " ")
+            .then(Slot::Accent, "and add a test");
+        let two = Row::new()
+            .then(Slot::Accent, "●")
+            .then(Slot::Plain, " Read ")
+            .then(Slot::Accent, "opens");
+
+        assert_eq!(none.accents(), 0);
+        assert_eq!(one.accents(), 1);
+        assert_eq!(two.accents(), 2);
+
+        // The caret's place on a row that is not marked is blank, and blank
+        // in any colour puts nothing in front of the eye.
+        let unmarked = Row::new()
+            .then(Slot::Accent, " ")
+            .then(Slot::Plain, " /plugin ")
+            .then(Slot::Accent, "●");
+        assert_eq!(unmarked.accents(), 1);
     }
 
     #[test]

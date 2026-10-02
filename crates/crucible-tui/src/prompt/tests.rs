@@ -1570,3 +1570,18 @@ fn in_the_ascii_set_the_label_is_joined_by_spaced_hyphens() {
         "deepseek · deepseek-flash"
     );
 }
+
+#[test]
+fn the_box_and_its_status_row_follow_the_colour_rule() {
+    // In every tone a mode is drawn in, with commands running: the count is
+    // the status row's one accent, and the mark is the typed row's.
+    for tone in [Slot::Quiet, Slot::AllowEdits, Slot::FullAccess] {
+        let rows = Prompt {
+            tone,
+            ..leaving("fix the flaky resume test", 2)
+        }
+        .rows(80, Glyphs::Unicode);
+
+        crate::colour_rule::holds("prompt", &rows, |_| false);
+    }
+}

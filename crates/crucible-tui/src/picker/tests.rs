@@ -855,3 +855,32 @@ fn the_whole_picker_after_a_query_that_matched_nothing() {
 
     insta::assert_snapshot!(picture(&picker.within(100, 20, Glyphs::Unicode), 100));
 }
+
+#[test]
+fn the_resume_picker_follows_the_colour_rule() {
+    // A session's tail as the transcript draws it: a call's mark takes the
+    // accent, so a list row beside it must not take a second one unless it is
+    // the selected session's.
+    let preview: Vec<Row> = [
+        "Bash(scripts/smoke.sh v0.23.0 2>&1 | tail -12)",
+        "Read(src/main.rs)",
+        "Edit(CHANGELOG.md)",
+        "Grep(colour)",
+        "Bash(cargo test)",
+        "Write(notes.md)",
+    ]
+    .iter()
+    .flat_map(|said| {
+        [
+            Row::new()
+                .then(Slot::Accent, "●")
+                .then(Slot::Plain, " ")
+                .then(Slot::Strong, *said),
+            Row::new().then(Slot::Quiet, "  └ done"),
+        ]
+    })
+    .collect();
+    let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
+
+    crate::colour_rule::holds("resume picker", &rows, |_| false);
+}

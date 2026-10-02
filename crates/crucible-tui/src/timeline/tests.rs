@@ -530,3 +530,15 @@ fn the_whole_list_at_eighty_columns_in_ascii() {
 fn the_whole_list_at_forty_columns_in_ascii() {
     insta::assert_snapshot!(pictured(40, Glyphs::Ascii));
 }
+
+#[test]
+fn the_release_notes_follow_the_colour_rule() {
+    // Every heading's mark is the one thing on its row in the accent; the
+    // version beside it is strong and the date quiet, at every width.
+    let told = told();
+    for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+        let rows = whole(&told, &forge(), columns, glyphs, 20_000);
+
+        crate::colour_rule::holds("release notes", &rows, |_| false);
+    }
+}
