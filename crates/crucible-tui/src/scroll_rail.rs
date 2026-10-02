@@ -10,11 +10,11 @@
 //! as thumb: the two share the cell and the thumb wins, so a press there takes
 //! the thumb, and a prompt under it is reached by moving the thumb off it.
 //! The one exception is the current prompt — the one a press on its mark last
-//! landed on while that prompt still starts in the band, else the latest that
-//! starts at or above the band's last row — whose mark is always drawn grown,
-//! on the thumb too, so a reader can see which prompt they are reading under.
-//! When the record fits the band there is nowhere else to be, and the rail is
-//! blank.
+//! landed on while that prompt still starts in the band and no prompt has been
+//! sent since, else the latest that starts at or above the band's last row —
+//! whose mark is always drawn grown, on the thumb too, so a reader can see
+//! which prompt they are reading under. When the record fits the band there is
+//! nowhere else to be, and the rail is blank.
 //!
 //! The rail spends no hue of its own. The thumb is [`Slot::Accent`] and the
 //! track and its marks are [`Slot::Quiet`], two jobs every palette already

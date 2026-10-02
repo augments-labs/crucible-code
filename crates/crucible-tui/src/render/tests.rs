@@ -1927,6 +1927,44 @@ fn the_prompt_a_rail_click_lands_on_stays_current_while_it_is_in_the_band() {
 }
 
 #[test]
+fn a_prompt_sent_after_a_rail_landing_is_the_current_prompt() {
+    // Prompts at lines 0, 10 and 32 of forty. From the top, a press on line
+    // 32's mark lands on it, and the band can go no lower than the foot,
+    // which starts at line 30 and so still holds it.
+    let mut drawn = Drawn::new(60, 10);
+    drawn.rails(true);
+    for line in 0..40 {
+        if [0, 10, 32].contains(&line) {
+            drawn.landmark();
+        }
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+    drawn.scrolled(-100).unwrap();
+    assert_eq!(rail_click(&mut drawn, 8), None);
+    assert!(
+        drawn.screen().row(0).starts_with("line 30 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+
+    // Sent as a prompt is: back to the foot, then its mark and its rows.
+    drawn.follows().unwrap();
+    drawn.landmark();
+    for line in 40..42 {
+        drawn.commit(&format!("line {line}")).unwrap();
+    }
+
+    // Line 32 starts in the band still, on the thumb, and the new prompt at
+    // line 40 is the one being read under.
+    assert!(
+        drawn.screen().row(0).starts_with("line 32 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    assert_eq!(rail_of(&drawn), "•│•││││┃┃●");
+}
+
+#[test]
 fn the_prompt_a_rail_click_lands_on_stays_current_across_a_resize_that_relays_the_opening() {
     // An opening one row tall at the railed sixty columns and four below
     // fifty-five, so pulling the window to fifty renumbers every line under

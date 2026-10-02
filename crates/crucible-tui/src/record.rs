@@ -222,7 +222,8 @@ pub(crate) struct Record {
     /// Held here rather than by whoever pressed, because a resize that lays
     /// the opening out again renumbers every landmark under it, and this has
     /// to move with them or it names another prompt. A prompt that has left
-    /// the record names nothing.
+    /// the record names nothing, and a prompt sent after it ends the landing:
+    /// the prompt being answered is the one read under.
     landed: Option<usize>,
     /// Whether the last line is still being written to.
     ///
@@ -672,6 +673,7 @@ impl Record {
             return;
         }
         self.landmarks.push_back(line);
+        self.landed = None;
         while self.landmarks.len() > MOST_LANDMARKS {
             self.landmarks.pop_front();
         }

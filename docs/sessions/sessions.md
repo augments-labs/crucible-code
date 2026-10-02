@@ -49,8 +49,9 @@ the bottom while you are at the newest line. A mark on the quiet track is a
 prompt you sent, at the place it falls in the whole transcript, and prompts too
 close to tell apart share one mark. The prompt you are reading under has its
 mark drawn larger, `●`, quiet on the track and in the accent on the thumb: the
-one you last landed on by clicking its mark, while it starts on screen, and
-otherwise the latest prompt that starts at or above the screen's last row.
+one you last landed on by clicking its mark, while it starts on screen and
+until you send another, and otherwise the latest prompt that starts at or above
+the screen's last row.
 With the pointer on the rail, the track and marks take the accent too, and the
 mark under the pointer is drawn larger, so you can see which prompt a click
 there lands on; moving off the rail puts it back.
