@@ -2,9 +2,10 @@
 //!
 //! A different read from [`mod@super::replay`], for a different reason. That
 //! one finds one log and hands back everything in it, because a session is
-//! about to be continued. This one finds a few and takes one line from each,
-//! because somebody is about to be shown a list — and the welcome screen runs
-//! it before the first frame, where twenty milliseconds is the whole budget.
+//! about to be continued. This one finds a bounded number — a few on the first
+//! frame, every indexed one after it — and takes one line from each, because
+//! somebody is about to be shown a list — and the welcome screen runs it before
+//! the first frame, where twenty milliseconds is the whole budget.
 //!
 //! Candidate names come from the fixed recent-session index. An older flat log
 //! directory is indexed once by session start, after the first frame; this
@@ -39,7 +40,7 @@ const EXAMINED: usize = 64;
 /// wanted is one argument swap away from a first frame that opens every log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reach {
-    /// The newest sixty-four logs: the welcome screen, before the first
+    /// The newest `EXAMINED` logs: the welcome screen, before the first
     /// frame, where the cost of each log opened is paid by every launch.
     FirstFrame,
     /// Every session the index names. For a listing somebody asked for after
@@ -61,6 +62,12 @@ impl Reach {
 #[derive(Debug, Clone, Copy)]
 pub enum Roots<'a> {
     /// Only these, each matched whole: `/w/crucible` is not `/w/crucible-code`.
+    ///
+    /// Compared as written, against the workspace a log's header recorded,
+    /// which is spelled as `Workspace::root()` spells a root: canonical, with
+    /// no trailing separator and no link left in it. Each root given must be
+    /// spelled that way too — a `Workspace::root()`, or a directory already
+    /// read back from a header — or it matches nothing and lists nothing.
     These(&'a [&'a Path]),
     /// Any directory at all. A caller that narrows in memory afterwards asks
     /// for this, so one scan answers every narrowing it offers.

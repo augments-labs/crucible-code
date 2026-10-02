@@ -4,7 +4,9 @@
 //! A session is named by its id — the same word `--resume` takes and the
 //! parting message prints — so an id given here is picked up directly, and
 //! anything else stands the picker: a search line over the sessions recorded
-//! in this workspace, with a window over the tail of whichever one is marked.
+//! in this workspace — or in this repository's other checkouts, or in any
+//! project, once a key asks for them — with a window over the tail of
+//! whichever one is marked.
 //! What the picker looks like is [`Picker`]'s; which sessions a query keeps
 //! and what each key moves is `finding`'s; what is listed, previewed and
 //! written down is decided here, where the sessions are. A run with no
@@ -15,7 +17,8 @@
 //! that reason: Ctrl+A shows every directory's, Ctrl+W adds this repository's
 //! other checkouts, and Ctrl+B keeps only the branch checked out here. Each
 //! flips its own state, over one read of the index filtered again on every
-//! key. A session from another directory is never picked up here, since it is
+//! key; the index is read again only after a rename, to show what it now
+//! holds. A session from another directory is never picked up here, since it is
 //! bound to the directory it was recorded in: Enter on one says the command
 //! that resumes it there instead.
 //!
@@ -347,7 +350,9 @@ struct Scope {
 struct Here {
     /// This workspace's root, spelled as a session's header spells it.
     root: PathBuf,
-    /// This repository's other checkouts, which Ctrl+W adds.
+    /// This repository's other checkouts, which Ctrl+W adds. Each is spelled
+    /// as a header spells its workspace, because `branching::worktrees` opens
+    /// every one as a workspace and keeps the root it canonicalised.
     others: Vec<PathBuf>,
     /// The branch checked out here. `None` leaves Ctrl+B nothing to keep, so
     /// the key does nothing and the keys row leaves it out.
@@ -493,11 +498,12 @@ fn quoted(place: &str) -> String {
 /// Said rather than done, because a session stays bound to the directory it
 /// was recorded in — every path it holds is that checkout's. One row where it
 /// fits; otherwise broken after the `&&`, where a shell reads on to the next
-/// line, so a copy of both rows still runs. The id is never cut, because a
-/// command with part of an id resumes nothing; where even the `cd` row is too
-/// wide, it is the directory that gives way, from its front, so the end that
-/// names the project stays — and the cut is marked, because a directory with
-/// its front missing is not one to run.
+/// line, so a copy of both rows still runs. This never shortens the id,
+/// because a command with part of an id resumes nothing; a window under 56
+/// columns still clips the row it is drawn on, which is the picker's to say.
+/// Where even the `cd` row is too wide, it is the directory that gives way,
+/// from its front, so the end that names the project stays — and the cut is
+/// marked, because a directory with its front missing is not one to run.
 fn elsewhere(
     session: &Recorded,
     home: Option<&Path>,
@@ -1090,7 +1096,7 @@ fn nothing(query: &str, branch: Option<&str>) -> String {
 /// be read by somebody who does not yet know. Between the long form and the
 /// short come the middle ones, which an eighty-column window gets: each toggle
 /// named by what it does next in a word or two, with the keys that explain
-/// themselves — the arrows, Enter, typing — dropped first and Ctrl+R next. The
+/// themselves — the arrows and typing — dropped first and Ctrl+R next. The
 /// short form is what a window with no room for those gets — the same keys,
 /// without the words saying what each of them moves.
 ///

@@ -128,10 +128,11 @@ pub enum Pressed {
     Rename,
     /// Ctrl+A: widen a listing to everything it could list, or back.
     ///
-    /// Readline's start-of-line, which the box answers with Home, so the
-    /// letter is free; it is the one "all" starts with. Like [`Pressed::Rename`]
-    /// it means something only where a listing has a narrower and a wider
-    /// reach, and every other component reads it as a key it has no use for.
+    /// Readline's start-of-line, but the box moves to the line's start on the
+    /// Home key and never bound Ctrl+A to it, so the letter is free; it is the
+    /// one "all" starts with. Like [`Pressed::Rename`] it means something only
+    /// where a listing has a narrower and a wider reach, and every other
+    /// component reads it as a key it has no use for.
     All,
     /// Escape, pressed on its own rather than opening a sequence.
     Escape,
@@ -471,8 +472,9 @@ fn key_pressed(key: KeyEvent) -> Pressed {
         // and it is the one "rename" starts with.
         KeyCode::Char('r') if bound => Pressed::Rename,
 
-        // Ctrl+A is readline's start-of-line, which the box already answers
-        // with Home. The letter is free, and it is the one "all" starts with.
+        // Ctrl+A is readline's start-of-line, but the box moves to the line's
+        // start on Home and was never given Ctrl+A for it. The letter is free,
+        // and it is the one "all" starts with.
         KeyCode::Char('a') if bound => Pressed::All,
 
         // A word either way, spelled the three ways the terminals here spell

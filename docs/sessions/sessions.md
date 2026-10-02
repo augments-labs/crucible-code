@@ -235,8 +235,8 @@ as `ctrl+a all projects · ctrl+b this branch · ctrl+w worktrees · esc`; a
 narrower window gets the keys alone. A session from another directory shows
 that directory after its branch, and a search matches it too. Where the row is
 too narrow for the whole directory its front gives way, marked `…`, so the end
-that names the project is what you see. The sessions were
-read once when the picker opened, so a key only filters them again.
+that names the project is what you see. The sessions were read once when the
+picker opened, and again after a rename, so a key only filters them again.
 
 A session recorded in another directory cannot be resumed from this one, since
 it belongs to that directory's files, and the foot of its preview says

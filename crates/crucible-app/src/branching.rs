@@ -15,15 +15,23 @@
 //! The same files say which other checkouts the repository has, for the resume
 //! picker's widening to a repository's worktrees: the common git directory
 //! keeps `worktrees/<name>/gitdir` for each linked checkout, naming that
-//! checkout's `.git` file. Read rather than asked of `git worktree list` for
-//! the same reasons, and with the same quiet answer — a directory that is not a
-//! repository, or one with no other checkout, has none to add.
+//! checkout's `.git` file. Read rather than asked of `git worktree list`, and
+//! with the same quiet answer — a directory that is not a repository, or one
+//! with no other checkout, has none to add. This runs only when `/resume`
+//! opens, not on the startup path, but the picker should still answer on a
+//! machine without git and without spawning a child while the reader waits,
+//! and the repository's own files are all it needs.
 //!
-//! A checkout is hostile input, and these files are read on every `/resume`.
-//! Each is read only when it is one ordinary file of no more than a few KiB,
-//! which any path git writes fits in: a pipe left where one stands would
-//! otherwise hold the picker until something wrote to it, and a file without
-//! end would be read into memory whole. Anything else is the same quiet
+//! A checkout is hostile input. The branch is read at session start and when
+//! `/clear` starts a new session — `.git` and `HEAD` — and on every `/resume`,
+//! which also reads `commondir` and each `worktrees/<name>/gitdir`. Each of
+//! these is read only when it is one ordinary file of at most `GIT_FILE`
+//! bytes, reached without leaving the directory it sits in: a pipe left where
+//! one stands would otherwise hold the reader until something wrote to it, a
+//! file without end would be read into memory whole, and a symbolic link
+//! leading out of its directory is a file the checkout does not hold. A `.git`
+//! directory that is itself such a link still reads, because the directory is
+//! resolved before anything in it is opened. Anything else is the same quiet
 //! `None` as a directory that is not a repository.
 
 use std::fs;
@@ -90,6 +98,9 @@ pub fn worktrees(root: &Path) -> Vec<PathBuf> {
         }
     }
 
+    // Every root handed back went through `rooted`, so each is canonical as
+    // `Workspace::root()` is and compares equal to the workspace a session
+    // recorded; a raw path from a `gitdir` record never leaves this function.
     let here = rooted(root);
     let mut roots: Vec<PathBuf> = checkouts
         .iter()
@@ -121,12 +132,15 @@ fn common(root: &Path) -> Option<PathBuf> {
     fs::canonicalize(common).ok()
 }
 
-/// How much of one of git's own small files is read. Any path git writes
-/// there fits; a file past this is not one git wrote.
+/// How much of one of git's own small files is read. A deliberate bound
+/// rather than a promise about git: every path git writes in practice fits,
+/// and a file past this — a path longer than the bound among them — is read as
+/// no repository.
 const GIT_FILE: usize = 4 * 1024;
 
 /// What the small file git keeps at `path` says, or `None` where it is not one
-/// ordinary file of at most [`GIT_FILE`] bytes of text.
+/// ordinary file of at most [`GIT_FILE`] bytes of text, reached without
+/// leaving the directory it sits in.
 ///
 /// Opened through the workspace's own open for content, which on Unix does not
 /// wait on a pipe and refuses whatever opened that is not a regular file, so a
