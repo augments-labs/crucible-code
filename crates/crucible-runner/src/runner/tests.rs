@@ -101,6 +101,7 @@ mod lifecycle;
 mod lifecycle_audit;
 mod outcome;
 mod pick_up;
+mod plan_limit;
 mod preserved;
 mod reporting;
 mod spending;

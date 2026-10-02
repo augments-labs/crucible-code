@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crucible_models::{
     Delta, DeltaStream, Effort, PriceRate, PromptCacheCapabilities, PromptCachePricing,
@@ -153,11 +153,21 @@ pub(crate) struct Script {
     /// The plan windows each answer's headers report, in the order the
     /// answers go out; an answer past the end reports none.
     limits: Mutex<VecDeque<Option<PlanWindows>>>,
+    /// The refusal of a used-up plan every request meets, where one does.
+    used_up: Option<UsedUp>,
     /// How long each request is out before its answer starts.
     waits: Duration,
     /// Stopped once the next round has been handed out, as a reader pressing
     /// Esc while an answer arrives.
     interrupts: Mutex<Option<Cancel>>,
+}
+
+/// A vendor's refusal of a used-up plan: the reset it gave, and the windows
+/// the refusal's head reported.
+#[derive(Debug, Clone, Copy)]
+struct UsedUp {
+    resets_at: Option<SystemTime>,
+    reading: Option<PlanWindows>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -214,6 +224,7 @@ impl Script {
             reach: Reach::Model,
             fast: FastFixture::default(),
             limits: Mutex::new(VecDeque::new()),
+            used_up: None,
             waits: Duration::ZERO,
             interrupts: Mutex::new(None),
         }
@@ -328,6 +339,16 @@ impl Script {
     /// from.
     pub(crate) fn failing() -> Self {
         Self::refusing(401)
+    }
+
+    /// A provider that refuses every request because the plan is used up,
+    /// saying it resets at `resets_at` and reporting `reading` on the
+    /// refusal's head, the way a provider that owns such a wire tells it.
+    pub(crate) fn used_up(resets_at: Option<SystemTime>, reading: Option<PlanWindows>) -> Self {
+        Self {
+            used_up: Some(UsedUp { resets_at, reading }),
+            ..Self::new(Vec::new())
+        }
     }
 
     /// A provider that refuses every request with `status`.
@@ -667,6 +688,17 @@ impl Provider for Script {
 
             if self.over_window {
                 return Err(ProviderError::WindowExceeded { provider: SCRIPT });
+            }
+
+            if let Some(UsedUp { resets_at, reading }) = self.used_up {
+                return Err(ProviderError::PlanLimit {
+                    provider: SCRIPT,
+                    window: reading
+                        .and_then(|reading| reading.exhausted(SystemTime::now()))
+                        .map(|(window, _)| window),
+                    resets_at,
+                    reading: reading.map(Box::new),
+                });
             }
 
             if let Some(status) = self.refuses {
