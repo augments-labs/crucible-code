@@ -28,7 +28,7 @@ expression: sessionless(&status)
 |  Sign-in              API key                                                  |
 |  Working directory    ~/…/workspace                                            |
 |  Config file          ~/home/config.json                                       |
-|  Session              ########-####-####-####-############                     |
+|  Session              ########                                                 |
 |  Sandbox              off                                                      |
 |  Permission mode      ask                                                      |
 |                                                                                |

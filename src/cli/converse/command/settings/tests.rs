@@ -557,3 +557,33 @@ fn a_settings_change_the_user_file_cannot_take_is_still_in_force_and_says_so() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn the_settings_status_tab_shows_a_session_by_the_first_eight_of_its_id() {
+    let terms = plain();
+    let id: crucible_types::SessionId = "0198f2a4-7c3e-7b21-9d4f-3a6c5e8b1f20"
+        .parse()
+        .expect("a session id");
+    let counted = Counted {
+        session: Some(id),
+        ..counted()
+    };
+    let mut panel = Panel::new(&terms, &counted);
+    key(&mut panel, Pressed::Tab);
+    key(&mut panel, Pressed::Tab);
+
+    let status = drawn(&mut panel, 40, 40);
+    let session = status
+        .iter()
+        .find(|row| row.contains("Session"))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        session.ends_with("Session              0198f2a4"),
+        "{status:#?}"
+    );
+    assert!(
+        !status.iter().any(|row| row.contains("7c3e")),
+        "{status:#?}"
+    );
+}

@@ -4232,35 +4232,36 @@ fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
 // `/settings`: what is in force, the settings a menu can change, and the
 // session's usage, as three tabs of one panel.
 
-/// `picture` with every session id written as `#`s of the same length.
+/// `picture` with the session on the Status tab written as `#`s.
 ///
 /// An id is minted from the clock and chance as the session opens, so the
 /// Status tab shows a different one every run; what the case is about is the
-/// row it stands in.
+/// row it stands in. The tab shows the id's first eight, which is the run of
+/// eight hex digits after the label.
 fn sessionless(picture: &str) -> String {
-    const SHAPE: [usize; 5] = [8, 4, 4, 4, 12];
-    let length = SHAPE.iter().sum::<usize>() + SHAPE.len() - 1;
-    let an_id = |run: &[char]| {
-        let mut groups = run.split(|letter| *letter == '-');
-        SHAPE.iter().all(|wide| {
-            groups.next().is_some_and(|group| {
-                group.len() == *wide && group.iter().all(char::is_ascii_hexdigit)
-            })
-        }) && groups.next().is_none()
-    };
-    let mut said: Vec<char> = picture.chars().collect();
-    let mut at = 0;
-    while let Some(run) = said.get_mut(at..at + length) {
-        if an_id(run) {
-            for letter in run.iter_mut().filter(|letter| **letter != '-') {
-                *letter = '#';
+    const LABEL: &str = "Session";
+    const SHOWN: usize = 8;
+    picture
+        .lines()
+        .map(|row| {
+            let Some((before, after)) = row.split_once(LABEL) else {
+                return row.to_owned();
+            };
+            let gap = after.len() - after.trim_start().len();
+            let (spaces, rest) = after.split_at(gap);
+            match rest.get(..SHOWN) {
+                Some(id) if gap > 0 && id.chars().all(|letter| letter.is_ascii_hexdigit()) => {
+                    format!(
+                        "{before}{LABEL}{spaces}{}{}",
+                        "#".repeat(SHOWN),
+                        rest.get(SHOWN..).unwrap_or_default()
+                    )
+                }
+                _ => row.to_owned(),
             }
-            at += length;
-        } else {
-            at += 1;
-        }
-    }
-    said.into_iter().collect()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]

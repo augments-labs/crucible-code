@@ -17,6 +17,7 @@ expression: sessionless(&status)
 |                                        |
 |                                        |
 |                                        |
+|                                        |
 |────────────────────────────────────────|
 |                                        |
 |Settings   ‹ Status › Config Usage      |
@@ -27,8 +28,7 @@ expression: sessionless(&status)
 |  Sign-in              API key          |
 |  Working directory    ~/…/workspace    |
 |  Config file          ~/…/config.json  |
-|  Session                               |
-|    ########-####-####-####-############|
+|  Session              ########         |
 |  Sandbox              off              |
 |  Permission mode      ask              |
 |                                        |

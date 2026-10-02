@@ -1224,12 +1224,14 @@ fn status(
         Fact::said("Sign-in", signed.unwrap_or_else(|| "none".to_owned())),
         Fact::path("Working directory", terms.workspace.root(), home),
         Fact::path("Config file", &terms.choosing, home),
+        // Its first eight, as a reader names one: enough to tell the sessions
+        // of one directory apart, and short enough to stand beside its label.
         Fact::said(
             "Session",
-            counted
-                .session
-                .as_ref()
-                .map_or_else(|| "not recorded".to_owned(), ToString::to_string),
+            counted.session.as_ref().map_or_else(
+                || "not recorded".to_owned(),
+                |id| id.as_str().chars().take(8).collect(),
+            ),
         ),
         Fact::said("Sandbox", confined),
         Fact::said("Permission mode", mode(counted.mode).to_owned()),
