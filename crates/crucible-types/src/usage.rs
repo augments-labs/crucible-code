@@ -695,8 +695,23 @@ impl GroupName {
 /// Kept apart from the group's name, which is only ever drawn: the key is
 /// what a request's model id is matched against, and the name is never read
 /// for it.
+///
+/// Built only by [`ModelKey::exact`], which bounds the id. A key is kept in
+/// a reading as long as the session, so one built around the constructor
+/// would carry an unbounded id past every ceiling a reading keeps to:
+///
+/// ```compile_fail,E0599
+/// use crucible_types::ModelKey;
+///
+/// let forged = ModelKey::Exact("\u{7}".repeat(4096).into());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ModelKey {
+pub struct ModelKey(Matching);
+
+/// How a [`ModelKey`] matches a request's model id: private, so no key is
+/// built past the bounds its constructor holds it to.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Matching {
     /// A request to the model whose id is exactly this, spelled as the
     /// request spells it.
     Exact(Box<str>),
@@ -709,14 +724,14 @@ impl ModelKey {
     #[must_use]
     pub fn exact(id: &str) -> Option<Self> {
         (!id.is_empty() && id.len() <= MAX_LIMIT_NAME_BYTES && !id.chars().any(char::is_control))
-            .then(|| Self::Exact(id.into()))
+            .then(|| Self(Matching::Exact(id.into())))
     }
 
     /// Whether a request to the model `model` is one this holds back.
     #[must_use]
     pub fn holds(&self, model: &str) -> bool {
-        match self {
-            Self::Exact(id) => **id == *model,
+        match &self.0 {
+            Matching::Exact(id) => **id == *model,
         }
     }
 
@@ -724,8 +739,8 @@ impl ModelKey {
     /// the group's model up by.
     #[must_use]
     pub fn model(&self) -> Option<&str> {
-        match self {
-            Self::Exact(id) => Some(id),
+        match &self.0 {
+            Matching::Exact(id) => Some(id),
         }
     }
 }
