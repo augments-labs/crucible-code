@@ -1936,7 +1936,9 @@ fn the_prompt_a_rail_click_lands_on_stays_current_across_a_resize_that_relays_th
     drawn
         .opens(Box::new(|columns| {
             let rows = if columns < 55 { 4 } else { 1 };
-            (0..rows).map(|row| Row::plain(format!("card {row}"))).collect()
+            (0..rows)
+                .map(|row| Row::plain(format!("card {row}")))
+                .collect()
         }))
         .unwrap();
     for line in 0..80 {
