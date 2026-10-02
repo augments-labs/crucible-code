@@ -433,11 +433,7 @@ impl Picker<'_> {
                         // The directory last: it is there only on a row from
                         // somewhere else, and the age the rows line up on
                         // stays where it is on every one.
-                        let aged = [one.when, one.branch, one.place]
-                            .into_iter()
-                            .filter(|said| !said.is_empty())
-                            .collect::<Vec<_>>()
-                            .join(&format!(" {} ", glyphs.dot()));
+                        let aged = aged(one, word, glyphs);
                         row.push(lit(on, Slot::Quiet), clip(&aged, word).to_owned());
                         row.fill(lit(on, Slot::Plain), inside);
                         row
@@ -650,6 +646,47 @@ const fn spared(room: usize, notice: usize) -> usize {
 /// carries its caret, so the two never have to be told apart by colour.
 const fn lit(on: bool, slot: Slot) -> Slot {
     if on { Slot::Pointed } else { slot }
+}
+
+/// The row under a session's title, in `room` columns: its age, its branch
+/// and, for a session from somewhere else, its directory.
+///
+/// Where the directory does not fit it gives way from its front, marked, as
+/// the command that resumes it does: two projects under one parent differ only
+/// at their ends, and a directory cut from its end would name the parent of
+/// both. The age and branch stay as they are; a row too narrow even for those
+/// is cut from its end by the caller like any other.
+fn aged(one: &Kept<'_>, room: usize, glyphs: Glyphs) -> String {
+    let dot = format!(" {} ", glyphs.dot());
+    let said = [one.when, one.branch]
+        .into_iter()
+        .filter(|said| !said.is_empty())
+        .collect::<Vec<_>>()
+        .join(&dot);
+    if one.place.is_empty() {
+        return said;
+    }
+
+    let before = if said.is_empty() {
+        String::new()
+    } else {
+        format!("{said}{dot}")
+    };
+    let fits = room.saturating_sub(wide(&before));
+    let mark = glyphs.ellipsis();
+    if wide(one.place) <= fits || fits <= wide(mark) {
+        return format!("{before}{}", one.place);
+    }
+    format!("{before}{mark}{}", ending(one.place, fits - wide(mark)))
+}
+
+/// The longest end of `text` at most `columns` wide.
+fn ending(text: &str, columns: usize) -> &str {
+    text.char_indices()
+        .map(|(at, _)| at)
+        .chain(std::iter::once(text.len()))
+        .find_map(|at| text.get(at..).filter(|rest| wide(rest) <= columns))
+        .unwrap_or_default()
 }
 
 /// A pane with nothing to show: one quiet sentence, then blank to `body`.

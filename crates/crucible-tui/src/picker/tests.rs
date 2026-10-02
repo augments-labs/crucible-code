@@ -268,6 +268,26 @@ fn a_session_from_another_directory_names_it_under_its_title() {
 }
 
 #[test]
+fn a_directory_too_long_for_its_row_keeps_the_end_that_names_the_project() {
+    // Two directories under one parent differ at their ends, so a row that
+    // cannot hold the whole of one gives up its front, marked, and the age
+    // and branch it lines up on stay whole.
+    let far = [Kept {
+        place: "~/projects/clients/northwind/website",
+        ..FIVE[3]
+    }];
+    let preview = tail();
+    let mut picker = picker(&far, &preview);
+    picker.marked = 0;
+    let rows = picker.within(100, 30, Glyphs::Unicode);
+
+    let row = said(&rows, LISTED + 1);
+    let row = row.split('│').nth(1).unwrap_or_default().trim_end();
+    assert!(row.contains("13 hours ago · main · …"), "{row:?}");
+    assert!(row.ends_with("/website"), "{row:?}");
+}
+
+#[test]
 fn a_notice_stands_on_the_row_between_the_panes_and_the_keys() {
     let preview = tail();
     let mut picker = picker(&FIVE, &preview);

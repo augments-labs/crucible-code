@@ -254,7 +254,7 @@
       "opened": [
         "Watched::launched( \"reach-all\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "92e8ad944c8755142c730bfabc29088d990abedf23190e653fb24cf9dd1c9b51"
+      "sha256": "d1b3be7007c409f22d011bd2a4a58c3d62a51e8d4f25fb00e0a633ca5a1efeaa"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_b_keeps_the_branch_checked_out_here.snap",
@@ -270,7 +270,7 @@
       "opened": [
         "Watched::launched( \"reach-worktrees\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "28a1e7bacce3423f4b7d2b5eba88b48bc604a13c229632acd21c11d5fbea7106"
+      "sha256": "d7021df2902204f4309f1186f614182b75b0aae28fba12a252aa09bb663ca505"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__enter_on_another_projects_session_says_how_to_resume_it_there.snap",
@@ -278,7 +278,7 @@
       "opened": [
         "Watched::launched( \"reach-elsewhere\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "f7541e782a4a4c7e2451e6404713803073ac66e33968444a937bdf515dac918f"
+      "sha256": "9e3b0b3ed924d2fb8aadb7004ade459b52ae6998a85b99d390f0b3dc1f3a2709"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__escape_while_room_is_being_made_stops_it_and_replaces_nothing.snap",
