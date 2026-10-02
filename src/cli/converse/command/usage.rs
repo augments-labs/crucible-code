@@ -375,7 +375,7 @@ pub(crate) fn body(
         let resets = limit.resets_at.and_then(|at| clock.resets(at));
         if wide {
             let cells = columns.saturating_sub(BESIDE + FIGURE);
-            rows.push(gauge(labelled(named(window), at), used, cells, glyphs));
+            rows.push(gauge(labelled(&named(window), at), used, cells, glyphs));
         } else {
             rows.push(Row::new().then(Slot::Plain, format!("  {}", named(window))));
             rows.push(gauge(
@@ -425,14 +425,22 @@ fn gauge(lead: Row, used: u8, cells: usize, glyphs: Glyphs) -> Row {
         .then(Slot::Plain, format!(" {used:>3}% used"))
 }
 
-/// What a window is called on its row: crucible's name for it, never words a
-/// response chose.
-const fn named(window: Window) -> &'static str {
-    match window {
-        Window::FiveHour => "5-hour window",
-        Window::Weekly => "Weekly window",
-        Window::Monthly => "Monthly window",
-    }
+/// What a window is called on its row: the name a sentence calls it by, so the
+/// two can never drift apart, standing first on the row and so capitalised.
+///
+/// The contract's window is mapped back to the domain's, whose name is the one
+/// the notice and the client's sentence say: a rename there reaches this row
+/// too, and the mapping names no words of its own.
+fn named(window: Window) -> String {
+    let window = match window {
+        Window::FiveHour => crucible_types::Window::FiveHour,
+        Window::Weekly => crucible_types::Window::Weekly,
+        Window::Monthly => crucible_types::Window::Monthly,
+    };
+    let mut name = window.named().chars();
+    name.next()
+        .map(|first| first.to_uppercase().chain(name).collect())
+        .unwrap_or_default()
 }
 
 /// What the session cost, and the tone it is said in.
