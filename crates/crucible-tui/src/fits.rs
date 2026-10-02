@@ -757,7 +757,10 @@ fn the_release_timeline_fits_the_window_it_is_printed_into() {
 fn the_scroll_rail_fits_the_band_it_stands_beside() {
     // A rail is as tall as the transcript band it stands for, and one column
     // wide where the window can spare one. Three places in a record far longer
-    // than any band, and one that fits, at every height the band can be.
+    // than any band, and one that fits, at every height the band can be, at
+    // rest and with the pointer on its first row, its middle and its last,
+    // and with the current prompt the latest above the band's foot, one
+    // landed on in the band, and one landed on that has left it.
     down("the scroll rail", |columns, room, glyphs| {
         let mut rows = Vec::new();
         for (total, top) in [(0, 0), (100_000, 0), (100_000, 50_000), (100_000, 99_999)] {
@@ -766,9 +769,14 @@ fn the_scroll_rail_fits_the_band_it_stands_beside() {
                 top,
                 height: room,
             };
-            let laid = ScrollRail::new(place, [0, 7, 49_999, 99_999]).rows(columns, glyphs);
-            assert!(laid.is_empty() || laid.len() == room, "{columns}x{room}");
-            rows = laid;
+            for landed in [None, Some(0), Some(49_999)] {
+                let rail = ScrollRail::new(place, [0, 7, 49_999, 99_999], landed);
+                for pointer in [None, Some(0), Some(room / 2), room.checked_sub(1)] {
+                    let laid = rail.rows(columns, glyphs, pointer);
+                    assert!(laid.is_empty() || laid.len() == room, "{columns}x{room}");
+                    rows = laid;
+                }
+            }
         }
         rows
     });

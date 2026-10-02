@@ -386,14 +386,31 @@ impl Glyphs {
     /// The part of the scroll rail that stands for what is on screen.
     ///
     /// Heavier than [`Glyphs::vertical`], which is the track it runs along, so
-    /// the two read apart by weight where colour says nothing; and not
-    /// [`Glyphs::bullet`], which marks a prompt on the same track. One column
-    /// in both sets, because the rail is one column.
+    /// the two read apart by weight where colour says nothing; and neither
+    /// [`Glyphs::bullet`] nor [`Glyphs::grown`], which mark a prompt on the
+    /// same track. One column in both sets, because the rail is one column.
     #[must_use]
     pub(crate) fn thumb(self) -> &'static str {
         match self {
             Self::Unicode => "┃",
             Self::Ascii => "#",
+        }
+    }
+
+    /// A prompt's mark on the scroll rail grown: the one under the pointer,
+    /// and the current prompt's.
+    ///
+    /// [`Glyphs::bullet`] is the small filled circle and this is the large
+    /// one, so a grown mark reads as the same mark made larger rather than as
+    /// a new kind of thing on the track. It is neither [`Glyphs::thumb`] nor
+    /// [`Glyphs::vertical`], since it may stand on either. In ASCII it is `*`,
+    /// since there is no larger `-`. One column in both sets, because the rail
+    /// is one column.
+    #[must_use]
+    pub(crate) fn grown(self) -> &'static str {
+        match self {
+            Self::Unicode => "●",
+            Self::Ascii => "*",
         }
     }
 
@@ -503,6 +520,27 @@ mod tests {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             assert_eq!(columns(glyphs.caret()), 1, "{glyphs:?}");
             assert_eq!(columns(glyphs.hidden()), 1, "{glyphs:?}");
+        }
+    }
+
+    #[test]
+    fn the_rail_s_cells_are_one_column_and_four_different_marks_in_both_sets() {
+        // The rail is one column, and a reader tells its parts apart by shape
+        // alone where colour says nothing.
+        for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+            let cells = [
+                glyphs.vertical(),
+                glyphs.thumb(),
+                glyphs.bullet(),
+                glyphs.grown(),
+            ];
+            for (at, cell) in cells.iter().enumerate() {
+                assert_eq!(columns(cell), 1, "{glyphs:?}: {cell}");
+                assert!(
+                    !cells.iter().take(at).any(|before| before == cell),
+                    "{glyphs:?}: {cell}"
+                );
+            }
         }
     }
 

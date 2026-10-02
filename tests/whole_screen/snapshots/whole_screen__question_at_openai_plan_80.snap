@@ -16,7 +16,7 @@ expression: asked
 |                                                                               ┃|
 |Warning: No provider selected. Use /model to select a provider and model.      ┃|
 |                                                                               ┃|
-|› /login                                                                       ┃|
+|› /login                                                                       ●|
 |────────────────────────────────────────────────────────────────────────────────|
 |                                                                                |
 |OpenAI                                                                          |

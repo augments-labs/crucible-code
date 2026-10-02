@@ -5,14 +5,14 @@ expression: window.picture()
 80x16 cursor 13,4 scrolled 0
 |lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     │|
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick│|
-|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.│|
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.●|
 |the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the│|
-|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     ●|
+|lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     │|
 |jumps over the lazy dog. the quick brown fox jumps over the lazy dog. the quick│|
-|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.│|
-|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the┃|
+|brown fox jumps over the lazy dog. the quick brown fox jumps over the lazy dog.●|
+|the quick brown fox jumps over the lazy dog. the quick brown fox jumps over the│|
 |lazy dog. the quick brown fox jumps over the lazy dog. the quick brown fox     ┃|
-|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. done.    ┃|
+|jumps over the lazy dog. the quick brown fox jumps over the lazy dog. again.   ┃|
 |                                                                                |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|

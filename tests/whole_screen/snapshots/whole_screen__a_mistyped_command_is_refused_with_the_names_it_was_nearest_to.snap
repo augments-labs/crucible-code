@@ -18,7 +18,7 @@ expression: refused_as_a_slip(&mut window)
 |variable. Then use /model to select a model.                                   ┃|
 |                                                                               ┃|
 |› /modle                                                                       ┃|
-|⎿ ! no such command: /modle                                                    ┃|
+|⎿ ! no such command: /modle                                                    ●|
 |    nearest: /model, /mode                                                     ┃|
 |                                                                               ┃|
 |                                                                                |
