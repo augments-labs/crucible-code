@@ -61,6 +61,18 @@ fn stopped_then<T>(
     prompts: &[&str],
     then: impl FnOnce(&Conversation, &mut Held<'_>, &Terms) -> T,
 ) -> (Stopped, T) {
+    stopped_after(name, reading, prompts, None, then)
+}
+
+/// [`stopped_then`], with `after` run once the prompts have, before the queue
+/// is asked for the next turn: work that ends some other way than the stop.
+fn stopped_after<T>(
+    name: &str,
+    reading: Option<PlanWindows>,
+    prompts: &[&str],
+    after: Option<Work>,
+    then: impl FnOnce(&Conversation, &mut Held<'_>, &Terms) -> T,
+) -> (Stopped, T) {
     let sample = Sample::new(name);
     let session =
         Arc::new(Session::start(&sample.logs(), &sample.workspace(), None).expect("a new session"));
@@ -92,6 +104,12 @@ fn stopped_then<T>(
         let work = Work::Turn((*prompt).to_owned(), Box::default());
         let (back, leaving) =
             ran(conversation, &mut renderer, &terms, work, &mut held).expect("the turn to end");
+        assert!(!leaving, "the session left");
+        conversation = back;
+    }
+    if let Some(work) = after {
+        let (back, leaving) =
+            ran(conversation, &mut renderer, &terms, work, &mut held).expect("the work to end");
         assert!(!leaving, "the session left");
         conversation = back;
     }
@@ -154,6 +172,28 @@ fn plan_limit_before_sending_holds_the_queued_line_and_records_nothing_more() {
         vec![Message::said("fix the build"), Message::said("try again")],
         "the transcript does not end on the line recorded before the stop"
     );
+}
+
+#[test]
+fn plan_limit_hold_lets_go_once_the_next_work_ends_another_way() {
+    // The hold is about the turn that stopped, not the session: room made
+    // because the window filled, with nothing behind the turns it keeps whole,
+    // ends without a stop, and the line held since is the next turn again
+    // rather than waiting over the box for the rest of the session.
+    let (stopped, ()) = stopped_after(
+        "plan-limit-hold-lets-go",
+        None,
+        &["fix the build"],
+        Some(Work::Room(Compacting::Full)),
+        |_, _, _| (),
+    );
+
+    assert!(
+        stopped.taken.is_some(),
+        "the held line was not run as a turn"
+    );
+    assert!(stopped.waiting.is_empty(), "the line is still queued");
+    assert_eq!(stopped.asked, 2, "the held line never reached the vendor");
 }
 
 /// The idle prompt's first frame, drawn as [`typing::ask`] draws it before it
