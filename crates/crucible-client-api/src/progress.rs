@@ -73,11 +73,12 @@ pub enum Progress {
         /// How many.
         tokens: u64,
     },
-    /// How the window was spent by the request the turn built last, as
-    /// `/context` reads it while a turn runs.
+    /// How the window is spent, as `/context` reads it while a turn runs: the
+    /// figures the turn last reported, which include anything it has recorded
+    /// since its last request.
     ///
-    /// The model is left out: a turn does not change it, and it is the
-    /// snapshot's to say.
+    /// The model is left out, and a frame naming one is refused: a turn does
+    /// not change it, and it is the snapshot's to say.
     Context(Context),
     /// A turn reported that it finished.
     Finished {
@@ -204,7 +205,10 @@ impl Progress {
             "spent" => Self::Spent {
                 tokens: fields.number("tokens")?,
             },
-            "context" => Self::Context(Context::read(fields.take("context")?)?),
+            "context" => match Context::read(fields.take("context")?)? {
+                Context { model: Some(_), .. } => return Err(ErrorCode::Malformed.into()),
+                context => Self::Context(context),
+            },
             "finished" => Self::Finished {
                 turn: fields.number("turn")?,
                 stop: Stop::named(&fields.string("stop")?)?,

@@ -584,7 +584,11 @@ fn progress() -> Vec<Progress> {
         Progress::Compacting { part: 2 },
         Progress::Compacted { replaced: 9 },
         Progress::Spent { tokens: 1234 },
-        Progress::Context(whole),
+        // Streamed with the model left out: it is the snapshot's to say.
+        Progress::Context(Context {
+            model: None,
+            ..whole
+        }),
         Progress::Context(unknown),
         Progress::Finished {
             turn: 1,
@@ -1757,9 +1761,71 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 3_479_318_969_913_473_177),
+        (1, 7_417_588_706_528_553_540),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
+    );
+}
+
+#[test]
+fn a_context_with_no_window_says_no_room_left_and_none_free() {
+    // Both are read against the window, so without one a frame that states
+    // either states a figure nothing measured.
+    let [_, unknown] = contexts();
+    let response = Response {
+        correlation: Some(Correlation::new(3)),
+        outcome: Outcome::Context(unknown),
+    };
+    let frame: Value = serde_json::from_slice(&response.encode().unwrap()).unwrap();
+    let saying = |field: &str, value: Value| -> Vec<u8> {
+        let mut frame = frame.clone();
+        frame
+            .pointer_mut("/outcome/context")
+            .and_then(Value::as_object_mut)
+            .expect("a context is an object")
+            .insert(field.to_owned(), value);
+        framed(&frame)
+    };
+
+    assert_eq!(
+        Response::decode(&framed(&frame)).map_err(Refusal::code),
+        Ok(response)
+    );
+    assert!(Response::decode(&saying("free", json!(0))).is_ok());
+    for (field, value) in [("left", json!(62)), ("free", json!(1))] {
+        assert_eq!(
+            Response::decode(&saying(field, value)).unwrap_err().code(),
+            ErrorCode::Malformed,
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn a_context_streamed_during_a_turn_names_no_model() {
+    // The model is the snapshot's to say; a second place saying it is a
+    // second figure for one fact.
+    let streamed = progress()
+        .into_iter()
+        .find(|one| matches!(one, Progress::Context(context) if context.window.is_some()))
+        .expect("a context specimen with a window");
+    let mut frame: Value = serde_json::from_slice(&streamed.encode().unwrap()).unwrap();
+    assert_eq!(
+        Progress::decode(&framed(&frame)).map_err(Refusal::code),
+        Ok(streamed)
+    );
+
+    frame
+        .pointer_mut("/context")
+        .and_then(Value::as_object_mut)
+        .expect("a context is an object")
+        .insert(
+            "model".to_owned(),
+            json!({"text": "a-model", "truncated": false}),
+        );
+    assert_eq!(
+        Progress::decode(&framed(&frame)).unwrap_err().code(),
+        ErrorCode::Malformed
     );
 }
 

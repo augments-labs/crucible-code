@@ -6,11 +6,14 @@
 //! were counted from: no instruction, schema or message crosses, only how much
 //! of the window each kind of them takes.
 //!
+//! It also crosses as [`Progress::Context`](crate::Progress::Context) during a
+//! turn, with the model left out.
+//!
 //! What is left of the window is the same whole-number reading a
 //! [`Snapshot`](crate::Snapshot) carries, so a client showing both never shows
 //! two figures for one fact. A model that has not said how large its window is
 //! leaves the window, the reading and the free part out rather than guessing
-//! them.
+//! them, and a frame that states either of those without a window is refused.
 
 use serde_json::Value;
 
@@ -34,7 +37,8 @@ pub enum Category {
     Mcp,
     /// The conversation, tool results included.
     Messages,
-    /// What is kept back for the answer and for compaction.
+    /// What is kept free for the next answer and the tool results a pass
+    /// carries back.
     Reserve,
     /// What nothing holds yet.
     Free,
@@ -69,7 +73,8 @@ impl Category {
 /// How the window of the next request is spent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
-    /// The model the request is for, where one is chosen.
+    /// The model the request is for, where one is chosen, or left out where a
+    /// turn streams it.
     pub model: Option<Model>,
     /// How many tokens the model's window holds, where it said.
     pub window: Option<u64>,
@@ -86,9 +91,10 @@ pub struct Context {
     pub mcp: u64,
     /// Tokens of the conversation.
     pub messages: u64,
-    /// Tokens kept back for the answer and for compaction.
+    /// Tokens kept free for the next answer and the tool results a pass
+    /// carries back.
     pub reserve: u64,
-    /// Tokens nothing holds; none where the window is not known.
+    /// Tokens nothing holds; 0 where the window is not known.
     pub free: u64,
 }
 
@@ -150,6 +156,11 @@ impl Context {
             free: fields.number(Category::Free.field())?,
         };
         fields.done()?;
+        // Both are read against the window: without one, either is a figure
+        // nothing measured.
+        if context.window.is_none() && (context.left.is_some() || context.free != 0) {
+            return Err(Refusal::new(ErrorCode::Malformed));
+        }
         Ok(context)
     }
 }
