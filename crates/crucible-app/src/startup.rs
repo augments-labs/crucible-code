@@ -426,13 +426,32 @@ pub fn protected(home: &Home) -> Result<(), AppError> {
 /// the provider's system field and prevents a model or tool change from
 /// rewriting it.
 pub fn under(settings: &Settings) -> String {
+    prompt(settings).instructions_text()
+}
+
+/// How many of the last bytes of [`under`] are `systemPrompt.append`: what the
+/// user or the checkout added after crucible's own part, or after the text
+/// `systemPrompt.custom` replaced it with. `/context` shows them apart.
+fn appended(settings: &Settings) -> usize {
+    let whole = prompt(settings);
+    let own = SystemPrompt {
+        append: None,
+        ..prompt(settings)
+    };
+    whole
+        .instructions_text()
+        .len()
+        .saturating_sub(own.instructions_text().len())
+}
+
+/// The system field the settings describe.
+fn prompt(settings: &Settings) -> SystemPrompt {
     SystemPrompt {
         tone: settings.tone(),
         custom: settings.custom_prompt().map(str::to_owned),
         append: settings.appended_prompt().map(str::to_owned),
         ..SystemPrompt::default()
     }
-    .instructions_text()
 }
 
 /// The session `--resume` named, and everything it already holds.
@@ -1583,6 +1602,7 @@ fn coding(startup: &Startup<'_>, provider: &str, name: &str, asked: &str) -> Age
     .named("Coding")
     .describing("Reads, changes and checks the code in this workspace.")
     .telling(asked)
+    .appending(appended(startup.settings))
     .build()
 }
 

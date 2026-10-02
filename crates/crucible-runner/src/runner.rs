@@ -223,7 +223,7 @@ fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>
 fn fixed<'a>(agent: &'a Agent, tools: &'a ToolSnapshot) -> Fixed<'a> {
     Fixed {
         system: agent.instructions(),
-        appended: 0,
+        appended: agent.appended(),
         tools: tools
             .entries()
             .iter()

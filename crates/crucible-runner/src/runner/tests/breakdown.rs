@@ -1,5 +1,6 @@
 //! What the next request carries, divided by what holds the window.
 
+use crucible_agents::AgentBuilder;
 use crucible_tools::{ToolDescriptor, ToolProvenance, ToolSourceKind};
 
 use super::*;
@@ -101,5 +102,24 @@ fn context_breakdown_without_a_window_draws_no_free_room() {
     assert_eq!(breakdown.window(), None);
     assert_eq!(breakdown.left(), None);
     assert_eq!(breakdown.tokens(Category::Free), 0);
+    assert_eq!(carried_by(&breakdown), scripted.runner.carrying());
+}
+
+#[test]
+fn context_breakdown_counts_what_was_appended_to_the_system_field_apart() {
+    let own = "o".repeat(3_000);
+    let appended = "a".repeat(1_500);
+    let agent = AgentBuilder::new(AgentId::new("test"), fixture().model().clone())
+        .telling(&format!("{own}{appended}"))
+        .appending(appended.len())
+        .build();
+    let mut scripted = Scripted::under(answered(), tools([]), agent);
+    scripted.runner.state.window = Some(200_000);
+
+    let breakdown = scripted.runner.breakdown();
+
+    // Nothing has reported a rate yet, so both are at three bytes a token.
+    assert_eq!(breakdown.tokens(Category::SystemPrompt), 1_000);
+    assert_eq!(breakdown.tokens(Category::ProjectInstructions), 500);
     assert_eq!(carried_by(&breakdown), scripted.runner.carrying());
 }
