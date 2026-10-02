@@ -169,13 +169,13 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
       "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
       "opened": [],
-      "sha256": "13322ee07417f5ab54b5f58c4bf63adda8033e41f3ed463183baf6bba31414f7"
+      "sha256": "e2e94472950e29daecfa31d3206d1e795081f75670baea10b400feb247165538"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
       "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
       "opened": [],
-      "sha256": "55a86518228297534f8b0500f64124b8acacdfa5e67d29678c69ac153bfbf545"
+      "sha256": "bc3069fce5f2ed2c61e22d043429ff821446f71df1cce1728afa034c633bf25d"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_opens_the_command_list_above_the_box.snap",
@@ -641,13 +641,13 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
       "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
       "opened": [],
-      "sha256": "9deddde49274c400894c222174a2d47a859e3f86ed19b2875675c14f7ea2de17"
+      "sha256": "5f330b6d68731f98f245d3ed39467c6af1bf5dbe9c97fa9cf041f08e0aceed47"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
       "case": "the_open_queue_wraps_its_keys_in_a_narrow_window",
       "opened": [],
-      "sha256": "7c2fd870754e81e1d0a5c4dd748673b10bdcec111a5d91b4d474381405c06598"
+      "sha256": "60abf62dc90b3bbee2c63be4403f81106a7f729d949deaba517fb15306194892"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_provider_panel_reaches_a_turn_without_a_provider_being_named.snap",

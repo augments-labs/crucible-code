@@ -40,7 +40,7 @@ use crate::cli::style::Style;
 
 use super::region::{self, Moved};
 use super::{
-    Held, QUEUED_BYTES, QUEUED_LINES, Terms, Work, answerable, attaching, ran, unanswered,
+    Held, QUEUED_BYTES, QUEUED_LINES, Terms, Turning, Work, answerable, attaching, ran, unanswered,
 };
 
 /// What stands around the lines of the view: the rule, the title, the blank
@@ -363,17 +363,25 @@ pub(super) fn stand<T: Terminal>(
 ///
 /// Answers whether it stood, which is the caller's question rather than this
 /// one's: the box and the list take the same rows, so exactly one of them is
-/// drawn per frame and the caller draws the other.
+/// drawn per frame and the caller draws the other. The row that says the turn
+/// is running stands directly over the list's rule, as it stands over the box.
 ///
 /// # Errors
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on.
+// Six is one over clippy's limit, and each is a distinct thing the frame is
+// drawn from: the terminal, the dress, the queue, whether it stands, the offer
+// the turn reads, and the turn whose row stands over it. The caller holds all
+// six as separate values, and a type made to bundle two of them would be built
+// at the one call site only to be taken apart here.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn under<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     queue: &Prompts,
     standing: &mut Standing,
     steer: &Steer,
+    turning: &Turning,
 ) -> Result<bool, Fatal> {
     let Standing::Open(at) = *standing else {
         return Ok(false);
@@ -383,18 +391,29 @@ pub(super) fn under<T: Terminal>(
     // the turn goes on writing into: a list that asked for the whole window
     // would leave what is being said now nowhere at all to appear.
     let room = renderer.rows().saturating_sub(1);
-    let rows = rows(queue, at, renderer.columns(), room, style);
+    let columns = renderer.columns();
+
+    // The row that says the turn is running stays directly over the view's rule,
+    // as it stands over the box. It is the first thing to give way: a window
+    // that can hold the list only without it holds the list, since the list is
+    // what the reader opened.
+    let mut laid = rows(queue, at, columns, room.saturating_sub(1), style);
+    if laid.is_empty() {
+        laid = rows(queue, at, columns, room, style);
+    } else {
+        laid.insert(0, turning.working(columns, style));
+    }
 
     // Nothing left to stand: the reader took the last line back, or the window
     // has no room for the list at all. Either way the box comes back in this
     // same frame, and the queue is the turn's again.
-    let Some(row) = rows.len().checked_sub(1) else {
+    let Some(row) = laid.len().checked_sub(1) else {
         steer.release();
         *standing = Standing::Closed;
         return Ok(false);
     };
 
-    renderer.under(&rows, Some(Caret { row, column: 0 }), style.palette())?;
+    renderer.under(&laid, Some(Caret { row, column: 0 }), style.palette())?;
     Ok(true)
 }
 
@@ -459,8 +478,9 @@ fn laid(open: &mut Open<'_>, columns: usize, rows: usize, style: Style) -> Vec<R
 /// naming every key that works. The marked line leads with the mark a line is
 /// typed after and is drawn in the accent, so a key's target is never a guess;
 /// the rest stand two columns in under it. A line is read whole here where the
-/// box cut it to a row, so it wraps and hangs under its own first word. No rows
-/// at all where there is nothing left to name, which both callers read as the
+/// box cut it to a row, so it wraps and hangs under its own first word. The
+/// marked line is always among those drawn: a window short of the whole queue
+/// scrolls to it. No rows at all where there is nothing left to name, which both callers read as the
 /// view closing.
 fn rows(queue: &Prompts, at: usize, columns: usize, rows: usize, style: Style) -> Vec<Row> {
     use crucible_tui::{Slot, fold};
@@ -492,21 +512,62 @@ fn rows(queue: &Prompts, at: usize, columns: usize, rows: usize, style: Style) -
     // Only as much of a line as the room could show is folded: a prompt may be
     // a megabyte, and the view is drawn again on every frame.
     let across = columns.saturating_sub(MARKED);
-    let mut left = room;
-    'lines: for (place, said) in queue.waiting_all().enumerate() {
+    let parts = |place: usize| -> Vec<String> {
+        queue
+            .waiting_all()
+            .nth(place)
+            .map(|said| {
+                let shown = draw::clipped(said, across.saturating_mul(room), glyphs);
+                fold(&shown, across)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // The marked line is always among the lines drawn, whole where the room
+    // holds it and from its first row where it does not: `d` takes away the
+    // words the mark stands on, and words the reader never saw are not a thing
+    // to take away. The room is filled backwards from it with the lines before
+    // it that fit whole, then forwards with what comes after. Nothing is kept
+    // between frames to say where the list was scrolled to; the mark alone says.
+    let at = at.min(waiting - 1);
+    let mut marked = parts(at);
+    marked.truncate(room);
+    let mut used = marked.len();
+
+    let mut before = Vec::new();
+    for place in (0..at).rev() {
+        let earlier = parts(place);
+        if used + earlier.len() > room {
+            break;
+        }
+        used += earlier.len();
+        before.push((place, earlier));
+    }
+    before.reverse();
+
+    let mut blocks = before;
+    blocks.push((at, marked));
+    for place in at + 1..waiting {
+        if used >= room {
+            break;
+        }
+        let mut later = parts(place);
+        later.truncate(room - used);
+        used += later.len();
+        blocks.push((place, later));
+    }
+
+    for (place, lines) in blocks {
         let tone = if place == at {
             Slot::Accent
         } else {
             Slot::Plain
         };
-        let shown = draw::clipped(said, across.saturating_mul(left), glyphs);
 
-        for (nth, part) in fold(&shown, across).into_iter().enumerate() {
-            if left == 0 {
-                break 'lines;
-            }
-            left -= 1;
-
+        for (nth, part) in lines.into_iter().enumerate() {
             let lead = if nth == 0 && place == at {
                 glyphs.caret()
             } else {

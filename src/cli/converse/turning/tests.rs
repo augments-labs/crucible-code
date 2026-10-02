@@ -1271,6 +1271,23 @@ fn one_waiting_prompt_is_told_the_key_that_opens_the_queue() {
 }
 
 #[test]
+fn the_queue_box_ends_the_footing_so_the_line_under_it_stands_directly_beneath() {
+    // The gap this closes: a blank row stood between the box's bottom edge and
+    // the window-left line, where the design draws the line directly under the
+    // edge. The blank parts the working row from the box below it; with the
+    // queue box standing it is the box that is that box's own, so nothing after
+    // it needs parting from.
+    for columns in [Prompt::FRAMED_AT, 40, 80] {
+        let said = queueing(&["one", "two"], columns, 24);
+        assert_eq!(
+            said.last().map(|row| row.starts_with('\u{2570}')),
+            Some(true),
+            "{columns}: {said:?}"
+        );
+    }
+}
+
+#[test]
 fn the_queue_overflow_row_counts_and_leaves_the_key_to_the_border() {
     // The key is named once, in the border, and the row says what it is for.
     let said = queueing(&["one", "two", "three", "four", "five"], 80, 24);

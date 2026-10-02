@@ -295,6 +295,65 @@ fn a_window_with_no_room_for_a_name_lays_nothing_out() {
 }
 
 #[test]
+fn walking_past_the_last_drawn_line_scrolls_so_the_marked_line_is_always_drawn() {
+    // The defect this pins: the list was always drawn from its first line, so in
+    // a window short of the whole queue the mark could stand on a line that was
+    // not on screen, and `d` would delete words the reader had never seen.
+    let lines = ["one", "two", "three", "four", "five", "six"];
+    let (queue, _) = queued(&lines);
+
+    // Two rows for lines: the footer is one row at 80 columns.
+    for (at, line) in lines.iter().enumerate() {
+        let drawn = said(&rows(&queue, at, 80, CHROME + 1 + 2, Style::plain()));
+
+        assert!(
+            drawn.contains(&format!("\u{203a} {line}")),
+            "{at}: {line} is marked and not drawn in {drawn:?}"
+        );
+        assert_eq!(
+            drawn
+                .iter()
+                .filter(|row| row.starts_with('\u{203a}'))
+                .count(),
+            1,
+            "{at}: {drawn:?}"
+        );
+    }
+
+    // And what `d` removes there is exactly the line the mark stood on.
+    let (_, queue, editor, _) = after(&lines, 5, Key::Char('d'));
+    assert_eq!(
+        queue.waiting_all().collect::<Vec<_>>(),
+        vec!["one", "two", "three", "four", "five"]
+    );
+    assert_eq!(editor.text(), "");
+}
+
+#[test]
+fn the_view_scrolls_by_wrapped_rows_and_keeps_a_tall_line_drawn_from_its_start() {
+    let first = "alpha beta gamma delta epsilon zeta eta theta iota";
+    let second = "kappa lambda mu nu xi omicron pi rho sigma tau";
+    let (queue, _) = queued(&[first, "short", second]);
+
+    // Forty columns fold each long line over two rows, so the third is the
+    // marked one and the room for lines is three rows: it takes two of them
+    // and the line before it takes the third.
+    let drawn = said(&rows(&queue, 2, 40, CHROME + 2 + 3, Style::plain()));
+    let whole = drawn.join("\n");
+    assert!(
+        whole.contains("\u{203a} kappa lambda mu nu xi omicron pi"),
+        "{whole}"
+    );
+    assert!(whole.contains("sigma tau"), "{whole}");
+    assert!(whole.contains("short"), "{whole}");
+    assert!(!whole.contains("alpha"), "{whole}");
+
+    // A line taller than all the room is drawn from its first row.
+    let drawn = said(&rows(&queue, 0, 40, CHROME + 2 + 1, Style::plain())).join("\n");
+    assert!(drawn.contains("\u{203a} alpha beta gamma delta"), "{drawn}");
+}
+
+#[test]
 fn editing_a_queued_line_moves_its_words_to_the_box_and_leaves_the_rest() {
     // `e` is the key the footer names, and it does what `x` always did: the
     // line leaves the queue, in both places it is held, and the box has it with

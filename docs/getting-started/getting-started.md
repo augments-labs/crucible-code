@@ -387,8 +387,8 @@ words, one of them being typed and the rest already sent for:
 
 The bottom edge names the key that opens the queue, for one waiting prompt as
 for many. Three are named and the rest are counted, oldest first, which is the
-order they will be said in. A line too wide for the window is cut at the right. On a window
-too narrow to open a frame the panel is one indented row saying how many are
+order they will be said in. A line too wide for the window is cut at the right.
+On a window too narrow to open a frame the panel is one indented row saying how many are
 waiting, since that is the fact that cannot go, and on one too short for
 everything standing over the box it gives its rows up before the row saying a
 turn is running does: a queued prompt has its own turn coming, and that row is
@@ -407,7 +407,8 @@ the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
 into the box to be edited or sent ahead of the rest, <kbd>d</kbd> deletes it
 without taking it back, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes
 it. While it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view
-rather than interrupting the turn.
+rather than interrupting the turn. In a window too short for the whole queue the
+view scrolls, so the line the keys act on is always the one you can read.
 
 Nothing leaves the queue while it stands open. The turn above goes on writing,
 tools go on running, the answer goes on arriving; what waits is the one moment

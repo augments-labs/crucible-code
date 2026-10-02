@@ -710,7 +710,38 @@ fn the_open_queue_names_the_keys_that_work_on_a_waiting_prompt() {
     window.types_and_catches("\x11", "d delete");
     let picture = window.picture();
     assert!(picture.contains("e edit"), "{picture}");
-    insta::assert_snapshot!(picture);
+    insta::assert_snapshot!(on_the_first_beat(&picture));
+}
+
+#[test]
+fn the_open_queue_keeps_the_working_row_directly_above_its_rule() {
+    // The view replaces the box and what stood over it, and the row that says a
+    // turn is running stood over it: dropped, the reader looking at their queue
+    // could not tell the turn behind it was still going. It is the row the
+    // view's rule sits directly under, and it is the live one, so its clock
+    // goes on counting while the view stands.
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open-working", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    let picture = window.picture();
+
+    let rows: Vec<&str> = picture.lines().collect();
+    let title = rows
+        .iter()
+        .position(|row| row.contains("1 queued"))
+        .unwrap_or_else(|| panic!("no title in {picture}"));
+    let rule = title.saturating_sub(2);
+    assert!(
+        rows.get(rule)
+            .is_some_and(|row| row.contains("\u{2500}\u{2500}\u{2500}")),
+        "{picture}"
+    );
+    assert!(
+        rows.get(rule.saturating_sub(1))
+            .is_some_and(|row| row.contains("esc to interrupt")),
+        "{picture}"
+    );
 }
 
 #[test]
@@ -719,7 +750,7 @@ fn the_open_queue_wraps_its_keys_in_a_narrow_window() {
     let mut window = with_a_prompt_waiting("queue-open-narrow", 40, &vendor);
 
     window.types_and_catches("\x11", "d delete");
-    insta::assert_snapshot!(window.picture());
+    insta::assert_snapshot!(on_the_first_beat(&window.picture()));
 }
 
 #[test]

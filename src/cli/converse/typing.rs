@@ -1329,7 +1329,7 @@ pub(super) fn during<T: Terminal>(
 
     if moved
         && !expanding::under(renderer, style, kept, opened)?
-        && !queueing::under(renderer, style, queued, viewing, steer)?
+        && !queueing::under(renderer, style, queued, viewing, steer, turning)?
     {
         // A view takes the rows the box has, so a frame draws one of the three.
         // A window with no room for either view has closed it above, and the

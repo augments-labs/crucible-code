@@ -910,6 +910,22 @@ impl Turning {
         self.left
     }
 
+    /// The row that says the turn is running, as the footing draws it.
+    ///
+    /// Also what the open queue keeps over its rule: the view stands where the
+    /// footing was, and this is the one row of it that says the turn behind the
+    /// view is still going. Read afresh each frame, so its clock goes on
+    /// counting while the view stands.
+    pub(super) fn working(&self, columns: usize, style: Style) -> Row {
+        Working {
+            doing: self.shown_doing().word(),
+            running: self.running(),
+            spent: self.spent,
+            stops: (self.doing != Doing::Interrupting).then_some(STOPS),
+        }
+        .row(columns, style.glyphs())
+    }
+
     /// The rows to put above the box, or none where the window has no room.
     ///
     /// A blank either side, so the rows belong to neither the turn's own output
@@ -953,13 +969,6 @@ impl Turning {
         // the panel gives up a task.
         let mut panel = planning.rows(columns, room - ROWS - 1, style.glyphs());
         let room = room - panel.len();
-
-        let working = Working {
-            doing: self.shown_doing().word(),
-            running: self.running(),
-            spent: self.spent,
-            stops: (self.doing != Doing::Interrupting).then_some(STOPS),
-        };
 
         // What the call has to clear is taller where the queue panel below is
         // being drawn, since the two are standing in the same window. The panel
@@ -1035,7 +1044,7 @@ impl Turning {
         }
 
         rows.push(Row::new());
-        rows.push(working.row(columns, style.glyphs()));
+        rows.push(self.working(columns, style));
 
         // Under the word and with no blank between them, because it is a second
         // line of the same thing rather than a second thing beside it — the
@@ -1046,10 +1055,17 @@ impl Turning {
             rows.push(row);
         }
 
+        // The blank under the footing parts it from the line below it. The
+        // queue box is a frame of its own and needs no parting: left last, its
+        // bottom edge stands directly over the line under it. A plan under the
+        // box is a thing beside it, so that blank stays.
+        let boxed = !panel_rows.is_empty() && panel.is_empty();
         rows.extend(panel_rows);
 
         rows.append(&mut panel);
-        rows.push(Row::new());
+        if !boxed {
+            rows.push(Row::new());
+        }
 
         rows
     }
