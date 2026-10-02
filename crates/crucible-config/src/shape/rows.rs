@@ -5,9 +5,9 @@
 //! name out of a set the host holds — the syntax themes it reads code in.
 //! Every other key is left out, and the list of what is left out sits beside
 //! the test in `rows/tests.rs`, each entry with its reason. That test walks
-//! every key [`DOCUMENT`](super::DOCUMENT) declares, so a key added to the
-//! document without a row or a reason fails the build rather than going
-//! missing from the menu in silence.
+//! every key [`DOCUMENT`] declares, so a key added to the document without a
+//! row or a reason fails the build rather than going missing from the menu in
+//! silence.
 //!
 //! What a row may be set to is the same constant its declaration names, and
 //! the test holds the two to one answer: the choices a menu offers and the
