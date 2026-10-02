@@ -238,6 +238,11 @@ as a text model, which this build does not offer. Whether an M Plan key is
 served `MiniMax-M3` and `MiniMax-M2.7` is not settled by any page; the vendor
 answers.
 
+A MiniMax key given on a Token Plan row has a plan with limits, which `/usage`
+asks MiniMax for at that row's site; the plan limits are asked for on the
+Token Plan sign-in row only. A key given on a pay-as-you-go row, or read from
+`MINIMAX_API_KEY`, is never asked, and neither is an address in `baseUrl`.
+
 #### Qwen's shared addresses
 
 Alibaba Cloud put the shared `dashscope.aliyuncs.com` domain into maintenance
