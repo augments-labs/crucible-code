@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crucible_runner::{Agent, Model, Tools};
+use crucible_runner::{Agent, Breakdown, Model, Tools};
 use crucible_runtime::Aside;
 use crucible_session::Session;
 use crucible_tools::{Mode, Permission, Rules};
@@ -978,11 +978,14 @@ fn the_row_under_a_running_turn_keeps_the_mode_cycle_hint() {
 fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     let renderer = roomy();
     let editor = typed("next");
-    let mut turning = Turning::started(None);
-    turning.saw(&crucible_runner::Event::Carried { left: Some(61) });
+    let carried = crate::cli::converse::tests::measured();
+    let mut turning = Turning::started(Breakdown::default());
+    turning.saw(&crucible_runner::Event::Carried { breakdown: carried });
     let planning = nothing();
     let mut says = settled(Mode::Ask);
-    says.left = Some(88);
+    says.left = Some(1);
+    assert_ne!(says.left, carried.left());
+    let shown = format!("{}% window left", carried.left().unwrap_or_default());
 
     let footed = working(
         &renderer,
@@ -999,10 +1002,7 @@ fn a_running_turn_moves_its_latest_window_reading_into_the_prompt_border() {
     );
 
     assert!(
-        footed
-            .boxed
-            .iter()
-            .any(|row| row.text().contains("61% window left")),
+        footed.boxed.iter().any(|row| row.text().contains(&shown)),
         "{:?}",
         footed.boxed
     );
@@ -1021,9 +1021,11 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
     let renderer = roomy();
     let editor = typed("next");
     let planning = nothing();
+    let started = crate::cli::converse::tests::measured();
     let mut says = settled(Mode::Ask);
-    says.left = Some(88);
-    let turning = Turning::started(says.left);
+    says.left = started.left();
+    let turning = Turning::started(started);
+    let shown = format!("{}% window left", started.left().unwrap_or_default());
 
     let footed = working(
         &renderer,
@@ -1040,12 +1042,49 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
     );
 
     assert!(
-        footed
-            .boxed
-            .iter()
-            .any(|row| row.text().contains("88% window left")),
+        footed.boxed.iter().any(|row| row.text().contains(&shown)),
         "{:?}",
         footed.boxed
+    );
+}
+
+#[test]
+fn context_mid_turn_reads_the_request_the_turn_started_from_then_the_last_it_carried() {
+    // `/context` stands over a running turn with the runner away on the
+    // worker, so what it shows is what the turn was handed when it started
+    // and then whatever its requests have since carried.
+    let runner = Runner::new(
+        Box::new(Script::new(vec![])),
+        Tools::new(),
+        Agent::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: Some(200_000),
+                accepts: None,
+                effort: None,
+            },
+        ),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        Arc::new(Session::nowhere()),
+    );
+    let started = runner.breakdown();
+    let mut turning = Turning::started(started);
+
+    let shown = crucible_app::client::context("script", &turning.breakdown());
+    assert_eq!(shown.window, Some(200_000));
+    assert_eq!(
+        shown.left.map(crucible_client_api::Percent::get),
+        runner.left()
+    );
+
+    let carried = crucible_runner::Breakdown::default();
+    turning.saw(&crucible_runner::Event::Carried { breakdown: carried });
+    assert_eq!(turning.breakdown(), carried);
+    assert_eq!(
+        crucible_app::client::context("script", &turning.breakdown()).window,
+        None
     );
 }
 
@@ -1447,7 +1486,7 @@ fn a_line_the_queue_refuses_is_not_said_to_the_turn() {
         lines,
     };
     let steer = crucible_runtime::Steer::new();
-    let mut turning = Turning::started(None);
+    let mut turning = Turning::started(Breakdown::default());
 
     let mut editor = Editor::new();
     for typed in "once more".chars() {

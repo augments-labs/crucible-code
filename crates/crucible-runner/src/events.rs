@@ -15,6 +15,8 @@ use crucible_types::{
     Ancestry, Attachment, ContextError, RunId, StopReason, ToolCall, ToolId, TurnId,
 };
 
+use crate::Breakdown;
+
 /// Why a turn ended badly.
 ///
 /// Owned here rather than by a lower layer, because a turn is what fails: the
@@ -347,9 +349,13 @@ pub enum Event {
     /// percentage, so zero is the safe compaction boundary rather than the
     /// model's literal last token. `None` where no window is known: nothing draws
     /// a fraction of a number nobody stated.
+    ///
+    /// The percentage is [`Breakdown::left`], read off the one value both
+    /// figures come from, so no reader can hold a percentage its breakdown
+    /// was not counted with.
     Carried {
-        /// The usable percentage still free, rounded down.
-        left: Option<u8>,
+        /// The request this reading measured, by what holds the window.
+        breakdown: Breakdown,
     },
 
     /// Room is being made, and the turn has not ended.
@@ -503,7 +509,10 @@ impl std::fmt::Debug for Event {
                 .field("reason", reason)
                 .field("resent", resent)
                 .finish(),
-            Self::Carried { left } => f.debug_struct("Carried").field("left", left).finish(),
+            Self::Carried { breakdown } => f
+                .debug_struct("Carried")
+                .field("breakdown", breakdown)
+                .finish(),
             Self::Compacting { why, part } => f
                 .debug_struct("Compacting")
                 .field("why", why)

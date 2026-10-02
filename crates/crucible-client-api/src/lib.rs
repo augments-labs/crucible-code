@@ -66,6 +66,7 @@
 
 pub mod bounds;
 pub mod command;
+pub mod context;
 pub mod error;
 pub mod outcome;
 pub mod pending;
@@ -76,6 +77,7 @@ mod wire;
 
 pub use bounds::{Name, Said, Text};
 pub use command::{Command, Mode, Pace, Palette, Prompt, Rung, Theme};
+pub use context::{Category, Context};
 pub use error::{ErrorCode, Refusal};
 pub use outcome::{
     CacheOutcome, CleanOutcome, ClearOutcome, EffortOutcome, Group, LoginOutcome, LogoutOutcome,

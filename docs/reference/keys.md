@@ -266,6 +266,13 @@ takes the one marked, and <kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> or
 <kbd>Ctrl+D</kbd> leave with `cancelled, the speed is unchanged`. Typed while a
 turn runs, the speed taken is asked for once the turn ends.
 
+### `/context`
+
+<kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
+redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
+runs, it stands over the turn with the figures that turn last reported, which
+include anything it has recorded since its last request.
+
 ### `/theme`
 
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list in view, <kbd>←</kbd> and
@@ -394,6 +401,7 @@ them all at once.
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd>, <kbd>↓</kbd> | Moves the mark. |
-| <kbd>x</kbd> | Takes the marked prompt back into the box, where it can be edited or sent again. When the queue is then empty the view closes with it. |
+| <kbd>e</kbd>, <kbd>x</kbd> | Takes the marked prompt back into the box, cursor after it, where it can be edited or sent again. When the queue is then empty the view closes with it. A prompt too long to go in beside what the box already holds (1 MiB together) stays queued and marked, and the box is left as it was. The footer names <kbd>e</kbd>. |
+| <kbd>d</kbd>, <kbd>Delete</kbd> | Deletes the marked prompt without taking it back; the box is left as it was. When the queue is then empty the view closes with it. |
 | <kbd>Esc</kbd>, <kbd>Ctrl+Q</kbd> | Closes it. |
 | Anything else | Nothing while it stands, <kbd>Ctrl+C</kbd> included. |

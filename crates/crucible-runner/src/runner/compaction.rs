@@ -194,7 +194,7 @@ impl Runner {
                 self.store.display_compacted(compacted, pruned).await;
                 events.post(crate::Event::Compacted { compacted });
                 events.post(crate::Event::Carried {
-                    left: self.left_under(run.policy().compaction),
+                    breakdown: self.breakdown_under(run.policy().compaction),
                 });
                 return Ok(Room::Made(compacted));
             }
@@ -301,10 +301,9 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &super::advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&super::Fixed::of(&self.agent, &self.state.tools));
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -321,7 +320,7 @@ impl Runner {
         self.store.display_compacted(compacted, pruned).await;
         events.post(crate::Event::Compacted { compacted });
         events.post(crate::Event::Carried {
-            left: self.left_under(run.policy().compaction),
+            breakdown: self.breakdown_under(run.policy().compaction),
         });
 
         Ok(Room::Made(compacted))
@@ -930,10 +929,9 @@ impl Runner {
         for message in self.state.transcript.messages() {
             self.state.load.recounted(message);
         }
-        self.state.load.requesting(
-            self.agent.instructions(),
-            &super::advertising(&self.agent, &self.state.tools),
-        );
+        self.state
+            .load
+            .requesting(&super::Fixed::of(&self.agent, &self.state.tools));
         true
     }
 }

@@ -2,7 +2,7 @@
   "harness": {
     "tests/whole_screen/screen.rs": "cc2ad5999ac72ed007d79e0197b0bd8782b9a75d05424aa7fb6ba8906b3a0e8f",
     "tests/whole_screen/vendor.rs": "34f9d6bbec72850a23e2c252f03bd859e3d9dce87eb156e8f1350f71fdecbb1c",
-    "tests/whole_screen/watched.rs": "86ef02c77c55de5770195b598c5783be38511407d17ca2afd2355a80c5bbf66c"
+    "tests/whole_screen/watched.rs": "38667fc3c5211495b69f92118a98bd714b6d66b2f3cb6000c2bbf8ec18043d01"
   },
   "captures": [
     {
@@ -166,12 +166,24 @@
       "sha256": "24224ae8dc2b025e7ce004c5cc4a5f71ba8e64866755cac6cbd8a6ca1c7d0c71"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
+      "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
+      "opened": [],
+      "sha256": "e2e94472950e29daecfa31d3206d1e795081f75670baea10b400feb247165538"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
+      "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
+      "opened": [],
+      "sha256": "bc3069fce5f2ed2c61e22d043429ff821446f71df1cce1728afa034c633bf25d"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_opens_the_command_list_above_the_box.snap",
       "case": "a_slash_opens_the_command_list_above_the_box",
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "a94de5727195e3e280a9847190be9cb05c069a77af21d1470861b46681548b9c"
+      "sha256": "9649af7c403f61a5542c21c033683cafad6e3a73c41b164b47000953fa679bfb"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -179,7 +191,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "3ae925cdd3b839479e265a11c28446062259e67c957aa70459f4ad4d14911756"
+      "sha256": "18a8502385ad42a3d6542e22d68a54c1792f2776ac79393169dba3a6f50de5e4"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -268,6 +280,38 @@
         "Watched::configured(\"compact-activity\", 80, 32, &config, true)"
       ],
       "sha256": "ac3c315898a568699a665bf2a77b7e43f5c848f57211806d60fdedb6192c3440"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__context_fresh_40.snap",
+      "case": "context_stands_over_a_fresh_session_and_closes_on_escape",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&format!(\"context-fresh-{columns}\"), columns, 24, &vendor)"
+      ],
+      "sha256": "56a4d6a6767da92a26146e108b1b4dd8409f2eb3d30ac94a76316d0e2f574c77"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__context_fresh_80.snap",
+      "case": "context_stands_over_a_fresh_session_and_closes_on_escape",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&format!(\"context-fresh-{columns}\"), columns, 24, &vendor)"
+      ],
+      "sha256": "2a02db16a1832673d0cf36047dd2e1510953b72c392bcb415dcf7fdaec37949d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__context_long_80.snap",
+      "case": "context_stands_over_a_long_session_with_what_the_prompt_line_says_is_left",
+      "opened": [],
+      "sha256": "79a0dfc9caff7a11e88f0015e6f365f7590fd52e3b9fd6ce8695ef90aa65802c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__context_mid_turn_80.snap",
+      "case": "context_stands_over_a_running_turn_with_the_figures_it_last_carried",
+      "opened": [
+        "Watched::allowing(\"context-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "6a0066ad59f9340b0fac69ae059eaa12d09b91d9d38a6287ae3287a2218dbccc"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
@@ -664,6 +708,18 @@
         "Watched::open(&format!(\"login-ways-{held}-{columns}\"), columns, 24)"
       ],
       "sha256": "6aac0c3e289794ce4a226b4e26fffd533726b896c455a17a04bc0593a0df63e1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
+      "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
+      "opened": [],
+      "sha256": "5f330b6d68731f98f245d3ed39467c6af1bf5dbe9c97fa9cf041f08e0aceed47"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
+      "case": "the_open_queue_wraps_its_keys_in_a_narrow_window",
+      "opened": [],
+      "sha256": "60abf62dc90b3bbee2c63be4403f81106a7f729d949deaba517fb15306194892"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_provider_panel_reaches_a_turn_without_a_provider_being_named.snap",

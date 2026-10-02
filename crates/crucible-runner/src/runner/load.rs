@@ -24,10 +24,18 @@
 //! this model's own bytes-per-token on this session's own text. Nothing here
 //! carries a tokenizer, a divisor per vendor, or a table to keep up to date: a
 //! provider added later is calibrated by its first answer.
+//!
+//! **What holds the load is counted by the same arithmetic.** The fixed
+//! content arrives already sorted into the categories `/context` names, and
+//! [`Breakdown`] divides [`Load::tokens`] among them rather than estimating
+//! each separately: the parts add up to the load, and the room it reports left
+//! is the prompt line's.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use crucible_agents::Agent;
+use crucible_tools::{ToolEntry, ToolSnapshot, ToolSourceKind};
 use crucible_types::{Calibration, Carried, Message, Spend, TOOL_RESULT_BYTES, ToolSchema};
 
 /// Bytes per token before any response has been seen.
@@ -93,6 +101,180 @@ impl Counting {
     /// How much usable room remains before the compaction boundary.
     pub(super) fn left(&self) -> Option<u8> {
         self.load.left(self.window, self.reserve)
+    }
+
+    /// The same load, divided by what holds the window.
+    pub(super) fn breakdown(&self) -> Breakdown {
+        self.load.breakdown(self.window, self.reserve)
+    }
+}
+
+/// What every request carries before the transcript.
+///
+/// Handed over with what the categories are decided from: how many of the
+/// system bytes were appended, and the kind of source of each tool. So the
+/// bytes the window is measured against and the bytes `/context` divides are
+/// one set.
+#[derive(Debug, Default)]
+pub(super) struct Fixed<'a> {
+    /// The system field, where there is one.
+    pub(super) system: Option<&'a str>,
+    /// How many of its last bytes the user or the checkout appended to it.
+    pub(super) appended: usize,
+    /// The tool schemas advertised, each beside the kind of source its tool
+    /// came from.
+    pub(super) tools: Vec<(ToolSourceKind, ToolSchema<'a>)>,
+}
+
+impl<'a> Fixed<'a> {
+    /// What every request `agent` sends out of `tools` carries.
+    ///
+    /// The one narrowing of the roster to what `agent` declares: what is
+    /// counted here and what [`Runner::offering`](super::Runner::offering)
+    /// names are read from this, so they cannot come apart. A pass narrows the
+    /// roster it admits and leaves it behind narrowed, so after the first one
+    /// this keeps all of it. Before it, the run is still holding everything it
+    /// was wired with, and what is read between turns is about what the
+    /// definition declares rather than about what the wiring installed.
+    ///
+    /// Takes the two fields rather than the runner, so a caller can hold the
+    /// load it is about to write while it asks.
+    pub(super) fn of(agent: &'a Agent, tools: &'a ToolSnapshot) -> Self {
+        Self {
+            system: agent.instructions(),
+            appended: agent.appended(),
+            tools: tools
+                .entries()
+                .iter()
+                .map(ToolEntry::descriptor)
+                .filter(|descriptor| agent.availability().offers(descriptor.name()))
+                .map(|descriptor| (descriptor.provenance().kind(), descriptor.advertised()))
+                .collect(),
+        }
+    }
+}
+
+/// The fixed request content, in bytes, by category.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Parts {
+    /// The system field, less what was appended to it.
+    system: u64,
+    /// What was appended to the system field.
+    appended: u64,
+    /// Every advertised schema but those an MCP server supplied.
+    tools: u64,
+    /// The schemas an MCP server supplied.
+    mcp: u64,
+}
+
+impl Parts {
+    fn total(self) -> u64 {
+        self.system
+            .saturating_add(self.appended)
+            .saturating_add(self.tools)
+            .saturating_add(self.mcp)
+    }
+}
+
+/// What a share of the window holds, as `/context` names it.
+///
+/// Closed: every byte a request carries is one of these, and the matches that
+/// place system text, tool schemas and transcript messages in one name every
+/// case, so new content cannot reach a request without being given a place
+/// here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    /// Crucible's own part of the system field, or the text that replaced it.
+    SystemPrompt,
+    /// What the user or the checkout appended to the system field.
+    ProjectInstructions,
+    /// The schemas of every advertised tool an MCP server did not supply.
+    ToolSchemas,
+    /// The schemas of the advertised tools an MCP server supplied.
+    McpToolSchemas,
+    /// The transcript.
+    Messages,
+    /// The room kept free for the answer and the tool results of a pass.
+    Reserve,
+    /// What is left of the window after all of the above.
+    Free,
+}
+
+impl Category {
+    /// Every category, in the order `/context` lists them.
+    pub const EVERY: [Self; 7] = [
+        Self::SystemPrompt,
+        Self::ProjectInstructions,
+        Self::ToolSchemas,
+        Self::McpToolSchemas,
+        Self::Messages,
+        Self::Reserve,
+        Self::Free,
+    ];
+
+    /// Where `message` is shown once it is in the transcript.
+    ///
+    /// Every variant is named, so a new kind of message cannot reach a request
+    /// without its author deciding this. The load holds transcript bytes as
+    /// one total, so a variant placed anywhere but here is one
+    /// [`Load::breakdown`] must first learn to count apart.
+    const fn holding(message: &Message) -> Self {
+        match message {
+            // Session facts — the workspace, the date, what was revealed —
+            // are fragments the transcript keeps, and are read as messages.
+            Message::Context(_)
+            | Message::User { .. }
+            | Message::Agent { .. }
+            | Message::ToolResults(_) => Self::Messages,
+        }
+    }
+}
+
+/// The next request's load divided by what holds it, in tokens.
+///
+/// Counted by the arithmetic that counts the load: the five categories a
+/// request carries add up to exactly `Load::tokens`, and the reading of what
+/// is left is `Load::left`'s, so `/context` and the prompt line cannot
+/// disagree.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Breakdown {
+    window: Option<u32>,
+    system: u64,
+    appended: u64,
+    tools: u64,
+    mcp: u64,
+    messages: u64,
+    reserve: u64,
+    free: u64,
+    left: Option<u8>,
+}
+
+impl Breakdown {
+    /// The window the load was measured against, where one is known.
+    #[must_use]
+    pub const fn window(&self) -> Option<u32> {
+        self.window
+    }
+
+    /// How many tokens `category` holds; zero for one that holds nothing.
+    #[must_use]
+    pub const fn tokens(&self, category: Category) -> u64 {
+        match category {
+            Category::SystemPrompt => self.system,
+            Category::ProjectInstructions => self.appended,
+            Category::ToolSchemas => self.tools,
+            Category::McpToolSchemas => self.mcp,
+            Category::Messages => self.messages,
+            Category::Reserve => self.reserve,
+            Category::Free => self.free,
+        }
+    }
+
+    /// The whole-number percentage of the window left, as the prompt line
+    /// prints it; none where no window is known.
+    #[must_use]
+    pub const fn left(&self) -> Option<u8> {
+        self.left
     }
 }
 
@@ -160,6 +342,8 @@ pub(super) struct Load {
     appended: u64,
     /// System-instruction and advertised-tool bytes in the next request.
     overhead: u64,
+    /// The same bytes, by the category each is shown under.
+    parts: Parts,
     /// Identity of that fixed request content, including order and boundaries.
     overhead_signature: u64,
     /// Bytes of the whole transcript, kept as it grows.
@@ -176,27 +360,46 @@ impl Load {
     /// A provider's carried-input report includes both of these. They are only
     /// estimated while no report covers the request being built; once one
     /// arrives, [`Self::carried`] supersedes this estimate whole.
-    pub(super) fn requesting(&mut self, system: Option<&str>, tools: &[ToolSchema<'_>]) {
-        let system_bytes = system.map_or(0_u64, |text| text.len() as u64);
-        let schemas = tools.iter().fold(0_u64, |bytes, tool| {
-            bytes
-                .saturating_add(tool.name.len() as u64)
+    pub(super) fn requesting(&mut self, fixed: &Fixed<'_>) {
+        let system = fixed.system.map_or(0_u64, |text| text.len() as u64);
+        let appended = (fixed.appended as u64).min(system);
+        let mut parts = Parts {
+            system: system - appended,
+            appended,
+            ..Parts::default()
+        };
+        for (kind, tool) in &fixed.tools {
+            let bytes = (tool.name.len() as u64)
                 .saturating_add(tool.schema.len() as u64)
                 // Conservative allowance for the provider-specific object and
                 // field names wrapped around every function declaration.
-                .saturating_add(64)
-        });
-        self.overhead = system_bytes.saturating_add(schemas);
+                .saturating_add(64);
+            // Every kind a tool can come from is named, so a new one cannot
+            // reach a request without being given its category here.
+            let part = match kind {
+                ToolSourceKind::Mcp => &mut parts.mcp,
+                ToolSourceKind::Builtin
+                | ToolSourceKind::User
+                | ToolSourceKind::Project
+                | ToolSourceKind::Extension
+                | ToolSourceKind::Skill
+                | ToolSourceKind::Agent
+                | ToolSourceKind::Other => &mut parts.tools,
+            };
+            *part = part.saturating_add(bytes);
+        }
+        self.parts = parts;
+        self.overhead = parts.total();
 
         // Length alone is not identity: changing one same-sized instruction or
         // schema changes tokenization just as surely as changing its size. The
         // signature is used only inside this process to decide whether an old
         // exact report still covers the request now being built.
         let mut signature = DefaultHasher::new();
-        system.hash(&mut signature);
-        system.is_some().hash(&mut signature);
-        tools.len().hash(&mut signature);
-        for tool in tools {
+        fixed.system.hash(&mut signature);
+        fixed.system.is_some().hash(&mut signature);
+        fixed.tools.len().hash(&mut signature);
+        for (_, tool) in &fixed.tools {
             tool.name.hash(&mut signature);
             tool.schema.hash(&mut signature);
         }
@@ -374,6 +577,7 @@ impl Load {
     /// output report. Where no output was observed separately, the complete
     /// message is that suffix.
     pub(super) fn recorded(&mut self, message: &Message) {
+        debug_assert_eq!(Category::holding(message), Category::Messages);
         let bytes = Self::bytes(message);
         let estimated = match message {
             Message::Agent { .. } if self.output_reported => 0,
@@ -407,6 +611,7 @@ impl Load {
     /// message; otherwise model changes and compaction make all earlier agent
     /// prose disappear from the next-request load.
     pub(super) fn recounted(&mut self, message: &Message) {
+        debug_assert_eq!(Category::holding(message), Category::Messages);
         let bytes = Self::bytes(message);
         self.bytes = self.bytes.saturating_add(bytes);
         self.appended = self.appended.saturating_add(bytes);
@@ -614,6 +819,45 @@ impl Load {
         .ok()
     }
 
+    /// The load divided by category, against `window` less `reserve`.
+    #[must_use]
+    pub(super) fn breakdown(&self, window: Option<u32>, reserve: u64) -> Breakdown {
+        let tokens = self.tokens();
+        // Each fixed part is the growth of the running total it ends, so the
+        // parts add up to the very figure the whole fixed content converts to
+        // rather than to a sum of separately rounded pieces. None is allowed
+        // past what the load holds: a report that measured the request whole
+        // is the true count, and an estimate of its parts may not exceed it.
+        let mut counted = 0_u64;
+        let mut through = 0_u64;
+        let mut part = |bytes: u64| {
+            through = through.saturating_add(bytes);
+            let reached = self.bytes_to_tokens(through).min(tokens);
+            let tokens = reached.saturating_sub(counted);
+            counted = reached;
+            tokens
+        };
+        let system = part(self.parts.system);
+        let appended = part(self.parts.appended);
+        let tools = part(self.parts.tools);
+        let mcp = part(self.parts.mcp);
+        Breakdown {
+            window,
+            system,
+            appended,
+            tools,
+            mcp,
+            messages: tokens.saturating_sub(counted),
+            reserve,
+            free: window.map_or(0, |window| {
+                u64::from(window)
+                    .saturating_sub(reserve)
+                    .saturating_sub(tokens)
+            }),
+            left: self.left(window, reserve),
+        }
+    }
+
     /// Whether there is no longer room for another exchange.
     #[must_use]
     pub(super) fn full(&self, window: Option<u32>, reserve: u64) -> bool {
@@ -637,10 +881,12 @@ impl Load {
     pub(super) fn reestimated(&mut self) {
         let bytes = self.bytes;
         let overhead = self.overhead;
+        let parts = self.parts;
         let overhead_signature = self.overhead_signature;
         *self = Self {
             appended: bytes,
             overhead,
+            parts,
             overhead_signature,
             bytes,
             ..Self::default()

@@ -1,14 +1,14 @@
 ---
 source: tests/whole_screen/main.rs
-assertion_line: 383
+assertion_line: 391
 expression: window.picture()
 ---
 80x24 cursor 21,5 scrolled 0
-|Warning: No models available. Use /login or set an API key environment         │|
 |variable. Then use /model to select a model.                                   │|
 |                                                                               ┃|
 |› /help            what these are                                               |
 |  /release-notes   what changed in each release                                 |
+|  /context         what fills the model's window                                |
 |  /model           pick which model answers                                     |
 |  /effort          pick how hard it thinks                                      |
 |  /fast            pick how fast it answers                                     |

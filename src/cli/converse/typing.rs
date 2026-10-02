@@ -1303,10 +1303,9 @@ pub(super) fn during<T: Terminal>(
     // also what redraws a row nobody touched: the clock counts and the mark
     // turns whether anything is typed or not.
     //
-    // Asked while the view stands as well, though the row it moves is not on
-    // screen then. It is what puts the view back after a question was answered
-    // over the top of it, and the picture it redraws is the same one, since
-    // what the view stands over does not change while it stands.
+    // Asked while the view stands as well: the view keeps the working row over
+    // its rule, so the clock this moves counts there. It is also what puts the
+    // view back after a question was answered over the top of it.
     moved |= turning.moved();
 
     // And the plan beside it, for the half of the same reason that is not the
@@ -1329,7 +1328,7 @@ pub(super) fn during<T: Terminal>(
 
     if moved
         && !expanding::under(renderer, style, kept, opened)?
-        && !queueing::under(renderer, style, queued, viewing, steer)?
+        && !queueing::under(renderer, style, queued, viewing, steer, turning)?
     {
         // A view takes the rows the box has, so a frame draws one of the three.
         // A window with no room for either view has closed it above, and the

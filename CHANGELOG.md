@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **`/context` shows how the model's window is spent.** One bar across the
+  window and a row each for the system prompt, project instructions, tool
+  schemas, MCP tool schemas, messages, the reserve and what is free, with
+  tokens and share; free reads the same as `window left` on the prompt line.
+  It opens mid-turn too, showing what the turn last reported.
 - **`/release-notes` opens a list of releases to choose from.** It shows the
   eight newest with their dates and entry counts, a row that reveals the rest,
   and Enter prints the chosen release alone. `/release-notes <version>` is
@@ -42,6 +47,11 @@ change in any release with no deprecation period.
   `NO_COLOR` or `TERM=dumb`, they print one plain `install:` line per step, and
   a failure during one of those steps names it; flags, downloads, destinations
   and exit codes are unchanged.
+- **The queue box always says how to open the queue, and the queue can delete a
+  message.** `ctrl+q edit` is on the box's bottom edge for one waiting message
+  as for many, and the open queue ends in a footer naming <kbd>↑</kbd><kbd>↓</kbd>,
+  <kbd>e</kbd> to edit, <kbd>d</kbd> to delete and <kbd>Esc</kbd>. Messages wrap
+  there instead of being cut; <kbd>x</kbd> still edits.
 - **A scroll rail on the transcript's right edge replaces the map behind the
   bottom-row label.** Its thumb shows which part of the transcript is on screen
   and a mark stands at each prompt; a click scrolls there, a drag on it scrolls
@@ -57,6 +67,13 @@ change in any release with no deprecation period.
   tools sent with every request are shorter, as are the compaction request and
   the tools found by search, with no instruction dropped and no tool, argument
   or choice renamed.
+
+### Fixed
+
+- **Editing a queued message no longer loses it when the box cannot take it.**
+  With text already in the box, <kbd>e</kbd> or <kbd>x</kbd> on a queued message
+  too long to fit beside it took the message out of the queue and put it
+  nowhere. It now stays queued and marked, and the box keeps what you typed.
 
 ## [0.44.2] - 2026-10-01
 

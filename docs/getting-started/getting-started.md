@@ -401,21 +401,22 @@ way the box is because they are the same thing a moment apart. They are your own
 words, one of them being typed and the rest already sent for:
 
 ```
-┌─ 4 queued ───────────────────────────────────────────────┐
+╭─ 4 queued ───────────────────────────────────────────────╮
 │ › fix the failing test                                   │
 │ › then run the gate                                      │
 │ › and write the changelog                                │
-│   … +1 more  (ctrl+q to see all)                         │
-└──────────────────────────────────────────────────────────┘
+│   … +1 more                                              │
+╰──────────────────────────────────────────── ctrl+q edit ─╯
 ```
 
-Three are named and the rest are counted, oldest first, which is the order they
-will be said in. A line too wide for the window is cut at the right. On a window
-too narrow to open a frame the panel is one indented row saying how many are
-waiting, since that is the fact that cannot go, and on one too short for
-everything standing over the box it gives its rows up before the row saying a
-turn is running does: a queued prompt has its own turn coming, and that row is
-written nowhere else.
+The bottom edge names the key that opens the queue, for one waiting prompt as
+for many. Three are named and the rest are counted, oldest first, which is the
+order they will be said in. A line too wide for the window is cut at the right.
+On a window too narrow to open a frame the panel is one indented row saying
+how many are waiting, since that is the fact that cannot go, and on one too
+short for everything standing over the box it gives its rows up before the row
+saying a turn is running does: a queued prompt has its own turn coming, and
+that row is written nowhere else.
 
 They go together. When the turn ends the whole queue is one turn: the oldest is
 its prompt and the rest are handed to the same turn before it asks anything, so
@@ -425,11 +426,13 @@ third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
 write.
 
-<kbd>Ctrl+Q</kbd> stands the whole queue where the box was. Up and down walk it,
-<kbd>x</kbd> takes the marked line back into the box to be edited or sent ahead
-of the rest, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes it. While it
-stands it has the keyboard, so <kbd>Esc</kbd> there closes the view rather than
-interrupting the turn.
+<kbd>Ctrl+Q</kbd> stands the whole queue where the box was, with a footer naming
+the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
+into the box to be edited or sent ahead of the rest, <kbd>d</kbd> deletes it
+without taking it back, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes
+it. While it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view
+rather than interrupting the turn. In a window too short for the whole queue the
+view scrolls, so the line the keys act on is always drawn, from its first row.
 
 Nothing leaves the queue while it stands open. The turn above goes on writing,
 tools go on running, the answer goes on arriving; what waits is the one moment
@@ -909,6 +912,7 @@ back to correct.
 | --- | --- |
 | `/help` | Lists these |
 | `/release-notes` | Lists the releases to open one, or prints the one you name |
+| `/context` | Shows how the model's window is spent by the next request, part by part |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
 | `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
@@ -958,6 +962,19 @@ so asking for them needs no network. Where a very narrow window would print more
 rows than the transcript keeps, the oldest rows are left out first, and the last
 row says how many.
 
+`/context` stands a panel over the prompt box: the model and the size of its
+window, one bar across the whole window, and a row for each part of the next
+request with its tokens and its share of the window. The parts are the system
+prompt, project instructions, the tool schemas advertised, those from MCP
+servers, the messages so far (tool results among them), the reserve kept free
+for the next answer and the tool results a pass carries back, and what is
+free. Project instructions are what
+`systemPrompt.append` adds, from whichever configuration file set it. Free is
+the figure the line above the box calls `window left`, the share of the room
+left before compaction, so the two always agree. A model whose window crucible
+does not know shows the tokens alone, with `window not known` in place of the
+size and no bar. Escape closes it.
+
 ### A command typed while a turn runs
 
 Most commands are for the space between turns, but a few can act over a running
@@ -965,8 +982,10 @@ one. Typing `/` while a turn runs opens the same command list the prompt opens,
 stood above the box, and the arrows walk it as they do there. What happens on
 Enter depends on the command:
 
-- **`/theme` and `/help`** are screen-only, and run at once, panel and all,
-  with the transcript going on behind them.
+- **`/theme`, `/help` and `/context`** are screen-only, and run at once, panel
+  and all, with the transcript going on behind them. `/context` shows the
+  figures the running turn last reported, which include anything it has
+  recorded since its last request.
 - **`/model`** cannot reach the runner answering this turn, so it is picked and
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already
