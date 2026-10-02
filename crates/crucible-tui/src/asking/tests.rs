@@ -571,3 +571,14 @@ fn a_tool_name_the_model_chose_cannot_write_to_the_terminal_through_the_panel() 
         assert_eq!(row.columns(), WIDE, "{:?}", row.text());
     }
 }
+
+#[test]
+fn the_verdict_panel_follows_the_colour_rule() {
+    // The frame's edges are the frame, not a span of the row they hold: the
+    // eye lands on the caret, or on nothing, between them.
+    for (columns, glyphs) in [(WIDE, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+        let rows = asking(&["cargo test --workspace --all-features"]).within(columns, 24, glyphs);
+
+        crate::colour_rule::holds_framed("verdict", &rows, |_| false);
+    }
+}
