@@ -17,10 +17,12 @@
 //! client with no terminal reads `/usage` mid-turn from what the turn last
 //! reported, as the terminal does.
 //!
-//! **Plan windows are the vendor's figure, as of the last response that
-//! carried them.** At most one per [`Window`], and none at all for a vendor or
-//! a credential that does not report them; a client says "not reported" rather
-//! than inventing a bar.
+//! **Plan windows are the vendor's figure from the last response that carried
+//! them.** At most one per [`Window`], and none at all for a vendor or a
+//! credential that does not report them; a client says "not reported" rather
+//! than inventing a bar. No age crosses with them: when that response came is
+//! not carried, so a client tells a reset already past by comparing
+//! [`Limit::resets_at`] with its own clock, as the terminal does.
 
 use serde_json::Value;
 
