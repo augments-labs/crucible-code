@@ -1053,6 +1053,49 @@ fn a_running_turn_keeps_its_turn_start_window_reading_before_the_first_event() {
 }
 
 #[test]
+fn context_mid_turn_reads_the_request_the_turn_started_from_then_the_last_it_carried() {
+    // `/context` stands over a running turn with the runner away on the
+    // worker, so what it shows is what the turn was handed when it started
+    // and then whatever its requests have since carried.
+    let runner = Runner::new(
+        Box::new(Script::new(vec![])),
+        Tools::new(),
+        Agent::new(
+            AgentId::new("test"),
+            Model {
+                name: "script".into(),
+                max_tokens: 64,
+                window: Some(200_000),
+                accepts: None,
+                effort: None,
+            },
+        ),
+        crucible_context::ContextInputs::new(std::env::temp_dir()),
+        Arc::new(Session::nowhere()),
+    );
+    let started = runner.breakdown();
+    let mut turning = Turning::started(runner.left()).counting(started);
+
+    let shown = crucible_app::client::context("script", &turning.breakdown());
+    assert_eq!(shown.window, Some(200_000));
+    assert_eq!(
+        shown.left.map(crucible_client_api::Percent::get),
+        runner.left()
+    );
+
+    let carried = crucible_runner::Breakdown::default();
+    turning.saw(&crucible_runner::Event::Carried {
+        left: None,
+        breakdown: carried,
+    });
+    assert_eq!(turning.breakdown(), carried);
+    assert_eq!(
+        crucible_app::client::context("script", &turning.breakdown()).window,
+        None
+    );
+}
+
+#[test]
 fn no_two_modes_are_drawn_in_the_same_colour() {
     // The colour is the part read before the sentence is, and two modes
     // sharing one would make the border say less than nothing — it would say

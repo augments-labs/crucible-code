@@ -45,6 +45,7 @@ use super::{Held, Terms, mode, picking, warning};
 
 mod cache;
 mod clear;
+mod context;
 mod effort;
 mod fast;
 mod login;
@@ -65,6 +66,8 @@ pub(super) enum Command {
     Help,
     /// Every release crucible has had, or one of them in full.
     ReleaseNotes,
+    /// How the window of the next request is spent, part by part.
+    Context,
     /// Which model answers.
     Model,
     /// How hard it is asked to think.
@@ -98,9 +101,10 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 15] = [
+const EVERY: [Command; 16] = [
     Command::Help,
     Command::ReleaseNotes,
+    Command::Context,
     Command::Model,
     Command::Effort,
     Command::Fast,
@@ -276,6 +280,7 @@ impl Command {
         match self {
             Self::Help => "/help",
             Self::ReleaseNotes => "/release-notes",
+            Self::Context => "/context",
             Self::Model => "/model",
             Self::Effort => "/effort",
             Self::Fast => "/fast",
@@ -297,6 +302,7 @@ impl Command {
         match self {
             Self::Help => "what these are",
             Self::ReleaseNotes => "what changed in each release",
+            Self::Context => "what fills the model's window",
             Self::Model => "pick which model answers",
             Self::Effort => "pick how hard it thinks",
             Self::Fast => "pick how fast it answers",
@@ -343,7 +349,7 @@ impl Command {
     /// decides which of the three it is in the same place it names itself.
     const fn mid_turn(self) -> MidTurn {
         match self {
-            Self::Help | Self::Theme => MidTurn::Live,
+            Self::Help | Self::Theme | Self::Context => MidTurn::Live,
             Self::Sandbox => {
                 MidTurn::Refused("changes the policy for new commands; open it between turns")
             }
@@ -424,10 +430,12 @@ pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a
 
 /// Runs a command that moves nothing but the screen, with a turn behind it.
 ///
-/// The picker and the list are the same ones the between-turns command opens;
-/// `while_waiting` is what differs. It is the turn's drain, run once a pass so
-/// the transcript goes on rendering while the panel stands, and it is the
-/// reason this is reached from the mid-turn loop rather than from `run`.
+/// The picker, the list and the panel are the same ones the between-turns
+/// command opens; `while_waiting` is what differs. It is the turn's drain, run
+/// once a pass so the transcript goes on rendering while the panel stands, and
+/// it is the reason this is reached from the mid-turn loop rather than from
+/// `run`. `counted` is the window as the running turn last divided it, which
+/// `/context` shows because the runner is away on the turn.
 ///
 /// # Errors
 ///
@@ -436,6 +444,7 @@ pub(super) fn live<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     wanted: &Owned,
+    counted: &api::Context,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
     let style = terms.style();
@@ -445,6 +454,7 @@ pub(super) fn live<T: Terminal>(
     };
     match wanted.command() {
         Command::Theme => theme::live(renderer, terms, rest, while_waiting),
+        Command::Context => context::live(renderer, terms, counted, while_waiting),
         Command::Help => {
             let commands = terms.commands.snapshot();
             // No keys to read: the list is stood, and any key closes it.
@@ -857,6 +867,11 @@ fn answer<T: Terminal>(
             command: Command::Cache,
             rest,
         } => cache::run(rest, renderer, conversation, terms)?,
+
+        Wanted::Known {
+            command: Command::Context,
+            ..
+        } => context::run(renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Clear,

@@ -61,7 +61,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crucible_runner::Event;
+use crucible_runner::{Breakdown, Event};
 use crucible_tools::Looking;
 use crucible_tui::{Prompt, Row, Slot, Working};
 use crucible_types::{Compacting, ToolId};
@@ -236,6 +236,8 @@ pub(super) struct Turning {
     /// How much usable room remained before compaction at the latest reading,
     /// or `None` where no window is known.
     left: Option<u8>,
+    /// The latest request divided by what holds the window, read with `left`.
+    breakdown: Breakdown,
     /// Why room is being made, and `None` when no progress row remains.
     ///
     /// Kept briefly after [`Event::Compacted`] with `part` at 100, so completed
@@ -552,6 +554,7 @@ impl Turning {
             since: Instant::now(),
             doing: Doing::Thinking,
             left,
+            breakdown: Breakdown::default(),
             making: None,
             part: 0,
             completed: None,
@@ -721,7 +724,10 @@ impl Turning {
         // stop keeps reporting them until the response in flight is actually
         // over, so freezing them would leave the next prompt with stale room.
         match event {
-            Event::Carried { left, .. } => self.left = *left,
+            Event::Carried { left, breakdown } => {
+                self.left = *left;
+                self.breakdown = *breakdown;
+            }
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
                 self.part = (*part).min(99);
@@ -890,6 +896,20 @@ impl Turning {
     /// [`Event::Carried`] while it runs.
     pub(super) const fn left(&self) -> Option<u8> {
         self.left
+    }
+
+    /// The same turn, starting from the session's last request divided by
+    /// what holds the window.
+    pub(super) const fn counting(mut self, breakdown: Breakdown) -> Self {
+        self.breakdown = breakdown;
+        self
+    }
+
+    /// The last request divided by what holds the window: the one the turn
+    /// started from, then each [`Event::Carried`] since. What `/context`
+    /// shows while the runner is away on the turn.
+    pub(super) const fn breakdown(&self) -> Breakdown {
+        self.breakdown
     }
 
     /// The rows to put above the box, or none where the window has no room.
