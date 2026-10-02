@@ -149,9 +149,11 @@ function Invoke-CrucibleInstall {
     }
 
     # Redraws the running step with its next spinner frame, at most ten times
-    # a second, followed by `Progress` when there is one.
+    # a second, followed by `Progress` when there is one. With no step running,
+    # as while the latest release is looked up before the banner, the line
+    # stays blank.
     function Show-Frame([string]$Progress) {
-        if (-not $fancy) { return }
+        if (-not $fancy -or -not $ui.Step) { return }
         $now = [DateTime]::UtcNow
         if (($now - $ui.Drawn).TotalMilliseconds -lt 100) { return }
         $ui.Drawn = $now
