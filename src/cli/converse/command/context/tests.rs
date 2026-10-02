@@ -4,8 +4,8 @@ use crucible_client_api::{Model, Percent};
 
 use super::super::{Command, MidTurn};
 
-/// The window the mockup draws: a long session on a large window, with
-/// nothing from a Model Context Protocol server.
+/// A long session on a large window, with nothing from a Model Context
+/// Protocol server.
 fn spent() -> api::Context {
     api::Context {
         model: Model::new("gpt-6-sol"),
@@ -54,8 +54,8 @@ fn tone(row: &Row, column: usize) -> Option<Slot> {
 fn context_of_a_known_window_is_its_bar_and_a_row_for_every_category() {
     let rows = panel(&spent(), 80, Glyphs::Unicode);
 
-    // The bar a part a category: a cell for each with tokens however small,
-    // none for MCP, which has none, and the shaded rest is free.
+    // The bar draws a part per category: a cell for each with tokens, however
+    // few; none for MCP, which has none; the shaded rest is free.
     let bar = format!("{}{}", "█".repeat(31), "░".repeat(49));
     assert_eq!(
         art(&rows),
@@ -106,7 +106,7 @@ fn context_rows_wear_the_tone_their_part_of_the_bar_is_drawn_in() {
     for (row, slot) in rows.iter().skip(6).zip(tones) {
         assert_eq!(tone(row, 2), Some(slot), "{:?}", row.text());
         assert_eq!(tone(row, 3), Some(slot), "{:?}", row.text());
-        // The figures are quiet from the column the mockup starts them in.
+        // The figures are quiet from column 26, where they start.
         assert_eq!(tone(row, 26), Some(Slot::Quiet), "{:?}", row.text());
         assert_eq!(tone(row, 32), Some(Slot::Quiet), "{:?}", row.text());
     }
@@ -239,15 +239,16 @@ fn context_fits_every_width_down_to_one_column() {
 #[test]
 fn context_opens_while_a_turn_runs() {
     // It reads and changes nothing, so it stands over the running turn with
-    // the figures of the last request that turn built.
+    // the figures that turn last reported, which include anything it has
+    // recorded since its last request.
     assert_eq!(Command::Context.mid_turn(), MidTurn::Live);
 }
 
 #[test]
 fn context_closes_on_escape_and_the_keys_every_panel_closes_on() {
     // Escape is the key the footer names. Interrupt and end of input close
-    // every panel, so they close this one too; enter, as the mockup draws it,
-    // leaves it standing, as any other key does.
+    // every panel, so they close this one too; enter leaves the panel
+    // standing, as any other key does.
     for pressed in [
         Pressed::Escape,
         Pressed::Key(Key::Interrupt),

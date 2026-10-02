@@ -11,11 +11,11 @@
 use crucible_models::ProviderError;
 use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
 use crucible_types::Spend;
-
-use crate::Breakdown;
 use crucible_types::{
     Ancestry, Attachment, ContextError, RunId, StopReason, ToolCall, ToolId, TurnId,
 };
+
+use crate::Breakdown;
 
 /// Why a turn ended badly.
 ///

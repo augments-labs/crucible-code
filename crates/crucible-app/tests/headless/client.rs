@@ -1378,9 +1378,10 @@ fn context_of_a_model_with_no_reported_window_leaves_the_window_and_free_room_ou
 
 /// A client with no terminal reads `/context` mid-turn as the terminal draws
 /// it: from the figures each reading of the running turn carried, streamed to
-/// it as progress. Asked for at a door the turn leaves open, it waits.
+/// it as progress. Asked for at a door the turn leaves open, it is refused as
+/// busy.
 #[test]
-fn context_mid_turn_is_streamed_by_the_turn_and_waits_at_every_door_it_leaves_open()
+fn context_mid_turn_is_streamed_by_the_turn_and_refused_as_busy_at_every_door_it_leaves_open()
 -> Result<(), Failed> {
     let tree = Tree::new("client-context-busy")?;
     let standing = Standing::new(&tree, &[])?;

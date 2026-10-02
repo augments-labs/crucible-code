@@ -111,8 +111,10 @@ impl Counting {
 
 /// What every request carries before the transcript.
 ///
-/// Handed over with the category each part is shown under, so the bytes the
-/// window is measured against and the bytes `/context` divides are one set.
+/// Handed over with what the categories are decided from: how many of the
+/// system bytes were appended, and the kind of source of each tool. So the
+/// bytes the window is measured against and the bytes `/context` divides are
+/// one set.
 #[derive(Debug, Default)]
 pub(super) struct Fixed<'a> {
     /// The system field, where there is one.
@@ -135,8 +137,8 @@ impl<'a> Fixed<'a> {
     /// was wired with, and what is read between turns is about what the
     /// definition declares rather than about what the wiring installed.
     ///
-    /// A function over the two fields rather than a method, so a caller can
-    /// hold the load it is about to write while it asks.
+    /// Takes the two fields rather than the runner, so a caller can hold the
+    /// load it is about to write while it asks.
     pub(super) fn of(agent: &'a Agent, tools: &'a ToolSnapshot) -> Self {
         Self {
             system: agent.instructions(),

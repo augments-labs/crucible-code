@@ -942,8 +942,9 @@ row says how many.
 window, one bar across the whole window, and a row for each part of the next
 request with its tokens and its share of the window. The parts are the system
 prompt, project instructions, the tool schemas advertised, those from MCP
-servers, the messages so far (tool results among them), the reserve kept for
-the answer and for compaction, and what is free. Project instructions are what
+servers, the messages so far (tool results among them), the reserve kept free
+for the next answer and the tool results a pass carries back, and what is
+free. Project instructions are what
 `systemPrompt.append` adds, from whichever configuration file set it. Free is
 the figure the line above the box calls `window left`, the share of the room
 left before compaction, so the two always agree. A model whose window crucible
@@ -959,7 +960,8 @@ Enter depends on the command:
 
 - **`/theme`, `/help` and `/context`** are screen-only, and run at once, panel
   and all, with the transcript going on behind them. `/context` shows the
-  figures of the last request the running turn built.
+  figures the running turn last reported, which include anything it has
+  recorded since its last request.
 - **`/model`** cannot reach the runner answering this turn, so it is picked and
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already

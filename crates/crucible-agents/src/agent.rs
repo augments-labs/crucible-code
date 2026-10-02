@@ -261,6 +261,9 @@ impl AgentBuilder {
 
     /// Marks the last `bytes` of what this agent is told as appended by the
     /// user or the checkout rather than crucible's own.
+    ///
+    /// Call it after `telling`: a later `telling` forgets the mark, and a
+    /// count past the text's end is held to the text.
     #[must_use]
     pub fn appending(mut self, bytes: usize) -> Self {
         self.agent.instructions = self.agent.instructions.ending_with(bytes);

@@ -15,7 +15,8 @@
 //! says so, and shows the tokens with no bar, no free row and no percent.
 //!
 //! It reads and changes nothing, so it stands over a running turn too, with
-//! the figures of the last request that turn built.
+//! the figures that turn last reported, which include anything it has
+//! recorded since its last request.
 
 use crucible_app::Conversation;
 use crucible_app::client::Performed;

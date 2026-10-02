@@ -8,8 +8,7 @@
 //! them, the smallest go without.
 //!
 //! Nothing here knows what the parts stand for. `/context` hands in the
-//! categories of a request and `/usage` the share of a limit spent, and the
-//! labels, numbers and order are theirs.
+//! categories of a request; the labels, numbers and order are the caller's.
 
 use crate::color::Slot;
 use crate::glyphs::Glyphs;

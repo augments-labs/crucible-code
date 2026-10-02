@@ -396,7 +396,6 @@ fn login_outcomes() -> Vec<Outcome> {
     ]
 }
 
-/// A release, with its words where there are some.
 /// How a window is spent, where everything about it is known, and where none
 /// of what may be left out is there.
 fn contexts() -> [Context; 2] {
@@ -428,6 +427,7 @@ fn contexts() -> [Context; 2] {
     ]
 }
 
+/// A release, with its words where there are some.
 fn release(text: Option<Text>) -> Release {
     Release {
         version: name("0.41.1"),
