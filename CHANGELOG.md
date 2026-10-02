@@ -60,6 +60,11 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **Colour follows one written rule.** Each line has at most one accented thing
+  for the eye to land on, colour that means something keeps that meaning in
+  every theme, and nothing is said by colour alone, so the colourblind themes
+  and `color` set to `never` lose nothing. The rule is in the theme section of
+  the configuration docs.
 - **The installers show each step as it runs.** In a terminal, `install.sh`
   and `install.ps1` mark each of detect platform, download, verify checksum,
   unpack and install, draw a bar while the archive downloads, and end with
