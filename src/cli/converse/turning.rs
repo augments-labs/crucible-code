@@ -81,12 +81,14 @@ const STOPS: &str = "esc to interrupt";
 const NAMED: usize = 3;
 
 /// The key that opens the queue, and what it is for, as the bottom edge of the
-/// panel says them whenever anything is waiting.
+/// framed panel says them. The one-row count drawn where there is no room for a
+/// frame has no edge to carry them.
 ///
 /// On the edge rather than in a row so that the hint costs the panel nothing:
 /// one prompt waiting is as much a queue as five, and it is the reader with one
 /// who has not yet found out it can be taken back.
 const OPENS: &str = "ctrl+q";
+/// What `OPENS` is for, in the word the bottom edge says after the key.
 const OPENS_TO: &str = "edit";
 
 /// What the hint spends on the bottom edge: the words, the space on either side
@@ -929,7 +931,9 @@ impl Turning {
     /// The rows to put above the box, or none where the window has no room.
     ///
     /// A blank either side, so the rows belong to neither the turn's own output
-    /// above them nor the box below, and a blank between the call and the row
+    /// above them nor the box below (the blank under a framed queue box is the
+    /// exception: the frame needs no parting from the line under it, while the
+    /// one-row count keeps its blank), and a blank between the call and the row
     /// under it for the same reason: the call is a thing that is happening and
     /// the row is what is happening to the turn. The prompt waiting takes no
     /// blank above it, because it is a second line of the row rather than a
@@ -1235,9 +1239,10 @@ impl Queued {
     /// As many lines as `spare` rows allow are named, each led by the mark a
     /// line is typed after — they are the reader's own words, waiting — and past
     /// that the rest are a count on the last row. The bottom edge names the key
-    /// that opens the whole queue, for one line as for many. An empty queue draws nothing
-    /// at all, and a window too short to open the frame keeps only the one line
-    /// that says anything is waiting, since that is the fact that cannot go.
+    /// that opens the whole queue, for one line as for many. An empty queue
+    /// draws nothing at all, and a window too short to open the frame keeps only
+    /// the one line that says anything is waiting, since that is the fact that
+    /// cannot go.
     fn rows(&self, spare: usize, columns: usize, style: Style) -> Vec<Row> {
         if self.count == 0 || spare == 0 {
             return Vec::new();

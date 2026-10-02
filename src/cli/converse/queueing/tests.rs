@@ -397,7 +397,7 @@ fn a_window_that_holds_the_list_only_without_the_working_row_draws_the_whole_lis
 fn editing_a_queued_line_moves_its_words_to_the_box_and_leaves_the_rest() {
     // `e` is the key the footer names, and it does what `x` always did: the
     // line leaves the queue, in both places it is held, and the box has it with
-    // the cursor at the end.
+    // the cursor after it.
     let (standing, queue, mut editor, steer) =
         after(&["first", "second", "third"], 1, Key::Char('e'));
 
@@ -407,7 +407,7 @@ fn editing_a_queued_line_moves_its_words_to_the_box_and_leaves_the_rest() {
     );
     assert_eq!(editor.text(), "second");
     editor.press(Key::Char('!'));
-    assert_eq!(editor.text(), "second!", "the cursor is at the end");
+    assert_eq!(editor.text(), "second!", "the cursor is after the line");
     assert!(standing.is_open(), "two lines are still being read");
 
     assert!(!steer.any(), "the view holds what is left");

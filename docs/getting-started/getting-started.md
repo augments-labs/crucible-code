@@ -408,7 +408,7 @@ into the box to be edited or sent ahead of the rest, <kbd>d</kbd> deletes it
 without taking it back, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes
 it. While it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view
 rather than interrupting the turn. In a window too short for the whole queue the
-view scrolls, so the line the keys act on is always the one you can read.
+view scrolls, so the line the keys act on is always drawn, from its first row.
 
 Nothing leaves the queue while it stands open. The turn above goes on writing,
 tools go on running, the answer goes on arriving; what waits is the one moment

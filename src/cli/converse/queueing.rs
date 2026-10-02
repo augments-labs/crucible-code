@@ -14,6 +14,10 @@
 //! view releases the whole batch at once — the lines that were edited and the
 //! ones that were not — and the turn works them in at its next pass boundary.
 //!
+//! The row saying a turn is running stays directly over the view's rule, with
+//! its clock counting; in a window too short for both it is the row that gives
+//! way, so the list is never the thing cut.
+//!
 //! Nothing above it stops for that. The turn writes into the tail as it always
 //! does; a held queue answers the exchange loop the way an empty one does, which
 //! is what it meets at almost every pass anyway. What the reader sees is their
