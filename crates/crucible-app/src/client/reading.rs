@@ -178,7 +178,7 @@ fn used(totals: &Totals) -> api::Used {
 }
 
 /// A session's cost as it crosses, in millionths of its currency.
-fn cost(cost: SessionCost) -> api::Cost {
+pub(super) fn cost(cost: SessionCost) -> api::Cost {
     match cost {
         SessionCost::Unspent => api::Cost::Unspent,
         SessionCost::Priced(amount) => stated(amount)
@@ -196,9 +196,10 @@ fn cost(cost: SessionCost) -> api::Cost {
 /// An amount as its currency's code and millionths of it, where it can be
 /// stated.
 fn stated(amount: CostAmount) -> Option<(Name, u64)> {
-    // A femtocurrency is a billionth of a micro; a code that is not a name is
-    // a sum nobody can read, so it is not stated.
-    let micros = u64::try_from(amount.femtocurrency() / 1_000_000_000).unwrap_or(u64::MAX);
+    // A femtocurrency is a billionth of a micro. A sum too large for the
+    // contract, or under a code that is not a name, is one nobody can read,
+    // so it is not stated: a capped figure would read as what was spent.
+    let micros = u64::try_from(amount.femtocurrency() / 1_000_000_000).ok()?;
     Some((Name::new(amount.currency().as_str()).ok()?, micros))
 }
 
@@ -332,3 +333,6 @@ pub const fn rung(effort: Effort) -> api::Rung {
         Effort::Max => api::Rung::Max,
     }
 }
+
+#[cfg(test)]
+mod tests;
