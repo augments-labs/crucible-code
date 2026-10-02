@@ -1,10 +1,10 @@
 //! What `.git/HEAD` spellings come back as a branch, and which come back as
-//! nothing.
+//! nothing; and which checkouts a repository's own files say it has.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::current;
+use super::{current, worktrees};
 
 /// A directory of its own to lay a checkout out in, deleted with it.
 struct Scratch(PathBuf);
@@ -83,4 +83,113 @@ fn a_linked_worktree_names_its_own_branch() {
     .expect("the .git pointer file");
 
     assert_eq!(current(&checkout).as_deref(), Some("fix/wrapping"));
+}
+
+/// A repository laid out as `git worktree add` leaves it: a main checkout at
+/// `main` whose `.git` directory keeps `worktrees/<name>/gitdir` for each
+/// linked checkout, and each linked checkout's `.git` file pointing back.
+struct Repository {
+    scratch: Scratch,
+}
+
+impl Repository {
+    fn new(name: &str) -> Self {
+        let scratch = Scratch::new(name);
+        fs::create_dir_all(scratch.root().join("main").join(".git")).expect("the main checkout");
+        Self { scratch }
+    }
+
+    fn main(&self) -> PathBuf {
+        canonical(&self.scratch.root().join("main"))
+    }
+
+    /// A linked checkout at `name`, recorded under the common directory the
+    /// way git spells it when `relative` is false, and with git's relative
+    /// spelling when it is true.
+    fn linked(&self, name: &str, relative: bool) -> PathBuf {
+        let checkout = self.scratch.root().join(name);
+        let admin = self
+            .scratch
+            .root()
+            .join("main")
+            .join(".git")
+            .join("worktrees")
+            .join(name);
+        fs::create_dir_all(&checkout).expect("the linked checkout");
+        fs::create_dir_all(&admin).expect("the worktree's own git directory");
+
+        let (back, forth) = if relative {
+            (
+                format!("../../../../{name}/.git"),
+                format!("../main/.git/worktrees/{name}"),
+            )
+        } else {
+            (
+                checkout.join(".git").display().to_string(),
+                admin.display().to_string(),
+            )
+        };
+        fs::write(admin.join("gitdir"), format!("{back}\n")).expect("the gitdir file");
+        fs::write(admin.join("commondir"), "../..\n").expect("the commondir file");
+        fs::write(checkout.join(".git"), format!("gitdir: {forth}\n")).expect("the .git file");
+
+        canonical(&checkout)
+    }
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    fs::canonicalize(path).expect("the checkout exists")
+}
+
+#[test]
+fn the_main_checkout_finds_each_linked_one() {
+    let repository = Repository::new("from-main");
+    let first = repository.linked("first", false);
+    let second = repository.linked("second", true);
+
+    let mut found = worktrees(&repository.main());
+    found.sort();
+    let mut expected = vec![first, second];
+    expected.sort();
+
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn a_linked_checkout_finds_the_main_one_and_its_siblings_but_not_itself() {
+    let repository = Repository::new("from-linked");
+    let first = repository.linked("first", false);
+    let second = repository.linked("second", true);
+
+    let mut found = worktrees(&first);
+    found.sort();
+    let mut expected = vec![repository.main(), second.clone()];
+    expected.sort();
+    assert_eq!(found, expected);
+
+    // Spelled relatively, the pointers lead to the same places.
+    let mut found = worktrees(&second);
+    found.sort();
+    let mut expected = vec![repository.main(), first];
+    expected.sort();
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn a_checkout_whose_directory_is_gone_is_left_out() {
+    // `git worktree prune` has not run yet: the record outlives the checkout.
+    let repository = Repository::new("pruned");
+    let gone = repository.linked("gone", false);
+    fs::remove_dir_all(&gone).expect("the checkout removed");
+
+    assert!(worktrees(&repository.main()).is_empty());
+}
+
+#[test]
+fn a_repository_without_other_checkouts_or_no_repository_adds_nothing() {
+    let repository = Repository::new("alone");
+    assert!(worktrees(&repository.main()).is_empty());
+
+    let scratch = Scratch::new("no-repository");
+    assert!(worktrees(scratch.root()).is_empty());
 }
