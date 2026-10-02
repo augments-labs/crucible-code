@@ -1966,6 +1966,35 @@ fn the_prompt_a_rail_click_lands_on_stays_current_across_a_resize_that_relays_th
 }
 
 #[test]
+fn a_drag_on_the_rail_thumb_grows_only_the_mark_under_the_pointer() {
+    let mut drawn = railed();
+    drawn.scrolled(-35).unwrap();
+    assert_eq!(rail_of(&drawn), "•│•│┃●│•││");
+
+    rail_hover(&mut drawn, 5);
+    assert_eq!(rail_click(&mut drawn, 5), None);
+    assert_eq!(
+        drawn.took(Pressed::Dragged { row: 0, column: 59 }).unwrap(),
+        None
+    );
+    assert!(
+        drawn.screen().row(0).starts_with("line 0 "),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    // The press was on row 5, and its mark is no longer under the pointer.
+    assert_eq!(rail_of(&drawn), "●┃•││•│•││");
+
+    // Dragged off the rail's column, nothing on it is under the pointer: the
+    // one grown mark left is line 0's, the latest prompt above the band.
+    assert_eq!(
+        drawn.took(Pressed::Dragged { row: 2, column: 0 }).unwrap(),
+        None
+    );
+    assert_eq!(rail_of(&drawn), "●┃┃││•│•││");
+}
+
+#[test]
 fn a_pointer_on_a_rail_over_a_record_that_fits_changes_nothing() {
     let mut drawn = Drawn::new(60, 10);
     drawn.rails(true);

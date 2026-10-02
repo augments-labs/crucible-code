@@ -408,20 +408,7 @@ impl<T: Terminal> Renderer<T> {
 
         let bands = self.bands();
         if let Pressed::Hovered { row, column } = arrived {
-            let lit = self.pointed();
-            let prompt_pointed = self.prompt_pointed();
-            let railed = self.rail_pointed(&bands);
-            self.pointing = Some((row, column));
-            let changed = lit != self.pointed()
-                || prompt_pointed != self.prompt_pointed()
-                || railed != self.rail_pointed(&bands);
-            if changed && self.prompt_target.is_some() {
-                // The caller has the pointable row in both of its palette
-                // states. It replaces that row and the rest of the prompt in
-                // one candidate rather than letting this write an
-                // intermediate frame.
-                self.pointed_changed = true;
-            } else if changed {
+            if self.points(row, column, &bands) {
                 self.draw()?;
             }
             return Ok(None);
@@ -547,10 +534,14 @@ impl<T: Terminal> Renderer<T> {
                 self.draw()?;
                 Ok(true)
             }
-            Pressed::Dragged { row, .. } => {
+            Pressed::Dragged { row, column } => {
                 let Some(grip) = self.grip else {
                     return Ok(false);
                 };
+                // A drag reports where the pointer is as motion does, so the
+                // mark grown under it is the one under it now, not the one
+                // the press was on.
+                let mut owed = self.points(row, column, bands);
                 if let Some(rail) = self.rail(bands)
                     && let Some(thumb) = rail.thumb()
                 {
@@ -560,15 +551,41 @@ impl<T: Terminal> Renderer<T> {
                     let start = at
                         .saturating_sub(grip)
                         .min(rows.saturating_sub(thumb.len()));
-                    if self.record.seek(rail.top_for(start), rows) {
-                        self.draw()?;
-                    }
+                    owed |= self.record.seek(rail.top_for(start), rows);
+                }
+                if owed {
+                    self.draw()?;
                 }
                 Ok(true)
             }
             Pressed::Released { .. } => Ok(self.grip.take().is_some()),
             _ => Ok(false),
         }
+    }
+
+    /// Moves the pointer to `row` and `column`, and says whether this renderer
+    /// owes a frame for it: when what the pointer lights, the prompt row it is
+    /// on or the rail row it is on changed.
+    ///
+    /// Motion within the same targets owes nothing, so all-motion reporting
+    /// does not turn into one frame per cell.
+    fn points(&mut self, row: usize, column: usize, bands: &Bands) -> bool {
+        let lit = self.pointed();
+        let prompt_pointed = self.prompt_pointed();
+        let railed = self.rail_pointed(bands);
+        self.pointing = Some((row, column));
+        let changed = lit != self.pointed()
+            || prompt_pointed != self.prompt_pointed()
+            || railed != self.rail_pointed(bands);
+        if changed && self.prompt_target.is_some() {
+            // The caller has the pointable row in both of its palette
+            // states. It replaces that row and the rest of the prompt in
+            // one candidate rather than letting this write an
+            // intermediate frame.
+            self.pointed_changed = true;
+            return false;
+        }
+        changed
     }
 
     /// The width the transcript is folded at: the window's, less the rail's
