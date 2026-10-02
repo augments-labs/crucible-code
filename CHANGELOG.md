@@ -10,6 +10,11 @@ change in any release with no deprecation period.
 
 ### Added
 
+- **`/release-notes` opens a list of releases to choose from.** It shows the
+  eight newest with their dates and entry counts, a row that reveals the rest,
+  and Enter prints the chosen release alone. `/release-notes <version>` is
+  unchanged, and `/release-notes all` prints every release at once as the bare
+  form did.
 - **The model can mark the answer it recommends.** In a question put by
   `ask_user`, one answer may be marked recommended and listed first, and it is
   drawn with `(Recommended)` after its name. What you choose and what is sent

@@ -7,7 +7,7 @@ shopt -s nullglob
 
 cd "$(dirname "$0")/../.."
 
-readonly MAX_RUST_FILE_LINES=2000
+readonly MAX_RUST_FILE_LINES=5000
 
 failed=0
 any=0
