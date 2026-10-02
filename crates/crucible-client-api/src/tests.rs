@@ -447,8 +447,8 @@ fn contexts() -> [Context; 2] {
 }
 
 /// What a session has used: priced with every window reported, not priced
-/// with none, and before anything was asked with one.
-fn usages() -> [Usage; 3] {
+/// with none, before anything was asked with one, and known only as a floor.
+fn usages() -> [Usage; 4] {
     let [context, unknown] = contexts();
     let limit = |used, resets_at| Limit {
         used: Percent::new(used).unwrap(),
@@ -485,6 +485,16 @@ fn usages() -> [Usage; 3] {
                 ..used.clone()
             },
             limits: Limits::default(),
+            ..counted.clone()
+        },
+        Usage {
+            used: Used {
+                cost: Cost::AtLeast {
+                    currency: name("USD"),
+                    micros: 400_000,
+                },
+                ..used.clone()
+            },
             ..counted.clone()
         },
         Usage {
@@ -643,7 +653,7 @@ fn responses() -> Vec<Response> {
 
 fn progress() -> Vec<Progress> {
     let [whole, unknown] = contexts();
-    let [counted, unpriced, unspent] = usages();
+    let [counted, unpriced, _, unspent] = usages();
     vec![
         Progress::Started { turn: 1 },
         Progress::Delta { text: marked() },
@@ -882,9 +892,10 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         | Outcome::Context(_)
         | Outcome::Leaving => (0, 1),
         Outcome::Usage(usage) => match usage.used.cost {
-            Cost::Unspent => (0, 3),
-            Cost::Priced { .. } => (1, 3),
-            Cost::NotPriced => (2, 3),
+            Cost::Unspent => (0, 4),
+            Cost::Priced { .. } => (1, 4),
+            Cost::NotPriced => (2, 4),
+            Cost::AtLeast { .. } => (3, 4),
         },
         Outcome::Turn(turn) => turn_arm(turn),
         Outcome::Unasked(missing) => match missing {

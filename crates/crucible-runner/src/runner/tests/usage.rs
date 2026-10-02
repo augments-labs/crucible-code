@@ -155,6 +155,141 @@ fn usage_a_response_that_reports_only_a_spend_is_not_priced() {
     assert_eq!(totals.output(), 17);
 }
 
+/// What [`reporting`] comes to under the fixture's prices.
+const ONE_ANSWER: u128 = 132_000_000_000;
+
+/// A response's opening report: what it carried, 100 input tokens with 20 of
+/// them read from a cache, and nothing yet about what it generated, the way an
+/// Anthropic answer opens.
+fn opening() -> Delta {
+    Delta::Usage(
+        ProviderUsage::new(
+            InputTokenUsage::inclusive_read(Some(100), Some(20)).unwrap(),
+            None,
+            None,
+            None,
+            &[],
+        )
+        .unwrap(),
+    )
+}
+
+/// What the session cost, where it is a lower bound.
+fn at_least(totals: &Totals) -> u128 {
+    let SessionCost::AtLeast(cost) = totals.cost() else {
+        panic!(
+            "an answer that never said what it cost leaves a lower bound: {:?}",
+            totals.cost()
+        );
+    };
+    cost.femtocurrency()
+}
+
+#[test]
+fn usage_an_answer_stopped_after_its_opening_report_leaves_a_lower_bound() {
+    // Esc pressed after the input was reported and before the output was:
+    // what it carried still counts, and what it cost is not known, so the sum
+    // of everything else is what the session cost at least. It is not "not
+    // priced": the model has a price.
+    let cancel = Cancel::new();
+    let script = Script::new(vec![vec![opening()], reporting(StopReason::Yielded)])
+        .priced()
+        .interrupted_by(cancel.clone());
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+    scripted.cancel = cancel;
+
+    assert_eq!(
+        scripted.turn("stopped").expect("the turn to stop"),
+        StopReason::Cancelled
+    );
+    assert_eq!(at_least(&scripted.runner.totals()), 0);
+    scripted.cancel.reset();
+    scripted
+        .turn("answered")
+        .expect("the second turn to finish");
+
+    let totals = scripted.runner.totals();
+    assert_eq!(at_least(&totals), ONE_ANSWER);
+    assert_eq!(totals.input(), 200, "the stopped answer's input counts");
+    assert_eq!(totals.cache_read(), 40);
+    assert_eq!(totals.output(), 10);
+}
+
+#[test]
+fn usage_an_answer_broken_off_before_it_reported_anything_leaves_a_lower_bound() {
+    // The first request is accepted and goes away before it has said a word,
+    // and is asked again: an OpenAI answer reports nothing until it completes,
+    // so whatever it was billed is not known, and the sum says it is a floor.
+    let script = Script::dropping(1, vec![reporting(StopReason::Yielded)]).priced();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+
+    scripted.turn("go").expect("the turn to finish");
+
+    let totals = scripted.runner.totals();
+    assert_eq!(at_least(&totals), ONE_ANSWER);
+    assert_eq!(totals.input(), 100);
+}
+
+#[test]
+fn usage_an_answer_that_completed_without_a_report_is_not_priced() {
+    // The provider said the answer was done and gave nothing to price it by:
+    // no sum is the session's from then on, and "nothing asked yet" is only
+    // for a session no response has ended in.
+    let script = Script::new(vec![
+        reporting(StopReason::Yielded),
+        vec![Delta::Stopped(StopReason::Yielded)],
+    ])
+    .priced();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+
+    scripted.turn("priced").expect("the first turn to finish");
+    scripted.turn("silent").expect("the second turn to finish");
+
+    assert_eq!(scripted.runner.totals().cost(), SessionCost::NotPriced);
+}
+
+#[test]
+fn usage_an_unpriced_model_is_not_priced_however_its_answers_end() {
+    let cancel = Cancel::new();
+    let script = Script::dropping(1, vec![vec![opening()], reporting(StopReason::Yielded)])
+        .interrupted_by(cancel.clone());
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+    scripted.cancel = cancel;
+
+    assert_eq!(
+        scripted.turn("stopped").expect("the turn to stop"),
+        StopReason::Cancelled
+    );
+    assert_eq!(scripted.runner.totals().cost(), SessionCost::NotPriced);
+    scripted.cancel.reset();
+    scripted
+        .turn("answered")
+        .expect("the second turn to finish");
+
+    assert_eq!(scripted.runner.totals().cost(), SessionCost::NotPriced);
+}
+
+#[test]
+fn usage_a_request_never_sent_leaves_the_sum_as_it_was() {
+    // Stopped before it went out: nothing was spent on it, so the sum is still
+    // the whole of what the session cost.
+    let script = Script::new(vec![reporting(StopReason::Yielded)])
+        .priced()
+        .cancelling_when_exhausted();
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+
+    scripted.turn("priced").expect("the first turn to finish");
+    let _stopped = scripted.turn("never sent");
+
+    let SessionCost::Priced(cost) = scripted.runner.totals().cost() else {
+        panic!(
+            "the one priced answer, and nothing else: {:?}",
+            scripted.runner.totals().cost()
+        );
+    };
+    assert_eq!(cost.femtocurrency(), ONE_ANSWER);
+}
+
 #[test]
 fn usage_lines_an_edit_changed_are_added_up() {
     let diff = Diff::new([

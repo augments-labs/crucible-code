@@ -1,8 +1,8 @@
 //! Versioned provider/model pricing and exact unknown-preserving cost accounting.
 
 use crucible_types::{
-    CostAmount, PricingCurrency, PricingDate, PricingError, PricingUnit, PromptCacheRetentionClass,
-    ProviderUsage, UsageCost,
+    CostAmount, InputTokenUsage, PricingCurrency, PricingDate, PricingError, PricingUnit,
+    PromptCacheRetentionClass, ProviderUsage, UsageCost,
 };
 
 /// Exact rate represented as nanocurrency units per published unit.
@@ -243,6 +243,22 @@ impl PromptCachePricing {
     #[must_use]
     pub const fn rates(self) -> PromptCacheRates {
         self.rates
+    }
+
+    /// Whether a report that carries every quantity is priced in full.
+    ///
+    /// [`Self::cost`] leaves the total unknown both for a record missing a
+    /// rate and for a report missing a quantity, and only this tells the two
+    /// apart: where it holds, an unknown total is the report's gap and not
+    /// the model's. Asked of `cost` itself, so the two cannot disagree.
+    #[must_use]
+    pub fn prices_in_full(self) -> bool {
+        InputTokenUsage::disjoint(Some(0), Some(0), Some(0))
+            .and_then(|input| ProviderUsage::new(input, Some(0), Some(0), None, &[]))
+            .is_ok_and(|every| {
+                self.cost(&every.with_storage_token_hours(0))
+                    .is_ok_and(|cost| cost.total.is_some())
+            })
     }
 
     /// Calculates one attempt without converting absent usage/rates into zero.
@@ -656,6 +672,41 @@ mod tests {
         assert!(cost.cache_read_input.is_none());
         assert!(cost.output.is_none());
         assert!(cost.total.is_none());
+    }
+
+    #[test]
+    fn a_record_prices_in_full_only_where_every_category_has_a_rate() {
+        let fixture = |rates| {
+            PromptCachePricing::new(
+                "fixture-protocol",
+                "https://provider.invalid/v1",
+                "model-a",
+                Some("model-a"),
+                PricingDate::new(2026, 1, 1),
+                "fixture-pricing-v1",
+                SOURCE,
+                USD,
+                PricingUnit::MillionTokens,
+                rates,
+            )
+        };
+        assert!(fixture(rates()).prices_in_full());
+
+        let mut unknown = rates();
+        unknown.output = UsageRate::Unknown;
+        assert!(!fixture(unknown).prices_in_full());
+
+        // No report carries an `other` quantity, so a rate that requires one
+        // is a gap no report fills.
+        let mut other = rates();
+        other.other = UsageRate::priced(PriceRate::per_million(1));
+        assert!(!fixture(other).prices_in_full());
+
+        let mut storage = rates();
+        storage.storage = UsageRate::priced(PriceRate::per_million_token_hours(1));
+        assert!(fixture(storage).prices_in_full());
+
+        assert!(!fixture(PromptCacheRates::UNKNOWN).prices_in_full());
     }
 
     #[test]

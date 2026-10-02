@@ -87,6 +87,22 @@ fn keyed() -> api::Usage {
     }
 }
 
+/// The keyed session after an answer was stopped before it said what it
+/// cost: what is known is a floor.
+fn stopped() -> api::Usage {
+    let keyed = keyed();
+    api::Usage {
+        used: Used {
+            cost: Cost::AtLeast {
+                currency: Name::new("USD").unwrap(),
+                micros: 400_000,
+            },
+            ..keyed.used
+        },
+        ..keyed
+    }
+}
+
 fn art(rows: &[Row]) -> Vec<String> {
     rows.iter().map(Row::text).collect()
 }
@@ -252,7 +268,7 @@ fn usage_at_40_columns_stands_each_label_over_or_before_a_narrower_value() {
 #[test]
 fn usage_fits_every_width_down_to_one_column() {
     for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
-        for usage in [weekly(), every_window(), keyed()] {
+        for usage in [weekly(), every_window(), keyed(), stopped()] {
             for columns in 1..=120 {
                 for row in panel(
                     "openai · ChatGPT sign-in",
@@ -270,6 +286,24 @@ fn usage_fits_every_width_down_to_one_column() {
             }
         }
     }
+}
+
+#[test]
+fn usage_at_40_columns_says_a_floor_on_its_cost_row() {
+    let rows = panel(
+        "anthropic · API key",
+        &stopped(),
+        40,
+        Glyphs::Unicode,
+        &clock(),
+    );
+
+    let row = rows
+        .iter()
+        .find(|row| row.text().starts_with("  Total cost"))
+        .unwrap();
+    assert_eq!(row.text(), "  Total cost     at least $0.40");
+    assert_eq!(tone(row, "at least $0.40"), Some(Slot::Plain));
 }
 
 #[test]
@@ -317,6 +351,29 @@ fn usage_says_a_cost_as_what_is_known_of_it() {
     assert_eq!(
         cost(&priced("EUR", 1_840_000)),
         (Slot::Plain, "1.84 EUR".to_owned())
+    );
+
+    // An answer stopped before the provider said what it cost: the figure
+    // is a floor, in the same form as a sum.
+    let at_least = |currency: &str, micros| Cost::AtLeast {
+        currency: Name::new(currency).unwrap(),
+        micros,
+    };
+    assert_eq!(
+        cost(&at_least("USD", 400_000)),
+        (Slot::Plain, "at least $0.40".to_owned())
+    );
+    assert_eq!(
+        cost(&at_least("USD", 0)),
+        (Slot::Plain, "at least $0.00".to_owned())
+    );
+    assert_eq!(
+        cost(&at_least("USD", 3_000)),
+        (Slot::Plain, "at least <$0.01".to_owned())
+    );
+    assert_eq!(
+        cost(&at_least("EUR", 1_840_000)),
+        (Slot::Plain, "at least 1.84 EUR".to_owned())
     );
 }
 

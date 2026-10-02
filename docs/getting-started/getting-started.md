@@ -981,7 +981,12 @@ pays for it (`API key`, or the sign-in's name, such as `ChatGPT sign-in`), with
 what the session has used: its cost, the time its requests were out and the
 time since it started, the lines edits added and removed, and its tokens in,
 out, read from a cache and written to one. A session with a model crucible has
-no price for says `not priced` rather than `$0.00`. Under that is the same
+no price for says `not priced` rather than `$0.00`, as does one where an answer
+finished without saying what it used. A cost that reads `at least $0.40`
+includes an answer that was stopped before the provider said what it cost: its
+tokens are counted as far as it reported them, and the rest of the session is
+priced in full, so the session cost that much and an amount nobody reported
+on top. Under that is the same
 context bar `/context` draws, and then the plan limits: one bar for each of the
 5-hour, weekly and monthly windows the vendor reported on its last response,
 with when each starts again in your local time; a reset already behind the

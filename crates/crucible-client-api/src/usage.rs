@@ -7,7 +7,9 @@
 //! counted from.
 //!
 //! **A cost that is not known is not zero.** [`Cost`] says so in its own arm,
-//! so a client cannot draw `$0.00` for a session it has no price for.
+//! so a client cannot draw `$0.00` for a session it has no price for, and a
+//! sum that leaves out an answer stopped before the provider said what it
+//! cost has an arm of its own as well, so it is not drawn as the whole.
 //!
 //! While a turn runs, the same figures are streamed rather than asked for:
 //! [`Used`] and [`Limits`] each cross as progress of their own whenever the
@@ -40,6 +42,14 @@ pub enum Cost {
         /// The sum, in millionths of the currency.
         micros: u64,
     },
+    /// An answer ended before the provider said what it cost, so the session
+    /// cost at least this, and more by an amount nobody reported.
+    AtLeast {
+        /// The currency the prices are in, as its code: `USD`.
+        currency: Name,
+        /// The sum known, in millionths of the currency.
+        micros: u64,
+    },
     /// At least one response could not be priced, so no sum is the session's.
     NotPriced,
 }
@@ -49,6 +59,9 @@ impl Cost {
         match self {
             Self::Unspent => Writing::kind("unspent"),
             Self::Priced { currency, micros } => Writing::kind("priced")
+                .with("currency", currency.as_str())
+                .with("micros", *micros),
+            Self::AtLeast { currency, micros } => Writing::kind("at_least")
                 .with("currency", currency.as_str())
                 .with("micros", *micros),
             Self::NotPriced => Writing::kind("not_priced"),
@@ -61,6 +74,10 @@ impl Cost {
         let cost = match fields.kind()?.as_str() {
             "unspent" => Self::Unspent,
             "priced" => Self::Priced {
+                currency: fields.name("currency")?,
+                micros: fields.number("micros")?,
+            },
+            "at_least" => Self::AtLeast {
                 currency: fields.name("currency")?,
                 micros: fields.number("micros")?,
             },

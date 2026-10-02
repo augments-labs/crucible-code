@@ -748,21 +748,23 @@ impl Runner {
         reading: RecapReading<'_>,
     ) -> Result<Recap, TurnError> {
         let (events, went) = (reading.events, reading.went);
+        self.went_out(super::request_disposition(&asked), reading.cache);
         self.limited(
             asked.as_ref().ok().and_then(|stream| stream.limits()),
             events,
         );
         let said = self.hear_recap(asked, reading).await;
-        self.answered(went, events);
-        said
+        self.answered(went, events, matches!(said, Ok((_, true))));
+        said.map(|(recap, _)| recap)
     }
 
-    /// Reads one standalone recap response while preserving attempt accounting.
+    /// Reads one standalone recap response while preserving attempt
+    /// accounting, and says whether the provider said it was done.
     async fn hear_recap(
         &mut self,
         asked: Result<Box<dyn crucible_models::DeltaStream>, ProviderError>,
         reading: RecapReading<'_>,
-    ) -> Result<Recap, TurnError> {
+    ) -> Result<(Recap, bool), TurnError> {
         let RecapReading {
             events,
             touched,
@@ -773,7 +775,7 @@ impl Runner {
         } = reading;
         let mut stream = match asked {
             Ok(stream) => stream,
-            Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
+            Err(ProviderError::Cancelled(_)) => return Ok((Recap::Stopped, false)),
             Err(problem) => return Err(problem.into()),
         };
         let mut said = String::new();
@@ -784,7 +786,7 @@ impl Runner {
         while let Some(delta) = stream.next().await {
             let delta = match delta {
                 Ok(delta) => delta,
-                Err(ProviderError::Cancelled(_)) => return Ok(Recap::Stopped),
+                Err(ProviderError::Cancelled(_)) => return Ok((Recap::Stopped, false)),
                 Err(problem) => return Err(problem.into()),
             };
             // Some protocols report accounting after the model's stop. Keep
@@ -792,13 +794,13 @@ impl Runner {
             if stopped.is_some()
                 && !matches!(delta, Delta::Usage(_) | Delta::Spent(_) | Delta::Carried(_))
             {
-                return Ok(Recap::Incomplete);
+                return Ok((Recap::Incomplete, false));
             }
             match delta {
                 Delta::Text(text) => {
                     said.push_str(&text);
                     if said.len() > MAX_RECAP_TEXT {
-                        return Ok(Recap::Incomplete);
+                        return Ok((Recap::Incomplete, false));
                     }
                     let now = reached(said.len() as u64);
                     if now != part {
@@ -825,20 +827,8 @@ impl Runner {
                         *spent = before.and(crucible_types::Spend::new(tokens));
                         events.post(crate::Event::Spent { spend: *spent });
                     }
-                    let cost = self
-                        .provider
-                        .prompt_cache_pricing(
-                            &self.agent.model().name,
-                            cache.model_revision,
-                            usage.input.total,
-                            cache.retention,
-                            cache.pricing_date,
-                        )
-                        .ok()
-                        .flatten()
-                        .and_then(|pricing| pricing.cost(&usage).ok())
-                        .unwrap_or(UsageCost::UNKNOWN);
-                    self.state.totals.used(&usage, cost.total);
+                    let (cost, price) = self.priced(&usage, cache);
+                    self.state.totals.used(&usage, price);
                     let outcome = usage.input.outcome(cache.reporting);
                     if let Some(attempt) = self
                         .state
@@ -872,7 +862,8 @@ impl Runner {
             }
         }
 
-        Ok(match stopped {
+        let completed = stopped.is_some_and(|reason| reason != StopReason::Cancelled);
+        let recap = match stopped {
             Some(StopReason::Yielded) if is_structured(&said) => {
                 append_files(&mut said, touched);
                 Recap::Complete(said)
@@ -888,7 +879,8 @@ impl Runner {
                 | StopReason::WantsTools,
             )
             | None => Recap::Incomplete,
-        })
+        };
+        Ok((recap, completed))
     }
 
     /// Clears old tool results from what the model is sent, and records it.

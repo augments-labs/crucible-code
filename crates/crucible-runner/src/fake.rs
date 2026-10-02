@@ -155,6 +155,9 @@ pub(crate) struct Script {
     limits: Mutex<VecDeque<Option<PlanWindows>>>,
     /// How long each request is out before its answer starts.
     waits: Duration,
+    /// Stopped once the next round has been handed out, as a reader pressing
+    /// Esc while an answer arrives.
+    interrupts: Mutex<Option<Cancel>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -212,7 +215,16 @@ impl Script {
             fast: FastFixture::default(),
             limits: Mutex::new(VecDeque::new()),
             waits: Duration::ZERO,
+            interrupts: Mutex::new(None),
         }
+    }
+
+    /// Stops the run through `cancel` once the first round has been handed
+    /// out, before the answer says how it ended: what that round reported is
+    /// all the response ever reports.
+    pub(crate) fn interrupted_by(self, cancel: Cancel) -> Self {
+        *self.interrupts.lock().unwrap() = Some(cancel);
+        self
     }
 
     /// Answers each request only once `waits` has passed, as a vendor
@@ -681,6 +693,7 @@ impl Provider for Script {
                     breaks: true,
                     served: Served::Unsaid,
                     limits: None,
+                    interrupts: None,
                 }) as Box<dyn DeltaStream>);
             }
             drop(drops);
@@ -694,6 +707,7 @@ impl Provider for Script {
                     breaks: self.breaks,
                     served: self.fast.serves,
                     limits: None,
+                    interrupts: None,
                 }) as Box<dyn DeltaStream>);
             };
             Ok(Box::new(Recited {
@@ -701,6 +715,7 @@ impl Provider for Script {
                 breaks: self.breaks,
                 served: self.fast.serves,
                 limits: self.limits.lock().unwrap().pop_front().flatten(),
+                interrupts: self.interrupts.lock().unwrap().take(),
             }) as Box<dyn DeltaStream>)
         })
     }
@@ -854,6 +869,8 @@ struct Recited {
     served: Served,
     /// The plan windows its headers report.
     limits: Option<PlanWindows>,
+    /// Stopped once its deltas have been handed out.
+    interrupts: Option<Cancel>,
 }
 
 impl DeltaStream for Recited {
@@ -869,6 +886,9 @@ impl DeltaStream for Recited {
         Box::pin(async move {
             if let Some(delta) = self.deltas.pop_front() {
                 return Some(Ok(delta));
+            }
+            if let Some(cancel) = self.interrupts.take() {
+                cancel.request();
             }
 
             self.breaks.then(|| {

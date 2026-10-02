@@ -1444,7 +1444,11 @@ impl Runner {
 
             let asked = Instant::now();
             let heard = self.hearing(&mut answer, &mut listening).await;
-            self.answered(asked, listening.run.reporting());
+            self.answered(
+                asked,
+                listening.run.reporting(),
+                matches!(heard, Ok(stop) if stop != StopReason::Cancelled),
+            );
             let problem = match heard {
                 Ok(said) => return Ok((answer, said)),
                 Err(problem) => problem,
@@ -1716,21 +1720,20 @@ impl Runner {
                 }),
             )
             .await;
-            (
-                streamed?,
-                CacheObservation {
-                    attempt: cache.attempt,
-                    reporting: cache.capabilities.usage(),
-                    model_revision: cache.capabilities.model_revision(),
-                    retention: cache
-                        .selection
-                        .selected()
-                        .map_or(cache.policy.retention().class(), |selected| {
-                            selected.retention()
-                        }),
-                    pricing_date,
-                },
-            )
+            let observation = CacheObservation {
+                attempt: cache.attempt,
+                reporting: cache.capabilities.usage(),
+                model_revision: cache.capabilities.model_revision(),
+                retention: cache
+                    .selection
+                    .selected()
+                    .map_or(cache.policy.retention().class(), |selected| {
+                        selected.retention()
+                    }),
+                pricing_date,
+            };
+            self.went_out(disposition, observation);
+            (streamed?, observation)
         };
 
         self.limited(stream.limits(), listening.run.reporting());
@@ -1746,13 +1749,68 @@ impl Runner {
         answer.finalize().map_err(TurnError::from)
     }
 
+    /// Notes, for the session's cost, whether the model a request that may
+    /// have reached it has a price.
+    ///
+    /// Asked of the smallest band: whether a model is priced, and in which
+    /// currency, does not depend on how much is sent. A request that never
+    /// went out, or that the provider turned away, is no response and is
+    /// left out.
+    fn went_out(
+        &mut self,
+        disposition: PromptCacheRequestDisposition,
+        observation: CacheObservation,
+    ) {
+        match disposition {
+            PromptCacheRequestDisposition::Accepted | PromptCacheRequestDisposition::Unknown => {
+                let record = self
+                    .provider
+                    .prompt_cache_pricing(
+                        &self.agent.model().name,
+                        observation.model_revision,
+                        Some(0),
+                        observation.retention,
+                        observation.pricing_date,
+                    )
+                    .ok()
+                    .flatten();
+                self.state.totals.asked(totals::Listed::of(record.as_ref()));
+            }
+            PromptCacheRequestDisposition::NotSent | PromptCacheRequestDisposition::Rejected => {}
+        }
+    }
+
+    /// What one usage report costs: in full for the attempt's cache facts,
+    /// and as the session's cost reads it.
+    fn priced(
+        &self,
+        usage: &ProviderUsage,
+        observation: CacheObservation,
+    ) -> (UsageCost, totals::Price) {
+        let record = self
+            .provider
+            .prompt_cache_pricing(
+                &self.agent.model().name,
+                observation.model_revision,
+                usage.input.total,
+                observation.retention,
+                observation.pricing_date,
+            )
+            .ok()
+            .flatten();
+        let cost = record
+            .and_then(|pricing| pricing.cost(usage).ok())
+            .unwrap_or(UsageCost::UNKNOWN);
+        (cost, totals::Price::of(record.as_ref(), usage))
+    }
+
     /// Counts a response that has ended, however it ended, and says what the
-    /// session has used now.
+    /// session has used now. `completed` where the provider said it was done.
     ///
     /// A response that failed part way was still spent: what it reported
     /// before it broke is counted with the rest.
-    fn answered(&mut self, asked: Instant, events: Reporter<'_>) {
-        self.state.totals.answered(asked.elapsed());
+    fn answered(&mut self, asked: Instant, events: Reporter<'_>, completed: bool) {
+        self.state.totals.answered(asked.elapsed(), completed);
         events.post(Event::Used {
             totals: self.state.totals,
         });
@@ -1871,20 +1929,8 @@ impl Runner {
                             counting.window = None;
                         }
                     }
-                    let cost = self
-                        .provider
-                        .prompt_cache_pricing(
-                            &self.agent.model().name,
-                            cache_observation.model_revision,
-                            usage.input.total,
-                            cache_observation.retention,
-                            cache_observation.pricing_date,
-                        )
-                        .ok()
-                        .flatten()
-                        .and_then(|pricing| pricing.cost(&usage).ok())
-                        .unwrap_or(UsageCost::UNKNOWN);
-                    self.state.totals.used(&usage, cost.total);
+                    let (cost, price) = self.priced(&usage, cache_observation);
+                    self.state.totals.used(&usage, price);
                     let outcome = usage.input.outcome(cache_observation.reporting);
                     if let Some(cache) = self
                         .state

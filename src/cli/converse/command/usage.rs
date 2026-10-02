@@ -422,17 +422,24 @@ fn cost(cost: &Cost) -> (Slot, String) {
     match cost {
         Cost::Unspent => (Slot::Quiet, "nothing asked yet".to_owned()),
         Cost::NotPriced => (Slot::Quiet, "not priced".to_owned()),
-        Cost::Priced { currency, micros } => {
-            let cents = micros.saturating_add(5_000) / 10_000;
-            let amount = format!("{}.{:02}", cents / 100, cents % 100);
-            let said = match (currency.as_str(), cents) {
-                // A sum that rounds to nothing was still spent.
-                ("USD", 0) if *micros > 0 => "<$0.01".to_owned(),
-                ("USD", _) => format!("${amount}"),
-                (code, _) => format!("{amount} {code}"),
-            };
-            (Slot::Plain, said)
-        }
+        Cost::Priced { currency, micros } => (Slot::Plain, money(currency.as_str(), *micros)),
+        // An answer stopped before the provider said what it cost.
+        Cost::AtLeast { currency, micros } => (
+            Slot::Plain,
+            format!("at least {}", money(currency.as_str(), *micros)),
+        ),
+    }
+}
+
+/// `micros` millionths of `currency`, to the cent: `$1.84`, `1.84 EUR`.
+fn money(currency: &str, micros: u64) -> String {
+    let cents = micros.saturating_add(5_000) / 10_000;
+    let amount = format!("{}.{:02}", cents / 100, cents % 100);
+    match (currency, cents) {
+        // A sum that rounds to nothing was still spent.
+        ("USD", 0) if micros > 0 => "<$0.01".to_owned(),
+        ("USD", _) => format!("${amount}"),
+        (code, _) => format!("{amount} {code}"),
     }
 }
 

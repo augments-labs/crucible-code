@@ -15,7 +15,7 @@ use crucible_client_api::{
 use crucible_models::{Effort, Served, Speed};
 use crucible_runner::{Breakdown, Category, Event, SessionCost, Totals};
 use crucible_tools::Mode;
-use crucible_types::{PlanWindows, StopReason, Window};
+use crucible_types::{CostAmount, PlanWindows, StopReason, Window};
 
 use crate::Conversation;
 use crate::switching::Retained;
@@ -181,16 +181,25 @@ fn used(totals: &Totals) -> api::Used {
 fn cost(cost: SessionCost) -> api::Cost {
     match cost {
         SessionCost::Unspent => api::Cost::Unspent,
-        SessionCost::Priced(amount) => {
-            // A femtocurrency is a billionth of a micro; a code that is not a
-            // name is a sum nobody can read, so it is not stated.
-            let micros = u64::try_from(amount.femtocurrency() / 1_000_000_000).unwrap_or(u64::MAX);
-            Name::new(amount.currency().as_str()).map_or(api::Cost::NotPriced, |currency| {
+        SessionCost::Priced(amount) => stated(amount)
+            .map_or(api::Cost::NotPriced, |(currency, micros)| {
                 api::Cost::Priced { currency, micros }
-            })
-        }
+            }),
+        SessionCost::AtLeast(amount) => stated(amount)
+            .map_or(api::Cost::NotPriced, |(currency, micros)| {
+                api::Cost::AtLeast { currency, micros }
+            }),
         SessionCost::NotPriced => api::Cost::NotPriced,
     }
+}
+
+/// An amount as its currency's code and millionths of it, where it can be
+/// stated.
+fn stated(amount: CostAmount) -> Option<(Name, u64)> {
+    // A femtocurrency is a billionth of a micro; a code that is not a name is
+    // a sum nobody can read, so it is not stated.
+    let micros = u64::try_from(amount.femtocurrency() / 1_000_000_000).unwrap_or(u64::MAX);
+    Some((Name::new(amount.currency().as_str()).ok()?, micros))
 }
 
 /// Every window a vendor reported, each placed by name.
