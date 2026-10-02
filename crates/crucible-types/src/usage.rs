@@ -729,14 +729,16 @@ const fn unshown(character: char) -> bool {
 /// what a request's model id is matched against, and the name is never read
 /// for it.
 ///
-/// Built only by [`ModelKey::exact`], which bounds the id. A key is kept in
-/// a reading as long as the session, so one built around the constructor
-/// would carry an unbounded id past every ceiling a reading keeps to:
+/// Built only by [`ModelKey::exact`] and [`ModelKey::prefixed`], which bound
+/// the id. A key is kept in a reading as long as the session, so one built
+/// around the constructors would carry an unbounded id past every ceiling a
+/// reading keeps to, or an empty prefix that holds back every model:
 ///
 /// ```compile_fail,E0599
 /// use crucible_types::ModelKey;
 ///
 /// let forged = ModelKey::Exact("\u{7}".repeat(4096).into());
+/// let everything = ModelKey::Prefix("".into());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelKey(Matching);
@@ -748,6 +750,8 @@ enum Matching {
     /// A request to the model whose id is exactly this, spelled as the
     /// request spells it.
     Exact(Box<str>),
+    /// A request to any model whose id starts with this.
+    Prefix(Box<str>),
 }
 
 impl ModelKey {
@@ -761,20 +765,39 @@ impl ModelKey {
             .then(|| Self(Matching::Exact(id.into())))
     }
 
+    /// Every model whose id starts with what comes before the `*` that ends
+    /// `pattern`; `None` for a pattern that does not end in `*`, has another
+    /// `*` or nothing before it, holds a control or a Unicode format
+    /// character, or is longer than [`MAX_LIMIT_NAME_BYTES`]. The one star at
+    /// the end is the only pattern read: a vendor's name with any other is
+    /// no model's, and a guess at what it meant could hold back one it does
+    /// not.
+    #[must_use]
+    pub fn prefixed(pattern: &str) -> Option<Self> {
+        let prefix = pattern.strip_suffix('*')?;
+        (!prefix.is_empty()
+            && pattern.len() <= MAX_LIMIT_NAME_BYTES
+            && !prefix.contains('*')
+            && !prefix.chars().any(unshown))
+        .then(|| Self(Matching::Prefix(prefix.into())))
+    }
+
     /// Whether a request to the model `model` is one this holds back.
     #[must_use]
     pub fn holds(&self, model: &str) -> bool {
         match &self.0 {
             Matching::Exact(id) => **id == *model,
+            Matching::Prefix(prefix) => model.starts_with(&**prefix),
         }
     }
 
     /// The one model this names, where it names one: what a reader looks
-    /// the group's model up by.
+    /// the group's model up by. A prefix names none.
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         match &self.0 {
             Matching::Exact(id) => Some(id),
+            Matching::Prefix(_) => None,
         }
     }
 }
@@ -1622,6 +1645,44 @@ mod tests {
         assert_eq!(ModelKey::exact(&long), None);
         assert_eq!(ModelKey::exact(""), None);
         assert_eq!(ModelKey::exact("gpt\u{1b}[31m"), None);
+    }
+
+    #[test]
+    fn plan_limit_a_prefix_key_holds_every_model_its_id_starts_and_names_none() {
+        let key = ModelKey::prefixed("MiniMax-M*").unwrap();
+        assert!(key.holds("MiniMax-M2.7"));
+        assert!(key.holds("MiniMax-M3"));
+        assert!(key.holds("MiniMax-M"));
+        assert!(!key.holds("speech-2.8-hd"));
+        assert!(!key.holds("minimax-m2.7"));
+        assert!(!key.holds("MiniMax-"));
+        assert_eq!(key.model(), None);
+
+        // A name not ending in the star is no prefix, and the star is read
+        // nowhere else.
+        assert!(!ModelKey::exact("MiniMax-M*").unwrap().holds("MiniMax-M2.7"));
+        assert_eq!(ModelKey::prefixed("MiniMax-M"), None);
+        assert_eq!(ModelKey::prefixed("Mini*Max-M*"), None);
+        assert_eq!(ModelKey::prefixed("MiniMax-M**"), None);
+    }
+
+    #[test]
+    fn plan_limit_a_prefix_key_is_bounded_as_an_exact_one_and_never_empty() {
+        assert_eq!(ModelKey::prefixed("*"), None);
+        assert_eq!(ModelKey::prefixed(""), None);
+        assert_eq!(ModelKey::prefixed("gpt\u{1b}[31m*"), None);
+        for format in FORMATS {
+            assert_eq!(
+                ModelKey::prefixed(&format!("Mini{format}Max*")),
+                None,
+                "{format:?}"
+            );
+        }
+
+        let longest = format!("{}*", "m".repeat(MAX_LIMIT_NAME_BYTES - 1));
+        assert!(ModelKey::prefixed(&longest).is_some());
+        let long = format!("{}*", "m".repeat(MAX_LIMIT_NAME_BYTES));
+        assert_eq!(ModelKey::prefixed(&long), None);
     }
 
     /// Every Unicode format character a vendor could put in a name to
