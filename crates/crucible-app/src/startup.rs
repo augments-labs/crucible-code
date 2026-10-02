@@ -780,12 +780,13 @@ pub fn mimo(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
 pub fn minimax(wiring: Wiring<'_>) -> Result<Box<dyn Provider>, AppError> {
     let http = wiring.http;
     let auth = wiring.auth;
-    let on_plan = ApiKey::from_lookup(wiring.variable, auth.from).is_err()
-        && auth.stored.held(wiring.named).is_some_and(|held| {
-            crate::providers::Rows::production()
-                .of(held.kind, &held.name)
-                .is_some_and(|row| row.list == crate::providers::List::Subscription)
-        });
+    // The store is looked at first, so the variable is read here only where a
+    // plan's key is stored, and a provider with none reads it once.
+    let on_plan = auth.stored.held(wiring.named).is_some_and(|held| {
+        crate::providers::Rows::production()
+            .of(held.kind, &held.name)
+            .is_some_and(|row| row.list == crate::providers::List::Subscription)
+    }) && ApiKey::from_lookup(wiring.variable, auth.from).is_err();
     let (endpoint, credential) = keyed(wiring, MiniMax::IO)?;
     let transport = Box::new(http.clone());
     Ok(Box::new(if on_plan {
