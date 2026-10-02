@@ -2117,7 +2117,10 @@ fn the_rail_thumb_and_marks_stand_on_the_rows_the_drawn_band_scales_to() {
                 }
                 if next(seed, 8) == 0 {
                     word += 1;
-                    let run: String = (0..200).map(|piece| format!("q{word}n{piece}")).collect();
+                    let run = (0..200)
+                        .map(|piece| format!("q{word}n{piece}"))
+                        .collect::<Vec<_>>()
+                        .concat();
                     let run = run.get(..next(seed, 200)).unwrap_or("");
                     text.push(format!("r{word}{run}"));
                 }
