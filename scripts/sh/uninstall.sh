@@ -74,6 +74,45 @@ if ((purge)); then
     fi
 fi
 
+# A removal in a terminal is shown as the installer shows its steps: a mark per
+# step, in colour. A dry run, a pipe, `NO_COLOR` or `TERM=dumb` keeps the plain
+# lines, which say the same.
+fancy=0
+if ((!dry_run)) && [[ -t 1 && -t 2 && -z ${NO_COLOR:-} && ${TERM:-} != dumb ]]; then
+    fancy=1
+fi
+case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in
+*[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) done_mark='✓' dot='·' ;;
+*) done_mark=ok dot=- ;;
+esac
+readonly bold=$'\033[1m' dim=$'\033[2m' green=$'\033[32m' plain=$'\033[0m'
+
+shown() {
+    local path=$1
+    if [[ -n ${HOME:-} && $HOME != / && $path == "$HOME"/* ]]; then
+        printf '~/%s' "${path#"$HOME"/}"
+    else
+        printf '%s' "$path"
+    fi
+}
+
+columns=80
+if ((fancy)); then
+    columns=$(stty size </dev/tty 2>/dev/null | awk '{ print $2 }') || true
+    [[ $columns =~ ^[0-9]+$ ]] && ((columns >= 20)) || columns=80
+fi
+
+# A step's mark and label, then its detail beside the label, or under it when
+# the row has no room for it.
+row() {
+    printf '  %s%s%s %s' "$green" "$done_mark" "$plain" "$1"
+    if ((2 + ${#done_mark} + 1 + 20 + ${#2} <= columns)); then
+        printf '%*s%s%s%s\n' $((20 - ${#1})) '' "$dim" "$2" "$plain"
+    else
+        printf '\n    %s%s%s\n' "$dim" "$2" "$plain"
+    fi
+}
+
 binary=$destination/crucible
 broker=$destination/crucible-sandbox-broker
 alias_path=$destination/cru
@@ -89,6 +128,8 @@ if [[ -e $broker || -L $broker ]]; then
         exit 1
     }
 fi
+((!fancy)) || printf '\n%scrucible%s %s uninstall\n\n' "$bold" "$plain" "$dot"
+gone_alias=0 gone_binary=0 gone_broker=0
 if [[ -e $alias_path || -L $alias_path ]]; then
     if [[ ! -L $alias_path || $(readlink "$alias_path") != crucible ]]; then
         printf 'uninstall: preserving unrelated %s\n' "$alias_path" >&2
@@ -96,6 +137,7 @@ if [[ -e $alias_path || -L $alias_path ]]; then
         printf 'Would remove %s\n' "$alias_path"
     else
         rm -f -- "$alias_path"
+        gone_alias=1
     fi
 fi
 if [[ -e $binary ]]; then
@@ -103,6 +145,7 @@ if [[ -e $binary ]]; then
         printf 'Would remove %s\n' "$binary"
     else
         rm -f -- "$binary"
+        gone_binary=1
     fi
 fi
 if [[ -e $broker ]]; then
@@ -110,7 +153,21 @@ if [[ -e $broker ]]; then
         printf 'Would remove %s\n' "$broker"
     else
         rm -f -- "$broker"
+        gone_broker=1
     fi
+fi
+if ((fancy)); then
+    names=()
+    ((!gone_binary)) || names+=(crucible)
+    ((!gone_broker)) || names+=(crucible-sandbox-broker)
+    ((!gone_alias)) || names+=(cru)
+    case ${#names[@]} in
+    0) what="nothing in $(shown "$destination")" ;;
+    1) what=${names[0]} ;;
+    2) what="${names[0]} and ${names[1]}" ;;
+    *) what="${names[0]}, ${names[1]} and ${names[2]}" ;;
+    esac
+    row remove "$what"
 fi
 
 if ((purge)); then
@@ -119,10 +176,14 @@ if ((purge)); then
             printf 'Would permanently remove %s\n' "$purge_target"
         else
             rm -rf -- "$purge_target"
+            ((!fancy)) || row purge "$(shown "$purge_target")"
         fi
     fi
+elif ((fancy)); then
+    row keep "$(shown "$data_home")"
 else
     printf 'Preserved configuration, credentials and sessions in %s\n' "$data_home"
 fi
 
+((!fancy)) || printf '\n'
 echo 'crucible is uninstalled.'
