@@ -4314,3 +4314,66 @@ fn a_settings_toggle_folds_the_transcript_again_and_is_left_in_it() {
     let picture = window.picture();
     insta::assert_snapshot!("settings_toggle_80", picture);
 }
+
+/// Turns the Send with row to `altEnter` through `/settings` and closes the
+/// panel, between turns or over a running one.
+fn sends_with_alt_enter(window: &mut Watched) {
+    window.types_until("/settings\r", "esc to close");
+    // Enter ends the search on the one row left; the second changes it.
+    window.types_until("/send", "Send with");
+    window.types_until("\r\r", "altEnter");
+    window.types_until("\x1b", "› Theme");
+    window.types_until("\x1b", "Send with set to altEnter");
+}
+
+/// Whether the prompt box holds `first` on one row and `second` on the next.
+fn boxed_on_two_rows(picture: &str, first: &str, second: &str) -> bool {
+    let rows: Vec<&str> = picture.lines().collect();
+    rows.windows(2).any(|pair| {
+        pair.first()
+            .is_some_and(|row| row.contains(&format!("│ › {first} ")))
+            && pair
+                .get(1)
+                .is_some_and(|row| row.contains(&format!("│   {second} ")))
+    })
+}
+
+#[test]
+fn a_send_key_changed_in_settings_is_the_one_return_obeys_next() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("settings-send", 80, 30, &vendor);
+    sends_with_alt_enter(&mut window);
+
+    // Return now opens a line, so nothing is sent and no turn starts.
+    window.types_until("say hello\rthere", "there");
+    let held = window.picture();
+    assert!(boxed_on_two_rows(&held, "say hello", "there"), "{held}");
+    assert!(
+        !held.lines().any(|row| row.starts_with("|› say hello")),
+        "{held}"
+    );
+    assert!(!held.contains("Hello."), "{held}");
+    insta::assert_snapshot!("settings_send_with_alt_enter_80", held);
+
+    // And Alt+Return is the press that sends the two lines.
+    window.types_until("\x1b\r", "Hello.");
+    let sent = window.picture();
+    assert!(sent.contains("› say hello"), "{sent}");
+    assert!(sent.contains("  there"), "{sent}");
+}
+
+#[test]
+fn a_send_key_changed_in_settings_over_a_running_turn_is_obeyed_once_it_closes() {
+    let vendor = Vendor::holding("Still going.");
+    let mut window = Watched::answering("settings-send-live", 80, 30, &vendor);
+    window.types_and_catches("say it\r", "going.");
+    sends_with_alt_enter(&mut window);
+
+    window.types_until("one\rtwo", "two");
+    let typed = window.picture();
+    assert!(boxed_on_two_rows(&typed, "one", "two"), "{typed}");
+    assert!(
+        !typed.lines().any(|row| row.starts_with("|› one")),
+        "{typed}"
+    );
+}

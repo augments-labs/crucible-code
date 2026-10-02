@@ -713,6 +713,15 @@
       "sha256": "c3cd60ba39745f146a6d1eb280e58b4ee0eca35a200c0e722feebe59c4e11845"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_send_with_alt_enter_80.snap",
+      "case": "a_send_key_changed_in_settings_is_the_one_return_obeys_next",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"settings-send\", 80, 30, &vendor)"
+      ],
+      "sha256": "00a9612d26a44dc293b00f3ec04d723a36faf08adcaf48b7df10731d48551691"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__settings_status_40.snap",
       "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
       "opened": [

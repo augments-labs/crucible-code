@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: held
+---
+80x30 cursor 27,9 scrolled 0
+|╭─ crucible v###### ──────────────────────────────────────────────────────────╮ |
+|│                                                                             │ |
+|│ CRUCIBLE                                                                    │ |
+|│ /…/workspace                                                                │ |
+|│                                                                             │ |
+|│ Recent sessions                                                             │ |
+|│                                                                             │ |
+|│ No recent sessions                                                          │ |
+|│                                                                             │ |
+|│ ─────────────────────────────────────────────────────────────────────────── │ |
+|│                                                                             │ |
+|│ Tips                                                                        │ |
+|│                                                                             │ |
+|│ · /          opens the command list                                         │ |
+|│ · \ enter    adds a line without sending                                    │ |
+|│ · shift+tab  steps the permission mode                                      │ |
+|│ · ctrl+c     clears the line typed so far                                   │ |
+|╰─────────────────────────────────────────────────────────────────────────────╯ |
+|                                                                                |
+|› /settings                                                                     |
+|⎿ Send with set to altEnter                                                     |
+|                                                                                |
+|                                                                                |
+|                                                                                |
+|                                                                100% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ › say hello                                                                  │|
+|│   there                                                                      │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle)                       anthropic · claude-test-1|
