@@ -71,6 +71,23 @@ pub fn drawing(file: &Path, theme: &str) -> Result<(), RememberError> {
     })
 }
 
+/// Writes `word` down as what `row` is set to.
+///
+/// Everything already in the file stays where it was, byte for byte. A file
+/// that is not there yet becomes one holding the setting and nothing else.
+///
+/// # Errors
+///
+/// [`RememberError::Busy`] when another crucible holds the file,
+/// [`RememberError::Unwritable`] when it cannot be opened or replaced, and
+/// [`RememberError::Unusable`] when what it already says is not configuration
+/// or the setting is not one the next start would read.
+pub fn setting(file: &Path, row: &crucible_config::Row, word: &str) -> Result<(), RememberError> {
+    answering(file, |text, named| {
+        crucible_config::setting(text, named, row, word)
+    })
+}
+
 /// Persists the sandbox choice in the user configuration.
 ///
 /// # Errors

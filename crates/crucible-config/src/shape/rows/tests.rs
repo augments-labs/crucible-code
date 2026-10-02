@@ -235,3 +235,22 @@ fn settings_rows_are_named_once() {
         }
     }
 }
+
+#[test]
+fn a_settings_row_takes_only_the_words_its_declaration_reads() {
+    let take = |key: &str, word: &str| super::row(key).is_some_and(|row| row.takes(word));
+    assert!(take("output.scrollRail", "false"));
+    assert!(!take("output.scrollRail", "0"));
+    assert!(take("output.theme", "light"));
+    assert!(!take("output.theme", "plaid"));
+    let speed = "env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED";
+    for word in ["3", "12", "30"] {
+        assert!(take(speed, word), "{word}");
+    }
+    for word in ["2", "31", "06", "+6", "six", ""] {
+        assert!(!take(speed, word), "{word}");
+    }
+    // Which names there are is the host's to say; any name is one to ask it.
+    assert!(take("output.syntaxTheme", "base16"));
+    assert!(!take("output.syntaxTheme", ""));
+}

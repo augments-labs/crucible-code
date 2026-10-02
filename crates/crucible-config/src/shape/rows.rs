@@ -82,6 +82,24 @@ impl Row {
         self.field().and_then(|field| field.usual)
     }
 
+    /// Whether `word` is a value it may be set to, spelled as a document
+    /// spells it: `true`, `dark`, `12`.
+    ///
+    /// A [`Values::Named`] row takes any name, since which names there are is
+    /// the host's to say and the host asks itself before anything is written.
+    #[must_use]
+    pub fn takes(&self, word: &str) -> bool {
+        match self.values {
+            Values::Flag => matches!(word, "true" | "false"),
+            Values::Choice(words) => words.contains(&word),
+            // Spelled the one way a number is: no sign, no leading zero.
+            Values::Whole { least, most } => word
+                .parse::<u16>()
+                .is_ok_and(|number| (least..=most).contains(&number) && number.to_string() == word),
+            Values::Named => !word.is_empty(),
+        }
+    }
+
     /// The names a document nests it under, outermost first.
     pub(crate) fn path(&self) -> impl Iterator<Item = &'static str> {
         self.key.split('.')
