@@ -222,7 +222,7 @@ a panel, it is not stood.
 | <kbd>Enter</kbd> | Picks up the marked session. On one recorded in another directory, whose preview says `Enter to see how to resume`, the picker stays open and says under the list the `cd … && crucible --resume <id>` that picks it up there, broken after the `&&` onto a second row where one is too narrow. Nothing while nothing matches. |
 | <kbd>Ctrl+A</kbd> | Shows every project's sessions; again, only this one's. |
 | <kbd>Ctrl+B</kbd> | Keeps the sessions recorded on the branch checked out here; again, every branch's. Nothing, and left off the keys row, where no branch is checked out. |
-| <kbd>Ctrl+W</kbd> | Adds the sessions of this repository's other worktrees; again, takes them away. <kbd>Ctrl+Backspace</kbd> and <kbd>Alt-Backspace</kbd> still rub out a word of the search. |
+| <kbd>Ctrl+W</kbd> | Adds the sessions of this repository's other worktrees; again, takes them away. <kbd>Alt-Backspace</kbd> rubs out a word of the search; <kbd>Ctrl+Backspace</kbd> does too where the terminal reports it as Backspace held with Ctrl, but a terminal that sends it as <kbd>Ctrl+W</kbd> toggles the worktrees instead. |
 | <kbd>Esc</kbd> | Clears the search and marks the top. With nothing to clear, leaves: `cancelled, no session picked up`. |
 | <kbd>Ctrl+R</kbd> | Opens a rename over the marked session's title. While it is open, typing and paste edit the title, <kbd>Enter</kbd> saves it (an empty one is refused with `a title cannot be empty`), and <kbd>Esc</kbd> closes it and keeps the search. |
 | <kbd>Ctrl+C</kbd>, <kbd>Ctrl+D</kbd> | Leaves, rename open or not. |
