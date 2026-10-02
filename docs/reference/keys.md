@@ -111,7 +111,8 @@ Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
 | <kbd>Ctrl+B</kbd> | Stands the list of commands left running. With none running it closes at once. A click on their count under the box does the same. |
 | <kbd>Ctrl+O</kbd> | Stands the results the transcript cut short. Nothing while none were cut. |
 | <kbd>Ctrl+T</kbd> | Expands the plan past its seven rows, or folds it back. Nothing without a plan. See [Seven rows, and the key that gives the rest back](../tools/planning.md#seven-rows-and-the-key-that-gives-the-rest-back). |
-| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+Q</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
+| <kbd>Ctrl+Q</kbd> | Stands the prompts left queued behind a turn that stopped on a used-up plan. See [The queue](#the-queue). Nothing while none are waiting. |
+| <kbd>Esc</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | Nothing between turns. |
 | Wheel | Scrolls the transcript. |
 
 ## While a turn runs
@@ -405,7 +406,9 @@ With one row of room the view gives it to the transcript and closes.
 
 <kbd>Ctrl+Q</kbd> while a turn runs stands the prompts waiting behind it.
 While the view stands the turn takes none of them, and closing it releases
-them all at once.
+them all at once. Between turns it reaches the prompts left queued behind a
+turn that stopped on a used-up plan, which wait over the box in the same panel
+until you send a prompt; closing the view leaves them waiting there.
 
 | Key | What it does |
 | --- | --- |
