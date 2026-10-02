@@ -231,16 +231,83 @@ fi
 # status is printed from inside, since not every `script` returns it. A case
 # that means a locale sets LC_ALL, which outranks any LC_CTYPE or LANG the
 # caller exported.
+#
+# A case takes seconds. One still running after `terminal_bound` seconds is
+# reported as `HANG in_terminal`, with the process tree under `script` (each
+# process's state and what it waits in) and what the terminal was sent so far.
+# Then its processes are killed, and so is this script, since a caller may hold
+# the output inside a second command substitution that would hide a failed
+# status. The watchdog is this shell polling, so it leaves nothing behind.
+readonly terminal_bound=120
 in_terminal() {
-    local cols=$1 command
+    local cols=$1 command sent pid status=0 deadline
     shift
     printf -v command '%q ' "$@"
     command="stty cols $cols rows 24; $command; echo status=\$?"
+    sent=$(mktemp "$scratch/terminal.XXXXXX")
     if script --version 2>/dev/null | grep -q util-linux; then
-        script -qec "$command" /dev/null </dev/null
+        script -qec "$command" /dev/null </dev/null >"$sent" &
     else
-        script -q /dev/null sh -c "$command" </dev/null
+        script -q /dev/null sh -c "$command" </dev/null >"$sent" &
     fi
+    pid=$!
+    deadline=$((SECONDS + terminal_bound))
+    while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do
+        sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        terminal_hung "$pid" "$sent" "$command"
+    fi
+    wait "$pid" || status=$?
+    cat "$sent"
+    rm -f -- "$sent"
+    return "$status"
+}
+
+# Reports and ends the case `in_terminal` started as `pid`: see above.
+terminal_hung() {
+    local pid=$1 sent=$2 command=$3 own_group tree groups p
+    local where="line ${BASH_LINENO[1]}"
+    [[ ${FUNCNAME[2]:-main} == main ]] ||
+        where+=" in ${FUNCNAME[2]}, called from line ${BASH_LINENO[2]}"
+    # `script` shares this script's process group, which is never signalled.
+    own_group=$(ps -o pgid= -p "$$" | tr -d ' ')
+    # `script`, everything under it, and every process in their groups but
+    # this script's: an orphan left in the terminal's group is still the case's.
+    tree=$(ps -A -o pid= -o ppid= -o pgid= | awk -v root="$pid" -v own="$own_group" '
+        { parent[$1] = $2; group[$1] = $3 }
+        END {
+            keep[root] = 1
+            do {
+                grew = 0
+                for (p in parent)
+                    if (!(p in keep) && (parent[p] in keep)) { keep[p] = 1; grew = 1 }
+            } while (grew)
+            for (p in keep) if ((p in group) && group[p] != own) groups[group[p]] = 1
+            for (p in group) if (group[p] in groups) keep[p] = 1
+            for (p in keep) if (p in group) print p, group[p]
+        }')
+    groups=$(printf '%s\n' "$tree" | awk -v own="$own_group" '$2 != own { print $2 }' | sort -u)
+    {
+        printf 'HANG in_terminal at %s: still running after %s seconds:\n    %s\n' \
+            "$where" "$terminal_bound" "$command"
+        echo 'processes:'
+        ps -o pid,ppid,pgid,stat,wchan,etime,command \
+            -p "$(printf '%s\n' "$tree" | awk '{ print $1 }' | paste -s -d, -)"
+        echo 'the terminal was sent, so far:'
+        cat -v "$sent"
+        echo
+    } >&2
+    for p in $groups; do
+        kill -KILL -- "-$p" 2>/dev/null || true
+    done
+    for p in $(printf '%s\n' "$tree" | awk '{ print $1 }'); do
+        kill -KILL "$p" 2>/dev/null || true
+    done
+    wait "$pid" 2>/dev/null || true
+    rm -f -- "$sent"
+    kill -TERM "$$"
+    exit 1
 }
 
 # Every check below names what it found, so a failure reads as the screen.
