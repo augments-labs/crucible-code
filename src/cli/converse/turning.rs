@@ -1293,7 +1293,8 @@ impl Queued {
     /// A frame of its own rather than a row under the word, because it is a
     /// second region and not a second line of the working row: what is in it is
     /// already typed and waiting, not the turn in front of it. The border takes
-    /// the accent the box below does, so the two read as the same kind of thing.
+    /// the colour the box below is framed in, so the two read as the same kind
+    /// of thing.
     ///
     /// As many lines as `spare` rows allow are named, each led by the mark a
     /// line is typed after — they are the reader's own words, waiting — and past

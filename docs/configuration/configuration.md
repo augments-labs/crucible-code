@@ -546,6 +546,19 @@ in goes blue and a line taken out goes amber), and `ansi` spends nothing but the
 sixteen colours your terminal already has, so your own terminal theme decides
 every hue.
 
+Every table spends colour the same way. A line has at most one thing in the
+accent, the one your eye should land on: the selected row, a tool call's mark, a
+key that opens something, the rule that opens a panel. A frame in the accent,
+such as the one around a question, is not counted against the lines inside it:
+its edges are the frame, and each line between them still has one accent at
+most. Colour that means
+something (a line added or taken out, success, trouble, a mode that lets
+crucible act without asking) means it in every table, and everything else is
+your own foreground or a quieter grey. Nothing is said by colour alone: every
+accent is also a mark or a place on the line, and every meaning also has a sign
+or a word, so a `colourblind` table, or `color` set to `never`, loses nothing.
+With no colour, an answer keeps the markdown markers it was written with.
+
 `/theme` picks one at the prompt and writes it here. It draws a diff and a
 prompt row under the list in whatever your mark is standing on, because a theme
 is a list of colours and nobody can picture one from its name.

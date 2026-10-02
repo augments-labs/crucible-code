@@ -845,3 +845,39 @@ fn a_link_is_the_accent_with_a_line_under_it_in_every_theme() {
         );
     }
 }
+
+#[test]
+fn every_theme_resolves_every_slot_the_colour_rule_uses_and_ansi_keeps_to_the_sixteen() {
+    // A slot a screen paints and a theme has no answer for is a span that
+    // reads as plain in that theme alone: the rule says which slot a span
+    // takes, and every theme has to say what that slot looks like. Ansi is
+    // the reader asking for their terminal's own sixteen, so no slot in it
+    // names one of the 256 or a channel value, at any rung or on any ground.
+    for theme in THEMES {
+        for depth in [Depth::Exact, Depth::Indexed, Depth::Basic] {
+            for ground in [None, Some((0, 0, 0)), Some((255, 255, 255))] {
+                let dark = wearing(depth, Theme::Dark, ground);
+                let worn = wearing(depth, theme, ground);
+
+                for slot in all() {
+                    let written = worn.open(slot);
+                    let written = written.as_str();
+
+                    assert!(
+                        dark.open(slot).as_str().is_empty() || !written.is_empty(),
+                        "{theme:?} at {depth:?} on {ground:?} leaves {slot:?} unresolved"
+                    );
+
+                    if theme == Theme::Ansi {
+                        for spent in ["38;2", "48;2", "38;5", "48;5"] {
+                            assert!(
+                                !written.contains(spent),
+                                "ansi at {depth:?} on {ground:?}: {slot:?} spelled {written:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

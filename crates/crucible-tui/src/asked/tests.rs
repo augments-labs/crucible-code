@@ -1038,3 +1038,16 @@ fn nothing_a_call_wrote_can_move_the_cursor_or_set_an_attribute() {
         );
     }
 }
+
+#[test]
+fn the_question_panel_follows_the_colour_rule() {
+    // The frame's edges are the frame, not a span of the row they hold: the
+    // eye lands on the caret, or on nothing, between them.
+    let answers = languages();
+    let stops = stops();
+    for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+        let (rows, _) = asked(&answers, &stops).within(columns, 30, glyphs);
+
+        crate::colour_rule::holds_framed("questions", &rows, |_| false);
+    }
+}

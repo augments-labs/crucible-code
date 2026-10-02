@@ -1421,3 +1421,33 @@ fn a_heading_is_still_a_heading_and_not_a_number() {
     assert_eq!(wrote(&said), "487 of them\n");
     assert!(points(&said).is_empty());
 }
+
+#[test]
+fn model_prose_is_plain_and_follows_the_colour_rule() {
+    // What a model says is read, not landed on: its prose is plain, and what
+    // it marks up takes the slots that mean something without the accent.
+    let said = whole(
+        "# Fixed\n\nThe test waits on a file the picker writes after it returns.\n\
+         I moved the wait into `wait_for_index`, see **the note** and \
+         [the issue](https://example.com/1).\n\n- one\n- two\n",
+    );
+    let prose = said
+        .iter()
+        .find(|(_, text)| text.contains("The test waits"))
+        .expect("the prose");
+    assert_eq!(prose.0, Slot::Plain, "{said:?}");
+
+    let mut rows = vec![crate::row::Row::new()];
+    for (slot, text) in &said {
+        for (at, line) in text.split('\n').enumerate() {
+            if at > 0 {
+                rows.push(crate::row::Row::new());
+            }
+            if let Some(row) = rows.last_mut() {
+                row.push(*slot, line);
+            }
+        }
+    }
+
+    crate::colour_rule::holds("model text", &rows, |_| false);
+}

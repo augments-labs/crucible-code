@@ -627,6 +627,49 @@ fn a_glyph_set_chosen_in_settings_is_the_one_the_next_answer_is_drawn_in() {
 }
 
 #[test]
+fn every_settings_view_follows_the_colour_rule() {
+    /// What brings the panel to one of the views checked.
+    type Opening = fn(&mut Panel);
+
+    // The marked row is the one line allowed its caret and its value both in
+    // the accent; every other row, on every tab, in a search and in an opened
+    // choice, lands the eye on one thing at most.
+    let terms = plain();
+    let counted = counted();
+    let views: [(&str, Opening); 5] = [
+        ("config", |_| {}),
+        ("usage", |panel| {
+            key(panel, Pressed::Tab);
+        }),
+        ("status", |panel| {
+            key(panel, Pressed::Cycle);
+        }),
+        ("search", |panel| {
+            key(panel, Pressed::Key(Key::Char('/')));
+            typed(panel, "the");
+        }),
+        ("choice", |panel| {
+            walk_to(panel, "Theme");
+            key(panel, Pressed::Key(Key::Enter));
+        }),
+    ];
+
+    for (name, view) in views {
+        for (columns, glyphs) in [(80, Glyphs::Unicode), (40, Glyphs::Ascii)] {
+            let mut panel = Panel::new(&terms, &counted);
+            view(&mut panel);
+            let rows = panel.laid(columns, 40, glyphs).0;
+
+            crate::cli::colour_rule::holds(
+                &format!("settings {name} at {columns}"),
+                &rows,
+                crate::cli::colour_rule::marked,
+            );
+        }
+    }
+}
+
+#[test]
 fn usage_tab_asks_the_plan_when_turned_to_and_draws_its_answer() {
     let (mut conversation, asked) = asking_plan();
     let terms = plain();

@@ -855,3 +855,66 @@ fn the_whole_picker_after_a_query_that_matched_nothing() {
 
     insta::assert_snapshot!(picture(&picker.within(100, 20, Glyphs::Unicode), 100));
 }
+
+#[test]
+fn the_resume_picker_follows_the_colour_rule() {
+    // A session's tail as the transcript draws it: a call's mark takes the
+    // accent, so a list row beside it must not take a second one unless it is
+    // the selected session's.
+    let preview: Vec<Row> = [
+        "Bash(scripts/smoke.sh v0.23.0 2>&1 | tail -12)",
+        "Read(src/main.rs)",
+        "Edit(CHANGELOG.md)",
+        "Grep(colour)",
+        "Bash(cargo test)",
+        "Write(notes.md)",
+    ]
+    .iter()
+    .flat_map(|said| {
+        [
+            Row::new()
+                .then(Slot::Accent, "●")
+                .then(Slot::Plain, " ")
+                .then(Slot::Strong, *said),
+            Row::new().then(Slot::Quiet, "  └ done"),
+        ]
+    })
+    .collect();
+    let resting = picker(&FIVE, &preview);
+    let renaming = Picker {
+        renaming: Some("Release 0.23.0 smoke"),
+        ..picker(&FIVE, &preview)
+    };
+
+    for (name, shown) in [("resume picker", resting), ("renaming", renaming)] {
+        let rows = shown.within(100, 30, Glyphs::Unicode);
+        // The marked session's title row: its caret, and the title being
+        // typed into while it is renamed.
+        let marked = |at: usize| {
+            rows.get(at)
+                .is_some_and(|row| row.text().starts_with("│ › "))
+        };
+
+        crate::colour_rule::holds(name, &rows, marked);
+    }
+
+    // The levels, on the list at rest: the selected session's caret is the
+    // accent, and when a session was last touched is quiet.
+    let rows = picker(&FIVE, &preview).within(100, 30, Glyphs::Unicode);
+    let slot_of = |text: &str| {
+        rows.iter()
+            .flat_map(Row::spans)
+            .find(|(_, said)| said.contains(text))
+            .map(|(slot, _)| slot)
+    };
+    assert_eq!(
+        slot_of("\u{203a}"),
+        Some(Slot::Accent),
+        "the selected row's caret"
+    );
+    assert_eq!(
+        slot_of("now \u{b7} main"),
+        Some(Slot::Quiet),
+        "when, and where"
+    );
+}
