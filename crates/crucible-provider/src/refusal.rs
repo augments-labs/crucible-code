@@ -29,17 +29,24 @@
 //! where the vendor puts it (see [`Overlong`]), read only from a body that
 //! arrived whole. Every other vendor's refusals are read by their code alone.
 //!
+//! A used-up plan is told apart too, because its remedy is a time rather than
+//! a change: the same request is refused until a window starts again, so it
+//! is never retried as if it were about the moment. It is told by the shape
+//! the vendor gives that refusal (see [`PlanRule`]), only where the vendor
+//! has one, and never by a status: a 429 is as often a moment's congestion.
+//!
 //! [`authorize`]: crucible_credentials::Credential::authorize
 
 use std::borrow::Cow;
 use std::io;
 #[cfg(test)]
 use std::io::Read;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crucible_credentials::Redactions;
 use crucible_models::ProviderError;
 use crucible_runtime::Cancel;
+use crucible_types::PlanWindows;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::transport::PostResponse;
@@ -183,6 +190,37 @@ pub(crate) type FastRule = fn(u16, &str) -> bool;
 /// be read from.
 pub(crate) type Overlong = fn(u16, &serde_json::Value) -> bool;
 
+/// Whether a refused body, read whole and parsed, is the vendor refusing the
+/// request because the plan behind the credential is used up, given when the
+/// response arrived.
+///
+/// Written as the vendor's own field for that refusal and nothing it says in
+/// words: the sentence is the vendor's and changes freely, and none of it is
+/// carried on. A body that did not arrive whole, or is not JSON, is never
+/// asked.
+pub(crate) type PlanRule = fn(&serde_json::Value, SystemTime) -> Option<UsedUp>;
+
+/// A vendor's refusal of a used-up plan, as its body says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UsedUp {
+    /// When the plan can be used again, where the body said in a form that
+    /// reads as an instant.
+    pub resets_at: Option<SystemTime>,
+}
+
+/// What a refused response is read for a used-up plan with.
+#[derive(Clone, Copy)]
+pub(crate) struct Plan {
+    /// The vendor's shape for that refusal.
+    pub(crate) rule: PlanRule,
+    /// When the response arrived, which a reset given as seconds to wait
+    /// counts from.
+    pub(crate) arrived: SystemTime,
+    /// What the refused response's head reported of the plan's windows, which
+    /// names the window that is used up.
+    pub(crate) reading: Option<PlanWindows>,
+}
+
 /// The refusals a vendor on [`refused_at`] tells apart in a shape of its own.
 #[derive(Clone, Copy)]
 pub(crate) struct Rules {
@@ -191,18 +229,25 @@ pub(crate) struct Rules {
     /// Its refusal of a request too large for the window, for a vendor that
     /// sends no code for it: see [`Overlong`].
     pub(crate) overlong: Option<Overlong>,
+    /// Its refusal of a used-up plan, where it has one: see [`PlanRule`].
+    pub(crate) plan: Option<Plan>,
 }
 
 /// [`refused`], for a request that may have asked for a fast form: a refusal
 /// `rules.fast` recognises is [`ProviderError::FastRefused`] rather than the
-/// failure it would otherwise be, and one `rules.overlong` recognises is
+/// failure it would otherwise be, one `rules.plan` recognises is
+/// [`ProviderError::PlanLimit`], and one `rules.overlong` recognises is
 /// [`ProviderError::WindowExceeded`].
 ///
 /// A path of its own rather than a parameter of [`refused`], so a provider
 /// that never asks for a fast form reads its refusals exactly as before.
 pub(crate) async fn refused_at(
     provider: &'static str,
-    Rules { fast, overlong }: Rules,
+    Rules {
+        fast,
+        overlong,
+        plan,
+    }: Rules,
     body: PostResponse,
     redactions: &Redactions,
     cancel: &Cancel,
@@ -213,24 +258,47 @@ pub(crate) async fn refused_at(
         redactions,
         cancel,
     };
-    let Some(fast) = fast else {
+    if fast.is_none() && plan.is_none() {
         return said_async(refusal, body, MAX_WAIT, Outgrew::words(overlong)).await;
-    };
+    }
     let mut said = Vec::new();
     let mut reading = body.into_reader().take(MAX_REFUSAL.saturating_add(1));
     let read = fill_async(&mut reading, &mut said, MAX_WAIT, cancel).await;
     let whole = usize::try_from(MAX_REFUSAL).is_ok_and(|most| said.len() <= most);
     if read.is_ok() && whole {
         let text = String::from_utf8_lossy(&said);
-        if fast(refusal.status, &text) {
+        if fast.is_some_and(|fast| fast(refusal.status, &text)) {
             return ProviderError::FastRefused {
                 provider,
                 message: explain(&text).into(),
             }
             .redacted(redactions);
         }
+        if let Some(plan) = plan
+            && let Some(error) = used_up(provider, plan, &text)
+        {
+            return error;
+        }
     }
     resolved(refusal, said, read, Outgrew::words(overlong))
+}
+
+/// The used-up plan `text` is, by `plan.rule`, named by the window the
+/// response's head reports used up; `None` where it is not one.
+///
+/// Nothing of `text` is kept, so there is nothing to redact.
+fn used_up(provider: &'static str, plan: Plan, text: &str) -> Option<ProviderError> {
+    let body = serde_json::from_str(text).ok()?;
+    let UsedUp { resets_at } = (plan.rule)(&body, plan.arrived)?;
+    Some(ProviderError::PlanLimit {
+        provider,
+        window: plan
+            .reading
+            .and_then(|reading| reading.exhausted(plan.arrived))
+            .map(|(window, _)| window),
+        resets_at,
+        reading: plan.reading.map(Box::new),
+    })
 }
 
 /// What a vendor reads in its refusals its own way.
