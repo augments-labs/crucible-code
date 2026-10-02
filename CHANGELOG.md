@@ -38,7 +38,7 @@ change in any release with no deprecation period.
 - **The installers show each step as it runs.** In a terminal, `install.sh`
   and `install.ps1` mark each of detect platform, download, verify checksum,
   unpack and install, draw a bar while the archive downloads, and end with
-  where crucible went and the line that puts it on `PATH`. Piped, or under
+  where crucible went and how to put it on `PATH`. Piped, or under
   `NO_COLOR` or `TERM=dumb`, they print one plain `install:` line per step, and
   a failure during one of those steps names it; flags, downloads, destinations
   and exit codes are unchanged.
