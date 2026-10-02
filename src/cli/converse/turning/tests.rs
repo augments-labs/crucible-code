@@ -1248,6 +1248,114 @@ fn a_queue_longer_than_the_panel_compacts_the_rest_to_a_count() {
 }
 
 #[test]
+fn one_waiting_prompt_is_told_the_key_that_opens_the_queue() {
+    // The gap this closes: the key appeared only once the box overflowed, so a
+    // reader with a single prompt waiting could not learn it can be taken
+    // back. The hint is inlaid in the bottom border, mirroring the count in
+    // the top one, and costs the box no row.
+    let said = queueing(&["and add a test for the windows path"], 80, 24);
+    let whole = said.join("\n");
+
+    let bottom = said
+        .iter()
+        .find(|row| row.starts_with('\u{2570}'))
+        .unwrap_or_else(|| panic!("no bottom edge in {whole}"));
+    assert!(
+        bottom.ends_with(" ctrl+q edit \u{2500}\u{256f}"),
+        "{bottom:?}"
+    );
+    assert_eq!(
+        said.iter().filter(|row| row.contains('\u{2500}')).count(),
+        2
+    );
+}
+
+#[test]
+fn the_queue_box_ends_the_footing_so_the_line_under_it_stands_directly_beneath() {
+    // The gap this closes: a blank row stood between the box's bottom edge and
+    // the window-left line, where the design draws the line directly under the
+    // edge. The blank parts the working row from the box below it; with the
+    // queue box standing it is the box that is that box's own, so nothing after
+    // it needs parting from.
+    for columns in [Prompt::FRAMED_AT, 40, 80] {
+        let said = queueing(&["one", "two"], columns, 24);
+        assert_eq!(
+            said.last().map(|row| row.starts_with('\u{2570}')),
+            Some(true),
+            "{columns}: {said:?}"
+        );
+    }
+}
+
+#[test]
+fn the_one_row_queue_count_keeps_the_blank_every_other_footing_ends_in() {
+    // The blank is dropped only under a frame, which needs no parting from the
+    // line below it. The one row that says how many are waiting, drawn where
+    // there is no room (or no width) for the frame, is a row of the footing
+    // like the working row and keeps the blank under it.
+    let said = queueing(&["one", "two"], Prompt::FRAMED_AT - 1, 24);
+
+    assert!(said.iter().any(|row| row.contains("2 queued")), "{said:?}");
+    assert!(
+        said.iter().all(|row| !row.starts_with('\u{256d}')),
+        "no frame in {said:?}"
+    );
+    assert_eq!(said.last(), Some(&String::new()), "{said:?}");
+}
+
+#[test]
+fn a_plan_under_the_queue_box_keeps_the_blank_under_the_footing() {
+    // The plan stands under the box rather than being the box's own, so the
+    // footing's last row is the blank that parts it from the line below.
+    let mut turning = Turning::started(None);
+    turning.queueing(["one", "two"].into_iter(), 80, Style::plain());
+
+    let said: Vec<String> = turning
+        .rows(&planned(2), "", 80, Style::plain(), 40)
+        .iter()
+        .map(Row::text)
+        .collect();
+
+    let edge = said
+        .iter()
+        .position(|row| row.starts_with('\u{2570}'))
+        .unwrap_or_else(|| panic!("no frame in {said:?}"));
+    assert!(
+        edge + 1 < said.len(),
+        "a plan stands under the box: {said:?}"
+    );
+    assert_eq!(said.last(), Some(&String::new()), "{said:?}");
+}
+
+#[test]
+fn the_queue_overflow_row_counts_and_leaves_the_key_to_the_border() {
+    // The key is named once, in the border, and the row says what it is for.
+    let said = queueing(&["one", "two", "three", "four", "five"], 80, 24);
+    let whole = said.join("\n");
+
+    assert!(whole.contains("\u{2026} +2 more "), "{whole}");
+    assert!(!whole.contains("(ctrl+q"), "{whole}");
+    assert_eq!(whole.matches("ctrl+q").count(), 1, "{whole}");
+}
+
+#[test]
+fn the_queue_key_hint_keeps_the_frame_square_down_to_the_narrowest_box() {
+    // The hint is drawn into the bottom edge, so it is the one row that could
+    // end a column long or short of its neighbours -- or be cut where it is
+    // not worth reading. At every width a frame is drawn it is whole or gone.
+    for columns in [Prompt::FRAMED_AT, 30, 40, 80] {
+        let said = queueing(&["one", "two", "three", "four", "five"], columns, 24);
+        let closes = said
+            .iter()
+            .find(|row| row.starts_with('\u{2570}'))
+            .unwrap_or_else(|| panic!("{columns}: no bottom edge in {said:?}"));
+
+        assert_eq!(crucible_tui::columns(closes), columns, "{closes:?}");
+        assert!(closes.contains(" ctrl+q edit "), "{columns}: {closes:?}");
+    }
+}
+
+#[test]
 fn an_empty_queue_draws_no_panel() {
     // Absent rather than blank. A frame around nothing is rows of the
     // window spent saying nothing, spent against the turn's own output.

@@ -80,9 +80,29 @@ const STOPS: &str = "esc to interrupt";
 /// more` row, and Ctrl+Q opens the list that holds them all.
 const NAMED: usize = 3;
 
+/// The key that opens the queue, and what it is for, as the bottom edge of the
+/// framed panel says them. The one-row count drawn where there is no room for a
+/// frame has no edge to carry them.
+///
+/// On the edge rather than in a row so that the hint costs the panel nothing:
+/// one prompt waiting is as much a queue as five, and it is the reader with one
+/// who has not yet found out it can be taken back.
+const OPENS: &str = "ctrl+q";
+/// What `OPENS` is for, in the word the bottom edge says after the key.
+const OPENS_TO: &str = "edit";
+
+/// What the hint spends on the bottom edge: the words, the space on either side
+/// of them, and the one stretch of edge that stands it off the corner.
+const HINT: usize = OPENS.len() + 1 + OPENS_TO.len() + INLAID;
+
+// A frame is drawn from `Prompt::FRAMED_AT` columns, and the hint is not cut
+// where it does not fit: it fits at the narrowest frame or this does not build.
+const _: () = assert!(Prompt::FRAMED_AT - 2 >= HINT);
+
 /// What the panel's last row says when the queue outgrew the names above it.
 ///
-/// The count is what the row is for; the key beside it is where the rest are.
+/// The count is what the row is for; the key that opens the rest is on the
+/// bottom edge, where it is for every queue and not only a long one.
 const MORE: &str = "more";
 
 /// The rows this puts above the box, blanks included.
@@ -892,10 +912,28 @@ impl Turning {
         self.left
     }
 
+    /// The row that says the turn is running, as the footing draws it.
+    ///
+    /// Also what the open queue keeps over its rule: the view stands where the
+    /// footing was, and this is the one row of it that says the turn behind the
+    /// view is still going. Read afresh each frame, so its clock goes on
+    /// counting while the view stands.
+    pub(super) fn working(&self, columns: usize, style: Style) -> Row {
+        Working {
+            doing: self.shown_doing().word(),
+            running: self.running(),
+            spent: self.spent,
+            stops: (self.doing != Doing::Interrupting).then_some(STOPS),
+        }
+        .row(columns, style.glyphs())
+    }
+
     /// The rows to put above the box, or none where the window has no room.
     ///
     /// A blank either side, so the rows belong to neither the turn's own output
-    /// above them nor the box below, and a blank between the call and the row
+    /// above them nor the box below (the blank under a framed queue box is the
+    /// exception: the frame needs no parting from the line under it, while the
+    /// one-row count keeps its blank), and a blank between the call and the row
     /// under it for the same reason: the call is a thing that is happening and
     /// the row is what is happening to the turn. The prompt waiting takes no
     /// blank above it, because it is a second line of the row rather than a
@@ -935,13 +973,6 @@ impl Turning {
         // the panel gives up a task.
         let mut panel = planning.rows(columns, room - ROWS - 1, style.glyphs());
         let room = room - panel.len();
-
-        let working = Working {
-            doing: self.shown_doing().word(),
-            running: self.running(),
-            spent: self.spent,
-            stops: (self.doing != Doing::Interrupting).then_some(STOPS),
-        };
 
         // What the call has to clear is taller where the queue panel below is
         // being drawn, since the two are standing in the same window. The panel
@@ -1017,7 +1048,7 @@ impl Turning {
         }
 
         rows.push(Row::new());
-        rows.push(working.row(columns, style.glyphs()));
+        rows.push(self.working(columns, style));
 
         // Under the word and with no blank between them, because it is a second
         // line of the same thing rather than a second thing beside it — the
@@ -1028,10 +1059,19 @@ impl Turning {
             rows.push(row);
         }
 
+        // The blank under the footing parts it from the line below it. The
+        // queue box is a frame of its own and needs no parting: left last, its
+        // bottom edge stands directly over the line under it. A plan under the
+        // box is a thing beside it, so that blank stays. So does the blank under
+        // the one row that only counts the queue: that is a row of the footing
+        // like the word above it, not a frame, and a frame is more than one row.
+        let boxed = panel_rows.len() > 1 && panel.is_empty();
         rows.extend(panel_rows);
 
         rows.append(&mut panel);
-        rows.push(Row::new());
+        if !boxed {
+            rows.push(Row::new());
+        }
 
         rows
     }
@@ -1198,9 +1238,11 @@ impl Queued {
     ///
     /// As many lines as `spare` rows allow are named, each led by the mark a
     /// line is typed after — they are the reader's own words, waiting — and past
-    /// that the rest are a count on the last row. An empty queue draws nothing
-    /// at all, and a window too short to open the frame keeps only the one line
-    /// that says anything is waiting, since that is the fact that cannot go.
+    /// that the rest are a count on the last row. The bottom edge names the key
+    /// that opens the whole queue, for one line as for many. An empty queue
+    /// draws nothing at all, and a window too short to open the frame keeps only
+    /// the one line that says anything is waiting, since that is the fact that
+    /// cannot go.
     fn rows(&self, spare: usize, columns: usize, style: Style) -> Vec<Row> {
         if self.count == 0 || spare == 0 {
             return Vec::new();
@@ -1289,7 +1331,7 @@ impl Queued {
         }
 
         if over > 0 {
-            let said = format!("… +{over} {MORE}  (ctrl+q to see all)");
+            let said = format!("… +{over} {MORE}");
             rows.push(Self::framed(
                 Row::new(),
                 Row::new().then(Slot::Quiet, draw::clipped(&said, inner, glyphs)),
@@ -1298,10 +1340,19 @@ impl Queued {
             ));
         }
 
+        // Stood off the corner by an edge and a space on each side, as the
+        // title is on the edge above. The key is the one accent on the row: it
+        // is the one thing on it to press.
         rows.push(
             Row::new()
                 .then(Prompt::BORDER, bl)
-                .then(Prompt::BORDER, edge.repeat(across))
+                .then(Prompt::BORDER, edge.repeat(across - HINT))
+                .then(Slot::Plain, " ")
+                .then(Slot::Accent, OPENS)
+                .then(Slot::Plain, " ")
+                .then(Slot::Quiet, OPENS_TO)
+                .then(Slot::Plain, " ")
+                .then(Prompt::BORDER, edge)
                 .then(Prompt::BORDER, br),
         );
 

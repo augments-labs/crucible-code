@@ -1,0 +1,12 @@
+---
+source: tests/whole_screen/main.rs
+expression: from_the_queue_box(&picture)
+---
+|╭─ 1 queued ───────────────────────────────────────────────────────────────────╮|
+|│ › and add a test for the windows path                                        │|
+|╰──────────────────────────────────────────────────────────────── ctrl+q edit ─╯|
+|                                                                 99% window left|
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ ›                                                                            │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|ask mode on (shift+tab to cycle) · 1 command           anthropic · claude-test-1|

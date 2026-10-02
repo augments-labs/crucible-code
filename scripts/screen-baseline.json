@@ -166,6 +166,18 @@
       "sha256": "24224ae8dc2b025e7ce004c5cc4a5f71ba8e64866755cac6cbd8a6ca1c7d0c71"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
+      "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
+      "opened": [],
+      "sha256": "e2e94472950e29daecfa31d3206d1e795081f75670baea10b400feb247165538"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
+      "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
+      "opened": [],
+      "sha256": "bc3069fce5f2ed2c61e22d043429ff821446f71df1cce1728afa034c633bf25d"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_opens_the_command_list_above_the_box.snap",
       "case": "a_slash_opens_the_command_list_above_the_box",
       "opened": [
@@ -664,6 +676,18 @@
         "Watched::open(&format!(\"login-ways-{held}-{columns}\"), columns, 24)"
       ],
       "sha256": "6aac0c3e289794ce4a226b4e26fffd533726b896c455a17a04bc0593a0df63e1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
+      "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
+      "opened": [],
+      "sha256": "5f330b6d68731f98f245d3ed39467c6af1bf5dbe9c97fa9cf041f08e0aceed47"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
+      "case": "the_open_queue_wraps_its_keys_in_a_narrow_window",
+      "opened": [],
+      "sha256": "60abf62dc90b3bbee2c63be4403f81106a7f729d949deaba517fb15306194892"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_provider_panel_reaches_a_turn_without_a_provider_being_named.snap",
