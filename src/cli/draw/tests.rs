@@ -1993,3 +1993,5 @@ fn a_change_offer_clipped_to_the_room_it_had_is_still_taken_off() {
 mod row_position;
 
 mod fast;
+
+mod recommended;

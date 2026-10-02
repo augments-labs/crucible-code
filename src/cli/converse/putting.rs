@@ -28,6 +28,8 @@
 //! rows it covered are back; what is left behind is the call's own result on the
 //! row under it, which is the bargain the permission panel already makes.
 
+use std::borrow::Cow;
+
 use crucible_tui::{
     Asked, Caret, Choice, Editor, Given, Key, Pressed, Renderer, Row, Stop, Terminal, Typed,
     Writing,
@@ -35,6 +37,7 @@ use crucible_tui::{
 use crucible_types::{Answer, Answered, Question};
 
 use crate::cli::Fatal;
+use crate::cli::draw;
 use crate::cli::style::Style;
 
 use super::region::{self, Ended, Moved, step};
@@ -119,20 +122,21 @@ impl Held {
 
     /// Every answer this question offers, the written one last.
     ///
-    /// `shown` is the specimens, already gathered by the caller: a `Choice`
-    /// borrows its rows, so they have to outlive the panel and cannot be built
-    /// here.
+    /// `shown` is the specimens and `named` the names as they are drawn, both
+    /// already gathered by the caller: a `Choice` borrows its rows and its
+    /// name, so they have to outlive the panel and cannot be built here.
     fn choices<'a>(
         &'a self,
         question: &'a Question,
         several: bool,
         shown: &'a [Vec<&'a str>],
+        named: &'a [Cow<'a, str>],
     ) -> Vec<Choice<'a>> {
         let mut choices: Vec<Choice<'a>> = question
             .answers()
             .enumerate()
             .map(|(at, answer)| Choice {
-                answer: answer.answer(),
+                answer: named.get(at).map_or_else(|| answer.answer(), Cow::as_ref),
                 says: answer.says(),
                 chosen: several.then(|| self.chosen.get(at).copied().unwrap_or_default()),
                 shows: shown.get(at).map_or(&[][..], Vec::as_slice),
@@ -363,7 +367,8 @@ fn drawn(
         .answers()
         .map(|answer| answer.shows().collect())
         .collect();
-    let answers = held.choices(question, several, &shown);
+    let named: Vec<Cow<'_, str>> = question.answers().map(draw::offered).collect();
+    let answers = held.choices(question, several, &shown, &named);
     let writing = standing.writing.map(|writer| {
         let line = match writer {
             Writer::Wrote => &held.wrote,

@@ -59,7 +59,7 @@ use crucible_tui::{
     Glyphs, Renderer, Row, Slot, Terminal, TerminalError, clip, columns, cut, fold,
 };
 use crucible_types::{
-    Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
+    Answer, Attachment, Change, Changed, Compacted, Compacting, Diff, Modality, Question,
     RecordedToolOutput, StopReason, ToolCall, ToolId,
 };
 use crucible_workspace::{Workspace, written};
@@ -82,6 +82,19 @@ pub(crate) use opening::{Opening, opening};
 /// The same two columns the reason and the answers are written behind, so the
 /// whole question reads as one block.
 const UNDER: &str = "  ";
+
+/// What an answer is called where it is drawn.
+///
+/// The name as the asker gave it, followed by the label where the asker marked
+/// it as the answer they would pick. The label is made here, for the row, and
+/// is in neither the name that is chosen nor the one handed back.
+pub(crate) fn offered(answer: &Answer) -> Cow<'_, str> {
+    if answer.is_recommended() {
+        Cow::Owned(format!("{} (Recommended)", answer.answer()))
+    } else {
+        Cow::Borrowed(answer.answer())
+    }
+}
 
 /// The narrowest a block's gutter of line numbers is drawn.
 ///
@@ -738,12 +751,12 @@ pub(crate) fn asking<T: Terminal>(
 
     for (number, answer) in question.answers().enumerate() {
         let said = if answer.says().is_empty() {
-            format!("{UNDER}{}. {}", number + 1, answer.answer())
+            format!("{UNDER}{}. {}", number + 1, offered(answer))
         } else {
             format!(
                 "{UNDER}{}. {} {} {}",
                 number + 1,
-                answer.answer(),
+                offered(answer),
                 style.glyphs().dash(),
                 answer.says()
             )
