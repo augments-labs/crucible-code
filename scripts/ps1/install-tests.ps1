@@ -25,13 +25,14 @@ function Assert-Lacks([string]$Text, [string]$Unwanted, [string]$Case) {
     if ($Text.Contains($Unwanted)) { Stop-Test "$Case`: did not expect '$Unwanted' in:`n$Text" }
 }
 
-# Runs the installer with `Arguments`, its output redirected to files, and
-# returns its status and what it printed on each stream.
-function Invoke-Installer([string[]]$Arguments) {
+# Runs the installer, or `Script` when given, with `Arguments`, its output
+# redirected to files, and returns its status and what it printed on each
+# stream.
+function Invoke-Installer([string[]]$Arguments, [string]$Script = $installer) {
     $out = Join-Path $root 'stdout.txt'
     $err = Join-Path $root 'stderr.txt'
     $quoted = @($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_ + '"' } else { $_ } })
-    $line = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$installer`" " + ($quoted -join ' ')
+    $line = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Script`" " + ($quoted -join ' ')
     $process = Start-Process -FilePath $shell -ArgumentList $line -NoNewWindow -Wait -PassThru `
         -RedirectStandardOutput $out -RedirectStandardError $err
     return [pscustomobject]@{
@@ -216,6 +217,29 @@ try {
     if ($run.Status -ne 2) { Stop-Test "a version with an escape sequence exited $($run.Status)" }
     Assert-Contains $run.Err 'install: invalid version 9.8.7?[31m' 'escape sequence in a reason'
     Assert-Lacks $run.Err $esc 'escape sequence in a reason'
+
+    # Run as a script block in the caller's PowerShell, as the documented
+    # `& ([scriptblock]::Create((irm ...)))` runs it, the installer leaves
+    # its status in LASTEXITCODE and returns to the caller, which goes on to
+    # choose its own exit status.
+    $caller = Join-Path $root 'caller.ps1'
+    [IO.File]::WriteAllText($caller, @'
+param([string]$Installer, [string]$Version, [string]$Archive, [string]$Checksums, [string]$Dir)
+$global:LASTEXITCODE = 99
+& ([scriptblock]::Create([IO.File]::ReadAllText($Installer))) -Version $Version -Archive $Archive -Checksums $Checksums -Dir $Dir
+[Console]::Out.WriteLine("returned with $LASTEXITCODE")
+exit 7
+'@)
+    $block = Join-Path $root 'script-block'
+    $run = Invoke-Installer @('-Installer', $installer, '-Version', $version, '-Archive', $archive,
+        '-Checksums', $sums, '-Dir', $block) $caller
+    if ($run.Status -ne 7) { Stop-Test "the installer as a script block ended its caller with $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Out 'returned with 0' 'script block'
+    foreach ($file in 'crucible.exe', 'crucible-sandbox-broker.exe', 'cru.exe') {
+        if (-not (Test-Path -LiteralPath (Join-Path $block $file) -PathType Leaf)) {
+            Stop-Test "the installer as a script block did not install $file"
+        }
+    }
 
     # Every install above ran without -AddToPath, and left PATH alone.
     if (-not (Test-UserPathAsFound)) { Stop-Test 'an install without -AddToPath changed the user PATH' }
