@@ -16,8 +16,8 @@ publish = false
 # than reviewed. Which edges are allowed is one list, in the crate-layering
 # section of `scripts/sh/repo-checks.sh`, checked against these manifests on
 # every run. It is not restated here: an arrow written down twice goes stale in
-# one of the two places without anything failing. What each crate is for is in
-# CLAUDE.md.
+# one of the two places without anything failing. What each crate is for is the
+# documentation that opens its `src/lib.rs`.
 #
 # `config` sits beside the others rather than above them: it reads files into
 # settings and hands them to the wiring, which is what applies them. Nothing
