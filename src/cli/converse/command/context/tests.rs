@@ -1,7 +1,6 @@
 use super::*;
 
 use crucible_client_api::{Model, Percent};
-use crucible_tui::Key;
 
 use super::super::{Command, MidTurn};
 
@@ -245,12 +244,19 @@ fn context_opens_while_a_turn_runs() {
 }
 
 #[test]
-fn context_closes_on_escape_alone_as_its_footer_says() {
-    // The footer names one key and the mockup gives the panel no other: enter,
-    // interrupt and end of input leave it standing, as any other key does.
-    assert_eq!(closing(&Pressed::Escape), Moved::Left);
+fn context_closes_on_escape_and_the_keys_every_panel_closes_on() {
+    // Escape is the key the footer names. Interrupt and end of input close
+    // every panel, so they close this one too; enter, as the mockup draws it,
+    // leaves it standing, as any other key does.
+    for pressed in [
+        Pressed::Escape,
+        Pressed::Key(Key::Interrupt),
+        Pressed::Key(Key::Eof),
+    ] {
+        assert_eq!(closing(&pressed), Moved::Left, "{pressed:?}");
+    }
     assert_eq!(closing(&Pressed::Resized), Moved::Redraw);
-    for key in [Key::Enter, Key::Interrupt, Key::Eof, Key::Char('q')] {
+    for key in [Key::Enter, Key::Char('q')] {
         assert_eq!(closing(&Pressed::Key(key)), Moved::Still, "{key:?}");
     }
 }

@@ -268,9 +268,10 @@ turn runs, the speed taken is asked for once the turn ends.
 
 ### `/context`
 
-<kbd>Esc</kbd> closes it, and a resize redraws it; no other key does anything.
-Typed while a turn runs, it stands over the turn with the figures of the last
-request that turn built.
+<kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
+redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
+runs, it stands over the turn with the figures of the last request that turn
+built.
 
 ### `/theme`
 
