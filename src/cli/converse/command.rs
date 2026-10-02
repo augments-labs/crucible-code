@@ -51,6 +51,7 @@ mod login;
 mod logout;
 mod model;
 pub(crate) mod notes;
+mod notes_list;
 mod resume;
 mod sandbox;
 mod theme;
@@ -63,7 +64,8 @@ mod theme;
 pub(super) enum Command {
     /// What these are.
     Help,
-    /// Every release crucible has had, or one of them in full.
+    /// A list of the releases to open one from, one of them in full, or every
+    /// release with `all`.
     ReleaseNotes,
     /// Which model answers.
     Model,
@@ -371,11 +373,11 @@ impl Command {
             }
             Self::Clear => MidTurn::Refused("starts a new session, leaving the one being answered"),
             Self::Exit => MidTurn::Refused("ends the session, turn and all"),
-            // Refused rather than printed under the tail: a thousand rows
-            // would part the answer being written, and they will be there to
-            // print once it is done.
+            // Refused rather than printed under the tail: a list standing over
+            // the answer being written, or every release printed into it,
+            // would part it, and either will be there once it is done.
             Self::ReleaseNotes => {
-                MidTurn::Refused("prints a thousand rows into the answer being written")
+                MidTurn::Refused("prints into, or stands over, the answer being written")
             }
         }
     }
@@ -746,14 +748,21 @@ pub(super) fn run<T: Terminal>(
     // The one answer not hung off the line that asked: a timeline has a rail
     // of its own down the left, and a thousand rows indented under a mark
     // would be a second one beside it. One release and the refusals are set
-    // apart the same way, as the list's look draws them.
+    // apart the same way, as the timeline's look draws them.
     if let Wanted::Known {
         command: Command::ReleaseNotes,
         rest,
     } = wanted
     {
-        notes::run(rest, renderer, terms.style().glyphs())?;
-        renderer.commit("")?;
+        // Nothing after it, and a keyboard to walk with: the list of releases.
+        // Anywhere it cannot be stood, or with no keyboard, the command prints
+        // what `/release-notes all` does.
+        let walked =
+            rest.trim().is_empty() && held.answers.keys && notes_list::run(renderer, terms)?;
+        if !walked {
+            notes::run(rest, renderer, terms.style().glyphs())?;
+            renderer.commit("")?;
+        }
         return Ok(Ran::Again);
     }
 
