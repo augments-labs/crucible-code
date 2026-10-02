@@ -303,7 +303,7 @@ impl Runner {
         }
         self.state
             .load
-            .requesting(&super::fixed(&self.agent, &self.state.tools));
+            .requesting(&super::Fixed::of(&self.agent, &self.state.tools));
 
         // Turns kept whole rather than messages, because that is the shape a
         // reader thinks in: the recap stands in for the front, and what is left
@@ -931,7 +931,7 @@ impl Runner {
         }
         self.state
             .load
-            .requesting(&super::fixed(&self.agent, &self.state.tools));
+            .requesting(&super::Fixed::of(&self.agent, &self.state.tools));
         true
     }
 }

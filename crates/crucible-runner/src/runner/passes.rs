@@ -284,7 +284,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(&super::fixed(&self.runner.agent, &tools));
+                .requesting(&super::Fixed::of(&self.runner.agent, &tools));
 
             // Worked out per pass rather than once, because what it is measured
             // against can be corrected mid-turn: a window learned from a
@@ -334,7 +334,7 @@ impl<'a> AgentLoop<'a> {
             counting.load = self.runner.state.load;
             counting
                 .load
-                .requesting(&super::fixed(&self.runner.agent, &tools));
+                .requesting(&super::Fixed::of(&self.runner.agent, &tools));
 
             let heard = match self
                 .runner

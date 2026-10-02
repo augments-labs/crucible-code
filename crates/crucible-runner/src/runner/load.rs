@@ -34,7 +34,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crucible_tools::ToolSourceKind;
+use crucible_agents::Agent;
+use crucible_tools::{ToolEntry, ToolSnapshot, ToolSourceKind};
 use crucible_types::{Calibration, Carried, Message, Spend, TOOL_RESULT_BYTES, ToolSchema};
 
 /// Bytes per token before any response has been seen.
@@ -121,6 +122,25 @@ pub(super) struct Fixed<'a> {
     /// The tool schemas advertised, each beside the kind of source its tool
     /// came from.
     pub(super) tools: Vec<(ToolSourceKind, ToolSchema<'a>)>,
+}
+
+impl<'a> Fixed<'a> {
+    /// What every request `agent` sends out of `tools` carries.
+    ///
+    /// The roster is the one the runner advertises, narrowed the same way.
+    pub(super) fn of(agent: &'a Agent, tools: &'a ToolSnapshot) -> Self {
+        Self {
+            system: agent.instructions(),
+            appended: agent.appended(),
+            tools: tools
+                .entries()
+                .iter()
+                .map(ToolEntry::descriptor)
+                .filter(|descriptor| agent.availability().offers(descriptor.name()))
+                .map(|descriptor| (descriptor.provenance().kind(), descriptor.advertised()))
+                .collect(),
+        }
+    }
 }
 
 /// The fixed request content, in bytes, by category.

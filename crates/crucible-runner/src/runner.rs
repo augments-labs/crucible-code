@@ -216,24 +216,6 @@ fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>
         .collect()
 }
 
-/// What every request `agent` sends out of `tools` carries before the
-/// transcript, each part beside the category `/context` shows it under.
-///
-/// The roster is the one [`advertising`] reads, and is narrowed the same way.
-fn fixed<'a>(agent: &'a Agent, tools: &'a ToolSnapshot) -> Fixed<'a> {
-    Fixed {
-        system: agent.instructions(),
-        appended: agent.appended(),
-        tools: tools
-            .entries()
-            .iter()
-            .map(ToolEntry::descriptor)
-            .filter(|descriptor| agent.availability().offers(descriptor.name()))
-            .map(|descriptor| (descriptor.provenance().kind(), descriptor.advertised()))
-            .collect(),
-    }
-}
-
 struct Tooling {
     source: Arc<dyn Toolset>,
     snapshot: ToolSnapshot,
@@ -321,7 +303,7 @@ impl Runner {
         runner
             .state
             .load
-            .requesting(&fixed(&runner.agent, &runner.state.tools));
+            .requesting(&Fixed::of(&runner.agent, &runner.state.tools));
         runner
     }
 
@@ -469,7 +451,7 @@ impl Runner {
         }
         self.state
             .load
-            .requesting(&fixed(&self.agent, &self.state.tools));
+            .requesting(&Fixed::of(&self.agent, &self.state.tools));
 
         // After the fixed content of this run's request is known, and never
         // before: what the log remembers is taken only where it still covers
@@ -830,7 +812,7 @@ impl Runner {
         self.agent = Arc::new(self.agent.telling(system));
         self.state
             .load
-            .requesting(&fixed(&self.agent, &self.state.tools));
+            .requesting(&Fixed::of(&self.agent, &self.state.tools));
     }
 
     /// Writes to a different vendor from the next turn on.
