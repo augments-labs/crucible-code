@@ -20,7 +20,7 @@
 use crucible_app::Conversation;
 use crucible_app::client::Performed;
 use crucible_client_api::{self as api, Category};
-use crucible_tui::{Bar, Fill, Glyphs, Key, Part, Pressed, Renderer, Row, Slot, Terminal};
+use crucible_tui::{Bar, Fill, Glyphs, Part, Pressed, Renderer, Row, Slot, Terminal};
 
 use crate::cli::Fatal;
 use crate::cli::client::astray;
@@ -96,12 +96,11 @@ fn stood<T: Terminal>(
     )
 }
 
-/// What a key does to the panel: escape closes it, as do the keys that close
-/// the refusal panel under the same footer; a new size redraws it; nothing
-/// else touches it.
+/// What a key does to the panel: escape, the one key its footer names, closes
+/// it; a new size redraws it; nothing else touches it.
 fn closing(pressed: &Pressed) -> Moved {
     match pressed {
-        Pressed::Escape | Pressed::Key(Key::Enter | Key::Interrupt | Key::Eof) => Moved::Left,
+        Pressed::Escape => Moved::Left,
         Pressed::Resized => Moved::Redraw,
         _ => Moved::Still,
     }
