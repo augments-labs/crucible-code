@@ -197,6 +197,7 @@ fn a_repository_without_other_checkouts_or_no_repository_adds_nothing() {
 /// What `read` answers, or `None` when it has not answered within a few
 /// seconds: a read that waits on a pipe never returns, and a bound held outside
 /// this test would leave the suite waiting instead of reporting.
+#[cfg(unix)]
 fn promptly<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     let (said, heard) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
