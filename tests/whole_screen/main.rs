@@ -561,11 +561,11 @@ fn a_bare_slash_is_the_list_opener_not_a_command() {
     let mut window = Watched::allowing("bare-slash", 80, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/", "/clear");
+    window.types_and_catches("/", "/help");
 
     // Enter on the bare slash: the list is still open and the box still holds
     // the slash — nothing was submitted.
-    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("\r", "/help");
     let still = window.picture();
     assert!(!still.contains("names no command"), "no refusal:\n{still}");
 }
@@ -580,8 +580,8 @@ fn a_bare_slash_mid_turn_is_neither_refused_nor_queued() {
     let mut window = Watched::allowing("bare-slash-kept", 80, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/", "/clear");
-    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("/", "/help");
+    window.types_and_catches("\r", "/help");
     window.types_and_catches("h", "› /h ");
 
     let still = window.picture();
@@ -839,8 +839,10 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
 
-    // `/` typed into the box opens the list above it.
-    window.types_and_catches("/", "/clear");
+    // `/` typed into the box opens the list above it. At twenty-four rows the
+    // running turn's footing leaves too little room for every command, so the
+    // list shows what fits and counts the rest on its last row.
+    window.types_and_catches("/", "more");
 
     insta::assert_snapshot!(on_the_first_beat(&window.picture()));
 }
@@ -4198,4 +4200,77 @@ fn context_stands_over_a_running_turn_with_the_figures_it_last_carried() {
     assert!(window_left(&before).is_some(), "{before}");
     assert_eq!(free_share(&picture), window_left(&before), "{picture}");
     insta::assert_snapshot!("context_mid_turn_80", on_the_first_beat(&picture));
+}
+
+// `/usage`: what the session has used, and the plan windows its vendor reported.
+
+/// `picture` with the two figures `/usage` reads off the wall clock written as
+/// `Ns`, the rest of each row as it was.
+///
+/// How long a case's requests took, and how long since its session started,
+/// are this machine's seconds today; what the case is about is the rows
+/// around them.
+fn timeless(picture: &str) -> String {
+    picture
+        .split('\n')
+        .map(|line| {
+            let Some(inner) = line.strip_prefix('|').and_then(|it| it.strip_suffix('|')) else {
+                return line.to_owned();
+            };
+            let Some(label) = ["API time", "Wall time"]
+                .into_iter()
+                .find(|label| inner.trim_start().starts_with(label))
+            else {
+                return line.to_owned();
+            };
+            let Some(at) = inner.find(label) else {
+                return line.to_owned();
+            };
+            let after = inner.get(at + label.len()..).unwrap_or_default();
+            let gap = after.len() - after.trim_start().len();
+            let kept = inner.get(..at + label.len() + gap).unwrap_or_default();
+            let width = inner.chars().count();
+            format!("|{:<width$}|", format!("{kept}Ns"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape() {
+    for columns in [80, 40] {
+        let vendor = Vendor::answering("Hello.");
+        let mut window = Watched::answering(&format!("usage-key-{columns}"), columns, 30, &vendor);
+        window.types_until("say hello\r", "Hello.");
+        window.types_until("/usage\r", "esc to close");
+
+        let picture = window.picture();
+        // A key is named for what it is, not for where it was read from.
+        assert!(picture.contains("Usage · anthropic · API key"), "{picture}");
+        assert!(!picture.contains("ANTHROPIC_API_KEY"), "{picture}");
+        assert!(picture.contains("Plan limits"), "{picture}");
+        assert!(picture.contains("limits not reported"), "{picture}");
+        assert!(!picture.contains("$0.00"), "{picture}");
+        insta::assert_snapshot!(format!("usage_key_{columns}"), timeless(&picture));
+
+        window.types_until("\x1b", "ask mode on");
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
+#[test]
+fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
+    let vendor = a_turn_still_running();
+    let mut window = Watched::allowing("usage-mid-turn", 80, 30, &vendor, "bash(*)");
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+
+    window.types_and_catches("/usage\r", "esc to close");
+    let picture = window.picture();
+    assert!(picture.contains("Plan limits"), "{picture}");
+    assert!(!picture.contains("can't"), "{picture}");
+    // Counted while the turn runs, from what it posts: the session had asked
+    // nothing before it.
+    assert!(picture.contains("0 in · 4 out"), "{picture}");
+    insta::assert_snapshot!("usage_mid_turn_80", timeless(&on_the_first_beat(&picture)));
 }

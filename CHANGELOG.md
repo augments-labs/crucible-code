@@ -15,6 +15,12 @@ change in any release with no deprecation period.
   schemas, MCP tool schemas, messages, the reserve and what is free, with
   tokens and share; free reads the same as `window left` on the prompt line.
   It opens mid-turn too, showing what the turn last reported.
+- **`/usage` shows what the session has used and how much of your plan is
+  gone.** Cost (`not priced` where the model has no price, never `$0.00`, and
+  `at least` once an answer is stopped before its cost is reported), request
+  and wall time, lines changed, tokens and the context bar, then a bar for
+  each plan window the ChatGPT sign-in reports, with its reset in local time.
+  Opening it sends no request; an API key says `limits not reported`.
 - **`/release-notes` opens a list of releases to choose from.** It shows the
   eight newest with their dates and entry counts, a row that reveals the rest,
   and Enter prints the chosen release alone. `/release-notes <version>` is
@@ -69,6 +75,10 @@ change in any release with no deprecation period.
   tools sent with every request are shorter, as are the compaction request and
   the tools found by search, with no instruction dropped and no tool, argument
   or choice renamed.
+- **The command list opens in a short window, scrolling with a count.** Where
+  there is no room for every command, as at 24 rows while a turn runs, it shows
+  what fits and ends on a quiet `↓ 2 more` row, with `↑ N more` over it once
+  <kbd>↓</kbd> has walked it down. It used to stay closed there.
 
 ### Fixed
 

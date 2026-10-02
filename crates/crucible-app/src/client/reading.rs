@@ -6,14 +6,16 @@
 //! bounded things about each that the contract has a word for, and an event
 //! with no word — a sandbox fact, a cache fact, a receipt — is not sent.
 
+use std::time::{Duration, UNIX_EPOCH};
+
 use crucible_client_api as api;
 use crucible_client_api::{
     Capabilities, Capability, Model, Name, Percent, Problem, Progress, Snapshot, Stop, Text,
 };
 use crucible_models::{Effort, Served, Speed};
-use crucible_runner::{Breakdown, Category, Event};
+use crucible_runner::{Breakdown, Category, Event, SessionCost, Totals};
 use crucible_tools::Mode;
-use crucible_types::StopReason;
+use crucible_types::{CostAmount, PlanWindows, StopReason, Window};
 
 use crate::Conversation;
 use crate::switching::Retained;
@@ -97,6 +99,11 @@ pub fn progress(capabilities: Capabilities, event: &Event) -> Option<Progress> {
         // runs; the terminal takes the same figures from the runner's event.
         // The model is the snapshot's to say.
         Event::Carried { breakdown } => Progress::Context(counted(breakdown)),
+        // What a client with no terminal reads as `/usage` while a turn runs,
+        // beside the context above: the session's totals as each response or
+        // edit moved them, and the plan windows a response carried.
+        Event::Used { totals } => Progress::Used(used(totals)),
+        Event::PlanLimits { windows } => Progress::Limits(limits(windows)),
         Event::TurnFinished { turn, stop } => Progress::Finished {
             turn: u64::from(turn.get()),
             stop: self::stop(*stop),
@@ -128,6 +135,92 @@ pub fn context(model: &str, breakdown: &Breakdown) -> api::Context {
         model: Model::new(model),
         ..counted(breakdown)
     }
+}
+
+/// What a session has used, and the plan windows its vendor last reported,
+/// as a client reads them.
+///
+/// Every figure is one the runner already holds: reading this sends nothing
+/// anywhere, so no request is made to learn a limit. The wall time is read as
+/// this is called. Called between turns by [`perform`](super::perform), and
+/// by the terminal mid-turn with the figures that turn last reported; a client
+/// with no terminal is streamed the same figures by [`progress`].
+#[must_use]
+pub fn usage(
+    model: &str,
+    breakdown: &Breakdown,
+    totals: &Totals,
+    limits: Option<&PlanWindows>,
+) -> api::Usage {
+    api::Usage {
+        used: used(totals),
+        context: context(model, breakdown),
+        limits: limits.map_or_else(api::Limits::default, self::limits),
+    }
+}
+
+/// What the session's requests and edits have added up to, as a client reads
+/// it. The wall time is read as this is called: as the response ended or the
+/// edit counted, for one streamed mid-turn.
+fn used(totals: &Totals) -> api::Used {
+    let millis = |of: Duration| u64::try_from(of.as_millis()).unwrap_or(u64::MAX);
+    api::Used {
+        cost: cost(totals.cost()),
+        api_ms: millis(totals.api()),
+        wall_ms: millis(totals.started().elapsed()),
+        added: totals.added(),
+        removed: totals.removed(),
+        input: totals.input(),
+        output: totals.output(),
+        cache_read: totals.cache_read(),
+        cache_write: totals.cache_write(),
+    }
+}
+
+/// A session's cost as it crosses, in millionths of its currency.
+pub(super) fn cost(cost: SessionCost) -> api::Cost {
+    match cost {
+        SessionCost::Unspent => api::Cost::Unspent,
+        SessionCost::Priced(amount) => stated(amount)
+            .map_or(api::Cost::NotPriced, |(currency, micros)| {
+                api::Cost::Priced { currency, micros }
+            }),
+        SessionCost::AtLeast(amount) => stated(amount)
+            .map_or(api::Cost::NotPriced, |(currency, micros)| {
+                api::Cost::AtLeast { currency, micros }
+            }),
+        SessionCost::NotPriced => api::Cost::NotPriced,
+    }
+}
+
+/// An amount as its currency's code and millionths of it, where it can be
+/// stated.
+fn stated(amount: CostAmount) -> Option<(Name, u64)> {
+    // A femtocurrency is a billionth of a micro. A sum too large for the
+    // contract, or under a code that is not a name, is one nobody can read,
+    // so it is not stated: a capped figure would read as what was spent.
+    let micros = u64::try_from(amount.femtocurrency() / 1_000_000_000).ok()?;
+    Some((Name::new(amount.currency().as_str()).ok()?, micros))
+}
+
+/// Every window a vendor reported, each placed by name.
+pub(super) fn limits(windows: &PlanWindows) -> api::Limits {
+    let mut limits = api::Limits::default();
+    for (window, reading) in windows.reported() {
+        let limit = Percent::new(reading.percent()).map(|used| api::Limit {
+            used,
+            resets_at: reading
+                .resets_at()
+                .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+                .map(|since| since.as_secs()),
+        });
+        match window {
+            Window::FiveHour => limits.five_hour = limit,
+            Window::Weekly => limits.weekly = limit,
+            Window::Monthly => limits.monthly = limit,
+        }
+    }
+    limits
 }
 
 /// The parts of `breakdown`, with no model named.
@@ -240,3 +333,6 @@ pub const fn rung(effort: Effort) -> api::Rung {
         Effort::Max => api::Rung::Max,
     }
 }
+
+#[cfg(test)]
+mod tests;

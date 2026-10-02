@@ -477,6 +477,20 @@ impl<'a> AgentLoop<'a> {
 
             bounds.tool_output = bounds.tool_output.saturating_add(output_bytes);
 
+            // Counted here, while the results still say what each edit
+            // changed; the transcript keeps the counts and not the lines.
+            let edits = results.iter().filter_map(|result| result.output.changed());
+            let mut edited = false;
+            for changed in edits {
+                self.runner.state.totals.changed(changed);
+                edited = true;
+            }
+            if edited {
+                events.post(Event::Used {
+                    totals: self.runner.state.totals,
+                });
+            }
+
             self.runner
                 .record(run.ancestry(), Message::ToolResults(results))
                 .await?;

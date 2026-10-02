@@ -128,6 +128,7 @@ pub async fn turn(
         | Command::Help
         | Command::ReleaseNotes { .. }
         | Command::Context
+        | Command::Usage
         | Command::Exit => Ended::Refused(ErrorCode::Busy.into()),
     }
 }
@@ -173,6 +174,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         | Command::Help
         | Command::ReleaseNotes { .. }
         | Command::Context
+        | Command::Usage
         | Command::Exit => Outcome::Refused(ErrorCode::Busy.into()),
     }
 }

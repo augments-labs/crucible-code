@@ -34,6 +34,7 @@ pub(crate) mod wire;
 
 use std::fmt;
 use std::marker::PhantomData;
+use std::time::SystemTime;
 
 use crucible_credentials::{Credential, Outgoing, Redactions};
 use crucible_models::{
@@ -42,7 +43,7 @@ use crucible_models::{
 };
 use crucible_runtime::{BoxFuture, Cancel};
 use crucible_types::{
-    ContinuationScope, CredentialScopeId, Modalities, PricingDate, PricingError,
+    ContinuationScope, CredentialScopeId, Modalities, PlanWindows, PricingDate, PricingError,
     PromptCacheEncoding, PromptCacheRetentionClass,
 };
 use serde_json::Value;
@@ -51,8 +52,8 @@ use crate::endpoint::Endpoint;
 use crate::json::Object;
 use crate::refusal::{Rules, refused_at};
 use crate::sse::SseEvent;
-use crate::stream::Response;
-use crate::transport::Transport;
+use crate::stream::{Limited, Response};
+use crate::transport::{Named, Transport};
 
 /// What writes a field the vendor's automatic prefix cache reads, into the
 /// body being written.
@@ -232,6 +233,21 @@ pub trait Dialect: Sized + Send + Sync + 'static {
     /// The tier an event says the answer was served at, where it says one.
     fn served(data: &str) -> Option<Served> {
         let _ = data;
+        None
+    }
+
+    /// The response headers `route` reports its subscription's usage windows
+    /// in, which the transport hands back and nothing else. None, by default.
+    fn limit_headers(route: Self::Route) -> &'static [&'static str] {
+        let _ = route;
+        &[]
+    }
+
+    /// The usage windows `named`, the headers [`Self::limit_headers`] named,
+    /// say, read from a response that arrived at `arrived`; `None` where they
+    /// report no window crucible knows.
+    fn limits(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
+        let _ = (named, arrived);
         None
     }
 
@@ -507,9 +523,17 @@ impl<D: Dialect> Provider for Responses<D> {
                 fast,
             )?;
 
+            // Only the vendor's own services are read for their windows: what a
+            // gateway puts in a header is not the vendor's to say.
             let response = self
                 .transport
-                .post(self.endpoint.as_str(), &mut outgoing, body, cancel)
+                .post_reading(
+                    self.endpoint.as_str(),
+                    &mut outgoing,
+                    body,
+                    cancel,
+                    self.vendor().map_or(&[][..], D::limit_headers),
+                )
                 .await;
             let redactions = outgoing.redactions();
             let response =
@@ -538,12 +562,20 @@ impl<D: Dialect> Provider for Responses<D> {
                 });
             }
 
-            Ok(Box::new(Response::with_wire(
+            let limits = self
+                .vendor()
+                .filter(|route| !D::limit_headers(*route).is_empty())
+                .and_then(|_| D::limits(response.named(), SystemTime::now()));
+            let response = Response::with_wire(
                 response.into_reader(),
                 cancel.clone(),
                 redactions,
                 wire::Narration::<D>::for_request(&request, scope)?,
-            )) as Box<dyn DeltaStream>)
+            );
+            Ok(match limits {
+                Some(limits) => Box::new(Limited::new(response, limits)) as Box<dyn DeltaStream>,
+                None => Box::new(response),
+            })
         })
     }
 }

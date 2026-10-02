@@ -4,7 +4,8 @@
 //! response and sends one for the other, and `Responses<Gpt>` is what ships.
 //! What is OpenAI's is here: its two addresses and which of its services each
 //! one is, the parts of the body only its own routes accept, its fast form (in
-//! [`fast`]), what its cache is known to do and what each model costs. Two
+//! [`fast`]), the usage windows its plan backend reports (in [`rate_limits`]),
+//! what its cache is known to do and what each model costs. Two
 //! addresses serve this protocol and they do not accept the same body, so the
 //! address is also what [`Serving`] is read off on the way out.
 //!
@@ -46,8 +47,13 @@ mod fast_tests;
 mod model_tests;
 #[cfg(test)]
 mod newer_tests;
+mod rate_limits;
+#[cfg(test)]
+mod rate_limits_tests;
 mod stream;
 mod wire;
+
+use std::time::SystemTime;
 
 #[cfg(test)]
 use crucible_models::Provider;
@@ -59,14 +65,15 @@ use crucible_models::{
 #[cfg(test)]
 use crucible_runtime::Cancel;
 use crucible_types::{
-    ContinuationScope, Modalities, Modality, PricingCurrency, PricingDate, PricingError,
-    PricingUnit, PromptCacheRetentionClass, PromptCacheUsageReporting,
+    ContinuationScope, Modalities, Modality, PlanWindows, PricingCurrency, PricingDate,
+    PricingError, PricingUnit, PromptCacheRetentionClass, PromptCacheUsageReporting,
 };
 
 use crate::endpoint::Endpoint;
 use crate::json::Object;
 use crate::responses::{Dialect, Hint, Priced, Replay, Responses};
 use crate::sse::SseEvent;
+use crate::transport::Named;
 
 /// What this provider is called, in errors and in the status line.
 const NAME: &str = "openai";
@@ -234,6 +241,14 @@ impl Dialect for Gpt {
 
     fn served(data: &str) -> Option<Served> {
         fast::served(data)
+    }
+
+    fn limit_headers(route: Serving) -> &'static [&'static str] {
+        rate_limits::headers(route)
+    }
+
+    fn limits(named: &Named, arrived: SystemTime) -> Option<PlanWindows> {
+        rate_limits::read(named, arrived)
     }
 
     fn prompt_cache(route: Serving, model: &str) -> PromptCacheCapabilities {

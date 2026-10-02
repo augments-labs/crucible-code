@@ -51,5 +51,7 @@ pub use events::{Event, EventEnvelope, Post, Reporter, TurnError};
 pub use outcome::{RunResult, RunStatus, Turned};
 pub use policy::{Bounds, Compaction, MAXIMUM_TOOL_CONCURRENCY, Retry, RunPolicy, ToolScheduling};
 pub use runner::attachments;
-pub use runner::{Breakdown, Category, PromptCacheCleanup, RunState, Runner, TOOL_RUNS};
+pub use runner::{
+    Breakdown, Category, PromptCacheCleanup, RunState, Runner, SessionCost, TOOL_RUNS, Totals,
+};
 pub use tools::Tools;

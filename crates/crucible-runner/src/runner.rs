@@ -39,7 +39,7 @@
 
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crucible_context::{ContextSection, PermissionsSection, Room};
 use crucible_models::{
@@ -54,7 +54,7 @@ use crucible_tools::{
     Toolset, ToolsetContext,
 };
 use crucible_types::{
-    Attachment, Compacting, Message, Modalities, PromptCacheEncoding, PromptCacheFact,
+    Attachment, Compacting, Message, Modalities, PlanWindows, PromptCacheEncoding, PromptCacheFact,
     PromptCacheOutcome, PromptCacheRequestDisposition, PromptCacheRequestFact,
     PromptCacheResourceError, PromptCacheResourceRecord, PromptCacheRetentionClass,
     PromptCacheUsageFact, PromptCacheUsageReporting, ProviderUsage, Spend, StopReason, ToolCall,
@@ -83,6 +83,7 @@ mod load;
 mod passes;
 mod record;
 mod state;
+mod totals;
 mod work;
 
 use answer::Answer;
@@ -92,6 +93,7 @@ use load::{Counting, Fixed, Load};
 use passes::AgentLoop;
 use state::Judged;
 pub use state::RunState;
+pub use totals::{SessionCost, Totals};
 pub use work::TOOL_RUNS;
 use work::{Went, Work};
 
@@ -464,11 +466,17 @@ impl Runner {
     /// of that kind — it is where this process is being run, it is on screen at
     /// all times, and a session that quietly moved it would be the one place
     /// the row under the box could be wrong.
+    ///
+    /// What the session has used starts again from nothing: [`Runner::totals`]
+    /// is this process's count of the session it is on, and the one picked up
+    /// kept no count of its own. The plan windows stay, since they belong to
+    /// the credential, which has not changed.
     pub fn pick_up(&mut self, store: Arc<dyn JournalStore>, transcript: Transcript) {
         self.permission.forget();
         self.state.forget_checked();
         self.state.turn = Self::counting(&transcript);
         self.state.transcript = transcript;
+        self.state.totals = Totals::new();
 
         // Before the recount rather than after it: what the session picked up
         // remembers about its own load is part of what is being recounted.
@@ -579,6 +587,28 @@ impl Runner {
     #[must_use]
     pub fn breakdown(&self) -> Breakdown {
         self.breakdown_under(self.policy.compaction)
+    }
+
+    /// What the session has used so far: tokens, cost, time waiting on
+    /// requests, and lines edits changed.
+    ///
+    /// The between-turn read `/usage` draws. A turn reports the same value as
+    /// [`Event::Used`] while it runs.
+    #[must_use]
+    pub const fn totals(&self) -> Totals {
+        self.state.totals
+    }
+
+    /// The plan windows the last response from the credential in force said
+    /// it had used, where its vendor reports them on responses.
+    ///
+    /// Read off a response that was sent for a turn; nothing is ever asked to
+    /// learn it. `None` until such a response arrives, for a vendor or a
+    /// credential that reports none, and again once the model or the provider
+    /// changes.
+    #[must_use]
+    pub const fn plan_limits(&self) -> Option<PlanWindows> {
+        self.state.limits
     }
 
     /// The same, against the compaction answer given; the one reader both the
@@ -771,6 +801,12 @@ impl Runner {
             accepts,
             effort: self.agent.model().effort,
         };
+        // A window is counted for a credential's use of a family of models,
+        // and which family another model is counted under is the vendor's to
+        // say and not reported. A reading from before is no reading for this.
+        if self.agent.model().name != aimed.name {
+            self.state.limits = None;
+        }
         self.agent = Arc::new(self.agent.aimed(aimed));
         self.state.window = window;
         self.state.load.reestimated();
@@ -822,6 +858,9 @@ impl Runner {
         let clearing = self.untransferable(0, provider.as_ref(), Some(self.provider.as_ref()));
 
         self.provider = provider;
+        // The windows read were the last credential's. This one's are
+        // unknown until a response of its own reports them.
+        self.state.limits = None;
         // As though a report had measured every message: the estimate is taken
         // again from the byte total below, and that total follows every message.
         self.clear_untransferable(&clearing, self.state.transcript.messages().len());
@@ -1403,7 +1442,14 @@ impl Runner {
                 listening.run.policy().bounds.response_bytes,
             );
 
-            let problem = match self.hearing(&mut answer, &mut listening).await {
+            let asked = Instant::now();
+            let heard = self.hearing(&mut answer, &mut listening).await;
+            self.answered(
+                asked,
+                listening.run.reporting(),
+                matches!(heard, Ok(stop) if stop != StopReason::Cancelled),
+            );
+            let problem = match heard {
                 Ok(said) => return Ok((answer, said)),
                 Err(problem) => problem,
             };
@@ -1674,23 +1720,23 @@ impl Runner {
                 }),
             )
             .await;
-            (
-                streamed?,
-                CacheObservation {
-                    attempt: cache.attempt,
-                    reporting: cache.capabilities.usage(),
-                    model_revision: cache.capabilities.model_revision(),
-                    retention: cache
-                        .selection
-                        .selected()
-                        .map_or(cache.policy.retention().class(), |selected| {
-                            selected.retention()
-                        }),
-                    pricing_date,
-                },
-            )
+            let observation = CacheObservation {
+                attempt: cache.attempt,
+                reporting: cache.capabilities.usage(),
+                model_revision: cache.capabilities.model_revision(),
+                retention: cache
+                    .selection
+                    .selected()
+                    .map_or(cache.policy.retention().class(), |selected| {
+                        selected.retention()
+                    }),
+                pricing_date,
+            };
+            self.went_out(disposition, observation);
+            (streamed?, observation)
         };
 
+        self.limited(stream.limits(), listening.run.reporting());
         self.hear(stream.as_mut(), answer, listening, cache_observation)
             .await?;
         self.pace.served = stream.served();
@@ -1701,6 +1747,87 @@ impl Runner {
             return Ok(StopReason::Cancelled);
         }
         answer.finalize().map_err(TurnError::from)
+    }
+
+    /// Notes, for the session's cost, whether the model a request that may
+    /// have reached it has a price.
+    ///
+    /// Asked of the smallest band: whether a model is priced, and in which
+    /// currency, does not depend on how much is sent. A request that never
+    /// went out, or that the provider turned away, is no response and is
+    /// left out.
+    fn went_out(
+        &mut self,
+        disposition: PromptCacheRequestDisposition,
+        observation: CacheObservation,
+    ) {
+        match disposition {
+            PromptCacheRequestDisposition::Accepted | PromptCacheRequestDisposition::Unknown => {
+                let record = self
+                    .provider
+                    .prompt_cache_pricing(
+                        &self.agent.model().name,
+                        observation.model_revision,
+                        Some(0),
+                        observation.retention,
+                        observation.pricing_date,
+                    )
+                    .ok()
+                    .flatten();
+                self.state.totals.asked(totals::Listed::of(record.as_ref()));
+            }
+            PromptCacheRequestDisposition::NotSent | PromptCacheRequestDisposition::Rejected => {}
+        }
+    }
+
+    /// What one usage report costs, as a pair: the first is the itemized
+    /// cost recorded on the prompt-cache attempt, and the second is the price
+    /// [`Totals`] adds into the session's cost.
+    fn priced(
+        &self,
+        usage: &ProviderUsage,
+        observation: CacheObservation,
+    ) -> (UsageCost, totals::Price) {
+        let record = self
+            .provider
+            .prompt_cache_pricing(
+                &self.agent.model().name,
+                observation.model_revision,
+                usage.input.total,
+                observation.retention,
+                observation.pricing_date,
+            )
+            .ok()
+            .flatten();
+        let cost = record
+            .and_then(|pricing| pricing.cost(usage).ok())
+            .unwrap_or(UsageCost::UNKNOWN);
+        (cost, totals::Price::of(record.as_ref(), usage))
+    }
+
+    /// Counts a response that has ended, however it ended, and says what the
+    /// session has used now. `completed` where the provider said it was done.
+    ///
+    /// A response that failed part way was still spent: what it reported
+    /// before it broke is counted with the rest.
+    fn answered(&mut self, asked: Instant, events: Reporter<'_>, completed: bool) {
+        self.state.totals.answered(asked.elapsed(), completed);
+        events.post(Event::Used {
+            totals: self.state.totals,
+        });
+    }
+
+    /// Keeps the plan windows a response's headers reported, and says so.
+    ///
+    /// Read as the response opens, since headers arrive before any of the
+    /// body: a turn the user stops still leaves the reading its response
+    /// carried. A response that reported none leaves the last reading
+    /// standing, because it said nothing about the windows.
+    fn limited(&mut self, windows: Option<PlanWindows>, events: Reporter<'_>) {
+        if let Some(windows) = windows {
+            self.state.limits = Some(windows);
+            events.post(Event::PlanLimits { windows });
+        }
     }
 
     /// Whether this failure, on this much of an answer, is worth asking again.
@@ -1803,19 +1930,8 @@ impl Runner {
                             counting.window = None;
                         }
                     }
-                    let cost = self
-                        .provider
-                        .prompt_cache_pricing(
-                            &self.agent.model().name,
-                            cache_observation.model_revision,
-                            usage.input.total,
-                            cache_observation.retention,
-                            cache_observation.pricing_date,
-                        )
-                        .ok()
-                        .flatten()
-                        .and_then(|pricing| pricing.cost(&usage).ok())
-                        .unwrap_or(UsageCost::UNKNOWN);
+                    let (cost, price) = self.priced(&usage, cache_observation);
+                    self.state.totals.used(&usage, price);
                     let outcome = usage.input.outcome(cache_observation.reporting);
                     if let Some(cache) = self
                         .state
@@ -1844,6 +1960,7 @@ impl Runner {
                 Delta::Spent(said) => {
                     counting.spent = before.and(said);
                     counting.load.spent(said);
+                    self.state.totals.spent(said.tokens());
                     events.post(Event::Spent {
                         spend: counting.spent,
                     });
@@ -1861,6 +1978,7 @@ impl Runner {
                 // running sum of them would describe a session nobody had.
                 Delta::Carried(carried) => {
                     counting.load.carried(carried);
+                    self.state.totals.carried(carried.tokens());
 
                     // A request that carried more than this model was believed
                     // to accept is that belief disproved by the only authority

@@ -95,10 +95,12 @@ it](../getting-started/getting-started.md#run-it) tells the longer story.
 While the box holds one word starting with `/`, the commands whose names begin
 with it stand in a list above the box, and a bare `/` shows all of them.
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list and <kbd>Enter</kbd> runs the
-marked command. The list is not drawn where there is no room for the whole
-of it, but it is still there: <kbd>↑</kbd> and <kbd>↓</kbd> still move its
-unseen mark, and <kbd>Enter</kbd> runs the marked command rather than the
-word as typed. The commands themselves are under
+marked command rather than the word as typed. Where there is no room for the
+whole of it, it shows as many commands as fit and ends on a row saying how
+many more there are, `↓ 2 more`; once <kbd>↓</kbd> walks the mark past the
+last one shown, the list moves with it and a `↑ N more` row stands over it.
+Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
+<kbd>↓</kbd> still move its unseen mark. The commands themselves are under
 [Commands](../getting-started/getting-started.md#commands).
 
 ### Other keys at the prompt
@@ -273,6 +275,13 @@ turn runs, the speed taken is asked for once the turn ends.
 redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
 runs, it stands over the turn with the figures that turn last reported, which
 include anything it has recorded since its last request.
+
+### `/usage`
+
+<kbd>Esc</kbd>, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+D</kbd> close it, and a resize
+redraws it; <kbd>Enter</kbd> and every other key do nothing. Typed while a turn
+runs, it stands over the turn with the totals and plan windows that turn last
+reported.
 
 ### `/theme`
 

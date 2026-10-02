@@ -183,7 +183,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "9649af7c403f61a5542c21c033683cafad6e3a73c41b164b47000953fa679bfb"
+      "sha256": "8afd17957a4893a14455306192733764ad91b35900eafb114f171b43adf37c42"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -191,7 +191,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "18a8502385ad42a3d6542e22d68a54c1792f2776ac79393169dba3a6f50de5e4"
+      "sha256": "4732e6fc880bea4f43446eab0ffaf8b56e3746f4c35ff5650c886155ac7f9575"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -784,6 +784,32 @@
       "case": "the_scroll_rail_grows_the_current_prompt_s_mark_on_the_thumb_in_a_narrow_window",
       "opened": [],
       "sha256": "71f9803684b924e52ab24980ced818a08a5a0af0efa7d8cd596033b366d06c50"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_key_40.snap",
+      "case": "usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&format!(\"usage-key-{columns}\"), columns, 30, &vendor)"
+      ],
+      "sha256": "3bd9ab736ad09bc3dfd45b2fe4e535e632e4b43fab20bfd5f528528993a34546"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_key_80.snap",
+      "case": "usage_after_a_turn_on_a_key_says_no_limits_were_reported_and_closes_on_escape",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&format!(\"usage-key-{columns}\"), columns, 30, &vendor)"
+      ],
+      "sha256": "59ebb469994271a491dfe5a6c8afb21cd08e9b1284b1ce3719b00c55754223c5"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__usage_mid_turn_80.snap",
+      "case": "usage_stands_over_a_running_turn_with_the_figures_it_last_posted",
+      "opened": [
+        "Watched::allowing(\"usage-mid-turn\", 80, 30, &vendor, \"bash(*)\")"
+      ],
+      "sha256": "7fb0dfd7e38b753bff945f6ac12a846870a87b0bdafac7680957d5b844602a8c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__warning_at_send_40_ascii.snap",
