@@ -924,6 +924,7 @@ back to correct.
 | `/mode` | The [permission mode](../permissions/modes.md) in force, or the one you name |
 | `/sandbox` | Shows the [sandbox](../security/sandboxing.md) in force, and turns it on or off |
 | `/theme` | Picks the colours crucible draws with, and the one code is drawn in |
+| `/settings` | Changes a [setting](../configuration/configuration.md) without editing JSON, and shows what is in force and what the session has used |
 | `/resume` | Stands what was worked on in this directory beside a preview of it, and picks one back up |
 | `/cache` | Shows what [prompt caching](../providers/prompt-caching.md) did, or cleans up what it left |
 | `/compact` | Replaces what is behind you with the model's own notes on it, making room |
@@ -1010,6 +1011,10 @@ Enter depends on the command:
   once, panel and all, with the transcript going on behind them. `/context`
   and `/usage` show the figures the running turn last reported, which for
   `/context` include anything it has recorded since its last request.
+- **`/settings`** opens at once too, over the running turn. A value changed
+  there is written to your user file as it is between turns, and a row that
+  applies at once changes the running session now; the others say `applies at
+  next start`.
 - **`/model`** cannot reach the runner answering this turn, so it is picked and
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already

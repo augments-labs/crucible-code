@@ -18,10 +18,10 @@ expression: on_the_first_beat(&window.picture())
 |  /mode            ask · allowEdits · fullAccess                                |
 |  /sandbox         sandbox disabled (enter to configure)                        |
 |  /theme           pick the colours crucible draws with                         |
+|  /settings        settings, and what is in force                               |
 |  /resume          pick up an earlier session here                              |
 |  /cache           inspect or clean prompt-cache state                          |
-|  /compact         replace what is behind you with notes on it                  |
-|  ↓ 2 more                                                                      |
+|  ↓ 3 more                                                                      |
 |                                                                 99% window left|
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ › /                                                                          │|

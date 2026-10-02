@@ -183,7 +183,7 @@
       "opened": [
         "Watched::open(\"commands\", 80, 24)"
       ],
-      "sha256": "8afd17957a4893a14455306192733764ad91b35900eafb114f171b43adf37c42"
+      "sha256": "252abdbdeee3cc94e6b115dbf711895f66accf40e419b52ef5fb00b049d2aa41"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
@@ -191,7 +191,7 @@
       "opened": [
         "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "4732e6fc880bea4f43446eab0ffaf8b56e3746f4c35ff5650c886155ac7f9575"
+      "sha256": "03f801a89dffb51062d7b5de190c8c8acc38e286cc2936f9df6fc1ca247d4043"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
@@ -699,6 +699,96 @@
       "case": "a_pointer_on_the_scroll_rail_grows_the_mark_under_it",
       "opened": [],
       "sha256": "a349a646c877f0728ac9bdc55648b3b85fb6c67f7795e6613685aaa9ff6a4ad1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "aac924524f52d6984daa654b2b21770d96ca90ef2623926212ec2551b8cdc00f"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_config_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "a5bb27c1f73647a8be65a0ccac985918a4114f0753ad898c8d9601c0e47dcb6a"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "972aa2e9d19cac31487e6244a8ff1a98ca763d2ff73fbcb9e5e6a011b0d85b5e"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_search_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "5ae7d5f0ace607bf7ff36aa59b47a013d70f5ec37ea513b1a2e5e9126492e0a2"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_send_with_alt_enter_80.snap",
+      "case": "a_send_key_changed_in_settings_is_the_one_return_obeys_next",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"settings-send\", 80, 30, &vendor)"
+      ],
+      "sha256": "00a9612d26a44dc293b00f3ec04d723a36faf08adcaf48b7df10731d48551691"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_status_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "7fc78b489aca51967868e0cde8bc4f3b62ca214731f61c0a50300856f6322e2c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_status_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "01bd8de9dce20f062be0e22179e55198a02088ccb87b26e1e9bfe432fef3de71"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_toggle_80.snap",
+      "case": "a_settings_toggle_folds_the_transcript_again_and_is_left_in_it",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(\"settings-toggle\", 80, 30, &vendor)"
+      ],
+      "sha256": "dac474116c06be3cd951406198eec6c1c225d11b6515e0c8081e26747b504651"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_usage_40.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "4069957a0f562a775f56a5b20bf94d22690fe72b66f406e9da954abeed2abd63"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__settings_usage_80.snap",
+      "case": "settings_opens_on_config_and_shows_each_tab_and_a_search",
+      "opened": [
+        "Vendor::answering(\"Hello.\")",
+        "Watched::answering(&case, columns, 30, &vendor)"
+      ],
+      "sha256": "cc93992ec741b182eaf190ec20f2ad82ef0ee8ad7663527a8d5eae966ac0afb5"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill.snap",

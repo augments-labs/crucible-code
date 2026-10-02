@@ -84,6 +84,9 @@ surface below, and updates every one it reaches in the same change.
   and refuses any other value with a message that names those four.
 - Content added to a request gets a category in `/context`.
 - A new kind of usage or limit a provider reports is shown in `/usage`.
+- A new configuration key gets a `/settings` row or an exclusion that says why;
+  `every_declared_key_has_a_settings_row_or_a_reason_it_has_none` fails until
+  it has one.
 - A refusal that means "come back later" is classified by the provider module
   that owns the wire, and is never retried as if it were about now.
 

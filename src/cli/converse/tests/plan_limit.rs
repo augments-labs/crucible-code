@@ -87,7 +87,7 @@ fn stopped_after<T>(
     let mut input = Cursor::new(Vec::new());
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers {
             input: &mut input,
             keys: false,

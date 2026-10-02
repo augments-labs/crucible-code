@@ -47,6 +47,7 @@ use crate::running::{Command, Running};
 use crate::sandbox_panel::{SandboxPanel, SandboxTab};
 use crate::scroll_rail::{Place, ScrollRail};
 use crate::shelf::{Pane, Serving, Shelf, Stocked};
+use crate::tab_row::TabRow;
 use crate::timeline::{Brief, Timeline, Told};
 use crate::welcome::{Recent, Welcome};
 use crate::working::Working;
@@ -829,4 +830,28 @@ fn a_bar_fits_the_width_it_is_drawn_across() {
         assert_eq!(row.columns(), columns, "{columns} with {glyphs:?}");
         vec![row]
     });
+}
+
+#[test]
+fn a_tab_row_fits_the_width_it_is_drawn_across() {
+    let names = [LONG, PROSE, "Usage"];
+    for heading in [None, Some(LONG)] {
+        for open in 0..=names.len() {
+            across("a tab row", |columns, glyphs| {
+                let marks = [None, Some(glyphs.bracketing())];
+                marks
+                    .into_iter()
+                    .map(|marks| {
+                        TabRow {
+                            heading,
+                            names: &names,
+                            open,
+                            marks,
+                        }
+                        .row(columns)
+                    })
+                    .collect()
+            });
+        }
+    }
 }

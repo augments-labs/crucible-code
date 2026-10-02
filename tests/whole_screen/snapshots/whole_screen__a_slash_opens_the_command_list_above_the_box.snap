@@ -3,7 +3,6 @@ source: tests/whole_screen/main.rs
 expression: window.picture()
 ---
 80x24 cursor 21,5 scrolled 0
-|                                                                               ┃|
 |› /help            what these are                                               |
 |  /release-notes   what changed in each release                                 |
 |  /context         what fills the model's window                                |
@@ -16,6 +15,7 @@ expression: window.picture()
 |  /mode            ask · allowEdits · fullAccess                                |
 |  /sandbox         sandbox disabled (enter to configure)                        |
 |  /theme           pick the colours crucible draws with                         |
+|  /settings        settings, and what is in force                               |
 |  /resume          pick up an earlier session here                              |
 |  /cache           inspect or clean prompt-cache state                          |
 |  /compact         replace what is behind you with notes on it                  |

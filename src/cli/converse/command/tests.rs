@@ -49,6 +49,7 @@ fn every_command_decides_what_it_can_do_mid_turn() {
     let live = [
         Command::Help,
         Command::Theme,
+        Command::Settings,
         Command::Context,
         Command::Usage,
     ];
@@ -392,6 +393,7 @@ fn help_answers_with_a_name_and_what_it_does() {
             "/mode            ask · allowEdits · fullAccess",
             "/sandbox         inspect or configure sandbox confinement",
             "/theme           pick the colours crucible draws with",
+            "/settings        settings, and what is in force",
             "/resume          pick up an earlier session here",
             "/cache           inspect or clean prompt-cache state",
             "/compact         replace what is behind you with notes on it",
@@ -418,6 +420,7 @@ fn a_terminal_without_the_marks_gets_the_ring_punctuated_for_it() {
             "/mode            ask, allowEdits, fullAccess",
             "/sandbox         inspect or configure sandbox confinement",
             "/theme           pick the colours crucible draws with",
+            "/settings        settings, and what is in force",
             "/resume          pick up an earlier session here",
             "/cache           inspect or clean prompt-cache state",
             "/compact         replace what is behind you with notes on it",

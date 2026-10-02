@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: config
+---
+80x30 cursor 29,0 scrolled 0
+|│ · shift+tab  steps the permission mode                                      ││|
+|│ · ctrl+c     clears the line typed so far                                   ││|
+|╰─────────────────────────────────────────────────────────────────────────────╯│|
+|                                                                               ┃|
+|› /settings                                                                    ●|
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Settings     Status   ‹ Config ›   Usage                                        |
+|                                                                                |
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ / to search                                                                  │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+|                                                                                |
+|› Theme                                                                     auto|
+|  Syntax theme                                                  Monokai Extended|
+|  Glyphs                                                                 unicode|
+|  Colour                                            auto · applies at next start|
+|  Tool detail                                                            compact|
+|  Scroll rail                                                                 on|
+|  Mouse scroll speed                                                       ‹ 6 ›|
+|  Send with                                                                enter|
+|  Tone                                           concise · applies at next start|
+|  Compaction                                        full · applies at next start|
+|  Check for updates                                                        never|
+|  Prompt caching                                  prefer · applies at next start|
+|  Cache isolation                                session · applies at next start|
+|  Cache retention                        providerDefault · applies at next start|
+|  Persistent cache                                forbid · applies at next start|
+|                                                                                |
+|↑↓ to walk · enter changes · / to search · ←→ tabs · esc to close               |

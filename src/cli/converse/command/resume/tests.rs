@@ -109,6 +109,7 @@ fn terms(sample: &Sample) -> Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
+        settled: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         runtime: crate::cli::fake::runtime(),
         ending: crate::cli::ending::Ending::deaf(),
@@ -142,7 +143,7 @@ fn terms(sample: &Sample) -> Terms {
         environment: Box::new(|_| None),
         sessions: sample.logs(),
         workspace: sample.workspace(),
-        sending: crucible_tui::Sending::default(),
+        sending: std::cell::Cell::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),

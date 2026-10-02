@@ -734,3 +734,77 @@ fn forgetting_takes_out_the_named_routes_and_nothing_else() {
         );
     }
 }
+
+fn row_of(key: &str) -> &'static crate::Row {
+    crate::row(key).expect("the test names a row")
+}
+
+#[test]
+fn a_settings_row_is_written_into_an_empty_file_with_the_blocks_around_it() {
+    let written = setting(
+        "",
+        FILE,
+        row_of("promptCaching.persistentResources.mode"),
+        "reuse",
+    )
+    .expect("an empty file takes any row");
+    assert_eq!(
+        written,
+        "{\n  \"promptCaching\": {\n    \"persistentResources\": {\n      \"mode\": \"reuse\"\n    }\n  }\n}\n"
+    );
+}
+
+#[test]
+fn a_settings_row_is_spliced_beside_what_the_file_already_says() {
+    let text = "{\n  \"output\": {\n    \"theme\": \"dark\"\n  },\n  \"provider\": \"openai\"\n}\n";
+
+    let flipped = setting(text, FILE, row_of("output.scrollRail"), "false").expect("spliced");
+    assert_eq!(
+        flipped,
+        "{\n  \"output\": {\n    \"theme\": \"dark\",\n    \"scrollRail\": false\n  },\n  \"provider\": \"openai\"\n}\n"
+    );
+
+    let over = setting(&flipped, FILE, row_of("output.theme"), "light").expect("spliced");
+    assert!(over.contains("\"theme\": \"light\""), "{over}");
+    assert!(!over.contains("dark"), "{over}");
+
+    let speed = setting(
+        &over,
+        FILE,
+        row_of("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED"),
+        "12",
+    )
+    .expect("spliced");
+    let document = Document::parse(&speed, FILE, Origin::User).expect("still a document");
+    let settings = Settings::resolve(vec![document]);
+    assert_eq!(settings.scroll_speed(&|_| None).expect("read").rows(), 12);
+    assert!(!settings.scroll_rail());
+    assert_eq!(settings.provider(), Some("openai"));
+}
+
+#[test]
+fn a_settings_row_refuses_what_its_key_does_not_take_and_leaves_no_text() {
+    let text = "{\n  \"output\": {}\n}\n";
+    for (key, word) in [
+        ("output.theme", "plaid"),
+        ("output.scrollRail", "maybe"),
+        ("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "31"),
+        ("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "2"),
+        // Retention that needs a ceiling the file does not give it.
+        ("promptCaching.requestedRetention.class", "extended"),
+    ] {
+        assert!(
+            setting(text, FILE, row_of(key), word).is_err(),
+            "{key} took {word}"
+        );
+    }
+}
+
+#[test]
+fn a_settings_row_already_saying_the_answer_leaves_the_file_as_it_was() {
+    let text = "{\"output\": {\"glyphs\": \"ascii\"}}";
+    assert_eq!(
+        setting(text, FILE, row_of("output.glyphs"), "ascii").expect("read"),
+        text
+    );
+}

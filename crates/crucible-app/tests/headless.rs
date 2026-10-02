@@ -417,6 +417,11 @@ impl Desk {
     }
 }
 
+/// The environment of a host started with nothing in it.
+fn unset(_: &str) -> Option<String> {
+    None
+}
+
 /// What the settings file now says, read the way the next start reads it.
 fn written(tree: &Tree) -> Result<Settings, Failed> {
     Ok(Settings::read_home(&tree.home()?)?)

@@ -462,6 +462,27 @@ pub enum ThemeOutcome {
     Unwritten(Problem),
 }
 
+/// Who decided a setting, where it was not the user's own configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Forced {
+    /// The environment the host was started in.
+    Environment,
+    /// A configuration file of the project.
+    Project,
+}
+
+/// How writing a setting ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingOutcome {
+    /// It is written down for this run and the next.
+    Remembered,
+    /// Something nearer than the user's own configuration decides it, so
+    /// nothing was written.
+    Forced(Forced),
+    /// It could not be written down.
+    Unwritten(Problem),
+}
+
 /// How many entries of one kind a release held.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
@@ -549,6 +570,8 @@ pub enum Outcome {
     Sandbox(SandboxOutcome),
     /// Remembering a theme ended.
     Theme(ThemeOutcome),
+    /// Writing a setting ended.
+    Setting(SettingOutcome),
     /// The commands that ship, by the word each crosses as.
     Help(Vec<Name>),
     /// Asking for the release notes ended.
@@ -625,7 +648,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 22] = [
+    pub const KINDS: [&'static str; 23] = [
         "refused",
         "turn",
         "room",
@@ -643,6 +666,7 @@ impl Outcome {
         "cleaned",
         "sandbox",
         "theme",
+        "setting",
         "help",
         "notes",
         "context",
@@ -671,6 +695,7 @@ impl Outcome {
             Self::Cleaned(_) => "cleaned",
             Self::Sandbox(_) => "sandbox",
             Self::Theme(_) => "theme",
+            Self::Setting(_) => "setting",
             Self::Help(_) => "help",
             Self::Notes(_) => "notes",
             Self::Context(_) => "context",
@@ -699,6 +724,7 @@ impl Outcome {
             Self::Cleaned(cleaned) => object.with("cleaned", cleaned.written()),
             Self::Sandbox(sandbox) => object.with("sandbox", sandbox.written()),
             Self::Theme(theme) => object.with("theme", theme.written()),
+            Self::Setting(setting) => object.with("setting", setting.written()),
             Self::Help(commands) => object.with(
                 "commands",
                 commands.iter().map(Name::as_str).collect::<Vec<_>>(),
@@ -731,6 +757,7 @@ impl Outcome {
             "cleaned" => Self::Cleaned(CleanOutcome::read(fields.take("cleaned")?)?),
             "sandbox" => Self::Sandbox(SandboxOutcome::read(fields.take("sandbox")?)?),
             "theme" => Self::Theme(ThemeOutcome::read(fields.take("theme")?)?),
+            "setting" => Self::Setting(SettingOutcome::read(fields.take("setting")?)?),
             "help" => Self::Help(
                 fields
                     .list("commands")?

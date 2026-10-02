@@ -80,6 +80,7 @@ pub(crate) fn plain() -> Terms {
         style: Cell::new(Style::plain()),
         chosen: Cell::new(None),
         reading: std::cell::RefCell::default(),
+        settled: std::cell::RefCell::default(),
         cancel: Cancel::new(),
         runtime: runtime(),
         ending: crate::cli::ending::Ending::deaf(),
@@ -128,7 +129,7 @@ pub(crate) fn plain() -> Terms {
         // that are there is proved where they are recorded.
         sessions: unwritten.join("sessions"),
         workspace: Workspace::open(std::env::temp_dir()).expect("a temporary directory"),
-        sending: crucible_tui::Sending::default(),
+        sending: std::cell::Cell::default(),
         commands: crate::cli::converse::command::builtins(&std::sync::Arc::default())
             .expect("the built-in commands register"),
         providers: crucible_app::providers::providers().expect("the built-in providers register"),
@@ -334,7 +335,7 @@ fn an_explicit_compaction_holds_completion_after_its_worker_disconnects() {
     let mut input = Cursor::new(Vec::new());
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers {
             input: &mut input,
             keys: false,

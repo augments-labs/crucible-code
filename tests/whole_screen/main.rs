@@ -4275,3 +4275,152 @@ fn usage_stands_over_a_running_turn_with_the_figures_it_last_posted() {
     assert!(picture.contains("0 in · 4 out"), "{picture}");
     insta::assert_snapshot!("usage_mid_turn_80", timeless(&on_the_first_beat(&picture)));
 }
+
+// `/settings`: what is in force, the settings a menu can change, and the
+// session's usage, as three tabs of one panel.
+
+/// `picture` with the session on the Status tab written as `#`s.
+///
+/// An id is minted from the clock and chance as the session opens, so the
+/// Status tab shows a different one every run; what the case is about is the
+/// row it stands in. The tab shows the id's first eight, which is the run of
+/// eight hex digits after the label.
+fn sessionless(picture: &str) -> String {
+    const LABEL: &str = "Session";
+    const SHOWN: usize = 8;
+    picture
+        .lines()
+        .map(|row| {
+            let Some((before, after)) = row.split_once(LABEL) else {
+                return row.to_owned();
+            };
+            let gap = after.len() - after.trim_start().len();
+            let (spaces, rest) = after.split_at(gap);
+            match rest.get(..SHOWN) {
+                Some(id) if gap > 0 && id.chars().all(|letter| letter.is_ascii_hexdigit()) => {
+                    format!(
+                        "{before}{LABEL}{spaces}{}{}",
+                        "#".repeat(SHOWN),
+                        rest.get(SHOWN..).unwrap_or_default()
+                    )
+                }
+                _ => row.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn settings_opens_on_config_and_shows_each_tab_and_a_search() {
+    for columns in [80, 40] {
+        let vendor = Vendor::answering("Hello.");
+        let case = format!("settings-tabs-{columns}");
+        let mut window = Watched::answering(&case, columns, 30, &vendor);
+
+        window.types_until("/settings\r", "esc to close");
+        let config = window.picture();
+        assert!(config.contains("Config"), "{config}");
+        assert!(config.contains("Scroll rail"), "{config}");
+        insta::assert_snapshot!(format!("settings_config_{columns}"), config);
+
+        window.types_until("/cache", "cache ");
+        let search = window.picture();
+        assert!(search.contains("Cache retention"), "{search}");
+        assert!(!search.contains("Scroll rail"), "{search}");
+        insta::assert_snapshot!(format!("settings_search_{columns}"), search);
+
+        // Escape clears the search; the left arrow is the tab before Config.
+        window.types_until("\x1b", "Scroll rail");
+        window.types_until("\x1b[D", "Permission mode");
+        let status = window.picture();
+        assert!(status.contains("Sandbox"), "{status}");
+        insta::assert_snapshot!(format!("settings_status_{columns}"), sessionless(&status));
+
+        window.types_until("\x1b[D", "Plan limits");
+        let usage = window.picture();
+        insta::assert_snapshot!(format!("settings_usage_{columns}"), timeless(&usage));
+
+        window.types_until("\x1b", "ask mode on");
+        let closed = window.picture();
+        assert!(!closed.contains("esc to close"), "{closed}");
+    }
+}
+
+#[test]
+fn a_settings_toggle_folds_the_transcript_again_and_is_left_in_it() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("settings-toggle", 80, 30, &vendor);
+    window.types_until("say hello\r", "Hello.");
+
+    window.types_until("/settings\r", "esc to close");
+    // Down to the rail, five rows below the theme, and turn it off.
+    window.types_until("\x1b[B\x1b[B\x1b[B\x1b[B\x1b[B", "› Scroll rail");
+    window.types_until("\r", "off");
+    window.types_until("\x1b", "Scroll rail set to off");
+    let picture = window.picture();
+    insta::assert_snapshot!("settings_toggle_80", picture);
+}
+
+/// Turns the Send with row to `altEnter` through `/settings` and closes the
+/// panel, between turns or over a running one.
+fn sends_with_alt_enter(window: &mut Watched) {
+    window.types_until("/settings\r", "esc to close");
+    // Enter ends the search on the one row left; the second changes it.
+    window.types_until("/send", "Send with");
+    window.types_until("\r\r", "altEnter");
+    window.types_until("\x1b", "› Theme");
+    window.types_until("\x1b", "Send with set to altEnter");
+}
+
+/// Whether the prompt box holds `first` on one row and `second` on the next.
+fn boxed_on_two_rows(picture: &str, first: &str, second: &str) -> bool {
+    let rows: Vec<&str> = picture.lines().collect();
+    rows.windows(2).any(|pair| {
+        pair.first()
+            .is_some_and(|row| row.contains(&format!("│ › {first} ")))
+            && pair
+                .get(1)
+                .is_some_and(|row| row.contains(&format!("│   {second} ")))
+    })
+}
+
+#[test]
+fn a_send_key_changed_in_settings_is_the_one_return_obeys_next() {
+    let vendor = Vendor::answering("Hello.");
+    let mut window = Watched::answering("settings-send", 80, 30, &vendor);
+    sends_with_alt_enter(&mut window);
+
+    // Return now opens a line, so nothing is sent and no turn starts.
+    window.types_until("say hello\rthere", "there");
+    let held = window.picture();
+    assert!(boxed_on_two_rows(&held, "say hello", "there"), "{held}");
+    assert!(
+        !held.lines().any(|row| row.starts_with("|› say hello")),
+        "{held}"
+    );
+    assert!(!held.contains("Hello."), "{held}");
+    insta::assert_snapshot!("settings_send_with_alt_enter_80", held);
+
+    // And Alt+Return is the press that sends the two lines.
+    window.types_until("\x1b\r", "Hello.");
+    let sent = window.picture();
+    assert!(sent.contains("› say hello"), "{sent}");
+    assert!(sent.contains("  there"), "{sent}");
+}
+
+#[test]
+fn a_send_key_changed_in_settings_over_a_running_turn_is_obeyed_once_it_closes() {
+    let vendor = Vendor::holding("Still going.");
+    let mut window = Watched::answering("settings-send-live", 80, 30, &vendor);
+    window.types_and_catches("say it\r", "going.");
+    sends_with_alt_enter(&mut window);
+
+    window.types_until("one\rtwo", "two");
+    let typed = window.picture();
+    assert!(boxed_on_two_rows(&typed, "one", "two"), "{typed}");
+    assert!(
+        !typed.lines().any(|row| row.starts_with("|› one")),
+        "{typed}"
+    );
+}

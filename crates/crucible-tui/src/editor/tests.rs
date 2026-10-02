@@ -957,3 +957,14 @@ fn a_line_too_long_for_the_box_is_not_put_in_it_at_all() {
     );
     assert_eq!(editor.text(), "what was already there");
 }
+
+#[test]
+fn the_press_that_sends_can_be_swapped_with_a_line_already_typed() {
+    // `/settings` changes it while a session runs; what was typed stays, and
+    // the next Return is read the new way.
+    let mut editor = typed("one").multiline();
+    editor.send_with(Sending::AltEnter);
+
+    assert_eq!(editor.press(Key::Enter), Typed::Changed);
+    assert_eq!(editor.text(), "one\n");
+}

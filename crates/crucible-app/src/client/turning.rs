@@ -112,6 +112,7 @@ pub async fn turn(
         }
         Command::Decide(_) => Ended::Refused(ErrorCode::StaleDecision.into()),
         Command::Theme(_)
+        | Command::Setting { .. }
         | Command::Cancel
         | Command::Clear
         | Command::Resume(_)
@@ -159,6 +160,7 @@ pub fn interrupt(request: &Request, cancel: &Cancel) -> Outcome {
         Command::Prompt(_)
         | Command::Compact
         | Command::Theme(_)
+        | Command::Setting { .. }
         | Command::Clear
         | Command::Resume(_)
         | Command::SelectModel { .. }

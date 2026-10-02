@@ -136,11 +136,12 @@ const QUEUED_BYTES: usize = Editor::MAX_BYTES;
 /// changes after it has started, so it is read from the engine that holds it
 /// every time it is drawn rather than copied here and kept in step.
 pub(crate) struct Terms {
-    /// Whether to write colour, how much of a tool call to show, and which
-    /// table of colours to draw with.
+    /// Whether to write colour, which characters to draw with, how much of a
+    /// tool call to show, and which table of colours to draw with.
     ///
-    /// In a cell because one command changes it: `/theme` picks a different
-    /// table, and everything drawn after it is drawn in that one. Settled once
+    /// In a cell because two commands change it: `/theme` picks a different
+    /// table, and `/settings` a different table, glyph set or tool detail, and
+    /// everything drawn after either is drawn with what it chose. Settled once
     /// at startup and again only when somebody says so — never per event, which
     /// is the thing `Style`'s own module doc is about.
     pub(crate) style: Cell<Style>,
@@ -152,6 +153,10 @@ pub(crate) struct Terms {
     /// `/theme` took one. `None` is "nothing said", and the first fence settles
     /// on whatever this build draws code in unless somebody says otherwise.
     pub(crate) reading: RefCell<Option<String>>,
+    /// What `/settings` has written down this session, by key, one entry a
+    /// row: the settings above were read at the start and are not read again,
+    /// so a row reopened shows what was taken rather than what was there.
+    pub(crate) settled: RefCell<Vec<(&'static str, String)>>,
     /// What stops a turn.
     pub(crate) cancel: Cancel,
     /// The application's runtime, which a turn runs on as a task and a
@@ -274,11 +279,12 @@ pub(crate) struct Terms {
     pub(crate) workspace: crucible_workspace::Workspace,
     /// Which press finishes a prompt, and which one opens a line under it.
     ///
-    /// Read once at startup and never again: it is a fact about the keyboard in
-    /// front of somebody, and no command changes it. Not a `Cell` for that
-    /// reason, and not part of the style either — it is about what arrives from
-    /// the terminal rather than about what is drawn to it.
-    pub(crate) sending: Sending,
+    /// Read at startup and again when `/settings` changes it, which is why it
+    /// is a `Cell`: the panel is handed these terms and not the editor, so
+    /// the loop hands the editor this answer whenever a command returns. Not
+    /// part of the style — it is about what arrives from the terminal rather
+    /// than about what is drawn to it.
+    pub(crate) sending: Cell<Sending>,
     /// The commands a `/` line is read against.
     ///
     /// A registry rather than the list itself, because what is in it is a
@@ -478,7 +484,7 @@ pub(crate) fn converse<T: Terminal>(
     // Held in one value for the reason its own prose gives.
     let mut held = Held::new(
         terms.plan.clone(),
-        terms.sending,
+        terms.sending.get(),
         Answers { input, keys },
         first.card,
     );
@@ -669,6 +675,8 @@ pub(crate) fn converse<T: Terminal>(
         // what was said to it, and `/help` was not.
         if local && let Some(wanted) = command::wanted(&terms.commands.snapshot(), &prompt) {
             let ran = command::run(wanted, renderer, &mut conversation, &mut held, terms)?;
+            // `/settings` may have changed which press sends.
+            held.editor.send_with(terms.sending.get());
             attaching::refresh_store(&mut held, importing(conversation.session()));
             match ran {
                 Ran::Again => continue,
@@ -1310,11 +1318,20 @@ impl Turn<'_, '_> {
                 self.turning.limits().as_ref(),
             ),
             serving: self.serving,
+            mode: self.says.running_mode,
+            session: self
+                .held
+                .attachment_store
+                .as_ref()
+                .map(|(_, id)| id.clone()),
         };
-        command::live(renderer, self.terms, command, &counted, &mut |renderer| {
+        let ran = command::live(renderer, self.terms, command, &counted, &mut |renderer| {
             self.drain(renderer);
             Ok(())
-        })
+        });
+        // `/settings` may have changed which press sends.
+        self.held.editor.send_with(self.terms.sending.get());
+        ran
     }
 
     /// Runs a command whose pick is held for the turn started next.

@@ -839,13 +839,16 @@ impl<T: Terminal> Renderer<T> {
 
     /// Tells this renderer which characters it may draw with.
     ///
-    /// Said once, at startup, because which set a font has is settled before
-    /// the first frame and no command changes it. It reaches the transcript
-    /// through the markdown reader, which is the one thing here that puts a
-    /// character of its own in place of one the model wrote.
+    /// Said at startup, and again whenever the reader changes the setting. It
+    /// reaches the transcript through the markdown reader, which is the one
+    /// thing here that puts a character of its own in place of one the model
+    /// wrote. The reader is told rather than replaced, since a change can
+    /// arrive between two deltas of one answer and the scan has to go on where
+    /// it was; rows already written keep the characters they were drawn with.
     pub fn draws(&mut self, glyphs: Glyphs) {
         self.glyphs = glyphs;
-        self.markdown = self.reader();
+        self.markdown.draws(glyphs);
+        self.painted.forget();
     }
 
     /// Tells this renderer which repository the answer's bare numbers count
@@ -895,9 +898,9 @@ impl<T: Terminal> Renderer<T> {
 
     /// Tells this renderer how far one notch of the wheel moves the transcript.
     ///
-    /// Said once, at startup. The wheel arrives as a count of notches and
-    /// nothing more — how far one is worth is the reader's, and this is where
-    /// their answer lands.
+    /// Said at startup, and again whenever the reader changes the setting. The
+    /// wheel arrives as a count of notches and nothing more — how far one is
+    /// worth is the reader's, and this is where their answer lands.
     pub fn rolls(&mut self, rows: i32) {
         self.notch = rows;
     }
@@ -910,11 +913,13 @@ impl<T: Terminal> Renderer<T> {
 
     /// Tells this renderer whether the transcript has a scroll rail.
     ///
-    /// Said once, at startup, from the setting. With it on, the rightmost
-    /// column of the transcript band is the rail wherever the window can spare
-    /// one, and the transcript folds a column narrower to leave it; with it
-    /// off, nothing is drawn there and the transcript has the whole width.
-    /// Nothing changes where output is redirected: a file has no right edge.
+    /// Said at startup from the setting, and again whenever the reader changes
+    /// it, when the record is folded again to the width it leaves. With it on,
+    /// the rightmost column of the transcript band is the rail wherever the
+    /// window can spare one, and the transcript folds a column narrower to
+    /// leave it; with it off, nothing is drawn there and the transcript has
+    /// the whole width. Nothing changes where output is redirected: a file has
+    /// no right edge.
     pub fn rails(&mut self, on: bool) {
         self.rails = on;
         self.grip = None;

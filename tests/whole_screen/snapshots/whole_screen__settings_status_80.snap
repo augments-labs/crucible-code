@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: sessionless(&status)
+---
+80x30 cursor 29,0 scrolled 0
+|│                                                                             ││|
+|│ Recent sessions                                                             ││|
+|│                                                                             ││|
+|│ No recent sessions                                                          │┃|
+|│                                                                             │┃|
+|│ ─────────────────────────────────────────────────────────────────────────── │┃|
+|│                                                                             │┃|
+|│ Tips                                                                        │┃|
+|│                                                                             │┃|
+|│ · /          opens the command list                                         │┃|
+|│ · \ enter    adds a line without sending                                    │┃|
+|│ · shift+tab  steps the permission mode                                      │┃|
+|│ · ctrl+c     clears the line typed so far                                   │┃|
+|╰─────────────────────────────────────────────────────────────────────────────╯┃|
+|                                                                               ┃|
+|› /settings                                                                    ●|
+|────────────────────────────────────────────────────────────────────────────────|
+|                                                                                |
+|Settings   ‹ Status ›   Config     Usage                                        |
+|                                                                                |
+|  Version              ######                                                   |
+|  Model                claude-test-1 · anthropic                                |
+|  Sign-in              API key                                                  |
+|  Working directory    ~/…/workspace                                            |
+|  Config file          ~/home/config.json                                       |
+|  Session              ########                                                 |
+|  Sandbox              off                                                      |
+|  Permission mode      ask                                                      |
+|                                                                                |
+|←→ tabs · esc to close                                                          |

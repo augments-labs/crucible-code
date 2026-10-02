@@ -1,0 +1,35 @@
+---
+source: tests/whole_screen/main.rs
+expression: sessionless(&status)
+---
+40x30 cursor 29,0 scrolled 0
+|CRUCIBLE                                |
+|/…/workspace                            |
+|                                        |
+|› /settings                             |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|                                        |
+|────────────────────────────────────────|
+|                                        |
+|Settings   ‹ Status › Config Usage      |
+|                                        |
+|  Version              ######           |
+|  Model                                 |
+|    claude-test-1 · anthropic           |
+|  Sign-in              API key          |
+|  Working directory    ~/…/workspace    |
+|  Config file          ~/…/config.json  |
+|  Session              ########         |
+|  Sandbox              off              |
+|  Permission mode      ask              |
+|                                        |
+|←→ tabs · esc to close                  |

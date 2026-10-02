@@ -80,6 +80,18 @@ pub enum Command {
     },
     /// Remember how this machine's sessions are drawn.
     Theme(Theme),
+    /// Write one setting into the user's own configuration.
+    ///
+    /// The setting is named by its key as a configuration document nests it,
+    /// `output.scrollRail`, and its value by the word a document spells it
+    /// with: `false`, `dark`, `12`. Only a setting the menu lists is taken,
+    /// and none that loosens what runs unasked is one of those.
+    Setting {
+        /// The key, dotted.
+        name: Name,
+        /// The value, as a word.
+        value: Name,
+    },
     /// Name the commands that ship.
     Help,
     /// Every release, or the one of this number.
@@ -98,7 +110,7 @@ pub enum Command {
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 22] = [
+    pub const KINDS: [&'static str; 23] = [
         "prompt",
         "compact",
         "cancel",
@@ -116,6 +128,7 @@ impl Command {
         "clean_cache",
         "sandbox",
         "theme",
+        "setting",
         "help",
         "release_notes",
         "context",
@@ -144,6 +157,7 @@ impl Command {
             Self::CleanCache => "clean_cache",
             Self::Sandbox { .. } => "sandbox",
             Self::Theme(_) => "theme",
+            Self::Setting { .. } => "setting",
             Self::Help => "help",
             Self::ReleaseNotes { .. } => "release_notes",
             Self::Context => "context",
@@ -174,6 +188,9 @@ impl Command {
             }
             Self::Sandbox { enabled } => object.with("enabled", *enabled),
             Self::Theme(theme) => object.with("part", theme.part()).with("name", theme.name()),
+            Self::Setting { name, value } => object
+                .with("name", name.as_str())
+                .with("value", value.as_str()),
             Self::ReleaseNotes { version } => {
                 object.maybe("version", version.as_ref().map(Name::as_str))
             }
@@ -225,6 +242,10 @@ impl Command {
                 let part = fields.string("part")?;
                 Self::Theme(Theme::read(&part, &fields.string("name")?)?)
             }
+            "setting" => Self::Setting {
+                name: fields.name("name")?,
+                value: fields.name("value")?,
+            },
             "help" => Self::Help,
             "release_notes" => Self::ReleaseNotes {
                 version: fields

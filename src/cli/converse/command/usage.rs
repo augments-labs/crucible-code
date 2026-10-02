@@ -221,6 +221,15 @@ fn heading(terms: &Terms, serving: Option<&'static str>, glyphs: Glyphs) -> Stri
     let Some(name) = serving else {
         return String::new();
     };
+    signed(terms, name).map_or_else(
+        || name.to_owned(),
+        |words| format!("{name} {} {words}", glyphs.dot()),
+    )
+}
+
+/// The credential the provider `name` answers with, worded as the heading
+/// words it, where it answers with one.
+pub(super) fn signed(terms: &Terms, name: &str) -> Option<String> {
     let providers = terms.providers.snapshot();
     let stored = terms.logins.read();
     let auth = ProviderAuth {
@@ -237,10 +246,6 @@ fn heading(terms: &Terms, serving: Option<&'static str>, glyphs: Glyphs) -> Stri
                 in_use(one, auth).map(|used| used.words)
             }
         })
-        .map_or_else(
-            || name.to_owned(),
-            |words| format!("{name} {} {words}", glyphs.dot()),
-        )
 }
 
 /// What the heading calls a key read from a variable.

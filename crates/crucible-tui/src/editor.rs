@@ -365,6 +365,12 @@ impl Editor {
         self
     }
 
+    /// Says again which press sends, for a reader who changed it while the
+    /// session runs. What is typed so far stays as it is.
+    pub fn send_with(&mut self, sending: Sending) {
+        self.sending = sending;
+    }
+
     /// What has been typed so far.
     #[must_use]
     pub fn text(&self) -> &str {

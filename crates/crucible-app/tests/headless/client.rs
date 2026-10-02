@@ -16,10 +16,10 @@ use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_app::switching::{LoggedIn, LoggedOut};
 use crucible_client_api::{
-    Capabilities, ClearOutcome, Command, Correlation, Cost, Decision, ErrorCode, Lasting, Limit,
-    Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending, PendingId,
-    Percent, Progress, Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop,
-    Theme, TurnOutcome,
+    Capabilities, ClearOutcome, Command, Correlation, Cost, Decision, ErrorCode, Forced, Lasting,
+    Limit, Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending,
+    PendingId, Percent, Progress, Prompt, Refusal, Request, Response, ResumeOutcome, Ruling,
+    SettingOutcome, Snapshot, Stop, Theme, TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Runner, Tools};
@@ -34,7 +34,7 @@ use crucible_types::{
     WindowReading,
 };
 
-use super::{Desk as Standing, Failed, Script, Tree, saying};
+use super::{Desk as Standing, Failed, Script, Tree, saying, unset};
 
 /// The name the counting tool is offered and called by.
 const WRITE: &str = "write";
@@ -469,6 +469,7 @@ fn a_decision_sent_outside_a_turn_settles_nothing() -> Result<(), Failed> {
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
@@ -499,6 +500,7 @@ fn a_decision_on_its_own_is_answered_the_same_at_every_door() -> Result<(), Fail
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Decide(Decision::Ruled {
@@ -541,6 +543,7 @@ fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> R
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -567,6 +570,145 @@ fn a_syntax_theme_this_host_does_not_read_is_refused_and_not_written_down() -> R
     Ok(())
 }
 
+/// A setting, as a client names it.
+fn setting(name: &str, value: &str) -> Result<Command, Failed> {
+    Ok(Command::Setting {
+        name: Name::new(name)?,
+        value: Name::new(value)?,
+    })
+}
+
+/// A host started with the mouse's scroll speed in its environment.
+fn scrolling(name: &str) -> Option<String> {
+    (name == "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED").then(|| "12".to_owned())
+}
+
+#[test]
+fn a_settings_row_is_written_through_either_door_and_read_back() -> Result<(), Failed> {
+    let tree = Tree::new("client-settings-written")?;
+    let mut conversation = super::conversation(&tree, Script::new(Vec::new()), false)?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let mut wire = Wire::default();
+    let remembered = Outcome::Setting(SettingOutcome::Remembered);
+
+    // While a turn has the conversation, as `/theme` is.
+    let request = wire.sent(setting("output.scrollRail", "false")?)?;
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, remembered);
+    assert!(!super::written(&tree)?.scroll_rail());
+
+    // And with the conversation in hand.
+    let request = wire.sent(setting("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "12")?)?;
+    let performed = super::runtime()?.block_on(client::perform(&mut conversation, &request, &desk));
+    assert_eq!(received(&performed.response(&request))?.outcome, remembered);
+    let read = super::written(&tree)?;
+    assert_eq!(read.scroll_speed(&unset)?.rows(), 12);
+    assert!(
+        !read.scroll_rail(),
+        "the first answer stays beside the second"
+    );
+
+    let request = wire.sent(setting("output.syntaxTheme", READ)?)?;
+    let kept = client::keep(&request, &desk);
+    assert_eq!(received(&kept.response(&request))?.outcome, remembered);
+    assert_eq!(super::written(&tree)?.syntax_theme(), Some(READ));
+    Ok(())
+}
+
+#[test]
+fn a_settings_row_the_shell_or_a_project_decides_is_forced_and_not_written() -> Result<(), Failed> {
+    let tree = Tree::new("client-settings-forced")?;
+    let mut standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let project = workspace.root().join(".crucible");
+    std::fs::create_dir_all(&project)?;
+    std::fs::write(
+        project.join("config.json"),
+        r#"{"output": {"theme": "dark"}}"#,
+    )?;
+    standing.settings = crucible_config::Settings::read(&tree.home()?, workspace.root())?;
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: scrolling,
+        notes,
+    };
+    let mut wire = Wire::default();
+
+    let request = wire.sent(setting("output.theme", "light")?)?;
+    assert_eq!(
+        received(&client::keep(&request, &desk).response(&request))?.outcome,
+        Outcome::Setting(SettingOutcome::Forced(Forced::Project))
+    );
+    let request = wire.sent(setting("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "9")?)?;
+    assert_eq!(
+        received(&client::keep(&request, &desk).response(&request))?.outcome,
+        Outcome::Setting(SettingOutcome::Forced(Forced::Environment))
+    );
+    assert!(
+        !crucible_config::user(&tree.home()?).exists(),
+        "a forced setting wrote the user's file"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_settings_value_or_key_the_menu_does_not_offer_is_refused_and_not_written() -> Result<(), Failed>
+{
+    let tree = Tree::new("client-settings-refused")?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        environment: unset,
+        notes,
+    };
+    let mut wire = Wire::default();
+    let invalid = Outcome::Refused(ErrorCode::InvalidArgument.into());
+
+    for (name, value) in [
+        // Not a row: it loosens what runs unasked.
+        ("permissions.mode", "fullAccess"),
+        ("sandbox.enabled", "false"),
+        ("provider", "openai"),
+        ("output", "dark"),
+        ("output.theme", "plaid"),
+        ("output.scrollRail", "1"),
+        ("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "31"),
+        ("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED", "06"),
+        ("output.syntaxTheme", "no theme by this name"),
+    ] {
+        let request = wire.sent(setting(name, value)?)?;
+        assert_eq!(
+            received(&client::keep(&request, &desk).response(&request))?.outcome,
+            invalid,
+            "{name} = {value}"
+        );
+    }
+    assert!(
+        !crucible_config::user(&tree.home()?).exists(),
+        "a refused setting wrote the user's file"
+    );
+    Ok(())
+}
+
 #[test]
 fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Result<(), Failed> {
     let tree = Tree::new("client-commands")?;
@@ -579,6 +721,7 @@ fn the_shipped_commands_are_carried_out_from_bytes_and_answered_in_bytes() -> Re
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -684,6 +827,7 @@ fn a_cache_that_cannot_be_retired_holds_the_model_where_it_was() -> Result<(), F
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
 
@@ -722,6 +866,7 @@ fn a_choice_that_could_not_be_written_down_is_still_taken_and_says_so() -> Resul
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
 
@@ -761,6 +906,7 @@ fn what_cannot_be_carried_out_is_refused_by_code_and_changes_nothing() -> Result
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let before = client::snapshot(&conversation);
@@ -824,6 +970,7 @@ fn the_release_notes_are_what_the_host_answers_and_wait_for_the_turn() -> Result
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -866,6 +1013,7 @@ fn every_palette_a_client_can_name_is_one_the_settings_file_reads_back() -> Resu
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let mut wire = Wire::default();
@@ -1320,6 +1468,7 @@ fn context(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Fail
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Context)?;
@@ -1397,6 +1546,7 @@ fn context_mid_turn_is_streamed_by_the_turn_and_refused_as_busy_at_every_door_it
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Context)?;
@@ -1448,6 +1598,7 @@ fn usage(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Failed
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Usage)?;
@@ -1560,6 +1711,7 @@ fn usage_mid_turn_is_streamed_with_the_figures_the_turn_last_reported() -> Resul
         sessions: &sessions,
         workspace: &workspace,
         reads,
+        environment: unset,
         notes,
     };
     let request = Wire::default().sent(Command::Usage)?;

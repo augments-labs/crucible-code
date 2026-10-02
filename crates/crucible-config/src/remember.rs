@@ -15,6 +15,7 @@ use crucible_tools::Minted;
 use serde_json::Value;
 
 use crate::error::ConfigError;
+use crate::shape::rows::{Row, Values};
 
 mod splice;
 
@@ -427,6 +428,109 @@ pub fn sandboxing(text: &str, file: &str, enabled: bool) -> Result<String, Confi
 /// As [`drawing`].
 pub fn reading(text: &str, file: &str, theme: &str) -> Result<String, ConfigError> {
     output(text, file, "syntaxTheme", theme)
+}
+
+/// The text of a configuration file where `row` says `word`.
+///
+/// `word` is spelled as the menu holds a value — `true`, `dark`, `12` — and
+/// written as the key's declaration wants it: a flag as a boolean, the scroll
+/// speed as a number, everything else as a string. Every object on the way to
+/// the key is created along with it, and every byte crucible did not put there
+/// stays where it was.
+///
+/// The result is read back the way a start reads it before it is handed back,
+/// so an answer the key does not take is refused here and the file is never
+/// written with it: a theme crucible does not draw, a speed past its bounds,
+/// a retention that needs a ceiling the file does not give.
+///
+/// # Errors
+///
+/// [`ConfigError::Malformed`] when the text is not JSON,
+/// [`ConfigError::Unspliceable`] when it is JSON no answer can be written into
+/// without rewriting, and the error a start would meet when the answer is not
+/// one the key takes.
+pub fn setting(text: &str, file: &str, row: &Row, word: &str) -> Result<String, ConfigError> {
+    let answer = match row.values() {
+        Values::Flag => word
+            .parse::<bool>()
+            .map_or_else(|_| Value::from(word), Value::Bool),
+        Values::Whole { .. } => word
+            .parse::<u64>()
+            .map_or_else(|_| Value::from(word), Value::from),
+        Values::Choice(_) | Values::Named => Value::from(word),
+    };
+    let written = spliced(text, file, row, &answer)?;
+    let document = crate::document::Document::parse(&written, file, crate::document::Origin::User)?;
+    crate::settings::Settings::resolve_checked(vec![document])?;
+    Ok(written)
+}
+
+/// `text` with `answer` at `row`'s key, every object on the way created.
+fn spliced(text: &str, file: &str, row: &Row, answer: &Value) -> Result<String, ConfigError> {
+    let path: Vec<&str> = row.path().collect();
+    let written = answer.to_string();
+
+    if text.trim().is_empty() {
+        return Ok(format!(
+            "{{\n  {}\n}}\n",
+            nested(&path, &written, Some("  "))
+        ));
+    }
+
+    let value = parsed(text, file)?;
+    let refuse = || ConfigError::Unspliceable {
+        file: file.into(),
+        at: row.key().into(),
+        written: written.clone().into(),
+    };
+    let mut span = splice::root(text)
+        .filter(|_| value.is_object())
+        .ok_or_else(refuse)?;
+    let mut held = &value;
+
+    // Outwards in, as every other answer here is written: whichever object is
+    // already there is where this stops, and the rest goes in with the key.
+    for (depth, name) in path.iter().enumerate() {
+        let Some(next) = held.get(name) else {
+            let below = path.get(depth..).unwrap_or_default();
+            return Ok(splice::insert(text, span, |indent| {
+                nested(below, &written, indent)
+            }));
+        };
+        if depth + 1 == path.len() {
+            if next == answer {
+                return Ok(text.to_owned());
+            }
+            let was = splice::member(text, span, name).ok_or_else(refuse)?;
+            return Ok(splice::over(text, was, &written));
+        }
+        if !next.is_object() {
+            return Err(refuse());
+        }
+        span = splice::member(text, span, name).ok_or_else(refuse)?;
+        held = next;
+    }
+    Err(refuse())
+}
+
+/// `"a": {"b": written}` for the path `a.b`, laid out at `indent` where the
+/// line it goes on has one, and on one line where it does not.
+fn nested(path: &[&str], written: &str, indent: Option<&str>) -> String {
+    let Some((first, rest)) = path.split_first() else {
+        return written.to_owned();
+    };
+    let key = Value::from(*first).to_string();
+    if rest.is_empty() {
+        return format!("{key}: {written}");
+    }
+    match indent {
+        Some(indent) => {
+            let inner = format!("{indent}  ");
+            let below = nested(rest, written, Some(&inner));
+            format!("{key}: {{\n{inner}{below}\n{indent}}}")
+        }
+        None => format!("{key}: {{{}}}", nested(rest, written, None)),
+    }
 }
 
 /// One key of the `output` block, spliced in beside whatever else is there.

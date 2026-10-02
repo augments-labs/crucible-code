@@ -98,7 +98,7 @@ const KEYS: [&str; 72] = [
 ];
 
 /// Further field names, kept apart so neither list outgrows a screen.
-const MORE_KEYS: [&str; 45] = [
+const MORE_KEYS: [&str; 48] = [
     "added",
     "api_ms",
     "cache_read",
@@ -144,6 +144,9 @@ const MORE_KEYS: [&str; 45] = [
     "version",
     "why",
     "window",
+    "setting",
+    "value",
+    "by",
 ];
 
 /// What a field name may not say, whatever else it says.
@@ -327,6 +330,10 @@ fn commands() -> Vec<Command> {
         Command::Sandbox { enabled: false },
         Command::Theme(Theme::Drawing(Palette::Dark)),
         Command::Theme(Theme::Syntax(name("base16"))),
+        Command::Setting {
+            name: name("output.scrollRail"),
+            value: name("false"),
+        },
         Command::Help,
         Command::ReleaseNotes { version: None },
         Command::ReleaseNotes {
@@ -606,6 +613,10 @@ fn outcomes() -> Vec<Outcome> {
         Outcome::Sandbox(SandboxOutcome::Unchanged(problem())),
         Outcome::Theme(ThemeOutcome::Remembered),
         Outcome::Theme(ThemeOutcome::Unwritten(problem())),
+        Outcome::Setting(SettingOutcome::Remembered),
+        Outcome::Setting(SettingOutcome::Forced(Forced::Environment)),
+        Outcome::Setting(SettingOutcome::Forced(Forced::Project)),
+        Outcome::Setting(SettingOutcome::Unwritten(problem())),
         Outcome::help(),
         Outcome::Notes(NotesOutcome::Listed {
             releases: vec![release(None), release(Some(marked()))],
@@ -831,34 +842,35 @@ const fn turn_arm(one: &TurnOutcome) -> (usize, usize) {
 
 const fn command_arm(one: &Command) -> (usize, usize) {
     match one {
-        Command::Prompt(_) => (0, 26),
-        Command::Compact => (1, 26),
-        Command::Cancel => (2, 26),
-        Command::Decide(_) => (3, 26),
-        Command::Clear => (4, 26),
-        Command::Resume(_) => (5, 26),
+        Command::Prompt(_) => (0, 27),
+        Command::Compact => (1, 27),
+        Command::Cancel => (2, 27),
+        Command::Decide(_) => (3, 27),
+        Command::Clear => (4, 27),
+        Command::Resume(_) => (5, 27),
         Command::SelectModel {
             effort: Some(_), ..
-        } => (6, 26),
-        Command::SelectModel { effort: None, .. } => (7, 26),
-        Command::SetEffort(_) => (8, 26),
-        Command::SetMode(_) => (9, 26),
-        Command::CycleMode => (10, 26),
-        Command::Login { .. } => (11, 26),
-        Command::Logout { .. } => (12, 26),
-        Command::InspectCache => (13, 26),
-        Command::CleanCache => (14, 26),
-        Command::Sandbox { enabled: true } => (15, 26),
-        Command::Sandbox { enabled: false } => (16, 26),
-        Command::Theme(Theme::Drawing(_)) => (17, 26),
-        Command::Theme(Theme::Syntax(_)) => (18, 26),
-        Command::Help => (19, 26),
-        Command::ReleaseNotes { version: None } => (20, 26),
-        Command::ReleaseNotes { version: Some(_) } => (21, 26),
-        Command::Exit => (22, 26),
-        Command::SetSpeed(_) => (23, 26),
-        Command::Context => (24, 26),
-        Command::Usage => (25, 26),
+        } => (6, 27),
+        Command::SelectModel { effort: None, .. } => (7, 27),
+        Command::SetEffort(_) => (8, 27),
+        Command::SetMode(_) => (9, 27),
+        Command::CycleMode => (10, 27),
+        Command::Login { .. } => (11, 27),
+        Command::Logout { .. } => (12, 27),
+        Command::InspectCache => (13, 27),
+        Command::CleanCache => (14, 27),
+        Command::Sandbox { enabled: true } => (15, 27),
+        Command::Sandbox { enabled: false } => (16, 27),
+        Command::Theme(Theme::Drawing(_)) => (17, 27),
+        Command::Theme(Theme::Syntax(_)) => (18, 27),
+        Command::Help => (19, 27),
+        Command::ReleaseNotes { version: None } => (20, 27),
+        Command::ReleaseNotes { version: Some(_) } => (21, 27),
+        Command::Exit => (22, 27),
+        Command::SetSpeed(_) => (23, 27),
+        Command::Context => (24, 27),
+        Command::Usage => (25, 27),
+        Command::Setting { .. } => (26, 27),
     }
 }
 
@@ -974,6 +986,12 @@ const fn inner_arm(one: &Outcome) -> (usize, usize) {
         Outcome::Theme(theme) => match theme {
             ThemeOutcome::Remembered => (0, 2),
             ThemeOutcome::Unwritten(_) => (1, 2),
+        },
+        Outcome::Setting(setting) => match setting {
+            SettingOutcome::Remembered => (0, 4),
+            SettingOutcome::Forced(Forced::Environment) => (1, 4),
+            SettingOutcome::Forced(Forced::Project) => (2, 4),
+            SettingOutcome::Unwritten(_) => (3, 4),
         },
         Outcome::Notes(notes) => match notes {
             NotesOutcome::Listed { .. } => (0, 4),
@@ -1861,7 +1879,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (2, 1_415_442_550_756_244_763),
+        (2, 14_657_618_173_854_786_696),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );
@@ -1953,6 +1971,48 @@ fn an_unasked_outcome_naming_nothing_it_knows_is_malformed() {
     );
     assert_eq!(
         Response::decode(&framed(&nothing)).unwrap_err().code(),
+        ErrorCode::Malformed
+    );
+}
+
+#[test]
+fn a_setting_crosses_as_the_name_of_its_key_and_the_word_for_its_value() {
+    let request = Request::new(
+        Capabilities::every(),
+        Correlation::new(4),
+        Command::Setting {
+            name: name("output.theme"),
+            value: name("light"),
+        },
+    );
+    let frame: Value = serde_json::from_slice(&request.encode().unwrap()).unwrap();
+    assert_eq!(
+        frame.get("command"),
+        Some(&json!({"kind": "setting", "name": "output.theme", "value": "light"})),
+        "{frame}"
+    );
+    assert_eq!(
+        Request::decode(&framed(&frame)).map_err(|refused| refused.refusal.code()),
+        Ok(request)
+    );
+
+    let response = Response {
+        correlation: Some(Correlation::new(4)),
+        outcome: Outcome::Setting(SettingOutcome::Forced(Forced::Project)),
+    };
+    let frame: Value = serde_json::from_slice(&response.encode().unwrap()).unwrap();
+    assert_eq!(
+        frame.get("outcome"),
+        Some(&json!({"kind": "setting", "setting": {"kind": "forced", "by": "project"}})),
+        "{frame}"
+    );
+    let elsewhere = with(
+        frame,
+        "outcome",
+        json!({"kind": "setting", "setting": {"kind": "forced", "by": "a-neighbour"}}),
+    );
+    assert_eq!(
+        Response::decode(&framed(&elsewhere)).unwrap_err().code(),
         ErrorCode::Malformed
     );
 }
