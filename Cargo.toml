@@ -350,14 +350,18 @@ windows-sys = { version = "=0.61.2", features = [
 # knows instants and nothing of zones: turning one into a local wall clock means
 # reading the system's zone (`/etc/localtime` and `TZ` on Unix, the registry on
 # Windows) and the TZif rules behind it, which is a parser and a platform
-# branch apiece. Only the system zone and the zoneinfo directory are turned
-# on, so no copy of the zone database is bundled; a machine where the zone
-# cannot be read is shown its times in UTC, and says so.
+# branch apiece. Unix reads its zone rules from the zoneinfo directory, so
+# nothing is bundled there; Windows has no such directory, so
+# `tzdb-bundle-platform` compiles a copy of the zone database into the binary
+# for Windows alone, without which the registry's zone has no rules to read and
+# every time would be UTC. A machine whose zone still cannot be read is shown
+# its times in UTC, and says so.
 jiff = { version = "=0.2.28", default-features = false, features = [
     "std",
     "tz-system",
     "tzdb-zoneinfo",
     "tzdb-concatenated",
+    "tzdb-bundle-platform",
 ] }
 
 # --- Encoded standards -------------------------------------------------------

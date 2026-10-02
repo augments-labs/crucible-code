@@ -363,3 +363,13 @@ fn usage_stands_over_a_running_turn() {
     // the figures that turn last reported.
     assert_eq!(Command::Usage.mid_turn(), MidTurn::Live);
 }
+
+/// Windows has no zoneinfo directory: the zone its registry names is read from
+/// the copy of the database built in, or every reset time would be UTC.
+#[cfg(windows)]
+#[test]
+fn a_windows_machine_reads_its_zone_from_the_database_built_in() {
+    assert!(TimeZone::get("Europe/Paris").is_ok());
+    let clock = Clock::system();
+    assert!(!clock.guessed, "{:?}", clock.zone);
+}
