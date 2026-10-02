@@ -270,9 +270,9 @@ pub(super) fn limits(windows: &PlanWindows, serving: Option<&str>) -> api::Limit
 
 /// One limit and its windows, shortest first.
 ///
-/// A name a vendor gave is kept stripped of control characters and cut under
-/// the contract's ceiling, so it always crosses; a group whose name somehow
-/// did not would be left out rather than called plan-wide.
+/// A name a vendor gave is kept stripped of control and format characters
+/// and cut under the contract's ceiling, so it always crosses; a group whose
+/// name somehow did not would be left out rather than called plan-wide.
 fn group(group: &LimitGroup, serving: Option<&str>) -> Option<api::LimitGroup> {
     Some(api::LimitGroup {
         model: match group.scope() {

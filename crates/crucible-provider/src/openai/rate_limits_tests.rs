@@ -869,6 +869,33 @@ async fn plan_limit_asked_a_used_up_model_limit_stops_its_model_and_no_other() {
     assert_eq!(windows.exhausted("codex_bengalfox", before), None);
 }
 
+/// A limit name is drawn as text a response chose: a format character in it,
+/// which would reorder or hide what the panel draws, is not kept, and a slug
+/// that held one is the key of no model.
+#[tokio::test]
+async fn plan_limit_asked_a_format_character_in_a_limit_name_is_not_kept() {
+    let before = at(RESET - 60);
+    let spent = format!(
+        r#"{{"primary_window":{},"secondary_window":null}}"#,
+        wham_window(100, 18_000, RESET)
+    );
+    let name = "gpt-5\u{202e}-ini";
+    let body = wham(
+        r#"{"primary_window":null,"secondary_window":null}"#,
+        &format!(r#","additional_rate_limits":[{{"limit_name":"{name}","rate_limit":{spent}}}]"#),
+    );
+
+    let windows = answered(asked(200, &body).await);
+
+    assert_eq!(
+        grouped(Some(windows.clone())),
+        [(Some("gpt-5-ini".to_owned()), vec![(Window::FiveHour, 100)])]
+    );
+    for model in [name, "gpt-5-ini"] {
+        assert_eq!(windows.exhausted(model, before), None, "{model}");
+    }
+}
+
 /// As many additional limits as a reading keeps groups beside the plan's own
 /// are all of them; one more is an answer that says it left some out.
 #[tokio::test]

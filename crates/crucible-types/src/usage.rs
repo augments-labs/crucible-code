@@ -652,7 +652,8 @@ pub const MAX_GROUP_WINDOWS: usize = 6;
 /// [`ModelKey`]'s to say.
 ///
 /// It is text a response chose, so it is never read for meaning: control
-/// characters are taken out, it is cut to [`MAX_LIMIT_NAME_BYTES`] on a
+/// characters and Unicode format characters, which would reorder or hide what
+/// is drawn, are taken out, it is cut to [`MAX_LIMIT_NAME_BYTES`] on a
 /// character's boundary and ends in `…` where it was, and a name with nothing
 /// left is not one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -665,7 +666,7 @@ impl GroupName {
         const CUT: &str = "…";
         let mut kept = String::new();
         let mut whole = true;
-        for character in said.trim().chars().filter(|c| !c.is_control()) {
+        for character in said.trim().chars().filter(|&c| !unshown(c)) {
             if kept.len().saturating_add(character.len_utf8()) > MAX_LIMIT_NAME_BYTES {
                 whole = false;
                 break;
@@ -687,6 +688,38 @@ impl GroupName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Whether `character` is a control character, or a Unicode format character
+/// (general category `Cf`): the bidi marks, embeddings, overrides and
+/// isolates, the zero-width characters and the byte order mark among them.
+/// Drawn, either reorders or hides the text around it. U+2065, unassigned
+/// between the invisible operators and the isolates, is taken with them.
+const fn unshown(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{ad}'
+                | '\u{600}'..='\u{605}'
+                | '\u{61c}'
+                | '\u{6dd}'
+                | '\u{70f}'
+                | '\u{890}'..='\u{891}'
+                | '\u{8e2}'
+                | '\u{180e}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+                | '\u{110bd}'
+                | '\u{110cd}'
+                | '\u{13430}'..='\u{1343f}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
+                | '\u{e0001}'
+                | '\u{e0020}'..='\u{e007f}'
+        )
 }
 
 /// Which requests a model's group of limits holds back, as the provider
@@ -719,11 +752,12 @@ enum Matching {
 
 impl ModelKey {
     /// The model whose id is exactly `id`; `None` for an id that is empty,
-    /// holds a control character, or is longer than [`MAX_LIMIT_NAME_BYTES`]:
-    /// no model's id is, and one cut to fit would be another model's.
+    /// holds a control or a Unicode format character, or is longer than
+    /// [`MAX_LIMIT_NAME_BYTES`]: no model's id is, and one cut to fit would be
+    /// another model's.
     #[must_use]
     pub fn exact(id: &str) -> Option<Self> {
-        (!id.is_empty() && id.len() <= MAX_LIMIT_NAME_BYTES && !id.chars().any(char::is_control))
+        (!id.is_empty() && id.len() <= MAX_LIMIT_NAME_BYTES && !id.chars().any(unshown))
             .then(|| Self(Matching::Exact(id.into())))
     }
 
@@ -1588,5 +1622,61 @@ mod tests {
         assert_eq!(ModelKey::exact(&long), None);
         assert_eq!(ModelKey::exact(""), None);
         assert_eq!(ModelKey::exact("gpt\u{1b}[31m"), None);
+    }
+
+    /// Every Unicode format character a vendor could put in a name to
+    /// reorder or hide what is drawn: the bidi marks, embeddings, overrides
+    /// and isolates, the zero-width characters, the byte order mark, and the
+    /// rest of the format category.
+    const FORMATS: &[char] = &[
+        '\u{ad}',
+        '\u{600}',
+        '\u{61c}',
+        '\u{180e}',
+        '\u{200b}',
+        '\u{200c}',
+        '\u{200d}',
+        '\u{200e}',
+        '\u{200f}',
+        '\u{202a}',
+        '\u{202b}',
+        '\u{202c}',
+        '\u{202d}',
+        '\u{202e}',
+        '\u{2060}',
+        '\u{2061}',
+        '\u{2062}',
+        '\u{2063}',
+        '\u{2064}',
+        '\u{2065}',
+        '\u{2066}',
+        '\u{2067}',
+        '\u{2068}',
+        '\u{2069}',
+        '\u{206f}',
+        '\u{feff}',
+        '\u{fff9}',
+        '\u{110bd}',
+        '\u{1d173}',
+        '\u{e0001}',
+        '\u{e007f}',
+    ];
+
+    #[test]
+    fn plan_limit_a_group_name_drops_format_characters_and_a_key_refuses_them() {
+        for &format in FORMATS {
+            let said = format!("gpt-5{format}-ini");
+            assert_eq!(
+                GroupName::new(&said).map(|name| name.as_str().to_owned()),
+                Some("gpt-5-ini".to_owned()),
+                "U+{:04X}",
+                u32::from(format)
+            );
+            assert_eq!(GroupName::new(&format!(" {format}{format} ")), None);
+            assert_eq!(ModelKey::exact(&said), None, "U+{:04X}", u32::from(format));
+        }
+        // Letters of any script are kept.
+        assert_eq!(GroupName::new("модель-ü").unwrap().as_str(), "модель-ü");
+        assert!(ModelKey::exact("модель-ü").is_some());
     }
 }
