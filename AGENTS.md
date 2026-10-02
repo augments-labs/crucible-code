@@ -83,6 +83,7 @@ surface below, and updates every one it reaches in the same change.
 - A boolean environment variable accepts exactly `true`, `false`, `1` and `0`,
   and refuses any other value with a message that names those four.
 - Content added to a request gets a category in `/context`.
+- A new kind of usage or limit a provider reports is shown in `/usage`.
 
 ## Dependencies
 

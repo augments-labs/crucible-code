@@ -889,6 +889,7 @@ back to correct.
 | `/help` | Lists these |
 | `/release-notes` | Lists the releases to open one, or prints the one you name |
 | `/context` | Shows how the model's window is spent by the next request, part by part |
+| `/usage` | Shows what the session has used, and how much of your plan's windows is gone |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
 | `/fast` | Asks the model in force for its vendor's [fast form](../providers/fast.md), at its price, or for standard |
@@ -951,6 +952,19 @@ left before compaction, so the two always agree. A model whose window crucible
 does not know shows the tokens alone, with `window not known` in place of the
 size and no bar. Escape closes it.
 
+`/usage` stands a panel over the prompt box with what the session has used:
+its cost, the time its requests were out and the time since it started, the
+lines edits added and removed, and its tokens in, out, read from a cache and
+written to one. A session with a model crucible has no price for says `not
+priced` rather than `$0.00`. Under that is the same context bar `/context`
+draws, and then the plan limits: one bar for each of the 5-hour, weekly and
+monthly windows the vendor reported on its last response, with when each
+starts again in your local time. Only the ChatGPT sign-in reports them; an API
+key or any other sign-in says `limits not reported`. Opening the panel sends
+nothing: every figure on it is one crucible already holds, and the counts are
+this run's, starting again for a session picked up with `/resume`. Escape
+closes it.
+
 ### A command typed while a turn runs
 
 Most commands are for the space between turns, but a few can act over a running
@@ -958,10 +972,10 @@ one. Typing `/` while a turn runs opens the same command list the prompt opens,
 stood above the box, and the arrows walk it as they do there. What happens on
 Enter depends on the command:
 
-- **`/theme`, `/help` and `/context`** are screen-only, and run at once, panel
-  and all, with the transcript going on behind them. `/context` shows the
-  figures the running turn last reported, which include anything it has
-  recorded since its last request.
+- **`/theme`, `/help`, `/context` and `/usage`** are screen-only, and run at
+  once, panel and all, with the transcript going on behind them. `/context`
+  and `/usage` show the figures the running turn last reported, which for
+  `/context` include anything it has recorded since its last request.
 - **`/model`** cannot reach the runner answering this turn, so it is picked and
   confirmed now but held for the turn that starts after. The rung strip is empty
   there and says so: how hard it thinks is something the running turn has already
