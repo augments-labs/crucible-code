@@ -7,7 +7,7 @@ Repository skills are in [`.agents/skills/`](.agents/skills/).
 ## Finding the owner
 
 Every crate's `src/lib.rs` opens by saying what the crate is for, so
-`head -qn3 crates/*/src/lib.rs` is the map. Before changing code, read the
+`head -n3 crates/*/src/lib.rs` is the map. Before changing code, read the
 module documentation above it: it states the local invariants, and when your
 change makes one of its sentences false, update it in the same change.
 
@@ -75,8 +75,8 @@ What the tree does not show:
 
 ## Keeping the surfaces whole
 
-A change that adds something a user can see or set looks at each surface
-below, and updates every one it reaches in the same change.
+A change that adds or changes what a user can see or set looks at each
+surface below, and updates every one it reaches in the same change.
 
 - The user docs under `docs/`, the README's first-run section, contributor
   setup in `CONTRIBUTING.md`, and `CHANGELOG.md`.
