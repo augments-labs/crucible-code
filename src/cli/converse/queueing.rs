@@ -15,8 +15,9 @@
 //! ones that were not — and the turn works them in at its next pass boundary.
 //!
 //! The row saying a turn is running stays directly over the view's rule, with
-//! its clock counting; in a window too short for both it is the row that gives
-//! way, so the list is never the thing cut.
+//! its clock counting. The list is laid in the rows left under it, so a list
+//! long enough to fill the window gives up one row to it. The working row is
+//! dropped only when the rows left would show none of the list.
 //!
 //! Nothing above it stops for that. The turn writes into the tail as it always
 //! does; a held queue answers the exchange loop the way an empty one does, which
