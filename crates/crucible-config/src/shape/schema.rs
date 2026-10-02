@@ -85,11 +85,15 @@ fn of(shape: &Shape) -> Value {
 
         Shape::Flag => json!({ "type": "boolean" }),
 
-        // `minimum` and `maximum` would say nothing here: they hold for a
-        // number, and this is a string, which is what the environment has.
-        // `pattern` is what an editor checks a string against, so the bounds
-        // are spelled as one.
-        Shape::Whole(bounds) => json!({ "type": "string", "pattern": pattern(bounds) }),
+        // Either way a number may be written in the block: as the integer it
+        // is, where `minimum` and `maximum` say the bounds, or as the string
+        // the environment holds, where only `pattern` can.
+        Shape::Whole(bounds) => json!({
+            "anyOf": [
+                { "type": "integer", "minimum": bounds.least, "maximum": bounds.most },
+                { "type": "string", "pattern": pattern(bounds) }
+            ]
+        }),
         Shape::Pattern(pattern) => json!({ "type": "string", "pattern": pattern }),
         Shape::Fields(_) | Shape::Named { .. } => object(shape),
         // An object and nothing more. No `properties`, because the names are
@@ -130,26 +134,105 @@ fn of(shape: &Shape) -> Value {
 
 /// Every number between two bounds, as a pattern an editor can check.
 ///
-/// One alternative per number rather than a decomposition into digit ranges.
-/// The published bounds are then the accepted ones by construction, with no
-/// algorithm in between that a test would have to stand behind — and the
-/// pattern is read by editors rather than by people, so its length is paid in
-/// bytes and not in comprehension.
+/// Generated from the bounds rather than written beside them, so the two cannot
+/// be edited apart. Numbers are grouped by how many digits they have and each
+/// group is split into the shortest run of alternatives that a digit class can
+/// say: `3` to `30` is `[3-9]` for one digit, then `[12][0-9]` and `30` for two.
 ///
-/// A leading `+` and any number of leading zeros are allowed because the reader
-/// that turns one of these into a value takes them: `+6` and `06` are spellings
-/// of a number somebody meant, and a schema that squiggled what the program
-/// accepts is the disagreement this whole file exists to prevent.
+/// Decimal digits and nothing else: no `+` and no leading zero, because the
+/// reader that turns one of these into a value refuses both, and a schema that
+/// accepted what the program refuses is the disagreement this file exists to
+/// prevent.
 fn pattern(bounds: &Whole) -> String {
-    let mut written = String::from(r"^\+?0*(?:");
-    for number in bounds.least..=bounds.most {
-        if number > bounds.least {
-            written.push('|');
+    let mut alternatives = Vec::new();
+    let (smallest, largest) = (u32::from(bounds.least), u32::from(bounds.most));
+
+    // The numbers written with one more digit each time round run from `starts`
+    // to `ends`, and `0` is the one number whose single digit is a zero.
+    let (mut starts, mut ends) = (0_u32, 9_u32);
+    while starts <= largest {
+        let (low, high) = (smallest.max(starts), largest.min(ends));
+        if low <= high {
+            alternatives.extend(of_equal_width(
+                format!("{low}").as_bytes(),
+                format!("{high}").as_bytes(),
+            ));
         }
-        written.push_str(&number.to_string());
+        starts = ends + 1;
+        ends = ends * 10 + 9;
     }
-    written.push_str(r")$");
-    written
+
+    format!("^({})$", alternatives.join("|"))
+}
+
+/// The alternatives matching every digit string from `low` to `high`, which are
+/// the same length and in order.
+///
+/// The first digits either agree, so one literal digit leads and the rest is
+/// the same question one digit shorter, or they differ, and what lies between
+/// is a ragged start under the low first digit, whole digit classes in the
+/// middle, and a ragged end under the high one.
+fn of_equal_width(low: &[u8], high: &[u8]) -> Vec<String> {
+    let (Some((&from, low_rest)), Some((&to, high_rest))) = (low.split_first(), high.split_first())
+    else {
+        return vec![String::new()];
+    };
+
+    if from == to {
+        return of_equal_width(low_rest, high_rest)
+            .into_iter()
+            .map(|rest| format!("{}{rest}", char::from(from)))
+            .collect();
+    }
+
+    let starts_whole = low_rest.iter().all(|digit| *digit == b'0');
+    let ends_whole = high_rest.iter().all(|digit| *digit == b'9');
+    let mut found = Vec::new();
+
+    if !starts_whole {
+        let nines = vec![b'9'; low_rest.len()];
+        found.extend(
+            of_equal_width(low_rest, &nines)
+                .into_iter()
+                .map(|rest| format!("{}{rest}", char::from(from))),
+        );
+    }
+
+    let first_whole = if starts_whole { from } else { from + 1 };
+    let last_whole = if ends_whole {
+        Some(to)
+    } else {
+        to.checked_sub(1)
+    };
+    if let Some(last_whole) = last_whole
+        && first_whole <= last_whole
+    {
+        found.push(format!(
+            "{}{}",
+            class(first_whole, last_whole),
+            "[0-9]".repeat(low_rest.len())
+        ));
+    }
+
+    if !ends_whole {
+        let zeros = vec![b'0'; high_rest.len()];
+        found.extend(
+            of_equal_width(&zeros, high_rest)
+                .into_iter()
+                .map(|rest| format!("{}{rest}", char::from(to))),
+        );
+    }
+
+    found
+}
+
+/// The digits from `low` to `high` as one character class, or the one digit.
+fn class(low: u8, high: u8) -> String {
+    match high - low {
+        0 => char::from(low).to_string(),
+        1 => format!("[{}{}]", char::from(low), char::from(high)),
+        _ => format!("[{}-{}]", char::from(low), char::from(high)),
+    }
 }
 
 /// One field of an object, as a schema: its shape, its sentence, its examples.
@@ -516,6 +599,100 @@ mod tests {
             ]
         );
         assert_eq!(sandbox.get("additionalProperties"), Some(&json!(false)));
+    }
+
+    /// Whether `written` is matched by one of the patterns this file writes.
+    ///
+    /// Only the subset `pattern` emits: `^(` and `)$` around alternatives, each
+    /// a run of a digit, `[ab]`, `[a-b]` or `[0-9]`. A regular-expression engine
+    /// would be a dependency for one test, and one that read the pattern back
+    /// the way an editor does would only be as independent as this is.
+    fn matches(pattern: &str, written: &str) -> bool {
+        let inner = pattern
+            .strip_prefix("^(")
+            .and_then(|rest| rest.strip_suffix(")$"))
+            .expect("the pattern is anchored and grouped");
+
+        inner.split('|').any(|alternative| {
+            let mut digits = written.chars();
+            let mut atoms = alternative.chars();
+            while let Some(atom) = atoms.next() {
+                let Some(digit) = digits.next() else {
+                    return false;
+                };
+                let held = if atom == '[' {
+                    let class: String = atoms.by_ref().take_while(|c| *c != ']').collect();
+                    let mut ends = class.chars();
+                    match (ends.next(), ends.next(), ends.next(), ends.next()) {
+                        (Some(low), Some('-'), Some(high), None) => (low..=high).contains(&digit),
+                        _ => class.contains(digit),
+                    }
+                } else {
+                    atom == digit
+                };
+                if !held {
+                    return false;
+                }
+            }
+            digits.next().is_none()
+        })
+    }
+
+    #[test]
+    fn scroll_speed_is_published_as_an_integer_with_bounds_or_a_string() {
+        let schema = generated();
+        let speed = property(&schema, &["env", "CRUCIBLE_CODE_MOUSE_SCROLL_SPEED"]);
+
+        assert_eq!(
+            at(speed, "anyOf"),
+            &json!([
+                { "type": "integer", "minimum": 3, "maximum": 30 },
+                { "type": "string", "pattern": "^([3-9]|[12][0-9]|30)$" }
+            ])
+        );
+        assert_eq!(at(speed, "default"), "6");
+    }
+
+    #[test]
+    fn scroll_speed_pattern_and_bounds_agree_on_every_integer_from_0_to_40() {
+        // The two halves of one alternative: a number the string form matches
+        // has to be one the integer form's bounds hold, and the other way
+        // round. Without this a bound can move and leave the other behind.
+        let bounds = &crate::shape::SCROLL_SPEED;
+        let written = pattern(bounds);
+
+        for number in 0..=40_u16 {
+            assert_eq!(
+                matches(&written, &number.to_string()),
+                (bounds.least..=bounds.most).contains(&number),
+                "{number} against {written}"
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_speed_pattern_refuses_every_spelling_the_reader_refuses() {
+        let written = pattern(&crate::shape::SCROLL_SPEED);
+
+        for spelling in ["", "+6", "06", "006", " 6", "6 ", "3 0", "300", "-3"] {
+            assert!(!matches(&written, spelling), "{spelling:?}");
+        }
+    }
+
+    #[test]
+    fn a_pattern_is_generated_for_a_range_that_crosses_more_than_one_width() {
+        // The generator is not written for 3 to 30: these are the shapes a
+        // different pair of bounds would need.
+        for (least, most) in [(0, 9), (1, 30), (3, 30), (7, 123), (10, 99), (95, 105)] {
+            let written = pattern(&Whole { least, most });
+            for number in 0..=130_u16 {
+                assert_eq!(
+                    matches(&written, &number.to_string()),
+                    (least..=most).contains(&number),
+                    "{number} against {written}"
+                );
+            }
+        }
     }
 
     /// Brings the checked-in schema back into step with `generated`, and says

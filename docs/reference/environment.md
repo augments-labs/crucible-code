@@ -30,13 +30,13 @@ Two more are read only if crucible crashes: Rust's own `RUST_BACKTRACE` and
   CRUCIBLE_CODE_HOME`. See
   [`CRUCIBLE_CODE_HOME`](../configuration/configuration.md#crucible_code_home).
 - `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`: how many rows of the transcript one notch
-  of the wheel moves, a whole number from `1` to `30`. Unset: `6`. It can also
+  of the wheel moves, a whole number from `3` to `30`. Unset: `6`. It can also
   be written in the [`env`](../configuration/configuration.md#env) block of a
-  configuration file, and the shell you start crucible in wins over the block.
+  configuration file, as an integer or a string, and the shell you start crucible in wins over the block.
   A value crucible cannot read is refused rather than rounded into range: in a
   file with `is not set to an answer crucible takes`, in the shell with
   `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED is not set to an answer crucible takes`,
-  each followed by what it does take, `a whole number of rows from 1 to 30`.
+  each followed by what it does take, `a whole number of rows from 3 to 30`.
   See
   [`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`](../configuration/configuration.md#crucible_code_mouse_scroll_speed).
 

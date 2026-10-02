@@ -40,7 +40,7 @@ pub use sandbox::SandboxSettings;
 pub use updates::Updates;
 pub use variables::ScrollSpeed;
 
-pub(crate) use variables::refused;
+pub(crate) use variables::{refused, spelled};
 
 /// What every layer together says a setting is.
 ///

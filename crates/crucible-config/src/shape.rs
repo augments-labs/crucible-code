@@ -54,11 +54,13 @@ pub(crate) enum Shape {
     /// every layer's own set to decide what each may add or narrow.
     TextSet { maximum: usize, bytes: usize },
 
-    /// A whole number *written as a string*, between two bounds.
+    /// A whole number between two bounds, written as a JSON integer or as the
+    /// string the environment would hold.
     ///
-    /// A string because the one place this appears is `env`, and the
+    /// A string is allowed because the one place this appears is `env`, and the
     /// environment holds strings — see [`VALUE`]. The bounds are what the
-    /// schema publishes; refusing a value outside them is
+    /// schema publishes, as `minimum` and `maximum` for the integer and as a
+    /// generated pattern for the string; refusing a value outside them is
     /// `settings::variables`, one layer down, because a refusal there names the
     /// variable without quoting what was set beside it and the block it is in
     /// is the block a token would be in. Two lists, tested against each other,
@@ -305,13 +307,15 @@ const PROVIDER: Shape = Shape::Fields(&[
 /// variable would have to be to arrive any other way.
 const VALUE: Shape = Shape::Text;
 
-/// The bounds a whole number written as a string is allowed to fall between.
+/// The bounds a whole number in the `env` block is allowed to fall between.
 ///
-/// Both are written out by the schema, one alternative per number, which is
-/// what makes the published bounds exactly the accepted ones without an
-/// algorithm standing between them. That costs a line of pattern per number, so
-/// this is for a range small enough to write out; a wider one wants a different
-/// answer here rather than a longer version of this one.
+/// The block is the environment, so the number may be written as the string the
+/// environment holds or as a JSON integer. The schema publishes the bounds for
+/// the integer as `minimum` and `maximum`, and for the string as a pattern
+/// generated from the same two numbers, so neither can say what the other
+/// refuses. The reader is `settings::variables`, which takes decimal digits
+/// only — no sign, no leading zero, no space — so that the pattern, which has
+/// none of those either, is exact.
 pub(crate) struct Whole {
     /// The smallest accepted.
     pub(crate) least: u16,
@@ -321,16 +325,17 @@ pub(crate) struct Whole {
 
 /// How far one notch of the wheel may be asked to move the transcript.
 ///
-/// One rather than none at the bottom. A wheel set to move nothing is a setting
-/// that looks applied and does nothing, and a reader who wants the wheel to
-/// leave the transcript alone is asking for a thing crucible no longer has to
-/// give, because the screen it scrolls is its own.
+/// Three at the bottom, and a number below it is refused rather than pulled up
+/// to it. A wheel set to move nothing is a setting that looks applied and does
+/// nothing, and a reader who wants the wheel to leave the transcript alone is
+/// asking for a thing crucible no longer has to give, because the screen it
+/// scrolls is its own.
 ///
 /// A screenful on most terminals at the top. Past that the wheel stops being a
 /// scroll and becomes a jump: two notches and the rows that were on screen are
 /// gone with nothing between them to read, which is a worse way to lose your
 /// place than scrolling too slowly ever is.
-pub(crate) const SCROLL_SPEED: Whole = Whole { least: 1, most: 30 };
+pub(crate) const SCROLL_SPEED: Whole = Whole { least: 3, most: 30 };
 
 /// The name of that setting, as it is written in the block.
 ///
@@ -1590,7 +1595,7 @@ impl Shape {
             Self::Limit(_) => "a positive whole number within the documented ceiling",
             Self::TextSet { .. } => "a bounded set of nonempty strings",
             Self::Flag => "true or false",
-            Self::Whole(_) => "a whole number written as a string",
+            Self::Whole(_) => "a whole number, or one written as a string",
             Self::Pattern(_) => "a string of the documented form",
             Self::Fields(_) | Self::Named { .. } => "an object",
             Self::List { .. } => "a list",
