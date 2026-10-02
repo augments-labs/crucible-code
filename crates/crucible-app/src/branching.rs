@@ -18,8 +18,16 @@
 //! checkout's `.git` file. Read rather than asked of `git worktree list` for
 //! the same reasons, and with the same quiet answer — a directory that is not a
 //! repository, or one with no other checkout, has none to add.
+//!
+//! A checkout is hostile input, and these files are read on every `/resume`.
+//! Each is read only when it is one ordinary file of no more than a few KiB,
+//! which any path git writes fits in: a pipe left where one stands would
+//! otherwise hold the picker until something wrote to it, and a file without
+//! end would be read into memory whole. Anything else is the same quiet
+//! `None` as a directory that is not a repository.
 
 use std::fs;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 /// The branch checked out at `root`, or `None` where there is no branch to
@@ -31,13 +39,13 @@ pub fn current(root: &Path) -> Option<String> {
     // In a linked worktree `.git` is a file naming where the real directory
     // is, and that is where this worktree's own HEAD lives.
     let head = if git.is_file() {
-        let pointed = fs::read_to_string(&git).ok()?;
+        let pointed = small(&git)?;
         Path::new(pointed.strip_prefix("gitdir:")?.trim()).join("HEAD")
     } else {
         git.join("HEAD")
     };
 
-    let head = fs::read_to_string(head).ok()?;
+    let head = small(&head)?;
 
     // `ref: refs/heads/<branch>` on a branch; a bare commit hash detached.
     Some(head.strip_prefix("ref: refs/heads/")?.trim().to_owned())
@@ -71,7 +79,7 @@ pub fn worktrees(root: &Path) -> Vec<PathBuf> {
     if let Ok(entries) = fs::read_dir(common.join("worktrees")) {
         for entry in entries.flatten().take(WORKTREES) {
             let admin = entry.path();
-            let Ok(pointed) = fs::read_to_string(admin.join("gitdir")) else {
+            let Some(pointed) = small(&admin.join("gitdir")) else {
                 continue;
             };
             // Absolute as git writes it by default; relative to this record's
@@ -104,13 +112,39 @@ fn common(root: &Path) -> Option<PathBuf> {
     // directory's `commondir` names the shared one, relative to itself. A
     // `.git` file with no `commondir` beside its target — a submodule — has
     // its own directory as the common one.
-    let pointed = fs::read_to_string(&git).ok()?;
+    let pointed = small(&git)?;
     let own = root.join(pointed.strip_prefix("gitdir:")?.trim());
-    let common = match fs::read_to_string(own.join("commondir")) {
-        Ok(common) => own.join(common.trim()),
-        Err(_) => own,
+    let common = match small(&own.join("commondir")) {
+        Some(common) => own.join(common.trim()),
+        None => own,
     };
     fs::canonicalize(common).ok()
+}
+
+/// How much of one of git's own small files is read. Any path git writes
+/// there fits; a file past this is not one git wrote.
+const GIT_FILE: usize = 4 * 1024;
+
+/// What the small file git keeps at `path` says, or `None` where it is not one
+/// ordinary file of at most [`GIT_FILE`] bytes of text.
+///
+/// Opened through the workspace's own open for content, which on Unix does not
+/// wait on a pipe and refuses whatever opened that is not a regular file, so a
+/// pipe swapped in after the name was looked up is refused all the same.
+fn small(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let file = crucible_workspace::Workspace::open(path.parent()?)
+        .ok()?
+        .existing(name)
+        .ok()?
+        .open_regular()
+        .ok()?;
+
+    let mut text = String::new();
+    file.take(GIT_FILE as u64 + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    (text.len() <= GIT_FILE).then_some(text)
 }
 
 /// `checkout` as a workspace root spells it, or `None` when it is gone.

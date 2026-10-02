@@ -193,3 +193,104 @@ fn a_repository_without_other_checkouts_or_no_repository_adds_nothing() {
     let scratch = Scratch::new("no-repository");
     assert!(worktrees(scratch.root()).is_empty());
 }
+
+/// What `read` answers, or `None` when it has not answered within a few
+/// seconds: a read that waits on a pipe never returns, and a bound held outside
+/// this test would leave the suite waiting instead of reporting.
+fn promptly<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (said, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = said.send(read());
+    });
+    heard.recv_timeout(std::time::Duration::from_secs(5)).ok()
+}
+
+/// A pipe at `at`, which an ordinary open for reading waits on until a writer
+/// comes.
+#[cfg(unix)]
+fn piped(at: &Path) {
+    let _ = fs::remove_file(at);
+    let made = std::process::Command::new("mkfifo")
+        .arg(at)
+        .status()
+        .expect("mkfifo is available on Unix");
+    assert!(made.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pipe_where_git_keeps_a_file_is_no_repository_and_no_wait() {
+    // A checkout is hostile input: a `.git` left as a pipe would hold
+    // `/resume` until something wrote to it.
+    let scratch = Scratch::new("pipe-dot-git");
+    piped(&scratch.root().join(".git"));
+    let root = scratch.root().to_path_buf();
+    assert_eq!(promptly(move || worktrees(&root)), Some(Vec::new()));
+    let root = scratch.root().to_path_buf();
+    assert_eq!(promptly(move || current(&root)), Some(None));
+
+    // HEAD, where the branch is read from.
+    let scratch = Scratch::new("pipe-head");
+    fs::create_dir_all(scratch.root().join(".git")).expect("a .git directory");
+    piped(&scratch.root().join(".git").join("HEAD"));
+    let root = scratch.root().to_path_buf();
+    assert_eq!(promptly(move || current(&root)), Some(None));
+
+    // `commondir`, read from a linked checkout to find the shared directory.
+    let repository = Repository::new("pipe-commondir");
+    let first = repository.linked("first", false);
+    piped(
+        &repository
+            .scratch
+            .root()
+            .join("main/.git/worktrees/first/commondir"),
+    );
+    let at = first.clone();
+    let found = promptly(move || worktrees(&at)).expect("an answer without waiting");
+    assert!(!found.contains(&repository.main()), "{found:?}");
+
+    // A linked checkout's `gitdir` record, read from the main one.
+    let repository = Repository::new("pipe-gitdir");
+    let _second = repository.linked("second", false);
+    piped(
+        &repository
+            .scratch
+            .root()
+            .join("main/.git/worktrees/second/gitdir"),
+    );
+    let main = repository.main();
+    assert_eq!(promptly(move || worktrees(&main)), Some(Vec::new()));
+}
+
+#[test]
+fn a_git_file_past_a_few_kilobytes_is_not_one_git_wrote() {
+    // Any path git writes fits in a few KiB; a record padded past that is
+    // read as nothing rather than grown into memory.
+    let padding = " ".repeat(64 * 1024);
+
+    let repository = Repository::new("oversize-gitdir");
+    let linked = repository.linked("linked", false);
+    let record = repository
+        .scratch
+        .root()
+        .join("main/.git/worktrees/linked/gitdir");
+    fs::write(
+        &record,
+        format!("{}{padding}\n", linked.join(".git").display()),
+    )
+    .expect("an oversize gitdir record");
+    assert!(worktrees(&repository.main()).is_empty());
+
+    let scratch = Scratch::new("oversize-dot-git");
+    let elsewhere = scratch.root().join("elsewhere");
+    fs::create_dir_all(&elsewhere).expect("the pointed-at git directory");
+    fs::write(elsewhere.join("HEAD"), "ref: refs/heads/main\n").expect("a HEAD file");
+    let checkout = scratch.root().join("checkout");
+    fs::create_dir_all(&checkout).expect("the checkout");
+    fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}{padding}\n", elsewhere.display()),
+    )
+    .expect("an oversize .git file");
+    assert_eq!(current(&checkout), None);
+}
