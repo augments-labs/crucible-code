@@ -1835,6 +1835,131 @@ fn the_session_picker_stands_over_the_whole_window() {
     assert!(keys > framed, "the keys stand above the panes: {picture}");
 }
 
+// How far `/resume` looks, on a real screen at a real size. Each case starts in
+// the home `reaching::planted` leaves, and each picture is the picker after the
+// keys the case is about, at eighty columns: the width the keys row has to give
+// up its long form in.
+
+#[test]
+fn the_resume_picker_opens_on_this_directory() {
+    let planted = reaching::planted("reach-here");
+    let mut window = Watched::launched(
+        "reach-here",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_a_shows_every_project_and_says_where_each_session_is() {
+    let planted = reaching::planted("reach-all");
+    let mut window = Watched::launched(
+        "reach-all",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x01", "all projects");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_w_adds_this_repositorys_other_checkouts() {
+    let planted = reaching::planted("reach-worktrees");
+    let mut window = Watched::launched(
+        "reach-worktrees",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x17", "this repository's worktrees");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn ctrl_b_keeps_the_branch_checked_out_here() {
+    let planted = reaching::planted("reach-branch");
+    let mut window = Watched::launched(
+        "reach-branch",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x02", "1 of 1");
+
+    insta::assert_snapshot!(window.picture());
+}
+
+#[test]
+fn enter_on_another_projects_session_says_how_to_resume_it_there() {
+    let planted = reaching::planted("reach-elsewhere");
+    let mut window = Watched::launched(
+        "reach-elsewhere",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&planted.earlier),
+        },
+    );
+
+    // Found by the directory its row shows, which nothing in what it asked
+    // says.
+    window.types_until("/resume\r", "a session, or a branch");
+    window.types_until("\x01", "all projects");
+    window.types_until("website", "1 of 4");
+    window.types_until("\r", "crucible --resume");
+
+    // The picker is still standing, with the session's own tail beside it:
+    // a row the keys put on the list is a row the pane can show.
+    let picture = window.picture();
+    assert!(picture.contains("Resume a session"), "{picture}");
+    assert!(
+        picture
+            .lines()
+            .any(|row| row.contains("│ │ › tidy the stylesheet")),
+        "{picture}"
+    );
+
+    // The id is this run's own, and at eighty columns only its start fits.
+    insta::assert_snapshot!(reaching::unnamed(&picture, &planted.website));
+}
+
 #[test]
 fn picking_a_session_up_asks_before_carrying_it_whole() {
     // The panel in the binary rather than in a component test: it stands where

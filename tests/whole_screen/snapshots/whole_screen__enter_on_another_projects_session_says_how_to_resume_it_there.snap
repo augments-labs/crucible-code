@@ -1,7 +1,7 @@
 ---
-source: tests/whole_screen/reaching.rs
-assertion_line: 168
-expression: "unnamed(&picture, &website)"
+source: tests/whole_screen/main.rs
+assertion_line: 1960
+expression: "reaching::unnamed(&picture, &planted.website)"
 ---
 80x24 cursor 1,17 scrolled 0
 |╭──────────────────────────────────────────────────────────────────────────────╮|

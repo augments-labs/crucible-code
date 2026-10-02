@@ -1,13 +1,13 @@
 ---
-source: tests/whole_screen/reaching.rs
-assertion_line: 109
+source: tests/whole_screen/main.rs
+assertion_line: 1881
 expression: window.picture()
 ---
 80x24 cursor 1,10 scrolled 0
 |╭──────────────────────────────────────────────────────────────────────────────╮|
 |│ Search    a session, or a branch                                             │|
 |╰──────────────────────────────────────────────────────────────────────────────╯|
-| Resume a session · 2 of 2 · ~/a-directory-to-be-working-in/and-something-below |
+| Resume a session · 4 of 4 · all projects                                       |
 |                                                                                |
 |╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮|
 |│ › fix the failing parser tes │ │ › fix the failing parser test               │|
@@ -16,11 +16,11 @@ expression: window.picture()
 |│   draft the parser rewrite   │ │                                             │|
 |│   just now · feature         │ │                                             │|
 |│                              │ │                                             │|
+|│   cut the release notes      │ │                                             │|
+|│   just now · release · ~/a-d │ │                                             │|
 |│                              │ │                                             │|
-|│                              │ │                                             │|
-|│                              │ │                                             │|
-|│                              │ │                                             │|
-|│                              │ │                                             │|
+|│   tidy the stylesheet        │ │                                             │|
+|│   just now · main · ~/projec │ │                                             │|
 |│                              │ │ ────────────────────────────────────────────│|
 |│                              │ │ just now · 1 message · main                 │|
 |│                              │ │ Enter to resume · Esc to cancel             │|

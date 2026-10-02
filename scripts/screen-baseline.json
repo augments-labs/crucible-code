@@ -249,6 +249,38 @@
       "sha256": "8a8c2809ae02ec7ae65a21bf980f092b418d5fe6ede3f116a780790833d4336e"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_a_shows_every_project_and_says_where_each_session_is.snap",
+      "case": "ctrl_a_shows_every_project_and_says_where_each_session_is",
+      "opened": [
+        "Watched::launched( \"reach-all\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
+      ],
+      "sha256": "95ba4fbf2ca69acd70e57e467b922aba447ad295b3324c526be926dcd8a483ee"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_b_keeps_the_branch_checked_out_here.snap",
+      "case": "ctrl_b_keeps_the_branch_checked_out_here",
+      "opened": [
+        "Watched::launched( \"reach-branch\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
+      ],
+      "sha256": "43967cbae759f88322bef09c9bda2e009a3b61e9a657ee697111220f886bb69d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_w_adds_this_repositorys_other_checkouts.snap",
+      "case": "ctrl_w_adds_this_repositorys_other_checkouts",
+      "opened": [
+        "Watched::launched( \"reach-worktrees\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
+      ],
+      "sha256": "c177343077b663852a9f5ebff2484e53ad97e60624a5071182f452e334609011"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__enter_on_another_projects_session_says_how_to_resume_it_there.snap",
+      "case": "enter_on_another_projects_session_says_how_to_resume_it_there",
+      "opened": [
+        "Watched::launched( \"reach-elsewhere\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
+      ],
+      "sha256": "2261d2e681001872d1a2a36e8376b14d9d28e77f6c1348ab62dfda59c02ec510"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__escape_while_room_is_being_made_stops_it_and_replaces_nothing.snap",
       "case": "escape_while_room_is_being_made_stops_it_and_replaces_nothing",
       "opened": [
@@ -580,6 +612,14 @@
         "Watched::keyless(\"login-walked\", 80, 24, &vendor)"
       ],
       "sha256": "d6e7f5eba50bf53f29f85fd16f8aaf5139dc6e5260bedea39115503ebe88823d"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_resume_picker_opens_on_this_directory.snap",
+      "case": "the_resume_picker_opens_on_this_directory",
+      "opened": [
+        "Watched::launched( \"reach-here\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
+      ],
+      "sha256": "6f88b854961d4522ec24d349444aafbc9614c5608167e805f1e30bfbad79f914"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_same_session_in_a_narrow_window_is_the_same_screen_at_its_width.snap",
