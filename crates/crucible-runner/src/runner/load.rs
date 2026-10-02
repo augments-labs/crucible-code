@@ -127,7 +127,16 @@ pub(super) struct Fixed<'a> {
 impl<'a> Fixed<'a> {
     /// What every request `agent` sends out of `tools` carries.
     ///
-    /// The roster is the one the runner advertises, narrowed the same way.
+    /// The one narrowing of the roster to what `agent` declares: what is
+    /// counted here and what [`Runner::offering`](super::Runner::offering)
+    /// names are read from this, so they cannot come apart. A pass narrows the
+    /// roster it admits and leaves it behind narrowed, so after the first one
+    /// this keeps all of it. Before it, the run is still holding everything it
+    /// was wired with, and what is read between turns is about what the
+    /// definition declares rather than about what the wiring installed.
+    ///
+    /// A function over the two fields rather than a method, so a caller can
+    /// hold the load it is about to write while it asks.
     pub(super) fn of(agent: &'a Agent, tools: &'a ToolSnapshot) -> Self {
         Self {
             system: agent.instructions(),

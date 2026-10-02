@@ -197,25 +197,6 @@ pub struct Runner {
     pace: fast::Pace,
 }
 
-/// What `agent` would be advertised out of `tools`, between turns.
-///
-/// A pass narrows the roster it admits and leaves it behind narrowed, so after
-/// the first one this hands the roster straight back. Before it, the run is
-/// still holding everything it was wired with, and both things read here
-/// between turns — the names under the box and the size of the request the
-/// next turn would send — are about what the definition declares rather than
-/// about what the wiring installed.
-///
-/// A function over the two fields rather than a method, so a caller can hold
-/// the load it is about to write while it asks.
-fn advertising<'a>(agent: &Agent, tools: &'a ToolSnapshot) -> Vec<ToolSchema<'a>> {
-    tools
-        .advertised()
-        .into_iter()
-        .filter(|schema| agent.availability().offers(schema.name))
-        .collect()
-}
-
 struct Tooling {
     source: Arc<dyn Toolset>,
     snapshot: ToolSnapshot,
@@ -702,9 +683,10 @@ impl Runner {
     /// that. What the reader is shown is the same either way.
     #[must_use]
     pub fn offering(&self) -> Vec<String> {
-        advertising(&self.agent, &self.state.tools)
+        Fixed::of(&self.agent, &self.state.tools)
+            .tools
             .into_iter()
-            .map(|schema| schema.name.to_owned())
+            .map(|(_, schema)| schema.name.to_owned())
             .collect()
     }
 
