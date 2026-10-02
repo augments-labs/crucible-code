@@ -30,7 +30,7 @@ use std::borrow::Cow;
 use crucible_app::Conversation;
 use crucible_app::client::{Performed, Setting};
 use crucible_client_api::{self as api, Name};
-use crucible_config::{Forced, Row as Setting_, Values};
+use crucible_config::{Forced, Row as Setting_, RowId, Values};
 use crucible_tools::Mode;
 use crucible_tui::{Caret, Glyphs, Key, Pressed, Renderer, Row, Slot, Terminal, columns, fold};
 
@@ -314,7 +314,10 @@ fn settle<T: Terminal>(
     };
     match asked {
         Performed::Setting(Setting::Remembered) => {
-            line.later = !worn(row, &word, renderer, terms);
+            line.later = match takes(row.id()) {
+                Takes::Now => !worn(row, &word, renderer, terms),
+                Takes::NextStart => true,
+            };
             line.value.clone_from(&word);
             kept(terms, row, word);
             let said = format!("{} set to {}", row.label(), line.worded(glyphs));
@@ -347,6 +350,36 @@ fn settle<T: Terminal>(
     }
 }
 
+/// When a change to a row reaches the running session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Takes {
+    /// At once: the running session reads it again, and [`worn`] puts it there.
+    Now,
+    /// Only a new start reads it.
+    NextStart,
+}
+
+/// When a change to the row `id` reaches the running session.
+///
+/// [`worn`] matches the same identity to put a change in force, and a test
+/// holds the two to one answer.
+const fn takes(id: RowId) -> Takes {
+    match id {
+        RowId::Theme | RowId::SyntaxTheme | RowId::ScrollRail | RowId::ScrollSpeed => Takes::Now,
+        RowId::Glyphs
+        | RowId::Colour
+        | RowId::ToolDetail
+        | RowId::Send
+        | RowId::Tone
+        | RowId::Compaction
+        | RowId::UpdateCheck
+        | RowId::CacheMode
+        | RowId::CacheIsolation
+        | RowId::CacheRetention
+        | RowId::CachePersistent => Takes::NextStart,
+    }
+}
+
 /// Puts `word` in force for `row` now, where the running session reads it
 /// again; `false` for a setting only a new start reads.
 fn worn<T: Terminal>(
@@ -355,18 +388,28 @@ fn worn<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
 ) -> bool {
-    match row.key() {
-        "output.theme" => theme::wear(word, renderer, terms),
-        "output.syntaxTheme" => theme::read_in(word, renderer, terms),
-        "output.scrollRail" => {
+    match row.id() {
+        RowId::Theme => theme::wear(word, renderer, terms),
+        RowId::SyntaxTheme => theme::read_in(word, renderer, terms),
+        RowId::ScrollRail => {
             renderer.rails(word == "true");
             true
         }
-        "env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED" => word
+        RowId::ScrollSpeed => word
             .parse::<u16>()
             .map(|rows| renderer.rolls(i32::from(rows)))
             .is_ok(),
-        _ => false,
+        RowId::Glyphs
+        | RowId::Colour
+        | RowId::ToolDetail
+        | RowId::Send
+        | RowId::Tone
+        | RowId::Compaction
+        | RowId::UpdateCheck
+        | RowId::CacheMode
+        | RowId::CacheIsolation
+        | RowId::CacheRetention
+        | RowId::CachePersistent => false,
     }
 }
 
@@ -389,10 +432,25 @@ impl Line {
     /// `row` as this session has it.
     fn read(terms: &Terms, row: &'static Setting_) -> Self {
         let from = |name: &str| (terms.environment)(name);
-        let shown = match row.key() {
-            "output.theme" => theme::worn(terms).map(str::to_owned),
-            "output.syntaxTheme" => terms.reading.borrow().clone(),
-            _ => None,
+        // The two a running session can say it has in force, since `/theme`
+        // changes them too; every other row's running value is what was
+        // settled here, or what the start read.
+        let shown = match row.id() {
+            RowId::Theme => theme::worn(terms).map(str::to_owned),
+            RowId::SyntaxTheme => terms.reading.borrow().clone(),
+            RowId::Glyphs
+            | RowId::Colour
+            | RowId::ToolDetail
+            | RowId::ScrollRail
+            | RowId::ScrollSpeed
+            | RowId::Send
+            | RowId::Tone
+            | RowId::Compaction
+            | RowId::UpdateCheck
+            | RowId::CacheMode
+            | RowId::CacheIsolation
+            | RowId::CacheRetention
+            | RowId::CachePersistent => None,
         };
         let settled = terms
             .settled

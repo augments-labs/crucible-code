@@ -358,3 +358,116 @@ fn the_settings_tab_row_shows_the_open_tab_whole_at_the_narrowest_width() {
         key(&mut panel, Pressed::Tab);
     }
 }
+
+/// What the running session has for `id`, read back from where it lives,
+/// where the running session reads it at all.
+fn running(
+    id: crucible_config::RowId,
+    renderer: &Renderer<Recording>,
+    terms: &Terms,
+) -> Option<String> {
+    use crucible_config::RowId;
+    match id {
+        RowId::Theme => theme::worn(terms).map(str::to_owned),
+        RowId::SyntaxTheme => terms.reading.borrow().clone(),
+        RowId::ScrollRail => Some(renderer.transcript_columns().to_string()),
+        RowId::ScrollSpeed => Some(renderer.scroll_rows().to_string()),
+        RowId::Glyphs
+        | RowId::Colour
+        | RowId::ToolDetail
+        | RowId::Send
+        | RowId::Tone
+        | RowId::Compaction
+        | RowId::UpdateCheck
+        | RowId::CacheMode
+        | RowId::CacheIsolation
+        | RowId::CacheRetention
+        | RowId::CachePersistent => None,
+    }
+}
+
+/// A value `line`'s row takes that is not the one it has.
+fn other(line: &Line) -> String {
+    match line.row.values() {
+        Values::Flag => Some(
+            if line.value == "true" {
+                "false"
+            } else {
+                "true"
+            }
+            .to_owned(),
+        ),
+        Values::Choice(words) => words
+            .iter()
+            .copied()
+            .find(|word| *word != line.value)
+            .map(str::to_owned),
+        Values::Whole { least, most } => Some(
+            if line.value == least.to_string() {
+                most
+            } else {
+                least
+            }
+            .to_string(),
+        ),
+        Values::Named => crucible_tui::syntax::every_theme()
+            .into_iter()
+            .find(|name| *name != line.value && *name != crucible_tui::syntax::THEME_UNLESS_SAID),
+    }
+    .unwrap_or_else(|| panic!("{} offers one value", line.row.label()))
+}
+
+#[test]
+fn every_settings_row_that_applies_at_once_changes_the_running_value() {
+    let sample = Sample::new("settings-live");
+    let terms = keeping(&sample);
+    let counted = counted();
+    let mut renderer = Renderer::new(Recording::new(80, 24));
+    // As the start leaves it, where no file says otherwise: the rail on and
+    // the wheel at its usual speed.
+    renderer.rails(true);
+    let speed = crucible_config::row("env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED")
+        .and_then(crucible_config::Row::usual)
+        .and_then(|word| word.parse().ok())
+        .expect("the speed has a default");
+    renderer.rolls(speed);
+    let mut panel = Panel::new(&terms, &counted);
+
+    for at in 0..panel.lines.len() {
+        let line = panel.lines.get(at).expect("a row is there");
+        let (id, label) = (line.row.id(), line.row.label());
+        if takes(id) != Takes::Now {
+            continue;
+        }
+        let before = running(id, &renderer, &terms);
+        let word = other(line);
+        panel.asked = Some((at, word.clone()));
+        settle(&mut renderer, &terms, &mut panel);
+        let after = running(id, &renderer, &terms);
+        assert!(
+            after.is_some(),
+            "{label} is read again but nothing shows it"
+        );
+        assert_ne!(
+            before, after,
+            "{label} set to {word} left the running value"
+        );
+        assert!(
+            panel.lines.get(at).is_some_and(|line| !line.later),
+            "{label} says it waits for a start"
+        );
+    }
+}
+
+#[test]
+fn the_settings_rows_that_apply_at_once_are_these() {
+    let live: Vec<&str> = crucible_config::rows()
+        .iter()
+        .filter(|row| takes(row.id()) == Takes::Now)
+        .map(crucible_config::Row::label)
+        .collect();
+    assert_eq!(
+        live,
+        ["Theme", "Syntax theme", "Scroll rail", "Mouse scroll speed"]
+    );
+}

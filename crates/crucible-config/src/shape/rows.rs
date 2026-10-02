@@ -45,17 +45,68 @@ pub enum Values {
     Named,
 }
 
+/// Which setting a row is, as a value a host matches on.
+///
+/// The key says where a row is written and this says which it is, so a host
+/// deciding what a change does matches on this, exhaustively, and a row added
+/// here is a case every such match has to answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowId {
+    /// `output.theme`.
+    Theme,
+    /// `output.syntaxTheme`.
+    SyntaxTheme,
+    /// `output.glyphs`.
+    Glyphs,
+    /// `output.color`.
+    Colour,
+    /// `output.toolDetail`.
+    ToolDetail,
+    /// `output.scrollRail`.
+    ScrollRail,
+    /// `env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED`.
+    ScrollSpeed,
+    /// `input.send`.
+    Send,
+    /// `systemPrompt.tone`.
+    Tone,
+    /// `compaction.when`.
+    Compaction,
+    /// `updates.check`.
+    UpdateCheck,
+    /// `promptCaching.mode`.
+    CacheMode,
+    /// `promptCaching.isolationScope`.
+    CacheIsolation,
+    /// `promptCaching.requestedRetention.class`.
+    CacheRetention,
+    /// `promptCaching.persistentResources.mode`.
+    CachePersistent,
+}
+
 /// One setting a menu lists.
 #[derive(Debug)]
 pub struct Row {
+    id: RowId,
     key: &'static str,
     label: &'static str,
     values: Values,
 }
 
 impl Row {
-    const fn new(key: &'static str, label: &'static str, values: Values) -> Self {
-        Self { key, label, values }
+    const fn new(id: RowId, key: &'static str, label: &'static str, values: Values) -> Self {
+        Self {
+            id,
+            key,
+            label,
+            values,
+        }
+    }
+
+    /// Which setting it is.
+    #[must_use]
+    pub const fn id(&self) -> RowId {
+        self.id
     }
 
     /// The key, dotted the way a document nests it: `output.theme`.
@@ -128,49 +179,82 @@ const SPEED: Values = Values::Whole {
 /// and the prompt cache last: its four rows are the ones a reader is least
 /// likely to have come for.
 const ROWS: &[Row] = &[
-    Row::new("output.theme", "Theme", Values::Choice(THEME)),
-    Row::new("output.syntaxTheme", "Syntax theme", Values::Named),
-    Row::new("output.glyphs", "Glyphs", Values::Choice(GLYPHS)),
-    Row::new("output.color", "Colour", Values::Choice(COLOR)),
+    Row::new(RowId::Theme, "output.theme", "Theme", Values::Choice(THEME)),
     Row::new(
+        RowId::SyntaxTheme,
+        "output.syntaxTheme",
+        "Syntax theme",
+        Values::Named,
+    ),
+    Row::new(
+        RowId::Glyphs,
+        "output.glyphs",
+        "Glyphs",
+        Values::Choice(GLYPHS),
+    ),
+    Row::new(
+        RowId::Colour,
+        "output.color",
+        "Colour",
+        Values::Choice(COLOR),
+    ),
+    Row::new(
+        RowId::ToolDetail,
         "output.toolDetail",
         "Tool detail",
         Values::Choice(TOOL_DETAIL),
     ),
-    Row::new("output.scrollRail", "Scroll rail", Values::Flag),
     Row::new(
+        RowId::ScrollRail,
+        "output.scrollRail",
+        "Scroll rail",
+        Values::Flag,
+    ),
+    Row::new(
+        RowId::ScrollSpeed,
         "env.CRUCIBLE_CODE_MOUSE_SCROLL_SPEED",
         "Mouse scroll speed",
         SPEED,
     ),
-    Row::new("input.send", "Send with", Values::Choice(SEND)),
-    Row::new("systemPrompt.tone", "Tone", Values::Choice(TONE)),
+    Row::new(RowId::Send, "input.send", "Send with", Values::Choice(SEND)),
     Row::new(
+        RowId::Tone,
+        "systemPrompt.tone",
+        "Tone",
+        Values::Choice(TONE),
+    ),
+    Row::new(
+        RowId::Compaction,
         "compaction.when",
         "Compaction",
         Values::Choice(COMPACTION_WHEN),
     ),
     Row::new(
+        RowId::UpdateCheck,
         "updates.check",
         "Check for updates",
         Values::Choice(UPDATE_CHECK),
     ),
     Row::new(
+        RowId::CacheMode,
         "promptCaching.mode",
         "Prompt caching",
         Values::Choice(PROMPT_CACHE_MODE),
     ),
     Row::new(
+        RowId::CacheIsolation,
         "promptCaching.isolationScope",
         "Cache isolation",
         Values::Choice(PROMPT_CACHE_ISOLATION),
     ),
     Row::new(
+        RowId::CacheRetention,
         "promptCaching.requestedRetention.class",
         "Cache retention",
         Values::Choice(PROMPT_CACHE_RETENTION),
     ),
     Row::new(
+        RowId::CachePersistent,
         "promptCaching.persistentResources.mode",
         "Persistent cache",
         Values::Choice(PROMPT_CACHE_PERSISTENT),

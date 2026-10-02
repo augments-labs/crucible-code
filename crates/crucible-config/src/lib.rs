@@ -78,5 +78,5 @@ pub use settings::{
     ThemeChoice, ToolDetail, Updates, When, local, user,
 };
 pub use shape::THEME;
-pub use shape::rows::{Row, Values, row, rows};
+pub use shape::rows::{Row, RowId, Values, row, rows};
 pub use shape::schema::schema;

@@ -6,7 +6,7 @@
 //! remember it.
 
 use super::super::{DOCUMENT, Shape};
-use super::{ROWS, Values};
+use super::{ROWS, RowId, Values, rows};
 
 /// What has no row, and why. An entry names a key, or a block whose every key
 /// it leaves out.
@@ -253,4 +253,36 @@ fn a_settings_row_takes_only_the_words_its_declaration_reads() {
     // Which names there are is the host's to say; any name is one to ask it.
     assert!(take("output.syntaxTheme", "base16"));
     assert!(!take("output.syntaxTheme", ""));
+}
+
+#[test]
+fn every_row_has_its_own_identity() {
+    // Written out so a new identity has to be listed here, and so fails
+    // until a row carries it.
+    let every = [
+        RowId::Theme,
+        RowId::SyntaxTheme,
+        RowId::Glyphs,
+        RowId::Colour,
+        RowId::ToolDetail,
+        RowId::ScrollRail,
+        RowId::ScrollSpeed,
+        RowId::Send,
+        RowId::Tone,
+        RowId::Compaction,
+        RowId::UpdateCheck,
+        RowId::CacheMode,
+        RowId::CacheIsolation,
+        RowId::CacheRetention,
+        RowId::CachePersistent,
+    ];
+    for id in every {
+        let carrying = rows().iter().filter(|row| row.id() == id).count();
+        assert_eq!(carrying, 1, "{id:?} is carried by {carrying} rows");
+    }
+    assert_eq!(
+        rows().len(),
+        every.len(),
+        "a row carries no listed identity"
+    );
 }
