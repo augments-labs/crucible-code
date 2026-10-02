@@ -2053,7 +2053,8 @@ fn a_pointer_on_a_rail_over_a_record_that_fits_changes_nothing() {
 fn after_the_record_is_emptied_the_rail_thumb_still_reaches_the_foot() {
     // Eighty one-row lines, then emptied, as `/clear` and `/resume` do, and a
     // new session of thirty lines that each fold to two rows: sixty rows on a
-    // rail of ten, six to a rail row, so the band at the foot is the last two.
+    // rail of ten, six to a rail row, so the thumb at the foot is the last two
+    // rail rows.
     let mut drawn = railed();
     drawn.empties().unwrap();
     drawn.landmark();
@@ -2074,8 +2075,9 @@ fn after_the_record_is_emptied_the_rail_thumb_still_reaches_the_foot() {
 
 /// The next number from a seeded generator, below `below`.
 ///
-/// A linear congruential step, so a failing case is the same case on every
-/// run and its seed is enough to find it again.
+/// A linear congruential step from a fixed start, so a failing case is the
+/// same case on every run and the case number its failure prints is enough to
+/// find it again.
 fn next(seed: &mut u64, below: usize) -> usize {
     *seed = seed
         .wrapping_mul(6_364_136_223_846_793_005)
@@ -2085,8 +2087,8 @@ fn next(seed: &mut u64, below: usize) -> usize {
 
 #[test]
 fn the_rail_thumb_and_marks_stand_on_the_rows_the_drawn_band_scales_to() {
-    // Records of every shape, at every width and band height, scrolled
-    // anywhere. What the rail is checked against is read off the screen: the
+    // 300 seeded cases across record shapes, widths, band heights and scroll
+    // positions. What the rail is checked against is read off the screen: the
     // band's rows found in the whole record as drawn, so the oracle is the row
     // space a reader sees rather than the one the record keeps.
     let mut seed = 0x5eed_u64;
