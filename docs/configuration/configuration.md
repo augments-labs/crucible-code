@@ -647,7 +647,7 @@ still wins.
 
 Values are strings, because that is what an environment holds. A setting that
 reads as a number is written `"12"`; `CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` also
-takes the integer `12`, which crucible reads and does not hand to commands.
+takes the integer `12`.
 
 A command is **not** started with the environment crucible was started in. It
 gets a short list of what a program needs in order to run at all, and whatever

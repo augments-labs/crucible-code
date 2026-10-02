@@ -1449,11 +1449,12 @@ fn tools(
     // And the other end of the row under the box. The clone shares one registry
     // rather than copying it, which is what lets the caller show what is running
     // and stop one — and what makes the caller's copy the thing that ends them all.
+    let exported: Vec<_> = settings.env().collect();
     tools.add_builtin(
         Bash::new(workspace.clone(), sandbox)
             .under_policy(settings.sandbox().enforcing_policy(workspace)?)
             .following_enablement(settings.sandbox().enablement())
-            .exporting(settings.env())
+            .exporting(exported.iter().map(|(name, value)| (*name, value.as_ref())))
             .leaving(leaving.clone()),
     )?;
 
