@@ -1133,10 +1133,10 @@ column 5 is not set to an answer crucible takes — accepted here: a whole numbe
 of rows from 3 to 30
 ```
 
-The floor is `3` because a wheel set to move nothing is a setting that looks
-applied and does nothing, and below three rows a notch is refused rather than
-pulled up to it. The ceiling is `30` because that is a screenful on
-most terminals, and past it the wheel stops being a scroll and becomes a jump.
+The floor is `3`, and a value below it is refused rather than pulled up to it,
+because a wheel set to move nothing is a setting that looks applied and does
+nothing. The ceiling is `30` because that is a screenful on most terminals, and
+past it the wheel stops being a scroll and becomes a jump.
 
 A run whose output is redirected has no wheel to answer, so the setting is read
 and never used.

@@ -28,8 +28,8 @@ use super::Settings;
 /// The fewest rows a notch may move, and the most.
 ///
 /// Read from the declaration rather than restated, so the bounds an editor is
-/// told about and the bounds this refuses by are the same pair. The reasoning
-/// for each number sits beside it there.
+/// told about and the bounds this refuses by are the same pair. Why the
+/// ceiling is where it is sits beside it there.
 const LEAST: u16 = SCROLL_SPEED.least;
 const MOST: u16 = SCROLL_SPEED.most;
 

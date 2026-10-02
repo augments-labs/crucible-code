@@ -136,8 +136,10 @@ fn of(shape: &Shape) -> Value {
 ///
 /// Generated from the bounds rather than written beside them, so the two cannot
 /// be edited apart. Numbers are grouped by how many digits they have and each
-/// group is split into the shortest run of alternatives that a digit class can
-/// say: `3` to `30` is `[3-9]` for one digit, then `[12][0-9]` and `30` for two.
+/// group is split on its first differing digit into a ragged start, whole
+/// digit classes and a ragged end, which is not promised to be the fewest
+/// alternatives: `3` to `30` is `[3-9]` for one digit, then `[12][0-9]` and `30`
+/// for two.
 ///
 /// Decimal digits and nothing else: no `+` and no leading zero, because the
 /// reader that turns one of these into a value refuses both, and a schema that
@@ -609,8 +611,7 @@ mod tests {
     ///
     /// Only the subset `pattern` emits: `^(` and `)$` around alternatives, each
     /// a run of a digit, `[ab]`, `[a-b]` or `[0-9]`. A regular-expression engine
-    /// would be a dependency for one test, and one that read the pattern back
-    /// the way an editor does would only be as independent as this is.
+    /// would be a dependency for one test.
     fn matches(pattern: &str, written: &str) -> bool {
         let inner = pattern
             .strip_prefix("^(")
@@ -684,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pattern_is_generated_for_a_range_that_crosses_more_than_one_width() {
+    fn a_pattern_is_generated_for_ranges_within_and_across_digit_widths() {
         // The generator is not written for 3 to 30: these are the shapes a
         // different pair of bounds would need.
         for (least, most) in [(0, 9), (1, 30), (3, 30), (7, 123), (10, 99), (95, 105)] {
