@@ -505,7 +505,15 @@ function Invoke-CrucibleInstall {
                 (Test-Path -LiteralPath $Checksums -PathType Leaf))) {
             Stop-Install 1 'archive or checksum file does not exist'
         }
+        # A local archive is copied into the private work directory, and only
+        # that copy is hashed and unpacked, so whoever can write where it was
+        # cannot swap it between the check and the unpacking.
         $archiveName = Split-Path -Leaf $Archive
+        $copy = Join-Path $work $archiveName
+        if ($Archive -ne $copy) {
+            Copy-Item -LiteralPath $Archive -Destination $copy
+            $Archive = $copy
+        }
         $expected = @(Get-Content -LiteralPath $Checksums | ForEach-Object {
                 $fields = @(($_.Trim()) -split '\s+')
                 if ($fields.Count -ge 2 -and ($fields[1] -ceq $archiveName -or $fields[1] -ceq "*$archiveName") -and
