@@ -714,6 +714,9 @@ fn the_picker_says_the_words_it_was_drawn_to_say() {
 
     // With nothing typed, what emptied the list is the branch Ctrl+B keeps.
     assert_eq!(nothing("", Some("main")), "no session on main");
+    // Spelled as the heading spells it: a branch is the checkout's to name,
+    // and a control character in it is drawn as the space the heading shows.
+    assert_eq!(nothing("", Some("fix\tlogin")), "no session on fix login");
 
     // Or nothing was ever recorded here, while something was elsewhere.
     assert_eq!(nothing("", None), NEVER);

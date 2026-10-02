@@ -1072,11 +1072,12 @@ fn heading(found: usize, total: usize, scope: Scope, here: &Here, glyphs: Glyphs
 /// type. With nothing typed, what emptied the list is the branch Ctrl+B keeps,
 /// the one key that can leave this directory's list with nothing on it — or
 /// this directory never recorded one, and the picker opened anyway because
-/// another did.
+/// another did. The branch is flattened as the heading flattens it, so the two
+/// rows never spell one branch two ways.
 fn nothing(query: &str, branch: Option<&str>) -> String {
     match branch {
         _ if !query.is_empty() => format!("no session holds \"{query}\""),
-        Some(branch) => format!("no session on {branch}"),
+        Some(branch) => format!("no session on {}", crate::cli::draw::flattened(branch)),
         None => NEVER.to_owned(),
     }
 }
