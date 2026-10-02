@@ -16,9 +16,10 @@
 //!
 //! **A response's cost joins the sum when it ends, by one rule.** A response
 //! that completed with a usage report its model's prices cover adds that
-//! price. A model with no price, a report no price fits, or amounts in
-//! currencies that do not add up make the sum [`SessionCost::NotPriced`], and
-//! it stays so: a reader shown `$0.40` for a session that also spent an
+//! price. A model with no price, a report no price fits, amounts in
+//! currencies that do not add up, or a sum too large to carry make the sum
+//! [`SessionCost::NotPriced`] whatever it was before, a lower bound included,
+//! and it stays so: a reader shown `$0.40` for a session that also spent an
 //! unpriced hour would read it as the whole. A response that completed without
 //! saying what it used is one nothing priced, so it is the same; that leaves
 //! [`SessionCost::Unspent`] meaning only that no response has ended. A response

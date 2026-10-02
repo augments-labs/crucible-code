@@ -249,6 +249,32 @@ fn usage_an_answer_that_completed_without_a_report_is_not_priced() {
 }
 
 #[test]
+fn usage_an_answer_that_completed_without_a_report_overrides_a_lower_bound() {
+    // A floor says everything but the stopped answer is priced. An answer that
+    // then completes and says nothing it used is not priced at all, so the
+    // floor no longer holds and the sum is not the session's either.
+    let cancel = Cancel::new();
+    let script = Script::new(vec![
+        vec![opening()],
+        vec![Delta::Stopped(StopReason::Yielded)],
+    ])
+    .priced()
+    .interrupted_by(cancel.clone());
+    let mut scripted = Scripted::new(script, Tools::new(), Verdict::Deny);
+    scripted.cancel = cancel;
+
+    assert_eq!(
+        scripted.turn("stopped").expect("the turn to stop"),
+        StopReason::Cancelled
+    );
+    assert_eq!(at_least(&scripted.runner.totals()), 0);
+    scripted.cancel.reset();
+    scripted.turn("silent").expect("the second turn to finish");
+
+    assert_eq!(scripted.runner.totals().cost(), SessionCost::NotPriced);
+}
+
+#[test]
 fn usage_an_unpriced_model_is_not_priced_however_its_answers_end() {
     let cancel = Cancel::new();
     let script = Script::dropping(1, vec![vec![opening()], reporting(StopReason::Yielded)])
