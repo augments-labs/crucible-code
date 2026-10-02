@@ -18,6 +18,7 @@ can only be about the whole tool: `deny ask_user` refuses every call to it.
 | `answers` | The answers it offers, best first. Required, at least 2 and at most 8, and no two the same. |
 | `answer` | What one answer is called. Required, and at most 500 bytes. |
 | `says` | One line saying what choosing it means, where the name does not say it. At most 500 bytes. |
+| `recommended` | Marks the one answer the agent would pick. At most one per question, and the first listed; a call that marks two, or one that is not first, is refused so the agent can correct it. |
 | `shows` | What the answer would look like, row by row. At most 10 rows of at most 500 bytes each. |
 
 ## What you see
@@ -43,6 +44,10 @@ on marked, then that question and its answers numbered under it.
 ╰──────────────────────────────────────────────────────────────╯
   esc to cancel · ←→ between questions · n for a note
 ```
+
+An answer the agent marked as the one it would pick is the first, and its name
+ends with `(Recommended)`. The label is only drawn: it is not part of the name
+you choose or that is sent back.
 
 A `□` is a question you have not answered and a `✓` is one you have, so the row
 across the top is both where you are and how much is left. It appears only where
