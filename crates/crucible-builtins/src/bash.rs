@@ -175,8 +175,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
         Field {
             name: TIMEOUT,
             about: format!(
-                "How many seconds to allow before stopping it. Defaults to {SECONDS}, and cannot \
-                 exceed {CEILING} or the configured command ceiling. Cannot be sent with background."
+                "Seconds before it is stopped: {SECONDS} by default, at most {CEILING} or the \
+                 configured command ceiling. Not with background."
             ),
             needed: false,
             shape: Shape::Count(Whole {
@@ -186,11 +186,10 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
         },
         Field {
             name: crate::account::LEFT,
-            about: "Leave the command running and answer at once, for something with no end of \
-                    its own: a dev server, a file watcher, a tunnel. The answer names the number \
-                    it is running as and carries whatever it printed in its first moment. A \
-                    command that has already exited by then is reported as an ordinary result \
-                    instead, so a failure still reaches you now. At most four may run at once."
+            about: "Leave it running and answer at once, for something with no end such as a dev \
+                    server, a watcher or a tunnel. The answer gives its number and first output; \
+                    one that already exited is an ordinary result, so a failure still reaches \
+                    you. At most four at once."
                 .into(),
             needed: false,
             shape: Shape::Flag,
@@ -199,7 +198,7 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     fields.extend(crate::account::fields(
         "command",
         "What the command does",
-        "Where the line runs more than one command, account for each of them.",
+        "Account for each command the line runs.",
     ));
     Schema {
         about: "Runs a shell command in the workspace root and returns its output and exit \

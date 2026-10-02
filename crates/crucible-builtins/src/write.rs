@@ -63,12 +63,11 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     fields.extend(crate::account::fields(
         "path",
         "What the file is becoming",
-        "Where a file is being replaced, account for what is in it now.",
+        "Replacing a file, account for what it holds now.",
     ));
     Schema {
-        about: "Writes a file in the workspace, replacing it if it is already there. Creates \
-                missing parent directories on Unix; on Windows the parent directory must already \
-                exist."
+        about: "Writes a workspace file, replacing any already there. Creates missing parent \
+                directories on Unix; on Windows the parent must exist."
             .into(),
         fields,
     }

@@ -136,44 +136,40 @@ const MAX_LINE: usize = 256 * 1024;
 /// meets.
 static SCHEMA: LazyLock<String> = LazyLock::new(|| {
     Schema {
-        about: "Searches the contents of files in the workspace for a regular expression, or for \
-                exact text with fixed. Skips anything gitignored."
+        about: "Searches workspace file contents for a regular expression, or exact text with \
+                fixed. Skips anything gitignored."
             .into(),
         fields: vec![
             Field {
                 name: PATTERN,
-                about: "The regular expression to search for, or the exact text to find if fixed \
-                        is true."
-                    .into(),
+                about: "The regular expression, or the exact text if fixed is true.".into(),
                 needed: true,
                 shape: Shape::Text,
             },
             Field {
                 name: PATH,
                 about: "A file or directory to search, relative to the workspace root. Defaults \
-                        to the whole workspace."
+                        to all of it."
                     .into(),
                 needed: false,
                 shape: Shape::Text,
             },
             Field {
                 name: GLOB,
-                about: "Only search files whose path matches this glob, for example **/*.rs."
-                    .into(),
+                about: "Only files whose path matches this glob, such as **/*.rs.".into(),
                 needed: false,
                 shape: Shape::Text,
             },
             Field {
                 name: IGNORE_CASE,
-                about: "Match without regard to case. Defaults to false.".into(),
+                about: "Ignore case. Defaults to false.".into(),
                 needed: false,
                 shape: Shape::Flag,
             },
             Field {
                 name: FIXED,
-                about: "Read pattern as the exact text to find rather than as a regular \
-                        expression, so characters like . ( [ * ? and | stand for themselves. Use \
-                        this for anything copied out of a file. Defaults to false."
+                about: "Read pattern as exact text, so . ( [ * ? and | are literal. Use it for \
+                        text copied from a file. Defaults to false."
                     .into(),
                 needed: false,
                 shape: Shape::Flag,
@@ -181,8 +177,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
             Field {
                 name: MODE,
                 about: format!(
-                    "What to answer with: {CONTENT} for the matching lines themselves, {FILES} \
-                     for the name of every file holding one. Defaults to {CONTENT}."
+                    "{CONTENT} answers with matching lines, {FILES} with each file holding one. \
+                     Defaults to {CONTENT}."
                 ),
                 needed: false,
                 shape: Shape::Choice(&[CONTENT, FILES]),
@@ -190,11 +186,9 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
             Field {
                 name: CONTEXT,
                 about: format!(
-                    "How many lines to return either side of each match, the way grep -C does. \
-                     Context lines are marked with dashes instead of colons and do not count \
-                     towards limit. Defaults to 0, and never more than {REACH} however large a \
-                     number is sent. Only {CONTENT} mode has lines to surround, so {FILES} mode \
-                     ignores it."
+                    "Lines either side of each match, like grep -C; marked with dashes, not \
+                     colons, and not counted in limit. Defaults to 0, at most {REACH}; {FILES} \
+                     mode ignores it."
                 ),
                 needed: false,
                 shape: Shape::Count(Whole {
@@ -205,10 +199,8 @@ static SCHEMA: LazyLock<String> = LazyLock::new(|| {
             Field {
                 name: LIMIT,
                 about: format!(
-                    "How many results to return, counting matching lines in {CONTENT} mode and \
-                     matching files in {FILES} mode. Defaults to {MATCHES}, and never more than \
-                     {CEILING} however large a number is sent. The answer is cut at {OUTPUT} \
-                     bytes as well, whichever comes first."
+                    "Most results: lines in {CONTENT} mode, files in {FILES} mode. Defaults to \
+                     {MATCHES}, at most {CEILING}. The answer is also cut at {OUTPUT} bytes."
                 ),
                 needed: false,
                 shape: Shape::Count(Whole {

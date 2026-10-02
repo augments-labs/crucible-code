@@ -126,7 +126,7 @@
         "Vendor::recapping_after( &[\"one answer\", \"two answer\", \"three answer\"], &notes, Some(\"the answer to what was queued\"), )",
         "Watched::compacting(\"compact-typing\", 80, 24, &vendor)"
       ],
-      "sha256": "e0f90ad116f9c2d06741e6f81d4e762b9100e84d3384c12ab8a7744edeee85a7"
+      "sha256": "effcb21da37e2106a58b77d6457df1ebf0f039981b064063b041b7b851ba09c3"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_remembered_provider_without_its_credential_still_opens_the_session.snap",
@@ -228,7 +228,7 @@
         "Vendor::recapping_after( &[ \"Notes on the first thing.\", \"Notes on the second thing.\", \"Notes on the third thing.\", ], \"Notes on everything that came before.\", None, )",
         "Watched::compacting(\"resume-notes\", 80, 24, &vendor)"
       ],
-      "sha256": "c2df508dba089fb6dcee6258f64defd34fd8171d0a7c274702949c4f84b79de3"
+      "sha256": "2b32fd2fa1dc852a34f13d99e4ee05762965ee7cdd1147f7187650a4b28ae974"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__compact_tool_activity.snap",
@@ -517,7 +517,7 @@
         "Vendor::answering(\"The first thing this session said.\")",
         "Watched::asking_on_resume(\"resume-asks\", 80, 24, &vendor)"
       ],
-      "sha256": "4c3485b23fdf47a61b1cf1392d4e37fd08afc7ecb5f6f2c6b4922221800fdbba"
+      "sha256": "b7c4e09eac3e50a01f8d05486fa51a28b3de1c46fcf97c598eecc6569ce2eb35"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__question_at_openai_plan_80.snap",
