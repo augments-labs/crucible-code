@@ -8,7 +8,8 @@ use crate::color::Slot;
 use crate::glyphs::Glyphs;
 use crate::panel::Offered;
 use crate::row::Row;
-use crate::width::{clip, columns, fold};
+use crate::tab_row::TabRow;
+use crate::width::{clip, fold};
 
 const TAB_SANDBOX: &str = "Sandbox";
 const TAB_DEPENDENCIES: &str = "Dependencies";
@@ -160,19 +161,17 @@ impl SandboxPanel<'_> {
     }
 
     fn tabs(&self, width: usize) -> Row {
-        let (left, right) = match self.tab {
-            SandboxTab::Sandbox => (Slot::Strong, Slot::Quiet),
-            SandboxTab::Dependencies => (Slot::Quiet, Slot::Strong),
+        let open = match self.tab {
+            SandboxTab::Sandbox => 0,
+            SandboxTab::Dependencies => 1,
         };
-        let mut row = Row::new().then(left, clip(TAB_SANDBOX, width));
-        if width > columns(TAB_SANDBOX) {
-            row.push(Slot::Plain, " ");
-            row.push(
-                right,
-                clip(TAB_DEPENDENCIES, width.saturating_sub(row.columns())),
-            );
+        TabRow {
+            heading: None,
+            names: &[TAB_SANDBOX, TAB_DEPENDENCIES],
+            open,
+            marks: None,
         }
-        row
+        .row(width)
     }
 }
 

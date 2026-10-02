@@ -34,7 +34,9 @@ use crucible_app::client::{Performed, Setting};
 use crucible_client_api::{self as api, Name};
 use crucible_config::{Forced, Row as Setting_, RowId, Values};
 use crucible_tools::Mode;
-use crucible_tui::{Caret, Glyphs, Key, Pressed, Renderer, Row, Slot, Terminal, columns, fold};
+use crucible_tui::{
+    Caret, Glyphs, Key, Pressed, Renderer, Row, Slot, TabRow, Terminal, columns, fold,
+};
 
 use crate::cli::client::astray;
 use crate::cli::style::glyph_set;
@@ -1105,34 +1107,16 @@ fn boxed(words: &str, prompt: bool, columns: usize, glyphs: Glyphs) -> Row {
 /// Where every tab does not fit, the others give way before the open one: a
 /// reader who cannot see which tab is open cannot tell what is under it.
 fn tabs(tab: Tab, columns: usize, glyphs: Glyphs) -> Row {
-    let (open, close) = glyphs.bracketing();
-    let drawn = |padded: bool| {
-        let mut row = Row::new()
-            .then(Slot::Strong, "Settings")
-            .then(Slot::Plain, "   ");
-        for (number, one) in Tab::EVERY.into_iter().enumerate() {
-            if number > 0 {
-                row.push(Slot::Plain, " ");
-            }
-            if one == tab {
-                row.push(Slot::Strong, format!("{open} {} {close}", one.name()));
-            } else if padded {
-                row.push(Slot::Quiet, format!("  {}  ", one.name()));
-            } else {
-                row.push(Slot::Quiet, one.name());
-            }
-        }
-        row
-    };
-    let open_tab = Row::new().then(Slot::Strong, format!("{open} {} {close}", tab.name()));
-    let heading_and_open = Row::new()
-        .then(Slot::Strong, "Settings")
-        .then(Slot::Plain, " ")
-        .then(Slot::Strong, format!("{open} {} {close}", tab.name()));
-    [drawn(true), drawn(false), heading_and_open]
-        .into_iter()
-        .find(|row| row.columns() <= columns)
-        .unwrap_or_else(|| open_tab.clipped(columns))
+    TabRow {
+        heading: Some("Settings"),
+        names: &Tab::EVERY.map(Tab::name),
+        open: Tab::EVERY
+            .iter()
+            .position(|one| *one == tab)
+            .unwrap_or_default(),
+        marks: Some(glyphs.bracketing()),
+    }
+    .row(columns)
 }
 
 /// One setting's rows: its label and value on one row where they fit, and
