@@ -91,6 +91,36 @@ pub(crate) fn planted(case: &str) -> Planted {
     Planted { earlier, website }
 }
 
+/// Plants a home whose one session was recorded in another project, none in
+/// the directory `case` will be started in, and returns that home.
+///
+/// With `said` false the session never got past its header — a run that
+/// opened and left — which is no session to offer anywhere.
+pub(crate) fn away(case: &str, said: bool) -> PathBuf {
+    let scratch = std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-{case}",
+        std::process::id()
+    ));
+    let here = scratch
+        .join("a-directory-to-be-working-in")
+        .join("and-something-below-that-again")
+        .join("workspace");
+    let website = scratch.join("projects").join("website");
+    for directory in [&here, &website] {
+        fs::create_dir_all(directory).expect("a directory a session was recorded in");
+    }
+
+    let earlier = scratch.join("earlier");
+    let sessions = earlier.join("sessions");
+    if said {
+        recorded(&sessions, &website, Some("main"), "tidy the stylesheet");
+    } else {
+        let workspace = Workspace::open(&website).expect("the directory exists");
+        drop(Session::start(&sessions, &workspace, Some("main")).expect("a session log"));
+    }
+    earlier
+}
+
 /// Records one session in `root` on `branch` that asked `asked`, and closes
 /// it.
 fn recorded(sessions: &Path, root: &Path, branch: Option<&str>, asked: &str) -> SessionId {

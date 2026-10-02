@@ -283,10 +283,13 @@ fn offered<T: Terminal>(
     let now = SystemTime::now();
     let columns = renderer.columns();
 
-    // What opens is this directory's, so it is this directory's that says
-    // whether there is anything to open.
+    // What opens is this directory's list, even where it has nothing on it:
+    // Ctrl+A is how a reader reaches a session recorded somewhere else, and a
+    // line ending the command would leave them no key to press. The line is
+    // for a home that holds no session at all, and for a run that reads no
+    // keys, which has nothing but this directory's list to print.
     let first = scoped(&listed, Scope::default(), &here);
-    if first.is_empty() {
+    if listed.is_empty() || (first.is_empty() && !held.answers.keys) {
         let rows = [Row::new().then(Slot::Quiet, clip(NEVER, columns))];
         renderer.present(&rows)?;
         return Ok(None);
@@ -1031,11 +1034,14 @@ fn heading(found: usize, total: usize, scope: Scope, here: &Here, glyphs: Glyphs
 /// The query is quoted back rather than described, because what a reader
 /// checks first is whether the thing they typed is the thing they meant to
 /// type. With nothing typed, what emptied the list is the branch Ctrl+B keeps,
-/// the one key that can leave this directory's list with nothing on it.
+/// the one key that can leave this directory's list with nothing on it — or
+/// this directory never recorded one, and the picker opened anyway because
+/// another did.
 fn nothing(query: &str, branch: Option<&str>) -> String {
     match branch {
-        Some(branch) if query.is_empty() => format!("no session on {branch}"),
-        _ => format!("no session holds \"{query}\""),
+        _ if !query.is_empty() => format!("no session holds \"{query}\""),
+        Some(branch) => format!("no session on {branch}"),
+        None => NEVER.to_owned(),
     }
 }
 

@@ -1988,6 +1988,60 @@ fn enter_on_another_projects_session_says_how_to_resume_it_there() {
 }
 
 #[test]
+fn a_directory_with_no_session_of_its_own_still_reaches_the_others() {
+    // Nothing was recorded here, but something was elsewhere: the picker
+    // opens on this directory's empty list and says so, and Ctrl+A is one key
+    // away rather than behind a line that ends the command.
+    let earlier = reaching::away("reach-none-here", true);
+    let mut window = Watched::launched(
+        "reach-none-here",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "no earlier session for this workspace");
+    let picture = window.picture();
+    assert!(
+        picture.contains("Resume a session · 0 of 0 · "),
+        "{picture}"
+    );
+    assert!(picture.contains("ctrl+a all projects"), "{picture}");
+    assert!(picture.contains("ctrl+w worktrees"), "{picture}");
+
+    window.types_until("\x01", "1 of 1 · all projects");
+    let picture = window.picture();
+    assert!(picture.contains("tidy the stylesheet"), "{picture}");
+}
+
+#[test]
+fn a_session_that_never_got_past_its_header_is_still_nothing_to_resume() {
+    // A log another directory left with nothing in it is no session, so the
+    // one line saying there is none stands where the picker would.
+    let earlier = reaching::away("reach-header-only", false);
+    let mut window = Watched::launched(
+        "reach-header-only",
+        80,
+        24,
+        &watched::Launch {
+            document: reaching::DOCUMENT,
+            env: &[],
+            args: &[],
+            home: Some(&earlier),
+        },
+    );
+
+    window.types_until("/resume\r", "no earlier session for this workspace");
+    let picture = window.picture();
+    assert!(!picture.contains("Resume a session"), "{picture}");
+}
+
+#[test]
 fn picking_a_session_up_asks_before_carrying_it_whole() {
     // The panel in the binary rather than in a component test: it stands where
     // the box was, and what it says has to be readable against a real screen.
