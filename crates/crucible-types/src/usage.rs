@@ -5,6 +5,8 @@
 //! that decision once at the wire boundary and hand the runner this shape.
 //! Missing fields remain `None`; absence is never rewritten as zero.
 
+use std::time::SystemTime;
+
 use crate::cache::{PromptCacheOutcome, PromptCacheUsageReporting};
 
 /// Maximum provider-labelled numeric details retained for one usage report.
@@ -428,6 +430,128 @@ impl Carried {
     }
 }
 
+/// Which of a subscription's usage windows a reading is about.
+///
+/// crucible's own three names. A vendor that reports a window says how long
+/// it is, and the provider module that reads it decides which of these that
+/// is; a length that is none of them is not shown, so a label on screen is
+/// never text a response chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Window {
+    /// A window of five hours.
+    FiveHour,
+    /// A window of a week.
+    Weekly,
+    /// A window of a month.
+    Monthly,
+}
+
+impl Window {
+    /// Every window, in the order they are shown and read.
+    pub const ALL: [Self; 3] = [Self::FiveHour, Self::Weekly, Self::Monthly];
+}
+
+/// How much of one window has been used, and when it starts again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowReading {
+    percent: u8,
+    resets_at: Option<SystemTime>,
+}
+
+impl WindowReading {
+    /// `percent` of the window used, saturating at 100, resetting at
+    /// `resets_at` where the vendor said when.
+    #[must_use]
+    pub fn new(percent: u8, resets_at: Option<SystemTime>) -> Self {
+        Self {
+            percent: percent.min(100),
+            resets_at,
+        }
+    }
+
+    /// How much of the window is used, from 0 to 100.
+    #[must_use]
+    pub const fn percent(self) -> u8 {
+        self.percent
+    }
+
+    /// When the window starts again, where the vendor said.
+    #[must_use]
+    pub const fn resets_at(self) -> Option<SystemTime> {
+        self.resets_at
+    }
+}
+
+/// What one response said of a subscription's usage windows.
+///
+/// At most one reading per [`Window`], and the moment the response carrying
+/// them arrived, so a reader can tell how old the figures are. A response
+/// replaces the whole value rather than adding to it: a window a later
+/// response no longer reports is not one crucible still knows about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanWindows {
+    five_hour: Option<WindowReading>,
+    weekly: Option<WindowReading>,
+    monthly: Option<WindowReading>,
+    arrived: SystemTime,
+}
+
+impl PlanWindows {
+    /// No window yet, read from a response that arrived at `arrived`.
+    #[must_use]
+    pub const fn new(arrived: SystemTime) -> Self {
+        Self {
+            five_hour: None,
+            weekly: None,
+            monthly: None,
+            arrived,
+        }
+    }
+
+    /// This, with `window` read as `reading`; a window read twice keeps the
+    /// later reading.
+    #[must_use]
+    pub fn with(mut self, window: Window, reading: WindowReading) -> Self {
+        let slot = match window {
+            Window::FiveHour => &mut self.five_hour,
+            Window::Weekly => &mut self.weekly,
+            Window::Monthly => &mut self.monthly,
+        };
+        *slot = Some(reading);
+        self
+    }
+
+    /// What was read of `window`, if it was reported.
+    #[must_use]
+    pub const fn reading(&self, window: Window) -> Option<WindowReading> {
+        match window {
+            Window::FiveHour => self.five_hour,
+            Window::Weekly => self.weekly,
+            Window::Monthly => self.monthly,
+        }
+    }
+
+    /// Every window reported, in [`Window::ALL`]'s order whatever order the
+    /// response named them in.
+    pub fn reported(&self) -> impl Iterator<Item = (Window, WindowReading)> + '_ {
+        Window::ALL
+            .into_iter()
+            .filter_map(|window| self.reading(window).map(|reading| (window, reading)))
+    }
+
+    /// Whether no window was reported at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.reported().next().is_none()
+    }
+
+    /// When the response these were read from arrived.
+    #[must_use]
+    pub const fn arrived(&self) -> SystemTime {
+        self.arrived
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,6 +655,50 @@ mod tests {
         assert_eq!(
             ProviderUsage::new(InputTokenUsage::UNKNOWN, None, None, None, &too_many),
             Err(UsageError::TooManyDetails)
+        );
+    }
+
+    #[test]
+    fn a_window_reported_past_full_reads_as_full() {
+        assert_eq!(WindowReading::new(150, None).percent(), 100);
+        assert_eq!(WindowReading::new(100, None).percent(), 100);
+        assert_eq!(WindowReading::new(31, None).percent(), 31);
+    }
+
+    #[test]
+    fn windows_read_in_the_fixed_order_whatever_order_they_arrived_in() {
+        let reading = |percent| WindowReading::new(percent, None);
+        let windows = PlanWindows::new(SystemTime::UNIX_EPOCH)
+            .with(Window::Monthly, reading(9))
+            .with(Window::FiveHour, reading(12))
+            .with(Window::Weekly, reading(31));
+
+        let read: Vec<_> = windows
+            .reported()
+            .map(|(window, reading)| (window, reading.percent()))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                (Window::FiveHour, 12),
+                (Window::Weekly, 31),
+                (Window::Monthly, 9)
+            ]
+        );
+        assert!(!windows.is_empty());
+        assert!(PlanWindows::new(SystemTime::UNIX_EPOCH).is_empty());
+    }
+
+    #[test]
+    fn a_window_read_twice_keeps_one_reading_the_later() {
+        let windows = PlanWindows::new(SystemTime::UNIX_EPOCH)
+            .with(Window::Weekly, WindowReading::new(31, None))
+            .with(Window::Weekly, WindowReading::new(40, None));
+
+        assert_eq!(windows.reported().count(), 1);
+        assert_eq!(
+            windows.reading(Window::Weekly).map(WindowReading::percent),
+            Some(40)
         );
     }
 }

@@ -19,7 +19,7 @@ use crucible_http::{ConnectError, Http, HttpError};
 use crucible_runtime::{BoxFuture, Cancel};
 use hyper::Method;
 
-use super::{PostResponse, SERVED_TIER, Tier, Transport, TransportError};
+use super::{Named, PostResponse, SERVED_TIER, Tier, Transport, TransportError};
 use crate::Endpoint;
 
 /// The longest any one post takes from entering the shared client to its
@@ -54,13 +54,19 @@ impl HttpTurns {
         Self { http: None }
     }
 
-    /// Awaits one post under the caller's cancel and the whole request bound.
+    /// Awaits one post under the caller's cancel and the whole request bound,
+    /// handing back the response headers named in `reading`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the post's own four, and the response headers it reads"
+    )]
     async fn send(
         &self,
         url: &str,
         headers: &mut Outgoing,
         body: String,
         cancel: &Cancel,
+        reading: &'static [&'static str],
     ) -> Result<PostResponse, TransportError> {
         if cancel.requested() {
             return Err(TransportError::Cancelled);
@@ -93,7 +99,15 @@ impl HttpTurns {
                     .get(SERVED_TIER)
                     .and_then(|value| value.to_str().ok()),
             );
-            PostResponse::network(response.status().as_u16(), response.into_body()).with_tier(tier)
+            let named = Named::kept(reading, |name| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+            });
+            PostResponse::network(response.status().as_u16(), response.into_body())
+                .with_tier(tier)
+                .with_named(named)
         })
         .map_err(|problem| request_problem(&problem))
     }
@@ -107,7 +121,18 @@ impl Transport for HttpTurns {
         body: String,
         cancel: &'a Cancel,
     ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
-        Box::pin(self.send(url, headers, body, cancel))
+        Box::pin(self.send(url, headers, body, cancel, &[]))
+    }
+
+    fn post_reading<'a>(
+        &'a self,
+        url: &'a str,
+        headers: &'a mut Outgoing,
+        body: String,
+        cancel: &'a Cancel,
+        reading: &'static [&'static str],
+    ) -> BoxFuture<'a, Result<PostResponse, TransportError>> {
+        Box::pin(self.send(url, headers, body, cancel, reading))
     }
 }
 
@@ -360,6 +385,41 @@ mod tests {
 
             assert_eq!(response.tier(), tier, "{header:?}");
         }
+    }
+
+    /// A provider is handed the response headers it named and no others, each
+    /// only where it is text within the bound; the transport reads none of
+    /// them itself.
+    #[tokio::test]
+    async fn only_the_headers_a_provider_names_come_back_each_within_its_bound() {
+        let transport = shared();
+        let long = "9".repeat(super::super::NAMED_HEADER_BYTES + 1);
+        let url = once(format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
+             x-named: 31\r\nx-unnamed: 12\r\nx-long: {long}\r\ncontent-length: 0\r\n\r\n"
+        ));
+        let response = transport
+            .post_reading(
+                &url,
+                &mut Outgoing::new(),
+                "{}".to_owned(),
+                &Cancel::new(),
+                &["x-named", "x-long", "x-missing"],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.named().get("x-named"), Some("31"));
+        assert_eq!(response.named().get("x-unnamed"), None);
+        assert_eq!(response.named().get("x-long"), None);
+        assert_eq!(response.named().get("x-missing"), None);
+
+        let url = once(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nx-named: 31\r\ncontent-length: 0\r\n\r\n"
+                .to_owned(),
+        );
+        let response = post(&transport, &url, &[], "{}").await.unwrap();
+        assert_eq!(response.named().get("x-named"), None, "nothing was named");
     }
 
     /// The pool is the client's, and every transport the application builds for

@@ -747,20 +747,180 @@ fn a_second_interrupt_leaves_only_while_the_first_is_still_recent() {
     assert!(!together(Some(first), first + TOGETHER * 30));
 }
 
-#[test]
-fn a_list_with_no_room_left_for_it_is_not_opened_at_all() {
-    // Cut off at the top it would read as the whole list, which is a worse
-    // answer than no list at all: nothing is what a reader can tell is nothing.
-    let every = command::filtering(&commands(), "/", Glyphs::Unicode).len();
+/// The text of each row `open` draws with room for `room`, the blank row that
+/// keeps it off the box left out.
+fn drawn_list(open: &Opened, room: usize, glyphs: Glyphs) -> Vec<String> {
+    let mut rows: Vec<String> = open.rows(60, room, glyphs).iter().map(Row::text).collect();
+    assert_eq!(
+        rows.pop().as_deref(),
+        Some(""),
+        "a list ends on a blank row"
+    );
+    rows
+}
 
-    for room in 0..every {
+#[test]
+fn a_list_with_too_little_room_shows_what_fits_and_counts_the_rest() {
+    // Cut off with nothing to say so it would read as the whole list. The last
+    // row says how many more there are, so a reader can tell a cut list from a
+    // short one, and every row stays inside the room it was given.
+    let commands = command::filtering(&commands(), "/", Glyphs::Unicode);
+    let every = commands.len();
+    let open = listing("/");
+
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    let first: Vec<&str> = commands.iter().take(7).map(|one| one.name).collect();
+    assert_eq!(rows.len(), 8, "{rows:#?}");
+    for (row, name) in rows.iter().zip(&first) {
+        assert!(row.contains(name), "{row:?} is not {name}: {rows:#?}");
+    }
+    let more = format!("  ↓ {} more", every - 7);
+    assert_eq!(rows.last(), Some(&more), "{rows:#?}");
+    let painted = open.rows(60, 8, Glyphs::Unicode);
+    let count = painted.get(7).and_then(|row| row.spans().next());
+    assert!(
+        count.is_some_and(|(slot, _)| slot == Slot::Quiet),
+        "the count is quiet: {count:?}"
+    );
+
+    // Every room too small for the whole list, and too big to be nothing.
+    for room in 3..every {
+        let rows = drawn_list(&open, room, Glyphs::Unicode);
+        assert_eq!(rows.len(), room, "room {room}: {rows:#?}");
         assert!(
-            listing("/").rows(60, room, Glyphs::Unicode).is_empty(),
-            "a list of {every} opened with room for {room}"
+            rows.iter().any(|row| row.starts_with('›')),
+            "room {room}: {rows:#?}"
         );
     }
+    // Under three rows there is no room for a row and what says where it is.
+    for room in 0..3 {
+        assert!(
+            open.rows(60, room, Glyphs::Unicode).is_empty(),
+            "room {room}"
+        );
+    }
+    // With room for the whole list, the whole list and no count.
+    let whole = drawn_list(&open, every, Glyphs::Unicode);
+    assert_eq!(whole.len(), every);
+    assert!(!whole.iter().any(|row| row.contains("more")), "{whole:#?}");
 
-    assert!(!listing("/").rows(60, every, Glyphs::Unicode).is_empty());
+    // The count in a font with no arrows.
+    let ascii = drawn_list(&listing("/"), 8, Glyphs::Ascii);
+    assert_eq!(ascii.last(), Some(&format!("  v {} more", every - 7)));
+}
+
+#[test]
+fn a_cut_list_fits_every_width_and_every_room_with_the_mark_anywhere() {
+    // One list per mark, drawn as the room shrinks and then grows again, so
+    // the row in view carried from one draw to the next is swept as well as
+    // the room and the width.
+    let every = command::filtering(&commands(), "/", Glyphs::Unicode).len();
+    let rooms: Vec<usize> = (0..24).rev().chain(0..24).collect();
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        for mark in 0..every {
+            let mut open = Opened::filtered(&commands(), "/", glyphs);
+            while open.up() {}
+            for _ in 0..mark {
+                open.down();
+            }
+            let chosen = open.chosen().expect("a marked row");
+            for &room in &rooms {
+                // The first draw at a new room, which is the one a reader sees
+                // when the room changes: the marked row is one of those drawn.
+                let rows: Vec<String> = open.rows(60, room, glyphs).iter().map(Row::text).collect();
+                if !rows.is_empty() {
+                    let marked: Vec<&String> = rows
+                        .iter()
+                        .filter(|row| row.starts_with(glyphs.caret()))
+                        .collect();
+                    assert!(
+                        matches!(marked.as_slice(), [one] if one.split_whitespace().any(|word| word == chosen)),
+                        "{chosen} at mark {mark} is not drawn in room {room}: {rows:#?}"
+                    );
+                }
+                for columns in 1..=80 {
+                    let rows = open.rows(columns, room, glyphs);
+                    assert!(
+                        rows.len() <= room + 1,
+                        "{} rows in room {room}, mark {mark}",
+                        rows.len()
+                    );
+                    for row in &rows {
+                        assert!(
+                            row.columns() <= columns,
+                            "{:?} is wider than {columns} columns",
+                            row.text()
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn moving_the_mark_past_the_last_row_shown_brings_its_row_into_view() {
+    // The mark is never moved somewhere the reader cannot see it. Walked past
+    // the last row shown, the list moves with it and says what is now above.
+    let commands = command::filtering(&commands(), "/", Glyphs::Unicode);
+    let every = commands.len();
+    let mut open = listing("/");
+    // Seven commands and the count below them.
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert!(!rows.iter().any(|row| row.contains('↑')), "{rows:#?}");
+
+    for _ in 0..7 {
+        assert!(open.down());
+    }
+    let chosen = open.chosen().expect("a marked row");
+    assert_eq!(Some(chosen), commands.get(7).map(|one| one.name));
+
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert_eq!(rows.len(), 8, "{rows:#?}");
+    assert_eq!(
+        rows.first().map(String::as_str),
+        Some("  ↑ 2 more"),
+        "{rows:#?}"
+    );
+    let marked = rows
+        .iter()
+        .find(|row| row.starts_with('›'))
+        .expect("the mark in view");
+    assert!(marked.contains(chosen), "{marked:?}: {rows:#?}");
+    assert_eq!(
+        rows.last(),
+        Some(&format!("  ↓ {} more", every - 8)),
+        "{rows:#?}"
+    );
+
+    // Back up a row: the mark is still in view, so the list stays where it is.
+    assert!(open.up());
+    assert_eq!(
+        drawn_list(&open, 8, Glyphs::Unicode)
+            .first()
+            .map(String::as_str),
+        Some("  ↑ 2 more")
+    );
+
+    // Back to the top: nothing above it any more.
+    while open.up() {}
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert!(
+        rows.first().is_some_and(|row| row.starts_with('›')),
+        "{rows:#?}"
+    );
+
+    // To the end: nothing below.
+    while open.down() {}
+    let rows = drawn_list(&open, 8, Glyphs::Unicode);
+    assert!(
+        rows.last().is_some_and(|row| row.starts_with('›')),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.first().is_some_and(|row| row.contains('↑')),
+        "{rows:#?}"
+    );
 }
 
 #[test]

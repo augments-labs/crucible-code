@@ -89,13 +89,16 @@ pub enum Command {
     },
     /// Show how the window of the next request is spent. Changes nothing.
     Context,
+    /// Show what the session has used, and the plan windows a vendor
+    /// reported. Changes nothing, and asks no vendor anything.
+    Usage,
     /// Leave the conversation.
     Exit,
 }
 
 impl Command {
     /// The word each arm crosses as, in the order the arms are declared.
-    pub const KINDS: [&'static str; 21] = [
+    pub const KINDS: [&'static str; 22] = [
         "prompt",
         "compact",
         "cancel",
@@ -116,6 +119,7 @@ impl Command {
         "help",
         "release_notes",
         "context",
+        "usage",
         "exit",
     ];
 
@@ -143,6 +147,7 @@ impl Command {
             Self::Help => "help",
             Self::ReleaseNotes { .. } => "release_notes",
             Self::Context => "context",
+            Self::Usage => "usage",
             Self::Exit => "exit",
         }
     }
@@ -180,6 +185,7 @@ impl Command {
             | Self::CleanCache
             | Self::Help
             | Self::Context
+            | Self::Usage
             | Self::Exit => object,
         }
         .finish()
@@ -227,6 +233,7 @@ impl Command {
                     .transpose()?,
             },
             "context" => Self::Context,
+            "usage" => Self::Usage,
             "exit" => Self::Exit,
             _ => return Err(ErrorCode::UnknownCommand.into()),
         };

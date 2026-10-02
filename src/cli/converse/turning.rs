@@ -61,10 +61,10 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crucible_runner::{Breakdown, Event};
+use crucible_runner::{Breakdown, Event, Totals};
 use crucible_tools::Looking;
 use crucible_tui::{Prompt, Row, Slot, Working};
-use crucible_types::{Compacting, ToolId};
+use crucible_types::{Compacting, PlanWindows, ToolId};
 
 use super::super::draw;
 use super::super::style::Style;
@@ -256,6 +256,11 @@ pub(super) struct Turning {
     /// The latest request divided by what holds the window, which is also
     /// where the usable room left before compaction is read from.
     breakdown: Breakdown,
+    /// What the session has used, as the turn last reported it: what `/usage`
+    /// shows while the runner is away on the turn.
+    totals: Totals,
+    /// The plan windows the vendor last reported, for the same panel.
+    limits: Option<PlanWindows>,
     /// Why room is being made, and `None` when no progress row remains.
     ///
     /// Kept briefly after [`Event::Compacted`] with `part` at 100, so completed
@@ -573,6 +578,8 @@ impl Turning {
             since: Instant::now(),
             doing: Doing::Thinking,
             breakdown,
+            totals: Totals::new(),
+            limits: None,
             making: None,
             part: 0,
             completed: None,
@@ -580,6 +587,16 @@ impl Turning {
             calling: VecDeque::new(),
             queued: Queued::default(),
             drawn: None,
+        }
+    }
+
+    /// The same turn, from what the session had used when it left and the
+    /// plan windows last reported.
+    pub(super) fn using(self, totals: Totals, limits: Option<PlanWindows>) -> Self {
+        Self {
+            totals,
+            limits,
+            ..self
         }
     }
 
@@ -735,6 +752,8 @@ impl Turning {
             | Event::Aged { .. }
             | Event::Unread { .. }
             | Event::FastRefused { .. }
+            | Event::Used { .. }
+            | Event::PlanLimits { .. }
             | Event::Retrying => Vec::new(),
         };
 
@@ -745,6 +764,8 @@ impl Turning {
             Event::Carried { breakdown } => {
                 self.breakdown = *breakdown;
             }
+            Event::Used { totals } => self.totals = *totals,
+            Event::PlanLimits { windows } => self.limits = Some(*windows),
             Event::Compacting { why, part } => {
                 self.making = Some(*why);
                 self.part = (*part).min(99);
@@ -786,6 +807,8 @@ impl Turning {
             | Event::Steered { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
+            | Event::Used { .. }
+            | Event::PlanLimits { .. }
             | Event::TurnFinished { .. }
             | Event::Failed { .. } => self.doing,
         };
@@ -920,6 +943,18 @@ impl Turning {
     /// shows while the runner is away on the turn.
     pub(super) const fn breakdown(&self) -> Breakdown {
         self.breakdown
+    }
+
+    /// What the session has used: what it had when the turn started, then
+    /// each [`Event::Used`] since.
+    pub(super) const fn totals(&self) -> Totals {
+        self.totals
+    }
+
+    /// The plan windows last reported: those the turn started with, then each
+    /// [`Event::PlanLimits`] since.
+    pub(super) const fn limits(&self) -> Option<PlanWindows> {
+        self.limits
     }
 
     /// The row that says the turn is running, as the footing draws it.

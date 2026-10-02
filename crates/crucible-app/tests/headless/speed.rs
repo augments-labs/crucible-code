@@ -95,7 +95,7 @@ impl Provider for Fastened {
                 });
             }
             Ok(Box::new(Answered {
-                deltas: Reading(saying("answered").into_iter()),
+                deltas: Reading(saying("answered").into_iter(), None),
                 served: self.serves,
             }) as Box<dyn DeltaStream>)
         })

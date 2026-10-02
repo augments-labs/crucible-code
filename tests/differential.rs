@@ -1685,6 +1685,25 @@ impl crucible_tools::Ask for Allowing {
     }
 }
 
+/// `text` with the clock readings in the session totals a turn posts put out
+/// of the comparison: how long requests were out, which a turn whose model
+/// waits makes longer by design, and the instant the session started. Every
+/// count beside them, and every other line, is compared as it stands.
+fn untimed(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let masked = line
+            .strip_prefix("Used { totals: ")
+            .and_then(|_| line.split_once(", waited: "))
+            .and_then(|(head, rest)| {
+                let (_, tail) = rest.split_once(", added: ")?;
+                Some(format!("{head}, waited: _, started: _, added: {tail}"))
+            });
+        out.push_str(masked.as_deref().unwrap_or(line));
+    }
+    out
+}
+
 /// `text` with what is minted afresh on each run renumbered: each UUID in its
 /// hyphenated spelling becomes `<id-N>`, and each 64-digit hexadecimal digest
 /// — a prompt-cache fingerprint, which binds the run's own identity — becomes
@@ -1861,7 +1880,7 @@ fn turn_record(pace: Pace) -> (String, Arc<Waited>) {
         rendered
     });
     assert!(stopped.is_ok(), "the runtime did not stop: {stopped:?}");
-    (renumbered(&rendered), waited)
+    (untimed(&renumbered(&rendered)), waited)
 }
 
 #[test]

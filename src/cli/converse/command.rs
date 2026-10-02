@@ -56,6 +56,7 @@ mod notes_list;
 mod resume;
 mod sandbox;
 mod theme;
+mod usage;
 
 /// What a line beginning `/` can ask for.
 ///
@@ -70,6 +71,8 @@ pub(super) enum Command {
     ReleaseNotes,
     /// How the window of the next request is spent, part by part.
     Context,
+    /// What the session has used, and the plan windows its vendor reported.
+    Usage,
     /// Which model answers.
     Model,
     /// How hard it is asked to think.
@@ -103,10 +106,11 @@ pub(super) enum Command {
 /// The ones that only say something first and the one that ends the session
 /// last. A list is read to find what you did not know to look for, and nobody
 /// is looking up how to leave.
-const EVERY: [Command; 16] = [
+const EVERY: [Command; 17] = [
     Command::Help,
     Command::ReleaseNotes,
     Command::Context,
+    Command::Usage,
     Command::Model,
     Command::Effort,
     Command::Fast,
@@ -283,6 +287,7 @@ impl Command {
             Self::Help => "/help",
             Self::ReleaseNotes => "/release-notes",
             Self::Context => "/context",
+            Self::Usage => "/usage",
             Self::Model => "/model",
             Self::Effort => "/effort",
             Self::Fast => "/fast",
@@ -305,6 +310,7 @@ impl Command {
             Self::Help => "what these are",
             Self::ReleaseNotes => "what changed in each release",
             Self::Context => "what fills the model's window",
+            Self::Usage => "what the session has used, and plan limits",
             Self::Model => "pick which model answers",
             Self::Effort => "pick how hard it thinks",
             Self::Fast => "pick how fast it answers",
@@ -351,7 +357,7 @@ impl Command {
     /// decides which of the three it is in the same place it names itself.
     const fn mid_turn(self) -> MidTurn {
         match self {
-            Self::Help | Self::Theme | Self::Context => MidTurn::Live,
+            Self::Help | Self::Theme | Self::Context | Self::Usage => MidTurn::Live,
             Self::Sandbox => {
                 MidTurn::Refused("changes the policy for new commands; open it between turns")
             }
@@ -436,8 +442,9 @@ pub(super) fn wanted<'a>(commands: &Commands, line: &'a str) -> Option<Wanted<'a
 /// command opens; `while_waiting` is what differs. It is the turn's drain, run
 /// once a pass so the transcript goes on rendering while the panel stands, and
 /// it is the reason this is reached from the mid-turn loop rather than from
-/// `run`. `counted` is the window as the running turn last divided it, which
-/// `/context` shows because the runner is away on the turn.
+/// `run`. `counted` is what the running turn last reported — the window as it
+/// divided it, what it has used and who it asks — which `/context` and
+/// `/usage` show because the runner is away on the turn.
 ///
 /// # Errors
 ///
@@ -446,7 +453,7 @@ pub(super) fn live<T: Terminal>(
     renderer: &mut Renderer<T>,
     terms: &Terms,
     wanted: &Owned,
-    counted: &api::Context,
+    counted: &Counted,
     while_waiting: &mut dyn FnMut(&mut Renderer<T>) -> Result<(), Fatal>,
 ) -> Result<(), Fatal> {
     let style = terms.style();
@@ -456,7 +463,8 @@ pub(super) fn live<T: Terminal>(
     };
     match wanted.command() {
         Command::Theme => theme::live(renderer, terms, rest, while_waiting),
-        Command::Context => context::live(renderer, terms, counted, while_waiting),
+        Command::Context => context::live(renderer, terms, &counted.usage.context, while_waiting),
+        Command::Usage => usage::live(renderer, terms, counted, while_waiting),
         Command::Help => {
             let commands = terms.commands.snapshot();
             // No keys to read: the list is stood, and any key closes it.
@@ -480,6 +488,16 @@ pub(super) fn live<T: Terminal>(
         // arm does not name is a build error at the match, not a silent skip.
         _ => Ok(()),
     }
+}
+
+/// What a running turn last reported, for the panels that show it while the
+/// runner is away on the turn.
+pub(super) struct Counted {
+    /// What the session has used, the window as the turn last divided it
+    /// among it.
+    pub(super) usage: api::Usage,
+    /// The provider the turn asks, by its name in the registry.
+    pub(super) serving: Option<&'static str>,
 }
 
 /// The stateless marker a panel with nothing to hold is stood with.
@@ -881,6 +899,11 @@ fn answer<T: Terminal>(
             command: Command::Context,
             ..
         } => context::run(renderer, conversation, terms, held.answers.keys)?,
+
+        Wanted::Known {
+            command: Command::Usage,
+            ..
+        } => usage::run(renderer, conversation, terms, held.answers.keys)?,
 
         Wanted::Known {
             command: Command::Clear,

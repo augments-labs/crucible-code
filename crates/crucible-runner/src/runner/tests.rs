@@ -106,6 +106,7 @@ mod reporting;
 mod spending;
 mod storage;
 mod unanswered;
+mod usage;
 mod waiting;
 
 /// A destination that keeps the event and lets the attribution go.
@@ -377,6 +378,8 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::Aged { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
                 Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
                 | Event::Sandbox { .. }
@@ -405,6 +408,8 @@ impl Scripted {
             .filter_map(|event| match event {
                 Event::Unread { files } => Some(files.iter().map(|one| one.path.clone()).collect()),
                 Event::Aged { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::TurnStarted { .. }
                 | Event::PromptCache { .. }
                 | Event::Sandbox { .. }
@@ -443,6 +448,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -481,6 +488,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Spent { .. }
@@ -509,6 +518,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::Spent { .. }
                 | Event::Failed { .. } => None,
@@ -536,6 +547,8 @@ impl Scripted {
                 | Event::FastRefused { .. }
                 | Event::Aged { .. }
                 | Event::Unread { .. }
+                | Event::Used { .. }
+                | Event::PlanLimits { .. }
                 | Event::Steered { .. }
                 | Event::TurnFinished { .. }
                 | Event::Failed { .. } => None,

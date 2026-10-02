@@ -76,6 +76,7 @@ pub use tone::{Tone, ToneError};
 pub use transcript::{Attachment, Message, StopReason, ToolResult, Transcript};
 pub use usage::{
     Calibration, Carried, InputTokenUsage, MAX_PROVIDER_USAGE_DETAIL_LABEL_BYTES,
-    MAX_PROVIDER_USAGE_DETAILS, ProviderNumericDetail, ProviderUsage, Spend, UsageError,
+    MAX_PROVIDER_USAGE_DETAILS, PlanWindows, ProviderNumericDetail, ProviderUsage, Spend,
+    UsageError, Window, WindowReading,
 };
 pub use version::later;

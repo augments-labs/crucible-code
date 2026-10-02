@@ -38,8 +38,8 @@ use crucible_runtime::{Aside, BoxFuture, Cancel, Steer};
 use crucible_session::Session;
 use crucible_tools::{Ask, Remember, Sensitivity, Verdict};
 use crucible_types::{
-    AgentId, CredentialScopeId, Message, Modalities, Modality, PromptCacheEncoding, SessionId,
-    StopReason, ToolCall,
+    AgentId, CredentialScopeId, Message, Modalities, Modality, PlanWindows, PromptCacheEncoding,
+    SessionId, StopReason, ToolCall,
 };
 use crucible_workspace::Workspace;
 
@@ -115,6 +115,8 @@ struct Script {
     scope: CredentialScopeId,
     rounds: Mutex<std::vec::IntoIter<Vec<Delta>>>,
     asked: Arc<AtomicUsize>,
+    /// The plan windows every response says its vendor reported.
+    limits: Option<PlanWindows>,
 }
 
 impl Script {
@@ -124,6 +126,15 @@ impl Script {
             scope: CredentialScopeId::new(),
             rounds: Mutex::new(rounds.into_iter()),
             asked: Arc::default(),
+            limits: None,
+        }
+    }
+
+    /// This, with every response reporting `limits`.
+    fn limiting(self, limits: PlanWindows) -> Self {
+        Self {
+            limits: Some(limits),
+            ..self
         }
     }
 
@@ -183,17 +194,22 @@ impl Provider for Script {
                 .next()
                 .unwrap_or_default();
 
-            Ok(Box::new(Reading(round.into_iter())) as Box<dyn DeltaStream>)
+            Ok(Box::new(Reading(round.into_iter(), self.limits)) as Box<dyn DeltaStream>)
         })
     }
 }
 
-/// The deltas of one round, handed over one at a time.
-struct Reading(std::vec::IntoIter<Delta>);
+/// The deltas of one round, handed over one at a time, and the plan windows
+/// the response reported.
+struct Reading(std::vec::IntoIter<Delta>, Option<PlanWindows>);
 
 impl DeltaStream for Reading {
     fn next(&mut self) -> BoxFuture<'_, Option<Result<Delta, ProviderError>>> {
         Box::pin(async move { self.0.next().map(Ok) })
+    }
+
+    fn limits(&self) -> Option<PlanWindows> {
+        self.1
     }
 }
 

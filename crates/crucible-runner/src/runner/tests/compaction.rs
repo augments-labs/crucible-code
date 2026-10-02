@@ -1884,3 +1884,30 @@ fn the_room_a_prune_reports_is_read_off_the_run_that_asked() {
          own reserve: {carried:?}"
     );
 }
+
+#[test]
+fn usage_a_recap_request_is_counted_in_the_session_totals() {
+    // A recap is a request like any other: the user pays for it, so `/usage`
+    // counts it.
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(200), None).unwrap(),
+        Some(17),
+        None,
+        None,
+        &[],
+    )
+    .unwrap();
+    let mut notes = recap("notes to self");
+    notes.push(Delta::Usage(usage));
+    let script = Script::new(vec![saying("first"), saying("second"), notes]);
+    let mut scripted = Scripted::within(script, 200_000, keeping_one());
+    scripted.turn("first").unwrap();
+    scripted.turn("second").unwrap();
+    let before = scripted.runner.totals();
+
+    assert!(matches!(scripted.compacting().unwrap(), Room::Made(_)));
+
+    let after = scripted.runner.totals();
+    assert_eq!(after.input() - before.input(), 200);
+    assert_eq!(after.output() - before.output(), 17);
+}

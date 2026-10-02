@@ -173,6 +173,8 @@ fn what_a_tool_prints_while_it_runs_arrives_under_its_own_call() {
             | Event::FastRefused { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
+            | Event::Used { .. }
+            | Event::PlanLimits { .. }
             | Event::Steered { .. }
             | Event::Spent { .. }
             | Event::TurnFinished { .. }
@@ -1544,6 +1546,8 @@ fn every_call_reports_that_it_finished() {
             | Event::FastRefused { .. }
             | Event::Aged { .. }
             | Event::Unread { .. }
+            | Event::Used { .. }
+            | Event::PlanLimits { .. }
             | Event::Steered { .. }
             | Event::TurnFinished { .. }
             | Event::Spent { .. }

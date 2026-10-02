@@ -9,15 +9,17 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::time::{Duration, UNIX_EPOCH};
 
 use crucible_agents::{AgentBuilder, Model};
 use crucible_app::Conversation;
 use crucible_app::client::{self, Ended, Front, Performed, Shown};
 use crucible_app::switching::{LoggedIn, LoggedOut};
 use crucible_client_api::{
-    Capabilities, ClearOutcome, Command, Correlation, Decision, ErrorCode, Lasting, Missing, Mode,
-    ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending, PendingId, Progress, Prompt,
-    Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop, Theme, TurnOutcome,
+    Capabilities, ClearOutcome, Command, Correlation, Cost, Decision, ErrorCode, Lasting, Limit,
+    Limits, Missing, Mode, ModelOutcome, Name, NotesOutcome, Outcome, Palette, Pending, PendingId,
+    Percent, Progress, Prompt, Refusal, Request, Response, ResumeOutcome, Ruling, Snapshot, Stop,
+    Theme, TurnOutcome,
 };
 use crucible_models::Delta;
 use crucible_runner::{EventEnvelope, Runner, Tools};
@@ -27,7 +29,10 @@ use crucible_tools::{
     Approved, DescribeTool, Permission, Rules, Sensitivity, Summary, Target, Tool, ToolContext,
     ToolError, ToolOutput,
 };
-use crucible_types::{AgentId, StopReason, ToolArgs, ToolId};
+use crucible_types::{
+    AgentId, InputTokenUsage, PlanWindows, ProviderUsage, StopReason, ToolArgs, ToolId, Window,
+    WindowReading,
+};
 
 use super::{Desk as Standing, Failed, Script, Tree, saying};
 
@@ -1429,5 +1434,189 @@ fn context_mid_turn_is_streamed_by_the_turn_and_refused_as_busy_at_every_door_it
             "{context:?}"
         );
     }
+    Ok(())
+}
+
+/// What `/usage` is answered with, asked for over the wire, and that asking
+/// reached no provider the host lent.
+fn usage(conversation: &mut Conversation, tree: &Tree) -> Result<Outcome, Failed> {
+    let standing = Standing::new(tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        notes,
+    };
+    let request = Wire::default().sent(Command::Usage)?;
+    let performed = super::runtime()?.block_on(client::perform(conversation, &request, &desk));
+    assert!(standing.reached().is_empty());
+
+    Ok(received(&performed.response(&request))?.outcome)
+}
+
+/// One response reporting 100 input tokens, 20 of them read from a cache,
+/// and 10 output.
+fn reporting() -> Result<Vec<Delta>, Failed> {
+    let usage = ProviderUsage::new(
+        InputTokenUsage::inclusive_read(Some(100), Some(20))?,
+        Some(10),
+        None,
+        None,
+        &[],
+    )?;
+    Ok(vec![
+        Delta::Text("hello".into()),
+        Delta::Usage(usage),
+        Delta::Stopped(StopReason::Yielded),
+    ])
+}
+
+#[test]
+fn usage_is_read_off_the_runner_and_asks_no_vendor_anything() -> Result<(), Failed> {
+    let tree = Tree::new("client-usage")?;
+    let resets = UNIX_EPOCH + Duration::from_secs(1_700_600_000);
+    let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .with(Window::Weekly, WindowReading::new(42, Some(resets)));
+    let script = Script::new(vec![reporting()?, reporting()?]).limiting(windows);
+    let asked = Arc::clone(&script.asked);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    for words in ["one", "two"] {
+        let request = Wire(500).sent(prompt(words)?)?;
+        turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    }
+    assert_eq!(asked.load(Ordering::Relaxed), 2);
+    let before = client::snapshot(&conversation);
+
+    let Outcome::Usage(usage) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+
+    assert_eq!(asked.load(Ordering::Relaxed), 2, "no request was sent");
+    assert_eq!(
+        (usage.used.input, usage.used.output),
+        (200, 20),
+        "{usage:?}"
+    );
+    assert_eq!(
+        (usage.used.cache_read, usage.used.cache_write),
+        (40, 0),
+        "{usage:?}"
+    );
+    // The script's model has no price: the cost is not known, not zero.
+    assert_eq!(usage.used.cost, Cost::NotPriced, "{usage:?}");
+    assert!(usage.used.api_ms <= usage.used.wall_ms, "{usage:?}");
+    assert_eq!(usage.context.model, before.model);
+    assert_eq!(usage.context.left, before.left);
+    assert_eq!(
+        usage.limits,
+        Limits {
+            weekly: Some(Limit {
+                used: Percent::new(42).ok_or("a percent")?,
+                resets_at: Some(1_700_600_000),
+            }),
+            ..Limits::default()
+        }
+    );
+    assert_eq!(client::snapshot(&conversation), before);
+    Ok(())
+}
+
+#[test]
+fn usage_before_anything_is_asked_is_unspent_with_no_limits_reported() -> Result<(), Failed> {
+    let tree = Tree::new("client-usage-unspent")?;
+    let script = Script::new(Vec::new());
+    let asked = Arc::clone(&script.asked);
+    let (mut conversation, _) = asking(&tree, script)?;
+
+    let Outcome::Usage(usage) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+
+    assert_eq!(asked.load(Ordering::Relaxed), 0, "no request was sent");
+    assert_eq!(usage.used.cost, Cost::Unspent, "{usage:?}");
+    assert_eq!(
+        (usage.used.input, usage.used.output, usage.used.api_ms),
+        (0, 0, 0)
+    );
+    assert!(usage.limits.is_empty(), "{usage:?}");
+    Ok(())
+}
+
+/// A client with no terminal reads `/usage` mid-turn as the terminal draws it:
+/// from the totals and plan windows the running turn last reported, streamed
+/// to it as progress, as `/context` is. Asked for at a door the turn leaves
+/// open, it is refused as busy; the turn is what holds the figures.
+#[test]
+fn usage_mid_turn_is_streamed_with_the_figures_the_turn_last_reported() -> Result<(), Failed> {
+    let tree = Tree::new("client-usage-busy")?;
+    let standing = Standing::new(&tree, &[])?;
+    let workspace = tree.workspace()?;
+    let sessions = tree.sessions();
+    let desk = client::Desk {
+        switching: standing.with(),
+        sessions: &sessions,
+        workspace: &workspace,
+        reads,
+        notes,
+    };
+    let request = Wire::default().sent(Command::Usage)?;
+    let busy = Outcome::Refused(ErrorCode::Busy.into());
+
+    assert_eq!(client::keep(&request, &desk).outcome(), busy);
+    assert_eq!(client::interrupt(&request, &Cancel::new()), busy);
+    let resets = UNIX_EPOCH + Duration::from_secs(1_700_600_000);
+    let windows = PlanWindows::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+        .with(Window::Weekly, WindowReading::new(42, Some(resets)));
+    let script = Script::new(vec![reporting()?]).limiting(windows);
+    let (mut conversation, _) = asking_under(&tree, script, None, Some(200_000))?;
+    let (response, _) = turned(&mut conversation, &request, &mut Remote::new(Vec::new()))?;
+    assert_eq!(response.outcome, busy);
+
+    let asked = Wire::default().sent(prompt("one")?)?;
+    let (_, streamed) = turned(&mut conversation, &asked, &mut Remote::new(Vec::new()))?;
+    let used = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Used(used) => Some(used),
+            _ => None,
+        })
+        .next_back()
+        .ok_or_else(|| format!("no figures were streamed: {streamed:?}"))?;
+    assert_eq!((used.input, used.output), (100, 10), "{used:?}");
+    assert_eq!((used.cache_read, used.cache_write), (20, 0), "{used:?}");
+    assert_eq!(used.cost, Cost::NotPriced, "{used:?}");
+    assert!(used.api_ms <= used.wall_ms, "{used:?}");
+    let limits = streamed
+        .iter()
+        .filter_map(|progress| match progress {
+            Progress::Limits(limits) => Some(limits),
+            _ => None,
+        })
+        .next_back()
+        .ok_or_else(|| format!("no plan windows were streamed: {streamed:?}"))?;
+    assert_eq!(
+        limits,
+        &Limits {
+            weekly: Some(Limit {
+                used: Percent::new(42).ok_or("a percent")?,
+                resets_at: Some(1_700_600_000),
+            }),
+            ..Limits::default()
+        }
+    );
+
+    // What was streamed is what the turn left: asked once it ended, the
+    // answer agrees.
+    let Outcome::Usage(usage) = usage(&mut conversation, &tree)? else {
+        return Err("/usage was not answered with what the session used".into());
+    };
+    assert_eq!(
+        (usage.used.input, usage.used.output, usage.used.cache_read),
+        (used.input, used.output, used.cache_read)
+    );
+    assert_eq!(&usage.limits, limits);
     Ok(())
 }

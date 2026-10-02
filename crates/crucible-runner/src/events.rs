@@ -10,12 +10,12 @@
 
 use crucible_models::ProviderError;
 use crucible_tools::{Looking, Summary, ToolError, ToolOutput, ToolReceipt, ToolsetError, Wrote};
-use crucible_types::Spend;
 use crucible_types::{
     Ancestry, Attachment, ContextError, RunId, StopReason, ToolCall, ToolId, TurnId,
 };
+use crucible_types::{PlanWindows, Spend};
 
-use crate::Breakdown;
+use crate::{Breakdown, Totals};
 
 /// Why a turn ended badly.
 ///
@@ -388,6 +388,27 @@ pub enum Event {
         spend: Spend,
     },
 
+    /// What the session has used so far, posted as a response ends and as an
+    /// edit changes lines.
+    ///
+    /// The whole session's figures rather than the turn's, and the same value
+    /// [`Runner::totals`](crate::Runner::totals) reads between turns, so
+    /// `/usage` drawn over a running turn and after it says the same thing.
+    Used {
+        /// Every response and edit of the session so far.
+        totals: Totals,
+    },
+
+    /// How much of each plan window the vendor said had been used, read off
+    /// the headers of a response this turn received.
+    ///
+    /// Only a vendor that sends its windows on its responses posts this, and
+    /// only where the response carried a window the provider could read.
+    PlanLimits {
+        /// The windows, as of the response that carried them.
+        windows: PlanWindows,
+    },
+
     /// A turn ended.
     TurnFinished {
         /// Which turn.
@@ -523,6 +544,11 @@ impl std::fmt::Debug for Event {
                 .field("compacted", compacted)
                 .finish(),
             Self::Spent { spend } => f.debug_struct("Spent").field("spend", spend).finish(),
+            Self::Used { totals } => f.debug_struct("Used").field("totals", totals).finish(),
+            Self::PlanLimits { windows } => f
+                .debug_struct("PlanLimits")
+                .field("windows", windows)
+                .finish(),
             Self::TurnFinished { turn, stop } => f
                 .debug_struct("TurnFinished")
                 .field("turn", turn)

@@ -14,6 +14,7 @@ use crate::command::{Command, Mode};
 use crate::context::Context;
 use crate::error::{ErrorCode, Refusal};
 use crate::request::Correlation;
+use crate::usage::Usage;
 use crate::wire::{Fields, Writing, frame, parsed};
 
 /// Something the application tried and could not do.
@@ -554,6 +555,8 @@ pub enum Outcome {
     Notes(NotesOutcome),
     /// How the window of the next request is spent.
     Context(Context),
+    /// What the session has used, and the plan windows a vendor reported.
+    Usage(Usage),
     /// The client is leaving; the host closes what it owns.
     Leaving,
 }
@@ -622,7 +625,7 @@ impl Outcome {
     }
 
     /// Every kind of outcome, by the word it crosses as.
-    pub const KINDS: [&'static str; 21] = [
+    pub const KINDS: [&'static str; 22] = [
         "refused",
         "turn",
         "room",
@@ -643,6 +646,7 @@ impl Outcome {
         "help",
         "notes",
         "context",
+        "usage",
         "leaving",
     ];
 
@@ -670,6 +674,7 @@ impl Outcome {
             Self::Help(_) => "help",
             Self::Notes(_) => "notes",
             Self::Context(_) => "context",
+            Self::Usage(_) => "usage",
             Self::Leaving => "leaving",
         }
     }
@@ -700,6 +705,7 @@ impl Outcome {
             ),
             Self::Notes(notes) => object.with("notes", notes.written()),
             Self::Context(context) => object.with("context", context.written()),
+            Self::Usage(usage) => object.with("usage", usage.written()),
         }
         .finish()
     }
@@ -734,6 +740,7 @@ impl Outcome {
             ),
             "notes" => Self::Notes(NotesOutcome::read(fields.take("notes")?)?),
             "context" => Self::Context(Context::read(fields.take("context")?)?),
+            "usage" => Self::Usage(Usage::read(fields.take("usage")?)?),
             "leaving" => Self::Leaving,
             _ => return Err(ErrorCode::Malformed.into()),
         };
