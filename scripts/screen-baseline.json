@@ -228,7 +228,7 @@
         "Vendor::recapping_after( &[ \"Notes on the first thing.\", \"Notes on the second thing.\", \"Notes on the third thing.\", ], \"Notes on everything that came before.\", None, )",
         "Watched::compacting(\"resume-notes\", 80, 24, &vendor)"
       ],
-      "sha256": "2b32fd2fa1dc852a34f13d99e4ee05762965ee7cdd1147f7187650a4b28ae974"
+      "sha256": "528f06968546bf2159b3c7d1c24678765714acd947286e1941b7ae1b03e64967"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__compact_tool_activity.snap",

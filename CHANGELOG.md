@@ -8,6 +8,13 @@ change in any release with no deprecation period.
 
 ## [Unreleased]
 
+### Added
+
+- **The model can mark the answer it recommends.** In a question put by
+  `ask_user`, one answer may be marked recommended and listed first, and it is
+  drawn with `(Recommended)` after its name. What you choose and what is sent
+  back is still the name alone.
+
 ### Changed
 
 - **`CRUCIBLE_CODE_MOUSE_SCROLL_SPEED` now takes 3 to 30, and its schema says so

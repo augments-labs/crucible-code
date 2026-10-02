@@ -491,3 +491,93 @@ fn one_question_taking_several_answers_still_reads_them_back() {
         Moved::Took
     );
 }
+
+/// The rows of the first question's panel, `columns` wide.
+fn panel(questions: &[Question], columns: usize) -> Vec<String> {
+    let mut standing = Standing::new(questions);
+    let (rows, _) = drawn(&mut standing, questions, columns, 30, Style::plain());
+    rows.iter().map(crucible_tui::Row::text).collect()
+}
+
+/// Two answers, the first of them recommended or not.
+fn recommending(recommended: bool) -> Vec<Question> {
+    let first = Answer::new("Typed flag");
+    let first = if recommended {
+        first.recommending()
+    } else {
+        first
+    };
+    vec![Question::new(
+        "Design",
+        "Which design?",
+        [first, Answer::new("Enum value")],
+    )]
+}
+
+#[test]
+fn the_recommended_answer_is_drawn_with_the_label_straight_after_its_name() {
+    for columns in [80, 40] {
+        let art = panel(&recommending(true), columns);
+
+        assert!(
+            art.iter()
+                .any(|row| row.contains("Typed flag (Recommended)")),
+            "at {columns}: {art:#?}"
+        );
+        assert_eq!(
+            art.iter()
+                .filter(|row| row.contains("(Recommended)"))
+                .count(),
+            1,
+            "at {columns}: {art:#?}"
+        );
+    }
+}
+
+#[test]
+fn an_answer_nobody_recommended_is_drawn_exactly_as_it_was() {
+    // The panel's words, rule and border left out, so what is compared is what
+    // the rows say and in what order.
+    let words = |art: &[String]| -> Vec<String> {
+        art.join(" ")
+            .replace(['│', '╭', '╮', '╰', '╯', '─'], " ")
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect()
+    };
+
+    for columns in [80, 40] {
+        let plain = panel(&recommending(false), columns);
+        assert!(
+            !plain.iter().any(|row| row.contains("Recommended")),
+            "{plain:#?}"
+        );
+        assert!(
+            plain.iter().any(|row| row.contains("Typed flag")),
+            "{plain:#?}"
+        );
+
+        // The label is the only thing the marked panel says more.
+        let marked = words(&panel(&recommending(true), columns));
+        let without: Vec<String> = marked
+            .into_iter()
+            .filter(|word| word != "(Recommended)")
+            .collect();
+        assert_eq!(without, words(&plain), "at {columns}");
+    }
+}
+
+#[test]
+fn the_name_that_comes_back_is_the_name_as_given_without_the_label() {
+    let questions = recommending(true);
+    let standing = Standing::new(&questions);
+
+    let given = standing
+        .held
+        .iter()
+        .zip(&questions)
+        .map(|(held, question)| held.answered(question))
+        .next()
+        .expect("the question");
+    assert_eq!(given.chosen().collect::<Vec<_>>(), ["Typed flag"]);
+}

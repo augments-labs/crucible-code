@@ -261,6 +261,29 @@ fn questions_are_settled_only_by_one_answer_each_under_their_own_identity() {
 }
 
 #[test]
+fn the_recommended_answer_is_put_marked_and_under_its_own_name() {
+    let asking = vec![Question::new(
+        "Colour",
+        "Which colour?",
+        [Answer::new("yes").recommending(), Answer::new("no")],
+    )];
+    let mut front = Scripted::saying([Reply::Answers(1)]);
+
+    crucible_runtime::answered!(questions(Capabilities::every(), &mut front, &asking))
+        .expect("a question that fits");
+
+    let Some(Pending::Questions { questions, .. }) = front.put.first() else {
+        panic!("the question was never put: {:?}", front.put);
+    };
+    let choices: Vec<(&str, bool)> = questions
+        .iter()
+        .flat_map(|asked| &asked.choices)
+        .map(|choice| (choice.name.as_str(), choice.recommended))
+        .collect();
+    assert_eq!(choices, [("yes", true), ("no", false)]);
+}
+
+#[test]
 fn a_question_that_cannot_be_put_whole_is_not_put_short() {
     // An answer that was not offered cannot be chosen, and a name that was cut
     // is not the name the asker reads back: either way what was shown is not

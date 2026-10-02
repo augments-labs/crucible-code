@@ -591,7 +591,11 @@ fn a_registered_tool_without_a_case_is_refused() -> Result<(), String> {
 ///
 /// Raised only on purpose. A change that needs more room says why in its own
 /// pull request; this number does not follow whatever the text became.
-const FIXED_REQUEST_BYTES: usize = 13_755;
+///
+/// The last 124 bytes are the `recommended` field of an `ask_user` answer: its
+/// name, its type and the sentence that says it is the one answer to pick, at
+/// most one per question, listed first.
+const FIXED_REQUEST_BYTES: usize = 13_879;
 
 /// Every tool crucible builds in, in the order [`registered`] lists them.
 const BUILT_IN: [&str; 12] = [

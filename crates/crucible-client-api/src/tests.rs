@@ -22,7 +22,7 @@ const MARKER: &str = "hunter2-marker";
 /// Every field name a frame may hold.
 ///
 /// An allow-list, so a field added to any value is a field somebody read here.
-const KEYS: [&str; 71] = [
+const KEYS: [&str; 72] = [
     "ambiguous",
     "answers",
     "asks",
@@ -71,6 +71,7 @@ const KEYS: [&str; 71] = [
     "protocol",
     "provider",
     "questions",
+    "recommended",
     "replaced",
     "resources",
     "resumed",
@@ -179,9 +180,57 @@ fn questions() -> Pending {
             choices: vec![Choice {
                 name: marked(),
                 says: marked(),
+                recommended: true,
             }],
         }],
     }
+}
+
+#[test]
+fn a_choice_marked_recommended_crosses_as_a_field_of_its_own_beside_its_unchanged_name() {
+    let choice = |name: &str, recommended| Choice {
+        name: Text::cut(name),
+        says: Text::cut(""),
+        recommended,
+    };
+    let pending = Pending::Questions {
+        id: PendingId::new(8),
+        questions: vec![Asked {
+            heading: Text::cut("h"),
+            asks: Text::cut("a"),
+            several: false,
+            choices: vec![choice("Typed flag", true), choice("Enum value", false)],
+        }],
+    };
+
+    let written = pending.written();
+    let first = "/questions/0/choices/0";
+    assert_eq!(
+        written.pointer(&format!("{first}/recommended")),
+        Some(&json!(true))
+    );
+    assert_eq!(written.pointer("/questions/0/choices/1/recommended"), None);
+    assert_eq!(
+        written.pointer(&format!("{first}/name/text")),
+        Some(&json!("Typed flag"))
+    );
+
+    assert_eq!(Pending::read(written.clone()).unwrap(), pending);
+
+    // A choice written before the flag existed has none, and reads as not
+    // recommended; one that says something else is not a flag.
+    let mut bare = written.clone();
+    bare.pointer_mut(first)
+        .and_then(Value::as_object_mut)
+        .unwrap()
+        .remove("recommended");
+    let read = Pending::read(bare).unwrap();
+    assert!(matches!(&read, Pending::Questions { questions, .. }
+        if questions.iter().flat_map(|one| &one.choices).all(|one| !one.recommended)));
+
+    let mut odd = written;
+    *odd.pointer_mut(&format!("{first}/recommended")).unwrap() = json!("yes");
+    assert_eq!(Pending::read(odd).unwrap_err().code(), ErrorCode::Malformed);
 }
 
 fn warning() -> Pending {
@@ -1298,15 +1347,19 @@ fn a_frame_of_more_values_than_any_needs_is_refused_while_it_is_read() {
 
 #[test]
 fn the_fullest_value_that_crosses_is_within_the_value_ceiling() {
-    let choice = || Choice {
+    // A question marks at most one of its choices, and the first.
+    let choice = |recommended| Choice {
         name: Text::cut("n"),
         says: Text::cut("s"),
+        recommended,
     };
     let asked = || Asked {
         heading: Text::cut("h"),
         asks: Text::cut("a"),
         several: true,
-        choices: vec![choice(); ITEMS],
+        choices: std::iter::once(choice(true))
+            .chain(vec![choice(false); ITEMS - 1])
+            .collect(),
     };
     let fullest = Snapshot {
         session: Some(SessionId::new()),
@@ -1650,7 +1703,7 @@ fn the_version_moves_with_what_a_frame_is_made_of() {
     // leave it as it was; those still need the number moved by hand.
     assert_eq!(
         (Version::CURRENT.number(), digest),
-        (1, 1_177_570_555_411_645_176),
+        (1, 11_474_190_890_111_485_080),
         "what a frame is made of moved. Once a release speaks this contract, \
          move Version::CURRENT with it; then write the pair here.\n{made_of}"
     );

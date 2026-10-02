@@ -19,6 +19,7 @@ pub struct Answer {
     name: Box<str>,
     says: Box<str>,
     shows: Box<[Box<str>]>,
+    recommended: bool,
 }
 
 impl Answer {
@@ -29,6 +30,7 @@ impl Answer {
             name: answer.into(),
             says: Box::from(""),
             shows: Box::new([]),
+            recommended: false,
         }
     }
 
@@ -48,6 +50,25 @@ impl Answer {
             shows: shows.into_iter().map(Into::into).collect(),
             ..self
         }
+    }
+
+    /// The same answer, marked as the one the asker would pick.
+    ///
+    /// A flag of its own and not part of the name: the name is what the reader
+    /// chooses and what is handed back, and a label written into it would be
+    /// handed back too.
+    #[must_use]
+    pub fn recommending(self) -> Self {
+        Self {
+            recommended: true,
+            ..self
+        }
+    }
+
+    /// Whether the asker marked it as the one they would pick.
+    #[must_use]
+    pub fn is_recommended(&self) -> bool {
+        self.recommended
     }
 
     /// What the answer is called.
@@ -83,17 +104,27 @@ pub struct Question {
 
 impl Question {
     /// A question taking one of its answers.
+    ///
+    /// It recommends at most one answer, and that is the first: the mark is
+    /// kept on the first answer and dropped from any other, so everything that
+    /// draws or sends the answers can rely on it. Dropping it is not an error;
+    /// a caller that wants to refuse a misplaced mark, as the `ask_user` parse
+    /// does so that the model can correct itself, looks before it builds.
     #[must_use]
     pub fn new(
         heading: impl Into<Box<str>>,
         question: impl Into<Box<str>>,
         answers: impl IntoIterator<Item = Answer>,
     ) -> Self {
+        let mut answers: Box<[Answer]> = answers.into_iter().collect();
+        for answer in answers.iter_mut().skip(1) {
+            answer.recommended = false;
+        }
         Self {
             heading: heading.into(),
             asks: question.into(),
             several: false,
-            answers: answers.into_iter().collect(),
+            answers,
         }
     }
 
