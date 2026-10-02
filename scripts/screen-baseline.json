@@ -262,7 +262,7 @@
       "opened": [
         "Watched::launched( \"reach-branch\", 80, 24, &watched::Launch { document: reaching::DOCUMENT, env: &[], args: &[], home: Some(&planted.earlier), }, )"
       ],
-      "sha256": "43967cbae759f88322bef09c9bda2e009a3b61e9a657ee697111220f886bb69d"
+      "sha256": "1a54beb2d2211c405137439419b1c990dce98d21b005368df7a3ac304fce9a16"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__ctrl_w_adds_this_repositorys_other_checkouts.snap",

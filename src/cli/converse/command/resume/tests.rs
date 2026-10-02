@@ -1099,7 +1099,7 @@ fn the_heading_names_what_the_keys_show() {
     );
     assert_eq!(
         heading(3, 5, branch, &here, glyphs),
-        format!("Resume a session · 3 of 5 · ~{sep}code{sep}crucible · main")
+        format!("Resume a session · 3 of 5 · main · ~{sep}code{sep}crucible")
     );
     assert_eq!(
         heading(
@@ -1112,7 +1112,25 @@ fn the_heading_names_what_the_keys_show() {
             &here,
             glyphs
         ),
-        "Resume a session · 3 of 5 · all projects · main"
+        "Resume a session · 3 of 5 · main · all projects"
+    );
+
+    // The branch goes before the directory, so a directory too long for the
+    // row is what the window cuts, and the branch Ctrl+B keeps stays read.
+    let deep = Here {
+        root: under(&[
+            "home",
+            "ada",
+            "a-directory-whose-name-is-long",
+            "and-longer-below-it",
+        ]),
+        ..here
+    };
+    let said = heading(1, 1, branch, &deep, glyphs);
+    let drawn = crucible_tui::clip(&said, 40);
+    assert!(
+        drawn.starts_with("Resume a session · 1 of 1 · main · ~"),
+        "{drawn}"
     );
 }
 

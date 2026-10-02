@@ -1920,7 +1920,14 @@ fn ctrl_b_keeps_the_branch_checked_out_here() {
     window.types_until("/resume\r", "a session, or a branch");
     window.types_until("\x02", "1 of 1");
 
-    insta::assert_snapshot!(window.picture());
+    // The branch is before the directory, so a long directory is what is cut.
+    let picture = window.picture();
+    assert!(
+        picture.contains("Resume a session · 1 of 1 · main · ~"),
+        "{picture}"
+    );
+
+    insta::assert_snapshot!(picture);
 }
 
 #[test]

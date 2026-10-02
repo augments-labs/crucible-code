@@ -949,7 +949,8 @@ fn furthest(rows: usize, room: usize) -> usize {
 /// The line over the panes: what this is, how much of what the keys left the
 /// query left, and where the sessions were recorded — this directory, every
 /// directory, or this repository's checkouts — with the branch while Ctrl+B
-/// keeps only it.
+/// keeps only it. The branch goes before the place, because a directory can be
+/// longer than the row and it is the end of the row a narrow window cuts.
 ///
 /// The lead says what the screen is for, because a picker that opens on a
 /// count alone reads as a report on sessions rather than as a way into one.
@@ -963,13 +964,14 @@ fn heading(found: usize, total: usize, scope: Scope, here: &Here, glyphs: Glyphs
         homed(&here.root, here.home.as_deref())
     };
 
-    let mut said = format!("Resume a session {dot} {found} of {total} {dot} {place}");
+    let mut said = format!("Resume a session {dot} {found} of {total} {dot} ");
     if let Some(branch) = here.branch.as_deref().filter(|_| scope.branch) {
+        said.push_str(&crate::cli::draw::flattened(branch));
         said.push(' ');
         said.push_str(dot);
         said.push(' ');
-        said.push_str(&crate::cli::draw::flattened(branch));
     }
+    said.push_str(&place);
     said
 }
 
