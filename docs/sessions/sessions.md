@@ -49,10 +49,12 @@ the bottom while you are at the newest line. A mark on the quiet track is a
 prompt you sent, at the place it falls in the whole transcript, and prompts too
 close to tell apart share one mark.
 
-Click anywhere on the rail and the transcript moves so the thumb is centred
-there; click a mark and you land on that prompt. Keep the button down and drag
-to scroll with the pointer, holding the thumb where you took it, and drag it to
-the foot to follow the newest line again. The prompt box and everything
+Click the rail off the thumb and the transcript moves so the thumb is centred
+there, or as near as the rail's ends allow; click a mark and you land on that
+prompt. A click on the thumb takes hold of it without moving it, and a mark the
+thumb covers is drawn as thumb. Keep the button down and drag to scroll with
+the pointer, holding the thumb where you took it, and drag it to the foot to
+follow the newest line again. The prompt box and everything
 standing over it stay where they are. The rail takes no keyboard binding, and a
 drag that selects text never takes it.
 

@@ -1645,6 +1645,32 @@ fn a_drag_on_the_rail_thumb_scrolls_the_transcript_with_it() {
 }
 
 #[test]
+fn a_click_off_the_rail_lets_go_of_a_thumb_whose_release_was_lost() {
+    let mut drawn = railed();
+    let starts = |drawn: &Drawn, line: &str| drawn.screen().row(0).starts_with(&format!("{line} "));
+
+    // Taken, and the button's release never arrives.
+    assert_eq!(rail_click(&mut drawn, 9), None);
+    assert!(starts(&drawn, "line 70"));
+
+    drawn.took(Pressed::Clicked { row: 0, column: 0 }).unwrap();
+    drawn.took(Pressed::Dragged { row: 1, column: 59 }).unwrap();
+    assert!(
+        starts(&drawn, "line 70"),
+        "the drag scrolled: {:?}",
+        drawn.screen().rows()
+    );
+    drawn.take();
+
+    drawn
+        .took(Pressed::Released { row: 1, column: 59 })
+        .unwrap();
+    let copied = drawn.take();
+    let wanted = onto_the_clipboard("line 70\nline 71");
+    assert!(copied.contains(&wanted), "{copied:?}");
+}
+
+#[test]
 fn a_click_on_a_rail_mark_lands_on_its_prompt() {
     let mut drawn = railed();
 

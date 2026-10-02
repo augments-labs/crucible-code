@@ -49,6 +49,9 @@ use std::num::NonZeroUsize;
 /// Below it the border costs a quarter of the screen to say what the caret
 /// already says, so it goes and the caret and the status row are left — which
 /// is the same shape a run with no terminal to draw a box on gets.
+///
+/// Also the width under which the scroll rail is not drawn
+/// ([`crate::scroll_rail::NARROWEST`] follows it), so moving it moves the rail's.
 pub(crate) const FRAMED_AT: usize = 24;
 
 /// What stands before the line on a framed row: an edge, a space, the caret,

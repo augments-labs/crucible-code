@@ -57,9 +57,9 @@ const RETAINED_ROW_BYTES: usize = 80;
 
 /// The most prompt landmarks the record keeps for the scroll rail to mark.
 ///
-/// More than the rows of any ordinary window, so a tall rail is not left short
-/// of marks after a long session, and fixed so a prompt per line cannot become
-/// a second record beside the record.
+/// More than the rows of any ordinary window, and fixed so a prompt per line
+/// cannot become a second record beside the record. Past it the oldest prompts
+/// are let go, so the oldest stretch of a very long session goes unmarked.
 const MOST_LANDMARKS: usize = 256;
 
 /// One line of the record, and whether a narrower window may re-fold it.
@@ -874,9 +874,10 @@ impl Record {
     /// Where a band `rows` tall stands in what the record retains, in display
     /// rows: what the scroll rail is laid out from.
     ///
-    /// Constant time. The total is kept, and the top is one lookup in the
-    /// cumulative ends beside the line heights, so a rail drawn on every frame
-    /// costs neither the record nor the length of the session.
+    /// The total is kept, and the top is one lookup in the cumulative ends
+    /// beside the line heights — or, while the band follows the foot, a walk
+    /// back over the lines the band shows — so a rail drawn on every frame
+    /// costs the band's height at most, never the record's or the session's.
     pub(crate) fn place(&self, rows: usize) -> Place {
         Place {
             total: self.rows,
@@ -902,8 +903,9 @@ impl Record {
     ///
     /// Never past the foot: a row the band cannot start on and still be full
     /// is the foot, and the band follows the record again from there, as the
-    /// wheel leaves it when it reaches the end. Logarithmic, through the same
-    /// cumulative ends [`Self::place`] reads.
+    /// wheel leaves it when it reaches the end. A binary search through the
+    /// same cumulative ends [`Self::place`] reads, plus a walk bounded by the
+    /// band's height to find the foot.
     pub(crate) fn seek(&mut self, row: usize, rows: usize) -> bool {
         let foot = self.foot(rows);
         let now = self.spot_at(self.before.saturating_add(row)).min(foot);

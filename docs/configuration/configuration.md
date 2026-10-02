@@ -522,7 +522,7 @@ you with no way to send at all.
 | `theme` | `auto`, `dark`, `light`, `colourblind-dark`, `colourblind-light`, `ansi` | Which colours crucible draws with; `auto` by default. |
 | `syntaxTheme` | a theme name | Which theme fenced code is drawn in; `Monokai Extended` by default. |
 | `toolDetail` | `compact`, `full` | The width of compact tool headings and result previews: a readable measure, or the whole window; `compact` by default. Clipped details remain expandable: recent ones from memory, older ones read back from the session log when the view reaches them, where the session has a log. |
-| `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt; a click on it scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
+| `scrollRail` | `true`, `false` | Whether the transcript has a one-column scroll rail on its right edge; `true` by default. The rail shows which part of the transcript is on screen and a mark at each prompt; a click off the thumb scrolls there, a drag on its thumb scrolls with the pointer, and a click on a mark lands on that prompt. Text wraps one column narrower while it is drawn, and a window too narrow to spare the column does not draw it. `false` gives the column back. |
 
 `theme` is a table of what each colour on screen means, tuned to one background.
 `auto` asks the terminal what its background is and picks the dark or the light

@@ -125,7 +125,7 @@ fn the_screens_are_pictured_in_both_glyph_sets() {
 
 #[test]
 fn nothing_of_the_prompt_reaches_the_key_screen() {
-    // Not a turn: no window reading, no transcript hint, no model, no map.
+    // Not a turn: no window reading, no transcript hint, no model.
     for columns in [24, 48, 80, 120] {
         for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
             for row in art(&anthropic(9), columns, glyphs) {

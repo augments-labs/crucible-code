@@ -8,9 +8,9 @@
 //! overlap and together they are the window, which is what lets a frame place
 //! a row absolutely and never wonder what else is there.
 //!
-//! Their sizes are not a layout so much as an order of surrender. One of them
-//! wants a fixed number of rows, one wants as many as it has, and one takes
-//! what is left — and on a window too small for that, something has to go.
+//! Their sizes are not a layout so much as an order of surrender. Two of them
+//! want as many rows as they have, and one takes what is left — and on a
+//! window too small for that, something has to go.
 //! What goes is stated here once, from the least missed to the most: the
 //! transcript shrinks to nothing first, then the turn, and the prompt is last
 //! because a reader who cannot see what they are typing has no way to fix

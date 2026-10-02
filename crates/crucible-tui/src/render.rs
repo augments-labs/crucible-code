@@ -484,10 +484,11 @@ impl<T: Terminal> Renderer<T> {
     /// Answers a press that belongs to the scroll rail, and says whether it
     /// did.
     ///
-    /// A press on the thumb takes hold of it where it was pressed. A press on
-    /// a mark lands on the prompt the mark stands for, and anywhere else on the
-    /// rail puts the thumb's middle there; either way the thumb is then held
-    /// where the pointer is. A drag moves the held thumb, and the transcript
+    /// A press on the thumb takes hold of it where it was pressed and moves
+    /// nothing, a mark the thumb covers included. A press on a mark off the
+    /// thumb lands on the prompt the mark stands for, and anywhere else on the
+    /// rail puts the thumb's middle there, as near as the rail's ends allow;
+    /// either way the thumb is then held where the pointer is. A drag moves the held thumb, and the transcript
     /// with it, and the release lets go. A rail with no thumb — a record that
     /// fits — has nowhere to go, so a press on it moves nothing; it is still
     /// the rail's, so it names no line beside it, just as a pointer resting
@@ -500,6 +501,10 @@ impl<T: Terminal> Renderer<T> {
         let rows = bands.transcript.len();
         match *arrived {
             Pressed::Clicked { row, column } => {
+                // A press is a new hold, whatever the last one was: a thumb
+                // whose release never arrived is let go here, or the drag
+                // this press starts would move it.
+                self.grip = None;
                 if Some(column) != self.rail_column() || !bands.transcript.contains(&row) {
                     return Ok(false);
                 }
@@ -965,7 +970,10 @@ impl<T: Terminal> Renderer<T> {
     /// a theme chosen later repaints it along with everything else.
     ///
     /// Not folded either, and it does not need to be: a component is given the
-    /// width and returns rows that fit it. A window that narrows clips them
+    /// width and returns rows that fit it. That width is
+    /// [`Self::transcript_columns`], not the window's: with the rail on, a row
+    /// laid at the window's width loses its last column to it. A window that
+    /// narrows clips them
     /// rather than folding them, because rows a component laid out against each
     /// other are not prose and re-flowing one of them would break the column
     /// the others are aligned in.
@@ -1003,7 +1011,8 @@ impl<T: Terminal> Renderer<T> {
     /// prompts and file changes. The closure is retained by the bounded record
     /// and called only when the terminal width changes; ordinary frames read the
     /// rows built for the current width. `retained` is the source bytes it closes
-    /// over, charged against that record's ceiling.
+    /// over, charged against that record's ceiling. Each width it is handed is
+    /// [`Self::transcript_columns`], as for [`Self::present`].
     ///
     /// # Errors
     ///
@@ -1015,7 +1024,7 @@ impl<T: Terminal> Renderer<T> {
         lay: Box<dyn Fn(usize) -> Vec<Row>>,
     ) -> Result<(), TerminalError> {
         if !self.terminal.is_terminal() {
-            return self.present(&lay(self.columns()));
+            return self.present(&lay(self.transcript_columns()));
         }
 
         self.record.responsive(retained, lay);
@@ -1030,7 +1039,8 @@ impl<T: Terminal> Renderer<T> {
     /// drawn again from facts read once at launch and held for the whole
     /// session, so what laid it is still here to lay it again — and it is what
     /// a reader is looking at when they take the corner of a fresh window and
-    /// pull.
+    /// pull. Each width it is handed is [`Self::transcript_columns`], as for
+    /// [`Self::present`].
     ///
     /// # Errors
     ///
@@ -1039,7 +1049,7 @@ impl<T: Terminal> Renderer<T> {
         if !self.terminal.is_terminal() {
             // Nothing will resize a file, so holding what could draw it again
             // would be holding it for an event that cannot arrive.
-            return self.present(&lay(self.columns()));
+            return self.present(&lay(self.transcript_columns()));
         }
 
         self.record.opens(lay);

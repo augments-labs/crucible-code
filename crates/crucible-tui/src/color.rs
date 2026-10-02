@@ -45,10 +45,10 @@
 //! carry, rather than against black and white, because a row that has taken the
 //! ground has none of the reader's left behind it to clear.
 //!
-//! A control under the pointer is the smallest exception. At rest it spends
-//! the accent as ink; under the pointer that exact accent becomes the ground
-//! under contrasting black or white text. The rectangle says the label is one
-//! control, and because the ground is made from the same table entry it cannot
+//! A control under the pointer is the smallest exception. At rest its text
+//! spends the accent as ink; under the pointer that exact accent becomes the
+//! ground under contrasting black or white text. The rectangle says the
+//! control's text is one thing to press, and because the ground is made from the same table entry it cannot
 //! drift from the configured theme.
 //!
 //! The row the reader's own prompt is on is the other, and it is the exception

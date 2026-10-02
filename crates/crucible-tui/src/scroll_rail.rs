@@ -6,9 +6,11 @@
 //! a row, so it sits at the top for the oldest line held and at the bottom
 //! while the band follows the foot. A prompt is a mark on the row its first
 //! line falls at in the whole record, scaled the same way, so several prompts
-//! that scale to one row are one mark; a mark that falls on the thumb is drawn
-//! as thumb, because the prompt it stands for is on screen already. When the
-//! record fits the band there is nowhere else to be, and the rail is blank.
+//! that scale to one row are one mark. A mark that falls on the thumb is drawn
+//! as thumb: the two share the cell and the thumb wins, so a press there takes
+//! the thumb, and a prompt under it is reached by moving the thumb off it.
+//! When the record fits the band there is nowhere else to be, and the rail is
+//! blank.
 //!
 //! The rail spends no hue of its own. The thumb is [`Slot::Accent`] and the
 //! track and its marks are [`Slot::Quiet`], two jobs every palette already
@@ -31,10 +33,10 @@ use crate::row::Row;
 
 /// The narrowest window the rail is drawn in.
 ///
-/// The width below which the prompt box already gives up its frame, for the
-/// same reason: under it, a column of chrome is a twentieth of what there is
-/// to read. The two are one judgement about what a narrow window can spare,
-/// so they are one number.
+/// The width below which the prompt box already gives up its frame: under it,
+/// chrome takes a share of what there is to read that the window cannot spare.
+/// The two are one judgement about what a narrow window can spare, so they are
+/// one number.
 pub(crate) const NARROWEST: usize = crate::prompt::FRAMED_AT;
 
 /// Whether a window `columns` wide has a column to spare for the rail.
@@ -56,8 +58,10 @@ pub(crate) struct Place {
 /// The rail as laid out for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScrollRail {
-    /// Where the band is, as the rail was laid out from it.
-    place: Place,
+    /// Every display row the record held when the rail was laid out.
+    total: usize,
+    /// How tall the band is, and so the rail.
+    height: usize,
     /// The rows the thumb covers; `None` while the record fits the band.
     thumb: Option<Range<usize>>,
     /// Which rail rows carry a prompt, one entry a row.
@@ -74,7 +78,8 @@ impl ScrollRail {
         // fits the band has nowhere else for one to be.
         if height == 0 || total <= height {
             return Self {
-                place,
+                total,
+                height,
                 thumb: None,
                 marks,
             };
@@ -86,7 +91,7 @@ impl ScrollRail {
         // row at the head and on the last at the foot, and makes it a row at
         // least.
         let top = place.top.min(total - height);
-        let start = scaled(top, place);
+        let start = scaled(top, total, height);
         let end = (top + height)
             .saturating_mul(height)
             .div_ceil(total)
@@ -95,13 +100,14 @@ impl ScrollRail {
         let start = start.min(height.saturating_sub(length));
 
         for prompt in prompts {
-            if let Some(mark) = marks.get_mut(scaled(prompt, place)) {
+            if let Some(mark) = marks.get_mut(scaled(prompt, total, height)) {
                 *mark = true;
             }
         }
 
         Self {
-            place,
+            total,
+            height,
             thumb: Some(start..start + length),
             marks,
         }
@@ -124,7 +130,7 @@ impl ScrollRail {
     /// from the answer starts on exactly `start`. A thumb asked to reach the
     /// rail's last row is at the foot, and the band follows it again.
     pub(crate) fn top_for(&self, start: usize) -> usize {
-        let Place { total, height, .. } = self.place;
+        let (total, height) = (self.total, self.height);
         let foot = total.saturating_sub(height);
         let length = self.thumb.as_ref().map_or(height, Range::len);
         if height == 0 || start + length >= height {
@@ -145,7 +151,7 @@ impl ScrollRail {
         self.thumb.as_ref()?;
         prompts
             .into_iter()
-            .find(|prompt| scaled(*prompt, self.place) == row)
+            .find(|prompt| scaled(*prompt, self.total, self.height) == row)
     }
 
     /// The rail as cells, one row a band row, for a window `columns` wide.
@@ -156,7 +162,7 @@ impl ScrollRail {
         if !spared(columns) {
             return Vec::new();
         }
-        (0..self.place.height)
+        (0..self.height)
             .map(|at| {
                 let (slot, cell) = match &self.thumb {
                     None => (Slot::Plain, " "),
@@ -172,11 +178,10 @@ impl ScrollRail {
     }
 }
 
-/// The rail row display row `row` of the record falls on.
-fn scaled(row: usize, place: Place) -> usize {
-    row.saturating_mul(place.height)
-        .checked_div(place.total)
-        .unwrap_or(0)
+/// The rail row display row `row` of a record `total` rows long falls on, on a
+/// rail `height` rows tall.
+fn scaled(row: usize, total: usize, height: usize) -> usize {
+    row.saturating_mul(height).checked_div(total).unwrap_or(0)
 }
 
 #[cfg(test)]
