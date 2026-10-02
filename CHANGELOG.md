@@ -60,6 +60,10 @@ change in any release with no deprecation period.
   tools sent with every request are shorter, as are the compaction request and
   the tools found by search, with no instruction dropped and no tool, argument
   or choice renamed.
+- **The command list opens in a short window, scrolling with a count.** Where
+  there is no room for every command, as at 24 rows while a turn runs, it shows
+  what fits and ends on a quiet `↓ 2 more` row, with `↑ N more` over it once
+  <kbd>↓</kbd> has walked it down. It used to stay closed there.
 
 ### Fixed
 

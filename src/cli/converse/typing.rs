@@ -30,6 +30,8 @@
 //! handed and steps nothing.
 
 use std::borrow::Cow;
+use std::cell::Cell;
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crucible_app::Conversation;
@@ -1772,6 +1774,10 @@ pub(super) fn saying(runner: &Runner) -> Says {
     }
 }
 
+/// The columns a command list keeps in front of its names for the mark: the
+/// mark and the space after it, as [`Menu`] keeps them.
+const MARKED: usize = 2;
+
 /// The command list a line has open above the box, and the row of it that
 /// pressing return would run.
 ///
@@ -1788,6 +1794,14 @@ pub(super) struct Opened {
     shown: Vec<Listed<'static>>,
     /// Which row of it return runs.
     at: usize,
+    /// The first row in view, where there was too little room to show them
+    /// all when it was last drawn.
+    ///
+    /// Kept between draws so a mark moving inside the rows in view moves the
+    /// mark and not the list; only a mark walked past an end moves the list.
+    /// Asked for while drawing, because how many rows are in view is the room
+    /// the draw is given, and that is known nowhere else.
+    top: Cell<usize>,
 }
 
 impl Opened {
@@ -1805,15 +1819,19 @@ impl Opened {
             .position(|one| one.name == said)
             .unwrap_or_default();
 
-        Self { shown, at }
+        Self {
+            shown,
+            at,
+            top: Cell::new(0),
+        }
     }
 
     /// Moves the mark back a row, and says whether it moved.
     ///
     /// Stopping at the end rather than running round to the other one, the same
-    /// as the arrows that move along the line. A list is short enough to read
-    /// whole, so wrapping would buy a keystroke at the price of somebody
-    /// looking away and back to find where the mark went.
+    /// as the arrows that move along the line. Wrapping would buy a keystroke
+    /// at the price of somebody looking away and back to find where the mark
+    /// went.
     pub(super) fn up(&mut self) -> bool {
         let moved = self.at > 0;
         self.at = self.at.saturating_sub(1);
@@ -1847,23 +1865,102 @@ impl Opened {
     /// The rows to open above the box, and the blank row that keeps them off
     /// it.
     ///
-    /// A list with no room for it is not opened, and not cut down to what there
-    /// is room for either: a list cut off at the top reads as the whole list,
-    /// which is worse than drawing nothing at all. Nothing is what a reader can
-    /// tell is nothing.
+    /// A list with room for every row is drawn whole. One without is drawn as
+    /// many rows as fit, with the marked row always among them, and with a
+    /// quiet row at each cut end saying how many more there are past it:
+    /// `↓ 12 more` under the last row shown, and `↑ 3 more` over the first once
+    /// the mark has walked the list down. A list cut with nothing to say so
+    /// would read as the whole list; the count is what tells a cut list from a
+    /// short one. Typing still narrows it, and return still runs the marked
+    /// row.
+    ///
+    /// Under three rows there is no room for a row and the counts either side
+    /// of it, and nothing is opened: nothing is what a reader can tell is
+    /// nothing.
     pub(super) fn rows(&self, columns: usize, room: usize, glyphs: Glyphs) -> Vec<Row> {
-        if self.shown.is_empty() || self.shown.len() > room {
+        let total = self.shown.len();
+        let Some(view) = self.view(room) else {
             return Vec::new();
-        }
+        };
+        let above = view.start;
+        let below = total.saturating_sub(view.end);
+        let at = self.at.saturating_sub(above);
+        let Some(shown) = self.shown.get(view) else {
+            return Vec::new();
+        };
 
-        let mut rows = Menu {
-            shown: &self.shown,
-            chosen: Some(self.at),
+        let (up, down) = glyphs.walking();
+        // Stood in the names' column, past the room the mark is kept, where
+        // there is width for that room at all.
+        let front = if columns > MARKED { MARKED } else { 0 };
+        let more = |arrow: &str, count: usize| {
+            let said = format!("{arrow} {count} more");
+            Row::new().then(Slot::Quiet, " ".repeat(front)).then(
+                Slot::Quiet,
+                crate::cli::draw::clipped(said, columns - front, glyphs),
+            )
+        };
+
+        let mut rows = Vec::with_capacity(room + 1);
+        if above > 0 {
+            rows.push(more(up, above));
         }
-        .rows(columns, glyphs);
+        rows.extend(
+            Menu {
+                shown,
+                chosen: Some(at),
+            }
+            .rows(columns, glyphs),
+        );
+        if below > 0 {
+            rows.push(more(down, below));
+        }
 
         rows.push(Row::new());
         rows
+    }
+
+    /// Which rows are in view with room for `room`, or `None` where there is
+    /// no list or no room to show one.
+    ///
+    /// The first row in view is the one shown last time where the mark is
+    /// still in view from it, and moves only as far as the mark needs. A view
+    /// that ends at the last row is moved back up as far as it can go, so a
+    /// list given more room shows more rather than leaving the room empty.
+    fn view(&self, room: usize) -> Option<Range<usize>> {
+        let total = self.shown.len();
+        if total == 0 {
+            return None;
+        }
+        if total <= room {
+            self.top.set(0);
+            return Some(0..total);
+        }
+        if room < 3 {
+            return None;
+        }
+
+        // Where the rows in view end when they start at `top`: what the room
+        // holds once a count has taken a row at each end that has one.
+        let end = |top: usize| {
+            let rest = room - usize::from(top > 0);
+            if top + rest >= total {
+                total
+            } else {
+                top + rest - 1
+            }
+        };
+
+        let mut top = self.top.get().min(self.at);
+        while self.at >= end(top) {
+            top += 1;
+        }
+        while top > 0 && end(top - 1) == total {
+            top -= 1;
+        }
+
+        self.top.set(top);
+        Some(top..end(top))
     }
 }
 

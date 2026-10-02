@@ -95,10 +95,12 @@ it](../getting-started/getting-started.md#run-it) tells the longer story.
 While the box holds one word starting with `/`, the commands whose names begin
 with it stand in a list above the box, and a bare `/` shows all of them.
 <kbd>↑</kbd> and <kbd>↓</kbd> walk the list and <kbd>Enter</kbd> runs the
-marked command. The list is not drawn where there is no room for the whole
-of it, but it is still there: <kbd>↑</kbd> and <kbd>↓</kbd> still move its
-unseen mark, and <kbd>Enter</kbd> runs the marked command rather than the
-word as typed. The commands themselves are under
+marked command rather than the word as typed. Where there is no room for the
+whole of it, it shows as many commands as fit and ends on a row saying how
+many more there are, `↓ 2 more`; once <kbd>↓</kbd> walks the mark past the
+last one shown, the list moves with it and a `↑ N more` row stands over it.
+Under three rows it is not drawn, but it is still there: <kbd>↑</kbd> and
+<kbd>↓</kbd> still move its unseen mark. The commands themselves are under
 [Commands](../getting-started/getting-started.md#commands).
 
 ### Other keys at the prompt

@@ -561,11 +561,11 @@ fn a_bare_slash_is_the_list_opener_not_a_command() {
     let mut window = Watched::allowing("bare-slash", 80, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/", "/clear");
+    window.types_and_catches("/", "/help");
 
     // Enter on the bare slash: the list is still open and the box still holds
     // the slash — nothing was submitted.
-    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("\r", "/help");
     let still = window.picture();
     assert!(!still.contains("names no command"), "no refusal:\n{still}");
 }
@@ -577,14 +577,11 @@ fn a_bare_slash_mid_turn_is_neither_refused_nor_queued() {
     // Enter was taken and the line kept: a refused slash would have stood a
     // panel, and a queued one would have left the box empty.
     let vendor = a_turn_still_running();
-    // Twenty-five rows: at twenty-four the seventeen commands and the running
-    // turn's footing do not both fit, and a list with no room for all of it
-    // is not opened at all.
-    let mut window = Watched::allowing("bare-slash-kept", 80, 25, &vendor, "bash(*)");
+    let mut window = Watched::allowing("bare-slash-kept", 80, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/", "/clear");
-    window.types_and_catches("\r", "/clear");
+    window.types_and_catches("/", "/help");
+    window.types_and_catches("\r", "/help");
     window.types_and_catches("h", "› /h ");
 
     let still = window.picture();
@@ -838,15 +835,14 @@ fn a_slash_typed_mid_turn_opens_the_command_list() {
     // opens is the same one the prompt would open between turns, stood above
     // the box while the turn goes on writing behind it.
     let vendor = a_turn_still_running();
-    // Twenty-five rows: at twenty-four the seventeen commands and the running
-    // turn's footing do not both fit, and a list with no room for all of it
-    // is not opened at all.
-    let mut window = Watched::allowing("list-mid-turn", 80, 25, &vendor, "bash(*)");
+    let mut window = Watched::allowing("list-mid-turn", 80, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
 
-    // `/` typed into the box opens the list above it.
-    window.types_and_catches("/", "/clear");
+    // `/` typed into the box opens the list above it. At twenty-four rows the
+    // running turn's footing leaves too little room for every command, so the
+    // list shows what fits and counts the rest on its last row.
+    window.types_and_catches("/", "more");
 
     insta::assert_snapshot!(on_the_first_beat(&window.picture()));
 }

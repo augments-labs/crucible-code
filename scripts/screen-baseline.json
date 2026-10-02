@@ -189,9 +189,9 @@
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_typed_mid_turn_opens_the_command_list.snap",
       "case": "a_slash_typed_mid_turn_opens_the_command_list",
       "opened": [
-        "Watched::allowing(\"list-mid-turn\", 80, 25, &vendor, \"bash(*)\")"
+        "Watched::allowing(\"list-mid-turn\", 80, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "0dac0c656115fbb8a9505d33f6170d0101f2bcb580f59e1206cea4d8301393dd"
+      "sha256": "4732e6fc880bea4f43446eab0ffaf8b56e3746f4c35ff5650c886155ac7f9575"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_theme_panel_opens_while_a_turn_is_still_running.snap",
