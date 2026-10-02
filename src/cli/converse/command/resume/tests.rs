@@ -32,6 +32,7 @@ use crate::cli::draw::opening::{Opening, Standing};
 use crate::cli::fake::Script;
 use crate::cli::sample::Sample;
 use crate::cli::style::Style;
+use crucible_workspace::Workspace;
 
 use super::*;
 
@@ -565,7 +566,7 @@ fn a_saved_title_outlives_the_picker_and_the_session() {
     drop(session);
     drop(on_the_list(&sample, &id));
 
-    let listed = saved("a better name", &id, &sample.logs(), &sample.workspace());
+    let listed = saved("a better name", &id, &sample.logs());
     let found = listed
         .iter()
         .find(|session| session.id() == &id)
@@ -692,32 +693,23 @@ fn wheeling_the_preview_back_never_empties_the_pane() {
 fn the_picker_says_the_words_it_was_drawn_to_say() {
     // The component draws whatever words it is handed, and its own tests hand
     // it the design's. These are the ones a reader gets, so they are asserted
-    // where they are written down rather than where they are drawn.
-    let glyphs = Glyphs::Unicode;
-
+    // where they are written down rather than where they are drawn. The
+    // heading and the keys row change with the keys, and have tests of their
+    // own below.
     assert_eq!(HINT, "a session, or a branch");
     assert_eq!(NOVIEW, "nothing to show");
     assert_eq!(TAKES, "Enter to resume · Esc to cancel");
     assert_eq!(NEVER, "no earlier session for this workspace");
     assert_eq!(CUT, "the rest could not be read");
 
-    assert_eq!(nothing("deploy"), "no session holds \"deploy\"");
+    assert_eq!(nothing("deploy", None), "no session holds \"deploy\"");
     assert_eq!(
-        heading(5, 5, "/w", glyphs),
-        "Resume a session · 5 of 5 · /w"
+        nothing("deploy", Some("main")),
+        "no session holds \"deploy\""
     );
 
-    let (walking, _) = keys(glyphs, true);
-    assert_eq!(
-        walking,
-        "↑↓ to walk · ctrl+r to rename · type to search · esc to cancel"
-    );
-
-    // With nothing on the list there is nothing to walk to and nothing to
-    // rename: what is left to do is narrow the query, or leave.
-    let (narrowing, short) = keys(glyphs, false);
-    assert_eq!(narrowing, "type to narrow · esc to cancel");
-    assert_eq!(short, narrowing);
+    // With nothing typed, what emptied the list is the branch Ctrl+B keeps.
+    assert_eq!(nothing("", Some("main")), "no session on main");
 }
 
 #[test]
@@ -816,4 +808,477 @@ fn a_session_another_crucible_holds_open_is_said_to_be_in_use() {
         Style::plain().glyphs(),
     );
     assert!(!said.contains("in use elsewhere"), "{said}");
+}
+
+/// A session recorded in `workspace` on `branch` and closed again: asked
+/// `asked`, or, with nothing asked, opened and left — a header and nothing
+/// under it, which is what starting crucible and quitting leaves behind.
+fn recorded_in(
+    sample: &Sample,
+    workspace: &Workspace,
+    branch: Option<&str>,
+    asked: Option<&str>,
+) -> SessionId {
+    let session = Session::start(&sample.logs(), workspace, branch).expect("a new session");
+    if let Some(asked) = asked {
+        session.append(&Message::said(asked));
+    }
+    let id = session.id().expect("a recorded session has a name").clone();
+    drop(session);
+    id
+}
+
+/// A directory beside the sample's workspace, opened as one.
+fn beside(sample: &Sample, name: &str) -> Workspace {
+    let root = sample.root().with_file_name(name);
+    std::fs::create_dir_all(&root).expect("a directory beside the workspace");
+    Workspace::open(root).expect("the directory exists")
+}
+
+/// The sample's workspace as the picker stands in it, with `others` as its
+/// repository's other checkouts and `branch` checked out.
+fn standing_in(sample: &Sample, others: &[&Workspace], branch: Option<&str>) -> Here {
+    Here {
+        root: sample.workspace().root().to_path_buf(),
+        others: others
+            .iter()
+            .map(|other| other.root().to_path_buf())
+            .collect(),
+        branch: branch.map(str::to_owned),
+        home: None,
+    }
+}
+
+/// What the sessions `scope` leaves were asked, sorted: which are shown is
+/// the question, and the order is `recent`'s, proven there.
+fn shown_under(listed: &[Recorded], scope: Scope, here: &Here) -> Vec<String> {
+    let mut titles: Vec<String> = chosen(listed, &scoped(listed, scope, here))
+        .into_iter()
+        .map(|session| session.title().to_owned())
+        .collect();
+    titles.sort();
+    titles
+}
+
+/// A path under the root of this platform's paths, a part at a time.
+fn under(parts: &[&str]) -> PathBuf {
+    parts.iter().fold(
+        PathBuf::from(std::path::MAIN_SEPARATOR_STR),
+        |path, part| path.join(part),
+    )
+}
+
+#[test]
+fn the_picker_looks_through_the_whole_index_and_offers_a_hundred() {
+    // The case the list was too short for: a directory whose newest logs are
+    // other directories' sessions and sessions nothing was asked in. Looking
+    // only as far as the welcome screen does, this directory's would be cut
+    // to the few left among them.
+    let sample = Sample::new("resume-reach");
+    let elsewhere = beside(&sample, "elsewhere");
+    for at in 0..110 {
+        recorded_in(
+            &sample,
+            &sample.workspace(),
+            None,
+            Some(&format!("here {at}")),
+        );
+    }
+    for at in 0..30 {
+        recorded_in(&sample, &elsewhere, None, Some(&format!("elsewhere {at}")));
+    }
+    for _ in 0..30 {
+        recorded_in(&sample, &sample.workspace(), None, None);
+    }
+
+    let listed = scanned(&sample.logs());
+    let here = standing_in(&sample, &[], None);
+    let offered = chosen(&listed, &scoped(&listed, Scope::default(), &here));
+
+    assert_eq!(offered.len(), OFFERED);
+    assert_eq!(OFFERED, 100);
+    assert!(
+        offered
+            .iter()
+            .all(|session| session.title().starts_with("here ")),
+        "{:?}",
+        offered
+            .iter()
+            .map(|session| session.title())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_session_nothing_was_asked_in_is_listed_under_no_key() {
+    // Somebody who started crucible and left asked nothing to come back to,
+    // in this directory or any other, on this branch or any other.
+    let sample = Sample::new("resume-unasked");
+    let checkout = beside(&sample, "checkout");
+    let elsewhere = beside(&sample, "elsewhere");
+    for workspace in [&sample.workspace(), &checkout, &elsewhere] {
+        recorded_in(&sample, workspace, Some("main"), Some("asked"));
+        recorded_in(&sample, workspace, Some("main"), None);
+    }
+
+    let listed = scanned(&sample.logs());
+    let here = standing_in(&sample, &[&checkout], Some("main"));
+    for all in [false, true] {
+        for worktrees in [false, true] {
+            for branch in [false, true] {
+                let scope = Scope {
+                    all,
+                    worktrees,
+                    branch,
+                };
+                let shown = shown_under(&listed, scope, &here);
+                assert!(!shown.is_empty(), "{scope:?}");
+                assert!(shown.iter().all(|title| title == "asked"), "{scope:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn another_directory_is_listed_only_while_ctrl_a_shows_every_project() {
+    let sample = Sample::new("resume-all");
+    let elsewhere = beside(&sample, "elsewhere");
+    recorded_in(&sample, &sample.workspace(), None, Some("here"));
+    recorded_in(&sample, &elsewhere, None, Some("elsewhere"));
+
+    let listed = scanned(&sample.logs());
+    let here = standing_in(&sample, &[], None);
+
+    assert_eq!(shown_under(&listed, Scope::default(), &here), ["here"]);
+    let all = Scope {
+        all: true,
+        ..Scope::default()
+    };
+    assert_eq!(shown_under(&listed, all, &here), ["elsewhere", "here"]);
+}
+
+#[test]
+fn another_checkout_of_this_repository_is_listed_while_ctrl_w_adds_them() {
+    let sample = Sample::new("resume-worktrees");
+    let checkout = beside(&sample, "checkout");
+    let elsewhere = beside(&sample, "elsewhere");
+    recorded_in(&sample, &sample.workspace(), None, Some("here"));
+    recorded_in(&sample, &checkout, None, Some("a checkout"));
+    recorded_in(&sample, &elsewhere, None, Some("elsewhere"));
+
+    let listed = scanned(&sample.logs());
+    let here = standing_in(&sample, &[&checkout], None);
+
+    assert_eq!(shown_under(&listed, Scope::default(), &here), ["here"]);
+    let worktrees = Scope {
+        worktrees: true,
+        ..Scope::default()
+    };
+    assert_eq!(
+        shown_under(&listed, worktrees, &here),
+        ["a checkout", "here"]
+    );
+}
+
+#[test]
+fn ctrl_b_keeps_only_the_branch_checked_out_here() {
+    let sample = Sample::new("resume-branch");
+    let elsewhere = beside(&sample, "elsewhere");
+    recorded_in(&sample, &sample.workspace(), Some("main"), Some("on main"));
+    recorded_in(
+        &sample,
+        &sample.workspace(),
+        Some("feature"),
+        Some("on feature"),
+    );
+    recorded_in(&sample, &sample.workspace(), None, Some("on no branch"));
+    recorded_in(&sample, &elsewhere, Some("main"), Some("main elsewhere"));
+
+    let listed = scanned(&sample.logs());
+    let here = standing_in(&sample, &[], Some("main"));
+
+    let branch = Scope {
+        branch: true,
+        ..Scope::default()
+    };
+    assert_eq!(shown_under(&listed, branch, &here), ["on main"]);
+    let everywhere = Scope {
+        all: true,
+        branch: true,
+        ..Scope::default()
+    };
+    assert_eq!(
+        shown_under(&listed, everywhere, &here),
+        ["main elsewhere", "on main"]
+    );
+}
+
+#[test]
+fn each_key_flips_its_own_scope_and_ctrl_b_waits_for_a_branch() {
+    let sample = Sample::new("resume-keys");
+    let mut stood = Stood::opened(Vec::new());
+    let unbranched = standing_in(&sample, &[], None);
+
+    // Nothing checked out: Ctrl+B has nothing to keep, so it does nothing.
+    assert_eq!(
+        pressed(Pressed::Background, &mut stood, &unbranched),
+        Moved::Still
+    );
+    assert_eq!(stood.scope, Scope::default());
+
+    assert_eq!(
+        pressed(Pressed::All, &mut stood, &unbranched),
+        Moved::Redraw
+    );
+    assert!(stood.scope.all);
+    assert_eq!(
+        pressed(Pressed::Key(Key::WordErase), &mut stood, &unbranched),
+        Moved::Redraw
+    );
+    assert!(stood.scope.worktrees);
+
+    // Ctrl+A again goes back to what was shown before it: the other
+    // checkouts, which Ctrl+W added under it.
+    pressed(Pressed::All, &mut stood, &unbranched);
+    assert_eq!(
+        stood.scope,
+        Scope {
+            worktrees: true,
+            ..Scope::default()
+        }
+    );
+
+    let branched = standing_in(&sample, &[], Some("main"));
+    assert_eq!(
+        pressed(Pressed::Background, &mut stood, &branched),
+        Moved::Redraw
+    );
+    assert!(stood.scope.branch);
+
+    // Backspace held rubs a word out of the search line, as it always did.
+    stood.standing.query.put("two words");
+    pressed(Pressed::Key(Key::RubWord), &mut stood, &branched);
+    assert_eq!(stood.standing.query.text(), "two ");
+    assert!(stood.scope.worktrees);
+}
+
+#[test]
+fn the_heading_names_what_the_keys_show() {
+    let glyphs = Glyphs::Unicode;
+    let here = Here {
+        root: under(&["home", "ada", "code", "crucible"]),
+        others: Vec::new(),
+        branch: Some("main".to_owned()),
+        home: Some(under(&["home", "ada"])),
+    };
+    let sep = std::path::MAIN_SEPARATOR;
+    let all = Scope {
+        all: true,
+        ..Scope::default()
+    };
+    let worktrees = Scope {
+        worktrees: true,
+        ..Scope::default()
+    };
+    let branch = Scope {
+        branch: true,
+        ..Scope::default()
+    };
+
+    assert_eq!(
+        heading(3, 5, Scope::default(), &here, glyphs),
+        format!("Resume a session · 3 of 5 · ~{sep}code{sep}crucible")
+    );
+    assert_eq!(
+        heading(3, 5, all, &here, glyphs),
+        "Resume a session · 3 of 5 · all projects"
+    );
+    assert_eq!(
+        heading(3, 5, worktrees, &here, glyphs),
+        "Resume a session · 3 of 5 · this repository's worktrees"
+    );
+    assert_eq!(
+        heading(3, 5, branch, &here, glyphs),
+        format!("Resume a session · 3 of 5 · ~{sep}code{sep}crucible · main")
+    );
+    assert_eq!(
+        heading(
+            3,
+            5,
+            Scope {
+                all: true,
+                ..branch
+            },
+            &here,
+            glyphs
+        ),
+        "Resume a session · 3 of 5 · all projects · main"
+    );
+}
+
+#[test]
+fn the_keys_row_names_what_each_key_does_next() {
+    let glyphs = Glyphs::Unicode;
+    let all = Scope {
+        all: true,
+        worktrees: true,
+        branch: true,
+    };
+
+    assert_eq!(
+        keys(glyphs, true, Scope::default(), true),
+        (
+            "↑↓ to walk · ctrl+r to rename · ctrl+a to show all projects · \
+             ctrl+b to only show this branch · ctrl+w to show all worktrees · \
+             type to search · esc to cancel"
+                .to_owned(),
+            "↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc".to_owned()
+        )
+    );
+    assert_eq!(
+        keys(glyphs, true, all, true).0,
+        "↑↓ to walk · ctrl+r to rename · ctrl+a to show this project · \
+         ctrl+b to show all branches · ctrl+w to hide other worktrees · \
+         type to search · esc to cancel"
+    );
+
+    // No branch checked out: Ctrl+B would do nothing, so it is not offered.
+    assert_eq!(
+        keys(glyphs, true, Scope::default(), false),
+        (
+            "↑↓ to walk · ctrl+r to rename · ctrl+a to show all projects · \
+             ctrl+w to show all worktrees · type to search · esc to cancel"
+                .to_owned(),
+            "↑↓ · enter · ctrl+r · ctrl+a · ctrl+w · esc".to_owned()
+        )
+    );
+
+    // With nothing on the list there is nothing to walk to and nothing to
+    // rename: what is left to do is narrow the query, change what the keys
+    // show, or leave.
+    assert_eq!(
+        keys(glyphs, false, Scope::default(), false),
+        (
+            "type to narrow · ctrl+a to show all projects · \
+             ctrl+w to show all worktrees · esc to cancel"
+                .to_owned(),
+            "type to narrow · ctrl+a · ctrl+w · esc".to_owned()
+        )
+    );
+}
+
+#[test]
+fn enter_on_a_session_recorded_elsewhere_says_how_to_resume_it_there() {
+    let sample = Sample::new("resume-elsewhere");
+    let yonder = beside(&sample, "elsewhere");
+    let away = recorded_in(&sample, &yonder, None, Some("away"));
+    let home = recorded_in(&sample, &sample.workspace(), None, Some("home"));
+
+    let here = standing_in(&sample, &[], None);
+    let mut stood = Stood::opened(scanned(&sample.logs()));
+    stood.scope.all = true;
+    stood.standing.found = scoped(&stood.listed, stood.scope, &here);
+    let at = |id: &SessionId, stood: &Stood| {
+        stood
+            .standing
+            .found
+            .iter()
+            .position(|&at| stood.listed.get(at).map(Recorded::id) == Some(id))
+            .expect("listed")
+    };
+
+    // Taken nowhere: the picker stays on the same row, and the row under the
+    // list says the command that picks it up in its own directory.
+    stood.standing.marked = at(&away, &stood);
+    let marked = stood.standing.marked;
+    assert_eq!(
+        pressed(Pressed::Key(Key::Enter), &mut stood, &here),
+        Moved::Redraw
+    );
+    assert_eq!(stood.standing.marked, marked);
+    assert_eq!(stood.told.as_ref(), Some(&away));
+    let root = yonder.root().display().to_string();
+    assert_eq!(
+        elsewhere(stood.marked().expect("marked"), None),
+        format!(
+            "In {root}: cd {root} && crucible --resume {}",
+            away.as_str()
+        )
+    );
+
+    // The next key takes it down.
+    pressed(Pressed::Key(Key::End), &mut stood, &here);
+    assert_eq!(stood.told, None);
+
+    // A session of this directory is taken as it always was.
+    stood.standing.marked = at(&home, &stood);
+    assert_eq!(
+        pressed(Pressed::Key(Key::Enter), &mut stood, &here),
+        Moved::Took
+    );
+    assert_eq!(stood.told, None);
+}
+
+#[test]
+fn a_directory_is_written_under_home_and_quoted_where_a_shell_needs_it() {
+    let home = under(&["home", "ada"]);
+    let sep = std::path::MAIN_SEPARATOR;
+
+    assert_eq!(
+        homed(&home.join("code"), Some(&home)),
+        format!("~{sep}code")
+    );
+    assert_eq!(homed(&home, Some(&home)), "~");
+    assert_eq!(
+        homed(&under(&["srv", "code"]), Some(&home)),
+        format!("{sep}srv{sep}code")
+    );
+    assert_eq!(
+        homed(&home.join("code"), None),
+        format!("{sep}home{sep}ada{sep}code")
+    );
+    // What a terminal would act on is not drawn.
+    assert_eq!(
+        homed(&home.join("a\u{1b}b"), Some(&home)),
+        format!("~{sep}a b")
+    );
+
+    assert_eq!(quoted("~/code/crucible-code"), "~/code/crucible-code");
+    assert_eq!(quoted("/srv/x_y@1.2+3=4:5,6%7"), "/srv/x_y@1.2+3=4:5,6%7");
+    assert_eq!(quoted("~/my code"), "~/'my code'");
+    assert_eq!(quoted("/srv/it's"), r"'/srv/it'\''s'");
+    assert_eq!(quoted("~"), "~");
+    assert_eq!(quoted("/a;rm -rf b"), "'/a;rm -rf b'");
+}
+
+#[test]
+fn a_search_finds_a_session_by_the_directory_its_row_shows() {
+    let sample = Sample::new("resume-sought");
+    let elsewhere = beside(&sample, "elsewhere");
+    recorded_in(&sample, &elsewhere, None, Some("a question"));
+    let listed = scanned(&sample.logs());
+    let session = listed.first().expect("the session");
+
+    assert!(sought(session, "~/elsewhere", "elsew"));
+    // Its own directory's row shows none, so there is none to match.
+    assert!(!sought(session, "", "elsew"));
+    assert!(sought(session, "", "question"));
+}
+
+#[test]
+fn a_rename_reads_back_every_directory_for_the_keys_to_narrow_again() {
+    let sample = Sample::new("resume-rename-scope");
+    let elsewhere = beside(&sample, "elsewhere");
+    recorded_in(&sample, &elsewhere, None, Some("away"));
+    let id = recorded_in(&sample, &sample.workspace(), None, Some("home"));
+
+    let listed = saved("renamed", &id, &sample.logs());
+    let here = standing_in(&sample, &[], None);
+    let all = Scope {
+        all: true,
+        ..Scope::default()
+    };
+
+    assert_eq!(shown_under(&listed, all, &here), ["away", "renamed"]);
+    assert_eq!(shown_under(&listed, Scope::default(), &here), ["renamed"]);
 }

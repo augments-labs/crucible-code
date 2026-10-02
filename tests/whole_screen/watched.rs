@@ -155,11 +155,23 @@ const NO_MIDDLE: u64 = 100_000_000;
 /// than of this program. The row at the top of the window is the widest thing
 /// that says it, so the segments below the scratch directory have to fill that
 /// row on their own.
-fn working(scratch: &Path) -> PathBuf {
+pub(crate) fn working(scratch: &Path) -> PathBuf {
     scratch
         .join("a-directory-to-be-working-in")
         .join("and-something-below-that-again")
         .join("workspace")
+}
+
+/// The directory a case is given, which crucible is told is `HOME`.
+///
+/// One flat directory per case, so the last thing a case does can take the
+/// whole of what it made with it. Named here so a case can put what an earlier
+/// run would have left there before this one starts.
+pub(crate) fn scratch(case: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "crucible-whole-screen-{}-{case}",
+        std::process::id()
+    ))
 }
 
 /// What a case starts crucible with beyond what every case is given.
@@ -440,12 +452,7 @@ impl Watched {
         terminal: &TerminalFixture<'_>,
         launch: Option<&Launch<'_>>,
     ) -> Self {
-        // One flat directory per case, so the last thing a case does can take
-        // the whole of what it made with it.
-        let scratch = std::env::temp_dir().join(format!(
-            "crucible-whole-screen-{}-{case}",
-            std::process::id()
-        ));
+        let scratch = scratch(case);
         let home = scratch.join("home");
 
         let workspace = working(&scratch);

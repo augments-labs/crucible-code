@@ -1,0 +1,30 @@
+---
+source: tests/whole_screen/reaching.rs
+assertion_line: 168
+expression: "unnamed(&picture, &website)"
+---
+80x24 cursor 1,17 scrolled 0
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ Search  website                                                              │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+| Resume a session · 1 of 4 · all projects                                       |
+|                                                                                |
+|╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮|
+|│ › tidy the stylesheet        │ │ › tidy the stylesheet                       │|
+|│   just now · main · ~/projec │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │ ────────────────────────────────────────────│|
+|│                              │ │ just now · 1 message · main                 │|
+|│                              │ │ Enter to resume · Esc to cancel             │|
+|╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
+| In ~/projects/website: cd ~/projects/website && crucible --resume <id>         |
+| ↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc                           |
+|                                                                                |

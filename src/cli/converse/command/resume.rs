@@ -11,6 +11,14 @@
 //! keyboard has no picker to walk, so it is given the listing instead, each
 //! row carrying the exact id `/resume` and `--resume` take.
 //!
+//! Three keys change which sessions the picker shows, and are read here for
+//! that reason: Ctrl+A shows every directory's, Ctrl+W adds this repository's
+//! other checkouts, and Ctrl+B keeps only the branch checked out here. Each
+//! flips its own state, over one read of the index filtered again on every
+//! key. A session from another directory is never picked up here, since it is
+//! bound to the directory it was recorded in: Enter on one says the command
+//! that resumes it there instead.
+//!
 //! Picking one up leaves nothing behind. The session being left is closed
 //! here, which is the last chance to say that its log stopped being written,
 //! and what it was allowed for the rest of *its* run is forgotten by the
@@ -28,7 +36,7 @@
 //! a row nobody can see is worse than a row that offers nothing.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::time::SystemTime;
 
@@ -36,7 +44,9 @@ use crucible_app::Conversation;
 use crucible_app::client::{Performed, Resumed};
 use crucible_client_api::Command;
 use crucible_session::{Glimpse, Pruned, Reach, Recorded, Roots, glimpse, recent, retitle};
-use crucible_tui::{Editor, Glyphs, Kept, Picker, Renderer, Row, Slot, Terminal, clip};
+use crucible_tui::{
+    Editor, Glyphs, Kept, Key, Picker, Pressed, Renderer, Row, Slot, Terminal, clip,
+};
 use crucible_types::{Compacting, SessionId};
 use crucible_workspace::Workspace;
 
@@ -44,17 +54,17 @@ use crate::cli::Fatal;
 use crate::cli::client::astray;
 use crate::cli::draw::when;
 
-use super::super::region::{self, Ended};
+use super::super::region::{self, Ended, Moved};
 use super::super::{Held, finding, replaying};
 use super::Terms;
 
 /// How many sessions the picker is handed.
 ///
 /// The search line is what reaches past the visible rows, so the ceiling is
-/// about how far back a query looks rather than how tall a window is. What is
-/// older than this in one directory is a directory listing, and the session
-/// directory is already that.
-const OFFERED: usize = 64;
+/// about how far back a query looks rather than how tall a window is. A
+/// hundred of however many the index names: past that, a session is found by
+/// its id sooner than by walking to it.
+const OFFERED: usize = 100;
 
 /// How many sessions the keyboardless listing holds.
 ///
@@ -89,6 +99,13 @@ const TAKES: &str = "Enter to resume · Esc to cancel";
 
 /// What a workspace nothing was ever recorded in says.
 const NEVER: &str = "no earlier session for this workspace";
+
+/// What the heading names the sessions of every directory as, under Ctrl+A.
+const EVERYWHERE: &str = "all projects";
+
+/// What it names this checkout's and this repository's others as, under
+/// Ctrl+W.
+const CHECKOUTS: &str = "this repository's worktrees";
 
 /// What a preview says where the bounded read did not reach the whole log.
 ///
@@ -249,30 +266,191 @@ fn offered<T: Terminal>(
     held: &mut Held<'_>,
     terms: &Terms,
 ) -> Result<Option<Compacting>, Fatal> {
-    let listed = recent(
-        &terms.sessions,
-        Roots::These(&[terms.workspace.root()]),
-        Reach::FirstFrame,
-        OFFERED,
-    );
+    let listed = scanned(&terms.sessions);
+    let here = Here::of(terms.workspace.root());
 
     // Read once, here, rather than per row: a list drawn against several
     // instants is several lists, each dated from a different now.
     let now = SystemTime::now();
     let columns = renderer.columns();
 
-    if listed.is_empty() {
+    // What opens is this directory's, so it is this directory's that says
+    // whether there is anything to open.
+    let first = scoped(&listed, Scope::default(), &here);
+    if first.is_empty() {
         let rows = [Row::new().then(Slot::Quiet, clip(NEVER, columns))];
         renderer.present(&rows)?;
         return Ok(None);
     }
 
     if !held.answers.keys {
-        renderer.present(&listing(shown(&listed), now, columns))?;
+        renderer.present(&listing(&chosen(&listed, &first), now, columns))?;
         return Ok(None);
     }
 
-    stood(listed, renderer, conversation, held, terms)
+    stood(
+        Reached { listed, here },
+        renderer,
+        conversation,
+        held,
+        terms,
+    )
+}
+
+/// What the picker opens over: every session the index names, and the
+/// directory, checkouts and branch the keys narrow them to.
+struct Reached {
+    listed: Vec<Recorded>,
+    here: Here,
+}
+
+/// Every session the index names, whichever directory it was recorded in.
+///
+/// The whole index rather than the handful the welcome screen opens: this is
+/// read after somebody asked for it, never on the way to the first frame, so it
+/// can afford to open every log the index holds. Every directory is admitted,
+/// once, and the keys narrow what came back in memory — a key that read the
+/// index again would be a read of every log per press.
+fn scanned(directory: &Path) -> Vec<Recorded> {
+    recent(directory, Roots::Any, Reach::Indexed, usize::MAX)
+}
+
+/// Which sessions the picker's three keys leave on the list.
+///
+/// Three flags rather than one choice of three, because each key flips its
+/// own: Ctrl+A pressed again goes back to whatever was shown before it, with
+/// or without the other checkouts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Scope {
+    /// Ctrl+A: every directory a session was recorded in.
+    all: bool,
+    /// Ctrl+W: this repository's other checkouts beside this one.
+    worktrees: bool,
+    /// Ctrl+B: only what was recorded on the branch checked out here.
+    branch: bool,
+}
+
+/// Where the picker stands: what each session's directory and branch are held
+/// against, read once when it opens.
+struct Here {
+    /// This workspace's root, spelled as a session's header spells it.
+    root: PathBuf,
+    /// This repository's other checkouts, which Ctrl+W adds.
+    others: Vec<PathBuf>,
+    /// The branch checked out here. `None` leaves Ctrl+B nothing to keep, so
+    /// the key does nothing and the keys row leaves it out.
+    branch: Option<String>,
+    /// The home directory, which a directory is written under as `~`.
+    home: Option<PathBuf>,
+}
+
+impl Here {
+    /// What `root` is, read off its git directory without running `git`.
+    fn of(root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            others: crucible_app::branching::worktrees(root),
+            branch: crucible_app::branching::current(root),
+            home: std::env::home_dir(),
+        }
+    }
+
+    /// Where `session` was recorded, as its row says it: nothing for this
+    /// directory, whose sessions every row would otherwise repeat.
+    fn place(&self, session: &Recorded) -> String {
+        if session.workspace() == self.root {
+            String::new()
+        } else {
+            homed(session.workspace(), self.home.as_deref())
+        }
+    }
+}
+
+/// The sessions `scope` leaves of `listed`, as places in it, newest first and
+/// no more than [`OFFERED`].
+///
+/// A log with nothing asked in it is not in `listed` at all, so no key shows
+/// one: what is filtered here is only which directory and which branch.
+fn scoped(listed: &[Recorded], scope: Scope, here: &Here) -> Vec<usize> {
+    let branch = here.branch.as_deref().filter(|_| scope.branch);
+
+    listed
+        .iter()
+        .enumerate()
+        .filter(|(_, session)| {
+            let place = session.workspace();
+            scope.all
+                || place == here.root
+                || (scope.worktrees && here.others.iter().any(|other| other == place))
+        })
+        .filter(|(_, session)| branch.is_none_or(|branch| session.branch() == Some(branch)))
+        .map(|(at, _)| at)
+        .take(OFFERED)
+        .collect()
+}
+
+/// The sessions at `places` in `listed`, for the ways in that print rather
+/// than stand.
+fn chosen<'a>(listed: &'a [Recorded], places: &[usize]) -> Vec<&'a Recorded> {
+    places.iter().filter_map(|&at| listed.get(at)).collect()
+}
+
+/// Whether `query` names `session`: its title, its branch, and the directory
+/// its row shows where it shows one — what is on screen is what a reader
+/// searches by.
+fn sought(session: &Recorded, place: &str, query: &str) -> bool {
+    finding::matches(session.title(), session.branch(), query)
+        || (!place.is_empty() && finding::matches(place, None, query))
+}
+
+/// `path` with the home directory written `~`, and nothing in it a terminal
+/// would act on: it was read off a session's header, as untrusted as the
+/// title beside it.
+fn homed(path: &Path, home: Option<&Path>) -> String {
+    let said = match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        None => path.display().to_string(),
+    };
+    crate::cli::draw::flattened(said)
+}
+
+/// `place` as a shell reads it back as the same directory.
+///
+/// Left bare where every character is one no shell treats specially, which is
+/// most directories, and otherwise in single quotes, inside which nothing is
+/// special but the quote itself. A leading `~/` stays outside the quotes,
+/// because quoted it is a directory named `~` rather than the home directory.
+fn quoted(place: &str) -> String {
+    let (tilde, rest) = match place.strip_prefix("~/") {
+        Some(rest) => ("~/", rest),
+        None if place == "~" => return place.to_owned(),
+        None => ("", place),
+    };
+
+    let bare = !rest.is_empty()
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if bare {
+        return format!("{tilde}{rest}");
+    }
+
+    format!("{tilde}'{}'", rest.replace('\'', "'\\''"))
+}
+
+/// What Enter on a session recorded somewhere else says: the directory, and
+/// the command that picks it up there.
+///
+/// Said rather than done, because a session stays bound to the directory it
+/// was recorded in — every path it holds is that checkout's.
+fn elsewhere(session: &Recorded, home: Option<&Path>) -> String {
+    let place = homed(session.workspace(), home);
+    format!(
+        "In {place}: cd {} && crucible --resume {}",
+        quoted(&place),
+        session.id().as_str()
+    )
 }
 
 /// What the picker keeps between frames, and the frames' own workings beside
@@ -287,8 +465,14 @@ fn offered<T: Terminal>(
 struct Stood {
     /// The query, the marks and the staging, as `finding` moves them.
     standing: finding::Standing,
-    /// The sessions offered, in the order the list shows them.
+    /// Every session read, from every directory, newest first: what the
+    /// scope leaves of it is what the list shows.
     listed: Vec<Recorded>,
+    /// Which of them the keys leave on the list.
+    scope: Scope,
+    /// The session Enter was pressed on that was recorded somewhere else,
+    /// while the line saying how to pick it up there still stands.
+    told: Option<SessionId>,
     /// The tail of every session already previewed, by id. `None` where the
     /// log could not be read, which the pane shows as nothing to preview.
     cached: HashMap<String, Option<Glimpse>>,
@@ -313,7 +497,7 @@ struct Stood {
 /// keys will walk next — marks included, since a query that emptied the list
 /// under the mark leaves it standing past the end.
 fn stood<T: Terminal>(
-    listed: Vec<Recorded>,
+    reached: Reached,
     renderer: &mut Renderer<T>,
     conversation: &mut Conversation,
     held: &mut Held<'_>,
@@ -322,27 +506,10 @@ fn stood<T: Terminal>(
     let style = terms.style();
     let glyphs = style.glyphs();
     let now = SystemTime::now();
-    let total = listed.len();
-    let root = terms.workspace.root().display().to_string();
 
-    let mut stood = Stood {
-        standing: finding::Standing {
-            query: Editor::new(),
-            renaming: None,
-            refused: false,
-            saving: None,
-            found: Vec::new(),
-            marked: 0,
-            behind: 0,
-            over: 0,
-            pointer: None,
-            lit: None,
-        },
-        listed,
-        cached: HashMap::new(),
-        drawn: HashMap::new(),
-        wide: None,
-    };
+    let Reached { listed, here } = reached;
+    let here = &here;
+    let mut stood = Stood::opened(listed);
 
     // What a previewed session is drawn against. The session being drawn is
     // not the one this runner is in: what the runner is asked for is what each
@@ -374,24 +541,25 @@ fn stood<T: Terminal>(
                     .get(stood.standing.marked)
                     .and_then(|&at| stood.listed.get(at))
                     .map(|session| session.id().clone());
+                // Read back whole, and narrowed by the same keys as before,
+                // so a rename changes a title and never what is shown.
                 if let Some(id) = renamed {
-                    stood.listed = saved(&title, &id, &terms.sessions, &terms.workspace);
+                    stood.listed = saved(&title, &id, &terms.sessions);
                 }
             }
 
-            let found: Vec<usize> = {
-                let query = stood.standing.query.text();
-                stood
-                    .listed
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, session)| {
-                        finding::matches(session.title(), session.branch(), query)
+            // Narrowed again on every frame, from the one read: the keys and
+            // the query both change what the list holds.
+            let scoped = scoped(&stood.listed, stood.scope, here);
+            let total = scoped.len();
+            stood.standing.found = scoped
+                .into_iter()
+                .filter(|&at| {
+                    stood.listed.get(at).is_some_and(|session| {
+                        sought(session, &here.place(session), stood.standing.query.text())
                     })
-                    .map(|(at, _)| at)
-                    .collect()
-            };
-            stood.standing.found = found;
+                })
+                .collect();
             stood.standing.marked = stood
                 .standing
                 .marked
@@ -404,25 +572,39 @@ fn stood<T: Terminal>(
                 .filter_map(|&at| stood.listed.get(at))
                 .map(|session| when::ago(session.started(), now))
                 .collect();
+            let places: Vec<String> = stood
+                .standing
+                .found
+                .iter()
+                .filter_map(|&at| stood.listed.get(at))
+                .map(|session| here.place(session))
+                .collect();
             let kept: Vec<Kept<'_>> = stood
                 .standing
                 .found
                 .iter()
                 .filter_map(|&at| stood.listed.get(at))
-                .zip(&ages)
-                .map(|(session, when)| Kept {
+                .zip(ages.iter().zip(&places))
+                .map(|(session, (when, place))| Kept {
                     title: session.title(),
                     when,
                     branch: session.branch().unwrap_or_default(),
-                    place: "",
+                    place,
                 })
                 .collect();
 
+            // Read field by field rather than through `Stood::marked`, because
+            // the caches below are written while this is held.
             let marked = stood
                 .standing
                 .found
                 .get(stood.standing.marked)
                 .and_then(|&at| stood.listed.get(at));
+
+            // Said for as long as the mark stays on the session it is about.
+            let notice = marked
+                .filter(|session| stood.told.as_ref() == Some(session.id()))
+                .map(|session| elsewhere(session, here.home.as_deref()));
 
             // The marked session's tail, read once and kept. The window over
             // it is handed to the picker as a shorter slice: the pane shows
@@ -437,9 +619,10 @@ fn stood<T: Terminal>(
             let (full, meta_line): (&[Row], String) = match marked {
                 Some(session) => {
                     let named = session.id().as_str().to_owned();
-                    let looked = stood.cached.entry(named.clone()).or_insert_with(|| {
-                        glimpse(&terms.sessions, &terms.workspace, session.id()).ok()
-                    });
+                    let looked = stood
+                        .cached
+                        .entry(named.clone())
+                        .or_insert_with(|| peeked(&terms.sessions, &terms.workspace, session));
                     let line = meta(session, looked.as_ref(), now, glyphs);
 
                     match (pane, looked.as_ref()) {
@@ -462,12 +645,18 @@ fn stood<T: Terminal>(
             let end = full.len().saturating_sub(stood.standing.behind);
             let windowed = full.get(..end).unwrap_or_default();
 
-            let heading = heading(stood.standing.found.len(), total, &root, glyphs);
-            let empty = nothing(stood.standing.query.text());
+            let heading = heading(stood.standing.found.len(), total, stood.scope, here, glyphs);
+            let branch = here.branch.as_deref().filter(|_| stood.scope.branch);
+            let empty = nothing(stood.standing.query.text(), branch);
             let (long, short) = if stood.standing.renaming.is_some() {
                 renaming(glyphs)
             } else {
-                keys(glyphs, !stood.standing.found.is_empty())
+                keys(
+                    glyphs,
+                    !stood.standing.found.is_empty(),
+                    stood.scope,
+                    here.branch.is_some(),
+                )
             };
 
             let typed = stood
@@ -498,7 +687,7 @@ fn stood<T: Terminal>(
                 nothing: &empty,
                 noview: NOVIEW,
                 keys: (&long, &short),
-                notice: None,
+                notice: notice.as_deref(),
                 pointer: stood.standing.pointer,
             };
 
@@ -512,18 +701,7 @@ fn stood<T: Terminal>(
                 Some(picker.caret(columns, room, glyphs)),
             )
         },
-        |arrived, stood| {
-            // Owned before the keys move anything under it: the title a rename
-            // opens over is the marked row's, and the mark is about to be the
-            // key's business.
-            let titled = stood
-                .standing
-                .found
-                .get(stood.standing.marked)
-                .and_then(|&at| stood.listed.get(at))
-                .map(|session| session.title().to_owned());
-            finding::sifting(arrived, &mut stood.standing, titled.as_deref())
-        },
+        |arrived, stood| pressed(arrived, stood, here),
     )?;
 
     match ended {
@@ -531,13 +709,7 @@ fn stood<T: Terminal>(
             // Enter on an empty list is refused by the keys, so the mark
             // stands on a session — but the picker's answer is read back off
             // the list rather than assumed, the same way every taken mark is.
-            let Some(id) = stood
-                .standing
-                .found
-                .get(stood.standing.marked)
-                .and_then(|&at| stood.listed.get(at))
-                .map(|session| session.id().clone())
-            else {
+            let Some(id) = stood.marked().map(|session| session.id().clone()) else {
                 return Ok(None);
             };
             picking(&id, renderer, conversation, held, terms)
@@ -548,15 +720,106 @@ fn stood<T: Terminal>(
         }
         // No room to stand it. The listing needs one row a session and no
         // keys at all, which is exactly what a window this small has room for.
+        // Listed as the keys had left it, which is what the reader was
+        // looking at when the window closed in.
         Ended::Cramped => {
-            renderer.present(&listing(shown(&stood.listed), now, renderer.columns()))?;
+            let places = scoped(&stood.listed, stood.scope, here);
+            let rows = listing(&chosen(&stood.listed, &places), now, renderer.columns());
+            renderer.present(&rows)?;
             Ok(None)
         }
     }
 }
 
+impl Stood {
+    /// A picker over `listed`, with nothing typed, nothing marked past the
+    /// first row, and every key's scope at this directory.
+    fn opened(listed: Vec<Recorded>) -> Self {
+        Self {
+            standing: finding::Standing {
+                query: Editor::new(),
+                renaming: None,
+                refused: false,
+                saving: None,
+                found: Vec::new(),
+                marked: 0,
+                behind: 0,
+                over: 0,
+                pointer: None,
+                lit: None,
+            },
+            listed,
+            scope: Scope::default(),
+            told: None,
+            cached: HashMap::new(),
+            drawn: HashMap::new(),
+            wide: None,
+        }
+    }
+
+    /// The session the mark stands on, where the list has one.
+    fn marked(&self) -> Option<&Recorded> {
+        self.standing
+            .found
+            .get(self.standing.marked)
+            .and_then(|&at| self.listed.get(at))
+    }
+}
+
+/// What one key does to the picker.
+///
+/// The three that change which sessions are shown are read here, where the
+/// sessions are; every other key is `finding`'s. While a title is being typed
+/// every key is the rename's, these three with it, so Ctrl+W still rubs a word
+/// out of the title.
+fn pressed(arrived: Pressed, stood: &mut Stood, here: &Here) -> Moved {
+    if stood.standing.renaming.is_none() {
+        let flipped = match arrived {
+            Pressed::All => Some(&mut stood.scope.all),
+            Pressed::Key(Key::WordErase) => Some(&mut stood.scope.worktrees),
+            Pressed::Background if here.branch.is_some() => Some(&mut stood.scope.branch),
+            _ => None,
+        };
+
+        // A different list, so the mark goes back to its top: the row it
+        // stood on was the old list's.
+        if let Some(flag) = flipped {
+            *flag = !*flag;
+            stood.standing.marked = 0;
+            stood.standing.behind = 0;
+            stood.told = None;
+            return Moved::Redraw;
+        }
+    }
+
+    // What Enter said stands until the reader does something else. The
+    // pointer passing over and the window changing size are not that.
+    if !matches!(arrived, Pressed::Hovered { .. } | Pressed::Resized) {
+        stood.told = None;
+    }
+
+    // Owned before the keys move anything under it: the title a rename opens
+    // over is the marked row's, and the mark is about to be the key's
+    // business.
+    let titled = stood.marked().map(|session| session.title().to_owned());
+    let moved = finding::sifting(arrived, &mut stood.standing, titled.as_deref());
+    if moved != Moved::Took {
+        return moved;
+    }
+
+    // Taken, but recorded somewhere else: the picker stays, with the mark
+    // where it was, and says how to pick it up there.
+    match stood.marked() {
+        Some(session) if session.workspace() != here.root => {
+            stood.told = Some(session.id().clone());
+            Moved::Redraw
+        }
+        _ => Moved::Took,
+    }
+}
+
 /// The first [`SHOWN`] of them, for the ways in that print rather than stand.
-fn shown(listed: &[Recorded]) -> &[Recorded] {
+fn shown<'a, 'b>(listed: &'b [&'a Recorded]) -> &'b [&'a Recorded] {
     listed.get(..SHOWN).unwrap_or(listed)
 }
 
@@ -564,7 +827,8 @@ fn shown(listed: &[Recorded]) -> &[Recorded] {
 ///
 /// The id leads because it is the row's handle — the exact word `/resume` and
 /// `--resume` take, for the runs that have no picker to walk.
-fn listing(listed: &[Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
+fn listing(listed: &[&Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
+    let listed = shown(listed);
     let ages: Vec<String> = listed
         .iter()
         .map(|session| when::ago(session.started(), now))
@@ -597,15 +861,23 @@ fn listing(listed: &[Recorded], now: SystemTime, columns: usize) -> Vec<Row> {
 /// The read-back is the point: the title is written into the index, and the
 /// list the picker goes on showing is the one the index now holds — a rename
 /// that could not be written shows the old title back rather than a new one
-/// that exists nowhere.
-fn saved(title: &str, id: &SessionId, directory: &Path, workspace: &Workspace) -> Vec<Recorded> {
+/// that exists nowhere. It is read back as [`scanned`] read it first, so the
+/// keys narrow it the same way.
+fn saved(title: &str, id: &SessionId, directory: &Path) -> Vec<Recorded> {
     drop(retitle(directory, id, title));
-    recent(
-        directory,
-        Roots::These(&[workspace.root()]),
-        Reach::FirstFrame,
-        OFFERED,
-    )
+    scanned(directory)
+}
+
+/// The tail of `session`, read through the door of the directory it was
+/// recorded in: this one's where it is this one's, and otherwise the one its
+/// header names, which the keys put on the list and the pane has to be able to
+/// show. `None` where that directory has gone, as for a log that will not open.
+fn peeked(directory: &Path, workspace: &Workspace, session: &Recorded) -> Option<Glimpse> {
+    if session.workspace() == workspace.root() {
+        return glimpse(directory, workspace, session.id()).ok();
+    }
+    let there = Workspace::open(session.workspace()).ok()?;
+    glimpse(directory, &there, session.id()).ok()
 }
 
 /// The line under the preview: age, count, branch, and whether the session is
@@ -674,23 +946,44 @@ fn furthest(rows: usize, room: usize) -> usize {
     rows.saturating_sub(Picker::previews(room))
 }
 
-/// The line over the panes: what this is, how much of the list the query left,
-/// and which directory the sessions were recorded in.
+/// The line over the panes: what this is, how much of what the keys left the
+/// query left, and where the sessions were recorded — this directory, every
+/// directory, or this repository's checkouts — with the branch while Ctrl+B
+/// keeps only it.
 ///
 /// The lead says what the screen is for, because a picker that opens on a
 /// count alone reads as a report on sessions rather than as a way into one.
-fn heading(found: usize, total: usize, root: &str, glyphs: Glyphs) -> String {
+fn heading(found: usize, total: usize, scope: Scope, here: &Here, glyphs: Glyphs) -> String {
     let dot = glyphs.dot();
-    format!("Resume a session {dot} {found} of {total} {dot} {root}")
+    let place = if scope.all {
+        EVERYWHERE.to_owned()
+    } else if scope.worktrees {
+        CHECKOUTS.to_owned()
+    } else {
+        homed(&here.root, here.home.as_deref())
+    };
+
+    let mut said = format!("Resume a session {dot} {found} of {total} {dot} {place}");
+    if let Some(branch) = here.branch.as_deref().filter(|_| scope.branch) {
+        said.push(' ');
+        said.push_str(dot);
+        said.push(' ');
+        said.push_str(&crate::cli::draw::flattened(branch));
+    }
+    said
 }
 
-/// What the list says where the query left nothing on it.
+/// What the list says where nothing is left on it.
 ///
 /// The query is quoted back rather than described, because what a reader
 /// checks first is whether the thing they typed is the thing they meant to
-/// type.
-fn nothing(query: &str) -> String {
-    format!("no session holds \"{query}\"")
+/// type. With nothing typed, what emptied the list is the branch Ctrl+B keeps,
+/// the one key that can leave this directory's list with nothing on it.
+fn nothing(query: &str, branch: Option<&str>) -> String {
+    match branch {
+        Some(branch) if query.is_empty() => format!("no session on {branch}"),
+        _ => format!("no session holds \"{query}\""),
+    }
 }
 
 /// The keys row, long and short, for a list with something on it or without.
@@ -702,23 +995,64 @@ fn nothing(query: &str) -> String {
 /// saying what each of them moves.
 ///
 /// A list the query left empty is offered neither, because there is nothing to
-/// walk to and nothing to rename: what is left to do is narrow the query or
-/// leave, and a row naming keys that do nothing is worse than a shorter one.
-fn keys(glyphs: Glyphs, listed: bool) -> (String, String) {
+/// walk to and nothing to rename: what is left to do is narrow the query, change
+/// what the keys show, or leave, and a row naming keys that do nothing is worse
+/// than a shorter one.
+///
+/// Each of the three keys that change what is shown is named by what pressing
+/// it does next, since that is the question a reader brings to it. Ctrl+B is
+/// left out where no branch is checked out here, because it then does nothing.
+fn keys(glyphs: Glyphs, listed: bool, scope: Scope, branched: bool) -> (String, String) {
     let (up, down) = glyphs.walking();
     let dot = glyphs.dot();
 
-    if !listed {
-        let said = format!("type to narrow {dot} esc to cancel");
-        return (said.clone(), said);
+    let all = if scope.all {
+        "ctrl+a to show this project"
+    } else {
+        "ctrl+a to show all projects"
+    };
+    let branch = if scope.branch {
+        "ctrl+b to show all branches"
+    } else {
+        "ctrl+b to only show this branch"
+    };
+    let worktrees = if scope.worktrees {
+        "ctrl+w to hide other worktrees"
+    } else {
+        "ctrl+w to show all worktrees"
+    };
+
+    let mut long: Vec<String> = Vec::new();
+    let mut short: Vec<String> = Vec::new();
+    if listed {
+        long.extend([format!("{up}{down} to walk"), "ctrl+r to rename".to_owned()]);
+        short.extend([
+            format!("{up}{down}"),
+            "enter".to_owned(),
+            "ctrl+r".to_owned(),
+        ]);
+    } else {
+        long.push("type to narrow".to_owned());
+        short.push("type to narrow".to_owned());
     }
 
-    (
-        format!(
-            "{up}{down} to walk {dot} ctrl+r to rename {dot} type to search {dot} esc to cancel"
-        ),
-        format!("{up}{down} {dot} enter {dot} ctrl+r {dot} esc"),
-    )
+    long.push(all.to_owned());
+    short.push("ctrl+a".to_owned());
+    if branched {
+        long.push(branch.to_owned());
+        short.push("ctrl+b".to_owned());
+    }
+    long.push(worktrees.to_owned());
+    short.push("ctrl+w".to_owned());
+
+    if listed {
+        long.push("type to search".to_owned());
+    }
+    long.push("esc to cancel".to_owned());
+    short.push("esc".to_owned());
+
+    let joint = format!(" {dot} ");
+    (long.join(&joint), short.join(&joint))
 }
 
 /// The keys row while a title is being renamed.

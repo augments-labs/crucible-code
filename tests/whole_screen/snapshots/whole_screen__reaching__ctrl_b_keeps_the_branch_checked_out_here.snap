@@ -1,0 +1,30 @@
+---
+source: tests/whole_screen/reaching.rs
+assertion_line: 139
+expression: window.picture()
+---
+80x24 cursor 1,10 scrolled 0
+|╭──────────────────────────────────────────────────────────────────────────────╮|
+|│ Search    a session, or a branch                                             │|
+|╰──────────────────────────────────────────────────────────────────────────────╯|
+| Resume a session · 1 of 1 · ~/a-directory-to-be-working-in/and-something-below |
+|                                                                                |
+|╭──────────────────────────────╮ ╭─────────────────────────────────────────────╮|
+|│ › fix the failing parser tes │ │ › fix the failing parser test               │|
+|│   just now · main            │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │                                             │|
+|│                              │ │ ────────────────────────────────────────────│|
+|│                              │ │ just now · 1 message · main                 │|
+|│                              │ │ Enter to resume · Esc to cancel             │|
+|╰──────────────────────────────╯ ╰─────────────────────────────────────────────╯|
+|                                                                                |
+| ↑↓ · enter · ctrl+r · ctrl+a · ctrl+b · ctrl+w · esc                           |
+|                                                                                |
