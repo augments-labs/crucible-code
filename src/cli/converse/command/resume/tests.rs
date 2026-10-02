@@ -1488,6 +1488,26 @@ fn cmd_and_powershell_read_the_directory_back_whole() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn a_resolved_directory_is_written_as_someone_types_it() {
+    // A session's header keeps the spelling resolving gave, `\\?\C:\...`,
+    // which cmd will not `cd` into and nobody recognises their project in.
+    let home = Path::new(r"C:\Users\ada");
+    let website = Path::new(r"\\?\C:\Users\ada\projects\website");
+
+    assert_eq!(
+        commanded(website, Some(home)),
+        r"C:\Users\ada\projects\website"
+    );
+    assert_eq!(
+        commanded(Path::new(r"\\?\UNC\server\share\x"), Some(home)),
+        r"\\server\share\x"
+    );
+    // The row is written under home, which the resolved spelling never is.
+    assert_eq!(homed(website, Some(home)), r"~\projects\website");
+}
+
 #[test]
 fn a_search_finds_a_session_by_the_directory_its_row_shows() {
     let sample = Sample::new("resume-sought");

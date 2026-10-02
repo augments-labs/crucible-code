@@ -58,7 +58,7 @@ mod tests;
 
 pub use error::PathError;
 pub use path::{WalkFiles, WorkspacePath};
-pub use spelling::written;
+pub use spelling::{typed, written};
 
 use roots::Roots;
 

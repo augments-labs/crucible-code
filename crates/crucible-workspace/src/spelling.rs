@@ -13,8 +13,12 @@
 //! can only make two paths that differ agree. Nothing here refuses to be used
 //! there; the point is that a site not going through this door is not
 //! automatically one to correct.
+//!
+//! A directory handed to a person to type into a shell is spelled for that
+//! shell instead, by [`typed`]: it is gone to, never matched, so it keeps the
+//! separators the shell reads and drops only what nobody types.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A path spelled the way one is written.
 ///
@@ -56,6 +60,43 @@ pub fn written(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// A path spelled the way someone types it at a shell prompt, separators and
+/// all.
+///
+/// What [`written`] does for a pattern, this does for a command a person
+/// pastes: resolving gives `\\?\C:\...`, which cmd will not `cd` into and
+/// nobody recognises their own project in. Here a share is shortened too,
+/// `\\?\UNC\server\share` to `\\server\share`, because a shell is handed
+/// a directory to go to, not a rule to match, and that is how one is typed.
+/// Anything else, and any path that is not text, is left as it is.
+#[cfg(windows)]
+#[must_use]
+pub fn typed(path: &Path) -> PathBuf {
+    let Some(spelled) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if let Some(share) = spelled.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{share}"));
+    }
+    let plain = spelled.strip_prefix(r"\\?\").filter(|rest| {
+        let mut ahead = rest.chars();
+        matches!(
+            (ahead.next(), ahead.next(), ahead.next()),
+            (Some(drive), Some(':'), Some('\\')) if drive.is_ascii_alphabetic()
+        )
+    });
+
+    PathBuf::from(plain.unwrap_or(spelled))
+}
+
+/// A path spelled the way someone types it at a shell prompt, which is the way
+/// it already is.
+#[cfg(not(windows))]
+#[must_use]
+pub fn typed(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +127,29 @@ mod tests {
         assert_eq!(
             written(Path::new(r"\\?\UNC\server\share")),
             "//?/UNC/server/share"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_resolved_path_is_typed_without_its_prefix() {
+        assert_eq!(
+            typed(Path::new(r"\\?\C:\Users\ada\projects\website")),
+            Path::new(r"C:\Users\ada\projects\website")
+        );
+        assert_eq!(
+            typed(Path::new(r"\\?\UNC\server\share\x")),
+            Path::new(r"\\server\share\x")
+        );
+        assert_eq!(typed(Path::new(r"D:\code")), Path::new(r"D:\code"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_path_is_typed_as_it_is() {
+        assert_eq!(
+            typed(Path::new(r"/srv/odd\name")),
+            Path::new(r"/srv/odd\name")
         );
     }
 

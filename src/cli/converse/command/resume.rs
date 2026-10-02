@@ -417,8 +417,10 @@ fn sought(session: &Recorded, place: &str, query: &str) -> bool {
 
 /// `path` with the home directory written `~`, and nothing in it a terminal
 /// would act on: it was read off a session's header, as untrusted as the
-/// title beside it.
+/// title beside it. Spelled as typed first, since the header keeps the
+/// spelling resolving gave, which on Windows is under no home a person has.
 fn homed(path: &Path, home: Option<&Path>) -> String {
+    let path = crucible_workspace::typed(path);
     let said = match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
         Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
