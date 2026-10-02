@@ -350,7 +350,7 @@ pub enum Event {
     /// model's literal last token. `None` where no window is known: nothing draws
     /// a fraction of a number nobody stated.
     ///
-    /// Posted through [`Event::carried`], so the percentage is always the one
+    /// Posted through `Event::carried`, so the percentage is always the one
     /// its breakdown was counted with.
     Carried {
         /// The usable percentage still free, rounded down.

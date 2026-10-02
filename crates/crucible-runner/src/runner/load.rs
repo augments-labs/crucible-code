@@ -222,8 +222,8 @@ impl Category {
 /// The next request's load divided by what holds it, in tokens.
 ///
 /// Counted by the arithmetic that counts the load: the five categories a
-/// request carries add up to exactly [`Load::tokens`], and the reading of what
-/// is left is [`Load::left`]'s, so `/context` and the prompt line cannot
+/// request carries add up to exactly `Load::tokens`, and the reading of what
+/// is left is `Load::left`'s, so `/context` and the prompt line cannot
 /// disagree.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Breakdown {
