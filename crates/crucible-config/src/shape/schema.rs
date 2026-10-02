@@ -298,8 +298,12 @@ fn described(field: &Field) -> Value {
 /// publishing `"true"` beside `"type": "boolean"` would have every editor that
 /// resolves it insert the one value the key refuses.
 ///
-/// A [`Shape::Whole`] is the exception that proves it: that one *is* a number
-/// written as a string, so its default is published as the string it has to be.
+/// A [`Shape::Whole`] is the exception that proves it: it may be written as a
+/// JSON integer or as a string, and its default is published as the string, the
+/// form the environment holds and the one `usual` is already spelled in. Either
+/// form is accepted, so the string is a valid default beside the integer
+/// bounds, and the editor writes into the file a value that reads back as the
+/// same number.
 ///
 /// A spelling that is not the shape's own is left as the string it was written
 /// as, so that it fails the agreement test beside this one rather than being

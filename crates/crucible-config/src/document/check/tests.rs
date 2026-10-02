@@ -119,6 +119,20 @@ fn scroll_speed_outside_three_to_thirty_is_refused_whichever_way_it_is_written()
 }
 
 #[test]
+fn only_the_declared_whole_number_variable_may_be_a_number() {
+    // `Settings::env()` hands a command the text of every number it finds, so
+    // this is what keeps a number under any other name from reaching one.
+    for read in [
+        mine as fn(&str) -> Result<Document, ConfigError>,
+        local,
+        shared,
+    ] {
+        let err = read(r#"{"env": {"PAGER": 1}}"#).unwrap_err();
+        assert!(matches!(err, ConfigError::WrongType { .. }), "got {err:?}");
+    }
+}
+
+#[test]
 fn scroll_speed_that_is_not_a_whole_number_is_the_wrong_type() {
     for written in ["-3", "6.5", "true", "[6]"] {
         let err = shared(&format!(
