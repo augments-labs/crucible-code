@@ -232,6 +232,17 @@ try {
     Assert-Contains $run.Err 'install: invalid version 9.8.7?[31m' 'escape sequence in a reason'
     Assert-Lacks $run.Err $esc 'escape sequence in a reason'
 
+    # A version holds ASCII letters only. U+212A KELVIN SIGN folds to k in a
+    # match that ignores case, so it is refused only by one that does not.
+    # The archive and checksums are local, so a version let through installs
+    # from them rather than reaching the network.
+    $kelvin = Join-Path $root 'kelvin'
+    $run = Invoke-Installer @('-Version', "$version-$([char]0x212A)", '-Archive', $archive,
+        '-Checksums', $sums, '-Dir', $kelvin)
+    if ($run.Status -ne 2) { Stop-Test "a version holding a Kelvin sign exited $($run.Status)" }
+    Assert-Contains $run.Err "install: invalid version $version-" 'Kelvin sign in a version'
+    if (Test-Path -LiteralPath $kelvin) { Stop-Test 'a refused version created the installation directory' }
+
     # Run as a script block in the caller's PowerShell, as the documented
     # `& ([scriptblock]::Create((irm ...)))` runs it, the installer leaves
     # its status in LASTEXITCODE and returns to the caller, which goes on to

@@ -515,7 +515,9 @@ function Invoke-CrucibleInstall {
             }
         }
         if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
-        if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
+        # Matched with case, since a match that ignores it folds U+212A
+        # KELVIN SIGN to k and would let it through.
+        if ($Version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
             Stop-Install 2 "invalid version $Version"
         }
 
@@ -748,8 +750,9 @@ function Invoke-CrucibleInstall {
             # command holding one would not be the one pasted. It is the
             # printed command that is judged, not the directory: one named
             # through $env:LOCALAPPDATA is ASCII whatever the account folder
-            # is called.
-            if ($literal -match '[^\x00-\x7E]' -and [Console]::OutputEncoding.CodePage -ne 65001) {
+            # is called. Matched with case, since a match that ignores it
+            # folds U+212A KELVIN SIGN to k and would not see it.
+            if ($literal -cmatch '[^\x00-\x7E]' -and [Console]::OutputEncoding.CodePage -ne 65001) {
                 Write-Out ($dim + (Get-Wrapped '' "That directory is not on your PATH. Add $where to your user PATH.") +
                     $plain + $nl)
             } else {
