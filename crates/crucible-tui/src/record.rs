@@ -173,10 +173,12 @@ pub(crate) struct Record {
     tall: VecDeque<u16>,
     /// The cumulative display-row end of each line at [`Self::columns`].
     ///
-    /// Absolute within the current width epoch: dropping a line advances
-    /// [`Self::before`] rather than subtracting from every end, so a seek from
-    /// the scroll rail can binary-search this list without work proportional
-    /// to the record on either append or spill.
+    /// Absolute within the current epoch, which a resize or emptying the
+    /// record starts afresh: dropping a line advances [`Self::before`] rather
+    /// than subtracting from every end, so a seek from the scroll rail can
+    /// binary-search this list without work proportional to the record on
+    /// either append or spill. An end kept past its epoch places the next
+    /// session's lines at the old one's rows, and the rail with them.
     ends: VecDeque<usize>,
     /// Display rows before the first retained line in the current width epoch.
     before: usize,
@@ -528,6 +530,8 @@ impl Record {
         self.gone += self.lines.len() + 1;
         self.lines.clear();
         self.tall.clear();
+        self.ends.clear();
+        self.before = 0;
         self.weight = 0;
         self.rows = 0;
         self.top = Spot {

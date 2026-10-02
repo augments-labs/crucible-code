@@ -1728,6 +1728,29 @@ fn a_pointer_on_the_rail_lights_no_cut_result() {
 }
 
 #[test]
+fn after_the_record_is_emptied_the_rail_thumb_still_reaches_the_foot() {
+    // Eighty one-row lines, then emptied, as `/clear` and `/resume` do, and a
+    // new session of thirty lines that each fold to two rows: sixty rows on a
+    // rail of ten, six to a rail row, so the band at the foot is the last two.
+    let mut drawn = railed();
+    drawn.empties().unwrap();
+    drawn.landmark();
+    for line in 0..30 {
+        drawn
+            .commit(&format!("again {line:02} {}", "word ".repeat(12)))
+            .unwrap();
+    }
+
+    let foot = drawn.bands().transcript.end - 1;
+    assert!(
+        drawn.screen().row(foot - 1).starts_with("again 29 word"),
+        "{:?}",
+        drawn.screen().rows()
+    );
+    assert_eq!(rail_of(&drawn), "•│││││││┃┃");
+}
+
+#[test]
 fn a_rail_over_a_transcript_that_fits_is_blank() {
     let mut drawn = Drawn::new(40, 8);
     drawn.rails(true);
