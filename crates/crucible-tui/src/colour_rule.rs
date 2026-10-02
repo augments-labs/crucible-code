@@ -5,7 +5,7 @@
 //! on a row that is not selected, and the same words in every theme, at every
 //! rung, as with no colour at all.
 
-use crate::color::{Palette, Theme};
+use crate::color::{Palette, Slot, Theme};
 use crate::escape::Escapes;
 use crate::row::Row;
 
@@ -35,6 +35,27 @@ fn unpainted(painted: &str) -> String {
         .collect()
 }
 
+/// How many accent spans the colour rule counts on `row`.
+///
+/// A span is a run of [`Slot::Accent`] that shows something, ended by text in
+/// any other slot, blank or not. Blank text in the accent counts for nothing,
+/// because it puts nothing in front of the eye.
+pub(crate) fn accents(row: &Row) -> usize {
+    let mut counted = 0;
+    let mut inside = false;
+
+    for (slot, text) in row.spans() {
+        if slot != Slot::Accent {
+            inside = false;
+        } else if !text.trim().is_empty() {
+            counted += usize::from(!inside);
+            inside = true;
+        }
+    }
+
+    counted
+}
+
 /// Panics, naming `screen` and the row, where `rows` breaks the rule.
 ///
 /// `selected` answers for a row's place among `rows`.
@@ -45,9 +66,9 @@ pub(crate) fn holds(screen: &str, rows: &[Row], selected: impl Fn(usize) -> bool
         let said = row.text();
 
         assert!(
-            selected(at) || row.accents() <= 1,
+            selected(at) || accents(row) <= 1,
             "{screen}: row {at} has {} accent spans: {said:?}",
-            row.accents()
+            accents(row)
         );
 
         assert_eq!(row.paint(&plain), said, "{screen}: row {at} with no colour");
@@ -66,4 +87,42 @@ pub(crate) fn holds(screen: &str, rows: &[Row], selected: impl Fn(usize) -> bool
             }
         }
     }
+}
+
+#[test]
+fn the_colour_rule_counts_runs_of_the_accent_slot_and_nothing_else() {
+    // Strong, code and the pointer's slot share the accent's ink or ground
+    // and are not counted: the rule is about the accent slot.
+    let none = Row::new()
+        .then(Slot::Strong, "4")
+        .then(Slot::Quiet, " lines, removed ")
+        .then(Slot::Strong, "2")
+        .then(Slot::Code, "wait")
+        .then(Slot::Pointed, "here");
+    let one = Row::new()
+        .then(Slot::Accent, "ctrl")
+        .then(Slot::Accent, "+q");
+    // Any other slot between two runs parts them, a blank one too: a
+    // border and a key with a space between are two things lit.
+    let parted = Row::new()
+        .then(Slot::Accent, "╰────")
+        .then(Slot::Plain, " ")
+        .then(Slot::Accent, "ctrl+q");
+    let two = Row::new()
+        .then(Slot::Accent, "●")
+        .then(Slot::Plain, " Read ")
+        .then(Slot::Accent, "opens");
+
+    assert_eq!(accents(&none), 0);
+    assert_eq!(accents(&one), 1);
+    assert_eq!(accents(&parted), 2);
+    assert_eq!(accents(&two), 2);
+
+    // The caret's place on a row that is not marked is blank, and blank
+    // in any colour puts nothing in front of the eye.
+    let unmarked = Row::new()
+        .then(Slot::Accent, " ")
+        .then(Slot::Plain, " /plugin ")
+        .then(Slot::Accent, "●");
+    assert_eq!(accents(&unmarked), 1);
 }
