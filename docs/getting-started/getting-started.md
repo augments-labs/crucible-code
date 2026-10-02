@@ -960,11 +960,12 @@ out, read from a cache and written to one. A session with a model crucible has
 no price for says `not priced` rather than `$0.00`. Under that is the same
 context bar `/context` draws, and then the plan limits: one bar for each of the
 5-hour, weekly and monthly windows the vendor reported on its last response,
-with when each starts again in your local time. Only the ChatGPT sign-in
-reports them; an API key or any other sign-in says `limits not reported`.
-Opening the panel sends nothing: every figure on it is one crucible already
-holds, and the counts are this run's, starting again for a session picked up
-with `/resume`. Escape closes it.
+with when each starts again in your local time; a reset already behind the
+clock reads `since passed`, as the window has started again since that
+response. Only the ChatGPT sign-in reports them; an API key or any other
+sign-in says `limits not reported`. Opening the panel sends nothing: every
+figure on it is one crucible already holds, and the counts are this run's,
+starting again for a session picked up with `/resume`. Escape closes it.
 
 ### A command typed while a turn runs
 

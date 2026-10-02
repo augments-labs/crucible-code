@@ -348,6 +348,48 @@ fn usage_reset_times_are_the_reader_wall_clock() {
 }
 
 #[test]
+fn a_reset_already_past_says_the_window_started_again_since_the_reading() {
+    // Three hours before the clock's noon, and the Monday before it.
+    let earlier_today = TODAY - 6 * 3_600 - 40 * 60;
+    let last_monday = MONDAY - 7 * 86_400;
+    assert_eq!(
+        clock().resets(earlier_today).as_deref(),
+        Some("reset 09:00, since passed")
+    );
+    assert_eq!(
+        clock().resets(last_monday).as_deref(),
+        Some("reset 19 Oct 09:00, since passed")
+    );
+    // One still to come reads as it did.
+    assert_eq!(clock().resets(TODAY).as_deref(), Some("resets 15:40"));
+    let guessed = Clock {
+        guessed: true,
+        ..clock()
+    };
+    assert_eq!(
+        guessed.resets(earlier_today).as_deref(),
+        Some("reset 09:00 UTC, since passed")
+    );
+
+    // The figure stays what the vendor reported, and the line fits the
+    // narrowest panel whole.
+    let mut usage = weekly();
+    usage.limits.weekly = Some(limit(31, last_monday));
+    for columns in [40, 80] {
+        let rows = art(&body("", &usage, columns, Glyphs::Unicode, &guessed));
+        let line = rows
+            .iter()
+            .find(|row| row.contains("since passed"))
+            .unwrap_or_else(|| panic!("no passed reset at {columns}: {rows:#?}"));
+        assert!(
+            line.ends_with("reset 19 Oct 09:00 UTC, since passed"),
+            "{line}"
+        );
+        assert!(rows.iter().any(|row| row.contains("31% used")), "{rows:#?}");
+    }
+}
+
+#[test]
 fn usage_with_no_window_known_says_so_in_place_of_the_bar() {
     let mut usage = keyed();
     usage.context.left = None;

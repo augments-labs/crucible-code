@@ -13,7 +13,9 @@
 //!
 //! A cost nobody priced reads `not priced`, never `$0.00`. A reset time is the
 //! reader's own wall clock, read in the system's zone as the panel opens; a
-//! machine whose zone cannot be read is shown UTC, and the times say so.
+//! machine whose zone cannot be read is shown UTC, and the times say so. A
+//! reset the clock is already past says `since passed`: the window has
+//! started again since the reading its figure is from.
 //!
 //! [`body`] draws the blocks at a width and nothing else, so the panel here
 //! and anything that embeds the same figures draw them alike. Below
@@ -82,8 +84,27 @@ impl Clock {
         }
     }
 
+    /// The phrase a window's reset is drawn with: `resets 15:40` for one to
+    /// come, and `reset 09:00, since passed` for one the clock is already
+    /// past.
+    ///
+    /// A reading is kept until a response brings another, so after an idle
+    /// stretch its reset can be behind the clock: the window has started
+    /// again since, and its figure is what it was as of the reading, which
+    /// the phrase says rather than promising a reset that already happened.
+    fn resets(&self, at: u64) -> Option<String> {
+        let read = self.reads(at)?;
+        let passed = i64::try_from(at).is_ok_and(|at| at <= self.now.as_second());
+        Some(if passed {
+            format!("reset {read}, since passed")
+        } else {
+            format!("resets {read}")
+        })
+    }
+
     /// When a window starts again, as a wall clock reads it: the time alone
-    /// today, with the weekday within the week, and with the date beyond.
+    /// today, with the weekday within the week, and with the date beyond or
+    /// before.
     fn reads(&self, at: u64) -> Option<String> {
         let at = Timestamp::from_second(i64::try_from(at).ok()?)
             .ok()?
@@ -333,7 +354,7 @@ pub(crate) fn body(
             continue;
         };
         let used = limit.used.get();
-        let resets = limit.resets_at.and_then(|at| clock.reads(at));
+        let resets = limit.resets_at.and_then(|at| clock.resets(at));
         if wide {
             let cells = columns.saturating_sub(BESIDE + FIGURE);
             rows.push(gauge(labelled(named(window), at), used, cells, glyphs));
@@ -351,7 +372,7 @@ pub(crate) fn body(
             rows.push(
                 Row::new()
                     .then(Slot::Plain, " ".repeat(indent))
-                    .then(Slot::Quiet, format!("resets {resets}")),
+                    .then(Slot::Quiet, resets),
             );
         }
     }
