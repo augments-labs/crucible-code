@@ -122,10 +122,30 @@ try {
     }
     if (@(Get-ChildItem -LiteralPath $dir -Force).Count -ne 3) { Stop-Test 'the install left files beside the executables' }
 
-    # Installing again replaces what the last install put there.
+    # Installing again replaces what the last install put there, and removes
+    # what an earlier one moved aside and could not remove, by its exact name.
+    $leftover = Join-Path $dir ('.crucible.exe.previous.' + [Guid]::NewGuid().ToString('N'))
+    [IO.File]::WriteAllText($leftover, 'replaced')
+    $mine = Join-Path $dir '.crucible.exe.previous.mine'
+    [IO.File]::WriteAllText($mine, 'kept')
     $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $dir))
     if ($run.Status -ne 0) { Stop-Test "a second install exited $($run.Status): $($run.Err)" }
+    if (Test-Path -LiteralPath $leftover) { Stop-Test 'the second install kept a copy an earlier one moved aside' }
+    if (-not (Test-Path -LiteralPath $mine)) { Stop-Test 'the second install removed a file it did not name' }
+    Remove-Item -LiteralPath $mine
     if (@(Get-ChildItem -LiteralPath $dir -Force).Count -ne 3) { Stop-Test 'the second install left files behind' }
+
+    # One still in use stays, and the install says so.
+    $held = [IO.File]::Open($leftover, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $run = Invoke-Installer ($release + @('-Checksums', $sums, '-Dir', $dir))
+    } finally {
+        $held.Dispose()
+    }
+    if ($run.Status -ne 0) { Stop-Test "an install beside a copy in use exited $($run.Status): $($run.Err)" }
+    Assert-Contains $run.Err 'install: could not remove ' 'a copy in use'
+    Assert-Contains $run.Err "$(Split-Path -Leaf $leftover), a replaced copy still in use" 'a copy in use'
+    Remove-Item -LiteralPath $leftover
 
     # NO_COLOR, like a redirect, gets no escape sequences.
     $env:NO_COLOR = '1'

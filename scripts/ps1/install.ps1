@@ -571,6 +571,16 @@ function Invoke-CrucibleInstall {
         }
 
         $null = New-Item -ItemType Directory -Force -Path $destination
+        # A replaced file that was still running when an earlier install moved
+        # it aside could not be removed then; it can be now that it has exited.
+        # Only the names this installer gives such files are touched.
+        $stuck = New-Object System.Collections.Generic.List[string]
+        foreach ($item in @(Get-ChildItem -LiteralPath $destination -Force -File)) {
+            if ($item.Name -cmatch '^\.(crucible|crucible-sandbox-broker|cru)\.exe\.previous\.[0-9a-f]{32}$') {
+                Remove-Item -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $item.FullName) { $stuck.Add($item.FullName) }
+            }
+        }
         # Either everything lands or nothing changes. A file being replaced is
         # moved aside first, which Windows allows even while it runs, and put
         # back if anything after it fails. The broker lands first so the
@@ -588,7 +598,10 @@ function Invoke-CrucibleInstall {
             Copy-Item -LiteralPath $source -Destination $target
         }
         foreach ($entry in $landed) {
-            if ($entry[1]) { Remove-Item -LiteralPath $entry[1] -Force -ErrorAction SilentlyContinue }
+            if ($entry[1]) {
+                Remove-Item -LiteralPath $entry[1] -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $entry[1]) { $stuck.Add($entry[1]) }
+            }
         }
         $landed.Clear()
         Complete-Step $where $destination
@@ -597,9 +610,11 @@ function Invoke-CrucibleInstall {
         if ($AddToPath -and -not $onPath) { Add-UserPath $destination }
         $installed = 'Installed crucible.exe, crucible-sandbox-broker.exe and cru.exe in '
         $nl = [Environment]::NewLine
+        $kept = @($stuck | ForEach-Object { "could not remove $_, a replaced copy still in use; the next install removes it" })
         # A log gets the whole path; the console gets it as Windows writes it.
         if (-not $fancy) {
             Write-Out ($installed + $destination + $nl)
+            foreach ($line in $kept) { [Console]::Error.WriteLine("install: $line") }
             if ($AddToPath -and -not $onPath) {
                 Write-Out ("Added $destination to your user PATH; open a new terminal to run crucible." + $nl)
             } elseif (-not $onPath) {
@@ -608,7 +623,9 @@ function Invoke-CrucibleInstall {
             return 0
         }
         $installed += $where
-        Write-Out ($nl + (Get-Wrapped '' $installed) + $nl + $nl)
+        Write-Out ($nl + (Get-Wrapped '' $installed) + $nl)
+        foreach ($line in $kept) { [Console]::Error.WriteLine((Get-Wrapped '' $line)) }
+        Write-Out $nl
         if ($AddToPath -and -not $onPath) {
             Write-Out ($dim + (Get-Wrapped '' 'That directory is now first on your user PATH.') + $plain + $nl)
         } elseif ($onPath) {
