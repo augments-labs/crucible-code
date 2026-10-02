@@ -651,6 +651,125 @@ fn a_mistyped_command_with_words_after_it_mid_turn_is_queued_as_a_prompt() {
     assert!(!queued.contains("esc to close"), "{queued}");
 }
 
+/// A turn held open with one prompt waiting behind it, in a window `columns`
+/// wide, and the vendor that holds it open for the caller to keep.
+fn with_a_prompt_waiting(case: &str, columns: u16, vendor: &Vendor) -> Watched {
+    let mut window = Watched::allowing(case, columns, 24, vendor, "bash(*)");
+
+    window.types_and_catches("start it\r", HELD_LAST_WORD);
+    window.types_and_catches("and add a test for the windows path\r", "1 queued");
+    window
+}
+
+/// The picture from the top edge of the queue box down.
+///
+/// Not the whole screen: the working row above it counts seconds, and a picture
+/// that held the count would be one a loaded machine draws a second later.
+fn from_the_queue_box(picture: &str) -> String {
+    picture
+        .lines()
+        .skip_while(|row| !row.contains("╭─ 1 queued"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_single_waiting_prompt_is_told_the_key_that_opens_the_queue() {
+    // The key used to appear only once the box overflowed, so a reader with one
+    // prompt waiting had nothing on screen saying it could be taken back. It
+    // is drawn into the box's bottom edge, which costs the screen no row.
+    let vendor = a_turn_still_running();
+    let window = with_a_prompt_waiting("queue-hint", 80, &vendor);
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
+        "{picture}"
+    );
+    insta::assert_snapshot!(from_the_queue_box(&picture));
+}
+
+#[test]
+fn a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window() {
+    let vendor = a_turn_still_running();
+    let window = with_a_prompt_waiting("queue-hint-narrow", 40, &vendor);
+
+    let picture = window.picture();
+    assert!(
+        picture.contains("\u{2500} ctrl+q edit \u{2500}\u{256f}"),
+        "{picture}"
+    );
+    insta::assert_snapshot!(from_the_queue_box(&picture));
+}
+
+#[test]
+fn the_open_queue_names_the_keys_that_work_on_a_waiting_prompt() {
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    let picture = window.picture();
+    assert!(picture.contains("e edit"), "{picture}");
+    insta::assert_snapshot!(on_the_first_beat(&picture));
+}
+
+#[test]
+fn the_open_queue_keeps_the_working_row_directly_above_its_rule() {
+    // The view replaces the box and what stood over it, and the row that says a
+    // turn is running stood over it: dropped, the reader looking at their queue
+    // could not tell the turn behind it was still going. It is the row the
+    // view's rule sits directly under, and it is the live one, so its clock
+    // goes on counting while the view stands.
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open-working", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    let picture = window.picture();
+
+    let rows: Vec<&str> = picture.lines().collect();
+    let title = rows
+        .iter()
+        .position(|row| row.contains("1 queued"))
+        .unwrap_or_else(|| panic!("no title in {picture}"));
+    let rule = title.saturating_sub(2);
+    assert!(
+        rows.get(rule)
+            .is_some_and(|row| row.contains("\u{2500}\u{2500}\u{2500}")),
+        "{picture}"
+    );
+    assert!(
+        rows.get(rule.saturating_sub(1))
+            .is_some_and(|row| row.contains("esc to interrupt")),
+        "{picture}"
+    );
+}
+
+#[test]
+fn the_open_queue_wraps_its_keys_in_a_narrow_window() {
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-open-narrow", 40, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    insta::assert_snapshot!(on_the_first_beat(&window.picture()));
+}
+
+#[test]
+fn deleting_the_only_waiting_prompt_closes_the_queue_and_leaves_the_box_empty() {
+    // Taking it back would put its words in the box; deleting must not.
+    let vendor = a_turn_still_running();
+    let mut window = with_a_prompt_waiting("queue-delete", 80, &vendor);
+
+    window.types_and_catches("\x11", "d delete");
+    window.types("d");
+
+    // What is typed next lands in a box holding nothing else: a prompt taken
+    // back would be in it already, and the line would read as the two joined.
+    window.types_and_catches("hi", "│ › hi");
+    let picture = window.picture();
+    assert!(!picture.contains("queued"), "{picture}");
+    assert!(!picture.contains("windows path"), "{picture}");
+}
+
 #[test]
 fn a_theme_panel_opens_while_a_turn_is_still_running() {
     // The turn is held open behind a finished answer — not made long enough to
@@ -2653,7 +2772,7 @@ fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
     for columns in [40, 80] {
         let rows = holding_the_newest(columns);
         let mut window = Watched::open(&format!("release-notes-whole-{columns}"), columns, rows);
-        window.types_until("/release-notes\r", "newest in full");
+        window.types_until("/release-notes all\r", "newest in full");
         let picture = window.picture();
         // A row of the picture without the edges it is drawn between.
         let lines: Vec<&str> = picture
@@ -2708,13 +2827,306 @@ fn the_whole_list_ends_on_the_running_version_and_the_closing_row() {
     }
 }
 
+/// Every release the changelog built in holds, newest first, as the headings
+/// number them.
+fn releases_newest_first() -> Vec<&'static str> {
+    include_str!("../../CHANGELOG.md")
+        .lines()
+        .filter_map(|line| line.strip_prefix("## ["))
+        .filter_map(|rest| rest.split_once(']').map(|(version, _)| version))
+        .filter(|version| *version != "Unreleased")
+        .collect()
+}
+
+/// The rows of `picture` without the edges they are drawn between or the
+/// spaces that pad them.
+fn trimmed(picture: &str) -> Vec<String> {
+    picture
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let line = line.strip_prefix('|').unwrap_or(line);
+            let line = line.strip_suffix('|').unwrap_or(line);
+            line.trim_end().to_owned()
+        })
+        .collect()
+}
+
+/// `picture` with the numbers a release moves taken out, so that what is
+/// accepted beside it is the list's shape and not the changelog it was drawn
+/// from: every digit is a `#`, the count of entries is always two of them over
+/// the plural, and the number in `6 newer`, `88 older` and `all 101 releases`
+/// is one, with the spaces it leaves put back so every row is as wide as it
+/// was drawn. The line giving the window's size is left as it is.
+fn shape(picture: &str) -> String {
+    let mut shaped = String::new();
+    for (index, line) in picture.lines().enumerate() {
+        if index == 0 {
+            shaped.push_str(line);
+            shaped.push('\n');
+            continue;
+        }
+        let line = line.replacen(" entry  ", " entries", 1);
+        let line = match line.find(" entries") {
+            Some(at) if at >= 2 && line.is_char_boundary(at - 2) => {
+                format!(
+                    "{}##{}",
+                    line.get(..at - 2).unwrap_or(""),
+                    line.get(at..).unwrap_or("")
+                )
+            }
+            _ => line,
+        };
+        let drawn = line.chars().count();
+        let mut row = String::new();
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if !c.is_ascii_digit() {
+                row.push(c);
+                continue;
+            }
+            let mut digits = 1;
+            while chars.next_if(char::is_ascii_digit).is_some() {
+                digits += 1;
+            }
+            let rest: String = chars.clone().collect();
+            let counted = [" newer", " older", " releases"]
+                .iter()
+                .any(|word| rest.starts_with(word));
+            row.push_str(&"#".repeat(if counted { 1 } else { digits }));
+        }
+        // Whatever a counted number lost goes back before the row's edge.
+        let lost = drawn - row.chars().count();
+        if lost > 0 {
+            let edge = row.pop();
+            row.push_str(&" ".repeat(lost));
+            row.extend(edge);
+        }
+        shaped.push_str(&row);
+        shaped.push('\n');
+    }
+    shaped
+}
+
+/// `count` presses of the down arrow, as one string.
+fn downs(count: usize) -> String {
+    "\x1b[B".repeat(count)
+}
+
+#[test]
+fn release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest() {
+    // Read rather than pictured, like the whole list above: its rows are the
+    // changelog's newest, which every release moves.
+    let every = releases_newest_first();
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-list-{columns}"), columns, 24);
+        window.types_until("/release-notes\r", "enter opens it");
+        let picture = window.picture();
+        insta::assert_snapshot!(format!("release_notes_list_at_{columns}"), shape(&picture));
+        let lines = trimmed(&picture);
+        let at = format!("{columns} columns:\n{picture}");
+
+        let title = lines
+            .iter()
+            .position(|line| line == "Release notes")
+            .unwrap_or_else(|| panic!("no title at {at}"));
+        let listed = lines.get(title + 2..title + 11).unwrap_or_default();
+
+        // The mark is on the newest, which is the running version: masked.
+        let first = listed.first().map_or("", String::as_str);
+        assert!(first.starts_with("\u{203a} ######"), "{first:?} at {at}");
+        assert!(first.ends_with("this version"), "{first:?} at {at}");
+        for (line, version) in listed.iter().skip(1).zip(every.iter().skip(1)).take(7) {
+            assert!(
+                line.starts_with(&format!("  {version} ")),
+                "{line:?} should be {version} at {at}"
+            );
+        }
+        for line in listed.iter().take(8) {
+            assert!(line.contains("entr"), "{line:?} has no count at {at}");
+            // The date goes first: a date is the one thing here with a dash.
+            assert_eq!(line.contains('-'), columns >= 80, "{line:?} at {at}");
+        }
+        assert_eq!(
+            listed.get(8).map(String::as_str),
+            Some(format!("  all {} releases \u{2193}", every.len()).as_str()),
+            "{at}"
+        );
+
+        let foot: Vec<&str> = lines
+            .iter()
+            .skip(title + 12)
+            .map(String::as_str)
+            .filter(|line| !line.is_empty())
+            .take(2)
+            .collect();
+        if columns >= 80 {
+            assert_eq!(
+                foot.first(),
+                Some(&"\u{2191}\u{2193} to walk \u{b7} enter opens it \u{b7} esc to close"),
+                "{at}"
+            );
+        } else {
+            assert_eq!(
+                foot,
+                [
+                    "\u{2191}\u{2193} to walk \u{b7} enter opens it \u{b7} esc to",
+                    "close"
+                ],
+                "{at}"
+            );
+        }
+    }
+}
+
+#[test]
+fn release_notes_list_reveals_every_release_in_place_on_the_row_that_was_ninth() {
+    let every = releases_newest_first();
+    let mut window = Watched::open("release-notes-list-reveal", 80, 24);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.types_until(&format!("{}\r", downs(8)), "newer");
+    let picture = window.picture();
+    insta::assert_snapshot!("release_notes_list_reveal_at_80", shape(&picture));
+    let lines = trimmed(&picture);
+
+    let title = lines
+        .iter()
+        .position(|line| line == "Release notes")
+        .unwrap_or_else(|| panic!("no title at\n{picture}"));
+    let listed = lines.get(title + 2..title + 11).unwrap_or_default();
+    let marked: Vec<&String> = listed
+        .iter()
+        .filter(|line| line.starts_with('\u{203a}'))
+        .collect();
+    let ninth = every.get(8).copied().unwrap_or_default();
+
+    assert_eq!(marked.len(), 1, "{picture}");
+    assert!(
+        marked
+            .first()
+            .is_some_and(|line| line.starts_with(&format!("\u{203a} {ninth} "))),
+        "{picture}"
+    );
+    // The window shows seven releases between its counts, opened with two
+    // rows of those before the ninth, so six are above it and the rest below.
+    assert_eq!(
+        listed.first().map(String::as_str),
+        Some("  \u{2191} 6 newer"),
+        "{picture}"
+    );
+    assert_eq!(
+        listed.last().map(String::as_str),
+        Some(format!("  \u{2193} {} older", every.len() - 13).as_str()),
+        "{picture}"
+    );
+    assert!(
+        !picture.contains("releases \u{2193}"),
+        "the reveal row stayed: {picture}"
+    );
+}
+
+#[test]
+fn release_notes_list_down_then_enter_puts_the_second_version_alone_in_the_transcript() {
+    let every = releases_newest_first();
+    let second = every.get(1).copied().expect("two releases");
+    let mut window = Watched::open("release-notes-list-second", 80, 120);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.types_until("\x1b[B\r", &format!("\u{25c6} {second}"));
+    let picture = window.picture();
+
+    assert!(
+        !picture.contains("this version"),
+        "the newest came too: {picture}"
+    );
+    assert!(
+        !picture.contains('\u{25c7}'),
+        "an older release came too: {picture}"
+    );
+    assert!(
+        !picture.contains("enter opens it"),
+        "the list stayed: {picture}"
+    );
+    assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+}
+
+#[test]
+fn release_notes_list_opens_one_version_from_the_revealed_rows() {
+    let every = releases_newest_first();
+    let at = every
+        .iter()
+        .position(|version| *version == "0.41.1")
+        .expect("0.41.1 is a release");
+    assert!(at >= 8, "0.41.1 is past the rows the list opens with");
+
+    for columns in [40, 80] {
+        let mut window = Watched::open(&format!("release-notes-list-open-{columns}"), columns, 24);
+        window.types_until("/release-notes\r", "enter opens it");
+        window.types_until(&format!("{}\r", downs(8)), "newer");
+        window.types_until(&format!("{}\r", downs(at - 8)), RELEASE_ENDS);
+
+        insta::assert_snapshot!(
+            format!("release_notes_one_from_the_list_at_{columns}"),
+            window.picture()
+        );
+    }
+}
+
+#[test]
+fn release_notes_list_escape_leaves_the_transcript_as_it_was() {
+    let mut window = Watched::open("release-notes-list-escape", 80, 24);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.types(&downs(2));
+    window.types("\x1b");
+    let picture = window.picture();
+
+    assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+    for gone in [
+        "Release notes",
+        "enter opens it",
+        "\u{25c6}",
+        "\u{25c7}",
+        "this version",
+    ] {
+        assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
+    }
+    // The command's own row is the one thing written, so the rows under it
+    // are the box and nothing else.
+    let lines = trimmed(&picture);
+    let echo = lines
+        .iter()
+        .position(|line| line.starts_with("\u{203a} /release-notes"))
+        .unwrap_or_else(|| panic!("no echo at\n{picture}"));
+    let under = lines.get(echo + 1..).unwrap_or_default();
+    assert!(
+        under.iter().take_while(|line| line.is_empty()).count() + 3
+            >= under.len().saturating_sub(2),
+        "{picture}"
+    );
+}
+
+#[test]
+fn release_notes_list_a_resize_that_leaves_no_room_closes_it_and_prints_nothing() {
+    let mut window = Watched::open("release-notes-list-cramped", 80, 24);
+    window.types_until("/release-notes\r", "enter opens it");
+    window.resize(80, 6);
+    window.resize(80, 24);
+    let picture = window.picture();
+
+    // Walked and abandoned, as escape does: neither the list nor the
+    // `all` output, which is what a window that never had room is given.
+    for gone in ["enter opens it", "newest in full", "\u{25c6}", "\u{25c7}"] {
+        assert!(!picture.contains(gone), "{gone:?} is on screen: {picture}");
+    }
+    assert!(picture.contains("\u{203a} /release-notes"), "{picture}");
+}
+
 #[test]
 fn release_notes_mid_turn_are_refused_on_the_panel() {
     let vendor = a_turn_still_running();
     let mut window = Watched::allowing("release-notes-mid-turn", 60, 24, &vendor, "bash(*)");
 
     window.types_and_catches("start it\r", HELD_LAST_WORD);
-    window.types_and_catches("/release-notes\r", "thousand rows");
+    window.types_and_catches("/release-notes\r", "stands over, the answer");
 
     let refused = window.picture();
     assert!(refused.contains("esc to close"), "{refused}");

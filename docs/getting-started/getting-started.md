@@ -377,21 +377,22 @@ way the box is because they are the same thing a moment apart. They are your own
 words, one of them being typed and the rest already sent for:
 
 ```
-┌─ 4 queued ───────────────────────────────────────────────┐
+╭─ 4 queued ───────────────────────────────────────────────╮
 │ › fix the failing test                                   │
 │ › then run the gate                                      │
 │ › and write the changelog                                │
-│   … +1 more  (ctrl+q to see all)                         │
-└──────────────────────────────────────────────────────────┘
+│   … +1 more                                              │
+╰──────────────────────────────────────────── ctrl+q edit ─╯
 ```
 
-Three are named and the rest are counted, oldest first, which is the order they
-will be said in. A line too wide for the window is cut at the right. On a window
-too narrow to open a frame the panel is one indented row saying how many are
-waiting, since that is the fact that cannot go, and on one too short for
-everything standing over the box it gives its rows up before the row saying a
-turn is running does: a queued prompt has its own turn coming, and that row is
-written nowhere else.
+The bottom edge names the key that opens the queue, for one waiting prompt as
+for many. Three are named and the rest are counted, oldest first, which is the
+order they will be said in. A line too wide for the window is cut at the right.
+On a window too narrow to open a frame the panel is one indented row saying
+how many are waiting, since that is the fact that cannot go, and on one too
+short for everything standing over the box it gives its rows up before the row
+saying a turn is running does: a queued prompt has its own turn coming, and
+that row is written nowhere else.
 
 They go together. When the turn ends the whole queue is one turn: the oldest is
 its prompt and the rest are handed to the same turn before it asks anything, so
@@ -401,11 +402,13 @@ third is working to a question you had already added to. Each is still its own
 message, in the order you typed it; nothing is joined into a prompt you did not
 write.
 
-<kbd>Ctrl+Q</kbd> stands the whole queue where the box was. Up and down walk it,
-<kbd>x</kbd> takes the marked line back into the box to be edited or sent ahead
-of the rest, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes it. While it
-stands it has the keyboard, so <kbd>Esc</kbd> there closes the view rather than
-interrupting the turn.
+<kbd>Ctrl+Q</kbd> stands the whole queue where the box was, with a footer naming
+the keys that work. Up and down walk it, <kbd>e</kbd> takes the marked line back
+into the box to be edited or sent ahead of the rest, <kbd>d</kbd> deletes it
+without taking it back, and <kbd>Esc</kbd>, or <kbd>Ctrl+Q</kbd> again, closes
+it. While it stands it has the keyboard, so <kbd>Esc</kbd> there closes the view
+rather than interrupting the turn. In a window too short for the whole queue the
+view scrolls, so the line the keys act on is always drawn, from its first row.
 
 Nothing leaves the queue while it stands open. The turn above goes on writing,
 tools go on running, the answer goes on arriving; what waits is the one moment
@@ -884,7 +887,7 @@ back to correct.
 | Command | What it does |
 | --- | --- |
 | `/help` | Lists these |
-| `/release-notes` | Prints what changed in each release, or in the one you name |
+| `/release-notes` | Lists the releases to open one, or prints the one you name |
 | `/context` | Shows how the model's window is spent by the next request, part by part |
 | `/model` | Picks the model to ask from now on and how hard it thinks, or takes the model you name |
 | `/effort` | Picks how hard it thinks from now on, or takes the rung you name |
@@ -920,11 +923,17 @@ this run is set up for, and the provider beside it, so the next crucible
 started anywhere begins with both. See [Providers and
 models](../providers/providers.md).
 
-`/release-notes` prints every release crucible has had into the transcript,
-oldest first: a row each for the older ones, saying how many entries each group
-held, then the ten newest in full, the one you are running last and marked
-`this version`. `/release-notes 0.41.1`, or `v0.41.1`, prints that release
-alone. The notes are the changelog of the build you are running, built into it,
+`/release-notes` opens a list of releases, newest first, each with its date and
+how many entries it holds; the one you are running is marked `this version`. The
+list shows the eight newest and a last row, `all N releases`, that opens the
+rest in place. <kbd>Up</kbd> and <kbd>Down</kbd> (or the wheel) move,
+<kbd>Enter</kbd> prints that release alone into the transcript, and
+<kbd>Esc</kbd> closes the list. `/release-notes 0.41.1`, or `v0.41.1`, prints
+that release without the list, and `/release-notes all` prints every release
+into the transcript, oldest first: a row each for the older ones, saying how
+many entries each group held, then the ten newest in full. Without a keyboard,
+or in a window too short to hold the list, `/release-notes` prints that same
+output. The notes are the changelog of the build you are running, built into it,
 so asking for them needs no network. Where a very narrow window would print more
 rows than the transcript keeps, the oldest rows are left out first, and the last
 row says how many.
@@ -960,8 +969,9 @@ Enter depends on the command:
 - The rest (`/clear`, `/logout`, `/resume` and the like) move the session
   itself, which a running turn owns, so they are refused and say so on a panel
   rather than act partway through one.
-- **`/release-notes`** would print a thousand rows into the answer being
-  written, so it is refused on the same panel; ask for it once the turn ends.
+- **`/release-notes`** would stand a list over the answer being written, or
+  print every release into it, so it is refused on the same panel; ask for it
+  once the turn ends.
 - **A word that names no command**, typed alone, stands the same panel with
   the nearest names on it, and is not queued. With words after it the line is
   a prompt, and waits for the turn like any other.

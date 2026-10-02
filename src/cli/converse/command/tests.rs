@@ -598,7 +598,7 @@ fn release_notes_typed_while_a_turn_runs_is_refused_on_the_panel_with_its_reason
 
     assert!(
         rows.iter()
-            .any(|row| row.contains("prints a thousand rows into the answer being written")),
+            .any(|row| row.contains("prints into, or stands over, the answer being written")),
         "{rows:#?}"
     );
     assert!(

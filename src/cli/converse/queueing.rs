@@ -2,9 +2,10 @@
 //! gone over.
 //!
 //! Ctrl+Q stands the whole queue where the panel above the box named the first
-//! few of it. Up and down walk it, `x` takes the marked line back into the box
-//! to be edited or sent sooner, and `esc` — or the key that opened it — closes
-//! it again.
+//! few of it. Up and down walk it, `e` takes the marked line back into the box
+//! to be edited or sent sooner (`x` did that before the footer named a key, and
+//! still does), `d` or Delete drops it without taking it back, and `esc` — or
+//! the key that opened it — closes it again.
 //!
 //! While it stands, the queue is held, and that is the point of it. The turn
 //! above goes on writing and takes none of these lines: a line the reader is
@@ -12,6 +13,11 @@
 //! mid-edit is in the transcript, where it cannot be taken back. Closing the
 //! view releases the whole batch at once — the lines that were edited and the
 //! ones that were not — and the turn works them in at its next pass boundary.
+//!
+//! The row saying a turn is running stays directly over the view's rule, with
+//! its clock counting. The list is laid in the rows left under it, so a list
+//! long enough to fill the window gives up one row to it. The working row is
+//! dropped only when the rows left would show none of the list.
 //!
 //! Nothing above it stops for that. The turn writes into the tail as it always
 //! does; a held queue answers the exchange loop the way an empty one does, which
@@ -39,8 +45,17 @@ use crate::cli::style::Style;
 
 use super::region::{self, Moved};
 use super::{
-    Held, QUEUED_BYTES, QUEUED_LINES, Terms, Work, answerable, attaching, ran, unanswered,
+    Held, QUEUED_BYTES, QUEUED_LINES, Terms, Turning, Work, answerable, attaching, ran, unanswered,
 };
+
+/// What stands around the lines of the view: the rule, the title, the blank
+/// under each of them, and the blank above the footer. The footer's own rows
+/// are counted beside it, since the width decides how many there are.
+const CHROME: usize = 5;
+
+/// What leads a line in the view: the mark, or the space that stands in for it,
+/// and the space after.
+const MARKED: usize = 2;
 
 /// Prompts finished while a turn is still running.
 ///
@@ -353,17 +368,25 @@ pub(super) fn stand<T: Terminal>(
 ///
 /// Answers whether it stood, which is the caller's question rather than this
 /// one's: the box and the list take the same rows, so exactly one of them is
-/// drawn per frame and the caller draws the other.
+/// drawn per frame and the caller draws the other. The row that says the turn
+/// is running stands directly over the list's rule, as it stands over the box.
 ///
 /// # Errors
 ///
 /// [`Fatal::Terminal`] if the terminal could not be drawn on.
+// Six is one over clippy's limit, and each is a distinct thing the frame is
+// drawn from: the terminal, the dress, the queue, whether it stands, the offer
+// the turn reads, and the turn whose row stands over it. The caller holds all
+// six as separate values, and a type made to bundle two of them would be built
+// at the one call site only to be taken apart here.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn under<T: Terminal>(
     renderer: &mut Renderer<T>,
     style: Style,
     queue: &Prompts,
     standing: &mut Standing,
     steer: &Steer,
+    turning: &Turning,
 ) -> Result<bool, Fatal> {
     let Standing::Open(at) = *standing else {
         return Ok(false);
@@ -373,18 +396,29 @@ pub(super) fn under<T: Terminal>(
     // the turn goes on writing into: a list that asked for the whole window
     // would leave what is being said now nowhere at all to appear.
     let room = renderer.rows().saturating_sub(1);
-    let rows = rows(queue, at, renderer.columns(), room, style);
+    let columns = renderer.columns();
+
+    // The row that says the turn is running stays directly over the view's rule,
+    // as it stands over the box. It is the first thing to give way: a window
+    // that can hold the list only without it holds the list, since the list is
+    // what the reader opened.
+    let mut laid = rows(queue, at, columns, room.saturating_sub(1), style);
+    if laid.is_empty() {
+        laid = rows(queue, at, columns, room, style);
+    } else {
+        laid.insert(0, turning.working(columns, style));
+    }
 
     // Nothing left to stand: the reader took the last line back, or the window
     // has no room for the list at all. Either way the box comes back in this
     // same frame, and the queue is the turn's again.
-    let Some(row) = rows.len().checked_sub(1) else {
+    let Some(row) = laid.len().checked_sub(1) else {
         steer.release();
         *standing = Standing::Closed;
         return Ok(false);
     };
 
-    renderer.under(&rows, Some(Caret { row, column: 0 }), style.palette())?;
+    renderer.under(&laid, Some(Caret { row, column: 0 }), style.palette())?;
     Ok(true)
 }
 
@@ -402,29 +436,39 @@ fn moving(arrived: &Pressed, open: &mut Open<'_>) -> Moved {
             (at + 1 < open.reading.queue.waiting_count()).then(|| at + 1),
         ),
 
-        // The one key that changes the queue: the marked line is taken back into
-        // the box, where it can be edited or sent ahead of the rest. Out of both
-        // places it sits in, because the panel and the turn's own offer hold the
-        // same line — one dropped from the panel alone is a prompt the reader
-        // deleted that the turn works in anyway. With one line it is also the way
-        // out, since the list it was read from is then empty.
-        Pressed::Key(Key::Char('x')) => match open.reading.queue.drop(at) {
-            Some(line) => {
-                open.reading.steer.forget(&line);
-                open.reading.editor.paste(&line);
-                open.at = at.min(open.reading.queue.waiting_count().saturating_sub(1));
-
-                if open.reading.queue.waiting_count() == 0 {
-                    Moved::Left
-                } else {
-                    Moved::Redraw
-                }
-            }
-            None => Moved::Still,
-        },
+        // The two keys that change the queue. `e` takes the marked line back into
+        // the box, where it can be edited or sent ahead of the rest, and `x` is
+        // the key it was before the footer named it; `d` and Delete drop it and
+        // put nothing in the box. Either way it leaves both places it sits in,
+        // because the panel and the turn's own offer hold the same line — one
+        // dropped from the panel alone is a prompt the reader deleted that the
+        // turn works in anyway. With one line each is also the way out, since the
+        // list it was read from is then empty.
+        Pressed::Key(Key::Char('e' | 'x')) => removed(open, at, true),
+        Pressed::Key(Key::Char('d') | Key::Delete) => removed(open, at, false),
 
         Pressed::Escape | Pressed::Queue => Moved::Left,
         _ => Moved::Still,
+    }
+}
+
+/// Takes the line at `at` out of the queue and the turn's offer, into the box
+/// where `back` is set, and answers what that owes the picture.
+fn removed(open: &mut Open<'_>, at: usize, back: bool) -> Moved {
+    let Some(line) = open.reading.queue.drop(at) else {
+        return Moved::Still;
+    };
+
+    open.reading.steer.forget(&line);
+    if back {
+        open.reading.editor.paste(&line);
+    }
+    open.at = at.min(open.reading.queue.waiting_count().saturating_sub(1));
+
+    if open.reading.queue.waiting_count() == 0 {
+        Moved::Left
+    } else {
+        Moved::Redraw
     }
 }
 
@@ -433,45 +477,122 @@ fn laid(open: &mut Open<'_>, columns: usize, rows: usize, style: Style) -> Vec<R
     self::rows(open.reading.queue, open.at, columns, rows, style)
 }
 
-/// The queue laid out as a titled list, with the marked line standing out.
+/// The queue laid out as a panel, with the marked line standing out.
 ///
-/// Each line is led by the mark a line is typed after, and the one the mark is
-/// on is drawn in the accent so a key's target is never a guess. No rows at all
-/// where there is nothing left to name, which both callers read as the view
-/// closing.
+/// The shape every other panel has: a rule, a title, the lines, and a footer
+/// naming every key that works. The marked line leads with the mark a line is
+/// typed after and is drawn in the accent, so a key's target is never a guess;
+/// the rest stand two columns in under it. A line is read whole here where the
+/// box cut it to a row, so it wraps and hangs under its own first word. The
+/// marked line is always among those drawn: a window short of the whole queue
+/// scrolls to it. No rows at all where there is nothing left to name, which
+/// both callers read as the view closing.
 fn rows(queue: &Prompts, at: usize, columns: usize, rows: usize, style: Style) -> Vec<Row> {
-    use crucible_tui::Slot;
+    use crucible_tui::{Slot, fold};
 
     let waiting = queue.waiting_count();
-    let room = rows.saturating_sub(3);
+    let glyphs = style.glyphs();
+    let (up, down) = glyphs.walking();
+    let dot = glyphs.dot();
+    let keys = format!("{up}{down} to walk {dot} e edit {dot} d delete {dot} esc to close");
+    let footer = fold(&keys, columns);
+
+    // The rule, the title, the three blanks and the footer take their rows
+    // before a line is given one.
+    let room = rows.saturating_sub(CHROME + footer.len());
     if waiting == 0 || room == 0 {
         return Vec::new();
     }
 
-    let glyphs = style.glyphs();
-    let mark = glyphs.caret();
+    let mut laid = vec![
+        Row::new().then(Slot::Accent, glyphs.horizontal().repeat(columns)),
+        Row::new(),
+        Row::new().then(
+            Slot::Strong,
+            draw::clipped(format!("{waiting} queued"), columns, glyphs),
+        ),
+        Row::new(),
+    ];
 
-    let caption = format!("{waiting} queued — x to take back, esc to close");
-    let title = Row::new().then(Slot::Strong, draw::clipped(&caption, columns, glyphs));
+    // Only as much of a line as the room could show is folded: a prompt may be
+    // a megabyte, and the view is drawn again on every frame.
+    let across = columns.saturating_sub(MARKED);
+    let parts = |place: usize| -> Vec<String> {
+        queue
+            .waiting_all()
+            .nth(place)
+            .map(|said| {
+                let shown = draw::clipped(said, across.saturating_mul(room), glyphs);
+                fold(&shown, across)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
-    let mut laid = vec![title, Row::new()];
+    // The marked line is always among the lines drawn, whole where the room
+    // holds it and from its first row where it does not: `d` takes away the
+    // words the mark stands on, and words the reader never saw are not a thing
+    // to take away. The room is filled backwards from it with the lines before
+    // it that fit whole, then forwards with what comes after. Nothing is kept
+    // between frames to say where the list was scrolled to; the mark alone says.
+    let at = at.min(waiting - 1);
+    let mut marked = parts(at);
+    marked.truncate(room);
+    let mut used = marked.len();
 
-    for (place, said) in queue.waiting_all().enumerate().take(room) {
+    let mut before = Vec::new();
+    for place in (0..at).rev() {
+        let earlier = parts(place);
+        if used + earlier.len() > room {
+            break;
+        }
+        used += earlier.len();
+        before.push((place, earlier));
+    }
+    before.reverse();
+
+    let mut blocks = before;
+    blocks.push((at, marked));
+    for place in at + 1..waiting {
+        if used >= room {
+            break;
+        }
+        let mut later = parts(place);
+        later.truncate(room - used);
+        used += later.len();
+        blocks.push((place, later));
+    }
+
+    for (place, lines) in blocks {
         let tone = if place == at {
             Slot::Accent
         } else {
             Slot::Plain
         };
 
-        laid.push(
-            Row::new()
-                .then(Slot::Accent, mark)
-                .then(Slot::Plain, " ")
-                .then(tone, draw::clipped(said, columns.saturating_sub(2), glyphs)),
-        );
+        for (nth, part) in lines.into_iter().enumerate() {
+            let lead = if nth == 0 && place == at {
+                glyphs.caret()
+            } else {
+                " "
+            };
+            laid.push(
+                Row::new()
+                    .then(tone, lead)
+                    .then(Slot::Plain, " ")
+                    .then(tone, part),
+            );
+        }
     }
 
     laid.push(Row::new());
+    laid.extend(
+        footer
+            .into_iter()
+            .map(|row| Row::new().then(Slot::Quiet, row)),
+    );
     laid
 }
 

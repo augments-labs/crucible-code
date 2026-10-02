@@ -15,6 +15,11 @@ change in any release with no deprecation period.
   schemas, MCP tool schemas, messages, the reserve and what is free, with
   tokens and share; free reads the same as `window left` on the prompt line.
   It opens mid-turn too, showing the last request the turn built.
+- **`/release-notes` opens a list of releases to choose from.** It shows the
+  eight newest with their dates and entry counts, a row that reveals the rest,
+  and Enter prints the chosen release alone. `/release-notes <version>` is
+  unchanged, and `/release-notes all` prints every release at once as the bare
+  form did.
 - **The model can mark the answer it recommends.** In a question put by
   `ask_user`, one answer may be marked recommended and listed first, and it is
   drawn with `(Recommended)` after its name. What you choose and what is sent
@@ -30,6 +35,11 @@ change in any release with no deprecation period.
 
 ### Changed
 
+- **The queue box always says how to open the queue, and the queue can delete a
+  message.** `ctrl+q edit` is on the box's bottom edge for one waiting message
+  as for many, and the open queue ends in a footer naming <kbd>↑</kbd><kbd>↓</kbd>,
+  <kbd>e</kbd> to edit, <kbd>d</kbd> to delete and <kbd>Esc</kbd>. Messages wrap
+  there instead of being cut; <kbd>x</kbd> still edits.
 - **A scroll rail on the transcript's right edge replaces the map behind the
   bottom-row label.** Its thumb shows which part of the transcript is on screen
   and a mark stands at each prompt; a click scrolls there, a drag on it scrolls

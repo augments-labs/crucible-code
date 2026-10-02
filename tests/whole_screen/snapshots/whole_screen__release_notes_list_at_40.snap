@@ -1,0 +1,29 @@
+---
+source: tests/whole_screen/main.rs
+expression: shape(&picture)
+---
+40x24 cursor 23,0 scrolled 0
+|                                       │|
+|                                       ┃|
+|Warning: No models available. Use      ┃|
+|/login or set an API key environment   ┃|
+|variable. Then use /model to select a  ┃|
+|model.                                 ┃|
+|                                       ┃|
+|› /release-notes                       ┃|
+|────────────────────────────────────────|
+|                                        |
+|Release notes                           |
+|                                        |
+|› ######    ## entries   this version   |
+|  #.##.#    ## entries                  |
+|  #.##.#    ## entries                  |
+|  #.##.#    ## entries                  |
+|  #.##.#    ## entries                  |
+|  #.##.#    ## entries                  |
+|  #.##.#    ## entries                  |
+|  #.##.#    ## entries                  |
+|  all # releases ↓                      |
+|                                        |
+|↑↓ to walk · enter opens it · esc to    |
+|close                                   |

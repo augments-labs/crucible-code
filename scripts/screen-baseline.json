@@ -166,6 +166,18 @@
       "sha256": "24224ae8dc2b025e7ce004c5cc4a5f71ba8e64866755cac6cbd8a6ca1c7d0c71"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_key_that_opens_the_queue.snap",
+      "case": "a_single_waiting_prompt_is_told_the_key_that_opens_the_queue",
+      "opened": [],
+      "sha256": "e2e94472950e29daecfa31d3206d1e795081f75670baea10b400feb247165538"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window.snap",
+      "case": "a_single_waiting_prompt_is_told_the_queue_key_in_a_narrow_window",
+      "opened": [],
+      "sha256": "bc3069fce5f2ed2c61e22d043429ff821446f71df1cce1728afa034c633bf25d"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__a_slash_opens_the_command_list_above_the_box.snap",
       "case": "a_slash_opens_the_command_list_above_the_box",
       "opened": [
@@ -617,12 +629,52 @@
       "sha256": "91fd979550eb0df0df0de000b6c48b87f62051c30e9c491c9c3e80374ae4c0af"
     },
     {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_40.snap",
+      "case": "release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-{columns}\"), columns, 24)"
+      ],
+      "sha256": "8b7b258c2739d949053d26ff428af66e5bd6df16b738c300df9dd3eb2fd90b55"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_at_80.snap",
+      "case": "release_notes_list_stands_the_newest_few_and_a_row_that_reveals_the_rest",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-{columns}\"), columns, 24)"
+      ],
+      "sha256": "e842685d74456546744228aad313a9cdce81366dd01ba4a472c4f22db12d94f4"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_list_reveal_at_80.snap",
+      "case": "release_notes_list_reveals_every_release_in_place_on_the_row_that_was_ninth",
+      "opened": [
+        "Watched::open(\"release-notes-list-reveal\", 80, 24)"
+      ],
+      "sha256": "e531a95ae2d3eb90a6549ee7a5ab08432e3c0bb3f6fa681c7de8d6c4d89f8c13"
+    },
+    {
       "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_mid_turn_are_refused_on_the_panel.snap",
       "case": "release_notes_mid_turn_are_refused_on_the_panel",
       "opened": [
         "Watched::allowing(\"release-notes-mid-turn\", 60, 24, &vendor, \"bash(*)\")"
       ],
-      "sha256": "f3ddb938ccc029878660a5e6fe087ab9086e11d29161b76ed69feebc3c9667fe"
+      "sha256": "ec95647bfb7c2651d7f6f2ac0aed3242cbb771467784c7981d1a2d149bbf9196"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_40.snap",
+      "case": "release_notes_list_opens_one_version_from_the_revealed_rows",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-open-{columns}\"), columns, 24)"
+      ],
+      "sha256": "b248cb466f4a81e743069de937682404302308e41499337cfeac3ea03945ff2c"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__release_notes_one_from_the_list_at_80.snap",
+      "case": "release_notes_list_opens_one_version_from_the_revealed_rows",
+      "opened": [
+        "Watched::open(&format!(\"release-notes-list-open-{columns}\"), columns, 24)"
+      ],
+      "sha256": "adf8d92083feb19ef94646cfe48c8553141b8b10e50776a26b1b66990be6404c"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_effort_ladder_stands_in_a_window_a_panel_of_the_same_five_would_fill.snap",
@@ -656,6 +708,18 @@
         "Watched::open(&format!(\"login-ways-{held}-{columns}\"), columns, 24)"
       ],
       "sha256": "6aac0c3e289794ce4a226b4e26fffd533726b896c455a17a04bc0593a0df63e1"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_names_the_keys_that_work_on_a_waiting_prompt.snap",
+      "case": "the_open_queue_names_the_keys_that_work_on_a_waiting_prompt",
+      "opened": [],
+      "sha256": "5f330b6d68731f98f245d3ed39467c6af1bf5dbe9c97fa9cf041f08e0aceed47"
+    },
+    {
+      "capture": "tests/whole_screen/snapshots/whole_screen__the_open_queue_wraps_its_keys_in_a_narrow_window.snap",
+      "case": "the_open_queue_wraps_its_keys_in_a_narrow_window",
+      "opened": [],
+      "sha256": "60abf62dc90b3bbee2c63be4403f81106a7f729d949deaba517fb15306194892"
     },
     {
       "capture": "tests/whole_screen/snapshots/whole_screen__the_provider_panel_reaches_a_turn_without_a_provider_being_named.snap",
