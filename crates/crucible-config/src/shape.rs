@@ -303,9 +303,10 @@ const PROVIDER: Shape = Shape::Fields(&[
 /// What a variable in the `env` block may be: a value, applied verbatim.
 ///
 /// Text for every variable, because this block is the environment and the
-/// environment holds strings. The one exception is the declared whole number
-/// ([`SCROLL_SPEED`]), which also takes a JSON integer: `spelled` gives its
-/// digits, so a command sees the same variable either way.
+/// environment holds strings. The one exception is the declared whole number,
+/// [`MOUSE_SCROLL_SPEED`] within [`SCROLL_SPEED`], which also takes a JSON
+/// integer: `spelled` gives its digits, so a command sees the same variable
+/// either way.
 const VALUE: Shape = Shape::Text;
 
 /// The bounds a whole number in the `env` block is allowed to fall between.
@@ -327,8 +328,8 @@ pub(crate) struct Whole {
 /// How far one notch of the wheel may be asked to move the transcript.
 ///
 /// Three at the bottom, and a number below it is refused rather than pulled up
-/// to it, because a wheel set to move nothing is a setting that looks applied
-/// and does nothing.
+/// to it, because a number pulled to another is a setting that looks applied
+/// and does something other than what was written.
 ///
 /// A screenful on most terminals at the top. Past that the wheel stops being a
 /// scroll and becomes a jump: two notches and the rows that were on screen are
